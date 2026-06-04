@@ -4,8 +4,6 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
-use Illuminate\Support\Facades\Storage;
-
 class Customer extends Model
 {
     use HasFactory;
@@ -37,7 +35,9 @@ class Customer extends Model
                 return null;
             }
 
-            return Storage::disk('public')->url($this->shop_image);
+            $base = rtrim((string) config('app.url'), '/');
+
+            return $base.'/api/v1/customers/'.$this->customer_num.'/shop-image/file';
         });
     }
 

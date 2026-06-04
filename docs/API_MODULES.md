@@ -73,7 +73,14 @@ Requires `hr_payroll` module where gated.
 | Resource | Path |
 |----------|------|
 | Departments | `/departments` |
+| Positions | `/positions` |
 | Employees | `/employees` |
+| Payroll deduction types | `/payroll-deduction-types` |
+| Employee deductions | `/employee-deductions` |
+| Overtime | `/employee-overtime` |
+| Cash advances | `/employee-cash-advances` |
+| Attendance | `/employee-attendance` |
+| Employee documents | `/employees/{id}/documents` (+ `GET …/documents/{id}/file`) |
 | Employee bank accounts | `/employees/{id}/bank-accounts` |
 | Emergency contacts | `/employees/{id}/emergency-contacts` |
 | Next of kin | `/employees/{id}/next-of-kin` |

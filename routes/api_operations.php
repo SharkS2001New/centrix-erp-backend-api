@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
 use App\Http\Controllers\Api\V1\Operations\JournalOperationsController;
+use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 
@@ -60,8 +61,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('journal-entries/{entryId}/post', [JournalOperationsController::class, 'post']);
     });
 
+    // ---- HR / Attendance (clock device) ----
+    Route::middleware(['erp.module:hr_payroll', 'erp.permission:hr.manage'])->prefix('attendance')->group(function () {
+        Route::post('clock-in', [AttendanceClockController::class, 'clockIn']);
+        Route::post('clock-out', [AttendanceClockController::class, 'clockOut']);
+        Route::get('clock-sessions', [AttendanceClockController::class, 'sessions']);
+    });
+
     // ---- HR / Payroll ----
     Route::middleware(['erp.module:hr_payroll', 'erp.permission:hr.manage'])->prefix('payroll')->group(function () {
+        Route::get('kenya-statutory', [PayrollOperationsController::class, 'kenyaStatutory']);
+        Route::get('run-schedule', [PayrollOperationsController::class, 'runSchedule']);
         Route::get('calculate', [PayrollOperationsController::class, 'calculate']);
         Route::post('runs/{runId}/process', [PayrollOperationsController::class, 'processRun']);
         Route::post('runs/{runId}/process-auto', [PayrollOperationsController::class, 'processAuto']);

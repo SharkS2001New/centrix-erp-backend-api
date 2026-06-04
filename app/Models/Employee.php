@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
@@ -16,6 +17,8 @@ class Employee extends Model
         'organization_id',
         'branch_id',
         'department_id',
+        'position_id',
+        'shift_id',
         'user_id',
         'reports_to_employee_id',
         'employee_code',
@@ -51,6 +54,7 @@ class Employee extends Model
         'notice_period_days',
         'pay_frequency',
         'base_salary',
+        'monthly_allowance',
         'kra_pin',
         'nssf_number',
         'sha_number',
@@ -58,9 +62,12 @@ class Employee extends Model
         'is_active',
     ];
 
+    protected $appends = ['photo_url'];
+
     protected $casts = [
         'is_active' => 'boolean',
         'base_salary' => 'decimal:2',
+        'monthly_allowance' => 'decimal:2',
         'hire_date' => 'date',
         'date_of_birth' => 'date',
         'confirmation_date' => 'date',
@@ -68,6 +75,19 @@ class Employee extends Model
         'contract_start_date' => 'date',
         'contract_end_date' => 'date',
     ];
+
+    protected function photoUrl(): Attribute
+    {
+        return Attribute::get(function () {
+            if (! $this->photo_path) {
+                return null;
+            }
+
+            $base = rtrim((string) config('app.url'), '/');
+
+            return $base.'/api/v1/employees/'.$this->id.'/photo/file';
+        });
+    }
 
     public static function generateNextEmployeeCode(int $organizationId): string
     {
@@ -105,6 +125,16 @@ class Employee extends Model
         return $this->belongsTo(Department::class, 'department_id');
     }
 
+    public function shift()
+    {
+        return $this->belongsTo(WorkShift::class, 'shift_id');
+    }
+
+    public function position()
+    {
+        return $this->belongsTo(Position::class, 'position_id');
+    }
+
     public function branch()
     {
         return $this->belongsTo(Branch::class, 'branch_id');
@@ -133,5 +163,15 @@ class Employee extends Model
     public function nextOfKin()
     {
         return $this->hasOne(EmployeeNextOfKin::class, 'employee_id');
+    }
+
+    public function deductions()
+    {
+        return $this->hasMany(EmployeeDeduction::class, 'employee_id');
+    }
+
+    public function documents()
+    {
+        return $this->hasMany(EmployeeDocument::class, 'employee_id');
     }
 }

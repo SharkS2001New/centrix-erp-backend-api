@@ -11,6 +11,8 @@ use App\Models\Department;
 use App\Models\Driver;
 use App\Models\Employee;
 use App\Models\EmployeeBankAccount;
+use App\Models\PayrollDeductionType;
+use App\Models\Position;
 use App\Models\Expense;
 use App\Models\ExpenseGroup;
 use App\Models\Organization;
@@ -142,10 +144,27 @@ class DemoDataSeeder extends Seeder
             'is_active' => true,
         ]);
 
+        $gmPosition = Position::create([
+            'organization_id' => $org->id,
+            'position_code' => 'GM',
+            'position_title' => 'General Manager',
+            'is_active' => true,
+        ]);
+
+        PayrollDeductionType::create([
+            'organization_id' => $org->id,
+            'deduction_code' => 'SACCO',
+            'name' => 'SACCO contribution',
+            'calc_type' => 'fixed',
+            'default_amount' => 1500,
+            'is_active' => true,
+        ]);
+
         $adminEmployee = Employee::create([
             'organization_id' => $org->id,
             'branch_id' => $hq->id,
             'department_id' => $salesDept->id,
+            'position_id' => $gmPosition->id,
             'user_id' => $admin->id,
             'employee_code' => 'EMP#0001',
             'payroll_number' => 'EMP#0001',

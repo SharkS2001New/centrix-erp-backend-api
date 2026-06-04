@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Employee;
 use App\Models\PayrollLine;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\Response;
 
 class EmployeeController extends BaseResourceController
 {
@@ -12,6 +14,8 @@ class EmployeeController extends BaseResourceController
     {
         return [
             'department',
+            'position',
+            'shift',
             'branch',
             'user',
             'reportsTo',
@@ -39,6 +43,8 @@ class EmployeeController extends BaseResourceController
         if ($q = $request->input('q')) {
             $query->where(function ($sub) use ($q) {
                 $sub->where('full_name', 'like', "%{$q}%")
+                    ->orWhere('first_name', 'like', "%{$q}%")
+                    ->orWhere('last_name', 'like', "%{$q}%")
                     ->orWhere('employee_code', 'like', "%{$q}%")
                     ->orWhere('payroll_number', 'like', "%{$q}%")
                     ->orWhere('job_title', 'like', "%{$q}%")
@@ -88,6 +94,56 @@ class EmployeeController extends BaseResourceController
         return response()->json($query->paginate($perPage));
     }
 
+    /** GET /employees/{id}/photo/file */
+    public function photoFile(int $employee)
+    {
+        $model = Employee::findOrFail($employee);
+
+        if (! $model->photo_path || ! Storage::disk('public')->exists($model->photo_path)) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $absolute = Storage::disk('public')->path($model->photo_path);
+        $mime = Storage::disk('public')->mimeType($model->photo_path) ?: 'image/jpeg';
+
+        return response()->file($absolute, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'private, max-age=3600',
+        ]);
+    }
+
+    /** POST /employees/{id}/photo */
+    public function uploadPhoto(Request $request, int $employee)
+    {
+        $model = Employee::findOrFail($employee);
+
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,jpg,png,webp|max:5120',
+        ]);
+
+        if ($model->photo_path) {
+            Storage::disk('public')->delete($model->photo_path);
+        }
+
+        $path = $request->file('image')->store('employees/'.$model->id, 'public');
+        $model->update(['photo_path' => $path]);
+
+        return response()->json($model->fresh($this->employeeRelations()));
+    }
+
+    /** DELETE /employees/{id}/photo */
+    public function deletePhoto(int $employee)
+    {
+        $model = Employee::findOrFail($employee);
+
+        if ($model->photo_path) {
+            Storage::disk('public')->delete($model->photo_path);
+            $model->update(['photo_path' => null]);
+        }
+
+        return response()->json($model->fresh($this->employeeRelations()));
+    }
+
     protected function prepareEmployeeData(Request $request, ?Employee $existing = null): array
     {
         $data = $this->validatedEmployee($request, $existing);
@@ -95,16 +151,12 @@ class EmployeeController extends BaseResourceController
         $data['nationality'] = 'Kenyan';
         $data['country'] = 'Kenya';
 
-        if (! empty($data['full_name'])) {
-            $data['full_name'] = trim($data['full_name']);
-        } else {
-            $data['full_name'] = Employee::composeFullName(
-                $data['first_name'] ?? $existing?->first_name,
-                $data['middle_name'] ?? $existing?->middle_name,
-                $data['last_name'] ?? $existing?->last_name,
-                $existing?->full_name,
-            );
-        }
+        $data['full_name'] = Employee::composeFullName(
+            $data['first_name'] ?? $existing?->first_name,
+            $data['middle_name'] ?? $existing?->middle_name,
+            $data['last_name'] ?? $existing?->last_name,
+            $data['full_name'] ?? $existing?->full_name,
+        );
 
         if (empty($data['employee_code'])) {
             $orgId = (int) ($data['organization_id'] ?? $existing?->organization_id);
@@ -119,6 +171,15 @@ class EmployeeController extends BaseResourceController
             $data['is_active'] = false;
         }
 
+        $status = $data['employment_status'] ?? $existing?->employment_status ?? 'active';
+        $salary = (float) ($data['base_salary'] ?? $existing?->base_salary ?? 0);
+        $shiftId = $data['shift_id'] ?? $existing?->shift_id;
+        if ($status === 'active' && $salary > 0 && empty($shiftId)) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'shift_id' => ['Assign a work shift for payroll, attendance, and overtime.'],
+            ]);
+        }
+
         return $data;
     }
 
@@ -128,14 +189,16 @@ class EmployeeController extends BaseResourceController
             'organization_id' => $existing ? 'sometimes|integer|exists:organizations,id' : 'required|integer|exists:organizations,id',
             'branch_id' => 'nullable|integer|exists:branches,id',
             'department_id' => 'nullable|integer|exists:departments,id',
+            'position_id' => 'nullable|integer|exists:positions,id',
+            'shift_id' => 'nullable|integer|exists:work_shifts,id',
             'user_id' => 'nullable|integer|exists:users,id',
             'reports_to_employee_id' => 'nullable|integer|exists:employees,id',
             'employee_code' => 'nullable|string|max:45',
             'payroll_number' => 'nullable|string|max:45',
-            'first_name' => 'nullable|string|max:100',
+            'first_name' => ($existing ? 'sometimes|' : '') . 'required|string|max:100',
             'middle_name' => 'nullable|string|max:100',
-            'last_name' => 'nullable|string|max:100',
-            'full_name' => ($existing ? 'sometimes|' : '') . 'required|string|max:200',
+            'last_name' => ($existing ? 'sometimes|' : '') . 'required|string|max:100',
+            'full_name' => 'nullable|string|max:200',
             'gender' => 'nullable|in:male,female,other,undisclosed',
             'date_of_birth' => 'nullable|date',
             'nationality' => 'nullable|string|max:100',
@@ -163,6 +226,7 @@ class EmployeeController extends BaseResourceController
             'notice_period_days' => 'nullable|integer|min:0',
             'pay_frequency' => 'nullable|in:monthly,biweekly,weekly',
             'base_salary' => 'nullable|numeric|min:0',
+            'monthly_allowance' => 'nullable|numeric|min:0',
             'kra_pin' => 'nullable|string|max:45',
             'nssf_number' => 'nullable|string|max:45',
             'sha_number' => 'nullable|string|max:45',

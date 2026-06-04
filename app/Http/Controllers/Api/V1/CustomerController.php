@@ -7,6 +7,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
+use Symfony\Component\HttpFoundation\Response;
 
 class CustomerController extends BaseResourceController
 {
@@ -67,6 +68,24 @@ class CustomerController extends BaseResourceController
         $customer->update($data);
 
         return response()->json($customer->fresh());
+    }
+
+    /** GET /customers/{customerNum}/shop-image/file — authenticated image bytes */
+    public function shopImageFile(string $customer)
+    {
+        $model = Customer::where('customer_num', $customer)->firstOrFail();
+
+        if (! $model->shop_image || ! Storage::disk('public')->exists($model->shop_image)) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $absolute = Storage::disk('public')->path($model->shop_image);
+        $mime = Storage::disk('public')->mimeType($model->shop_image) ?: 'image/jpeg';
+
+        return response()->file($absolute, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'private, max-age=3600',
+        ]);
     }
 
     /** POST /customers/{customerNum}/shop-image — multipart shop photo */

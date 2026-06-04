@@ -1120,10 +1120,17 @@ CREATE TABLE journal_entry_lines (
 DROP TABLE IF EXISTS payroll_lines;
 DROP TABLE IF EXISTS payroll_runs;
 DROP TABLE IF EXISTS pay_periods;
+DROP TABLE IF EXISTS employee_documents;
+DROP TABLE IF EXISTS employee_attendance;
+DROP TABLE IF EXISTS employee_cash_advances;
+DROP TABLE IF EXISTS employee_overtime;
+DROP TABLE IF EXISTS employee_deductions;
+DROP TABLE IF EXISTS payroll_deduction_types;
 DROP TABLE IF EXISTS employee_next_of_kin;
 DROP TABLE IF EXISTS employee_emergency_contacts;
 DROP TABLE IF EXISTS employee_bank_accounts;
 DROP TABLE IF EXISTS employees;
+DROP TABLE IF EXISTS positions;
 DROP TABLE IF EXISTS departments;
 CREATE TABLE departments (
     id               INT           PRIMARY KEY AUTO_INCREMENT,
@@ -1135,11 +1142,24 @@ CREATE TABLE departments (
     UNIQUE KEY uq_org_dept (organization_id, department_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE positions (
+    id               INT           PRIMARY KEY AUTO_INCREMENT,
+    organization_id  INT           NOT NULL,
+    position_code    VARCHAR(45)   NOT NULL,
+    position_title   VARCHAR(200)  NOT NULL,
+    description      VARCHAR(500)  NULL,
+    is_active        BOOLEAN       DEFAULT TRUE,
+    created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    UNIQUE KEY uq_org_position (organization_id, position_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE employees (
     id                    INT           PRIMARY KEY AUTO_INCREMENT,
     organization_id       INT           NOT NULL,
     branch_id             INT           NULL,
     department_id         INT           NULL,
+    position_id           INT           NULL,
     user_id               INT           NULL,
     reports_to_employee_id INT          NULL,
     employee_code         VARCHAR(45)   NOT NULL,
@@ -1184,12 +1204,46 @@ CREATE TABLE employees (
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     FOREIGN KEY (branch_id) REFERENCES branches(id),
     FOREIGN KEY (department_id) REFERENCES departments(id),
+    FOREIGN KEY (position_id) REFERENCES positions(id) ON DELETE SET NULL,
     FOREIGN KEY (user_id) REFERENCES users(id),
     FOREIGN KEY (reports_to_employee_id) REFERENCES employees(id) ON DELETE SET NULL,
     UNIQUE KEY uq_org_employee (organization_id, employee_code),
     INDEX idx_emp_branch (branch_id),
     INDEX idx_emp_dept (department_id),
+    INDEX idx_emp_position (position_id),
     INDEX idx_emp_reports_to (reports_to_employee_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE payroll_deduction_types (
+    id                  INT           PRIMARY KEY AUTO_INCREMENT,
+    organization_id     INT           NOT NULL,
+    deduction_code      VARCHAR(45)   NOT NULL,
+    name                VARCHAR(200)  NOT NULL,
+    calc_type           ENUM('fixed','percentage') NOT NULL DEFAULT 'fixed',
+    default_amount      DECIMAL(12,2) NOT NULL DEFAULT 0,
+    default_percentage  DECIMAL(5,2)  NULL,
+    is_active           BOOLEAN       DEFAULT TRUE,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    UNIQUE KEY uq_org_deduction_code (organization_id, deduction_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE employee_deductions (
+    id                  INT           PRIMARY KEY AUTO_INCREMENT,
+    employee_id         INT           NOT NULL,
+    deduction_type_id   INT           NULL,
+    name                VARCHAR(200)  NOT NULL,
+    calc_type           ENUM('fixed','percentage') NOT NULL DEFAULT 'fixed',
+    amount              DECIMAL(12,2) NOT NULL DEFAULT 0,
+    percentage          DECIMAL(5,2)  NULL,
+    start_date          DATE          NULL,
+    end_date            DATE          NULL,
+    is_active           BOOLEAN       DEFAULT TRUE,
+    notes               VARCHAR(500)  NULL,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+    FOREIGN KEY (deduction_type_id) REFERENCES payroll_deduction_types(id) ON DELETE SET NULL,
+    INDEX idx_emp_deduction (employee_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE employee_bank_accounts (
@@ -1242,6 +1296,77 @@ CREATE TABLE pay_periods (
     status           ENUM('open','closed') DEFAULT 'open',
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     UNIQUE KEY uq_org_period (organization_id, period_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE employee_overtime (
+    id               INT           PRIMARY KEY AUTO_INCREMENT,
+    employee_id      INT           NOT NULL,
+    organization_id  INT           NOT NULL,
+    work_date        DATE          NOT NULL,
+    hours            DECIMAL(6,2)  NOT NULL DEFAULT 0,
+    hourly_rate      DECIMAL(12,2) NULL,
+    rate_multiplier  DECIMAL(4,2)  NOT NULL DEFAULT 1.50,
+    amount           DECIMAL(12,2) NOT NULL DEFAULT 0,
+    status           ENUM('pending','approved','paid','rejected') NOT NULL DEFAULT 'pending',
+    pay_period_id    INT           NULL,
+    notes            VARCHAR(500)  NULL,
+    created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    FOREIGN KEY (pay_period_id) REFERENCES pay_periods(id) ON DELETE SET NULL,
+    INDEX idx_ot_emp_date (employee_id, work_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE employee_cash_advances (
+    id                 INT           PRIMARY KEY AUTO_INCREMENT,
+    employee_id        INT           NOT NULL,
+    organization_id    INT           NOT NULL,
+    advance_date       DATE          NOT NULL,
+    amount             DECIMAL(12,2) NOT NULL,
+    balance            DECIMAL(12,2) NOT NULL,
+    status             ENUM('open','repaid','cancelled') NOT NULL DEFAULT 'open',
+    repayment_amount   DECIMAL(12,2) NULL,
+    notes              VARCHAR(500)  NULL,
+    created_at         TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    INDEX idx_adv_emp (employee_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE employee_attendance (
+    id               INT           PRIMARY KEY AUTO_INCREMENT,
+    employee_id      INT           NOT NULL,
+    organization_id  INT           NOT NULL,
+    branch_id        INT           NULL,
+    attendance_date  DATE          NOT NULL,
+    check_in         TIME          NULL,
+    check_out        TIME          NULL,
+    status           ENUM('present','absent','late','half_day','leave','holiday') NOT NULL DEFAULT 'present',
+    hours_worked     DECIMAL(5,2)  NULL,
+    notes            VARCHAR(500)  NULL,
+    created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL,
+    UNIQUE KEY uq_emp_attendance_date (employee_id, attendance_date),
+    INDEX idx_att_org_date (organization_id, attendance_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE employee_documents (
+    id               INT           PRIMARY KEY AUTO_INCREMENT,
+    employee_id      INT           NOT NULL,
+    document_type    ENUM('contract','national_id','passport','kra_pin','offer_letter','certificate','other') NOT NULL DEFAULT 'other',
+    title            VARCHAR(200)  NOT NULL,
+    file_path        VARCHAR(500)  NOT NULL,
+    file_name        VARCHAR(255)  NOT NULL,
+    mime_type        VARCHAR(100)  NULL,
+    file_size        INT           NULL,
+    uploaded_by      INT           NULL,
+    notes            VARCHAR(500)  NULL,
+    created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+    FOREIGN KEY (uploaded_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_emp_doc (employee_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE payroll_runs (

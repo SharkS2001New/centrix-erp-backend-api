@@ -23,4 +23,9 @@ class PayPeriod extends Model
         'period_start' => 'date',
         'period_end' => 'date',
     ];
+
+    public function payrollRuns()
+    {
+        return $this->hasMany(PayrollRun::class, 'pay_period_id');
+    }
 }
