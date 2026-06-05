@@ -237,9 +237,7 @@ class DemoDataSeeder extends Seeder
             'vat_id' => $vatStd->id,
             'organization_id' => $org->id,
             'reorder_point' => 500,
-            'low_stock_alert_enabled' => true,
             'created_by' => $admin->id,
-            'updated_by' => $admin->id,
         ]);
 
         RetailPackageSetting::create([

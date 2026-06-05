@@ -8,6 +8,10 @@ class StockReceipt extends Model
 {
     use HasFactory;
 
+    public $timestamps = true;
+
+    const UPDATED_AT = null;
+
     protected $table = 'stock_receipts';
     protected $fillable = [
         'product_code', 'branch_id', 'organization_id', 'units_received',

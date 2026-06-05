@@ -274,9 +274,7 @@ CREATE TABLE products (
     vat_id                  INT           NOT NULL,
     organization_id         INT           NOT NULL,
     reorder_point           DECIMAL(10,2) DEFAULT 0,
-    low_stock_alert_enabled BOOLEAN       DEFAULT TRUE,
     created_by              INT           NULL,
-    updated_by              INT           NULL,
     created_at              TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at              DATETIME      NULL,
@@ -287,7 +285,6 @@ CREATE TABLE products (
     FOREIGN KEY (supplier_id)     REFERENCES suppliers(id),
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     FOREIGN KEY (created_by)      REFERENCES users(id),
-    FOREIGN KEY (updated_by)      REFERENCES users(id),
     INDEX idx_product_code (product_code),
     INDEX idx_subcategory_id (subcategory_id),
     INDEX idx_deleted_at   (deleted_at)
@@ -859,6 +856,10 @@ CREATE TABLE lpo_supplier_invoices (
     supplier_invoice_number VARCHAR(100)  NOT NULL,
     invoice_date            DATE          NULL,
     invoice_amount          DECIMAL(12,2) NULL,
+    file_path               VARCHAR(500)  NULL,
+    file_name               VARCHAR(255)  NULL,
+    mime_type               VARCHAR(100)  NULL,
+    file_size               INT UNSIGNED  NULL,
     created_at              TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (lpo_no)     REFERENCES lpo_mst(lpo_no),
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
@@ -1507,9 +1508,9 @@ SELECT
     cs.store_quantity,
     (cs.shop_quantity + cs.store_quantity) AS total_base_units,
     p.reorder_point,
-    p.low_stock_alert_enabled,
     CASE
-        WHEN (cs.shop_quantity + cs.store_quantity) <= p.reorder_point THEN 'REORDER'
+        WHEN p.reorder_point > 0
+            AND (cs.shop_quantity + cs.store_quantity) <= p.reorder_point THEN 'REORDER'
         ELSE 'OK'
     END AS product_alert,
     rps.max_qty_measure,
@@ -2026,8 +2027,14 @@ JOIN users u ON cip.received_by = u.id;
 -- ================================================================
 
 INSERT INTO lpo_statuses (status_code, status_name) VALUES
-(0,'Pending Approval'),(1,'Not Sent'),(2,'Pending Received'),
-(3,'Partially Received'),(4,'Fully Received'),(5,'Cleared');
+(0,'Pending – Awaiting LPO To be Checked'),
+(1,'Pending – Awaiting Approval'),
+(2,'Awaiting to be Sent to Supplier'),
+(3,'Awaiting Items to be Received'),
+(4,'Awaiting Last Items to be Received'),
+(5,'Items Fully Received'),
+(6,'LPO Cleared (Payment Made)'),
+(7,'Cancelled – Items Returned to Supplier');
 
 INSERT INTO payment_methods (method_name, method_code, requires_reference) VALUES
 ('Cash',        'CASH',   FALSE),

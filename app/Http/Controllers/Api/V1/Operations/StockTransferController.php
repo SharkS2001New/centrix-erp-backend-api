@@ -23,7 +23,9 @@ class StockTransferController extends Controller
             $data['quantity'],
             $data['from_location'],
             $data['to_location'],
-            $request->user()
+            $request->user(),
+            $data['purpose'] ?? null,
+            $data['notes'] ?? null,
         );
 
         return response()->json($result, 201);
@@ -35,13 +37,18 @@ class StockTransferController extends Controller
         float $quantity,
         string $from,
         string $to,
-        User $user
+        User $user,
+        ?string $purpose = null,
+        ?string $notes = null,
     ): array {
         if ($from === $to) {
             throw new InvalidArgumentException('From and to locations must differ.');
         }
 
-        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $to, $user) {
+        $purposeNote = $purpose ? " · {$purpose}" : '';
+        $extra = $notes ? " — {$notes}" : '';
+
+        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $to, $user, $purposeNote, $extra) {
             $out = $this->postStockLedger([
                 'branch_id' => $branchId,
                 'product_code' => $productCode,
@@ -50,7 +57,7 @@ class StockTransferController extends Controller
                 'reference_type' => 'transfer',
                 'quantity_change' => -abs($quantity),
                 'created_by' => $user->id,
-                'notes' => "Transfer out to {$to}",
+                'notes' => "Transfer out to {$to}{$purposeNote}{$extra}",
             ]);
 
             $in = $this->postStockLedger([
@@ -62,7 +69,7 @@ class StockTransferController extends Controller
                 'reference_id' => $out->id,
                 'quantity_change' => abs($quantity),
                 'created_by' => $user->id,
-                'notes' => "Transfer in from {$from}",
+                'notes' => "Transfer in from {$from}{$purposeNote}{$extra}",
             ]);
 
             StockMovementHistory::create([

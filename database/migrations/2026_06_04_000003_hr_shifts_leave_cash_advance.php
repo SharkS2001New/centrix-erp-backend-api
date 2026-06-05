@@ -2,6 +2,7 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
@@ -56,12 +57,20 @@ return new class extends Migration
             });
         }
 
-        Schema::table('employees', function (Blueprint $table) {
-            if (! Schema::hasColumn('employees', 'shift_id')) {
-                $table->integer('shift_id')->nullable()->after('position_id');
+        if (! Schema::hasColumn('employees', 'shift_id')) {
+            Schema::table('employees', function (Blueprint $table) {
+                $table->unsignedInteger('shift_id')->nullable()->after('position_id');
+            });
+        } else {
+            // Recover from a prior failed run that created a signed INT column.
+            DB::statement('ALTER TABLE `employees` MODIFY `shift_id` INT UNSIGNED NULL');
+        }
+
+        if (! $this->foreignKeyExists('employees', 'employees_shift_id_foreign')) {
+            Schema::table('employees', function (Blueprint $table) {
                 $table->foreign('shift_id')->references('id')->on('work_shifts')->nullOnDelete();
-            }
-        });
+            });
+        }
 
         Schema::table('employee_cash_advances', function (Blueprint $table) {
             if (! Schema::hasColumn('employee_cash_advances', 'repayment_mode')) {
@@ -80,15 +89,34 @@ return new class extends Migration
             }
         });
 
-        Schema::table('employees', function (Blueprint $table) {
-            if (Schema::hasColumn('employees', 'shift_id')) {
+        if ($this->foreignKeyExists('employees', 'employees_shift_id_foreign')) {
+            Schema::table('employees', function (Blueprint $table) {
                 $table->dropForeign(['shift_id']);
+            });
+        }
+
+        if (Schema::hasColumn('employees', 'shift_id')) {
+            Schema::table('employees', function (Blueprint $table) {
                 $table->dropColumn('shift_id');
-            }
-        });
+            });
+        }
 
         Schema::dropIfExists('employee_leave_days');
         Schema::dropIfExists('organization_holidays');
         Schema::dropIfExists('work_shifts');
+    }
+
+    private function foreignKeyExists(string $table, string $constraintName): bool
+    {
+        $rows = DB::select(
+            'SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+             WHERE TABLE_SCHEMA = DATABASE()
+               AND TABLE_NAME = ?
+               AND CONSTRAINT_NAME = ?
+               AND CONSTRAINT_TYPE = ?',
+            [$table, $constraintName, 'FOREIGN KEY'],
+        );
+
+        return count($rows) > 0;
     }
 };

@@ -3,46 +3,46 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\SupplierReturn;
+use App\Models\LpoMst;
 use App\Services\SupplierReturnDocumentService;
-use App\Services\SupplierReturnService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
-class SupplierReturnController extends Controller
+class LpoSupplierReturnController extends Controller
 {
     public function __construct(
-        protected SupplierReturnService $returns,
         protected SupplierReturnDocumentService $documents,
     ) {}
 
-    public function index(Request $request)
+    public function index(string $lpo_mst)
     {
-        return response()->json(
-            $this->documents->paginatedList($request, $request->user()),
-        );
+        return response()->json([
+            'data' => $this->documents->listForLpo((int) $lpo_mst),
+        ]);
     }
 
-    public function store(Request $request)
+    public function store(Request $request, string $lpo_mst)
     {
+        $lpoNo = (int) $lpo_mst;
+        $lpo = LpoMst::query()->whereNull('deleted_at')->where('lpo_no', $lpoNo)->firstOrFail();
+
         $data = $request->validate([
-            'supplier_id' => 'required|integer',
             'branch_id' => 'required|integer',
             'product_code' => 'required|string|max:200',
             'quantity' => 'required|numeric|min:0.001',
             'package_type' => 'nullable|in:full_package,partial,pieces',
             'uom_label' => 'nullable|string|max:45',
             'stock_location' => 'nullable|in:shop,store',
-            'unit_cost' => 'nullable|numeric|min:0',
             'reason' => 'required|string|max:2000',
         ]);
 
         try {
-            $doc = $this->documents->create([
-                'supplier_id' => (int) $data['supplier_id'],
+            $this->documents->create([
+                'supplier_id' => (int) $lpo->supplier_id,
                 'branch_id' => (int) $data['branch_id'],
-                'source_type' => 'manual',
+                'source_type' => 'lpo',
+                'lpo_no' => $lpoNo,
                 'notes' => $data['reason'],
                 'lines' => [[
                     'product_code' => $data['product_code'],
@@ -56,21 +56,8 @@ class SupplierReturnController extends Controller
             throw ValidationException::withMessages(['document' => [$e->getMessage()]]);
         }
 
-        return response()->json(['data' => $doc], 201);
-    }
-
-    public function show(string $supplier_return, Request $request)
-    {
-        $row = SupplierReturn::query()->findOrFail((int) $supplier_return);
-
-        if ($row->document_id) {
-            return response()->json([
-                'data' => $this->documents->show((int) $row->document_id, $request->user()),
-            ]);
-        }
-
         return response()->json([
-            'data' => $this->returns->mapReturn($row),
-        ]);
+            'data' => $this->documents->listForLpo($lpoNo),
+        ], 201);
     }
 }

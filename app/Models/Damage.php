@@ -8,6 +8,10 @@ class Damage extends Model
 {
     use HasFactory;
 
+    public $timestamps = true;
+
+    const UPDATED_AT = null;
+
     protected $table = 'damages';
     protected $fillable = [
         'product_code', 'branch_id', 'quantity', 'package_type', 'uom_label',

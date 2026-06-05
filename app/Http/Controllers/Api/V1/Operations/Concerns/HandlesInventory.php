@@ -56,14 +56,38 @@ trait HandlesInventory
             throw new InvalidArgumentException('quantity_change cannot be zero.');
         }
 
-        $before = $this->stockOnHand($productCode, $branchId, $location);
-        $after = $before + $change;
+        return DB::transaction(function () use ($data, $branchId, $productCode, $location, $change) {
+            $row = CurrentStock::query()
+                ->where('product_code', $productCode)
+                ->where('branch_id', $branchId)
+                ->lockForUpdate()
+                ->first();
 
-        if ($after < -0.0001) {
-            throw new InvalidArgumentException("Insufficient stock at {$location} for {$productCode}.");
-        }
+            if (! $row) {
+                $row = new CurrentStock([
+                    'product_code' => $productCode,
+                    'branch_id' => $branchId,
+                    'shop_quantity' => 0,
+                    'store_quantity' => 0,
+                ]);
+            }
 
-        return DB::transaction(function () use ($data, $branchId, $productCode, $location, $change, $before, $after) {
+            $before = $location === 'store'
+                ? (float) $row->store_quantity
+                : (float) $row->shop_quantity;
+            $after = $before + $change;
+
+            if ($after < -0.0001) {
+                throw new InvalidArgumentException("Insufficient stock at {$location} for {$productCode}.");
+            }
+
+            if ($location === 'store') {
+                $row->store_quantity = $after;
+            } else {
+                $row->shop_quantity = $after;
+            }
+            $row->save();
+
             $txn = InventoryTransaction::create([
                 'branch_id' => $branchId,
                 'product_code' => $productCode,

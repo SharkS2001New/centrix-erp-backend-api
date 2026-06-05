@@ -19,8 +19,7 @@ class Product extends Model
         'last_selling_price', 'last_cost_price', 'discount_type', 'discount_percentage',
         'discount_value', 'product_weight', 'stock_in_shop', 'stock_in_store',
         'supplier_id', 'sell_on_retail', 'vat_id', 'organization_id',
-        'reorder_point', 'low_stock_alert_enabled', 'created_by', 'updated_by',
-        'deleted_at', 'deleted_by',
+        'reorder_point', 'created_by', 'deleted_at', 'deleted_by',
     ];
 
     public function unit()
@@ -32,7 +31,7 @@ class Product extends Model
         'unit_price' => 'float',
         'stock_in_shop' => 'float',
         'stock_in_store' => 'float',
-        'low_stock_alert_enabled' => 'boolean',
+        'sell_on_retail' => 'boolean',
         'deleted_at' => 'datetime',
     ];
 }

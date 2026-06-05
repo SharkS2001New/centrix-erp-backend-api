@@ -7,6 +7,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class StockTakeSession extends Model
 {
     use HasFactory;
+
+    public $timestamps = false;
+
     protected $table = "stock_take_sessions";
     protected $fillable = array (
   0 => 'branch_id',
