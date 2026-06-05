@@ -124,7 +124,12 @@ class SupplierReturnService
             throw new InvalidArgumentException('Enter a reason for the return (e.g. damaged goods).');
         }
 
-        return DB::transaction(function () use ($lpo, $txn, $data, $qty, $reason, $user, $stockDeductQty) {
+        $stockLocation = $this->lpoModule->resolveLpoReturnStockLocation(
+            $txn,
+            $data['stock_location'] ?? null,
+        );
+
+        return DB::transaction(function () use ($lpo, $txn, $data, $qty, $reason, $user, $stockDeductQty, $stockLocation) {
             $return = SupplierReturn::create([
                 'supplier_id' => (int) $lpo->supplier_id,
                 'branch_id' => (int) $data['branch_id'],
@@ -132,7 +137,7 @@ class SupplierReturnService
                 'quantity' => $qty,
                 'package_type' => $data['package_type'] ?? 'partial',
                 'uom_label' => $data['uom_label'] ?? $txn->uom,
-                'stock_location' => $data['stock_location'] ?? 'store',
+                'stock_location' => $stockLocation,
                 'reason' => $reason,
                 'reference_type' => 'lpo',
                 'reference_id' => (int) $lpo->lpo_no,
@@ -143,7 +148,7 @@ class SupplierReturnService
                 $this->inventory->adjustStock([
                     'branch_id' => (int) $data['branch_id'],
                     'product_code' => $txn->product_code,
-                    'stock_location' => $data['stock_location'] ?? 'store',
+                    'stock_location' => $stockLocation,
                     'transaction_type' => 'SUPPLIER_RETURN',
                     'reference_type' => 'supplier_return',
                     'reference_id' => $return->id,

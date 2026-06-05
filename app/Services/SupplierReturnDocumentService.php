@@ -452,6 +452,7 @@ class SupplierReturnDocumentService
             }
             $uom = $line['uom_label'] ?? $txn->uom;
             $unitCost = (float) ($txn->cost_price ?? 0);
+            $stockLocation = $this->resolveLineStockLocation($line, $txn, true);
         } else {
             $product = Product::query()->where('product_code', $productCode)->first();
             if (! $product) {
@@ -460,6 +461,7 @@ class SupplierReturnDocumentService
             $uom = $line['uom_label'] ?? null;
             $unitCost = (float) ($product->last_cost_price ?? 0);
             $txn = null;
+            $stockLocation = $this->resolveLineStockLocation($line, null, false);
         }
 
         $return = SupplierReturn::create([
@@ -470,7 +472,7 @@ class SupplierReturnDocumentService
             'quantity' => $qty,
             'package_type' => $line['package_type'] ?? 'partial',
             'uom_label' => $uom,
-            'stock_location' => $line['stock_location'] ?? 'store',
+            'stock_location' => $stockLocation,
             'reason' => $reason,
             'reference_type' => $doc->source_type === 'lpo' ? 'lpo' : 'manual',
             'reference_id' => $doc->lpo_no,
@@ -482,6 +484,27 @@ class SupplierReturnDocumentService
         }
 
         return $return;
+    }
+
+    /**
+     * @param  array<string, mixed>  $line
+     */
+    protected function resolveLineStockLocation(array $line, ?LpoTxn $txn, bool $isLpo): string
+    {
+        $requested = strtolower(trim((string) ($line['stock_location'] ?? 'store')));
+        if ($requested === 'both') {
+            throw new InvalidArgumentException('Return each product from a single location (Shop or Store).');
+        }
+
+        if ($isLpo && $txn) {
+            return $this->lpoModule->resolveLpoReturnStockLocation($txn, $requested ?: null);
+        }
+
+        if (! in_array($requested, ['shop', 'store'], true)) {
+            throw new InvalidArgumentException('Select Shop or Store for the return location.');
+        }
+
+        return $requested;
     }
 
     protected function applyStockForLine(
@@ -802,45 +825,30 @@ class SupplierReturnDocumentService
     }
 
     /**
-     * One product per return line; shop+store split from "Both" is the only allowed duplicate product_code.
+     * One product per return line — single shop or store location only.
      *
      * @param  array<int, array<string, mixed>>  $lines
      */
     protected function assertUniqueProductsInLines(array $lines): void
     {
-        $byProduct = [];
+        $seen = [];
         foreach ($lines as $line) {
             $code = trim((string) ($line['product_code'] ?? ''));
             if ($code === '') {
                 continue;
             }
-            $loc = (string) ($line['stock_location'] ?? 'store');
-            $byProduct[$code] ??= [];
-            $byProduct[$code][] = $loc;
-        }
-
-        foreach ($byProduct as $code => $locations) {
-            if (count($locations) > 2) {
+            $loc = strtolower((string) ($line['stock_location'] ?? ''));
+            if ($loc === 'both') {
                 throw new InvalidArgumentException(
-                    "Product {$code} is listed more than once. Use one line per product (change packaging or qty on the existing line).",
+                    'Return each product from a single location (Shop or Store).',
                 );
             }
-
-            $unique = array_values(array_unique($locations));
-            if (count($unique) < count($locations)) {
+            if (isset($seen[$code])) {
                 throw new InvalidArgumentException(
-                    "Product {$code} cannot be added twice on the same return.",
+                    "Product {$code} is listed more than once. Use one line per product.",
                 );
             }
-
-            if (count($locations) === 2) {
-                sort($unique);
-                if ($unique !== ['shop', 'store']) {
-                    throw new InvalidArgumentException(
-                        "Product {$code} cannot be added twice on the same return.",
-                    );
-                }
-            }
+            $seen[$code] = true;
         }
     }
 

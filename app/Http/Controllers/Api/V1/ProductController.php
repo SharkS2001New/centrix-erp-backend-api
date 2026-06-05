@@ -208,7 +208,7 @@ class ProductController extends BaseResourceController
         $cost = (float) ($product->last_cost_price ?? 0);
         $disc = $this->effectiveDiscountPct($product);
 
-        if ($unit === $prevUnit && $cost === $prevCost && $disc === $prevDisc) {
+        if ($unit === $prevUnit) {
             return;
         }
 

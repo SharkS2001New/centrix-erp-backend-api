@@ -57,24 +57,35 @@ trait HandlesInventory
         }
 
         return DB::transaction(function () use ($data, $branchId, $productCode, $location, $change) {
-            $row = CurrentStock::query()
+            $row = DB::table('current_stock')
                 ->where('product_code', $productCode)
                 ->where('branch_id', $branchId)
                 ->lockForUpdate()
                 ->first();
 
             if (! $row) {
-                $row = new CurrentStock([
+                $product = Product::where('product_code', $productCode)->first();
+                $shopQty = (float) ($product->stock_in_shop ?? 0);
+                $storeQty = (float) ($product->stock_in_store ?? 0);
+                DB::table('current_stock')->insert([
                     'product_code' => $productCode,
                     'branch_id' => $branchId,
-                    'shop_quantity' => 0,
-                    'store_quantity' => 0,
+                    'shop_quantity' => $shopQty,
+                    'store_quantity' => $storeQty,
                 ]);
+            } else {
+                $product = Product::where('product_code', $productCode)->first();
+                $shopQty = (float) ($row->shop_quantity ?? 0);
+                $storeQty = (float) ($row->store_quantity ?? 0);
+                if ($shopQty == 0.0 && ($product->stock_in_shop ?? 0) > 0) {
+                    $shopQty = (float) $product->stock_in_shop;
+                }
+                if ($storeQty == 0.0 && ($product->stock_in_store ?? 0) > 0) {
+                    $storeQty = (float) $product->stock_in_store;
+                }
             }
 
-            $before = $location === 'store'
-                ? (float) $row->store_quantity
-                : (float) $row->shop_quantity;
+            $before = $location === 'store' ? $storeQty : $shopQty;
             $after = $before + $change;
 
             if ($after < -0.0001) {
@@ -82,11 +93,15 @@ trait HandlesInventory
             }
 
             if ($location === 'store') {
-                $row->store_quantity = $after;
+                $storeQty = $after;
             } else {
-                $row->shop_quantity = $after;
+                $shopQty = $after;
             }
-            $row->save();
+
+            DB::table('current_stock')->updateOrInsert(
+                ['product_code' => $productCode, 'branch_id' => $branchId],
+                ['shop_quantity' => $shopQty, 'store_quantity' => $storeQty],
+            );
 
             $txn = InventoryTransaction::create([
                 'branch_id' => $branchId,

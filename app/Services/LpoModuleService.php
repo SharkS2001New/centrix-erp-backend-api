@@ -9,13 +9,13 @@ use App\Models\Product;
 use App\Models\Supplier;
 use App\Models\SupplierPayment;
 use App\Models\User;
-use App\Models\StockReceipt;
 use App\Models\SupplierReturn;
 use App\Models\Uom;
 use App\Support\LpoStatus;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 use RuntimeException;
 
@@ -176,6 +176,9 @@ class LpoModuleService
                 $receiveStatus = 'partial';
             }
 
+            $receivedByLocation = $this->receivedBaseQtyByLocation((int) $t->lpo_no, (int) $t->id);
+            $receivedLocationOptions = $this->allowedReturnLocations($receivedByLocation);
+
             return [
                 'id' => $t->id,
                 'lpo_no' => (int) $t->lpo_no,
@@ -201,6 +204,9 @@ class LpoModuleService
                 'line_total' => round($ordered * $cost, 2),
                 'received_line_total' => round($effectiveReceived * $cost, 2),
                 'receive_status' => $receiveStatus,
+                'received_qty_by_location' => $receivedByLocation,
+                'received_stock_location' => $this->primaryReceivedLocation($receivedByLocation),
+                'received_location_options' => $receivedLocationOptions,
             ];
         })->values();
 
@@ -228,8 +234,6 @@ class LpoModuleService
                 'source' => 'invoice',
             ])
             ->values();
-
-        $invoices = $this->mergeReceiveInvoiceNumbers($lpoNo, $invoices);
 
         $paid = (float) SupplierPayment::query()->where('lpo_no', $lpoNo)->sum('amount_paid');
         $total = (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0);
@@ -760,6 +764,94 @@ class LpoModuleService
     }
 
     /**
+     * Base units received per shop/store for an LPO line (from linked stock receipts).
+     *
+     * @return array{shop: float, store: float}
+     */
+    public function receivedBaseQtyByLocation(int $lpoNo, int $lpoTxnId): array
+    {
+        if (! Schema::hasColumn('stock_receipts', 'lpo_no')
+            || ! Schema::hasColumn('stock_receipts', 'lpo_txn_id')) {
+            return ['shop' => 0, 'store' => 0];
+        }
+
+        $rows = DB::table('stock_receipts')
+            ->where('lpo_no', $lpoNo)
+            ->where('lpo_txn_id', $lpoTxnId)
+            ->selectRaw('stock_location, SUM(units_received) as total')
+            ->groupBy('stock_location')
+            ->get();
+
+        return [
+            'shop' => (float) ($rows->firstWhere('stock_location', 'shop')?->total ?? 0),
+            'store' => (float) ($rows->firstWhere('stock_location', 'store')?->total ?? 0),
+        ];
+    }
+
+    /**
+     * @param  array{shop: float, store: float}  $byLocation
+     * @return list<string>
+     */
+    public function allowedReturnLocations(array $byLocation): array
+    {
+        $allowed = [];
+        if (($byLocation['shop'] ?? 0) > 0) {
+            $allowed[] = 'shop';
+        }
+        if (($byLocation['store'] ?? 0) > 0) {
+            $allowed[] = 'store';
+        }
+
+        return $allowed;
+    }
+
+    /**
+     * @param  array{shop: float, store: float}  $byLocation
+     */
+    public function primaryReceivedLocation(array $byLocation): ?string
+    {
+        $allowed = $this->allowedReturnLocations($byLocation);
+        if ($allowed === []) {
+            return null;
+        }
+        if (count($allowed) === 1) {
+            return $allowed[0];
+        }
+
+        return ($byLocation['store'] ?? 0) >= ($byLocation['shop'] ?? 0) ? 'store' : 'shop';
+    }
+
+    public function resolveLpoReturnStockLocation(LpoTxn $txn, ?string $requested): string
+    {
+        $byLocation = $this->receivedBaseQtyByLocation((int) $txn->lpo_no, (int) $txn->id);
+        $allowed = $this->allowedReturnLocations($byLocation);
+
+        if ($allowed === []) {
+            if (! in_array($requested, ['shop', 'store'], true)) {
+                throw new InvalidArgumentException('Select Shop or Store for the return location.');
+            }
+
+            return $requested;
+        }
+
+        if (count($allowed) === 1) {
+            return $allowed[0];
+        }
+
+        if (! in_array($requested, ['shop', 'store'], true)) {
+            throw new InvalidArgumentException('Select Shop or Store for the return location.');
+        }
+        if (! in_array($requested, $allowed, true)) {
+            throw new InvalidArgumentException(
+                'Return stock from the same location it was received into on this LPO ('
+                .implode(' or ', array_map(fn ($l) => ucfirst($l), $allowed)).').',
+            );
+        }
+
+        return $requested;
+    }
+
+    /**
      * @return array{subtotal: float, vat: float, total: float}
      */
     /** LPO order total after supplier returns (committed), excluding invoice overrides. */
@@ -930,6 +1022,18 @@ class LpoModuleService
     /**
      * @param  \Illuminate\Support\Collection<int, string>|array<int, string>  $statusNames
      */
+    protected function lpoOrderDate(LpoMst $l): ?string
+    {
+        if ($l->created_at) {
+            return Carbon::parse($l->created_at)->format('Y-m-d');
+        }
+        if ($l->sent_at) {
+            return Carbon::parse($l->sent_at)->format('Y-m-d');
+        }
+
+        return null;
+    }
+
     protected function mapListRow(LpoMst $l, ?Supplier $supplier, $statusNames, $paidByLpo, $creatorsById = null): array
     {
         $total = (float) ($l->net_amount ?? $l->total_amount ?? 0);
@@ -958,7 +1062,7 @@ class LpoModuleService
             'supplier_invoice_no' => $l->supplier_invoice_no,
             'created_by' => $l->created_by ? (int) $l->created_by : null,
             'created_by_name' => $creator?->full_name ?: $creator?->username,
-            'order_date' => $l->created_at ? Carbon::parse($l->created_at)->format('Y-m-d') : null,
+            'order_date' => $this->lpoOrderDate($l),
             'due_date' => $l->due_date ? Carbon::parse($l->due_date)->format('Y-m-d') : null,
             'delivery_address' => $l->delivery_address,
             'lpo_status_code' => (int) $l->lpo_status_code,
@@ -1082,68 +1186,5 @@ class LpoModuleService
         if (! $lpo->supplier_invoice_no) {
             $lpo->update(['supplier_invoice_no' => $invoiceNumber]);
         }
-    }
-
-    /**
-     * @param  \Illuminate\Support\Collection<int, array<string, mixed>>  $invoices
-     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
-     */
-    protected function mergeReceiveInvoiceNumbers(int $lpoNo, $invoices)
-    {
-        $known = $invoices
-            ->pluck('supplier_invoice_number')
-            ->map(fn ($n) => trim((string) $n))
-            ->filter()
-            ->all();
-
-        foreach ($this->receiveInvoiceNumbersFromReceipts($lpoNo) as $number) {
-            if (in_array($number, $known, true)) {
-                continue;
-            }
-            $known[] = $number;
-            $invoices->push([
-                'id' => null,
-                'lpo_no' => $lpoNo,
-                'supplier_id' => null,
-                'supplier_invoice_number' => $number,
-                'invoice_date' => null,
-                'invoice_amount' => 0,
-                'file_name' => null,
-                'mime_type' => null,
-                'has_document' => false,
-                'document_url' => null,
-                'received_at' => null,
-                'source' => 'receive',
-            ]);
-        }
-
-        return $invoices->sortByDesc(fn ($inv) => $inv['invoice_date'] ?? $inv['received_at'] ?? '')
-            ->values();
-    }
-
-    /**
-     * @return array<int, string>
-     */
-    protected function receiveInvoiceNumbersFromReceipts(int $lpoNo): array
-    {
-        $productCodes = LpoTxn::query()
-            ->where('lpo_no', $lpoNo)
-            ->pluck('product_code');
-
-        if ($productCodes->isEmpty()) {
-            return [];
-        }
-
-        return StockReceipt::query()
-            ->whereIn('product_code', $productCodes)
-            ->whereNotNull('invoice_number')
-            ->where('invoice_number', '!=', '')
-            ->orderByDesc('created_at')
-            ->pluck('invoice_number')
-            ->map(fn ($n) => trim((string) $n))
-            ->filter()
-            ->unique()
-            ->values()
-            ->all();
     }
 }
