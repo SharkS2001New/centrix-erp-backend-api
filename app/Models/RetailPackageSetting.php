@@ -11,11 +11,7 @@ class RetailPackageSetting extends Model
     protected $table = 'retail_package_settings';
     public $timestamps = false;
     protected $fillable = [
-        'product_code', 'pricing_tiers', 'max_qty_measure', 'markup_price', 'min_uom_measure',
+        'product_code', 'max_qty_measure', 'markup_price', 'min_uom_measure',
         'wholesale_qty_measure', 'wholesale_markup_price', 'max_uom_measure',
-    ];
-
-    protected $casts = [
-        'pricing_tiers' => 'array',
     ];
 }

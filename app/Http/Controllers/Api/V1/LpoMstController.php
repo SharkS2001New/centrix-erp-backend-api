@@ -1,16 +1,15 @@
 <?php
-
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\LpoMst;
+use App\Models\LpoStatus;
+use App\Models\Supplier;
 use App\Services\LpoModuleService;
-use App\Services\SupplierBalanceService;
 use Illuminate\Http\Request;
 
 class LpoMstController extends BaseResourceController
 {
     public function __construct(
-        protected SupplierBalanceService $supplierBalances,
         protected LpoModuleService $lpoModule,
     ) {}
 
@@ -24,120 +23,95 @@ class LpoMstController extends BaseResourceController
         return 'lpo_no';
     }
 
+    protected function baseQuery()
+    {
+        return LpoMst::query()->whereNull('deleted_at');
+    }
+
     public function index(Request $request)
     {
-        return response()->json($this->lpoModule->index($request));
-    }
+        $query = $this->baseQuery();
 
-    public function dashboard(Request $request)
-    {
-        return response()->json($this->lpoModule->dashboard($request->user()?->organization_id));
-    }
-
-    public function summary(string $lpo_mst)
-    {
-        return response()->json($this->lpoModule->detail((int) $lpo_mst));
-    }
-
-    public function storeFull(Request $request)
-    {
-        $data = $request->validate([
-            'supplier_id' => 'required|integer',
-            'reference_number' => 'nullable|string|max:45',
-            'due_date' => 'nullable|date',
-            'delivery_address' => 'nullable|string|max:45',
-            'lpo_status_code' => 'nullable|integer',
-            'terms' => 'nullable|string|max:200',
-            'instructions' => 'nullable|string|max:200',
-            'lines' => 'required|array|min:1',
-            'lines.*.product_code' => 'required|string',
-            'lines.*.ordered_qty' => 'required|numeric|min:0.001',
-            'lines.*.cost_price' => 'nullable|numeric|min:0',
-            'lines.*.uom' => 'nullable|string|max:45',
-            'lines.*.received_qty' => 'nullable|numeric|min:0',
-        ]);
-
-        $lpo = $this->lpoModule->saveWithLines(
-            $data,
-            $data['lines'],
-            (int) $request->user()->id,
-        );
-
-        return response()->json($this->lpoModule->detail((int) $lpo->lpo_no), 201);
-    }
-
-    public function updateFull(Request $request, string $lpo_mst)
-    {
-        $data = $request->validate([
-            'supplier_id' => 'required|integer',
-            'reference_number' => 'nullable|string|max:45',
-            'due_date' => 'nullable|date',
-            'delivery_address' => 'nullable|string|max:45',
-            'lpo_status_code' => 'nullable|integer',
-            'terms' => 'nullable|string|max:200',
-            'instructions' => 'nullable|string|max:200',
-            'lines' => 'required|array|min:1',
-            'lines.*.product_code' => 'required|string',
-            'lines.*.ordered_qty' => 'required|numeric|min:0.001',
-            'lines.*.cost_price' => 'nullable|numeric|min:0',
-            'lines.*.uom' => 'nullable|string|max:45',
-            'lines.*.received_qty' => 'nullable|numeric|min:0',
-        ]);
-
-        $this->lpoModule->saveWithLines(
-            $data,
-            $data['lines'],
-            (int) $request->user()->id,
-            (int) $lpo_mst,
-        );
-
-        return response()->json($this->lpoModule->detail((int) $lpo_mst));
-    }
-
-    public function store(Request $request)
-    {
-        $rules = array_fill_keys($this->fillableFields(), 'nullable');
-        $model = LpoMst::create($request->validate($rules));
-        if (! $model->created_at) {
-            $model->update(['created_at' => now()]);
+        if ($request->filled('supplier_id')) {
+            $query->where('supplier_id', $request->input('supplier_id'));
         }
-        $this->syncSupplierBalance($model);
 
-        return response()->json($model, 201);
+        if ($request->filled('status_code')) {
+            $query->where('lpo_status_code', $request->input('status_code'));
+        }
+
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if (in_array($col, $this->filterableColumns(), true)) {
+                $query->where($col, $val);
+            }
+        }
+
+        if ($q = $request->input('q')) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('lpo_no', 'like', "%{$q}%")
+                    ->orWhere('reference_number', 'like', "%{$q}%")
+                    ->orWhereHas('supplier', function ($supplier) use ($q) {
+                        $supplier->where('supplier_name', 'like', "%{$q}%");
+                    });
+            });
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+
+        return response()->json($query->orderByDesc('lpo_no')->paginate($perPage));
+    }
+
+    public function dashboard()
+    {
+        $startOfMonth = now()->startOfMonth();
+        $base = $this->baseQuery();
+
+        $monthly = (clone $base)->where(function ($q) use ($startOfMonth) {
+            $q->where('created_at', '>=', $startOfMonth)
+                ->orWhere('sent_at', '>=', $startOfMonth);
+        });
+
+        $pendingStatuses = [0, 1, 2, 3, 4];
+
+        return response()->json([
+            'total_pos' => (clone $monthly)->count(),
+            'total_value' => (float) ((clone $monthly)->sum('total_amount') ?? 0),
+            'pending_count' => (clone $base)->whereIn('lpo_status_code', $pendingStatuses)->count(),
+            'cleared_count' => (clone $base)->where(function ($q) {
+                $q->where('lpo_status_code', 6)->orWhere('cleared_flag', 1);
+            })->count(),
+            'partially_received_count' => (clone $base)->where('lpo_status_code', 4)->count(),
+        ]);
+    }
+
+    public function summary(string $lpoNo)
+    {
+        return response()->json($this->lpoModule->summary((int) $lpoNo));
+    }
+
+    public function show(string $id)
+    {
+        $model = $this->baseQuery()->where($this->routeKeyColumn(), $id)->firstOrFail();
+
+        return response()->json($model);
     }
 
     public function update(Request $request, string $id)
     {
-        $model = LpoMst::where($this->routeKeyColumn(), $id)->firstOrFail();
+        $model = $this->baseQuery()->where($this->routeKeyColumn(), $id)->firstOrFail();
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $model->update($request->validate($rules));
-        $this->syncSupplierBalance($model->fresh());
 
         return response()->json($model);
     }
 
     public function destroy(string $id)
     {
-        $this->lpoModule->delete((int) $id, (int) request()->user()->id);
-
-        return response()->json(['message' => 'LPO removed.']);
-    }
-
-    public function workflow(Request $request, string $lpo_mst)
-    {
-        $data = $request->validate([
-            'action' => 'required|string|in:mark_checked,approve,mark_sent',
+        $model = $this->baseQuery()->where($this->routeKeyColumn(), $id)->firstOrFail();
+        $model->update([
+            'deleted_at' => now(),
         ]);
 
-        $this->lpoModule->transition((int) $lpo_mst, $data['action'], (int) $request->user()->id);
-
-        return response()->json($this->lpoModule->detail((int) $lpo_mst));
-    }
-
-    protected function syncSupplierBalance(LpoMst $lpo): void
-    {
-        if ($lpo->supplier_id) {
-            $this->supplierBalances->recalculate((int) $lpo->supplier_id);
-        }
+        return response()->json(null, 204);
     }
 }

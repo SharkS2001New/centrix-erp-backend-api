@@ -55,16 +55,8 @@ class CurrentStockController extends Controller
             'shop_quantity' => 'nullable|numeric',
             'store_quantity' => 'nullable|numeric',
         ]);
-        CurrentStock::query()
-            ->where('product_code', $productCode)
-            ->where('branch_id', $branchId)
-            ->update($data);
-
-        return response()->json(
-            CurrentStock::where('product_code', $productCode)
-                ->where('branch_id', $branchId)
-                ->firstOrFail(),
-        );
+        $row->update($data);
+        return response()->json($row);
     }
 
     public function destroy(string $productCode, Request $request)

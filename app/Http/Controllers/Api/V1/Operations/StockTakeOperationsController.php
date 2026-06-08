@@ -31,15 +31,7 @@ class StockTakeOperationsController extends Controller
         }
 
         return DB::transaction(function () use ($session, $user) {
-            $allowed = match ($session->stock_location) {
-                'shop' => ['shop'],
-                'store' => ['store'],
-                default => ['shop', 'store'],
-            };
-
-            $lines = StockTakeLine::where('session_id', $session->id)
-                ->whereIn('stock_location', $allowed)
-                ->get();
+            $lines = StockTakeLine::where('session_id', $session->id)->get();
 
             foreach ($lines as $line) {
                 $variance = (float) $line->counted_quantity - (float) $line->system_quantity;

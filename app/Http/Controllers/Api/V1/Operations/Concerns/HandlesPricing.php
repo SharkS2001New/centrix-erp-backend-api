@@ -5,7 +5,6 @@ namespace App\Http\Controllers\Api\V1\Operations\Concerns;
 use App\Models\Product;
 use App\Models\RetailPackageSetting;
 use App\Models\RouteModel;
-use App\Support\RetailPricing;
 
 trait HandlesPricing
 {
@@ -17,11 +16,17 @@ trait HandlesPricing
     ): float {
         $base = (float) $product->unit_price;
         $rps = RetailPackageSetting::where('product_code', $product->product_code)->first();
+        $conversion = (float) ($product->unit?->conversion_factor ?? 1);
+        if ($conversion <= 0) {
+            $conversion = 1;
+        }
 
-        if ($isRetailLine && $rps) {
-            $price = RetailPricing::linePrice($product, $rps, $quantity, true);
+        if ($isRetailLine && $rps && $rps->max_qty_measure > 0) {
+            $perUnit = ($base / (float) $rps->max_qty_measure) + (float) $rps->markup_price;
+            $price = $perUnit * $quantity;
         } else {
-            $price = $base * $quantity;
+            $markup = (float) ($rps->wholesale_markup_price ?? 0);
+            $price = ($base + $markup) * $quantity;
         }
 
         if ($routeId) {

@@ -9,8 +9,6 @@ class LpoTxn extends Model
     use HasFactory;
 
     protected $table = 'lpo_txn';
-
-    public $timestamps = false;
     protected $fillable = [
         'lpo_no', 'product_code', 'ordered_qty', 'uom', 'cost_price',
         'received_qty', 'markup_amount', 'markup_percent',

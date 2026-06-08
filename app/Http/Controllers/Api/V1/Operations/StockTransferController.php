@@ -23,9 +23,7 @@ class StockTransferController extends Controller
             $data['quantity'],
             $data['from_location'],
             $data['to_location'],
-            $request->user(),
-            $data['purpose'] ?? null,
-            $data['notes'] ?? null,
+            $request->user()
         );
 
         return response()->json($result, 201);
@@ -37,51 +35,13 @@ class StockTransferController extends Controller
         float $quantity,
         string $from,
         string $to,
-        User $user,
-        ?string $purpose = null,
-        ?string $notes = null,
+        User $user
     ): array {
-        $consumptionDestinations = [
-            'internal_use', 'donations', 'staff_consumption', 'charity', 'sample', 'production', 'display',
-        ];
-        $isConsumption = in_array($to, $consumptionDestinations, true);
-
-        if (! $isConsumption && $from === $to) {
+        if ($from === $to) {
             throw new InvalidArgumentException('From and to locations must differ.');
         }
 
-        $destLabel = str_replace('_', ' ', $to);
-        $purposeNote = $purpose ? " · {$purpose}" : '';
-        $extra = $notes ? " — {$notes}" : '';
-
-        return DB::transaction(function () use (
-            $branchId, $productCode, $quantity, $from, $to, $user,
-            $purposeNote, $extra, $isConsumption, $destLabel,
-        ) {
-            if ($isConsumption) {
-                $out = $this->postStockLedger([
-                    'branch_id' => $branchId,
-                    'product_code' => $productCode,
-                    'stock_location' => $from,
-                    'transaction_type' => 'TRANSFER',
-                    'reference_type' => 'transfer',
-                    'quantity_change' => -abs($quantity),
-                    'created_by' => $user->id,
-                    'notes' => "Transfer out to {$destLabel}{$purposeNote}{$extra}",
-                ]);
-
-                StockMovementHistory::create([
-                    'product_code' => $productCode,
-                    'branch_id' => $branchId,
-                    'quantity_moved' => $quantity,
-                    'from_location' => $from,
-                    'to_location' => $to,
-                    'moved_by' => $user->id,
-                ]);
-
-                return ['out' => $out];
-            }
-
+        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $to, $user) {
             $out = $this->postStockLedger([
                 'branch_id' => $branchId,
                 'product_code' => $productCode,
@@ -90,7 +50,7 @@ class StockTransferController extends Controller
                 'reference_type' => 'transfer',
                 'quantity_change' => -abs($quantity),
                 'created_by' => $user->id,
-                'notes' => "Transfer out to {$to}{$purposeNote}{$extra}",
+                'notes' => "Transfer out to {$to}",
             ]);
 
             $in = $this->postStockLedger([
@@ -102,7 +62,7 @@ class StockTransferController extends Controller
                 'reference_id' => $out->id,
                 'quantity_change' => abs($quantity),
                 'created_by' => $user->id,
-                'notes' => "Transfer in from {$from}{$purposeNote}{$extra}",
+                'notes' => "Transfer in from {$from}",
             ]);
 
             StockMovementHistory::create([

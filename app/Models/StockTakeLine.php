@@ -7,9 +7,6 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 class StockTakeLine extends Model
 {
     use HasFactory;
-
-    public $timestamps = false;
-
     protected $table = "stock_take_lines";
     protected $fillable = array (
   0 => 'session_id',

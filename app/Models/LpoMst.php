@@ -17,4 +17,14 @@ class LpoMst extends Model
         'cleared_by', 'cleared_at', 'email_sent_flag', 'sent_at', 'sent_by',
         'supplier_invoice_no', 'terms', 'instructions', 'deleted_by', 'deleted_at',
     ];
+
+    public function supplier()
+    {
+        return $this->belongsTo(Supplier::class, 'supplier_id');
+    }
+
+    public function lines()
+    {
+        return $this->hasMany(LpoTxn::class, 'lpo_no', 'lpo_no');
+    }
 }

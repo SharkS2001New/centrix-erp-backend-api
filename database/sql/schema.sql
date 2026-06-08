@@ -216,14 +216,10 @@ CREATE TABLE vats (
 
 DROP TABLE IF EXISTS uoms;
 CREATE TABLE uoms (
-    id                      INT           PRIMARY KEY AUTO_INCREMENT,
-    conversion_factor       FLOAT         NOT NULL DEFAULT 1,
-    full_name               VARCHAR(200)  NOT NULL,
-    measure_name            VARCHAR(100)  NULL,
-    small_packaging_label   VARCHAR(45)   NULL,
-    middle_packaging_label  VARCHAR(45)   NULL,
-    middle_factor           FLOAT         NULL,
-    uom_type                VARCHAR(45)   NOT NULL,
+    id                INT           PRIMARY KEY AUTO_INCREMENT,
+    conversion_factor FLOAT         NOT NULL DEFAULT 1,
+    full_name         VARCHAR(200)  NOT NULL,
+    uom_type          VARCHAR(45)   NOT NULL,
     is_base_unit      BOOLEAN       DEFAULT FALSE,
     is_active         BOOLEAN       DEFAULT TRUE,
     created_by        INT           NULL,
@@ -278,7 +274,9 @@ CREATE TABLE products (
     vat_id                  INT           NOT NULL,
     organization_id         INT           NOT NULL,
     reorder_point           DECIMAL(10,2) DEFAULT 0,
+    low_stock_alert_enabled BOOLEAN       DEFAULT TRUE,
     created_by              INT           NULL,
+    updated_by              INT           NULL,
     created_at              TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at              TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at              DATETIME      NULL,
@@ -289,6 +287,7 @@ CREATE TABLE products (
     FOREIGN KEY (supplier_id)     REFERENCES suppliers(id),
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     FOREIGN KEY (created_by)      REFERENCES users(id),
+    FOREIGN KEY (updated_by)      REFERENCES users(id),
     INDEX idx_product_code (product_code),
     INDEX idx_subcategory_id (subcategory_id),
     INDEX idx_deleted_at   (deleted_at)
@@ -298,7 +297,6 @@ DROP TABLE IF EXISTS retail_package_settings;
 CREATE TABLE retail_package_settings (
     id                     INT           PRIMARY KEY AUTO_INCREMENT,
     product_code           VARCHAR(200)  NOT NULL,
-    pricing_tiers          JSON          NULL,
     max_qty_measure        FLOAT,
     markup_price           FLOAT         DEFAULT 0,
     min_uom_measure        VARCHAR(45),
@@ -448,7 +446,7 @@ CREATE TABLE stock_movement_history (
     branch_id       INT           NOT NULL,
     quantity_moved  DOUBLE        NOT NULL,
     from_location   ENUM('shop','store') NOT NULL,
-    to_location     VARCHAR(50)   NOT NULL,
+    to_location     ENUM('shop','store') NOT NULL,
     moved_by        INT           NOT NULL,
     move_status     INT           DEFAULT 0,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
@@ -464,7 +462,7 @@ CREATE TABLE damages (
     product_code    VARCHAR(200)  NOT NULL,
     branch_id       INT           NOT NULL,
     quantity        DOUBLE        NOT NULL,
-    package_type    ENUM('full_package','partial','pieces','full','middle','small') NOT NULL DEFAULT 'partial',
+    package_type    ENUM('full_package','partial','pieces') NOT NULL DEFAULT 'partial',
     uom_label       VARCHAR(45),
     stock_location  ENUM('shop','store') NOT NULL DEFAULT 'shop',
     reason          TEXT,
@@ -482,8 +480,6 @@ CREATE TABLE stock_receipts (
     product_code    VARCHAR(200)  NOT NULL,
     branch_id       INT           NOT NULL,
     organization_id INT           NOT NULL,
-    lpo_no          BIGINT        NULL,
-    lpo_txn_id      BIGINT        NULL,
     units_received  FLOAT         NOT NULL,
     stock_location  ENUM('shop','store') NOT NULL DEFAULT 'store',
     invoice_number  VARCHAR(45),
@@ -863,10 +859,6 @@ CREATE TABLE lpo_supplier_invoices (
     supplier_invoice_number VARCHAR(100)  NOT NULL,
     invoice_date            DATE          NULL,
     invoice_amount          DECIMAL(12,2) NULL,
-    file_path               VARCHAR(500)  NULL,
-    file_name               VARCHAR(255)  NULL,
-    mime_type               VARCHAR(100)  NULL,
-    file_size               INT UNSIGNED  NULL,
     created_at              TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (lpo_no)     REFERENCES lpo_mst(lpo_no),
     FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
@@ -1515,9 +1507,9 @@ SELECT
     cs.store_quantity,
     (cs.shop_quantity + cs.store_quantity) AS total_base_units,
     p.reorder_point,
+    p.low_stock_alert_enabled,
     CASE
-        WHEN p.reorder_point > 0
-            AND (cs.shop_quantity + cs.store_quantity) <= p.reorder_point THEN 'REORDER'
+        WHEN (cs.shop_quantity + cs.store_quantity) <= p.reorder_point THEN 'REORDER'
         ELSE 'OK'
     END AS product_alert,
     rps.max_qty_measure,
@@ -2034,14 +2026,8 @@ JOIN users u ON cip.received_by = u.id;
 -- ================================================================
 
 INSERT INTO lpo_statuses (status_code, status_name) VALUES
-(0,'Pending – Awaiting LPO To be Checked'),
-(1,'Pending – Awaiting Approval'),
-(2,'Awaiting to be Sent to Supplier'),
-(3,'Awaiting Items to be Received'),
-(4,'Awaiting Last Items to be Received'),
-(5,'Items Fully Received'),
-(6,'LPO Cleared (Payment Made)'),
-(7,'Cancelled – Items Returned to Supplier');
+(0,'Pending Approval'),(1,'Not Sent'),(2,'Pending Received'),
+(3,'Partially Received'),(4,'Fully Received'),(5,'Cleared');
 
 INSERT INTO payment_methods (method_name, method_code, requires_reference) VALUES
 ('Cash',        'CASH',   FALSE),

@@ -2,11 +2,22 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
+    protected function foreignKeyExists(string $table, string $constraint): bool
+    {
+        $database = Schema::getConnection()->getDatabaseName();
+        $row = Schema::getConnection()->selectOne(
+            'SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_TYPE = ? AND CONSTRAINT_NAME = ?',
+            [$database, $table, 'FOREIGN KEY', $constraint],
+        );
+
+        return $row !== null;
+    }
+
     public function up(): void
     {
         if (! Schema::hasTable('work_shifts')) {
@@ -57,16 +68,24 @@ return new class extends Migration
             });
         }
 
-        if (! Schema::hasColumn('employees', 'shift_id')) {
-            Schema::table('employees', function (Blueprint $table) {
+        Schema::table('employees', function (Blueprint $table) {
+            if (! Schema::hasColumn('employees', 'shift_id')) {
                 $table->unsignedInteger('shift_id')->nullable()->after('position_id');
-            });
-        } else {
-            // Recover from a prior failed run that created a signed INT column.
-            DB::statement('ALTER TABLE `employees` MODIFY `shift_id` INT UNSIGNED NULL');
+            }
+        });
+
+        if (Schema::hasColumn('employees', 'shift_id')) {
+            // work_shifts.id is UNSIGNED (increments); align shift_id after a partial failed run.
+            Schema::getConnection()->statement(
+                'ALTER TABLE `employees` MODIFY `shift_id` INT UNSIGNED NULL',
+            );
         }
 
-        if (! $this->foreignKeyExists('employees', 'employees_shift_id_foreign')) {
+        // FK added separately so a partial run can be retried.
+        if (
+            Schema::hasColumn('employees', 'shift_id')
+            && ! $this->foreignKeyExists('employees', 'employees_shift_id_foreign')
+        ) {
             Schema::table('employees', function (Blueprint $table) {
                 $table->foreign('shift_id')->references('id')->on('work_shifts')->nullOnDelete();
             });
@@ -89,34 +108,15 @@ return new class extends Migration
             }
         });
 
-        if ($this->foreignKeyExists('employees', 'employees_shift_id_foreign')) {
-            Schema::table('employees', function (Blueprint $table) {
+        Schema::table('employees', function (Blueprint $table) {
+            if (Schema::hasColumn('employees', 'shift_id')) {
                 $table->dropForeign(['shift_id']);
-            });
-        }
-
-        if (Schema::hasColumn('employees', 'shift_id')) {
-            Schema::table('employees', function (Blueprint $table) {
                 $table->dropColumn('shift_id');
-            });
-        }
+            }
+        });
 
         Schema::dropIfExists('employee_leave_days');
         Schema::dropIfExists('organization_holidays');
         Schema::dropIfExists('work_shifts');
-    }
-
-    private function foreignKeyExists(string $table, string $constraintName): bool
-    {
-        $rows = DB::select(
-            'SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS
-             WHERE TABLE_SCHEMA = DATABASE()
-               AND TABLE_NAME = ?
-               AND CONSTRAINT_NAME = ?
-               AND CONSTRAINT_TYPE = ?',
-            [$table, $constraintName, 'FOREIGN KEY'],
-        );
-
-        return count($rows) > 0;
     }
 };

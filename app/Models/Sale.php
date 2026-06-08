@@ -15,12 +15,6 @@ class Sale extends Model
     {
         return $this->hasMany(SaleItem::class, 'sale_id');
     }
-
-    public function cashier()
-    {
-        return $this->belongsTo(User::class, 'cashier_id');
-    }
-
     protected $fillable = [
         'order_num', 'branch_id', 'organization_id', 'channel', 'till_id',
         'float_session_id', 'cashier_id', 'customer_num', 'customer_name_override',
