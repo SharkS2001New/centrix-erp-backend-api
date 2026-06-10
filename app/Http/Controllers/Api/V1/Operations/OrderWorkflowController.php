@@ -8,23 +8,13 @@ use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\OrderWorkflowService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 
 class OrderWorkflowController extends Controller
 {
     use HandlesInventory;
-
-    /** @var array<string, list<string>> */
-    protected array $transitions = [
-        'booked' => ['pending', 'cancelled'],
-        'pending' => ['pending_payment', 'processed', 'cancelled'],
-        'pending_payment' => ['paid', 'partial', 'cancelled'],
-        'paid' => ['processed', 'completed'],
-        'processed' => ['completed'],
-        'draft' => ['held', 'completed', 'booked', 'cancelled'],
-        'held' => ['draft', 'booked', 'completed', 'cancelled'],
-    ];
 
     public function __construct(protected ErpContext $erp) {}
 
@@ -48,9 +38,9 @@ class OrderWorkflowController extends Controller
 
     protected function transitionSale(Sale $sale, string $toStatus, User $user, array $meta = []): Sale
     {
+        $workflow = OrderWorkflowService::forGate($this->erp->gateForUser($user));
         $from = $sale->status;
-        $allowed = $this->transitions[$from] ?? [];
-        if (! in_array($toStatus, $allowed, true) && $toStatus !== 'cancelled') {
+        if (! $workflow->canTransition($from, $toStatus, $sale->channel)) {
             throw new InvalidArgumentException("Cannot transition from [{$from}] to [{$toStatus}].");
         }
 
@@ -66,7 +56,7 @@ class OrderWorkflowController extends Controller
 
         $updates = ['status' => $toStatus];
 
-        if ($toStatus === 'processed' || $toStatus === 'completed') {
+        if (in_array($toStatus, ['processed', 'delivered', 'completed'], true)) {
             $meta = array_merge($sale->fulfillment_meta ?? [], $meta);
 
             if (! empty($meta['driver_id'])) {
@@ -86,7 +76,9 @@ class OrderWorkflowController extends Controller
 
         if ($toStatus === 'completed') {
             $updates['completed_at'] = now();
-            $this->deductSaleStockIfNeeded($sale, $user);
+            if (! $sale->stock_balanced) {
+                $this->deductSaleStockIfNeeded($sale, $user);
+            }
         }
 
         $sale->update($updates);

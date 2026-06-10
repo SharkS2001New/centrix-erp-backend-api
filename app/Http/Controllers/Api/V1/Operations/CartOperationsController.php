@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesMpesaPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesPricing;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Sales\AddCartLineRequest;
@@ -25,6 +26,7 @@ class CartOperationsController extends Controller
 {
     use HandlesCartPayments;
     use HandlesInventory;
+    use HandlesMpesaPayments;
     use HandlesPricing;
 
     public function __construct(protected ErpContext $erp) {}
@@ -124,6 +126,7 @@ class CartOperationsController extends Controller
 
         $cart = $this->getOrCreateCart($user, [
             'channel' => $channel,
+            'order_source' => $sale->order_source ?? $channel,
             'branch_id' => $sale->branch_id ?? $user->branch_id,
             'route_id' => $sale->route_id,
         ]);
@@ -359,23 +362,31 @@ class CartOperationsController extends Controller
     protected function getOrCreateCart(User $user, array $input): TemporaryCart
     {
         $channel = $input['channel'] ?? 'pos';
+        $orderSource = $input['order_source'] ?? 'backoffice';
         $gate = $this->erp->gateForUser($user);
         if (! $gate->channelEnabled($channel)) {
             throw new InvalidArgumentException("Channel [{$channel}] is not enabled for this organization.");
         }
 
-        return TemporaryCart::firstOrCreate(
+        $cart = TemporaryCart::firstOrCreate(
             [
                 'user_id' => $user->id,
                 'channel' => $channel,
             ],
             [
                 'branch_id' => $input['branch_id'] ?? $user->branch_id,
+                'order_source' => $orderSource,
                 'till_id' => $input['till_id'] ?? null,
                 'route_id' => $input['route_id'] ?? null,
                 'update_no' => 0,
             ]
         );
+
+        if ($cart->order_source !== $orderSource) {
+            $cart->update(['order_source' => $orderSource]);
+        }
+
+        return $cart;
     }
 
     protected function addCartLine(TemporaryCart $cart, array $line, User $user, CapabilityGate $gate): CartLine

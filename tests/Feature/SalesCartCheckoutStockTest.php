@@ -170,7 +170,7 @@ class SalesCartCheckoutStockTest extends TestCase
         $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
             'status' => 'held',
             'pay_now' => 0,
-            'deduct_stock' => false,
+            'save_only' => true,
         ])->assertCreated()->json();
 
         $this->postJson("/api/v1/sales/orders/{$sale['id']}/cancel-held")
@@ -226,7 +226,7 @@ class SalesCartCheckoutStockTest extends TestCase
         $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
             'status' => 'held',
             'pay_now' => 0,
-            'deduct_stock' => false,
+            'save_only' => true,
             'customer_name_override' => 'Walk-in',
         ])->assertCreated()->json();
 

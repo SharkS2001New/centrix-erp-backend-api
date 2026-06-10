@@ -91,6 +91,16 @@ class CapabilityGate
                 ->first()
             : null;
 
+        $moduleSettings = array_merge(
+            config('erp.module_settings_defaults', []),
+            $this->organization?->module_settings ?? [],
+        );
+        if ($this->organization) {
+            $sales = is_array($moduleSettings['sales'] ?? null) ? $moduleSettings['sales'] : [];
+            $sales['order_workflow'] = OrderWorkflowService::forGate($this)->config();
+            $moduleSettings['sales'] = $sales;
+        }
+
         return [
             'organization_id' => $this->organization?->id,
             'deployment_profile' => $profile,
@@ -98,10 +108,7 @@ class CapabilityGate
             'modules' => $this->allModules(),
             'channels' => $this->allowedChannels(),
             'workflows' => $this->workflowForOrg(),
-            'module_settings' => array_merge(
-                config('erp.module_settings_defaults', []),
-                $this->organization?->module_settings ?? []
-            ),
+            'module_settings' => $moduleSettings,
             'allow_negative_stock' => (bool) ($system?->allow_below_stock ?? false),
         ];
     }
@@ -109,14 +116,6 @@ class CapabilityGate
     /** @return array<string, mixed> */
     protected function workflowForOrg(): array
     {
-        $workflows = config('erp.workflows', []);
-        $allowed = $this->allowedChannels();
-        $out = [];
-        foreach ($allowed as $channel) {
-            if (isset($workflows[$channel])) {
-                $out[$channel] = $workflows[$channel];
-            }
-        }
-        return $out;
+        return OrderWorkflowService::forGate($this)->workflowsByChannel();
     }
 }

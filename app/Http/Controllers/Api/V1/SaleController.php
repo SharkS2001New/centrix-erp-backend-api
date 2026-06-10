@@ -3,10 +3,14 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Sale;
+use App\Services\Erp\ErpContext;
+use App\Services\Erp\OrderWorkflowService;
 use Illuminate\Http\Request;
 
 class SaleController extends BaseResourceController
 {
+    public function __construct(protected ErpContext $erp) {}
+
     protected function modelClass(): string
     {
         return Sale::class;
@@ -14,9 +18,14 @@ class SaleController extends BaseResourceController
 
     public function show(string $id)
     {
-        $sale = Sale::with(['items.product'])->findOrFail($id);
+        $sale = Sale::with(['items.product.unit'])->findOrFail($id);
+        $gate = $this->erp->gateForUser(request()->user());
+        $channel = $sale->channel ?: 'backend';
+        $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
 
-        return response()->json($sale);
+        return response()->json(array_merge($sale->toArray(), [
+            'workflow' => $workflow,
+        ]));
     }
 
     public function index(Request $request)
@@ -24,7 +33,7 @@ class SaleController extends BaseResourceController
         $query = Sale::query();
 
         if ($request->boolean('with_items')) {
-            $query->with(['items.product']);
+            $query->with(['items.product.unit']);
         }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {

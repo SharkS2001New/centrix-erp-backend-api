@@ -48,8 +48,14 @@ use App\Http\Controllers\Api\V1\SystemSettingController;
 use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
 use App\Http\Controllers\Api\V1\StockReservationController;
 
+use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
+
 Route::prefix('v1')->group(function () {
     Route::post('auth/login', [AuthController::class, 'login']);
+    // Safaricom rejects callback URLs containing the word "mpesa" in the path.
+    Route::post('payments/stk/callback', [MpesaPaymentController::class, 'stkCallback']);
+    Route::post('payments/c2b/validation', [MpesaPaymentController::class, 'validationRequest']);
+    Route::post('payments/c2b/confirmation', [MpesaPaymentController::class, 'c2bConfirmation']);
 
     Route::middleware('auth:sanctum')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);

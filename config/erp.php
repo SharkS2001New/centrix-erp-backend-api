@@ -102,18 +102,75 @@ return [
     */
     'workflows' => [
         'pos' => [
-            'statuses' => ['draft', 'held', 'completed', 'cancelled'],
+            'statuses' => ['draft', 'held', 'booked', 'unpaid', 'pending_payment', 'paid', 'delivered', 'completed', 'cancelled'],
             'pay_on_complete' => true,
         ],
         'mobile' => [
-            'statuses' => ['draft', 'booked', 'pending', 'pending_payment', 'paid', 'processed', 'completed', 'cancelled'],
+            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled'],
             'payment_statuses' => ['unpaid', 'partial', 'paid'],
         ],
         'backend' => [
-            'statuses' => ['draft', 'booked', 'pending', 'pending_payment', 'paid', 'processed', 'completed', 'cancelled'],
+            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled'],
             'payment_statuses' => ['unpaid', 'partial', 'paid'],
             'credit_allowed' => true,
         ],
+    ],
+
+    'order_status_labels' => [
+        'draft' => 'Draft',
+        'held' => 'Held',
+        'booked' => 'Booked',
+        'pending' => 'Pending',
+        'unpaid' => 'Unpaid',
+        'pending_payment' => 'Partially paid',
+        'paid' => 'Paid',
+        'processed' => 'Processed',
+        'delivered' => 'Delivered',
+        'completed' => 'Completed',
+        'cancelled' => 'Cancelled',
+    ],
+
+    'default_order_workflow' => [
+        'steps' => [
+            ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
+            ['status' => 'pending', 'label' => 'Pending', 'enabled' => true],
+            ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+            ['status' => 'pending_payment', 'label' => 'Partially paid', 'enabled' => true],
+            ['status' => 'paid', 'label' => 'Paid', 'enabled' => true],
+            ['status' => 'processed', 'label' => 'Processed', 'enabled' => true],
+            ['status' => 'delivered', 'label' => 'Delivered', 'enabled' => true],
+            ['status' => 'completed', 'label' => 'Completed', 'enabled' => true],
+        ],
+        'transitions' => [
+            'booked' => ['pending', 'unpaid', 'cancelled'],
+            'pending' => ['unpaid', 'pending_payment', 'cancelled'],
+            'unpaid' => ['pending_payment', 'paid', 'cancelled'],
+            'pending_payment' => ['paid', 'cancelled'],
+            'paid' => ['processed', 'delivered', 'completed'],
+            'processed' => ['delivered', 'completed'],
+            'delivered' => ['completed'],
+            'draft' => ['held', 'completed', 'booked', 'cancelled'],
+            'held' => ['draft', 'booked', 'completed', 'cancelled'],
+        ],
+        'save_status' => [
+            'pos' => 'unpaid',
+            'mobile' => 'unpaid',
+            'backend' => 'unpaid',
+        ],
+        'checkout' => [
+            'full_paid' => [
+                'pos' => 'completed',
+                'mobile' => 'paid',
+                'backend' => 'paid',
+            ],
+            'partial' => 'pending_payment',
+            'unpaid' => [
+                'pos' => 'unpaid',
+                'mobile' => 'unpaid',
+                'backend' => 'unpaid',
+            ],
+        ],
+        'deduct_stock_on' => 'completed',
     ],
 
     'module_settings_defaults' => [
@@ -154,6 +211,7 @@ return [
             'retail_shop_wholesale_store_stock' => false,
             'add_route_markup_prices' => false,
             'pos_order_type_mode' => 'normal',
+            'order_workflow' => null,
         ],
         'inventory' => [
             'default_receive_location' => 'store',

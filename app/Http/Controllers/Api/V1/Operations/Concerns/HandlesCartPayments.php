@@ -14,10 +14,12 @@ trait HandlesCartPayments
 {
     protected function cartOrderTotal(TemporaryCart $cart): float
     {
-        $lineNet = (float) CartLine::where('cart_id', $cart->id)->sum('amount');
+        $lineQuery = CartLine::where('cart_id', $cart->id);
+        $lineNet = (float) $lineQuery->sum('amount');
+        $vat = (float) CartLine::where('cart_id', $cart->id)->sum('product_vat');
         $orderDiscount = max(0, (float) ($cart->order_discount ?? 0));
 
-        return max(0, $lineNet - min($orderDiscount, $lineNet));
+        return max(0, $lineNet - min($orderDiscount, $lineNet) + $vat);
     }
 
     protected function cartAmountDue(TemporaryCart $cart): float
@@ -25,8 +27,9 @@ trait HandlesCartPayments
         $total = $this->cartOrderTotal($cart);
         $voucherPay = max(0, (float) ($cart->voucher_payment_amount ?? 0));
         $pointsPay = max(0, (float) ($cart->points_payment_amount ?? 0));
+        $mpesaPay = max(0, (float) ($cart->mpesa_payment_amount ?? 0));
 
-        return max(0, $total - $voucherPay - $pointsPay);
+        return max(0, $total - $voucherPay - $pointsPay - $mpesaPay);
     }
 
     protected function normalizePhone(?string $phone): string
@@ -163,6 +166,10 @@ trait HandlesCartPayments
 
     protected function clearCartPaymentOptions(TemporaryCart $cart): void
     {
+        if (method_exists($this, 'releaseCartMpesaPayments')) {
+            $this->releaseCartMpesaPayments($cart);
+        }
+
         $cart->update([
             'payment_voucher_id' => null,
             'voucher_payment_amount' => 0,
@@ -170,6 +177,8 @@ trait HandlesCartPayments
             'points_redeemed' => 0,
             'points_payment_amount' => 0,
             'mpesa_phone' => null,
+            'mpesa_payment_amount' => 0,
+            'mpesa_transaction_code' => null,
         ]);
     }
 

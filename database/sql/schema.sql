@@ -605,8 +605,8 @@ CREATE TABLE sales (
     required_date          DATE          NULL,
     delivery_date          DATETIME      NULL,
     status                 ENUM(
-        'draft','held','booked','pending','processed',
-        'pending_payment','paid','completed','cancelled'
+        'draft','held','booked','pending','unpaid','processed',
+        'pending_payment','paid','delivered','completed','cancelled'
     ) NOT NULL DEFAULT 'draft',
     total_vat              FLOAT         NOT NULL DEFAULT 0,
     order_total            FLOAT         NOT NULL DEFAULT 0,

@@ -22,6 +22,7 @@ use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\OrderWorkflowService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -102,7 +103,7 @@ class CheckoutController extends Controller
             }
 
             $cashDue = max(0, $total - $voucherPayment - $pointsPayment);
-            if (! $isCredit && $payNow <= 0 && $cashDue > 0) {
+            if (! $isCredit && $payNow <= 0 && $cashDue > 0 && empty($input['save_only'])) {
                 $payNow = $cashDue;
             }
             $payNow = min($payNow, $cashDue);
@@ -112,18 +113,54 @@ class CheckoutController extends Controller
                 $customerNum = LoyaltyCard::find($loyaltyCardId)?->customer_num;
             }
 
+            $workflow = OrderWorkflowService::forGate($gate);
+            $channelWorkflow = $workflow->forChannel($cart->channel);
+            $allowPartialPayment = ! empty($salesSettings['allow_credit_pay_now']);
+            $paymentMethodCode = (string) ($input['payment_method_code'] ?? 'CASH');
+
+            $isSaveOnly = $payNow <= 0 && ! $isCredit && ! empty($input['save_only']);
+            if ($isSaveOnly) {
+                $requested = isset($input['status']) && is_string($input['status']) ? $input['status'] : null;
+                if ($requested === 'held') {
+                    $orderStatus = 'held';
+                } else {
+                    $orderStatus = $workflow->resolveSaveStatus($cart->channel);
+                }
+            } elseif ($payNow > 0 || $isCredit) {
+                $orderStatus = $workflow->resolveCheckoutStatus(
+                    $cart->channel,
+                    $isCredit,
+                    $payNow,
+                    $total,
+                    $paymentMethodCode,
+                    $allowPartialPayment,
+                );
+            } elseif (isset($input['status']) && is_string($input['status'])) {
+                if ($input['status'] === 'held') {
+                    throw new InvalidArgumentException('Held status is only allowed when holding an order (save_only).');
+                }
+                $orderStatus = $workflow->pickEnabledStatus($input['status'], $channelWorkflow);
+            } else {
+                $orderStatus = $workflow->resolveSaveStatus($cart->channel);
+            }
+
+            if (! $workflow->isAllowedStatus($orderStatus, $cart->channel)) {
+                throw new InvalidArgumentException("Status [{$orderStatus}] is not allowed for this channel.");
+            }
+
             $sale = Sale::create([
                 'order_num' => $orderNum,
                 'branch_id' => $cart->branch_id ?? $user->branch_id,
                 'organization_id' => $user->organization_id,
                 'channel' => $cart->channel,
+                'order_source' => $cart->order_source ?? $cart->channel,
                 'till_id' => $cart->till_id,
                 'float_session_id' => $input['float_session_id'] ?? null,
                 'cashier_id' => $user->id,
                 'customer_num' => $customerNum,
                 'customer_name_override' => $input['customer_name_override'] ?? null,
                 'route_id' => $cart->route_id,
-                'status' => $input['status'] ?? ($cart->channel === 'pos' ? 'completed' : 'booked'),
+                'status' => $orderStatus,
                 'total_vat' => $vat,
                 'order_total' => $total,
                 'order_discount' => $orderDiscount,
@@ -137,7 +174,7 @@ class CheckoutController extends Controller
                 'completed_at' => null,
             ]);
 
-            if ($sale->status === 'completed') {
+            if ($orderStatus === 'completed') {
                 $sale->update(['completed_at' => now()]);
             }
 
@@ -164,7 +201,7 @@ class CheckoutController extends Controller
                     'on_wholesale_retail' => $line->on_wholesale_retail,
                 ]);
 
-                if (($input['deduct_stock'] ?? true) && $sale->status === 'completed') {
+                if ($input['deduct_stock'] ?? true) {
                     $this->postStockLedger([
                         'branch_id' => $sale->branch_id,
                         'product_code' => $line->product_code,

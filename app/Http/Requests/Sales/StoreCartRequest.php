@@ -15,6 +15,7 @@ class StoreCartRequest extends FormRequest
     {
         return [
             'channel' => 'required|in:pos,mobile,backend',
+            'order_source' => 'nullable|in:pos,mobile,backoffice,backend',
             'branch_id' => 'nullable|integer|exists:branches,id',
             'till_id' => 'nullable|integer|exists:tills,id',
             'route_id' => 'nullable|integer|exists:routes,id',

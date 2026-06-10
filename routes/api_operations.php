@@ -14,6 +14,7 @@ use App\Http\Controllers\Api\V1\Operations\JournalOperationsController;
 use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
+use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 
 Route::middleware('auth:sanctum')->group(function () {
 
@@ -31,6 +32,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('carts/{cartId}/payment/voucher', [CartOperationsController::class, 'applyVoucherPayment']);
         Route::post('carts/{cartId}/payment/points', [CartOperationsController::class, 'applyPointsPayment']);
         Route::patch('carts/{cartId}/payment/extras', [CartOperationsController::class, 'updateCartPaymentExtras']);
+        Route::post('carts/{cartId}/payment/mpesa/stk-push', [MpesaPaymentController::class, 'stkPush']);
+        Route::get('carts/{cartId}/payment/mpesa/status', [MpesaPaymentController::class, 'paymentStatus']);
+        Route::get('carts/{cartId}/payment/mpesa/incoming', [MpesaPaymentController::class, 'lookupIncomingPayments']);
+        Route::post('carts/{cartId}/payment/mpesa/apply', [MpesaPaymentController::class, 'applyIncomingPayment']);
+        Route::post('carts/{cartId}/payment/mpesa/skip', [MpesaPaymentController::class, 'skipIncomingPayment']);
         Route::delete('carts/{cartId}/payment', [CartOperationsController::class, 'clearCartPayments']);
         Route::post('carts/{cartId}/checkout', [CheckoutController::class, 'fromCart']);
         Route::post('orders/{saleId}/restore-to-cart', [CartOperationsController::class, 'restoreHeldOrder']);
@@ -43,6 +49,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware(['erp.module:payments', 'erp.permission:payments.manage'])->group(function () {
         Route::post('sales/{saleId}/payments', [PaymentOperationsController::class, 'paySale']);
+        Route::post('payments/c2b/register-urls', [MpesaPaymentController::class, 'registerC2bUrls']);
     });
 
     // ---- POS till ----
