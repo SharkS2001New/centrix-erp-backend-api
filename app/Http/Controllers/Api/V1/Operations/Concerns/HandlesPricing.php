@@ -37,7 +37,14 @@ trait HandlesPricing
         if ($routeId) {
             $route = RouteModel::find($routeId);
             if ($route) {
-                $price += (float) $route->route_markup_price * $quantity;
+                $routeMarkup = (float) $route->route_markup_price;
+                if ($isRetailLine) {
+                    // Retail: (unit price × qty) + route markup
+                    $price += $routeMarkup;
+                } else {
+                    // Wholesale: (unit price + route markup) × qty
+                    $price += $routeMarkup * $quantity;
+                }
             }
         }
 

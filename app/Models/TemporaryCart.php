@@ -10,7 +10,9 @@ class TemporaryCart extends Model
 
     protected $table = 'temporary_carts';
     protected $fillable = [
-        'user_id', 'branch_id', 'channel', 'till_id', 'route_id', 'update_no',
+        'user_id', 'branch_id', 'channel', 'till_id', 'route_id', 'order_discount',
+        'payment_voucher_id', 'voucher_payment_amount', 'loyalty_card_id',
+        'points_redeemed', 'points_payment_amount', 'mpesa_phone', 'update_no',
     ];
 
     public function lines()

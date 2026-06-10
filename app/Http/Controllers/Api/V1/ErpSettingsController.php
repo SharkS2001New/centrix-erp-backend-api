@@ -41,6 +41,12 @@ class ErpSettingsController extends Controller
             'allow_sell_from_store',
             'enable_retail_pricing',
             'allow_discounts',
+            'allow_edit_line_discount',
+            'enable_order_discount',
+            'enable_vouchers',
+            'enable_redeemable_points',
+            'point_cash_value',
+            'points_earn_per_kes',
             'allow_edit_unit_price',
             'enable_barcode_scanner',
             'default_tax_rate',
@@ -70,6 +76,10 @@ class ErpSettingsController extends Controller
         ];
         foreach ($salesKeys as $key) {
             if (in_array($key, ['other_bank_name', 'pos_order_type_mode'], true)) {
+                continue;
+            }
+            if (in_array($key, ['point_cash_value', 'points_earn_per_kes'], true)) {
+                $rules[$key] = 'sometimes|numeric|min:0';
                 continue;
             }
             $rules[$key] = str_starts_with($key, 'default_tax')

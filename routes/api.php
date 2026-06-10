@@ -26,6 +26,7 @@ use App\Http\Controllers\Api\V1\DamageController;
 use App\Http\Controllers\Api\V1\StockReceiptController;
 use App\Http\Controllers\Api\V1\SupplierReturnController;
 use App\Http\Controllers\Api\V1\PaymentMethodController;
+use App\Http\Controllers\Api\V1\VoucherController;
 use App\Http\Controllers\Api\V1\SaleController;
 use App\Http\Controllers\Api\V1\SaleItemController;
 use App\Http\Controllers\Api\V1\SalePaymentController;
@@ -95,6 +96,8 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('stock-receipts', StockReceiptController::class);
         Route::apiResource('supplier-returns', SupplierReturnController::class);
         Route::apiResource('payment-methods', PaymentMethodController::class);
+        Route::apiResource('vouchers', VoucherController::class);
+        Route::apiResource('loyalty-cards', \App\Http\Controllers\Api\V1\LoyaltyCardController::class);
         Route::apiResource('sales', SaleController::class);
         Route::apiResource('sale-items', SaleItemController::class);
         Route::apiResource('sale-payments', SalePaymentController::class);

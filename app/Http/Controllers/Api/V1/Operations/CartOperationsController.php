@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesPricing;
 use App\Http\Controllers\Controller;
@@ -10,14 +11,19 @@ use App\Http\Requests\Sales\StoreCartRequest;
 use App\Http\Requests\Sales\UpdateCartLineRequest;
 use App\Models\CartLine;
 use App\Models\Product;
+use App\Models\Sale;
 use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use Illuminate\Support\Str;
 
 class CartOperationsController extends Controller
 {
+    use HandlesCartPayments;
     use HandlesInventory;
     use HandlesPricing;
 
@@ -39,14 +45,27 @@ class CartOperationsController extends Controller
     public function update(\Illuminate\Http\Request $request, int $cartId)
     {
         $cart = $this->findCart($cartId, $request->user());
+        $gate = $this->erp->gateForUser($request->user());
+        $salesSettings = $gate->moduleSettings('sales');
         $data = $request->validate([
             'route_id' => 'nullable|integer|exists:routes,id',
+            'order_discount' => 'sometimes|numeric|min:0',
         ]);
 
-        $cart->update([
-            'route_id' => $data['route_id'] ?? null,
-        ]);
-        $cart->increment('update_no');
+        $updates = [];
+        if (array_key_exists('route_id', $data)) {
+            $updates['route_id'] = $data['route_id'] ?? null;
+        }
+        if (array_key_exists('order_discount', $data)) {
+            $updates['order_discount'] = ! empty($salesSettings['enable_order_discount'])
+                ? max(0, (float) $data['order_discount'])
+                : 0;
+        }
+
+        if ($updates !== []) {
+            $cart->update($updates);
+            $cart->increment('update_no');
+        }
 
         return response()->json($cart->fresh('lines'));
     }
@@ -60,19 +79,19 @@ class CartOperationsController extends Controller
         return response()->json($line, 201);
     }
 
-    public function updateLine(UpdateCartLineRequest $request, int $cartId, int $lineId)
+    public function updateLine(UpdateCartLineRequest $request, int $cartId, string $lineRef)
     {
         $cart = $this->findCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
-        $line = $this->updateCartLine($cart, $lineId, $request->validated(), $request->user(), $gate);
+        $line = $this->updateCartLine($cart, $lineRef, $request->validated(), $request->user(), $gate);
 
         return response()->json($cart->fresh('lines'));
     }
 
-    public function deleteLine(int $cartId, int $lineId)
+    public function deleteLine(int $cartId, string $lineRef)
     {
         $cart = $this->findCart($cartId, request()->user());
-        $this->removeCartLine($cart, $lineId);
+        $this->removeCartLine($cart, $lineRef);
 
         return response()->json($cart->fresh('lines'));
     }
@@ -82,6 +101,259 @@ class CartOperationsController extends Controller
         $this->clearCart($this->findCart($cartId, request()->user()));
 
         return response()->json(['ok' => true]);
+    }
+
+    public function restoreHeldOrder(Request $request, int $saleId)
+    {
+        $sale = Sale::with('items')->findOrFail($saleId);
+        $user = $request->user();
+
+        if ($sale->status !== 'held') {
+            throw new InvalidArgumentException('Only held orders can be restored to the cart.');
+        }
+
+        if ((int) $sale->organization_id !== (int) $user->organization_id) {
+            abort(403, 'This order belongs to another organization.');
+        }
+
+        $channel = $sale->channel ?: 'pos';
+        $gate = $this->erp->gateForUser($user);
+        if (! $gate->channelEnabled($channel)) {
+            throw new InvalidArgumentException("Channel [{$channel}] is not enabled for this organization.");
+        }
+
+        $cart = $this->getOrCreateCart($user, [
+            'channel' => $channel,
+            'branch_id' => $sale->branch_id ?? $user->branch_id,
+            'route_id' => $sale->route_id,
+        ]);
+
+        if ($cart->lines()->exists() && ! $request->boolean('replace')) {
+            throw new InvalidArgumentException(
+                'Your cart already has items. Clear it first or confirm replace.',
+            );
+        }
+
+        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate, $request) {
+            if ($cart->lines()->exists()) {
+                $this->clearCart($cart);
+            }
+
+            $cart->update([
+                'route_id' => $sale->route_id,
+                'order_discount' => (float) ($sale->order_discount ?? 0),
+            ]);
+
+            foreach ($sale->items as $item) {
+                $this->addCartLine($cart, [
+                    'product_code' => $item->product_code,
+                    'quantity' => $item->quantity,
+                    'unit_price' => $item->selling_price,
+                    'uom' => $item->uom,
+                    'product_vat' => $item->product_vat,
+                    'discount_given' => $item->discount_given,
+                    'on_wholesale_retail' => $item->on_wholesale_retail,
+                ], $user, $gate);
+            }
+
+            $sale->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $user->id,
+            ]);
+
+            return $cart->fresh('lines');
+        });
+
+        return response()->json($cart);
+    }
+
+    public function lookupLoyaltyCard(Request $request)
+    {
+        $gate = $this->erp->gateForUser($request->user());
+        $salesSettings = $gate->moduleSettings('sales');
+        if (empty($salesSettings['enable_redeemable_points'])) {
+            throw new InvalidArgumentException('Redeemable points are not enabled.');
+        }
+
+        $data = $request->validate(['phone' => 'required|string|max:45']);
+        $card = $this->findLoyaltyCardByPhone((int) $request->user()->organization_id, $data['phone'], false);
+        $this->syncCustomerPhoneOnCard($card);
+        $rate = max(0, (float) ($salesSettings['point_cash_value'] ?? 1));
+        $earnPerKes = max(0, (float) ($salesSettings['points_earn_per_kes'] ?? 1000));
+
+        return response()->json([
+            'loyalty_card_id' => $card->id,
+            'card_number' => $card->card_number,
+            'customer_num' => $card->customer_num,
+            'customer_name' => $card->customer?->customer_name,
+            'phone_number' => $card->phone_number,
+            'points_balance' => (float) $card->points_balance,
+            'point_cash_value' => $rate,
+            'points_earn_per_kes' => $earnPerKes,
+            'max_cash_value' => round((float) $card->points_balance * $rate, 2),
+        ]);
+    }
+
+    public function attachLoyaltyCard(Request $request, int $cartId)
+    {
+        $cart = $this->findCart($cartId, $request->user());
+        $gate = $this->erp->gateForUser($request->user());
+        $salesSettings = $gate->moduleSettings('sales');
+        if (empty($salesSettings['enable_redeemable_points'])) {
+            throw new InvalidArgumentException('Redeemable points are not enabled.');
+        }
+
+        $data = $request->validate(['phone' => 'required|string|max:45']);
+        $card = $this->findLoyaltyCardByPhone((int) $request->user()->organization_id, $data['phone'], false);
+        $this->syncCustomerPhoneOnCard($card);
+
+        $cart->update(['loyalty_card_id' => $card->id]);
+        $cart->increment('update_no');
+
+        return response()->json([
+            'cart' => $cart->fresh('lines'),
+            'loyalty' => [
+                'loyalty_card_id' => $card->id,
+                'card_number' => $card->card_number,
+                'customer_num' => $card->customer_num,
+                'customer_name' => $card->customer?->customer_name,
+                'points_balance' => (float) $card->points_balance,
+            ],
+        ]);
+    }
+
+    public function applyVoucherPayment(Request $request, int $cartId)
+    {
+        $cart = $this->findCart($cartId, $request->user());
+        $gate = $this->erp->gateForUser($request->user());
+        $salesSettings = $gate->moduleSettings('sales');
+        if (empty($salesSettings['enable_vouchers'])) {
+            throw new InvalidArgumentException('Vouchers are not enabled.');
+        }
+
+        $data = $request->validate([
+            'voucher_code' => 'required|string|max:50',
+            'amount' => 'nullable|numeric|min:0',
+        ]);
+
+        $voucher = $this->findPaymentVoucher((int) $request->user()->organization_id, $data['voucher_code']);
+        $orderTotal = $this->cartOrderTotal($cart);
+        $otherPoints = max(0, (float) ($cart->points_payment_amount ?? 0));
+        $maxApplicable = min((float) $voucher->balance, max(0, $orderTotal - $otherPoints));
+        $amount = array_key_exists('amount', $data) && $data['amount'] !== null
+            ? min((float) $data['amount'], $maxApplicable)
+            : $maxApplicable;
+
+        $cart->update([
+            'payment_voucher_id' => $voucher->id,
+            'voucher_payment_amount' => $amount,
+        ]);
+        $cart->increment('update_no');
+        $fresh = $cart->fresh('lines');
+
+        return response()->json([
+            'cart' => $fresh,
+            'voucher' => [
+                'id' => $voucher->id,
+                'voucher_code' => $voucher->voucher_code,
+                'balance' => (float) $voucher->balance,
+                'applied_amount' => $amount,
+                'amount_due' => $this->cartAmountDue($fresh),
+            ],
+        ]);
+    }
+
+    public function applyPointsPayment(Request $request, int $cartId)
+    {
+        $cart = $this->findCart($cartId, $request->user());
+        $gate = $this->erp->gateForUser($request->user());
+        $salesSettings = $gate->moduleSettings('sales');
+        if (empty($salesSettings['enable_redeemable_points'])) {
+            throw new InvalidArgumentException('Redeemable points are not enabled.');
+        }
+
+        $data = $request->validate([
+            'phone' => 'required|string|max:45',
+            'points' => 'nullable|numeric|min:0',
+        ]);
+
+        $card = $this->findLoyaltyCardByPhone((int) $request->user()->organization_id, $data['phone']);
+        $orderTotal = $this->cartOrderTotal($cart);
+        $otherVoucher = max(0, (float) ($cart->voucher_payment_amount ?? 0));
+        $remaining = max(0, $orderTotal - $otherVoucher);
+        $maxPoints = min((float) $card->points_balance, $remaining / max(0.0001, (float) ($salesSettings['point_cash_value'] ?? 1)));
+        $points = array_key_exists('points', $data) && $data['points'] !== null
+            ? min((float) $data['points'], $maxPoints)
+            : $maxPoints;
+        $cashValue = $this->pointsCashValue($salesSettings, $points);
+
+        $cart->update([
+            'loyalty_card_id' => $card->id,
+            'points_redeemed' => $points,
+            'points_payment_amount' => $cashValue,
+        ]);
+        $cart->increment('update_no');
+        $fresh = $cart->fresh('lines');
+
+        return response()->json([
+            'cart' => $fresh,
+            'loyalty' => [
+                'loyalty_card_id' => $card->id,
+                'card_number' => $card->card_number,
+                'customer_name' => $card->customer?->customer_name,
+                'points_balance' => (float) $card->points_balance,
+                'points_redeemed' => $points,
+                'applied_amount' => $cashValue,
+                'amount_due' => $this->cartAmountDue($fresh),
+            ],
+        ]);
+    }
+
+    public function updateCartPaymentExtras(Request $request, int $cartId)
+    {
+        $cart = $this->findCart($cartId, $request->user());
+        $data = $request->validate([
+            'mpesa_phone' => 'nullable|string|max:45',
+        ]);
+
+        if (array_key_exists('mpesa_phone', $data)) {
+            $cart->update(['mpesa_phone' => $data['mpesa_phone'] ?: null]);
+            $cart->increment('update_no');
+        }
+
+        return response()->json($cart->fresh('lines'));
+    }
+
+    public function clearCartPayments(int $cartId)
+    {
+        $cart = $this->findCart($cartId, request()->user());
+        $this->clearCartPaymentOptions($cart);
+        $cart->increment('update_no');
+
+        return response()->json($cart->fresh('lines'));
+    }
+
+    public function cancelHeldOrder(Request $request, int $saleId)
+    {
+        $sale = Sale::findOrFail($saleId);
+        $user = $request->user();
+
+        if ($sale->status !== 'held') {
+            throw new InvalidArgumentException('Only held orders can be deleted.');
+        }
+
+        if ((int) $sale->organization_id !== (int) $user->organization_id) {
+            abort(403, 'This order belongs to another organization.');
+        }
+
+        $sale->update([
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+            'cancelled_by' => $user->id,
+        ]);
+
+        return response()->json($sale->fresh());
     }
 
     protected function getOrCreateCart(User $user, array $input): TemporaryCart
@@ -119,9 +391,10 @@ class CartOperationsController extends Controller
         $amount = round($unitPrice * $qty, 2);
 
         $salesSettings = $gate->moduleSettings('sales');
-        $discountGiven = ! empty($salesSettings['allow_discounts'])
-            ? max(0, (float) ($line['discount_given'] ?? 0))
-            : 0;
+        $discountGiven = $this->resolveLineDiscountGiven(
+            $salesSettings,
+            (float) ($line['discount_given'] ?? 0),
+        );
 
         $settings = $gate->moduleSettings('inventory');
         $stockAsRetail = $this->stockRouteAsRetail($product, $onWholesaleRetailFlag, $salesSettings);
@@ -141,6 +414,7 @@ class CartOperationsController extends Controller
             'discount_given' => $discountGiven,
             'on_wholesale_retail' => $onWholesaleRetailFlag ? 1 : 0,
             'line_no' => $lineNo,
+            'update_code' => $this->generateLineUpdateCode(),
         ]);
 
         if ($settings['reserve_stock_on_cart'] ?? true) {
@@ -164,7 +438,7 @@ class CartOperationsController extends Controller
 
     protected function updateCartLine(
         TemporaryCart $cart,
-        int $lineId,
+        string $lineRef,
         array $input,
         User $user,
         CapabilityGate $gate,
@@ -176,7 +450,7 @@ class CartOperationsController extends Controller
             throw new InvalidArgumentException('Cart was updated elsewhere. Refresh and try again.');
         }
 
-        $row = CartLine::where('cart_id', $cart->id)->where('id', $lineId)->firstOrFail();
+        $row = $this->findCartLineByRef($cart, $lineRef);
         $product = Product::with('unit')->where('product_code', $row->product_code)->firstOrFail();
 
         $qty = array_key_exists('quantity', $input) ? (float) $input['quantity'] : (float) $row->quantity;
@@ -194,11 +468,9 @@ class CartOperationsController extends Controller
 
         $salesSettings = $gate->moduleSettings('sales');
         $discountGiven = array_key_exists('discount_given', $input)
-            ? max(0, (float) $input['discount_given'])
+            ? (float) $input['discount_given']
             : (float) $row->discount_given;
-        if (empty($salesSettings['allow_discounts'])) {
-            $discountGiven = 0;
-        }
+        $discountGiven = $this->resolveLineDiscountGiven($salesSettings, $discountGiven);
 
         $settings = $gate->moduleSettings('inventory');
         $stockAsRetail = $this->stockRouteAsRetail($product, $onWholesaleRetailFlag, $salesSettings);
@@ -234,9 +506,9 @@ class CartOperationsController extends Controller
         return $row->fresh();
     }
 
-    protected function removeCartLine(TemporaryCart $cart, int $lineId): void
+    protected function removeCartLine(TemporaryCart $cart, string $lineRef): void
     {
-        $row = CartLine::where('cart_id', $cart->id)->where('id', $lineId)->firstOrFail();
+        $row = $this->findCartLineByRef($cart, $lineRef);
         $this->releaseLineReservation($row->id);
         $row->delete();
         $cart->increment('update_no');
@@ -246,6 +518,8 @@ class CartOperationsController extends Controller
     {
         $this->releaseCartReservations($cart->id);
         CartLine::where('cart_id', $cart->id)->delete();
+        $cart->update(['order_discount' => 0]);
+        $this->clearCartPaymentOptions($cart);
         $cart->increment('update_no');
     }
 
@@ -257,5 +531,40 @@ class CartOperationsController extends Controller
         }
 
         return $cart;
+    }
+
+    protected function findCartLineByRef(TemporaryCart $cart, string $lineRef): CartLine
+    {
+        $lineRef = trim((string) $lineRef);
+        $query = CartLine::where('cart_id', $cart->id);
+
+        $line = (clone $query)->where('update_code', $lineRef)->first();
+        if ($line) {
+            return $line;
+        }
+
+        if (ctype_digit($lineRef)) {
+            return $query->where('id', (int) $lineRef)->firstOrFail();
+        }
+
+        abort(404);
+    }
+
+    protected function generateLineUpdateCode(): string
+    {
+        do {
+            $code = 'CLU-'.Str::upper(Str::random(10));
+        } while (CartLine::where('update_code', $code)->exists());
+
+        return $code;
+    }
+
+    protected function resolveLineDiscountGiven(array $salesSettings, float $amount): float
+    {
+        if (empty($salesSettings['allow_discounts'])) {
+            return 0;
+        }
+
+        return max(0, $amount);
     }
 }

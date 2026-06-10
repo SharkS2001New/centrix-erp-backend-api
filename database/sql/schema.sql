@@ -534,6 +534,54 @@ CREATE TABLE payment_methods (
     is_active          BOOLEAN       DEFAULT TRUE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+DROP TABLE IF EXISTS vouchers;
+CREATE TABLE vouchers (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    organization_id     INT           NOT NULL,
+    voucher_code        VARCHAR(50)   NOT NULL,
+    voucher_kind        ENUM('discount','payment') NOT NULL DEFAULT 'discount',
+    name                VARCHAR(200)  NULL,
+    description         TEXT          NULL,
+    discount_type       ENUM('fixed','percentage') NOT NULL DEFAULT 'fixed',
+    discount_value      DOUBLE        NOT NULL DEFAULT 0,
+    initial_balance     DOUBLE        NOT NULL DEFAULT 0,
+    balance             DOUBLE        NOT NULL DEFAULT 0,
+    min_order_amount    DOUBLE        NOT NULL DEFAULT 0,
+    max_redemptions     INT           NULL,
+    redemption_count    INT           NOT NULL DEFAULT 0,
+    valid_from          DATE          NULL,
+    valid_until         DATE          NULL,
+    is_active           BOOLEAN       DEFAULT TRUE,
+    created_by          INT           NULL,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    FOREIGN KEY (created_by)      REFERENCES users(id),
+    UNIQUE KEY uq_org_voucher_code (organization_id, voucher_code),
+    INDEX idx_vouchers_org_active (organization_id, is_active)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS loyalty_cards;
+CREATE TABLE loyalty_cards (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    organization_id     INT           NOT NULL,
+    customer_num        INT           NOT NULL,
+    card_number         VARCHAR(32)   NOT NULL,
+    phone_number        VARCHAR(45)   NOT NULL,
+    points_balance      DOUBLE        NOT NULL DEFAULT 0,
+    is_active           BOOLEAN       DEFAULT TRUE,
+    issued_at           DATE          NULL,
+    created_by          INT           NULL,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    FOREIGN KEY (customer_num)    REFERENCES customers(customer_num),
+    FOREIGN KEY (created_by)      REFERENCES users(id),
+    UNIQUE KEY uq_org_loyalty_card (organization_id, card_number),
+    INDEX idx_loyalty_phone (organization_id, phone_number),
+    INDEX idx_loyalty_customer (organization_id, customer_num)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ================================================================
 -- SECTION 6: SALES
 -- ================================================================
@@ -562,6 +610,10 @@ CREATE TABLE sales (
     ) NOT NULL DEFAULT 'draft',
     total_vat              FLOAT         NOT NULL DEFAULT 0,
     order_total            FLOAT         NOT NULL DEFAULT 0,
+    order_discount         DOUBLE        NOT NULL DEFAULT 0,
+    voucher_payment_amount DOUBLE        NOT NULL DEFAULT 0,
+    points_payment_amount  DOUBLE        NOT NULL DEFAULT 0,
+    loyalty_card_id        BIGINT        NULL,
     cash                   INT           NOT NULL DEFAULT 0,
     mpesa_amount           INT           DEFAULT 0,
     equity_amount          INT           DEFAULT 0,
@@ -644,6 +696,13 @@ CREATE TABLE temporary_carts (
     channel         ENUM('pos','mobile','backend') NOT NULL DEFAULT 'pos',
     till_id         INT           NULL,
     route_id        INT           NULL,
+    order_discount  DOUBLE        NOT NULL DEFAULT 0,
+    payment_voucher_id BIGINT     NULL,
+    voucher_payment_amount DOUBLE  NOT NULL DEFAULT 0,
+    loyalty_card_id BIGINT        NULL,
+    points_redeemed DOUBLE        NOT NULL DEFAULT 0,
+    points_payment_amount DOUBLE  NOT NULL DEFAULT 0,
+    mpesa_phone     VARCHAR(45)   NULL,
     update_no       INT           DEFAULT 0,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -657,6 +716,7 @@ CREATE TABLE temporary_carts (
 CREATE TABLE cart_lines (
     id                  INT           PRIMARY KEY AUTO_INCREMENT,
     cart_id             INT           NOT NULL,
+    update_code         VARCHAR(24)   NOT NULL,
     product_code        VARCHAR(200)  NOT NULL,
     product_name        VARCHAR(250),
     unit_price          DOUBLE,
@@ -668,7 +728,8 @@ CREATE TABLE cart_lines (
     on_wholesale_retail INT           DEFAULT 0,
     line_no             INT           DEFAULT 1,
     FOREIGN KEY (cart_id) REFERENCES temporary_carts(id) ON DELETE CASCADE,
-    INDEX idx_cart_id (cart_id)
+    INDEX idx_cart_id (cart_id),
+    UNIQUE KEY uq_cart_line_update_code (update_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DROP TABLE IF EXISTS stock_reservations;

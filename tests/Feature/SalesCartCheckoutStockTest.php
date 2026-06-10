@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
+use App\Models\Sale;
 use App\Models\StockReservation;
 use App\Models\User;
 use Laravel\Sanctum\Sanctum;
@@ -111,6 +112,133 @@ class SalesCartCheckoutStockTest extends TestCase
         ]))
             ->assertOk()
             ->assertJsonStructure(['on_hand', 'reserved', 'available']);
+    }
+
+    public function test_update_and_delete_cart_line_by_update_code(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated();
+
+        $retail = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+            'on_wholesale_retail' => 1,
+        ])->assertCreated()->json();
+
+        $this->assertNotEmpty($retail['update_code'] ?? null);
+
+        $res = $this->patchJson("/api/v1/sales/carts/{$cartId}/lines/{$retail['update_code']}", [
+            'quantity' => 4,
+            'on_wholesale_retail' => 1,
+        ])->assertOk()->json();
+
+        $lines = $res['lines'] ?? [];
+        $updated = collect($lines)->firstWhere('update_code', $retail['update_code']);
+        $other = collect($lines)->firstWhere('on_wholesale_retail', 0);
+
+        $this->assertNotNull($updated);
+        $this->assertEquals(4.0, (float) ($updated['quantity'] ?? 0));
+        $this->assertNotNull($other);
+        $this->assertEquals(2.0, (float) ($other['quantity'] ?? 0));
+
+        $this->deleteJson("/api/v1/sales/carts/{$cartId}/lines/{$retail['update_code']}")
+            ->assertOk();
+
+        $this->assertDatabaseMissing('cart_lines', ['update_code' => $retail['update_code']]);
+    }
+
+    public function test_held_order_can_be_cancelled(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'held',
+            'pay_now' => 0,
+            'deduct_stock' => false,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/orders/{$sale['id']}/cancel-held")
+            ->assertOk();
+
+        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
+    }
+
+    public function test_cart_order_discount_reduces_checkout_total(): void
+    {
+        $org = \App\Models\Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales']['enable_order_discount'] = true;
+        $org->update(['module_settings' => $settings]);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $line = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated()->json();
+
+        $lineTotal = (float) ($line['amount'] ?? 0);
+
+        $this->patchJson("/api/v1/sales/carts/{$cartId}", [
+            'order_discount' => 50,
+        ])->assertOk()->assertJsonPath('order_discount', 50);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertCreated()->json();
+
+        $this->assertEquals(50.0, (float) ($sale['order_discount'] ?? 0));
+        $this->assertEquals($lineTotal - 50, (float) ($sale['order_total'] ?? 0));
+    }
+
+    public function test_hold_order_can_be_restored_to_cart(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'held',
+            'pay_now' => 0,
+            'deduct_stock' => false,
+            'customer_name_override' => 'Walk-in',
+        ])->assertCreated()->json();
+
+        $this->assertEquals('held', $sale['status']);
+
+        $cart = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+
+        $this->assertCount(1, $cart['lines'] ?? []);
+        $this->assertEquals(2.0, (float) ($cart['lines'][0]['quantity'] ?? 0));
+        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
     }
 
     protected function onHandShop(): float

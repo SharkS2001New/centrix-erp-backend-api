@@ -23,7 +23,7 @@ class OrderWorkflowController extends Controller
         'paid' => ['processed', 'completed'],
         'processed' => ['completed'],
         'draft' => ['held', 'completed', 'booked', 'cancelled'],
-        'held' => ['draft', 'completed', 'cancelled'],
+        'held' => ['draft', 'booked', 'completed', 'cancelled'],
     ];
 
     public function __construct(protected ErpContext $erp) {}

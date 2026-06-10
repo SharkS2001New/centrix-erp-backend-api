@@ -33,6 +33,10 @@ class SaleController extends BaseResourceController
             }
         }
 
+        if ($exclude = $request->input('exclude_status')) {
+            $query->where('status', '!=', $exclude);
+        }
+
         if ($q = $request->input('q')) {
             $query->where(function ($sub) use ($q) {
                 $sub->where('order_num', 'like', "%{$q}%")

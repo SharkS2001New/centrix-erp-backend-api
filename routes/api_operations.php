@@ -23,10 +23,18 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('carts/{cartId}', [CartOperationsController::class, 'show']);
         Route::patch('carts/{cartId}', [CartOperationsController::class, 'update']);
         Route::post('carts/{cartId}/lines', [CartOperationsController::class, 'addLine']);
-        Route::patch('carts/{cartId}/lines/{lineId}', [CartOperationsController::class, 'updateLine']);
-        Route::delete('carts/{cartId}/lines/{lineId}', [CartOperationsController::class, 'deleteLine']);
+        Route::patch('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'updateLine']);
+        Route::delete('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'deleteLine']);
         Route::delete('carts/{cartId}/lines', [CartOperationsController::class, 'clear']);
+        Route::get('loyalty-cards/lookup', [CartOperationsController::class, 'lookupLoyaltyCard']);
+        Route::post('carts/{cartId}/loyalty', [CartOperationsController::class, 'attachLoyaltyCard']);
+        Route::post('carts/{cartId}/payment/voucher', [CartOperationsController::class, 'applyVoucherPayment']);
+        Route::post('carts/{cartId}/payment/points', [CartOperationsController::class, 'applyPointsPayment']);
+        Route::patch('carts/{cartId}/payment/extras', [CartOperationsController::class, 'updateCartPaymentExtras']);
+        Route::delete('carts/{cartId}/payment', [CartOperationsController::class, 'clearCartPayments']);
         Route::post('carts/{cartId}/checkout', [CheckoutController::class, 'fromCart']);
+        Route::post('orders/{saleId}/restore-to-cart', [CartOperationsController::class, 'restoreHeldOrder']);
+        Route::post('orders/{saleId}/cancel-held', [CartOperationsController::class, 'cancelHeldOrder']);
     });
 
     Route::middleware('erp.permission:sales.manage')->prefix('sales')->group(function () {
