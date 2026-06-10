@@ -21,7 +21,10 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('erp.permission:sales.create')->prefix('sales')->group(function () {
         Route::post('carts', [CartOperationsController::class, 'store']);
         Route::get('carts/{cartId}', [CartOperationsController::class, 'show']);
+        Route::patch('carts/{cartId}', [CartOperationsController::class, 'update']);
         Route::post('carts/{cartId}/lines', [CartOperationsController::class, 'addLine']);
+        Route::patch('carts/{cartId}/lines/{lineId}', [CartOperationsController::class, 'updateLine']);
+        Route::delete('carts/{cartId}/lines/{lineId}', [CartOperationsController::class, 'deleteLine']);
         Route::delete('carts/{cartId}/lines', [CartOperationsController::class, 'clear']);
         Route::post('carts/{cartId}/checkout', [CheckoutController::class, 'fromCart']);
     });

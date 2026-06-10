@@ -6,6 +6,7 @@ use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
 use App\Models\StockReservation;
+use App\Models\SystemSetting;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -45,7 +46,21 @@ trait HandlesInventory
             - $this->stockReserved($productCode, $branchId, $location));
     }
 
-    protected function postStockLedger(array $data): InventoryTransaction
+    protected function organizationAllowsBelowStock(?int $organizationId): bool
+    {
+        if (! $organizationId) {
+            return false;
+        }
+
+        $system = SystemSetting::query()
+            ->where('organization_id', $organizationId)
+            ->orderBy('id')
+            ->first();
+
+        return (bool) ($system?->allow_below_stock ?? false);
+    }
+
+    protected function postStockLedger(array $data, bool $allowBelowStock = false): InventoryTransaction
     {
         $branchId = (int) $data['branch_id'];
         $productCode = (string) $data['product_code'];
@@ -59,7 +74,7 @@ trait HandlesInventory
         $before = $this->stockOnHand($productCode, $branchId, $location);
         $after = $before + $change;
 
-        if ($after < -0.0001) {
+        if (! $allowBelowStock && $after < -0.0001) {
             throw new InvalidArgumentException("Insufficient stock at {$location} for {$productCode}.");
         }
 
@@ -109,6 +124,41 @@ trait HandlesInventory
         };
     }
 
+    /**
+     * When sales.retail_shop_wholesale_store_stock is enabled, retail lines use shop and wholesale lines use store.
+     * When only shop or only store is enabled, all lines use that location.
+     */
+    protected function saleLineStockLocation(
+        string $channel,
+        array $inventorySettings,
+        array $salesSettings,
+        bool $isRetailLine,
+    ): string {
+        if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
+            return $isRetailLine ? 'shop' : 'store';
+        }
+
+        if (! empty($salesSettings['allow_sell_from_shop']) && empty($salesSettings['allow_sell_from_store'])) {
+            return 'shop';
+        }
+
+        if (empty($salesSettings['allow_sell_from_shop']) && ! empty($salesSettings['allow_sell_from_store'])) {
+            return 'store';
+        }
+
+        return $this->saleStockLocation($channel, $inventorySettings);
+    }
+
+    /** Whether a line deducts from shop (retail) vs store (wholesale) when per-line routing is on. */
+    protected function stockRouteAsRetail(Product $product, bool $onWholesaleRetailFlag, array $salesSettings): bool
+    {
+        if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
+            return $onWholesaleRetailFlag;
+        }
+
+        return $this->isRetailLine($product, $onWholesaleRetailFlag);
+    }
+
     protected function saleTransactionType(string $channel): string
     {
         return match ($channel) {
@@ -126,10 +176,16 @@ trait HandlesInventory
         string $location,
         int $userId,
         ?int $cartId = null,
+        bool $allowBelowStock = false,
+        ?int $cartLineId = null,
     ): StockReservation {
-        $available = $this->stockNetAvailable($productCode, $branchId, $location);
-        if ($quantity > $available) {
-            throw new InvalidArgumentException("Cannot reserve {$quantity} of {$productCode}; available {$available}.");
+        if (! $allowBelowStock) {
+            $available = $this->stockNetAvailable($productCode, $branchId, $location);
+            if ($quantity > $available) {
+                throw new InvalidArgumentException(
+                    "Cannot reserve {$quantity} of {$productCode} at {$location}; available {$available}."
+                );
+            }
         }
 
         return StockReservation::create([
@@ -138,8 +194,16 @@ trait HandlesInventory
             'stock_location' => $location,
             'quantity' => $quantity,
             'cart_id' => $cartId,
+            'cart_line_id' => $cartLineId,
             'reserved_by' => $userId,
         ]);
+    }
+
+    protected function releaseLineReservation(int $cartLineId): void
+    {
+        StockReservation::where('cart_line_id', $cartLineId)
+            ->whereNull('released_at')
+            ->update(['released_at' => now()]);
     }
 
     protected function releaseCartReservations(int $cartId): void

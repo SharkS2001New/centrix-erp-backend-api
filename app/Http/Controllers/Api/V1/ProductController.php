@@ -18,6 +18,28 @@ class ProductController extends BaseResourceController
         return 'product_code';
     }
 
+    public function index(Request $request)
+    {
+        $query = Product::query()->whereNull('deleted_at');
+
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if (in_array($col, $this->filterableColumns(), true)) {
+                $query->where($col, $val);
+            }
+        }
+
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('product_code', 'like', "%{$q}%")
+                    ->orWhere('product_name', 'like', "%{$q}%");
+            });
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+
+        return response()->json($query->orderBy('product_name')->paginate($perPage));
+    }
+
     public function store(Request $request)
     {
         $rules = array_fill_keys($this->fillableFields(), 'nullable');

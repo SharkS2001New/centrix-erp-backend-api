@@ -22,6 +22,8 @@ class CheckoutRequest extends FormRequest
             'payment_method_code' => 'nullable|string|max:45',
             'is_credit_sale' => 'nullable|boolean',
             'pay_now' => 'nullable|numeric|min:0',
+            'payment_reference' => 'nullable|string|max:120',
+            'payment_date' => 'nullable|date',
             'total_vat' => 'nullable|numeric|min:0',
             'deduct_stock' => 'nullable|boolean',
             'submit_kra' => 'nullable|boolean',

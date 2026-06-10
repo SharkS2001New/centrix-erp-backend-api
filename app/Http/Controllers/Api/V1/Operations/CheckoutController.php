@@ -31,6 +31,9 @@ class CheckoutController extends Controller
     public function fromCart(CheckoutRequest $request, int $cartId)
     {
         $cart = TemporaryCart::with('lines')->findOrFail($cartId);
+        if ((int) $cart->user_id !== (int) $request->user()->id) {
+            abort(403, 'This cart belongs to another cashier.');
+        }
         $gate = $this->erp->gateForUser($request->user());
         $sale = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
 
@@ -44,11 +47,13 @@ class CheckoutController extends Controller
             throw new InvalidArgumentException('Cart is empty.');
         }
 
-        $settings = $gate->moduleSettings('inventory');
-        $location = $this->saleStockLocation($cart->channel, $settings);
+        $inventorySettings = $gate->moduleSettings('inventory');
+        $salesSettings = $gate->moduleSettings('sales');
         $txnType = $this->saleTransactionType($cart->channel);
 
-        return DB::transaction(function () use ($cart, $user, $input, $lines, $location, $txnType, $gate) {
+        $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+
+        return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $inventorySettings, $salesSettings, $txnType, $allowBelowStock) {
             $stockDeducted = false;
             $orderNum = (int) ($input['order_num'] ?? $this->nextOrderNum());
             $total = $lines->sum('amount');
@@ -82,6 +87,14 @@ class CheckoutController extends Controller
             }
 
             foreach ($lines as $i => $line) {
+                $isRetailLine = (bool) $line->on_wholesale_retail;
+                $location = $this->saleLineStockLocation(
+                    $cart->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    $isRetailLine,
+                );
+
                 SaleItem::create([
                     'sale_id' => $sale->id,
                     'product_code' => $line->product_code,
@@ -90,7 +103,7 @@ class CheckoutController extends Controller
                     'quantity' => $line->quantity,
                     'uom' => $line->uom,
                     'selling_price' => $line->unit_price,
-                    'discount_given' => 0,
+                    'discount_given' => (float) ($line->discount_given ?? 0),
                     'product_vat' => $line->product_vat ?? 0,
                     'amount' => $line->amount,
                     'on_wholesale_retail' => $line->on_wholesale_retail,
@@ -106,7 +119,7 @@ class CheckoutController extends Controller
                         'reference_id' => $sale->id,
                         'quantity_change' => -abs((float) $line->quantity),
                         'created_by' => $user->id,
-                    ]);
+                    ], $allowBelowStock);
                     $stockDeducted = true;
                 }
             }
@@ -123,6 +136,7 @@ class CheckoutController extends Controller
                         'payment_method_id' => $method->id,
                         'amount' => $payNow,
                         'reference_number' => $input['payment_reference'] ?? null,
+                        'paid_at' => $input['payment_date'] ?? now(),
                     ]);
                 }
             }

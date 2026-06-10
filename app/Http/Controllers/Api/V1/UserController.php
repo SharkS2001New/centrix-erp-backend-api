@@ -1,9 +1,11 @@
 <?php
+
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
 
 class UserController extends BaseResourceController
 {
@@ -34,5 +36,21 @@ class UserController extends BaseResourceController
         }
         $model->update($data);
         return response()->json($model);
+    }
+
+    public function destroy(string $id)
+    {
+        $model = User::findOrFail($id);
+        $authUser = request()->user();
+
+        if ($authUser && (int) $authUser->id === (int) $model->id) {
+            throw ValidationException::withMessages([
+                'user' => 'You cannot delete your own account.',
+            ]);
+        }
+
+        $model->delete();
+
+        return response()->json(null, 204);
     }
 }

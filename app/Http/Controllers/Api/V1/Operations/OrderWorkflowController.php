@@ -100,11 +100,20 @@ class OrderWorkflowController extends Controller
             return;
         }
 
-        $settings = $this->erp->gateForUser($user)->moduleSettings('inventory');
-        $location = $this->saleStockLocation($sale->channel, $settings);
+        $inventorySettings = $this->erp->gateForUser($user)->moduleSettings('inventory');
+        $salesSettings = $this->erp->gateForUser($user)->moduleSettings('sales');
         $txnType = $this->saleTransactionType($sale->channel);
+        $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
 
         foreach ($sale->items ?? SaleItem::where('sale_id', $sale->id)->get() as $item) {
+            $isRetailLine = (bool) $item->on_wholesale_retail;
+            $location = $this->saleLineStockLocation(
+                $sale->channel,
+                $inventorySettings,
+                $salesSettings,
+                $isRetailLine,
+            );
+
             $this->postStockLedger([
                 'branch_id' => $sale->branch_id,
                 'product_code' => $item->product_code,
@@ -114,7 +123,7 @@ class OrderWorkflowController extends Controller
                 'reference_id' => $sale->id,
                 'quantity_change' => -abs((float) $item->quantity),
                 'created_by' => $user->id,
-            ]);
+            ], $allowBelowStock);
         }
 
         $sale->update(['stock_balanced' => 1]);

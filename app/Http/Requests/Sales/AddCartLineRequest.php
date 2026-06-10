@@ -20,6 +20,7 @@ class AddCartLineRequest extends FormRequest
             'uom' => 'nullable|string|max:45',
             'on_wholesale_retail' => 'nullable|boolean',
             'product_vat' => 'nullable|numeric|min:0',
+            'discount_given' => 'nullable|numeric|min:0',
         ];
     }
 }

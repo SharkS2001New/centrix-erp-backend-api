@@ -13,5 +13,10 @@ class RetailPackageSetting extends Model
     protected $fillable = [
         'product_code', 'max_qty_measure', 'markup_price', 'min_uom_measure',
         'wholesale_qty_measure', 'wholesale_markup_price', 'max_uom_measure',
+        'pricing_tiers',
+    ];
+
+    protected $casts = [
+        'pricing_tiers' => 'array',
     ];
 }

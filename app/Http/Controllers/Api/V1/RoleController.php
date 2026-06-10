@@ -1,12 +1,106 @@
 <?php
+
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\Permission;
 use App\Models\Role;
+use App\Models\User;
+use App\Services\Erp\PermissionMatrixService;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class RoleController extends BaseResourceController
 {
     protected function modelClass(): string
     {
         return Role::class;
+    }
+
+    public function index(Request $request)
+    {
+        $response = parent::index($request);
+        $payload = $response->getData(true);
+        $ids = collect($payload['data'] ?? [])->pluck('id');
+        $counts = User::query()
+            ->whereIn('role_id', $ids)
+            ->selectRaw('role_id, COUNT(*) as users_count')
+            ->groupBy('role_id')
+            ->pluck('users_count', 'role_id');
+
+        $payload['data'] = collect($payload['data'] ?? [])->map(function ($row) use ($counts) {
+            $row['users_count'] = (int) ($counts[$row['id']] ?? 0);
+
+            return $row;
+        })->all();
+
+        return response()->json($payload);
+    }
+
+    public function permissions(string $id)
+    {
+        $role = Role::findOrFail($id);
+        $permissionIds = DB::table('role_permissions')
+            ->where('role_id', $role->id)
+            ->pluck('permission_id')
+            ->map(fn ($v) => (int) $v)
+            ->values()
+            ->all();
+
+        return response()->json([
+            'role_id' => (int) $role->id,
+            'permission_ids' => $permissionIds,
+        ]);
+    }
+
+    public function syncPermissions(Request $request, string $id)
+    {
+        $role = Role::findOrFail($id);
+        $data = $request->validate([
+            'permission_ids' => 'array',
+            'permission_ids.*' => 'integer|exists:permissions,id',
+        ]);
+
+        DB::transaction(function () use ($role, $data) {
+            DB::table('role_permissions')->where('role_id', $role->id)->delete();
+            foreach ($data['permission_ids'] ?? [] as $permissionId) {
+                DB::table('role_permissions')->insert([
+                    'role_id' => $role->id,
+                    'permission_id' => $permissionId,
+                ]);
+            }
+        });
+
+        return $this->permissions($id);
+    }
+
+    public function permissionMatrix()
+    {
+        PermissionMatrixService::ensure();
+
+        $permissions = Permission::query()->orderBy('module')->orderBy('permission_name')->get();
+
+        return response()->json([
+            'permissions' => $permissions,
+            'modules' => PermissionMatrixService::modules(),
+            'actions' => PermissionMatrixService::actions(),
+        ]);
+    }
+
+    public function destroy(string $id)
+    {
+        $role = Role::findOrFail($id);
+        $usersCount = User::query()->where('role_id', $role->id)->count();
+
+        if ($usersCount > 0) {
+            throw ValidationException::withMessages([
+                'role' => "Cannot delete this role — {$usersCount} user(s) are still assigned. Reassign them first.",
+            ]);
+        }
+
+        DB::table('role_permissions')->where('role_id', $role->id)->delete();
+        $role->delete();
+
+        return response()->json(null, 204);
     }
 }

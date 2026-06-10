@@ -2,6 +2,7 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\ErpSettingsController;
 use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\RoleController;
@@ -56,9 +57,16 @@ Route::prefix('v1')->group(function () {
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
         Route::get('erp/profiles', [ErpCapabilitiesController::class, 'profiles'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
 
         Route::apiResource('organizations', OrganizationController::class);
         Route::apiResource('branches', BranchController::class);
+        Route::get('roles/permissions/matrix', [RoleController::class, 'permissionMatrix']);
+        Route::get('roles/{role}/permissions', [RoleController::class, 'permissions']);
+        Route::put('roles/{role}/permissions', [RoleController::class, 'syncPermissions']);
         Route::apiResource('roles', RoleController::class);
         Route::apiResource('permissions', PermissionController::class);
         Route::apiResource('users', UserController::class);

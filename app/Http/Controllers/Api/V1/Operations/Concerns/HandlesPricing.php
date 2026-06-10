@@ -21,9 +21,14 @@ trait HandlesPricing
             $conversion = 1;
         }
 
-        if ($isRetailLine && $rps && $rps->max_qty_measure > 0) {
-            $perUnit = ($base / (float) $rps->max_qty_measure) + (float) $rps->markup_price;
-            $price = $perUnit * $quantity;
+        if ($isRetailLine && $rps) {
+            $perSmall = $base / $conversion;
+            $markup = (float) ($rps->markup_price ?? 0);
+            if ($rps->max_qty_measure > 0 && $quantity <= (float) $rps->max_qty_measure) {
+                $price = ($perSmall + $markup) * $quantity;
+            } else {
+                $price = $perSmall * $quantity;
+            }
         } else {
             $markup = (float) ($rps->wholesale_markup_price ?? 0);
             $price = ($base + $markup) * $quantity;

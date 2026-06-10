@@ -12,7 +12,7 @@ class StockReservation extends Model
     public $timestamps = false;
     protected $fillable = [
         'branch_id', 'product_code', 'stock_location', 'quantity',
-        'cart_id', 'sale_id', 'reserved_by', 'expires_at', 'released_at',
+        'cart_id', 'cart_line_id', 'sale_id', 'reserved_by', 'expires_at', 'released_at',
     ];
     protected $casts = [
         'expires_at' => 'datetime',

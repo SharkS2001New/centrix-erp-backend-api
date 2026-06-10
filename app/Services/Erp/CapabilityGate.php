@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Models\Organization;
+use App\Models\SystemSetting;
 
 class CapabilityGate
 {
@@ -83,6 +84,13 @@ class CapabilityGate
         $profile = $this->organization?->deployment_profile ?? 'wholesale_retail';
         $profileConfig = config("erp.profiles.{$profile}", []);
 
+        $system = $this->organization
+            ? SystemSetting::query()
+                ->where('organization_id', $this->organization->id)
+                ->orderBy('id')
+                ->first()
+            : null;
+
         return [
             'organization_id' => $this->organization?->id,
             'deployment_profile' => $profile,
@@ -94,6 +102,7 @@ class CapabilityGate
                 config('erp.module_settings_defaults', []),
                 $this->organization?->module_settings ?? []
             ),
+            'allow_negative_stock' => (bool) ($system?->allow_below_stock ?? false),
         ];
     }
 
