@@ -73,8 +73,11 @@ class ErpSettingsController extends Controller
             'add_route_markup_prices',
             'pos_order_type_mode',
             'enable_mobile_orders',
+            'enable_pos_orders',
             'order_document_type',
             'invoice_valid_days',
+            'receipt_copies',
+            'show_branch_on_receipt',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -106,8 +109,13 @@ class ErpSettingsController extends Controller
             'order_workflow.checkout.unpaid.mobile' => ['sometimes', 'string', $statusRule],
             'order_workflow.checkout.unpaid.backend' => ['sometimes', 'string', $statusRule],
             'order_workflow.deduct_stock_on' => ['sometimes', 'string', $statusRule],
+            'receipt_copies' => 'sometimes|integer|min:1|max:10',
         ];
         foreach ($salesKeys as $key) {
+            // Do not overwrite any rules that were explicitly defined above
+            if (array_key_exists($key, $rules)) {
+                continue;
+            }
             if (in_array($key, ['other_bank_name', 'pos_order_type_mode', 'order_document_type'], true)) {
                 continue;
             }
