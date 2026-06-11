@@ -33,7 +33,27 @@ class OrderWorkflowService
         $sales = $this->gate->moduleSettings('sales');
         $custom = is_array($sales['order_workflow'] ?? null) ? $sales['order_workflow'] : [];
 
-        return $this->normalizeConfig(array_replace_recursive($defaults, $custom));
+        return $this->normalizeConfig($this->mergeWorkflowConfig($defaults, $custom));
+    }
+
+    /**
+     * Merge saved workflow over defaults.
+     * Steps are replaced wholesale — array_replace_recursive would keep trailing default stages.
+     *
+     * @param  array<string, mixed>  $defaults
+     * @param  array<string, mixed>  $custom
+     * @return array<string, mixed>
+     */
+    public function mergeWorkflowConfig(array $defaults, array $custom): array
+    {
+        $customWithoutSteps = $custom;
+        unset($customWithoutSteps['steps']);
+        $merged = array_replace_recursive($defaults, $customWithoutSteps);
+        if (array_key_exists('steps', $custom) && is_array($custom['steps'])) {
+            $merged['steps'] = array_values($custom['steps']);
+        }
+
+        return $merged;
     }
 
     /** @return array<string, mixed> */

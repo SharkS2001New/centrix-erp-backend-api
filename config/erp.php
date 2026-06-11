@@ -211,6 +211,9 @@ return [
             'retail_shop_wholesale_store_stock' => false,
             'add_route_markup_prices' => false,
             'pos_order_type_mode' => 'normal',
+            'enable_mobile_orders' => false,
+            'order_document_type' => 'receipt',
+            'invoice_valid_days' => 7,
             'order_workflow' => null,
         ],
         'inventory' => [

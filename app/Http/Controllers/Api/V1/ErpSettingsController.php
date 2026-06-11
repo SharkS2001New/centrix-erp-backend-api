@@ -72,6 +72,9 @@ class ErpSettingsController extends Controller
             'retail_shop_wholesale_store_stock',
             'add_route_markup_prices',
             'pos_order_type_mode',
+            'enable_mobile_orders',
+            'order_document_type',
+            'invoice_valid_days',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -80,6 +83,8 @@ class ErpSettingsController extends Controller
             'allow_negative_stock' => 'sometimes|boolean',
             'other_bank_name' => 'sometimes|string|max:100',
             'pos_order_type_mode' => 'sometimes|in:normal,route,toggle',
+            'order_document_type' => 'sometimes|in:receipt,invoice',
+            'invoice_valid_days' => 'sometimes|integer|min:0|max:365',
             'order_workflow' => 'sometimes|array',
             'order_workflow.steps' => 'sometimes|array',
             'order_workflow.steps.*.status' => ['required_with:order_workflow.steps', 'string', $statusRule],
@@ -103,7 +108,7 @@ class ErpSettingsController extends Controller
             'order_workflow.deduct_stock_on' => ['sometimes', 'string', $statusRule],
         ];
         foreach ($salesKeys as $key) {
-            if (in_array($key, ['other_bank_name', 'pos_order_type_mode'], true)) {
+            if (in_array($key, ['other_bank_name', 'pos_order_type_mode', 'order_document_type'], true)) {
                 continue;
             }
             if (in_array($key, ['point_cash_value', 'points_earn_per_kes'], true)) {
@@ -127,10 +132,9 @@ class ErpSettingsController extends Controller
         if (array_key_exists('order_workflow', $data) && is_array($data['order_workflow'])) {
             $workflowService = OrderWorkflowService::forGate($gate);
             $defaults = config('erp.default_order_workflow', []);
-            $nextSales['order_workflow'] = $workflowService->normalize(array_replace_recursive(
-                $defaults,
-                $data['order_workflow'],
-            ));
+            $nextSales['order_workflow'] = $workflowService->normalize(
+                $workflowService->mergeWorkflowConfig($defaults, $data['order_workflow']),
+            );
         }
 
         if (
