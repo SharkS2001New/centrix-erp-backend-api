@@ -27,6 +27,9 @@ class AuthController extends Controller
             ]);
         }
 
+        // Only one active login per username — revoke older sessions/tokens.
+        $user->tokens()->delete();
+
         $user->forceFill(['last_login' => now()])->save();
         $token = $user->createToken('api')->plainTextToken;
 

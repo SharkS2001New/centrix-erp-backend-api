@@ -74,6 +74,7 @@ class ErpSettingsController extends Controller
             'pos_order_type_mode',
             'enable_mobile_orders',
             'enable_pos_orders',
+            'require_pos_till_float',
             'order_document_type',
             'invoice_valid_days',
             'receipt_copies',

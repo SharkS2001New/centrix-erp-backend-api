@@ -212,6 +212,8 @@ return [
             'add_route_markup_prices' => false,
             'pos_order_type_mode' => 'normal',
             'enable_mobile_orders' => false,
+            'enable_pos_orders' => false,
+            'require_pos_till_float' => false,
             'order_document_type' => 'receipt',
             'invoice_valid_days' => 7,
             'order_workflow' => null,

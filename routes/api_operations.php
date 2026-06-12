@@ -55,6 +55,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // ---- POS till ----
     Route::middleware(['erp.module:sales.pos', 'erp.permission:pos.till'])->prefix('pos')->group(function () {
         Route::post('sessions/open', [TillOperationsController::class, 'openSession']);
+        Route::post('sessions/{sessionId}/add-float', [TillOperationsController::class, 'addFloat']);
         Route::post('sessions/{sessionId}/close', [TillOperationsController::class, 'closeSession']);
         Route::get('sessions/{sessionId}/x-report', [TillOperationsController::class, 'xReport']);
         Route::get('sessions/{sessionId}/z-report', [TillOperationsController::class, 'zReport']);
@@ -121,6 +122,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('open-lpo', [ReportController::class, 'openLpo']);
         Route::get('profit-loss', [ReportController::class, 'profitLoss']);
         Route::get('eod-cashier', [ReportController::class, 'eodCashier']);
+        Route::get('eod-report', [ReportController::class, 'eodReport']);
         Route::get('ar-aging', [ReportController::class, 'arAging']);
         Route::get('top-debtors', [ReportController::class, 'topDebtors']);
         Route::get('invoice-payments', [ReportController::class, 'invoicePayments']);

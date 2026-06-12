@@ -10,8 +10,9 @@ class Till extends Model
 
     protected $table = 'tills';
     protected $fillable = [
-        'branch_id', 'till_number', 'ip_address', 'cashier_id',
+        'branch_id', 'till_number', 'till_name', 'description', 'is_active',
+        'ip_address', 'cashier_id',
         'working_amount', 'float_breakdown',
     ];
-    protected $casts = ['float_breakdown' => 'array'];
+    protected $casts = ['float_breakdown' => 'array', 'is_active' => 'boolean'];
 }

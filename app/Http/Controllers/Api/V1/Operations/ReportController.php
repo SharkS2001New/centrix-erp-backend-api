@@ -26,6 +26,7 @@ class ReportController extends Controller
                 ['key' => 'payment-collection', 'path' => '/reports/payment-collection', 'label' => 'Payments by method'],
                 ['key' => 'credit-outstanding', 'path' => '/reports/credit-outstanding', 'label' => 'Outstanding credit sales'],
                 ['key' => 'eod-cashier', 'path' => '/reports/eod-cashier', 'label' => 'End of day (cashier)'],
+                ['key' => 'eod-report', 'path' => '/reports/eod-report', 'label' => 'End of day report'],
             ],
             'inventory' => [
                 ['key' => 'stock-on-hand', 'path' => '/reports/stock-on-hand', 'label' => 'Stock on hand'],
@@ -239,6 +240,235 @@ class ReportController extends Controller
         return response()->json($this->reportFromView('v_eod_cashier_summary', $this->filters($request), [
             'sale_date', 'branch_id', 'cashier_id',
         ]));
+    }
+
+    /** Full end-of-day dashboard payload for a branch and date. */
+    public function eodReport(Request $request)
+    {
+        $data = $request->validate([
+            'sale_date' => 'required|date',
+            'branch_id' => 'nullable|integer',
+            'cashier_id' => 'nullable|integer',
+        ]);
+
+        $date = $data['sale_date'];
+        $branchId = $data['branch_id'] ?? null;
+        $cashierId = isset($data['cashier_id']) ? (int) $data['cashier_id'] : null;
+        if ($cashierId <= 0) {
+            $cashierId = null;
+        }
+
+        $salesBase = DB::table('sales')
+            ->where('status', 'completed')
+            ->where('archived', 0)
+            ->whereDate('completed_at', $date);
+        if ($branchId) {
+            $salesBase->where('branch_id', $branchId);
+        }
+        if ($cashierId) {
+            $salesBase->where('cashier_id', $cashierId);
+        }
+
+        $agg = (clone $salesBase)->selectRaw('
+            COUNT(*) as transactions,
+            COUNT(DISTINCT customer_num) as customers,
+            COALESCE(SUM(order_total), 0) as gross_sales,
+            COALESCE(SUM(order_discount), 0) as order_discounts,
+            COALESCE(SUM(cash), 0) as cash_collected,
+            COALESCE(SUM(mpesa_amount), 0) as mpesa_collected,
+            COALESCE(SUM(equity_amount), 0) as equity_collected,
+            COALESCE(SUM(kcb_amount), 0) as kcb_collected,
+            COALESCE(SUM(CASE WHEN is_credit_sale = 1 THEN order_total ELSE 0 END), 0) as credit_sales,
+            MIN(completed_at) as first_sale_at,
+            MAX(completed_at) as last_sale_at
+        ')->first();
+
+        $lineDiscounts = (float) DB::table('sale_items as si')
+            ->join('sales as s', 'si.sale_id', '=', 's.id')
+            ->where('s.status', 'completed')
+            ->where('s.archived', 0)
+            ->whereDate('s.completed_at', $date)
+            ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
+            ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
+            ->sum('si.discount_given');
+
+        $itemsSold = (float) DB::table('sale_items as si')
+            ->join('sales as s', 'si.sale_id', '=', 's.id')
+            ->where('s.status', 'completed')
+            ->where('s.archived', 0)
+            ->whereDate('s.completed_at', $date)
+            ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
+            ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
+            ->sum('si.quantity');
+
+        $saleIds = (clone $salesBase)->pluck('id');
+        $refunds = $saleIds->isEmpty()
+            ? 0
+            : (float) DB::table('returns')->whereIn('sale_id', $saleIds)->sum('amount');
+
+        $voided = DB::table('sales')
+            ->where('status', 'cancelled')
+            ->whereDate('cancelled_at', $date)
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId))
+            ->count();
+
+        $gross = (float) ($agg->gross_sales ?? 0);
+        $totalDiscounts = (float) ($agg->order_discounts ?? 0) + $lineDiscounts;
+        $netSales = max(0, $gross - $totalDiscounts - $refunds);
+
+        $cash = (float) ($agg->cash_collected ?? 0);
+        $mpesa = (float) ($agg->mpesa_collected ?? 0);
+        $bank = (float) ($agg->equity_collected ?? 0) + (float) ($agg->kcb_collected ?? 0);
+
+        $sessionQ = DB::table('till_float_sessions as tfs')
+            ->whereDate('tfs.session_date', $date);
+        if ($branchId) {
+            $sessionQ->where('tfs.branch_id', $branchId);
+        }
+        if ($cashierId) {
+            $sessionQ->where('tfs.cashier_id', $cashierId);
+        }
+        $openingFloat = (float) (clone $sessionQ)->sum('working_amount');
+
+        $tillRows = DB::table('till_float_sessions as tfs')
+            ->join('tills as t', 'tfs.till_id', '=', 't.id')
+            ->join('users as u', 'tfs.cashier_id', '=', 'u.id')
+            ->leftJoin(DB::raw('(
+                SELECT float_session_id, COUNT(*) AS txn_count, SUM(order_total) AS gross
+                FROM sales WHERE status = \'completed\' GROUP BY float_session_id
+            ) s'), 's.float_session_id', '=', 'tfs.id')
+            ->whereDate('tfs.session_date', $date)
+            ->when($branchId, fn ($q) => $q->where('tfs.branch_id', $branchId))
+            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId))
+            ->select(
+                't.till_number',
+                't.till_name',
+                'u.username as cashier',
+                DB::raw('COALESCE(s.gross, 0) as gross_sales'),
+                DB::raw('COALESCE(s.txn_count, 0) as transactions'),
+                'tfs.working_amount as opening_float',
+            )
+            ->get()
+            ->map(function ($row) {
+                $row->till_name = $row->till_name ?? $row->till_number;
+
+                return $row;
+            });
+
+        $cashierRows = DB::table('sales as s')
+            ->join('users as u', 's.cashier_id', '=', 'u.id')
+            ->where('s.status', 'completed')
+            ->where('s.archived', 0)
+            ->whereDate('s.completed_at', $date)
+            ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
+            ->groupBy('s.cashier_id', 'u.username', 'u.full_name')
+            ->orderBy('cashier')
+            ->select(
+                's.cashier_id',
+                DB::raw('COALESCE(NULLIF(TRIM(u.full_name), ""), u.username) as cashier'),
+                DB::raw('COUNT(*) as transactions'),
+                DB::raw('COALESCE(SUM(s.order_total), 0) as gross_sales'),
+                DB::raw('COALESCE(SUM(s.cash), 0) as cash_collected'),
+                DB::raw('COALESCE(SUM(s.mpesa_amount), 0) as mpesa_collected'),
+                DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
+            )
+            ->get()
+            ->map(function ($row) use ($date, $branchId) {
+                $floatQuery = DB::table('till_float_sessions')
+                    ->where('cashier_id', $row->cashier_id)
+                    ->whereDate('session_date', $date);
+                if ($branchId) {
+                    $floatQuery->where('branch_id', $branchId);
+                }
+                $row->opening_float = (float) $floatQuery->sum('working_amount');
+
+                return $row;
+            });
+
+        $expenseRows = DB::table('v_expenses_summary')
+            ->where('expense_date', $date)
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->select('group_name', DB::raw('SUM(total_amount) as amount'))
+            ->groupBy('group_name')
+            ->get();
+
+        $totalExpenses = $expenseRows->sum(fn ($r) => (float) $r->amount);
+
+        $creditPayments = (float) DB::table('customer_invoice_payments')
+            ->whereDate('date_paid', $date)
+            ->sum('amount_paid');
+
+        $closingDebtors = (float) DB::table('customers')
+            ->whereNull('deleted_at')
+            ->when($branchId, function ($q) use ($branchId) {
+                $q->whereIn('customer_num', function ($sub) use ($branchId) {
+                    $sub->select('customer_num')
+                        ->from('sales')
+                        ->where('branch_id', $branchId)
+                        ->whereNotNull('customer_num');
+                });
+            })
+            ->sum('current_balance');
+
+        $creditSales = (float) ($agg->credit_sales ?? 0);
+        $netCashExpected = $openingFloat + $cash;
+        $netPosition = $netCashExpected - $totalExpenses - $closingDebtors;
+
+        $branchName = null;
+        if ($branchId) {
+            $branchName = DB::table('branches')->where('id', $branchId)->value('branch_name');
+        }
+
+        $cashierName = null;
+        if ($cashierId) {
+            $cashierName = DB::table('users')
+                ->where('id', $cashierId)
+                ->selectRaw('COALESCE(NULLIF(TRIM(full_name), ""), username) as name')
+                ->value('name');
+        }
+
+        return response()->json([
+            'sale_date' => $date,
+            'branch_id' => $branchId,
+            'branch_name' => $branchName,
+            'cashier_id' => $cashierId,
+            'cashier_name' => $cashierName,
+            'summary' => [
+                'gross_sales' => $gross,
+                'transactions' => (int) ($agg->transactions ?? 0),
+                'total_discounts' => $totalDiscounts,
+                'total_refunds' => $refunds,
+                'net_sales' => $netSales,
+                'opening_float' => $openingFloat,
+                'net_cash_expected' => $netCashExpected,
+                'items_sold' => (int) round($itemsSold),
+                'customers' => (int) ($agg->customers ?? 0),
+                'voided_transactions' => (int) $voided,
+                'average_sale_value' => ($agg->transactions ?? 0) > 0
+                    ? round($netSales / (int) $agg->transactions, 2)
+                    : 0,
+                'start_time' => $agg->first_sale_at,
+                'end_time' => $agg->last_sale_at,
+            ],
+            'payments' => [
+                'cash' => $cash,
+                'mpesa' => $mpesa,
+                'bank' => $bank,
+                'card' => 0,
+            ],
+            'tills' => $tillRows,
+            'cashiers' => $cashierRows,
+            'expenses' => $expenseRows,
+            'total_expenses' => $totalExpenses,
+            'debtors' => [
+                'opening' => null,
+                'new_credit_sales' => $creditSales,
+                'payments_received' => $creditPayments,
+                'closing' => $closingDebtors,
+            ],
+            'net_position' => $netPosition,
+        ]);
     }
 
     public function arAging(Request $request)

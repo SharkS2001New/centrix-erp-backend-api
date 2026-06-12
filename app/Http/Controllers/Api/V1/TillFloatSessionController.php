@@ -1,12 +1,117 @@
 <?php
+
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\TillFloatSession;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 class TillFloatSessionController extends BaseResourceController
 {
     protected function modelClass(): string
     {
         return TillFloatSession::class;
+    }
+
+    /** @param  mixed  $breakdown */
+    protected function normalizeFloatEntries($breakdown): array
+    {
+        if (! is_array($breakdown) || $breakdown === []) {
+            return [];
+        }
+
+        if (array_is_list($breakdown)) {
+            return array_values(array_filter(array_map(function ($entry) {
+                if (! is_array($entry)) {
+                    return null;
+                }
+
+                return [
+                    'new_float' => (float) ($entry['new_float'] ?? 0),
+                    'payment_type' => strtoupper((string) ($entry['payment_type'] ?? 'CASH')),
+                    'date_added' => $entry['date_added'] ?? now()->format('Y-m-d\TH:i:s.v'),
+                ];
+            }, $breakdown)));
+        }
+
+        $entries = [];
+        foreach ($breakdown as $type => $amount) {
+            if (is_numeric($amount)) {
+                $entries[] = [
+                    'new_float' => (float) $amount,
+                    'payment_type' => strtoupper((string) $type),
+                    'date_added' => now()->format('Y-m-d\TH:i:s.v'),
+                ];
+            }
+        }
+
+        return $entries;
+    }
+
+    protected function sumFloatEntries(array $entries): float
+    {
+        return array_sum(array_map(
+            fn (array $entry) => (float) ($entry['new_float'] ?? 0),
+            $entries,
+        ));
+    }
+
+    public function update(\Illuminate\Http\Request $request, string $id)
+    {
+        $session = TillFloatSession::findOrFail($id);
+        $data = $request->validate([
+            'notes' => 'nullable|string',
+            'float_breakdown' => 'nullable|array',
+            'working_amount' => 'nullable|numeric|min:0',
+        ]);
+
+        if (array_key_exists('float_breakdown', $data)) {
+            $entries = $this->normalizeFloatEntries($data['float_breakdown']);
+            $data['float_breakdown'] = $entries;
+            $data['working_amount'] = (int) round($this->sumFloatEntries($entries));
+        } elseif (array_key_exists('working_amount', $data)) {
+            $amount = (float) $data['working_amount'];
+            $entries = $this->normalizeFloatEntries($session->float_breakdown);
+            if ($entries === []) {
+                $entries = [[
+                    'new_float' => $amount,
+                    'payment_type' => 'CASH',
+                    'date_added' => now()->format('Y-m-d\TH:i:s.v'),
+                ]];
+            } else {
+                $entries[0]['new_float'] = $amount;
+            }
+            $data['float_breakdown'] = $entries;
+            $data['working_amount'] = (int) round($this->sumFloatEntries($entries));
+        }
+
+        $session->update($data);
+
+        return response()->json($session->fresh());
+    }
+
+    public function destroy(string $id)
+    {
+        $session = TillFloatSession::findOrFail($id);
+
+        $hasSales = DB::table('sales')->where('float_session_id', $session->id)->exists();
+        if ($hasSales) {
+            throw new InvalidArgumentException(
+                'This session has linked sales and cannot be deleted. Close it and keep it for history.',
+            );
+        }
+
+        if ($session->status === 'open') {
+            $session->update([
+                'status' => 'closed',
+                'closed_at' => now(),
+                'notes' => trim(($session->notes ?? '').' · Deleted while open'),
+            ]);
+        }
+
+        $session->delete();
+
+        return response()->json(null, 204);
     }
 }
