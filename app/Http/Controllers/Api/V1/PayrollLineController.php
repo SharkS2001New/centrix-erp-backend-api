@@ -26,7 +26,7 @@ class PayrollLineController extends BaseResourceController
         return response()->json($query->orderBy('id')->paginate($perPage));
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         $line = PayrollLine::with('employee')->findOrFail($id);
 

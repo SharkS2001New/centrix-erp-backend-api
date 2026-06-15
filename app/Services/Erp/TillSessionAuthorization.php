@@ -4,7 +4,7 @@ namespace App\Services\Erp;
 
 use App\Models\TillFloatSession;
 use App\Models\User;
-use Illuminate\Support\Facades\DB;
+use App\Services\Auth\UserPermissionService;
 use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 class TillSessionAuthorization
@@ -64,10 +64,6 @@ class TillSessionAuthorization
             return false;
         }
 
-        return DB::table('role_permissions')
-            ->join('permissions', 'permissions.id', '=', 'role_permissions.permission_id')
-            ->where('role_permissions.role_id', $user->role_id)
-            ->where('permissions.permission_code', $permission)
-            ->exists();
+        return app(UserPermissionService::class)->hasPermission($user, $permission);
     }
 }

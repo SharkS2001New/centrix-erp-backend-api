@@ -7,6 +7,7 @@ use App\Models\Driver;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\TemporaryCart;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class RouteModelController extends BaseResourceController
@@ -16,9 +17,9 @@ class RouteModelController extends BaseResourceController
         return RouteModel::class;
     }
 
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        $route = RouteModel::where($this->routeKeyColumn(), $id)->firstOrFail();
+        $route = $this->findScopedModel($request, $id);
 
         DB::transaction(function () use ($route) {
             Customer::where('route_id', $route->id)->update(['route_id' => null]);

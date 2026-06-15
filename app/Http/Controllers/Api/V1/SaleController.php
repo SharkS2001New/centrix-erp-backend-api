@@ -16,10 +16,10 @@ class SaleController extends BaseResourceController
         return Sale::class;
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         $sale = Sale::with(['items.product.unit'])->findOrFail($id);
-        $gate = $this->erp->gateForUser(request()->user());
+        $gate = $this->erp->gateForUser($request->user());
         $channel = $sale->channel ?: 'backend';
         $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
 

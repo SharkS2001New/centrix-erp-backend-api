@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
 use App\Http\Controllers\Api\V1\Operations\JournalOperationsController;
+use App\Http\Controllers\Api\V1\Operations\AccountingReportController;
 use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
@@ -82,6 +83,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware(['erp.module:accounting', 'erp.permission:accounting.manage'])->prefix('accounting')->group(function () {
         Route::post('journal-entries', [JournalOperationsController::class, 'store']);
         Route::post('journal-entries/{entryId}/post', [JournalOperationsController::class, 'post']);
+        Route::post('journal-entries/{entryId}/reverse', [JournalOperationsController::class, 'reverse']);
     });
 
     // ---- HR / Attendance (clock device) ----
@@ -141,6 +143,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('supplier-returns', [ReportController::class, 'supplierReturns']);
         Route::get('kra-receipts', [ReportController::class, 'kraReceipts']);
         Route::get('journal-register', [ReportController::class, 'journalRegister']);
+        Route::get('general-ledger', [AccountingReportController::class, 'generalLedger']);
+        Route::get('trial-balance', [AccountingReportController::class, 'trialBalance']);
+        Route::get('balance-sheet', [AccountingReportController::class, 'balanceSheet']);
+        Route::get('profit-loss-gl', [AccountingReportController::class, 'profitLossGl']);
+        Route::get('cash-flow', [AccountingReportController::class, 'cashFlow']);
+        Route::get('accounts-receivable', [AccountingReportController::class, 'accountsReceivable']);
+        Route::get('accounts-payable', [AccountingReportController::class, 'accountsPayable']);
         Route::get('till-sessions', [ReportController::class, 'tillSessions']);
         Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
         Route::get('audit-trail', [ReportController::class, 'auditTrail']);

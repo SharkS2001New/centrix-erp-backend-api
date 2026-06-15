@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Branch;
 use App\Models\User;
+use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class BranchController extends BaseResourceController
@@ -13,9 +14,9 @@ class BranchController extends BaseResourceController
         return Branch::class;
     }
 
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        $branch = Branch::findOrFail($id);
+        $branch = $this->findScopedModel($request, $id);
         $usersCount = User::query()->where('branch_id', $branch->id)->count();
 
         if ($usersCount > 0) {

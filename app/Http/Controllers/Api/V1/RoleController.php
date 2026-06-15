@@ -17,10 +17,23 @@ class RoleController extends BaseResourceController
         return Role::class;
     }
 
+    protected function scopesByOrganization(): bool
+    {
+        return false;
+    }
+
     public function index(Request $request)
     {
-        $response = parent::index($request);
-        $payload = $response->getData(true);
+        $orgId = $request->user()?->organization_id;
+        $query = Role::query()->where(function ($q) use ($orgId) {
+            $q->whereNull('organization_id');
+            if ($orgId) {
+                $q->orWhere('organization_id', $orgId);
+            }
+        });
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+        $payload = $query->paginate($perPage)->toArray();
         $ids = collect($payload['data'] ?? [])->pluck('id');
         $counts = User::query()
             ->whereIn('role_id', $ids)
@@ -87,7 +100,7 @@ class RoleController extends BaseResourceController
         ]);
     }
 
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
         $role = Role::findOrFail($id);
         $usersCount = User::query()->where('role_id', $role->id)->count();

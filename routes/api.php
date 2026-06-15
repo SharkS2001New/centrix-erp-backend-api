@@ -4,6 +4,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ErpSettingsController;
 use App\Http\Controllers\Api\V1\OrganizationController;
+use App\Http\Controllers\Api\V1\OrganizationProvisionController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\PermissionController;
@@ -53,14 +54,19 @@ use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 
 Route::prefix('v1')->group(function () {
     Route::post('auth/login', [AuthController::class, 'login']);
+    Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword']);
+    Route::post('auth/reset-password', [AuthController::class, 'resetPassword']);
     // Safaricom rejects callback URLs containing the word "mpesa" in the path.
     Route::post('payments/stk/callback', [MpesaPaymentController::class, 'stkCallback']);
     Route::post('payments/c2b/validation', [MpesaPaymentController::class, 'validationRequest']);
     Route::post('payments/c2b/confirmation', [MpesaPaymentController::class, 'c2bConfirmation']);
 
-    Route::middleware('auth:sanctum')->group(function () {
+    Route::middleware(['auth:sanctum', 'erp.tenant'])->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('auth/me', [AuthController::class, 'me']);
+        Route::post('auth/change-password', [AuthController::class, 'changePassword']);
+        Route::get('auth/memberships', [AuthController::class, 'memberships']);
+        Route::post('auth/switch-organization', [AuthController::class, 'switchOrganization']);
 
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
         Route::get('erp/profiles', [ErpCapabilitiesController::class, 'profiles'])
@@ -74,6 +80,9 @@ Route::prefix('v1')->group(function () {
         Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
 
+        Route::post('admin/organizations/provision', [OrganizationProvisionController::class, 'store'])
+            ->middleware(['erp.admin', 'erp.org_provisioning']);
+
         Route::apiResource('organizations', OrganizationController::class);
         Route::apiResource('branches', BranchController::class);
         Route::get('roles/permissions/matrix', [RoleController::class, 'permissionMatrix']);
@@ -81,7 +90,10 @@ Route::prefix('v1')->group(function () {
         Route::put('roles/{role}/permissions', [RoleController::class, 'syncPermissions']);
         Route::apiResource('roles', RoleController::class);
         Route::apiResource('permissions', PermissionController::class);
-        Route::apiResource('users', UserController::class);
+        Route::apiResource('users', UserController::class)->middleware('erp.admin');
+        Route::get('users/{user}/permissions', [UserController::class, 'permissions'])->middleware('erp.admin');
+        Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions'])->middleware('erp.admin');
+        Route::post('users/{user}/memberships', [UserController::class, 'addMembership'])->middleware('erp.admin');
 
         Route::middleware('erp.module:sales.pos')->group(function () {
             Route::apiResource('tills', TillController::class);

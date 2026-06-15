@@ -8,6 +8,17 @@
  */
 return [
 
+    'company_code' => env('APP_COMPANY_CODE'),
+
+    /** When true, org admins can provision new organizations via the admin API. */
+    'allow_org_provisioning' => filter_var(env('APP_ALLOW_ORG_PROVISIONING', false), FILTER_VALIDATE_BOOL),
+
+    /** Idle API tokens are revoked after this many minutes without a request. */
+    'session_idle_minutes' => (int) env('AUTH_SESSION_IDLE_MINUTES', 15),
+
+    /** Frontend base URL for password-reset links (no trailing slash). */
+    'frontend_url' => rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/'),
+
     'profiles' => [
         'small_shop' => [
             'label' => 'Small shop (backend sales only)',
@@ -80,7 +91,7 @@ return [
             'label' => 'LPO, receipts, transfers, stock ledger',
         ],
         'accounting' => [
-            'label' => 'Accounting (planned)',
+            'label' => 'General ledger, journals & financial reports',
         ],
         'hr_payroll' => [
             'label' => 'HR & payroll (planned)',
@@ -235,6 +246,9 @@ return [
             'kra_device_test_mode' => false,
             'kra_plu_register_path' => '/api/upload-plu-data',
             'default_submit_kra' => true,
+            'accounting_mode' => 'native',
+            'accounting_provider' => null,
+            'accounting_sync_direction' => 'export',
             'mpesa' => [
                 'env' => 'sandbox',
                 'consumer_key' => '',

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Till;
 use App\Models\TillFloatSession;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class TillController extends BaseResourceController
@@ -132,9 +133,9 @@ class TillController extends BaseResourceController
         return response()->json($model);
     }
 
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        $till = Till::findOrFail($id);
+        $till = $this->findScopedModel($request, $id);
 
         DB::transaction(function () use ($till) {
             $sessionIds = TillFloatSession::query()

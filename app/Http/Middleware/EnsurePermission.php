@@ -2,9 +2,9 @@
 
 namespace App\Http\Middleware;
 
+use App\Services\Auth\UserPermissionService;
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpFoundation\Response;
 
 class EnsurePermission
@@ -20,13 +20,7 @@ class EnsurePermission
             return $next($request);
         }
 
-        $has = DB::table('role_permissions')
-            ->join('permissions', 'permissions.id', '=', 'role_permissions.permission_id')
-            ->where('role_permissions.role_id', $user->role_id)
-            ->where('permissions.permission_code', $permission)
-            ->exists();
-
-        if (! $has) {
+        if (! app(UserPermissionService::class)->hasPermission($user, $permission)) {
             return response()->json([
                 'message' => 'You do not have permission to perform this action.',
                 'permission' => $permission,

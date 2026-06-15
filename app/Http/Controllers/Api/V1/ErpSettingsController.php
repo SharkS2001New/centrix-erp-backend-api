@@ -266,6 +266,9 @@ class ErpSettingsController extends Controller
             'mpesa.stk_callback_url' => 'sometimes|nullable|string|max:500',
             'mpesa.c2b_confirmation_url' => 'sometimes|nullable|string|max:500',
             'mpesa.c2b_validation_url' => 'sometimes|nullable|string|max:500',
+            'accounting_mode' => 'sometimes|in:native,external',
+            'accounting_provider' => 'sometimes|nullable|in:quickbooks,xero,sage',
+            'accounting_sync_direction' => 'sometimes|in:export,import,bidirectional',
         ]);
 
         if (! empty($data['enable_kra_device'])) {

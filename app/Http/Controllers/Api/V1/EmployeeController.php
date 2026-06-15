@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Employee;
 use App\Models\PayrollLine;
+use App\Services\Auth\UserLoginService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
@@ -58,7 +59,7 @@ class EmployeeController extends BaseResourceController
         return response()->json($query->orderBy('full_name')->paginate($perPage));
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         $employee = Employee::with($this->employeeRelations())->findOrFail($id);
 
@@ -69,16 +70,20 @@ class EmployeeController extends BaseResourceController
     {
         $data = $this->prepareEmployeeData($request);
         $employee = Employee::create($data);
+        $employee = $employee->load($this->employeeRelations());
+        app(UserLoginService::class)->syncFromEmployee($employee);
 
-        return response()->json($employee->load($this->employeeRelations()), 201);
+        return response()->json($employee, 201);
     }
 
     public function update(Request $request, string $id)
     {
         $employee = Employee::findOrFail($id);
         $employee->update($this->prepareEmployeeData($request, $employee));
+        $employee = $employee->fresh($this->employeeRelations());
+        app(UserLoginService::class)->syncFromEmployee($employee);
 
-        return response()->json($employee->fresh($this->employeeRelations()));
+        return response()->json($employee);
     }
 
     public function payrollLines(Request $request, int $employee)

@@ -60,7 +60,7 @@ DROP TABLE IF EXISTS branches;
 CREATE TABLE branches (
     id             INT           PRIMARY KEY AUTO_INCREMENT,
     organization_id INT          NOT NULL,
-    branch_code    VARCHAR(45)   UNIQUE NOT NULL,
+    branch_code    VARCHAR(45)   NOT NULL,
     branch_name    VARCHAR(200)  NOT NULL,
     branch_address VARCHAR(400),
     branch_phone   VARCHAR(45),
@@ -72,6 +72,7 @@ CREATE TABLE branches (
     created_at     TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at     TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    UNIQUE KEY uq_org_branch_code (organization_id, branch_code),
     INDEX idx_branch_type (branch_type),
     INDEX idx_is_active   (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -102,18 +103,29 @@ CREATE TABLE role_permissions (
     FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+DROP TABLE IF EXISTS user_permission_overrides;
+CREATE TABLE user_permission_overrides (
+    user_id       INT NOT NULL,
+    permission_id INT NOT NULL,
+    effect        ENUM('grant','deny') NOT NULL,
+    PRIMARY KEY (user_id, permission_id),
+    FOREIGN KEY (user_id)       REFERENCES users(id)       ON DELETE CASCADE,
+    FOREIGN KEY (permission_id) REFERENCES permissions(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 DROP TABLE IF EXISTS users;
 CREATE TABLE users (
     id             INT           PRIMARY KEY AUTO_INCREMENT,
     organization_id INT          NOT NULL,
     branch_id      INT           NULL,
     role_id        INT           NOT NULL,
-    username       VARCHAR(50)   UNIQUE NOT NULL,
+    username       VARCHAR(50)   NOT NULL,
     email          VARCHAR(255),
     password       VARCHAR(255)  NOT NULL,
     full_name      VARCHAR(200)  NOT NULL,
     is_admin       TINYINT       DEFAULT 0,
     is_mobile_user TINYINT       DEFAULT 0,
+    login_channels JSON          NULL,
     is_active      BOOLEAN       DEFAULT TRUE,
     last_login     TIMESTAMP     NULL,
     created_at     TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
@@ -124,6 +136,7 @@ CREATE TABLE users (
     FOREIGN KEY (branch_id)     REFERENCES branches(id),
     FOREIGN KEY (role_id)         REFERENCES roles(id),
     FOREIGN KEY (deleted_by)      REFERENCES users(id),
+    UNIQUE KEY uq_org_username (organization_id, username),
     INDEX idx_username   (username),
     INDEX idx_is_mobile  (is_mobile_user),
     INDEX idx_is_active  (is_active)

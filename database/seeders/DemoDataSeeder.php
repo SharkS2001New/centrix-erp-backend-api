@@ -455,8 +455,28 @@ class DemoDataSeeder extends Seeder
             ['account_name' => 'Cash', 'account_type' => 'asset', 'is_active' => true]
         );
         \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '1100'],
+            ['account_name' => 'Bank Account', 'account_type' => 'asset', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '1200'],
+            ['account_name' => 'Accounts Receivable', 'account_type' => 'asset', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '2000'],
+            ['account_name' => 'Accounts Payable', 'account_type' => 'liability', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '3000'],
+            ['account_name' => 'Owner Equity', 'account_type' => 'equity', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
             ['organization_id' => $org->id, 'account_code' => '4000'],
             ['account_name' => 'Sales Revenue', 'account_type' => 'revenue', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '5000'],
+            ['account_name' => 'Cost of Goods Sold', 'account_type' => 'expense', 'is_active' => true]
         );
         \App\Models\ChartOfAccount::firstOrCreate(
             ['organization_id' => $org->id, 'account_code' => '5100'],

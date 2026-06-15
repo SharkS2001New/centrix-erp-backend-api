@@ -36,7 +36,7 @@ class DriverController extends BaseResourceController
         return response()->json($query->orderBy('full_name')->paginate($perPage));
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         $driver = Driver::with(['defaultVehicle', 'defaultRoute', 'branch'])->findOrFail($id);
 

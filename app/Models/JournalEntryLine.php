@@ -1,8 +1,10 @@
 <?php
+
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class JournalEntryLine extends Model
 {
@@ -10,12 +12,18 @@ class JournalEntryLine extends Model
 
     public $timestamps = false;
 
-    protected $table = "journal_entry_lines";
-    protected $fillable = array (
-  0 => 'journal_entry_id',
-  1 => 'account_id',
-  2 => 'debit',
-  3 => 'credit',
-  4 => 'line_notes',
-);
+    protected $table = 'journal_entry_lines';
+
+    protected $fillable = [
+        'journal_entry_id',
+        'account_id',
+        'debit',
+        'credit',
+        'line_notes',
+    ];
+
+    public function account(): BelongsTo
+    {
+        return $this->belongsTo(ChartOfAccount::class, 'account_id');
+    }
 }

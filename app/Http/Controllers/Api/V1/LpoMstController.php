@@ -23,14 +23,14 @@ class LpoMstController extends BaseResourceController
         return 'lpo_no';
     }
 
-    protected function baseQuery()
+    protected function baseQuery(Request $request)
     {
-        return LpoMst::query()->whereNull('deleted_at');
+        return parent::baseQuery($request)->whereNull('deleted_at');
     }
 
     public function index(Request $request)
     {
-        $query = $this->baseQuery();
+        $query = $this->baseQuery($request);
 
         if ($request->filled('supplier_id')) {
             $query->where('supplier_id', $request->input('supplier_id'));
@@ -61,10 +61,10 @@ class LpoMstController extends BaseResourceController
         return response()->json($query->orderByDesc('lpo_no')->paginate($perPage));
     }
 
-    public function dashboard()
+    public function dashboard(Request $request)
     {
         $startOfMonth = now()->startOfMonth();
-        $base = $this->baseQuery();
+        $base = $this->baseQuery($request);
 
         $monthly = (clone $base)->where(function ($q) use ($startOfMonth) {
             $q->where('created_at', '>=', $startOfMonth)
@@ -89,25 +89,25 @@ class LpoMstController extends BaseResourceController
         return response()->json($this->lpoModule->summary((int) $lpoNo));
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
-        $model = $this->baseQuery()->where($this->routeKeyColumn(), $id)->firstOrFail();
+        $model = $this->baseQuery($request)->where($this->routeKeyColumn(), $id)->firstOrFail();
 
         return response()->json($model);
     }
 
     public function update(Request $request, string $id)
     {
-        $model = $this->baseQuery()->where($this->routeKeyColumn(), $id)->firstOrFail();
+        $model = $this->baseQuery($request)->where($this->routeKeyColumn(), $id)->firstOrFail();
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $model->update($request->validate($rules));
 
         return response()->json($model);
     }
 
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        $model = $this->baseQuery()->where($this->routeKeyColumn(), $id)->firstOrFail();
+        $model = $this->baseQuery($request)->where($this->routeKeyColumn(), $id)->firstOrFail();
         $model->update([
             'deleted_at' => now(),
         ]);

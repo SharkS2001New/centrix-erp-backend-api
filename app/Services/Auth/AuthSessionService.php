@@ -1,0 +1,169 @@
+<?php
+
+namespace App\Services\Auth;
+
+use App\Models\PersonalAccessToken;
+use App\Models\User;
+use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\ValidationException;
+
+class AuthSessionService
+{
+    public function __construct(
+        protected TenantAccountResolver $resolver,
+        protected UserLoginChannelService $loginChannels,
+    ) {}
+
+    /**
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    public function login(
+        string $companyCode,
+        string $username,
+        string $password,
+        string $clientId,
+        bool $forceLogout = false,
+        string $loginChannel = UserLoginChannelService::BACKOFFICE,
+    ): array {
+        $companyCode = strtoupper(trim($companyCode));
+        if ($companyCode === '') {
+            throw ValidationException::withMessages([
+                'company_code' => ['Organization code is required.'],
+            ]);
+        }
+
+        $org = \App\Models\Organization::where('company_code', $companyCode)->first();
+        if (! $org) {
+            throw ValidationException::withMessages([
+                'username' => ['Invalid credentials.'],
+            ]);
+        }
+
+        $account = $this->resolver->resolve($org, $username);
+        if (! $account || ! Hash::check($password, $account->authUser->password)) {
+            throw ValidationException::withMessages([
+                'username' => ['Invalid credentials.'],
+            ]);
+        }
+
+        return $this->issueSession($account, $clientId, $forceLogout, $loginChannel);
+    }
+
+    /**
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    public function switchOrganization(
+        User $currentUser,
+        string $companyCode,
+        string $clientId,
+        string $loginChannel = UserLoginChannelService::BACKOFFICE,
+    ): array
+    {
+        $companyCode = strtoupper(trim($companyCode));
+        $org = \App\Models\Organization::where('company_code', $companyCode)->firstOrFail();
+
+        $canonicalId = (int) $currentUser->id;
+        $account = $this->resolver->resolveForCanonicalUser($org, $canonicalId);
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'company_code' => ['You do not have access to this organization.'],
+            ]);
+        }
+
+        $currentUser->currentAccessToken()?->delete();
+
+        return $this->issueSession($account, $clientId, forceLogout: false, loginChannel: $loginChannel);
+    }
+
+    /**
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    protected function issueSession(
+        TenantAccount $account,
+        string $clientId,
+        bool $forceLogout,
+        string $loginChannel,
+    ): array {
+        $authUser = $account->authUser;
+        $effective = $account->effectiveUser();
+        $loginChannel = $this->loginChannels->normalizeChannel($loginChannel);
+        $this->loginChannels->assertCanLogin($effective, $loginChannel);
+
+        if ($forceLogout) {
+            $authUser->tokens()->delete();
+        } else {
+            $this->pruneStaleTokens($authUser);
+            $this->assertNoActiveSessionElsewhere($authUser, $clientId);
+            $authUser->tokens()->where('name', $clientId)->delete();
+        }
+
+        $authUser->forceFill(['last_login' => now()])->save();
+
+        $newToken = $authUser->createToken($clientId);
+        /** @var PersonalAccessToken $accessToken */
+        $accessToken = $newToken->accessToken;
+        $accessToken->forceFill([
+            'organization_id' => $account->organization->id,
+            'user_membership_id' => $account->membership?->id,
+            'login_channel' => $loginChannel,
+        ])->save();
+
+        $memberships = $this->resolver->membershipsForCanonicalUser($account->canonicalUserId());
+
+        return [
+            'token' => $newToken->plainTextToken,
+            'user' => $effective,
+            'organization' => $account->organization,
+            'memberships' => $memberships,
+        ];
+    }
+
+    protected function pruneStaleTokens(User $authUser): void
+    {
+        $idleMinutes = max(1, (int) config('erp.session_idle_minutes', 15));
+        $idleCutoff = now()->subMinutes($idleMinutes);
+        // Tokens that were issued but never used (e.g. closed tab before first API call).
+        $abandonedMinutes = min(5, $idleMinutes);
+        $abandonedCutoff = now()->subMinutes($abandonedMinutes);
+
+        $authUser->tokens()
+            ->where(function ($query) use ($idleCutoff, $abandonedCutoff) {
+                $query
+                    ->where(function ($q) use ($idleCutoff) {
+                        $q->whereNotNull('last_used_at')
+                            ->where('last_used_at', '<', $idleCutoff);
+                    })
+                    ->orWhere(function ($q) use ($idleCutoff) {
+                        $q->whereNull('last_used_at')
+                            ->where('created_at', '<', $idleCutoff);
+                    })
+                    ->orWhere(function ($q) use ($abandonedCutoff) {
+                        $q->whereNull('last_used_at')
+                            ->where('created_at', '<', $abandonedCutoff);
+                    });
+            })
+            ->delete();
+    }
+
+    protected function assertNoActiveSessionElsewhere(User $authUser, string $clientId): void
+    {
+        $idleMinutes = max(1, (int) config('erp.session_idle_minutes', 15));
+
+        $activeTokenExists = $authUser->tokens()
+            ->where('name', '!=', $clientId)
+            ->where(function ($query) use ($idleMinutes) {
+                $query->where('last_used_at', '>=', now()->subMinutes($idleMinutes))
+                    ->orWhere(function ($q) use ($idleMinutes) {
+                        $q->whereNull('last_used_at')
+                            ->where('created_at', '>=', now()->subMinutes($idleMinutes));
+                    });
+            })
+            ->exists();
+
+        if ($activeTokenExists) {
+            throw ValidationException::withMessages([
+                'session' => ['This user is already logged in on another device.'],
+            ]);
+        }
+    }
+}

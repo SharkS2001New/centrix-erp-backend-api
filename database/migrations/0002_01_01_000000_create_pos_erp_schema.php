@@ -46,7 +46,7 @@ return new class extends Migration {
             'inventory_transactions','current_stock','customers','routes',
             'price_history','retail_package_settings','products',
             'sub_categories','categories','uoms','vats','suppliers',
-            'till_float_sessions','tills','users','role_permissions',
+            'till_float_sessions','tills','users','user_permission_overrides','role_permissions',
             'permissions','roles','branches','organizations',
         ];
         foreach ($objects as $name) {

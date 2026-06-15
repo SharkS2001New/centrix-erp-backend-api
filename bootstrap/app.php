@@ -16,6 +16,9 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->statefulApi();
+        $middleware->prependToGroup('api', \App\Http\Middleware\EnsureSessionNotIdle::class);
+        $middleware->prependToGroup('api', \App\Http\Middleware\EnsureUserIsActive::class);
+        $middleware->prependToGroup('api', \App\Http\Middleware\EnsureLoginChannel::class);
         $middleware->redirectGuestsTo(function (Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
                 return null;
@@ -27,6 +30,9 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.module' => \App\Http\Middleware\EnsureErpModule::class,
             'erp.permission' => \App\Http\Middleware\EnsurePermission::class,
             'erp.admin' => \App\Http\Middleware\EnsureAdmin::class,
+            'erp.org_provisioning' => \App\Http\Middleware\EnsureOrgProvisioningAllowed::class,
+            'erp.tenant' => \App\Http\Middleware\ResolveActingTenantUser::class,
+            'erp.session_idle' => \App\Http\Middleware\EnsureSessionNotIdle::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

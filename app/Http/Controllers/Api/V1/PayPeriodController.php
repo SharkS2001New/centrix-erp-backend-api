@@ -94,14 +94,14 @@ class PayPeriodController extends BaseResourceController
     }
 
     /** DELETE /pay-periods/{id} — admin only; blocked if payroll runs exist */
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        if (! request()->user()?->is_admin) {
+        if (! $request->user()?->is_admin) {
             return response()->json(['message' => 'Only administrators can delete pay periods.'], 403);
         }
 
         $query = PayPeriod::query();
-        if ($orgId = request()->user()?->organization_id) {
+        if ($orgId = $request->user()?->organization_id) {
             $query->where('organization_id', $orgId);
         }
         $period = $query->findOrFail((int) $id);

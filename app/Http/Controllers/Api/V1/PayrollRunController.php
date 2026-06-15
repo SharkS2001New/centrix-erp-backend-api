@@ -56,7 +56,7 @@ class PayrollRunController extends BaseResourceController
         return response()->json($this->runWithMeta($run->load('payPeriod')), 201);
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         $run = PayrollRun::with('payPeriod')
             ->withCount('lines as employee_count')
@@ -68,9 +68,9 @@ class PayrollRunController extends BaseResourceController
     /**
      * Admin only — delete run and lines; restore closed attendance, overtime, advances, etc.
      */
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        if (! request()->user()?->is_admin) {
+        if (! $request->user()?->is_admin) {
             return response()->json(['message' => 'Only administrators can delete payroll runs.'], 403);
         }
 

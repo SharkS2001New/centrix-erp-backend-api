@@ -106,9 +106,9 @@ class TillFloatSessionController extends BaseResourceController
         return response()->json($session->fresh());
     }
 
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        $session = TillFloatSession::findOrFail($id);
+        $session = $this->findScopedModel($request, $id);
 
         $hasSales = DB::table('sales')->where('float_session_id', $session->id)->exists();
         if ($hasSales) {

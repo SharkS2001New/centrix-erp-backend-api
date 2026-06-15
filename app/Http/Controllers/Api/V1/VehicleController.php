@@ -13,7 +13,7 @@ class VehicleController extends BaseResourceController
         return Vehicle::class;
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         $vehicle = Vehicle::with('branch')->findOrFail($id);
 
