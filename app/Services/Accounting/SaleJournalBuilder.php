@@ -9,6 +9,7 @@ class SaleJournalBuilder
 {
     public function __construct(
         protected JournalPostingService $posting,
+        protected SaleCogsCalculator $cogsCalculator,
     ) {}
 
     /** @return array<int, array<string, mixed>>|null */
@@ -111,9 +112,31 @@ class SaleJournalBuilder
             ];
         }
 
-        $creditTotal = round($net + $vat, 2);
-        if (round($debitTotal, 2) !== $creditTotal) {
-            $diff = round($creditTotal - $debitTotal, 2);
+        $cogsAmount = $this->cogsCalculator->totalCostForSale($sale);
+        if ($cogsAmount > 0) {
+            $cogsAccount = $this->posting->resolveAccount($orgId, $codes['cogs'] ?? '5000');
+            $inventoryAccount = $this->posting->resolveAccount($orgId, $codes['inventory'] ?? '1300');
+            if ($cogsAccount && $inventoryAccount) {
+                $lines[] = [
+                    'account_id' => $cogsAccount->id,
+                    'debit' => $cogsAmount,
+                    'credit' => 0,
+                    'line_notes' => 'Cost of goods sold',
+                ];
+                $lines[] = [
+                    'account_id' => $inventoryAccount->id,
+                    'debit' => 0,
+                    'credit' => $cogsAmount,
+                    'line_notes' => 'Inventory relief',
+                ];
+                $debitTotal += $cogsAmount;
+            }
+        }
+
+        $debits = round(collect($lines)->sum(fn ($line) => (float) ($line['debit'] ?? 0)), 2);
+        $credits = round(collect($lines)->sum(fn ($line) => (float) ($line['credit'] ?? 0)), 2);
+        if ($debits !== $credits) {
+            $diff = round($credits - $debits, 2);
             if (abs($diff) <= 0.02 && $lines !== []) {
                 $lines[0]['debit'] = round((float) $lines[0]['debit'] + $diff, 2);
             } else {

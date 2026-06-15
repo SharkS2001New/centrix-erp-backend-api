@@ -81,6 +81,7 @@ class OrganizationProvisioningService
                 'password' => Hash::make($data['admin_password']),
                 'full_name' => $data['admin_full_name'],
                 'is_admin' => 1,
+                'is_super_admin' => 0,
                 'access_scope' => 'org',
                 'login_channels' => ['backoffice', 'pos', 'mobile'],
                 'is_active' => true,

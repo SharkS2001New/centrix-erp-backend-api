@@ -140,6 +140,48 @@ class JournalExportService
         return compact('processed', 'exported', 'failed');
     }
 
+    public function queueReversal(AccountingExportQueue $original, CapabilityGate $gate): ?AccountingExportQueue
+    {
+        $settings = $this->settings->fromFinanceSettings($gate->moduleSettings('finance'));
+        if (! $settings->exportsEnabled()) {
+            return null;
+        }
+
+        $lines = is_array($original->lines) ? $original->lines : [];
+        if ($lines === []) {
+            return null;
+        }
+
+        $inverted = collect($lines)->map(function ($line) {
+            return [
+                'account_code' => $line['account_code'] ?? null,
+                'account_name' => $line['account_name'] ?? null,
+                'debit' => (float) ($line['credit'] ?? 0),
+                'credit' => (float) ($line['debit'] ?? 0),
+                'line_notes' => 'Reversal: '.($line['line_notes'] ?? ''),
+            ];
+        })->all();
+
+        $provider = $original->provider ?: ($settings->provider() ?? 'quickbooks');
+        $reversalNumber = $original->entry_number.'-REV';
+
+        return AccountingExportQueue::firstOrCreate(
+            [
+                'organization_id' => $original->organization_id,
+                'provider' => $provider,
+                'reference_type' => 'journal_reversal',
+                'reference_id' => (int) $original->id,
+            ],
+            [
+                'entry_number' => $reversalNumber,
+                'entry_date' => now()->toDateString(),
+                'description' => 'Reversal of '.$original->entry_number,
+                'lines' => $inverted,
+                'status' => 'pending',
+            ],
+        );
+    }
+
     /** @return Collection<int, AccountingExportQueue> */
     public function listQueue(int $orgId, ?string $status = null): Collection
     {

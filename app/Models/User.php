@@ -14,11 +14,13 @@ class User extends Authenticatable
     protected $table = 'users';
     protected $fillable = [
         'organization_id', 'branch_id', 'role_id', 'username', 'email', 'password',
-        'full_name', 'is_admin', 'access_scope', 'is_mobile_user', 'login_channels', 'is_active', 'last_login',
+        'full_name', 'is_admin', 'is_super_admin', 'access_scope', 'is_mobile_user', 'login_channels', 'is_active', 'last_login',
         'deleted_by', 'deleted_at',
     ];
     protected $hidden = ['password'];
     protected $casts = [
+        'is_admin' => 'boolean',
+        'is_super_admin' => 'boolean',
         'is_active' => 'boolean',
         'is_mobile_user' => 'boolean',
         'login_channels' => 'array',

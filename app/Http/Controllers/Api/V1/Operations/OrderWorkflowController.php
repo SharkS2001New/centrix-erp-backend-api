@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use Illuminate\Http\Request;
@@ -51,7 +52,14 @@ class OrderWorkflowController extends Controller
                 'cancelled_by' => $user->id,
             ]);
 
-            return $sale;
+            app(ReferenceJournalReversalService::class)->reverseIfEnabled(
+                'sale',
+                (int) $sale->id,
+                $user,
+                $this->erp->gateForUser($user),
+            );
+
+            return $sale->fresh();
         }
 
         $updates = ['status' => $toStatus];

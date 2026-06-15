@@ -12,6 +12,7 @@ use App\Models\CartLine;
 use App\Models\CustomerInvoice;
 use App\Models\KraResponse;
 use App\Models\PaymentMethod;
+use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\SalePayment;
@@ -219,6 +220,7 @@ class CheckoutController extends Controller
                 ]);
 
                 if ($input['deduct_stock'] ?? true) {
+                    $unitCost = max(0, (float) (Product::query()->find($line->product_code)?->last_cost_price ?? 0));
                     $this->postStockLedger([
                         'branch_id' => $sale->branch_id,
                         'product_code' => $line->product_code,
@@ -227,6 +229,7 @@ class CheckoutController extends Controller
                         'reference_type' => 'sale',
                         'reference_id' => $sale->id,
                         'quantity_change' => -abs((float) $line->quantity),
+                        'unit_cost' => $unitCost > 0 ? $unitCost : null,
                         'created_by' => $user->id,
                     ], $allowBelowStock);
                     $stockDeducted = true;

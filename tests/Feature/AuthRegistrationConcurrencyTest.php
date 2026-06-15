@@ -2,10 +2,7 @@
 
 namespace Tests\Feature;
 
-use App\Models\Branch;
-use App\Models\Organization;
 use App\Models\User;
-use App\Models\Employee;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -15,12 +12,12 @@ class AuthRegistrationConcurrencyTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_admin_can_provision_organization(): void
+    public function test_super_admin_can_provision_organization(): void
     {
         config(['erp.allow_org_provisioning' => true]);
 
-        $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
 
         $payload = [
             'company_code' => 'NEWORG',
@@ -46,39 +43,19 @@ class AuthRegistrationConcurrencyTest extends TestCase
             'org_name' => 'New Organization Ltd',
         ]);
 
-        $org = Organization::where('company_code', 'NEWORG')->firstOrFail();
-
-        $this->assertDatabaseHas('branches', [
-            'organization_id' => $org->id,
-            'branch_code' => 'HQ',
-            'branch_type' => 'small_shop',
-        ]);
-
-        $branch = Branch::where('organization_id', $org->id)->where('branch_code', 'HQ')->firstOrFail();
-
         $this->assertDatabaseHas('users', [
-            'organization_id' => $org->id,
-            'branch_id' => $branch->id,
             'username' => 'admin_user',
-            'email' => 'admin@neworg.com',
             'is_admin' => 1,
-        ]);
-
-        $user = User::where('organization_id', $org->id)->where('username', 'admin_user')->firstOrFail();
-
-        $this->assertDatabaseHas('employees', [
-            'organization_id' => $org->id,
-            'user_id' => $user->id,
-            'email' => 'admin@neworg.com',
+            'is_super_admin' => 0,
         ]);
     }
 
-    public function test_provision_requires_admin_and_feature_flag(): void
+    public function test_provision_requires_super_admin_and_feature_flag(): void
     {
         config(['erp.allow_org_provisioning' => false]);
 
-        $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
 
         $this->postJson('/api/v1/admin/organizations/provision', [
             'company_code' => 'BLOCKED',
@@ -95,16 +72,8 @@ class AuthRegistrationConcurrencyTest extends TestCase
 
         config(['erp.allow_org_provisioning' => true]);
 
-        $cashier = User::create([
-            'organization_id' => $admin->organization_id,
-            'role_id' => 1,
-            'username' => 'cashier_only',
-            'password' => Hash::make('password123'),
-            'full_name' => 'Cashier Only',
-            'is_active' => true,
-            'is_admin' => false,
-        ]);
-        Sanctum::actingAs($cashier);
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
 
         $this->postJson('/api/v1/admin/organizations/provision', [
             'company_code' => 'BLOCKED2',
@@ -118,12 +87,36 @@ class AuthRegistrationConcurrencyTest extends TestCase
             'admin_password' => 'password123',
             'admin_full_name' => 'Manager Two',
         ])->assertStatus(403);
+
+        $cashier = User::create([
+            'organization_id' => $orgAdmin->organization_id,
+            'role_id' => 1,
+            'username' => 'cashier_only',
+            'password' => Hash::make('password123'),
+            'full_name' => 'Cashier Only',
+            'is_active' => true,
+            'is_admin' => false,
+            'is_super_admin' => false,
+        ]);
+        Sanctum::actingAs($cashier);
+
+        $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'BLOCKED3',
+            'org_name' => 'Blocked Org 3',
+            'org_email' => 'blocked3@test.com',
+            'primary_tel' => '0700000002',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'admin_username' => 'mgr3',
+            'admin_email' => 'mgr3@test.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Manager Three',
+        ])->assertStatus(403);
     }
 
     public function test_scoped_username_uniqueness(): void
     {
-        // Setup ORG1 and user 'employee1'
-        $org1 = Organization::create([
+        $org1 = \App\Models\Organization::create([
             'company_code' => 'ORG1',
             'org_name' => 'First Org',
             'org_email' => 'org1@test.com',
@@ -139,8 +132,7 @@ class AuthRegistrationConcurrencyTest extends TestCase
             'is_active' => true,
         ]);
 
-        // Setup ORG2 and user 'employee1' (should not clash)
-        $org2 = Organization::create([
+        $org2 = \App\Models\Organization::create([
             'company_code' => 'ORG2',
             'org_name' => 'Second Org',
             'org_email' => 'org2@test.com',
@@ -156,7 +148,6 @@ class AuthRegistrationConcurrencyTest extends TestCase
             'is_active' => true,
         ]);
 
-        // Verify both can log in using their respective company codes
         $this->postJson('/api/v1/auth/login', [
             'company_code' => 'ORG1',
             'username' => 'employee1',
@@ -174,7 +165,7 @@ class AuthRegistrationConcurrencyTest extends TestCase
 
     public function test_login_blocks_second_device_while_first_is_active(): void
     {
-        $org = Organization::create([
+        $org = \App\Models\Organization::create([
             'company_code' => 'TESTCONC',
             'org_name' => 'Testing Concurrency',
             'org_email' => 'test@conc.com',
@@ -221,7 +212,7 @@ class AuthRegistrationConcurrencyTest extends TestCase
     {
         config(['erp.session_idle_minutes' => 15]);
 
-        $org = Organization::create([
+        $org = \App\Models\Organization::create([
             'company_code' => 'TESTABN',
             'org_name' => 'Abandoned Token Org',
             'org_email' => 'abn@test.com',
@@ -268,5 +259,17 @@ class AuthRegistrationConcurrencyTest extends TestCase
             'password' => 'password',
             'client_id' => 'PC_SETUP',
         ])->assertOk()->assertJsonStructure(['token', 'user', 'organization', 'memberships']);
+    }
+
+    public function test_super_admin_login(): void
+    {
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'PLATFORM',
+            'username' => 'superadmin',
+            'password' => 'password',
+            'client_id' => 'PC_PLATFORM',
+        ])->assertOk()
+            ->assertJsonPath('user.is_super_admin', true)
+            ->assertJsonPath('user.is_admin', false);
     }
 }

@@ -11,7 +11,10 @@ return [
     'company_code' => env('APP_COMPANY_CODE'),
 
     /** When true, org admins can provision new organizations via the admin API. */
-    'allow_org_provisioning' => filter_var(env('APP_ALLOW_ORG_PROVISIONING', false), FILTER_VALIDATE_BOOL),
+    'allow_org_provisioning' => filter_var(env('APP_ALLOW_ORG_PROVISIONING', true), FILTER_VALIDATE_BOOL),
+
+    /** Company code for the platform super-admin organization (login target). */
+    'platform_company_code' => strtoupper(env('APP_PLATFORM_COMPANY_CODE', 'PLATFORM')),
 
     /** Idle API tokens are revoked after this many minutes without a request. */
     'session_idle_minutes' => (int) env('AUTH_SESSION_IDLE_MINUTES', 15),
@@ -20,6 +23,22 @@ return [
     'frontend_url' => rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/'),
 
     'profiles' => [
+        'platform' => [
+            'label' => 'Platform operator',
+            'modules' => [
+                'sales.backend' => false,
+                'sales.pos' => false,
+                'sales.mobile' => false,
+                'payments' => false,
+                'inventory' => false,
+                'accounting' => false,
+                'hr_payroll' => false,
+                'admin' => false,
+                'customers_suppliers' => false,
+                'reports' => false,
+            ],
+            'default_channels' => ['backend'],
+        ],
         'small_shop' => [
             'label' => 'Small shop (backend sales only)',
             'modules' => [

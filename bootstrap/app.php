@@ -30,6 +30,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.module' => \App\Http\Middleware\EnsureErpModule::class,
             'erp.permission' => \App\Http\Middleware\EnsurePermission::class,
             'erp.admin' => \App\Http\Middleware\EnsureAdmin::class,
+            'erp.super_admin' => \App\Http\Middleware\EnsureSuperAdmin::class,
             'erp.org_provisioning' => \App\Http\Middleware\EnsureOrgProvisioningAllowed::class,
             'erp.tenant' => \App\Http\Middleware\ResolveActingTenantUser::class,
             'erp.session_idle' => \App\Http\Middleware\EnsureSessionNotIdle::class,

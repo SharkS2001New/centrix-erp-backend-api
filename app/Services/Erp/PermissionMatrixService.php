@@ -9,19 +9,12 @@ class PermissionMatrixService
     /** @return array<string, string> module key => display label */
     public static function modules(): array
     {
-        return [
-            'dashboard' => 'Dashboard',
-            'sales' => 'Sales',
-            'inventory' => 'Inventory',
-            'purchasing' => 'Procurement',
-            'accounting' => 'Finance',
-            'hr' => 'HR & Payroll',
-            'admin' => 'Administration',
-            'catalogue' => 'Products',
-            'reports' => 'Reports',
-            'payments' => 'Payments',
-            'pos' => 'Point of sale',
-        ];
+        $modules = [];
+        foreach (config('permission_registry.groups', []) as $key => $group) {
+            $modules[$key] = $group['label'];
+        }
+
+        return $modules;
     }
 
     /** @return list<string> */
@@ -30,17 +23,124 @@ class PermissionMatrixService
         return ['view', 'create', 'edit', 'delete', 'approve'];
     }
 
-    public static function ensure(): void
+    /** @return list<string> */
+    public static function allRegistryCodes(): array
     {
-        foreach (self::modules() as $module => $label) {
-            foreach (self::actions() as $action) {
-                $code = "{$module}.{$action}";
-                $name = "{$label} — ".ucfirst($action);
-                Permission::firstOrCreate(
-                    ['permission_code' => $code],
-                    ['permission_name' => $name, 'module' => $module]
-                );
+        $codes = [];
+        foreach (config('permission_registry.groups', []) as $moduleKey => $group) {
+            foreach ($group['features'] as $featureKey => $feature) {
+                foreach ($feature['actions'] as $action) {
+                    $codes[] = "{$moduleKey}.{$featureKey}.{$action}";
+                }
             }
         }
+
+        return $codes;
+    }
+
+    public static function ensure(): void
+    {
+        self::ensureRegistryPermissions();
+        self::ensureCapabilityCodes();
+    }
+
+    public static function ensureRegistryPermissions(): void
+    {
+        foreach (config('permission_registry.groups', []) as $moduleKey => $group) {
+            foreach ($group['features'] as $featureKey => $feature) {
+                foreach ($feature['actions'] as $action) {
+                    $code = "{$moduleKey}.{$featureKey}.{$action}";
+                    $name = "{$group['label']} / {$feature['label']} — ".ucfirst($action);
+                    Permission::firstOrCreate(
+                        ['permission_code' => $code],
+                        ['permission_name' => $name, 'module' => $moduleKey]
+                    );
+                }
+            }
+        }
+    }
+
+    /** Route capability codes used by erp.permission middleware. */
+    public static function ensureCapabilityCodes(): void
+    {
+        $moduleByCode = [
+            'sales.create' => 'sales',
+            'sales.manage' => 'sales',
+            'payments.manage' => 'payments',
+            'inventory.view' => 'inventory',
+            'inventory.manage' => 'inventory',
+            'reports.view' => 'reports',
+            'purchasing.manage' => 'purchasing',
+            'accounting.view' => 'accounting',
+            'accounting.manage' => 'accounting',
+            'hr.manage' => 'hr',
+            'admin.manage' => 'admin',
+            'pos.till' => 'pos',
+            'products.manage' => 'catalogue',
+        ];
+
+        foreach (config('permissions', []) as $code => $description) {
+            if (! is_string($description)) {
+                continue;
+            }
+
+            $module = $moduleByCode[$code] ?? explode('.', $code)[0];
+            Permission::firstOrCreate(
+                ['permission_code' => $code],
+                [
+                    'permission_name' => $description,
+                    'module' => $module,
+                ]
+            );
+        }
+    }
+
+    /** @return list<array<string, mixed>> */
+    public static function groupedForUi(): array
+    {
+        self::ensure();
+
+        $byCode = Permission::query()->get()->keyBy('permission_code');
+        $groups = [];
+
+        foreach (config('permission_registry.groups', []) as $moduleKey => $groupDef) {
+            $features = [];
+            foreach ($groupDef['features'] as $featureKey => $featureDef) {
+                $permissions = [];
+                foreach ($featureDef['actions'] as $action) {
+                    $code = "{$moduleKey}.{$featureKey}.{$action}";
+                    $perm = $byCode->get($code);
+                    if (! $perm) {
+                        continue;
+                    }
+                    $permissions[] = [
+                        'id' => (int) $perm->id,
+                        'permission_code' => $code,
+                        'permission_name' => $perm->permission_name,
+                        'action' => $action,
+                    ];
+                }
+                if ($permissions === []) {
+                    continue;
+                }
+                $features[] = [
+                    'key' => $featureKey,
+                    'label' => $featureDef['label'],
+                    'permissions' => $permissions,
+                ];
+            }
+
+            if ($features === []) {
+                continue;
+            }
+
+            $groups[] = [
+                'module' => $moduleKey,
+                'label' => $groupDef['label'],
+                'features' => $features,
+            ];
+        }
+
+        return $groups;
     }
 }

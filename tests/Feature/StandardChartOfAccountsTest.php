@@ -15,8 +15,8 @@ class StandardChartOfAccountsTest extends TestCase
     {
         config(['erp.allow_org_provisioning' => true]);
 
-        $admin = \App\Models\User::where('username', 'admin')->firstOrFail();
-        \Laravel\Sanctum\Sanctum::actingAs($admin);
+        $superAdmin = \App\Models\User::where('username', 'superadmin')->firstOrFail();
+        \Laravel\Sanctum\Sanctum::actingAs($superAdmin);
 
         $this->postJson('/api/v1/admin/organizations/provision', [
             'company_code' => 'ACCTCO',

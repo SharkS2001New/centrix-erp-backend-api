@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Organization;
 use App\Services\OrganizationProvisioningService;
 use Illuminate\Http\Request;
 
@@ -11,6 +12,17 @@ class OrganizationProvisionController extends Controller
     public function __construct(
         protected OrganizationProvisioningService $provisioning,
     ) {}
+
+    /** GET /api/v1/admin/organizations — list tenants (super admin only) */
+    public function index()
+    {
+        return response()->json([
+            'data' => Organization::query()
+                ->where('company_code', '!=', config('erp.platform_company_code', 'PLATFORM'))
+                ->orderBy('org_name')
+                ->get(['id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'created_at']),
+        ]);
+    }
 
     /** POST /api/v1/admin/organizations/provision */
     public function store(Request $request)

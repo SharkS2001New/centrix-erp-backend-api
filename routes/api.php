@@ -85,8 +85,10 @@ Route::prefix('v1')->group(function () {
         Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
 
+        Route::get('admin/organizations', [OrganizationProvisionController::class, 'index'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
         Route::post('admin/organizations/provision', [OrganizationProvisionController::class, 'store'])
-            ->middleware(['erp.admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
 
         Route::apiResource('organizations', OrganizationController::class);
         Route::apiResource('branches', BranchController::class);

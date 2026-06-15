@@ -95,6 +95,7 @@ class RoleController extends BaseResourceController
 
         return response()->json([
             'permissions' => $permissions,
+            'groups' => PermissionMatrixService::groupedForUi(),
             'modules' => PermissionMatrixService::modules(),
             'actions' => PermissionMatrixService::actions(),
         ]);

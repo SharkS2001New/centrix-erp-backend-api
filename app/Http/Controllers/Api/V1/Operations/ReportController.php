@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
+use App\Models\Customer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -75,6 +76,202 @@ class ReportController extends Controller
                 'status', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
             ],
         ]);
+    }
+
+    /** KPIs and chart payloads for the reports hub dashboard. */
+    public function dashboard(Request $request)
+    {
+        $data = $request->validate([
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date',
+            'branch_id' => 'nullable|integer',
+        ]);
+
+        $to = isset($data['to_date'])
+            ? \Carbon\Carbon::parse($data['to_date'])->startOfDay()
+            : now()->startOfDay();
+        $from = isset($data['from_date'])
+            ? \Carbon\Carbon::parse($data['from_date'])->startOfDay()
+            : $to->copy()->subDays(29);
+        if ($from->gt($to)) {
+            [$from, $to] = [$to->copy(), $from->copy()];
+        }
+
+        $days = $from->diffInDays($to) + 1;
+        $prevTo = $from->copy()->subDay();
+        $prevFrom = $prevTo->copy()->subDays($days - 1);
+        $branchId = $data['branch_id'] ?? null;
+
+        $salesBase = fn (\Carbon\Carbon $start, \Carbon\Carbon $end) => DB::table('sales')
+            ->where('status', 'completed')
+            ->where('archived', 0)
+            ->whereDate('completed_at', '>=', $start->toDateString())
+            ->whereDate('completed_at', '<=', $end->toDateString())
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+
+        $totalSales = (float) $salesBase($from, $to)->sum('order_total');
+        $prevTotalSales = (float) $salesBase($prevFrom, $prevTo)->sum('order_total');
+
+        $plBase = fn (\Carbon\Carbon $start, \Carbon\Carbon $end) => DB::table('v_profit_loss_summary')
+            ->where('period', '>=', $start->toDateString())
+            ->where('period', '<=', $end->toDateString())
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+
+        $grossProfit = (float) $plBase($from, $to)->sum('gross_profit');
+        $prevGrossProfit = (float) $plBase($prevFrom, $prevTo)->sum('gross_profit');
+
+        $receivables = (float) DB::table('customer_invoices')
+            ->whereNull('deleted_at')
+            ->where('balance_due', '>', 0)
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->sum('balance_due');
+
+        $creditIssued = (float) DB::table('sales')
+            ->where('status', 'completed')
+            ->where('archived', 0)
+            ->where('is_credit_sale', 1)
+            ->whereDate('completed_at', '>=', $from->toDateString())
+            ->whereDate('completed_at', '<=', $to->toDateString())
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->sum('order_total');
+
+        $paymentsCollected = (float) DB::table('customer_invoice_payments as p')
+            ->when($branchId, function ($q) use ($branchId) {
+                $q->join('customer_invoices as ci', 'ci.id', '=', 'p.customer_invoice_id')
+                    ->where('ci.branch_id', $branchId);
+            })
+            ->whereDate('p.date_paid', '>=', $from->toDateString())
+            ->whereDate('p.date_paid', '<=', $to->toDateString())
+            ->sum('p.amount_paid');
+
+        $prevReceivables = max(0, $receivables - $creditIssued + $paymentsCollected);
+
+        $inventoryValue = (float) DB::table('v_stock_valuation')
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->sum('retail_value');
+
+        $receiptValue = (float) DB::table('stock_receipts')
+            ->whereDate('created_at', '>=', $from->toDateString())
+            ->whereDate('created_at', '<=', $to->toDateString())
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->selectRaw('SUM(units_received * COALESCE(cost_price, 0)) as total')
+            ->value('total');
+
+        $prevReceiptValue = (float) DB::table('stock_receipts')
+            ->whereDate('created_at', '>=', $prevFrom->toDateString())
+            ->whereDate('created_at', '<=', $prevTo->toDateString())
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->selectRaw('SUM(units_received * COALESCE(cost_price, 0)) as total')
+            ->value('total');
+
+        $prevInventory = max(0, $inventoryValue - $receiptValue + $prevReceiptValue);
+
+        $dailyCurrent = $salesBase($from, $to)
+            ->selectRaw('DATE(completed_at) as day, SUM(order_total) as total')
+            ->groupBy('day')
+            ->orderBy('day')
+            ->get()
+            ->keyBy('day');
+
+        $dailyPrevious = $salesBase($prevFrom, $prevTo)
+            ->selectRaw('DATE(completed_at) as day, SUM(order_total) as total')
+            ->groupBy('day')
+            ->orderBy('day')
+            ->get()
+            ->values();
+
+        $salesTrend = [];
+        $cursor = $from->copy();
+        $idx = 0;
+        while ($cursor->lte($to)) {
+            $dayKey = $cursor->toDateString();
+            $prevRow = $dailyPrevious[$idx] ?? null;
+            $salesTrend[] = [
+                'date' => $dayKey,
+                'label' => $cursor->format('M j'),
+                'current' => (float) ($dailyCurrent[$dayKey]->total ?? 0),
+                'previous' => (float) ($prevRow->total ?? 0),
+            ];
+            $cursor->addDay();
+            $idx++;
+        }
+
+        $topProducts = DB::table('v_sales_by_product')
+            ->where('sale_date', '>=', $from->toDateString())
+            ->where('sale_date', '<=', $to->toDateString())
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->selectRaw('product_code, product_name, SUM(total_revenue) as revenue')
+            ->groupBy('product_code', 'product_name')
+            ->orderByDesc('revenue')
+            ->limit(5)
+            ->get()
+            ->map(fn ($row) => [
+                'product_code' => $row->product_code,
+                'product_name' => $row->product_name,
+                'revenue' => (float) $row->revenue,
+            ])
+            ->values()
+            ->all();
+
+        $topTotal = array_sum(array_column($topProducts, 'revenue'));
+        $topProducts = array_map(function ($row) use ($topTotal) {
+            $row['share_pct'] = $topTotal > 0 ? round(($row['revenue'] / $topTotal) * 100, 1) : 0;
+
+            return $row;
+        }, $topProducts);
+
+        $channelRows = $salesBase($from, $to)
+            ->selectRaw('channel, SUM(order_total) as revenue, COUNT(*) as orders')
+            ->groupBy('channel')
+            ->orderByDesc('revenue')
+            ->get();
+
+        $channelTotal = (float) $channelRows->sum('revenue');
+        $salesByChannel = $channelRows->map(fn ($row) => [
+            'channel' => $row->channel ?: 'other',
+            'revenue' => (float) $row->revenue,
+            'orders' => (int) $row->orders,
+            'share_pct' => $channelTotal > 0 ? round(((float) $row->revenue / $channelTotal) * 100, 1) : 0,
+        ])->values()->all();
+
+        return response()->json([
+            'period' => [
+                'from_date' => $from->toDateString(),
+                'to_date' => $to->toDateString(),
+                'previous_from_date' => $prevFrom->toDateString(),
+                'previous_to_date' => $prevTo->toDateString(),
+            ],
+            'kpis' => [
+                'total_sales' => [
+                    'value' => $totalSales,
+                    'change_pct' => $this->pctChange($totalSales, $prevTotalSales),
+                ],
+                'gross_profit' => [
+                    'value' => $grossProfit,
+                    'change_pct' => $this->pctChange($grossProfit, $prevGrossProfit),
+                ],
+                'receivables' => [
+                    'value' => $receivables,
+                    'change_pct' => $this->pctChange($receivables, $prevReceivables),
+                ],
+                'inventory_value' => [
+                    'value' => $inventoryValue,
+                    'change_pct' => $this->pctChange($inventoryValue, $prevInventory),
+                ],
+            ],
+            'sales_trend' => $salesTrend,
+            'top_products' => $topProducts,
+            'sales_by_channel' => $salesByChannel,
+        ]);
+    }
+
+    protected function pctChange(float $current, float $previous): ?float
+    {
+        if ($previous == 0.0) {
+            return $current > 0 ? 100.0 : 0.0;
+        }
+
+        return round((($current - $previous) / abs($previous)) * 100, 1);
     }
 
     public function salesByProduct(Request $request)
@@ -636,6 +833,19 @@ class ReportController extends Controller
 
     protected function buildCustomerStatement(int $customerNum): array
     {
+        $customer = Customer::query()
+            ->where('customer_num', $customerNum)
+            ->whereNull('deleted_at')
+            ->firstOrFail();
+
+        $branchName = DB::table('branches')
+            ->where('id', $customer->branch_id)
+            ->value('branch_name');
+
+        $routeName = $customer->route_id
+            ? DB::table('routes')->where('id', $customer->route_id)->value('route_name')
+            : null;
+
         $invoices = DB::table('customer_invoices')
             ->where('customer_num', $customerNum)
             ->whereNull('deleted_at')
@@ -654,7 +864,36 @@ class ReportController extends Controller
             ->limit(100)
             ->get();
 
-        return compact('invoices', 'payments', 'sales');
+        $totalInvoiced = $invoices->sum(fn ($row) => (float) $row->invoice_total);
+        $totalPaid = $payments->sum(fn ($row) => (float) $row->amount_paid);
+
+        return [
+            'customer' => [
+                'customer_num' => $customer->customer_num,
+                'customer_name' => $customer->customer_name,
+                'customer_type' => $customer->customer_type,
+                'phone_number' => $customer->phone_number,
+                'additional_phone' => $customer->additional_phone,
+                'town' => $customer->town,
+                'kra_pin' => $customer->kra_pin,
+                'terms_of_payment' => $customer->terms_of_payment,
+                'credit_limit' => (float) $customer->credit_limit,
+                'current_balance' => (float) $customer->current_balance,
+                'branch_id' => $customer->branch_id,
+                'branch_name' => $branchName,
+                'route_id' => $customer->route_id,
+                'route_name' => $routeName,
+            ],
+            'invoices' => $invoices,
+            'payments' => $payments,
+            'sales' => $sales,
+            'summary' => [
+                'total_invoiced' => round($totalInvoiced, 2),
+                'total_paid' => round($totalPaid, 2),
+                'outstanding_balance' => (float) $customer->current_balance,
+                'credit_limit' => (float) $customer->credit_limit,
+            ],
+        ];
     }
 
     protected function buildPriceList(?int $branchId = null)

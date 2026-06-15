@@ -29,8 +29,8 @@ class UserPermissionOverrideTest extends TestCase
             'is_active' => true,
         ]);
 
-        $viewId = (int) Permission::where('permission_code', 'sales.view')->value('id');
-        $createId = (int) Permission::where('permission_code', 'sales.create')->value('id');
+        $viewId = (int) Permission::where('permission_code', 'sales.orders.view')->value('id');
+        $createId = (int) Permission::where('permission_code', 'sales.orders.create')->value('id');
 
         DB::table('role_permissions')->insert([
             ['role_id' => $role->id, 'permission_id' => $viewId],
@@ -54,8 +54,8 @@ class UserPermissionOverrideTest extends TestCase
         ])->assertOk();
 
         $service = app(UserPermissionService::class);
-        $this->assertTrue($service->hasPermission($target->fresh(), 'sales.view'));
-        $this->assertFalse($service->hasPermission($target->fresh(), 'sales.create'));
+        $this->assertTrue($service->hasPermission($target->fresh(), 'sales.orders.view'));
+        $this->assertFalse($service->hasPermission($target->fresh(), 'sales.orders.create'));
     }
 
     public function test_user_can_grant_extra_permission(): void
@@ -70,8 +70,8 @@ class UserPermissionOverrideTest extends TestCase
             'is_active' => true,
         ]);
 
-        $viewId = (int) Permission::where('permission_code', 'sales.view')->value('id');
-        $manageId = (int) Permission::where('permission_code', 'sales.manage')->value('id');
+        $viewId = (int) Permission::where('permission_code', 'sales.orders.view')->value('id');
+        $manageId = (int) Permission::where('permission_code', 'sales.orders.approve')->value('id');
 
         DB::table('role_permissions')->insert([
             ['role_id' => $role->id, 'permission_id' => $viewId],
@@ -94,6 +94,7 @@ class UserPermissionOverrideTest extends TestCase
         ])->assertOk();
 
         $service = app(UserPermissionService::class);
+        $this->assertTrue($service->hasPermission($target->fresh(), 'sales.orders.approve'));
         $this->assertTrue($service->hasPermission($target->fresh(), 'sales.manage'));
     }
 }

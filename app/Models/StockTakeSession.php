@@ -8,6 +8,7 @@ class StockTakeSession extends Model
 {
     use HasFactory;
     protected $table = "stock_take_sessions";
+    public $timestamps = false;
     protected $fillable = array (
   0 => 'branch_id',
   1 => 'session_code',

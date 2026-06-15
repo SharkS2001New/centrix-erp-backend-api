@@ -74,6 +74,23 @@ class UserPermissionService
             return true;
         }
 
+        if ($this->hasDirectPermission($user, $permissionCode)) {
+            return true;
+        }
+
+        $aliases = config('permission_aliases', []);
+
+        foreach ($aliases[$permissionCode] ?? [] as $aliasCode) {
+            if ($this->hasDirectPermission($user, $aliasCode)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function hasDirectPermission(User $user, string $permissionCode): bool
+    {
         $permissionId = Permission::query()
             ->where('permission_code', $permissionCode)
             ->value('id');
@@ -102,6 +119,18 @@ class UserPermissionService
         $map = [];
         foreach ($codes as $code) {
             $map[$code] = true;
+        }
+
+        foreach (config('permission_aliases', []) as $capability => $aliases) {
+            if ($map[$capability] ?? false) {
+                continue;
+            }
+            foreach ($aliases as $alias) {
+                if ($map[$alias] ?? false) {
+                    $map[$capability] = true;
+                    break;
+                }
+            }
         }
 
         return $map;

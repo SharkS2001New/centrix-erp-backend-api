@@ -7,6 +7,8 @@ use App\Http\Controllers\Controller;
 use App\Models\StockTakeLine;
 use App\Models\StockTakeSession;
 use App\Models\User;
+use App\Services\Accounting\StockTakeJournalService;
+use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -14,6 +16,8 @@ use InvalidArgumentException;
 class StockTakeOperationsController extends Controller
 {
     use HandlesInventory;
+
+    public function __construct(protected ErpContext $erp) {}
 
     public function complete(Request $request, int $sessionId)
     {
@@ -57,6 +61,9 @@ class StockTakeOperationsController extends Controller
                 'completed_by' => $user->id,
                 'completed_at' => now(),
             ]);
+
+            $gate = $this->erp->gateForUser($user);
+            app(StockTakeJournalService::class)->postIfEnabled($session->fresh(), $lines, $user, $gate);
 
             return $session->fresh();
         });

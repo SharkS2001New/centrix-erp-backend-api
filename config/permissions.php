@@ -17,4 +17,5 @@ return [
     'hr.manage' => 'Payroll processing',
     'admin.manage' => 'Users, roles, org settings',
     'pos.till' => 'Open/close till sessions and X/Z reports',
+    'products.manage' => 'Product catalogue and KRA device register',
 ];

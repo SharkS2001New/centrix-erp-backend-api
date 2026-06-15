@@ -18,13 +18,15 @@ class ErpCapabilitiesController extends Controller
         $user = $request->user();
 
         return response()->json(array_merge($gate->toArray(), [
+            'is_super_admin' => (bool) $user?->is_super_admin,
             'is_admin' => (bool) $user?->is_admin,
             'access_scope' => $user?->access_scope ?? 'org',
             'branch_id' => $user?->branch_id,
             'permissions' => $user
                 ? app(UserPermissionService::class)->permissionMapForUser($user)
                 : [],
-            'allow_org_provisioning' => (bool) $user?->is_admin && config('erp.allow_org_provisioning'),
+            'allow_org_provisioning' => (bool) $user?->is_super_admin
+                && config('erp.allow_org_provisioning'),
         ]));
     }
 

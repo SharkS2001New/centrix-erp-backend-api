@@ -8,6 +8,7 @@ class StockTakeLine extends Model
 {
     use HasFactory;
     protected $table = "stock_take_lines";
+    public $timestamps = false;
     protected $fillable = array (
   0 => 'session_id',
   1 => 'product_code',

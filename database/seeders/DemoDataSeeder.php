@@ -21,6 +21,7 @@ use App\Models\Permission;
 use App\Models\Product;
 use App\Models\RetailPackageSetting;
 use App\Models\Role;
+use App\Services\Erp\PermissionMatrixService;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -103,32 +104,27 @@ class DemoDataSeeder extends Seeder
         $rAdmin = Role::create(['role_name' => 'Administrator', 'scope' => 'org']);
         $rCash = Role::create(['role_name' => 'Cashier', 'scope' => 'branch']);
 
-        $permDefs = [
-            ['Process Sales', 'sales.create', 'sales'],
-            ['Manage Orders', 'sales.manage', 'sales'],
-            ['Manage Payments', 'payments.manage', 'payments'],
-            ['View Stock', 'inventory.view', 'inventory'],
-            ['Manage Stock', 'inventory.manage', 'inventory'],
-            ['View Reports', 'reports.view', 'reports'],
-            ['Manage Purchasing', 'purchasing.manage', 'purchasing'],
-            ['View Accounting', 'accounting.view', 'accounting'],
-            ['Manage Accounting', 'accounting.manage', 'accounting'],
-            ['Manage HR Payroll', 'hr.manage', 'hr'],
-            ['Administration', 'admin.manage', 'admin'],
-            ['POS Till', 'pos.till', 'pos'],
-            ['Manage Products', 'products.manage', 'catalogue'],
-        ];
-        foreach ($permDefs as [$n, $c, $m]) {
-            $perm = Permission::firstOrCreate(
-                ['permission_code' => $c],
-                ['permission_name' => $n, 'module' => $m]
-            );
+        PermissionMatrixService::ensure();
+
+        foreach (Permission::query()->pluck('id') as $permId) {
             DB::table('role_permissions')->insertOrIgnore([
                 'role_id' => $rAdmin->id,
-                'permission_id' => $perm->id,
+                'permission_id' => $permId,
             ]);
         }
-        $cashierPerms = ['sales.create', 'payments.manage', 'inventory.view', 'pos.till'];
+
+        $cashierPerms = [
+            'dashboard.overview.view',
+            'pos.checkout.create',
+            'pos.till_management.view',
+            'pos.till_management.create',
+            'pos.end_of_day.view',
+            'sales.dashboard.view',
+            'sales.orders.view',
+            'sales.orders.create',
+            'payments.sale_payments.create',
+            'inventory.stock.view',
+        ];
         foreach ($cashierPerms as $code) {
             $pid = Permission::where('permission_code', $code)->value('id');
             if ($pid) {
@@ -146,8 +142,11 @@ class DemoDataSeeder extends Seeder
             'username' => 'admin',
             'email' => 'admin@demo.co.ke',
             'password' => Hash::make('password'),
-            'full_name' => 'System Administrator',
+            'full_name' => 'Demo Organization Manager',
             'is_admin' => 1,
+            'is_super_admin' => 0,
+            'access_scope' => 'org',
+            'login_channels' => ['backoffice', 'pos', 'mobile'],
             'is_active' => true,
         ]);
 
@@ -504,6 +503,47 @@ class DemoDataSeeder extends Seeder
             ['account_name' => 'Operating Expenses', 'account_type' => 'expense', 'is_active' => true]
         );
 
-        $this->command->info('Demo data seeded (schema v3). Login: admin / password');
+        $platformCode = config('erp.platform_company_code', 'PLATFORM');
+        $platformOrg = Organization::create([
+            'company_code' => $platformCode,
+            'org_name' => 'Platform Administration',
+            'org_email' => 'platform@pos-erp.local',
+            'primary_tel' => '0700000000',
+            'org_address' => 'Platform',
+            'deployment_profile' => 'small_shop',
+            'module_settings' => ['platform' => true],
+        ]);
+
+        $platformBranch = Branch::create([
+            'organization_id' => $platformOrg->id,
+            'branch_code' => 'HQ',
+            'branch_name' => 'Platform HQ',
+            'branch_type' => 'supermarket',
+            'branch_phone' => '0700000000',
+        ]);
+
+        $platformRole = Role::create([
+            'role_name' => 'Platform Operator',
+            'scope' => 'org',
+            'is_active' => true,
+        ]);
+
+        User::create([
+            'organization_id' => $platformOrg->id,
+            'branch_id' => $platformBranch->id,
+            'role_id' => $platformRole->id,
+            'username' => 'superadmin',
+            'email' => 'superadmin@platform.local',
+            'password' => Hash::make('password'),
+            'full_name' => 'Platform Super Admin',
+            'is_admin' => 0,
+            'is_super_admin' => 1,
+            'access_scope' => 'org',
+            'login_channels' => ['backoffice'],
+            'is_active' => true,
+        ]);
+
+        $this->command->info("Demo data seeded. Org manager: DEMO / admin / password");
+        $this->command->info("Platform super admin: {$platformCode} / superadmin / password");
     }
 }

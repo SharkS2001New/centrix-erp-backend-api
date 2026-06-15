@@ -137,6 +137,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // ---- Reports ----
     Route::middleware(['erp.module:reports', 'erp.permission:reports.view'])->prefix('reports')->group(function () {
         Route::get('/', [ReportController::class, 'catalog']);
+        Route::get('dashboard', [ReportController::class, 'dashboard']);
         Route::get('sales-by-product', [ReportController::class, 'salesByProduct']);
         Route::get('sales-by-user', [ReportController::class, 'salesByUser']);
         Route::get('sales-by-customer', [ReportController::class, 'salesByCustomer']);

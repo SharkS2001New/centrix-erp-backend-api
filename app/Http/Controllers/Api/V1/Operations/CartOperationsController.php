@@ -16,6 +16,7 @@ use App\Models\Sale;
 use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Models\Voucher;
+use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
@@ -166,6 +167,8 @@ class CartOperationsController extends Controller
                 'cancelled_at' => now(),
                 'cancelled_by' => $user->id,
             ]);
+
+            $this->reverseSaleJournalIfPosted($sale, $user);
 
             return $cart->fresh('lines');
         });
@@ -408,7 +411,19 @@ class CartOperationsController extends Controller
             'cancelled_by' => $user->id,
         ]);
 
+        $this->reverseSaleJournalIfPosted($sale, $user);
+
         return response()->json($sale->fresh());
+    }
+
+    protected function reverseSaleJournalIfPosted(Sale $sale, User $user): void
+    {
+        app(ReferenceJournalReversalService::class)->reverseIfEnabled(
+            'sale',
+            (int) $sale->id,
+            $user,
+            $this->erp->gateForUser($user),
+        );
     }
 
     protected function getOrCreateCart(User $user, array $input): TemporaryCart
