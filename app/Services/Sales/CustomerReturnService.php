@@ -11,6 +11,7 @@ use App\Models\ReturnRecord;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Accounting\ReturnJournalService;
 use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -21,6 +22,7 @@ class CustomerReturnService
 
     public function __construct(
         protected CreditNoteService $creditNoteService,
+        protected ReturnJournalService $returnJournal,
     ) {}
 
     public function nextReturnNo(int $organizationId): string
@@ -182,10 +184,15 @@ class CustomerReturnService
 
             $return = $return->fresh(['lines', 'sale', 'customer']);
             $organization = Organization::find($user->organization_id);
-            $finance = $organization
-                ? (new CapabilityGate($organization))->moduleSettings('finance')
-                : [];
+            $gate = $organization
+                ? (new CapabilityGate($organization))
+                : null;
+            $finance = $gate?->moduleSettings('finance') ?? [];
             $this->creditNoteService->createForReturn($return, $user, $finance);
+
+            if ($gate) {
+                $this->returnJournal->postIfEnabled($return->fresh(['sale']), $user, $gate);
+            }
 
             return $return->fresh(['lines', 'sale', 'customer', 'returnedByUser', 'approvedByUser', 'creditNote']);
         });

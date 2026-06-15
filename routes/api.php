@@ -60,6 +60,7 @@ Route::prefix('v1')->group(function () {
     Route::post('payments/stk/callback', [MpesaPaymentController::class, 'stkCallback']);
     Route::post('payments/c2b/validation', [MpesaPaymentController::class, 'validationRequest']);
     Route::post('payments/c2b/confirmation', [MpesaPaymentController::class, 'c2bConfirmation']);
+    Route::get('accounting/quickbooks/callback', [\App\Http\Controllers\Api\V1\Operations\ExternalAccountingController::class, 'quickBooksCallback']);
 
     Route::middleware(['auth:sanctum', 'erp.tenant'])->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
@@ -74,6 +75,10 @@ Route::prefix('v1')->group(function () {
         Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::get('erp/settings/inventory', [ErpSettingsController::class, 'inventory'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::patch('erp/settings/inventory', [ErpSettingsController::class, 'updateInventory'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/finance', [ErpSettingsController::class, 'finance'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
@@ -149,10 +154,19 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('audit-logs', AuditLogController::class);
         Route::apiResource('system-settings', SystemSettingController::class);
 
-        // HR / Accounting / Fulfillment CRUD
-        Route::apiResource('chart-of-accounts', \App\Http\Controllers\Api\V1\ChartOfAccountController::class);
-        Route::apiResource('journal-entries', \App\Http\Controllers\Api\V1\JournalEntryController::class);
-        Route::apiResource('journal-entry-lines', \App\Http\Controllers\Api\V1\JournalEntryLineController::class);
+        // Accounting — read vs manage
+        Route::middleware('erp.module:accounting')->group(function () {
+            Route::apiResource('chart-of-accounts', \App\Http\Controllers\Api\V1\ChartOfAccountController::class)
+                ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:accounting.manage']);
+            Route::apiResource('journal-entries', \App\Http\Controllers\Api\V1\JournalEntryController::class)
+                ->except(['store'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
+                ->middlewareFor(['update', 'destroy'], ['erp.permission:accounting.manage']);
+            Route::apiResource('journal-entry-lines', \App\Http\Controllers\Api\V1\JournalEntryLineController::class)
+                ->only(['index', 'show'])
+                ->middleware('erp.permission:accounting.view');
+        });
         Route::apiResource('departments', \App\Http\Controllers\Api\V1\DepartmentController::class);
         Route::get('employees/{employee}/photo/file', [\App\Http\Controllers\Api\V1\EmployeeController::class, 'photoFile']);
         Route::post('employees/{employee}/photo', [\App\Http\Controllers\Api\V1\EmployeeController::class, 'uploadPhoto']);

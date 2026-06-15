@@ -8,15 +8,22 @@ use App\Http\Requests\Inventory\StockReceiveRequest;
 use App\Models\LpoTxn;
 use App\Models\StockReceipt;
 use App\Models\User;
+use App\Services\Accounting\PurchaseReceiveJournalService;
+use App\Services\Erp\ErpContext;
 use Illuminate\Support\Facades\DB;
 
 class LpoReceiveController extends Controller
 {
     use HandlesInventory;
 
+    public function __construct(protected ErpContext $erp) {}
+
     public function store(StockReceiveRequest $request)
     {
         $receipt = $this->receiveStockLine($request->validated(), $request->user());
+
+        $gate = $this->erp->gateForUser($request->user());
+        app(PurchaseReceiveJournalService::class)->postIfEnabled($receipt, $request->user(), $gate);
 
         return response()->json($receipt, 201);
     }

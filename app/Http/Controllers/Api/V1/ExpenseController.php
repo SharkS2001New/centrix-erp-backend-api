@@ -3,11 +3,15 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Expense;
 use App\Models\TillFloatSession;
+use App\Services\Accounting\ExpenseJournalService;
+use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 
 class ExpenseController extends BaseResourceController
 {
+    public function __construct(protected ErpContext $erp) {}
+
     protected function modelClass(): string
     {
         return Expense::class;
@@ -40,6 +44,9 @@ class ExpenseController extends BaseResourceController
 
         $data['recorded_by'] = $request->user()->id;
         $expense = Expense::create($data);
+
+        $gate = $this->erp->gateForUser($request->user());
+        app(ExpenseJournalService::class)->postIfEnabled($expense, $request->user(), $gate);
 
         return response()->json($expense, 201);
     }

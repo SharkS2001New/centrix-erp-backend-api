@@ -24,8 +24,6 @@ class JournalEntry extends Model
   4 => 'reference_type',
   5 => 'reference_id',
   6 => 'description',
-  7 => 'status',
-  8 => 'created_by',
-  9 => 'posted_at',
+  7 => 'created_by',
 );
 }

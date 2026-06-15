@@ -8,6 +8,7 @@ use App\Models\SystemSetting;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Accounting\QuickBooksSettingsResolver;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
@@ -150,43 +151,8 @@ class ErpSettingsController extends Controller
             );
         }
 
-        if (
-            empty($nextSales['allow_sell_from_shop'])
-            && empty($nextSales['allow_sell_from_store'])
-            && (
-                empty($nextSales['enable_retail_pricing'])
-                || empty($nextSales['retail_shop_wholesale_store_stock'])
-            )
-        ) {
-            throw ValidationException::withMessages([
-                'allow_sell_from_shop' => 'Enable shop stock, store stock, or retail-from-shop / wholesale-from-store routing.',
-            ]);
-        }
-
-        if (
-            ! empty($nextSales['allow_sell_from_shop'])
-            && ! empty($nextSales['allow_sell_from_store'])
-        ) {
-            throw ValidationException::withMessages([
-                'allow_sell_from_shop' => 'Enable only shop stock or store stock — not both at the same time.',
-            ]);
-        }
-
-        if (! empty($nextSales['retail_shop_wholesale_store_stock'])) {
-            $nextSales['allow_sell_from_shop'] = false;
-            $nextSales['allow_sell_from_store'] = false;
-        }
-
-        if (empty($nextSales['enable_retail_pricing'])) {
-            $nextSales['retail_shop_wholesale_store_stock'] = false;
-            if (
-                empty($nextSales['allow_sell_from_shop'])
-                && empty($nextSales['allow_sell_from_store'])
-            ) {
-                $nextSales['allow_sell_from_shop'] = true;
-                $nextSales['allow_sell_from_store'] = false;
-            }
-        }
+        $this->assertValidStockSourceSettings($nextSales);
+        $this->normalizeStockSourceSettings($nextSales);
 
         if (empty($nextSales['add_route_markup_prices'])) {
             $nextSales['pos_order_type_mode'] = 'normal';
@@ -228,6 +194,179 @@ class ErpSettingsController extends Controller
         ]);
     }
 
+    public function inventory(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+        $sales = $gate->moduleSettings('sales');
+        $inventory = $gate->moduleSettings('inventory');
+        $system = SystemSetting::query()
+            ->where('organization_id', $org->id)
+            ->orderBy('id')
+            ->first();
+
+        return response()->json([
+            'inventory' => $this->inventorySettingsResponse($inventory, $sales, $system),
+        ]);
+    }
+
+    public function updateInventory(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+
+        $inventoryKeys = [
+            'default_receive_location',
+            'default_pos_sale_location',
+            'default_distribution_sale_location',
+            'reserve_stock_on_cart',
+        ];
+
+        $stockSourceKeys = [
+            'allow_sell_from_shop',
+            'allow_sell_from_store',
+            'enable_retail_pricing',
+            'retail_shop_wholesale_store_stock',
+            'enable_barcode_scanner',
+        ];
+
+        $data = $request->validate([
+            'default_receive_location' => 'sometimes|in:shop,store',
+            'default_pos_sale_location' => 'sometimes|in:shop,store',
+            'default_distribution_sale_location' => 'sometimes|in:shop,store',
+            'reserve_stock_on_cart' => 'sometimes|boolean',
+            'allow_sell_from_shop' => 'sometimes|boolean',
+            'allow_sell_from_store' => 'sometimes|boolean',
+            'enable_retail_pricing' => 'sometimes|boolean',
+            'retail_shop_wholesale_store_stock' => 'sometimes|boolean',
+            'enable_barcode_scanner' => 'sometimes|boolean',
+            'allow_negative_stock' => 'sometimes|boolean',
+            'stock_alert_mode' => 'sometimes|in:per_product,global,both',
+            'global_low_stock_threshold' => 'sometimes|nullable|numeric|min:0',
+        ]);
+
+        $currentSales = $gate->moduleSettings('sales');
+        $nextSales = array_merge($currentSales, array_filter(
+            $data,
+            fn ($key) => in_array($key, $stockSourceKeys, true),
+            ARRAY_FILTER_USE_KEY
+        ));
+
+        $this->assertValidStockSourceSettings($nextSales);
+        $this->normalizeStockSourceSettings($nextSales);
+
+        $currentInventory = $gate->moduleSettings('inventory');
+        $nextInventory = array_merge($currentInventory, array_filter(
+            $data,
+            fn ($key) => in_array($key, $inventoryKeys, true),
+            ARRAY_FILTER_USE_KEY
+        ));
+
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['sales'] = $nextSales;
+        $moduleSettings['inventory'] = $nextInventory;
+        $org->update(['module_settings' => $moduleSettings]);
+
+        $systemPayload = array_filter(
+            $data,
+            fn ($key) => in_array($key, ['allow_negative_stock', 'stock_alert_mode', 'global_low_stock_threshold'], true),
+            ARRAY_FILTER_USE_KEY
+        );
+        if ($systemPayload !== []) {
+            $system = SystemSetting::query()->firstOrCreate(
+                ['organization_id' => $org->id],
+                ['allow_below_stock' => 0, 'stock_alert_mode' => 'per_product'],
+            );
+            $updates = [];
+            if (array_key_exists('allow_negative_stock', $systemPayload)) {
+                $updates['allow_below_stock'] = $systemPayload['allow_negative_stock'] ? 1 : 0;
+            }
+            if (array_key_exists('stock_alert_mode', $systemPayload)) {
+                $updates['stock_alert_mode'] = $systemPayload['stock_alert_mode'];
+            }
+            if (array_key_exists('global_low_stock_threshold', $systemPayload)) {
+                $updates['global_low_stock_threshold'] = $systemPayload['global_low_stock_threshold'];
+            }
+            if ($updates !== []) {
+                $system->update($updates);
+            }
+        }
+
+        $refreshedGate = $this->erp->gateForUser($user->fresh());
+        $system = SystemSetting::query()->where('organization_id', $org->id)->orderBy('id')->first();
+
+        return response()->json([
+            'inventory' => $this->inventorySettingsResponse(
+                $refreshedGate->moduleSettings('inventory'),
+                $refreshedGate->moduleSettings('sales'),
+                $system,
+            ),
+        ]);
+    }
+
+    /** @return array<string, mixed> */
+    protected function inventorySettingsResponse(array $inventory, array $sales, ?SystemSetting $system): array
+    {
+        return array_merge($inventory, [
+            'allow_sell_from_shop' => (bool) ($sales['allow_sell_from_shop'] ?? false),
+            'allow_sell_from_store' => (bool) ($sales['allow_sell_from_store'] ?? false),
+            'enable_retail_pricing' => (bool) ($sales['enable_retail_pricing'] ?? false),
+            'retail_shop_wholesale_store_stock' => (bool) ($sales['retail_shop_wholesale_store_stock'] ?? false),
+            'enable_barcode_scanner' => (bool) ($sales['enable_barcode_scanner'] ?? false),
+            'allow_negative_stock' => (bool) ($system?->allow_below_stock ?? false),
+            'stock_alert_mode' => $system?->stock_alert_mode ?? 'per_product',
+            'global_low_stock_threshold' => $system?->global_low_stock_threshold,
+        ]);
+    }
+
+    /** @param  array<string, mixed>  $nextSales */
+    protected function assertValidStockSourceSettings(array $nextSales): void
+    {
+        if (
+            empty($nextSales['allow_sell_from_shop'])
+            && empty($nextSales['allow_sell_from_store'])
+            && (
+                empty($nextSales['enable_retail_pricing'])
+                || empty($nextSales['retail_shop_wholesale_store_stock'])
+            )
+        ) {
+            throw ValidationException::withMessages([
+                'allow_sell_from_shop' => 'Enable shop stock, store stock, or retail-from-shop / wholesale-from-store routing.',
+            ]);
+        }
+
+        if (
+            ! empty($nextSales['allow_sell_from_shop'])
+            && ! empty($nextSales['allow_sell_from_store'])
+        ) {
+            throw ValidationException::withMessages([
+                'allow_sell_from_shop' => 'Enable only shop stock or store stock — not both at the same time.',
+            ]);
+        }
+    }
+
+    /** @param  array<string, mixed>  $nextSales */
+    protected function normalizeStockSourceSettings(array &$nextSales): void
+    {
+        if (! empty($nextSales['retail_shop_wholesale_store_stock'])) {
+            $nextSales['allow_sell_from_shop'] = false;
+            $nextSales['allow_sell_from_store'] = false;
+        }
+
+        if (empty($nextSales['enable_retail_pricing'])) {
+            $nextSales['retail_shop_wholesale_store_stock'] = false;
+            if (
+                empty($nextSales['allow_sell_from_shop'])
+                && empty($nextSales['allow_sell_from_store'])
+            ) {
+                $nextSales['allow_sell_from_shop'] = true;
+                $nextSales['allow_sell_from_store'] = false;
+            }
+        }
+    }
+
     public function finance(Request $request)
     {
         $user = $request->user();
@@ -237,6 +376,11 @@ class ErpSettingsController extends Controller
         $mpesaConfig = MpesaSettingsResolver::forOrganization($org);
         $finance['mpesa'] = $this->mpesaForResponse($mpesaConfig);
         $finance['mpesa_status'] = MpesaSettingsResolver::describe($mpesaConfig);
+        $qbStored = is_array($finance['quickbooks'] ?? null) ? $finance['quickbooks'] : [];
+        $finance['quickbooks'] = QuickBooksSettingsResolver::maskStoredForClient($qbStored);
+        $finance['quickbooks_status'] = QuickBooksSettingsResolver::describe(
+            QuickBooksSettingsResolver::forOrganization($org)
+        );
 
         return response()->json(['finance' => $finance]);
     }
@@ -269,6 +413,11 @@ class ErpSettingsController extends Controller
             'accounting_mode' => 'sometimes|in:native,external',
             'accounting_provider' => 'sometimes|nullable|in:quickbooks,xero,sage',
             'accounting_sync_direction' => 'sometimes|in:export,import,bidirectional',
+            'quickbooks' => 'sometimes|array',
+            'quickbooks.client_id' => 'sometimes|nullable|string|max:250',
+            'quickbooks.client_secret' => 'sometimes|nullable|string|max:250',
+            'quickbooks.redirect_uri' => 'sometimes|nullable|string|max:500',
+            'quickbooks.environment' => 'sometimes|in:sandbox,production',
         ]);
 
         if (! empty($data['enable_kra_device'])) {
@@ -285,13 +434,18 @@ class ErpSettingsController extends Controller
         $current = $gate->moduleSettings('finance');
         $nextFinance = array_merge($current, array_filter(
             $data,
-            fn ($key) => $key !== 'mpesa',
+            fn ($key) => ! in_array($key, ['mpesa', 'quickbooks'], true),
             ARRAY_FILTER_USE_KEY,
         ));
 
         if (array_key_exists('mpesa', $data) && is_array($data['mpesa'])) {
             $mergedMpesa = MpesaSettingsResolver::mergeFinanceMpesa($current, $data['mpesa']);
             $nextFinance['mpesa'] = $mergedMpesa['mpesa'];
+        }
+
+        if (array_key_exists('quickbooks', $data) && is_array($data['quickbooks'])) {
+            $mergedQuickBooks = QuickBooksSettingsResolver::mergeFinanceQuickBooks($current, $data['quickbooks']);
+            $nextFinance['quickbooks'] = $mergedQuickBooks['quickbooks'];
         }
 
         $moduleSettings = $org->module_settings ?? [];
@@ -303,6 +457,11 @@ class ErpSettingsController extends Controller
         $mpesaConfig = MpesaSettingsResolver::forOrganization($org->fresh());
         $finance['mpesa'] = $this->mpesaForResponse($mpesaConfig);
         $finance['mpesa_status'] = MpesaSettingsResolver::describe($mpesaConfig);
+        $qbStored = is_array($finance['quickbooks'] ?? null) ? $finance['quickbooks'] : [];
+        $finance['quickbooks'] = QuickBooksSettingsResolver::maskStoredForClient($qbStored);
+        $finance['quickbooks_status'] = QuickBooksSettingsResolver::describe(
+            QuickBooksSettingsResolver::forOrganization($org->fresh())
+        );
 
         return response()->json([
             'finance' => $finance,

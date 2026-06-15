@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
+use App\Services\Accounting\PayrollJournalService;
+use App\Services\Erp\ErpContext;
 use App\Services\Payroll\KenyaStatutoryCalculator;
 use App\Services\Payroll\KenyaStatutoryReference;
 use App\Models\PayPeriod;
@@ -21,6 +23,7 @@ class PayrollOperationsController extends Controller
         protected KenyaStatutoryCalculator $calculator,
         protected PayrollEarningsService $earnings,
         protected PayrollCycleSettlementService $settlements,
+        protected ErpContext $erp,
     ) {}
 
     /** GET /payroll/kenya-statutory — formulas and rates for UI */
@@ -162,6 +165,9 @@ class PayrollOperationsController extends Controller
                     $settlementOptions,
                 );
             }
+
+            $gate = $this->erp->gateForUser($request->user());
+            app(PayrollJournalService::class)->postIfEnabled($run->fresh('lines'), $request->user(), $gate);
 
             return response()->json(array_merge($run->toArray(), [
                 'cycle_closed' => $closed,

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\JournalEntry;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class JournalEntryController extends BaseResourceController
 {
@@ -48,12 +49,25 @@ class JournalEntryController extends BaseResourceController
         return response()->json($entry);
     }
 
+    public function store(Request $request)
+    {
+        throw ValidationException::withMessages([
+            'journal_entry' => ['Use POST /accounting/journal-entries to create journal entries.'],
+        ]);
+    }
+
+    public function update(Request $request, string $id)
+    {
+        $this->findOrgEntry($request, $id);
+
+        throw ValidationException::withMessages([
+            'journal_entry' => ['Journal entries cannot be edited directly. Post, reverse, or delete draft entries via the accounting API.'],
+        ]);
+    }
+
     public function destroy(Request $request, string $id)
     {
-        $entry = JournalEntry::query()
-            ->where('organization_id', $request->user()->organization_id)
-            ->where($this->routeKeyColumn(), $id)
-            ->firstOrFail();
+        $entry = $this->findOrgEntry($request, $id);
 
         if ($entry->status !== 'draft') {
             return response()->json(['message' => 'Only draft entries can be deleted.'], 422);
@@ -62,5 +76,13 @@ class JournalEntryController extends BaseResourceController
         $entry->delete();
 
         return response()->json(null, 204);
+    }
+
+    protected function findOrgEntry(Request $request, string $id): JournalEntry
+    {
+        return JournalEntry::query()
+            ->where('organization_id', $request->user()->organization_id)
+            ->where($this->routeKeyColumn(), $id)
+            ->firstOrFail();
     }
 }

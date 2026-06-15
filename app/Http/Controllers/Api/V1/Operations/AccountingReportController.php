@@ -4,12 +4,16 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Services\Accounting\AccountingReportService;
+use App\Services\Accounting\SubledgerReconciliationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class AccountingReportController extends Controller
 {
-    public function __construct(protected AccountingReportService $reports) {}
+    public function __construct(
+        protected AccountingReportService $reports,
+        protected SubledgerReconciliationService $subledgers,
+    ) {}
 
     public function generalLedger(Request $request)
     {
@@ -50,7 +54,21 @@ class AccountingReportController extends Controller
 
     public function cashFlow(Request $request)
     {
-        $result = $this->reports->cashFlow((int) $request->user()->organization_id, $this->filters($request));
+        $orgId = (int) $request->user()->organization_id;
+        $filters = $this->filters($request);
+
+        if ($request->input('method') === 'gaap') {
+            $result = $this->reports->gaapCashFlow($orgId, $filters);
+
+            return response()->json([
+                'method' => $result['method'],
+                'sections' => $result['sections'],
+                'data' => $result['data'],
+                'summary' => $result['summary'],
+            ]);
+        }
+
+        $result = $this->reports->cashFlow($orgId, $filters);
 
         return response()->json([
             'data' => $result['rows'],
@@ -86,11 +104,21 @@ class AccountingReportController extends Controller
         ));
     }
 
+    public function subledgerReconciliation(Request $request)
+    {
+        return response()->json(
+            $this->subledgers->summarize(
+                (int) $request->user()->organization_id,
+                $this->filters($request),
+            ),
+        );
+    }
+
     /** @return array<string, mixed> */
     protected function filters(Request $request): array
     {
         return $request->only([
-            'branch_id', 'account_id', 'from_date', 'to_date', 'per_page', 'page',
+            'branch_id', 'account_id', 'from_date', 'to_date', 'per_page', 'page', 'method',
         ]);
     }
 }

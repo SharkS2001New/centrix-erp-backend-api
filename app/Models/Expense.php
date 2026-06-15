@@ -32,4 +32,9 @@ class Expense extends Model
         'deleted_at' => 'datetime',
         'billable_status' => 'integer',
     ];
+
+    public function paymentMethod()
+    {
+        return $this->belongsTo(PaymentMethod::class, 'payment_method_id');
+    }
 }

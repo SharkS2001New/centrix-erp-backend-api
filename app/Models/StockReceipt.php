@@ -9,6 +9,9 @@ class StockReceipt extends Model
     use HasFactory;
 
     protected $table = 'stock_receipts';
+
+    public const UPDATED_AT = null;
+
     protected $fillable = [
         'product_code', 'branch_id', 'organization_id', 'units_received',
         'stock_location', 'invoice_number', 'cost_price', 'received_by',

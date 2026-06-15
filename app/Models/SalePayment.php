@@ -19,4 +19,9 @@ class SalePayment extends Model
     protected $casts = [
         'paid_at' => 'datetime',
     ];
+
+    public function paymentMethod()
+    {
+        return $this->belongsTo(PaymentMethod::class, 'payment_method_id');
+    }
 }

@@ -78,10 +78,12 @@ class JournalOperationsTest extends TestCase
             'entry_number' => 'JE-BAL-001',
             'entry_date' => '2026-06-15',
             'description' => 'Balance test',
-            'status' => 'posted',
             'created_by' => $this->user->id,
-            'posted_at' => now(),
         ]);
+        $entry->forceFill([
+            'status' => 'posted',
+            'posted_at' => now(),
+        ])->save();
 
         $entry->lines()->create([
             'account_id' => $cash->id,

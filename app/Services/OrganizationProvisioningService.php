@@ -10,6 +10,9 @@ use App\Models\Permission;
 use App\Models\Position;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\Accounting\FiscalPeriodService;
+use App\Services\Accounting\StandardChartOfAccounts;
+use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -120,11 +123,24 @@ class OrganizationProvisioningService
                 'is_active' => true,
             ]);
 
+            $this->seedAccountingFoundation($org);
+
             return [
                 'organization' => $org,
                 'manager' => $manager,
                 'branch' => $branch,
             ];
         });
+    }
+
+    protected function seedAccountingFoundation(Organization $org): void
+    {
+        $gate = app(CapabilityGate::class)->forOrganization($org);
+        if (! $gate->enabled('accounting')) {
+            return;
+        }
+
+        app(StandardChartOfAccounts::class)->seedForOrganization($org);
+        app(FiscalPeriodService::class)->seedYear((int) $org->id, (int) now()->year);
     }
 }

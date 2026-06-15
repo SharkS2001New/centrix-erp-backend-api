@@ -39,10 +39,12 @@ class AccountingReportTest extends TestCase
             'entry_number' => 'JE-RPT-001',
             'entry_date' => '2026-06-15',
             'description' => 'Report test',
-            'status' => 'posted',
             'created_by' => $this->user->id,
-            'posted_at' => now(),
         ]);
+        $entry->forceFill([
+            'status' => 'posted',
+            'posted_at' => now(),
+        ])->save();
 
         JournalEntryLine::create([
             'journal_entry_id' => $entry->id,
@@ -83,5 +85,48 @@ class AccountingReportTest extends TestCase
     {
         $this->getJson('/api/v1/reports/accounts-receivable?per_page=10')->assertOk();
         $this->getJson('/api/v1/reports/accounts-payable?per_page=10')->assertOk();
+    }
+
+    public function test_gaap_cash_flow_indirect_method(): void
+    {
+        $cash = ChartOfAccount::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('account_code', '1000')
+            ->firstOrFail();
+        $sales = ChartOfAccount::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('account_code', '4000')
+            ->firstOrFail();
+
+        $entry = JournalEntry::create([
+            'organization_id' => $this->user->organization_id,
+            'entry_number' => 'JE-CF-GAAP',
+            'entry_date' => '2026-06-15',
+            'description' => 'GAAP cash flow test',
+            'created_by' => $this->user->id,
+        ]);
+        $entry->forceFill(['status' => 'posted', 'posted_at' => now()])->save();
+
+        JournalEntryLine::create([
+            'journal_entry_id' => $entry->id,
+            'account_id' => $cash->id,
+            'debit' => 500,
+            'credit' => 0,
+        ]);
+        JournalEntryLine::create([
+            'journal_entry_id' => $entry->id,
+            'account_id' => $sales->id,
+            'debit' => 0,
+            'credit' => 500,
+        ]);
+
+        $response = $this->getJson('/api/v1/reports/cash-flow?method=gaap&from_date=2026-06-01&to_date=2026-06-30')
+            ->assertOk()
+            ->json();
+
+        $this->assertSame('indirect', $response['method']);
+        $this->assertArrayHasKey('sections', $response);
+        $this->assertSame(500.0, (float) $response['summary']['net_operating']);
+        $this->assertGreaterThan(0, (float) $response['summary']['ending_cash']);
     }
 }

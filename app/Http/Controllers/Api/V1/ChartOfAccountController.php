@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\ChartOfAccount;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ChartOfAccountController extends BaseResourceController
 {
@@ -113,6 +114,16 @@ class ChartOfAccountController extends BaseResourceController
             ->where('organization_id', $request->user()->organization_id)
             ->where($this->routeKeyColumn(), $id)
             ->firstOrFail();
+
+        $hasLines = DB::table('journal_entry_lines')
+            ->where('account_id', $model->id)
+            ->exists();
+
+        if ($hasLines) {
+            throw ValidationException::withMessages([
+                'account' => ['Cannot delete an account that has journal activity. Deactivate it instead.'],
+            ]);
+        }
 
         $model->delete();
 

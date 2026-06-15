@@ -8,6 +8,7 @@ use App\Models\CustomerInvoicePayment;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\SalePayment;
+use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\SalePaymentColumnMapper;
@@ -52,6 +53,11 @@ class PaymentOperationsController extends Controller
         }
 
         return DB::transaction(function () use ($sale, $payment, $amount, $user) {
+            $priorPaid = (float) $sale->amount_paid;
+            $collectsReceivable = (bool) $sale->is_credit_sale
+                || $sale->customer_num
+                || $priorPaid + 0.01 < (float) $sale->order_total;
+
             SalePayment::create([
                 'sale_id' => $sale->id,
                 'payment_method_id' => $payment['payment_method_id'],
@@ -108,7 +114,20 @@ class PaymentOperationsController extends Controller
                 }
             }
 
-            return $sale->fresh();
+            $sale = $sale->fresh();
+
+            if ($collectsReceivable) {
+                $gate = $this->erp->gateForUser($user);
+                app(CustomerPaymentJournalService::class)->postIfEnabled(
+                    $sale,
+                    $user,
+                    $gate,
+                    $amount,
+                    (int) $payment['payment_method_id'],
+                );
+            }
+
+            return $sale;
         });
     }
 }

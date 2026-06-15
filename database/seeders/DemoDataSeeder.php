@@ -111,6 +111,7 @@ class DemoDataSeeder extends Seeder
             ['Manage Stock', 'inventory.manage', 'inventory'],
             ['View Reports', 'reports.view', 'reports'],
             ['Manage Purchasing', 'purchasing.manage', 'purchasing'],
+            ['View Accounting', 'accounting.view', 'accounting'],
             ['Manage Accounting', 'accounting.manage', 'accounting'],
             ['Manage HR Payroll', 'hr.manage', 'hr'],
             ['Administration', 'admin.manage', 'admin'],
@@ -463,12 +464,24 @@ class DemoDataSeeder extends Seeder
             ['account_name' => 'Accounts Receivable', 'account_type' => 'asset', 'is_active' => true]
         );
         \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '1300'],
+            ['account_name' => 'Inventory', 'account_type' => 'asset', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '2100'],
+            ['account_name' => 'VAT Payable', 'account_type' => 'liability', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
             ['organization_id' => $org->id, 'account_code' => '2000'],
             ['account_name' => 'Accounts Payable', 'account_type' => 'liability', 'is_active' => true]
         );
         \App\Models\ChartOfAccount::firstOrCreate(
             ['organization_id' => $org->id, 'account_code' => '3000'],
             ['account_name' => 'Owner Equity', 'account_type' => 'equity', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '3100'],
+            ['account_name' => 'Retained Earnings', 'account_type' => 'equity', 'is_active' => true]
         );
         \App\Models\ChartOfAccount::firstOrCreate(
             ['organization_id' => $org->id, 'account_code' => '4000'],
@@ -481,6 +494,14 @@ class DemoDataSeeder extends Seeder
         \App\Models\ChartOfAccount::firstOrCreate(
             ['organization_id' => $org->id, 'account_code' => '5100'],
             ['account_name' => 'Cash Over / Short', 'account_type' => 'expense', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '5200'],
+            ['account_name' => 'Payroll Expense', 'account_type' => 'expense', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '5300'],
+            ['account_name' => 'Operating Expenses', 'account_type' => 'expense', 'is_active' => true]
         );
 
         $this->command->info('Demo data seeded (schema v3). Login: admin / password');

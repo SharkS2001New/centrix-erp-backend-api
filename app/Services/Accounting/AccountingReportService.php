@@ -372,6 +372,306 @@ class AccountingReportService
         ];
     }
 
+    /**
+     * GAAP indirect-method cash flow statement.
+     *
+     * @param  array<string, mixed>  $filters
+     * @return array{
+     *     method: string,
+     *     sections: array<int, array<string, mixed>>,
+     *     data: \Illuminate\Support\Collection<int, object>,
+     *     summary: array<string, float>
+     * }
+     */
+    public function gaapCashFlow(int $orgId, array $filters): array
+    {
+        $fromDate = $filters['from_date'] ?? now()->startOfYear()->toDateString();
+        $toDate = $filters['to_date'] ?? now()->toDateString();
+        $branchId = ! empty($filters['branch_id']) ? (int) $filters['branch_id'] : null;
+        $dayBefore = \Carbon\Carbon::parse($fromDate)->subDay()->toDateString();
+
+        $pl = $this->profitAndLoss($orgId, array_merge($filters, [
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
+        ]));
+        $netIncome = (float) ($pl['summary']['net_income'] ?? 0);
+
+        $operatingLines = [
+            ['label' => 'Net income', 'amount' => round($netIncome, 2)],
+        ];
+
+        $workingCapital = [
+            ['label' => 'Accounts receivable', 'code' => '1200', 'type' => 'asset'],
+            ['label' => 'Inventory', 'code' => '1300', 'type' => 'asset'],
+            ['label' => 'Accounts payable', 'code' => '2000', 'type' => 'liability'],
+            ['label' => 'VAT payable', 'code' => '2100', 'type' => 'liability'],
+        ];
+
+        foreach ($workingCapital as $wc) {
+            $start = $this->accountBalanceAsOf($orgId, $wc['code'], $dayBefore, $branchId);
+            $end = $this->accountBalanceAsOf($orgId, $wc['code'], $toDate, $branchId);
+            $change = round($end - $start, 2);
+            if (abs($change) < 0.005) {
+                continue;
+            }
+
+            $cashEffect = $wc['type'] === 'asset' ? -$change : $change;
+            $direction = $change > 0 ? 'Increase in' : 'Decrease in';
+            $operatingLines[] = [
+                'label' => "{$direction} {$wc['label']}",
+                'amount' => round($cashEffect, 2),
+            ];
+        }
+
+        $netOperating = round(collect($operatingLines)->sum('amount'), 2);
+
+        $investingLines = $this->investingCashFlows($orgId, $fromDate, $toDate, $branchId);
+        $netInvesting = round(collect($investingLines)->sum('amount'), 2);
+
+        $financingLines = $this->financingCashFlows($orgId, $dayBefore, $toDate, $branchId, $netIncome);
+        $netFinancing = round(collect($financingLines)->sum('amount'), 2);
+
+        $netChange = round($netOperating + $netInvesting + $netFinancing, 2);
+        $beginningCash = $this->cashBalanceAsOf($orgId, $dayBefore, $branchId);
+        $endingCash = $this->cashBalanceAsOf($orgId, $toDate, $branchId);
+
+        $sections = [
+            [
+                'key' => 'operating',
+                'label' => 'Cash flows from operating activities',
+                'lines' => $operatingLines,
+                'subtotal' => $netOperating,
+            ],
+            [
+                'key' => 'investing',
+                'label' => 'Cash flows from investing activities',
+                'lines' => $investingLines,
+                'subtotal' => $netInvesting,
+            ],
+            [
+                'key' => 'financing',
+                'label' => 'Cash flows from financing activities',
+                'lines' => $financingLines,
+                'subtotal' => $netFinancing,
+            ],
+        ];
+
+        $flatRows = collect();
+        foreach ($sections as $section) {
+            $flatRows->push((object) [
+                'section' => $section['label'],
+                'line_label' => '',
+                'amount' => null,
+                'is_header' => true,
+            ]);
+            foreach ($section['lines'] as $line) {
+                $flatRows->push((object) [
+                    'section' => $section['label'],
+                    'line_label' => $line['label'],
+                    'amount' => $line['amount'],
+                    'is_header' => false,
+                ]);
+            }
+            $flatRows->push((object) [
+                'section' => $section['label'],
+                'line_label' => 'Net cash from '.strtolower(str_replace('Cash flows from ', '', $section['label'])),
+                'amount' => $section['subtotal'],
+                'is_total' => true,
+            ]);
+        }
+
+        $flatRows->push((object) [
+            'section' => 'Summary',
+            'line_label' => 'Net increase (decrease) in cash',
+            'amount' => $netChange,
+            'is_total' => true,
+        ]);
+        $flatRows->push((object) [
+            'section' => 'Summary',
+            'line_label' => 'Cash at beginning of period',
+            'amount' => $beginningCash,
+            'is_header' => false,
+        ]);
+        $flatRows->push((object) [
+            'section' => 'Summary',
+            'line_label' => 'Cash at end of period',
+            'amount' => $endingCash,
+            'is_total' => true,
+        ]);
+
+        return [
+            'method' => 'indirect',
+            'sections' => $sections,
+            'data' => $flatRows->values(),
+            'summary' => [
+                'net_operating' => $netOperating,
+                'net_investing' => $netInvesting,
+                'net_financing' => $netFinancing,
+                'net_change_in_cash' => $netChange,
+                'beginning_cash' => round($beginningCash, 2),
+                'ending_cash' => round($endingCash, 2),
+            ],
+        ];
+    }
+
+    /** @return list<array{label: string, amount: float}> */
+    protected function investingCashFlows(int $orgId, string $fromDate, string $toDate, ?int $branchId): array
+    {
+        $lines = [];
+        $accounts = DB::table('chart_of_accounts')
+            ->where('organization_id', $orgId)
+            ->where('is_active', true)
+            ->where('account_type', 'asset')
+            ->where(function ($q) {
+                $q->where('account_code', 'like', '14%')
+                    ->orWhere('account_code', 'like', '15%')
+                    ->orWhere('account_code', 'like', '16%')
+                    ->orWhere('account_code', 'like', '17%')
+                    ->orWhere('account_code', 'like', '18%')
+                    ->orWhere('account_code', 'like', '19%');
+            })
+            ->whereNotIn('account_code', ['1300'])
+            ->get();
+
+        foreach ($accounts as $account) {
+            $netDebit = $this->periodNetDebit($orgId, (int) $account->id, $fromDate, $toDate, $branchId);
+            if (abs($netDebit) < 0.005) {
+                continue;
+            }
+            $lines[] = [
+                'label' => 'Purchase of '.$account->account_name,
+                'amount' => round(-$netDebit, 2),
+            ];
+        }
+
+        if ($lines === []) {
+            $lines[] = ['label' => 'No investing activity', 'amount' => 0.0];
+        }
+
+        return $lines;
+    }
+
+    /** @return list<array{label: string, amount: float}> */
+    protected function financingCashFlows(int $orgId, string $dayBefore, string $toDate, ?int $branchId, float $netIncome): array
+    {
+        $lines = [];
+        $ownerEquityChange = $this->balanceChange($orgId, '3000', $dayBefore, $toDate, $branchId, 'equity');
+        if (abs($ownerEquityChange) >= 0.005) {
+            $lines[] = [
+                'label' => $ownerEquityChange >= 0 ? 'Owner contributions' : 'Owner draws',
+                'amount' => round($ownerEquityChange, 2),
+            ];
+        }
+
+        $retainedChange = $this->balanceChange($orgId, '3100', $dayBefore, $toDate, $branchId, 'equity');
+        $retainedFromClose = round($retainedChange - $netIncome, 2);
+        if (abs($retainedFromClose) >= 0.005) {
+            $lines[] = [
+                'label' => $retainedFromClose >= 0 ? 'Other equity / retained earnings adjustments' : 'Distributions from retained earnings',
+                'amount' => round($retainedFromClose, 2),
+            ];
+        }
+
+        if ($lines === []) {
+            $lines[] = ['label' => 'No financing activity', 'amount' => 0.0];
+        }
+
+        return $lines;
+    }
+
+    protected function accountBalanceAsOf(int $orgId, string $accountCode, string $asOfDate, ?int $branchId): float
+    {
+        $account = DB::table('chart_of_accounts')
+            ->where('organization_id', $orgId)
+            ->where('account_code', $accountCode)
+            ->where('is_active', true)
+            ->first();
+
+        if (! $account) {
+            return 0.0;
+        }
+
+        return $this->signedAccountBalance($orgId, (int) $account->id, (string) $account->account_type, $asOfDate, $branchId);
+    }
+
+    protected function cashBalanceAsOf(int $orgId, string $asOfDate, ?int $branchId): float
+    {
+        $codes = config('erp.module_settings_defaults.accounting.account_codes', []);
+        $cashCodes = array_unique([
+            $codes['cash'] ?? '1000',
+            $codes['bank'] ?? '1100',
+        ]);
+
+        $total = 0.0;
+        foreach ($cashCodes as $code) {
+            $total += $this->accountBalanceAsOf($orgId, $code, $asOfDate, $branchId);
+        }
+
+        return round($total, 2);
+    }
+
+    protected function balanceChange(
+        int $orgId,
+        string $accountCode,
+        string $dayBefore,
+        string $toDate,
+        ?int $branchId,
+        string $accountType,
+    ): float {
+        $start = $this->accountBalanceAsOf($orgId, $accountCode, $dayBefore, $branchId);
+        $end = $this->accountBalanceAsOf($orgId, $accountCode, $toDate, $branchId);
+
+        return round($end - $start, 2);
+    }
+
+    protected function signedAccountBalance(
+        int $orgId,
+        int $accountId,
+        string $accountType,
+        string $asOfDate,
+        ?int $branchId,
+    ): float {
+        $query = DB::table('journal_entry_lines as jel')
+            ->join('journal_entries as je', 'je.id', '=', 'jel.journal_entry_id')
+            ->where('je.organization_id', $orgId)
+            ->where('je.status', 'posted')
+            ->where('jel.account_id', $accountId)
+            ->where('je.entry_date', '<=', $asOfDate);
+
+        if ($branchId) {
+            $query->where('je.branch_id', $branchId);
+        }
+
+        $totals = $query
+            ->selectRaw('COALESCE(SUM(jel.debit), 0) as total_debit, COALESCE(SUM(jel.credit), 0) as total_credit')
+            ->first();
+
+        $debit = (float) ($totals->total_debit ?? 0);
+        $credit = (float) ($totals->total_credit ?? 0);
+
+        return $this->signedBalance($accountType, $debit, $credit);
+    }
+
+    protected function periodNetDebit(int $orgId, int $accountId, string $fromDate, string $toDate, ?int $branchId): float
+    {
+        $query = DB::table('journal_entry_lines as jel')
+            ->join('journal_entries as je', 'je.id', '=', 'jel.journal_entry_id')
+            ->where('je.organization_id', $orgId)
+            ->where('je.status', 'posted')
+            ->where('jel.account_id', $accountId)
+            ->whereBetween('je.entry_date', [$fromDate, $toDate]);
+
+        if ($branchId) {
+            $query->where('je.branch_id', $branchId);
+        }
+
+        $totals = $query
+            ->selectRaw('COALESCE(SUM(jel.debit), 0) as total_debit, COALESCE(SUM(jel.credit), 0) as total_credit')
+            ->first();
+
+        return round((float) ($totals->total_debit ?? 0) - (float) ($totals->total_credit ?? 0), 2);
+    }
+
     protected function signedBalance(string $accountType, float $debit, float $credit): float
     {
         if (in_array($accountType, ['asset', 'expense'], true)) {

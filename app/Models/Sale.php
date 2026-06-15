@@ -15,6 +15,11 @@ class Sale extends Model
     {
         return $this->hasMany(SaleItem::class, 'sale_id');
     }
+
+    public function payments()
+    {
+        return $this->hasMany(SalePayment::class, 'sale_id');
+    }
     protected $fillable = [
         'order_num', 'branch_id', 'organization_id', 'channel', 'order_source', 'till_id',
         'float_session_id', 'cashier_id', 'customer_num', 'customer_name_override',

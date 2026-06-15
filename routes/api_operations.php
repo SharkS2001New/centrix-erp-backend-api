@@ -10,7 +10,11 @@ use App\Http\Controllers\Api\V1\Operations\LpoReceiveController;
 use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
+use App\Http\Controllers\Api\V1\Operations\ExternalAccountingController;
+use App\Http\Controllers\Api\V1\Operations\FiscalPeriodController;
 use App\Http\Controllers\Api\V1\Operations\JournalOperationsController;
+use App\Http\Controllers\Api\V1\Operations\AccountingSettingsController;
+use App\Http\Controllers\Api\V1\Operations\YearEndCloseController;
 use App\Http\Controllers\Api\V1\Operations\AccountingReportController;
 use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
@@ -80,10 +84,33 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ---- Accounting ----
+    Route::middleware(['erp.module:accounting', 'erp.permission:accounting.view'])->prefix('accounting')->group(function () {
+        Route::get('settings', [AccountingSettingsController::class, 'show']);
+    });
+
     Route::middleware(['erp.module:accounting', 'erp.permission:accounting.manage'])->prefix('accounting')->group(function () {
+        Route::patch('settings', [AccountingSettingsController::class, 'update']);
+        Route::post('seed-chart-of-accounts', [AccountingSettingsController::class, 'seedChart']);
         Route::post('journal-entries', [JournalOperationsController::class, 'store']);
         Route::post('journal-entries/{entryId}/post', [JournalOperationsController::class, 'post']);
         Route::post('journal-entries/{entryId}/reverse', [JournalOperationsController::class, 'reverse']);
+        Route::get('fiscal-periods', [FiscalPeriodController::class, 'index']);
+        Route::post('fiscal-periods', [FiscalPeriodController::class, 'store']);
+        Route::post('fiscal-periods/{periodId}/close', [FiscalPeriodController::class, 'close']);
+        Route::post('fiscal-periods/{periodId}/reopen', [FiscalPeriodController::class, 'reopen']);
+        Route::post('year-end-close', [YearEndCloseController::class, 'store']);
+        Route::get('integration/status', [ExternalAccountingController::class, 'status']);
+        Route::get('quickbooks/connect-url', [ExternalAccountingController::class, 'quickBooksConnectUrl']);
+        Route::get('quickbooks/accounts', [ExternalAccountingController::class, 'quickBooksAccounts']);
+        Route::post('quickbooks/disconnect', [ExternalAccountingController::class, 'quickBooksDisconnect']);
+        Route::post('{provider}/connect-stub', [ExternalAccountingController::class, 'connectStub'])
+            ->where('provider', 'xero|sage');
+        Route::post('{provider}/disconnect', [ExternalAccountingController::class, 'disconnectProvider'])
+            ->where('provider', 'xero|sage');
+        Route::get('account-mappings', [ExternalAccountingController::class, 'listMappings']);
+        Route::put('account-mappings', [ExternalAccountingController::class, 'syncMappings']);
+        Route::get('export-queue', [ExternalAccountingController::class, 'exportQueue']);
+        Route::post('export-queue/process', [ExternalAccountingController::class, 'processExportQueue']);
     });
 
     // ---- HR / Attendance (clock device) ----
@@ -150,6 +177,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('cash-flow', [AccountingReportController::class, 'cashFlow']);
         Route::get('accounts-receivable', [AccountingReportController::class, 'accountsReceivable']);
         Route::get('accounts-payable', [AccountingReportController::class, 'accountsPayable']);
+        Route::get('subledger-reconciliation', [AccountingReportController::class, 'subledgerReconciliation']);
         Route::get('till-sessions', [ReportController::class, 'tillSessions']);
         Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
         Route::get('audit-trail', [ReportController::class, 'auditTrail']);

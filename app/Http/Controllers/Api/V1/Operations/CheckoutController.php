@@ -9,10 +9,7 @@ use App\Models\Voucher;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Sales\CheckoutRequest;
 use App\Models\CartLine;
-use App\Models\ChartOfAccount;
 use App\Models\CustomerInvoice;
-use App\Models\JournalEntry;
-use App\Models\JournalEntryLine;
 use App\Models\KraResponse;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
@@ -24,6 +21,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Kra\KraDeviceService;
 use App\Support\CustomerCreditLimit;
@@ -331,7 +329,7 @@ class CheckoutController extends Controller
             CartLine::where('cart_id', $cart->id)->delete();
             $cart->delete();
 
-            $sale = $sale->fresh(['items']);
+            $sale = $sale->fresh(['items', 'payments.paymentMethod']);
 
             $kraResponse = $this->submitKraForSale(
                 $sale,
@@ -344,7 +342,7 @@ class CheckoutController extends Controller
                 $sale->setRelation('kraResponse', $kraResponse);
             }
 
-            $this->postSaleJournalIfEnabled($sale, $user, $gate);
+            app(SaleJournalService::class)->postIfEnabled($sale, $user, $gate);
 
             return $sale;
         });
@@ -441,62 +439,5 @@ class CheckoutController extends Controller
                 'channel' => $sale->channel,
             ],
         ]);
-    }
-
-    protected function postSaleJournalIfEnabled(Sale $sale, User $user, CapabilityGate $gate): ?JournalEntry
-    {
-        if (! $gate->enabled('accounting')) {
-            return null;
-        }
-
-        $settings = $gate->moduleSettings('accounting') ?? [];
-        if (! ($settings['auto_post_sales'] ?? true)) {
-            return null;
-        }
-
-        $orgId = $sale->organization_id;
-        $cash = ChartOfAccount::where('organization_id', $orgId)
-            ->where('account_code', '1000')->first();
-        $sales = ChartOfAccount::where('organization_id', $orgId)
-            ->where('account_code', '4000')->first();
-
-        if (! $cash || ! $sales) {
-            return null;
-        }
-
-        $net = (float) $sale->order_total - (float) $sale->total_vat;
-        $entryNumber = 'SALE-' . $sale->order_num;
-
-        if (JournalEntry::where('organization_id', $orgId)->where('entry_number', $entryNumber)->exists()) {
-            return null;
-        }
-
-        $entry = JournalEntry::create([
-            'organization_id' => $orgId,
-            'branch_id' => $sale->branch_id,
-            'entry_number' => $entryNumber,
-            'entry_date' => now()->toDateString(),
-            'reference_type' => 'sale',
-            'reference_id' => $sale->id,
-            'description' => 'Auto journal for sale #' . $sale->order_num,
-            'status' => 'posted',
-            'created_by' => $user->id,
-            'posted_at' => now(),
-        ]);
-
-        JournalEntryLine::create([
-            'journal_entry_id' => $entry->id,
-            'account_id' => $cash->id,
-            'debit' => $net,
-            'credit' => 0,
-        ]);
-        JournalEntryLine::create([
-            'journal_entry_id' => $entry->id,
-            'account_id' => $sales->id,
-            'debit' => 0,
-            'credit' => $net,
-        ]);
-
-        return $entry;
     }
 }
