@@ -5,6 +5,10 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\Till;
 use App\Models\TillFloatSession;
+use App\Services\Erp\FloatSessionValidator;
+use App\Services\Erp\TillSessionAuthorization;
+use App\Services\Erp\TillVarianceJournal;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -88,14 +92,15 @@ class TillOperationsController extends Controller
 
     protected function assertCashierHasNoOtherOpenSession(int $userId, int $tillId): void
     {
-        $open = TillFloatSession::query()
+        $other = TillFloatSession::query()
             ->where('cashier_id', $userId)
-            ->where('status', 'open')
+            ->whereIn('status', ['open', 'suspended'])
+            ->where('till_id', '!=', $tillId)
             ->first();
 
-        if ($open && (int) $open->till_id !== $tillId) {
+        if ($other) {
             throw new InvalidArgumentException(
-                'You already have an open session on another till. Close it before opening a new one.',
+                'You already have an active session on another till. Close or resume it before opening a new one.',
             );
         }
     }
@@ -113,10 +118,19 @@ class TillOperationsController extends Controller
 
         $existing = TillFloatSession::query()
             ->where('till_id', $data['till_id'])
-            ->where('status', 'open')
+            ->whereIn('status', ['open', 'suspended'])
             ->first();
         if ($existing) {
             if ((int) $existing->cashier_id === (int) $request->user()->id) {
+                if ($existing->status === 'suspended') {
+                    $existing->update([
+                        'status' => 'open',
+                        'suspended_at' => null,
+                    ]);
+
+                    return response()->json($existing->fresh());
+                }
+
                 return response()->json($existing->fresh());
             }
 
@@ -133,14 +147,17 @@ class TillOperationsController extends Controller
         $this->assertCashierHasNoOtherOpenSession($userId, (int) $till->id);
 
         $amount = (float) $data['working_amount'];
-        if ($amount <= 0) {
+        $requireFloat = FloatSessionValidator::forUser($request->user())->requirePosTillFloat();
+        if ($requireFloat && $amount <= 0) {
             throw new InvalidArgumentException('Operating float is required to open a session.');
         }
 
         $entries = $data['float_breakdown'] ?? null;
         $floatBreakdown = is_array($entries) && $entries !== []
             ? $this->normalizeFloatEntries($entries)
-            : $this->appendFloatEntry([], $amount, $data['payment_type']);
+            : ($amount > 0
+                ? $this->appendFloatEntry([], $amount, $data['payment_type'])
+                : []);
 
         $session = TillFloatSession::create([
             'till_id' => $data['till_id'],
@@ -168,12 +185,9 @@ class TillOperationsController extends Controller
         ]);
 
         $session = TillFloatSession::findOrFail($sessionId);
+        TillSessionAuthorization::assertSessionCashier($request->user(), $session);
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Cannot add float to a closed session.');
-        }
-
-        if ((int) $session->cashier_id !== (int) $request->user()->id) {
-            throw new InvalidArgumentException('Only the session cashier can add float.');
         }
 
         $entries = $this->normalizeFloatEntries($session->float_breakdown);
@@ -188,15 +202,45 @@ class TillOperationsController extends Controller
         return response()->json($session->fresh());
     }
 
+    public function recordCashMovement(Request $request, int $sessionId)
+    {
+        $data = $request->validate([
+            'type' => 'required|string|in:drop,pay_in,pay_out',
+            'amount' => 'required|numeric|min:0.01',
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $session = TillFloatSession::findOrFail($sessionId);
+        TillSessionAuthorization::assertSessionCashier($request->user(), $session);
+        if ($session->status !== 'open') {
+            throw new InvalidArgumentException('Cannot record cash movements on a closed session.');
+        }
+
+        $movements = $this->normalizeCashMovements($session->cash_movements);
+        $movements[] = [
+            'type' => $data['type'],
+            'amount' => (float) $data['amount'],
+            'reason' => $data['reason'] ?? null,
+            'recorded_at' => now()->format('Y-m-d\TH:i:s.v'),
+            'recorded_by' => (int) $request->user()->id,
+        ];
+
+        $session->update(['cash_movements' => $movements]);
+
+        return response()->json($session->fresh());
+    }
+
     public function closeSession(Request $request, int $sessionId)
     {
         $data = $request->validate([
             'closing_amount' => 'required|numeric',
             'expected_amount' => 'nullable|numeric',
+            'closing_denominations' => 'nullable|array',
             'notes' => 'nullable|string',
         ]);
 
         $session = TillFloatSession::findOrFail($sessionId);
+        TillSessionAuthorization::assertSessionCashier($request->user(), $session);
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Session is not open.');
         }
@@ -204,12 +248,18 @@ class TillOperationsController extends Controller
         $report = $this->buildTillReport($sessionId);
         $expected = $data['expected_amount'] ?? ($report['expected_cash'] ?? null);
         $cashSales = (float) ($report['sales']['cash'] ?? 0);
+        $expensesTotal = (float) DB::table('expenses')
+            ->where('float_session_id', $sessionId)
+            ->whereNull('deleted_at')
+            ->sum('expense_amount');
 
         $session->update([
             'closing_amount' => $data['closing_amount'],
             'expected_amount' => $expected,
             'notes' => $data['notes'] ?? $session->notes,
             'cash_sales' => $cashSales,
+            'expenses_total' => $expensesTotal,
+            'closing_denominations' => $data['closing_denominations'] ?? null,
             'closed_at' => now(),
             'status' => 'closed',
         ]);
@@ -219,16 +269,128 @@ class TillOperationsController extends Controller
             ? (float) $data['closing_amount'] - (float) $expected
             : null;
 
+        $journal = app(TillVarianceJournal::class)->postIfEnabled($fresh, $request->user(), $variance);
+
         return response()->json([
             'session' => $fresh,
             'variance' => $variance,
+            'variance_journal_id' => $journal?->id,
             'report' => $this->buildTillReport($sessionId, $fresh),
         ]);
     }
 
-    public function xReport(int $sessionId)
+    public function suspendSession(Request $request, int $sessionId)
     {
-        $report = $this->buildTillReport($sessionId);
+        $session = TillFloatSession::findOrFail($sessionId);
+        TillSessionAuthorization::assertSessionCashier($request->user(), $session);
+        if ($session->status !== 'open') {
+            throw new InvalidArgumentException('Only an open session can be suspended.');
+        }
+
+        $session->update([
+            'status' => 'suspended',
+            'suspended_at' => now(),
+        ]);
+
+        return response()->json($session->fresh());
+    }
+
+    public function resumeSession(Request $request, int $sessionId)
+    {
+        $session = TillFloatSession::findOrFail($sessionId);
+        TillSessionAuthorization::assertSessionCashier($request->user(), $session);
+        if ($session->status !== 'suspended') {
+            throw new InvalidArgumentException('Session is not suspended.');
+        }
+
+        $otherOpen = TillFloatSession::query()
+            ->where('cashier_id', $session->cashier_id)
+            ->where('status', 'open')
+            ->where('id', '!=', $session->id)
+            ->exists();
+        if ($otherOpen) {
+            throw new InvalidArgumentException('Close your other open session before resuming this one.');
+        }
+
+        $session->update([
+            'status' => 'open',
+            'suspended_at' => null,
+        ]);
+
+        return response()->json($session->fresh());
+    }
+
+    public function handoverSession(Request $request, int $sessionId)
+    {
+        $data = $request->validate([
+            'to_cashier_id' => 'required|integer',
+            'notes' => 'nullable|string|max:500',
+        ]);
+
+        $session = TillFloatSession::findOrFail($sessionId);
+        TillSessionAuthorization::assertCanHandover($request->user(), $session);
+        if ($session->status !== 'open') {
+            throw new InvalidArgumentException('Only an open session can be handed over.');
+        }
+
+        $toCashier = User::query()
+            ->where('id', $data['to_cashier_id'])
+            ->where('organization_id', $request->user()->organization_id)
+            ->first();
+        if (! $toCashier) {
+            throw new InvalidArgumentException('Target cashier not found.');
+        }
+        if ((int) $toCashier->id === (int) $session->cashier_id) {
+            throw new InvalidArgumentException('Session is already assigned to that cashier.');
+        }
+        if ($toCashier->branch_id && (int) $toCashier->branch_id !== (int) $session->branch_id) {
+            throw new InvalidArgumentException('Target cashier must belong to the same branch.');
+        }
+
+        $conflict = TillFloatSession::query()
+            ->where('cashier_id', $toCashier->id)
+            ->where('status', 'open')
+            ->exists();
+        if ($conflict) {
+            throw new InvalidArgumentException('Target cashier already has an open session.');
+        }
+
+        $fromCashierId = (int) $session->cashier_id;
+        $handoverNote = trim((string) ($data['notes'] ?? ''));
+        $noteLine = sprintf(
+            'Handed over from user #%d to user #%d at %s%s',
+            $fromCashierId,
+            $toCashier->id,
+            now()->format('Y-m-d H:i'),
+            $handoverNote !== '' ? ': '.$handoverNote : '',
+        );
+        $notes = trim(($session->notes ? $session->notes."\n" : '').$noteLine);
+
+        $session->update([
+            'cashier_id' => $toCashier->id,
+            'handed_over_from' => $fromCashierId,
+            'handed_over_at' => now(),
+            'notes' => $notes,
+        ]);
+
+        $till = Till::find($session->till_id);
+        if ($till) {
+            $till->update(['cashier_id' => $toCashier->id]);
+        }
+
+        return response()->json([
+            'session' => $session->fresh(),
+            'from_cashier_id' => $fromCashierId,
+            'to_cashier_id' => $toCashier->id,
+        ]);
+    }
+
+    public function xReport(Request $request, int $sessionId)
+    {
+        $session = TillFloatSession::findOrFail($sessionId);
+        TillSessionAuthorization::assertCanView($request->user(), $session);
+
+        $report = $this->buildTillReport($sessionId, $session);
         if (! $report) {
             abort(404);
         }
@@ -236,9 +398,10 @@ class TillOperationsController extends Controller
         return response()->json(['type' => 'X', ...$report]);
     }
 
-    public function zReport(int $sessionId)
+    public function zReport(Request $request, int $sessionId)
     {
         $session = TillFloatSession::findOrFail($sessionId);
+        TillSessionAuthorization::assertCanView($request->user(), $session);
         if ($session->status !== 'closed') {
             return response()->json(['message' => 'Session must be closed for Z-report.'], 422);
         }
@@ -302,7 +465,17 @@ class TillOperationsController extends Controller
         $bank = $equity + $kcb;
         $net = max(0, $gross - $discounts - $refunds);
         $openingFloat = (float) ($session->working_amount ?? 0);
-        $expectedCash = $openingFloat + $cash;
+        $cashMovements = $this->normalizeCashMovements(
+            is_string($session->cash_movements ?? null)
+                ? json_decode($session->cash_movements, true)
+                : ($session->cash_movements ?? []),
+        );
+        $movementAdjust = $this->sumCashMovementAdjustments($cashMovements);
+        $sessionExpenses = (float) DB::table('expenses')
+            ->where('float_session_id', $floatSessionId)
+            ->whereNull('deleted_at')
+            ->sum('expense_amount');
+        $expectedCash = $openingFloat + $cash - $movementAdjust['out'] + $movementAdjust['in'] - $sessionExpenses;
 
         $floatEntries = $this->normalizeFloatEntries(
             is_string($session->float_breakdown ?? null)
@@ -326,6 +499,54 @@ class TillOperationsController extends Controller
                 'kcb' => $kcb,
             ],
             'expected_cash' => $expectedCash,
+            'cash_movements' => $cashMovements,
+            'session_expenses' => $sessionExpenses,
         ];
+    }
+
+    /** @param  mixed  $movements */
+    protected function normalizeCashMovements($movements): array
+    {
+        if (! is_array($movements)) {
+            return [];
+        }
+
+        return array_values(array_filter(array_map(function ($row) {
+            if (! is_array($row)) {
+                return null;
+            }
+            $type = strtolower((string) ($row['type'] ?? ''));
+            if (! in_array($type, ['drop', 'pay_in', 'pay_out'], true)) {
+                return null;
+            }
+
+            return [
+                'type' => $type,
+                'amount' => (float) ($row['amount'] ?? 0),
+                'reason' => $row['reason'] ?? null,
+                'recorded_at' => $row['recorded_at'] ?? null,
+                'recorded_by' => $row['recorded_by'] ?? null,
+            ];
+        }, $movements)));
+    }
+
+    /** @return array{in: float, out: float} */
+    protected function sumCashMovementAdjustments(array $movements): array
+    {
+        $in = 0.0;
+        $out = 0.0;
+        foreach ($movements as $row) {
+            $amount = (float) ($row['amount'] ?? 0);
+            if ($amount <= 0) {
+                continue;
+            }
+            if ($row['type'] === 'pay_in') {
+                $in += $amount;
+            } else {
+                $out += $amount;
+            }
+        }
+
+        return ['in' => $in, 'out' => $out];
     }
 }

@@ -35,4 +35,9 @@ return Application::configure(basePath: dirname(__DIR__))
                 return response()->json(['message' => 'Unauthenticated.'], 401);
             }
         });
+        $exceptions->renderable(function (\InvalidArgumentException $e, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json(['message' => $e->getMessage()], 422);
+            }
+        });
     })->create();

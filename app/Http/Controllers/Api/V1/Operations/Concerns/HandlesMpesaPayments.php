@@ -108,7 +108,7 @@ trait HandlesMpesaPayments
         );
     }
 
-    protected function incomingPaymentsForCart(TemporaryCart $cart, string $phone): Collection
+    protected function incomingPaymentsForCart(TemporaryCart $cart, string $phone, ?int $organizationId = null): Collection
     {
         $skippedIds = MpesaPaymentSkip::where('cart_id', $cart->id)->pluck('mpesa_incoming_payment_id');
         $variants = $this->mpesaPhoneVariants($phone);
@@ -117,6 +117,9 @@ trait HandlesMpesaPayments
             ->where('status', 'available')
             ->whereIn('phone_number', $variants)
             ->where('received_at', '>=', now()->subDay())
+            ->when($organizationId, fn ($q) => $q->where(fn ($inner) => $inner
+                ->where('organization_id', $organizationId)
+                ->orWhereNull('organization_id')))
             ->when($skippedIds->isNotEmpty(), fn ($q) => $q->whereNotIn('id', $skippedIds))
             ->orderByDesc('received_at')
             ->limit(10)

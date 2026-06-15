@@ -15,6 +15,8 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\TemporaryCart;
 use App\Models\User;
+use App\Models\Voucher;
+use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
@@ -240,7 +242,54 @@ class CartOperationsController extends Controller
             'amount' => 'nullable|numeric|min:0',
         ]);
 
-        $voucher = $this->findPaymentVoucher((int) $request->user()->organization_id, $data['voucher_code']);
+        $code = $data['voucher_code'];
+        $orgId = (int) $request->user()->organization_id;
+        $voucher = Voucher::where('organization_id', $orgId)
+            ->where('voucher_code', strtoupper(trim($code)))
+            ->first();
+
+        if (! $voucher) {
+            throw new InvalidArgumentException('Voucher not found.');
+        }
+
+        if ($voucher->voucher_kind === 'discount') {
+            $discountVoucher = $this->findDiscountVoucher($orgId, $code);
+            $lineNet = (float) CartLine::where('cart_id', $cart->id)->sum('amount');
+            $discount = $this->computeVoucherDiscountAmount($discountVoucher, $lineNet);
+
+            if (method_exists($this, 'releaseCartMpesaPayments')) {
+                $this->releaseCartMpesaPayments($cart);
+            }
+
+            $cart->update([
+                'discount_voucher_id' => $discountVoucher->id,
+                'order_discount' => $discount,
+                'payment_voucher_id' => null,
+                'voucher_payment_amount' => 0,
+                'loyalty_card_id' => null,
+                'points_redeemed' => 0,
+                'points_payment_amount' => 0,
+                'mpesa_phone' => null,
+                'mpesa_payment_amount' => 0,
+                'mpesa_transaction_code' => null,
+            ]);
+            $cart->increment('update_no');
+            $fresh = $cart->fresh('lines');
+
+            return response()->json([
+                'cart' => $fresh,
+                'voucher' => [
+                    'id' => $discountVoucher->id,
+                    'voucher_code' => $discountVoucher->voucher_code,
+                    'voucher_kind' => 'discount',
+                    'discount_type' => $discountVoucher->discount_type,
+                    'applied_amount' => $discount,
+                    'amount_due' => $this->cartAmountDue($fresh),
+                ],
+            ]);
+        }
+
+        $voucher = $this->findPaymentVoucher($orgId, $code);
         $orderTotal = $this->cartOrderTotal($cart);
         $otherPoints = max(0, (float) ($cart->points_payment_amount ?? 0));
         $maxApplicable = min((float) $voucher->balance, max(0, $orderTotal - $otherPoints));
@@ -250,6 +299,8 @@ class CartOperationsController extends Controller
 
         $cart->update([
             'payment_voucher_id' => $voucher->id,
+            'discount_voucher_id' => null,
+            'order_discount' => 0,
             'voucher_payment_amount' => $amount,
         ]);
         $cart->increment('update_no');
@@ -260,6 +311,7 @@ class CartOperationsController extends Controller
             'voucher' => [
                 'id' => $voucher->id,
                 'voucher_code' => $voucher->voucher_code,
+                'voucher_kind' => 'payment',
                 'balance' => (float) $voucher->balance,
                 'applied_amount' => $amount,
                 'amount_due' => $this->cartAmountDue($fresh),
@@ -407,6 +459,15 @@ class CartOperationsController extends Controller
             (float) ($line['discount_given'] ?? 0),
         );
 
+        $product->loadMissing('vat');
+        $grossForVat = max(0, $amount - $discountGiven);
+        $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
+            ? max(0, (float) $line['product_vat'])
+            : SalesVatCalculator::vatFromInclusiveGross(
+                $grossForVat,
+                SalesVatCalculator::vatRateFromProduct($product),
+            );
+
         $settings = $gate->moduleSettings('inventory');
         $stockAsRetail = $this->stockRouteAsRetail($product, $onWholesaleRetailFlag, $salesSettings);
         $location = $this->saleLineStockLocation($cart->channel, $settings, $salesSettings, $stockAsRetail);
@@ -420,7 +481,7 @@ class CartOperationsController extends Controller
             'unit_price' => $unitPrice,
             'quantity' => $qty,
             'uom' => $line['uom'] ?? $product->unit?->uom_type,
-            'product_vat' => $line['product_vat'] ?? 0,
+            'product_vat' => $productVat,
             'amount' => $amount,
             'discount_given' => $discountGiven,
             'on_wholesale_retail' => $onWholesaleRetailFlag ? 1 : 0,
@@ -502,12 +563,22 @@ class CartOperationsController extends Controller
             );
         }
 
+        $amount = round($unitPrice * $qty, 2);
+        $grossForVat = max(0, $amount - $discountGiven);
+        $product->loadMissing('vat');
+        $productVat = array_key_exists('product_vat', $input) && $input['product_vat'] !== null
+            ? max(0, (float) $input['product_vat'])
+            : SalesVatCalculator::vatFromInclusiveGross(
+                $grossForVat,
+                SalesVatCalculator::vatRateFromProduct($product),
+            );
+
         $row->update([
             'unit_price' => $unitPrice,
             'quantity' => $qty,
             'uom' => $input['uom'] ?? $row->uom ?? $product->unit?->uom_type,
-            'product_vat' => $input['product_vat'] ?? $row->product_vat ?? 0,
-            'amount' => round($unitPrice * $qty, 2),
+            'product_vat' => $productVat,
+            'amount' => $amount,
             'discount_given' => $discountGiven,
             'on_wholesale_retail' => $onWholesaleRetailFlag ? 1 : 0,
         ]);
@@ -529,7 +600,7 @@ class CartOperationsController extends Controller
     {
         $this->releaseCartReservations($cart->id);
         CartLine::where('cart_id', $cart->id)->delete();
-        $cart->update(['order_discount' => 0]);
+        $cart->update(['order_discount' => 0, 'discount_voucher_id' => null]);
         $this->clearCartPaymentOptions($cart);
         $cart->increment('update_no');
     }

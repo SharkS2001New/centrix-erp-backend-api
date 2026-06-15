@@ -15,6 +15,7 @@ use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
+use App\Http\Controllers\Api\V1\Operations\KraProductRegistrationController;
 
 Route::middleware('auth:sanctum')->group(function () {
 
@@ -49,13 +50,16 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware(['erp.module:payments', 'erp.permission:payments.manage'])->group(function () {
         Route::post('sales/{saleId}/payments', [PaymentOperationsController::class, 'paySale']);
-        Route::post('payments/c2b/register-urls', [MpesaPaymentController::class, 'registerC2bUrls']);
     });
 
     // ---- POS till ----
     Route::middleware(['erp.module:sales.pos', 'erp.permission:pos.till'])->prefix('pos')->group(function () {
         Route::post('sessions/open', [TillOperationsController::class, 'openSession']);
         Route::post('sessions/{sessionId}/add-float', [TillOperationsController::class, 'addFloat']);
+        Route::post('sessions/{sessionId}/cash-movement', [TillOperationsController::class, 'recordCashMovement']);
+        Route::post('sessions/{sessionId}/suspend', [TillOperationsController::class, 'suspendSession']);
+        Route::post('sessions/{sessionId}/resume', [TillOperationsController::class, 'resumeSession']);
+        Route::post('sessions/{sessionId}/handover', [TillOperationsController::class, 'handoverSession']);
         Route::post('sessions/{sessionId}/close', [TillOperationsController::class, 'closeSession']);
         Route::get('sessions/{sessionId}/x-report', [TillOperationsController::class, 'xReport']);
         Route::get('sessions/{sessionId}/z-report', [TillOperationsController::class, 'zReport']);
@@ -94,6 +98,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('calculate', [PayrollOperationsController::class, 'calculate']);
         Route::post('runs/{runId}/process', [PayrollOperationsController::class, 'processRun']);
         Route::post('runs/{runId}/process-auto', [PayrollOperationsController::class, 'processAuto']);
+    });
+
+    // ---- KRA device ----
+    Route::middleware('erp.permission:products.manage')->prefix('kra')->group(function () {
+        Route::post('register-products', [KraProductRegistrationController::class, 'register']);
     });
 
     // ---- Reports ----

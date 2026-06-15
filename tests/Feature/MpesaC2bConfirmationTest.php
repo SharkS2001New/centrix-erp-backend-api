@@ -3,12 +3,28 @@
 namespace Tests\Feature;
 
 use App\Models\MpesaIncomingPayment;
+use App\Models\Organization;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
 
 class MpesaC2bConfirmationTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $org = Organization::query()->orderBy('id')->firstOrFail();
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'mpesa' => array_merge(config('erp.module_settings_defaults.finance.mpesa', []), [
+                'env' => 'live',
+                'child_storecode' => '6563610',
+                'till_number' => '6563610',
+            ]),
+        ]);
+        $org->update(['module_settings' => $settings]);
+    }
 
     public function test_c2b_confirmation_stores_incoming_payment_for_check_payment(): void
     {

@@ -5,11 +5,14 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesMpesaPayments;
 use App\Http\Controllers\Controller;
+use App\Models\Branch;
 use App\Models\MpesaIncomingPayment;
 use App\Models\MpesaPaymentSkip;
 use App\Models\MpesaStkRequest;
-use App\Models\TemporaryCart;
 use App\Models\Organization;
+use App\Models\TemporaryCart;
+use App\Services\Erp\ErpContext;
+use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\MpesaService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -20,11 +23,20 @@ class MpesaPaymentController extends Controller
     use HandlesCartPayments;
     use HandlesMpesaPayments;
 
-    public function __construct(protected MpesaService $mpesaService) {}
+    public function __construct(protected ErpContext $erp) {}
+
+    protected function mpesaForCart(TemporaryCart $cart, $user): MpesaService
+    {
+        $org = Organization::findOrFail($user->organization_id);
+        $branch = $cart->branch_id ? Branch::find($cart->branch_id) : null;
+
+        return MpesaService::forOrganization($org, $branch);
+    }
 
     public function stkPush(Request $request, int $cartId)
     {
         $cart = $this->findCart($cartId, $request->user());
+        $mpesaService = $this->mpesaForCart($cart, $request->user());
         $data = $request->validate([
             'phone_number' => ['required', 'string', 'max:45'],
             'amount' => ['nullable', 'numeric', 'min:1'],
@@ -41,7 +53,7 @@ class MpesaPaymentController extends Controller
         }
 
         try {
-            $stkResponse = $this->mpesaService->stkPush(
+            $stkResponse = $mpesaService->stkPush(
                 $phone,
                 $amount,
                 'POS-CART-' . $cart->id,
@@ -119,7 +131,7 @@ class MpesaPaymentController extends Controller
         }
 
         $candidates = $phone !== ''
-            ? $this->incomingPaymentsForCart($cart, $phone)->map(fn ($p) => $this->formatIncomingPayment($p))
+            ? $this->incomingPaymentsForCart($cart, $phone, (int) $request->user()->organization_id)->map(fn ($p) => $this->formatIncomingPayment($p))
             : collect();
 
         return response()->json([
@@ -145,7 +157,7 @@ class MpesaPaymentController extends Controller
         ]);
 
         $this->formatMpesaPhone($data['phone_number']);
-        $candidates = $this->incomingPaymentsForCart($cart, $data['phone_number'])
+        $candidates = $this->incomingPaymentsForCart($cart, $data['phone_number'], (int) $request->user()->organization_id)
             ->map(fn ($p) => $this->formatIncomingPayment($p));
 
         return response()->json([
@@ -158,6 +170,7 @@ class MpesaPaymentController extends Controller
     public function applyIncomingPayment(Request $request, int $cartId)
     {
         $cart = $this->findCart($cartId, $request->user());
+        $orgId = (int) $request->user()->organization_id;
         $data = $request->validate([
             'payment_id' => ['required', 'integer'],
             'amount' => ['nullable', 'numeric', 'min:1'],
@@ -166,6 +179,7 @@ class MpesaPaymentController extends Controller
         $payment = MpesaIncomingPayment::query()
             ->where('id', $data['payment_id'])
             ->where('status', 'available')
+            ->where(fn ($q) => $q->where('organization_id', $orgId)->orWhereNull('organization_id'))
             ->first();
 
         if (! $payment) {
@@ -189,7 +203,7 @@ class MpesaPaymentController extends Controller
         $remainder = (int) round($paymentAmount - $toApply);
         if ($remainder >= 1) {
             MpesaIncomingPayment::query()->create([
-                'organization_id' => $payment->organization_id,
+                'organization_id' => $payment->organization_id ?? $orgId,
                 'transaction_id' => $payment->transaction_id.'-R'.$remainder.'-'.uniqid(),
                 'phone_number' => $payment->phone_number,
                 'amount' => $remainder,
@@ -205,7 +219,7 @@ class MpesaPaymentController extends Controller
             'applied_cart_id' => $cart->id,
             'applied_amount' => (int) round($toApply),
             'applied_at' => now(),
-            'organization_id' => $payment->organization_id ?? (int) $request->user()->organization_id,
+            'organization_id' => $payment->organization_id ?? $orgId,
         ]);
 
         $cart = $this->refreshCartMpesaTotals($cart);
@@ -221,6 +235,7 @@ class MpesaPaymentController extends Controller
     public function skipIncomingPayment(Request $request, int $cartId)
     {
         $cart = $this->findCart($cartId, $request->user());
+        $orgId = (int) $request->user()->organization_id;
         $data = $request->validate([
             'payment_id' => ['required', 'integer'],
         ]);
@@ -228,6 +243,7 @@ class MpesaPaymentController extends Controller
         $payment = MpesaIncomingPayment::query()
             ->where('id', $data['payment_id'])
             ->where('status', 'available')
+            ->where(fn ($q) => $q->where('organization_id', $orgId)->orWhereNull('organization_id'))
             ->firstOrFail();
 
         MpesaPaymentSkip::firstOrCreate([
@@ -240,6 +256,7 @@ class MpesaPaymentController extends Controller
             'candidates' => $this->incomingPaymentsForCart(
                 $cart,
                 (string) ($cart->mpesa_phone ?: $payment->phone_number),
+                $orgId,
             )->map(fn ($p) => $this->formatIncomingPayment($p)),
         ]);
     }
@@ -320,23 +337,6 @@ class MpesaPaymentController extends Controller
         return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);
     }
 
-    public function registerC2bUrls(Request $request)
-    {
-        try {
-            $response = $this->mpesaService->registerUrls();
-        } catch (\RuntimeException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
-        }
-
-        return response()->json([
-            'message' => 'M-Pesa C2B URLs registered. Direct till/paybill payments will post to the confirmation callback.',
-            'confirmation_url' => $this->mpesaService->resolvedConfirmationUrl(),
-            'validation_url' => config('mpesa.validation_url'),
-            'shortcode' => config('mpesa.child_storecode'),
-            'response' => $response,
-        ]);
-    }
-
     public function c2bConfirmation(Request $request)
     {
         $payload = $this->parseMpesaCallbackPayload($request);
@@ -364,7 +364,7 @@ class MpesaPaymentController extends Controller
             $phone,
             $amount,
             'c2b',
-            $this->organizationIdForC2bPayload($payload),
+            MpesaSettingsResolver::organizationIdForC2bPayload($payload),
         );
 
         Log::info('M-Pesa C2B payment stored for check payment', [
@@ -372,6 +372,7 @@ class MpesaPaymentController extends Controller
             'transaction_id' => $payment->transaction_id,
             'phone_number' => $payment->phone_number,
             'amount' => $payment->amount,
+            'organization_id' => $payment->organization_id,
         ]);
 
         return response()->json([
@@ -396,13 +397,6 @@ class MpesaPaymentController extends Controller
         }
 
         return $request->all();
-    }
-
-    protected function organizationIdForC2bPayload(array $payload): ?int
-    {
-        unset($payload);
-
-        return Organization::query()->orderBy('id')->value('id');
     }
 
     protected function formatIncomingPayment(MpesaIncomingPayment $payment): array

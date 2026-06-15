@@ -40,9 +40,8 @@ class CheckoutIntegrationsTest extends TestCase
             'submit_kra' => true,
         ])->assertCreated()->json();
 
-        $this->assertDatabaseHas('kra_responses', [
+        $this->assertDatabaseMissing('kra_responses', [
             'sale_id' => $sale['id'],
-            'status' => 'pending',
         ]);
 
         $this->assertDatabaseHas('journal_entries', [

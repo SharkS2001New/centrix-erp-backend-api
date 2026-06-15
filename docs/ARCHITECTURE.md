@@ -65,6 +65,8 @@ Walk-in customers: `customer_name_override` on `sales` only (no `customers` row)
 - **Pay now**: `sale_payments` rows; `sales.payment_status` = `paid`
 - **Pay later / partial**: `payment_status` = `unpaid` | `partial` | `paid`; multiple `sale_payments`; credit path creates **`customer_invoices`**
 - **Mobile / distribution stages**: driven by `sales.status` + `payment_status` (see `config/erp.php` → `workflows`)
+- **M-Pesa (Daraja)**: per-organization under `module_settings.finance.mpesa` (Admin → Settings → Finance). Branches may override till/shortcode via `branches.settings.mpesa`. Register C2B/STK URLs on the Safaricom Daraja portal — the API stores and validates them but does not call Daraja register-URL. C2B callbacks are routed to the correct tenant by `BusinessShortCode`. Secrets are masked in API responses; `GET /erp/capabilities` never returns raw `consumer_secret` or `passkey`.
+- **KRA PLU registration**: `POST /kra/register-products` uploads catalogue items to the on-prem device using the LightStores-style payload (`sn`, `is_test`, `plu_data`, single `sign_structure` object). Default device path `/api/register-plu` (configurable as `finance.kra_plu_register_path`). Sales still use `/api/complete-workflow`.
 
 ## Inventory
 

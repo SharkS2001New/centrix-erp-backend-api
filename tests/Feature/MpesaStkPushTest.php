@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Organization;
 use App\Models\User;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -18,20 +19,25 @@ class MpesaStkPushTest extends TestCase
         parent::setUp();
         $this->user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($this->user);
+
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'mpesa' => [
+                'env' => 'live',
+                'consumer_key' => 'test-key',
+                'consumer_secret' => 'test-secret',
+                'shortcode' => '5000072',
+                'till_number' => '8881950',
+                'passkey' => 'test-passkey',
+                'stk_callback_url' => 'http://localhost:8000/api/v1/payments/stk/callback',
+            ],
+        ]);
+        $org->update(['module_settings' => $settings]);
     }
 
     public function test_stk_push_rejects_localhost_callback_url(): void
     {
-        config([
-            'mpesa.consumer_key' => 'test-key',
-            'mpesa.consumer_secret' => 'test-secret',
-            'mpesa.shortcode' => '5000072',
-            'mpesa.till_number' => '8881950',
-            'mpesa.passkey' => 'test-passkey',
-            'mpesa.callback_url' => 'http://localhost:8000/api/v1/payments/stk/callback',
-            'mpesa.env' => 'live',
-        ]);
-
         $productCode = \App\Models\Product::first()->product_code;
         $cartId = $this->postJson('/api/v1/sales/carts', [
             'channel' => 'pos',
@@ -48,7 +54,7 @@ class MpesaStkPushTest extends TestCase
         ])
             ->assertStatus(422)
             ->assertJsonFragment([
-                'message' => 'M-Pesa cannot send STK push while MPESA_CALLBACK_URL points to localhost. Use a public HTTPS URL (for example an ngrok tunnel to /api/v1/payments/stk/callback).',
+                'message' => 'STK callback URL must be publicly reachable (not localhost).',
             ]);
     }
 }

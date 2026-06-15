@@ -113,12 +113,50 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for cart/checkout flows.
 
 ## POS till
 
-| Method | Path |
-|--------|------|
-| POST | `/pos/sessions/open` |
-| POST | `/pos/sessions/{id}/close` |
-| GET | `/pos/sessions/{id}/x-report` |
-| GET | `/pos/sessions/{id}/z-report` |
+Requires `sales.pos` module and `pos.till` permission (cashiers). Admin users bypass permission checks.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/pos/sessions/open` | Open or resume session; body: `till_id`, `working_amount`, `payment_type` |
+| POST | `/pos/sessions/{id}/add-float` | Add float entry; body: `new_float`, `payment_type` |
+| POST | `/pos/sessions/{id}/cash-movement` | Safe drop / pay-in / pay-out; body: `type` (`drop`, `pay_in`, `pay_out`), `amount`, optional `reason` |
+| POST | `/pos/sessions/{id}/suspend` | Pause shift (blocks checkout until resumed) |
+| POST | `/pos/sessions/{id}/resume` | Resume a suspended session |
+| POST | `/pos/sessions/{id}/handover` | Manager handover to another cashier; body: `to_cashier_id`, optional `notes` |
+| POST | `/pos/sessions/{id}/close` | Close session; body: `closing_amount`, optional `expected_amount`, `notes`, `closing_denominations` |
+| GET | `/pos/sessions/{id}/x-report` | Interim report (session stays open) |
+| GET | `/pos/sessions/{id}/z-report` | End-of-day report after close |
+
+**Expected cash** on X/Z reports: opening float + cash sales − cash movements out + movements in − session expenses (`expenses.float_session_id`).
+
+**Settings** (organization `module_settings`): `sales.blind_till_close` hides expected cash in the close UI; `accounting.post_till_variance` posts cash over/short journals (accounts `1000` / `5100`) on close.
+
+### Till CRUD (`/tills`, `/till-float-sessions`)
+
+| Method | Path | Notes |
+|--------|------|-------|
+| GET/POST/PATCH/DELETE | `/tills` | Till setup (admin) |
+| GET/PATCH | `/till-float-sessions/{id}` | Session history; `POST` store blocked — use `/pos/sessions/open`. Float correction via PATCH requires `sales.manage` or admin. |
+
+Expenses linked to an open session (`float_session_id`) reduce expected cash on till reports.
+
+## Payments & M-Pesa
+
+Organization config: `GET/PATCH /erp/settings/finance` → `finance.mpesa` (consumer key/secret, paybill, till, passkey, Daraja callback URLs). Branch overrides: `branches.settings.mpesa` (till/shortcode only). Register URLs on the Safaricom Daraja portal; the API validates stored URLs but does not call Daraja register-URL.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/sales/carts/{id}/payment/mpesa/stk-push` | STK push; uses org (+ branch) M-Pesa config |
+| POST | `/payments/stk/callback` | Daraja STK callback (no auth) |
+| POST | `/payments/c2b/validation` | Daraja C2B validation (no auth) |
+| POST | `/payments/c2b/confirmation` | Daraja C2B confirmation (no auth); org resolved by `BusinessShortCode` |
+| GET | `/sales/carts/{id}/payment/mpesa/incoming` | List unmatched C2B payments for cart checkout |
+
+`GET /erp/capabilities` includes `module_settings.finance.mpesa` with secrets masked.
+
+| Method | Path | Notes |
+|--------|------|-------|
+| POST | `/kra/register-products` | Upload product PLU to on-prem KRA device; body `{ product_codes: [] }` or `{ all: true }` |
 
 ## Inventory operations
 

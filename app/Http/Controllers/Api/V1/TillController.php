@@ -84,8 +84,6 @@ class TillController extends BaseResourceController
         }
 
         // Float and cashier belong to POS sessions — not stored on the till record.
-        $data['working_amount'] = 0;
-        $data['float_breakdown'] = null;
         $data['cashier_id'] = null;
 
         $model = Till::create($data);

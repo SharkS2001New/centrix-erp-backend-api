@@ -176,6 +176,7 @@ return [
     'module_settings_defaults' => [
         'accounting' => [
             'auto_post_sales' => true,
+            'post_till_variance' => true,
         ],
         'sales' => [
             'auto_assign_truck' => true,
@@ -214,6 +215,8 @@ return [
             'enable_mobile_orders' => false,
             'enable_pos_orders' => false,
             'require_pos_till_float' => false,
+            'blind_till_close' => false,
+            'default_submit_kra' => true,
             'order_document_type' => 'receipt',
             'invoice_valid_days' => 7,
             'order_workflow' => null,
@@ -223,6 +226,27 @@ return [
             'default_pos_sale_location' => 'shop',
             'default_distribution_sale_location' => 'store',
             'reserve_stock_on_cart' => true,
+        ],
+        'finance' => [
+            'enable_kra_device' => false,
+            'kra_device_ip' => '',
+            'kra_serial_number' => '',
+            'kra_pin_number' => '',
+            'kra_device_test_mode' => false,
+            'kra_plu_register_path' => '/api/upload-plu-data',
+            'default_submit_kra' => true,
+            'mpesa' => [
+                'env' => 'sandbox',
+                'consumer_key' => '',
+                'consumer_secret' => '',
+                'shortcode' => '',
+                'till_number' => '',
+                'child_storecode' => '',
+                'passkey' => '',
+                'stk_callback_url' => '',
+                'c2b_confirmation_url' => '',
+                'c2b_validation_url' => '',
+            ],
         ],
     ],
 ];

@@ -22,7 +22,11 @@ use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Erp\SalePaymentColumnMapper;
+use App\Services\Kra\KraDeviceService;
+use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -62,9 +66,15 @@ class CheckoutController extends Controller
             $stockDeducted = false;
             $orderNum = (int) ($input['order_num'] ?? $this->nextOrderNum());
             $lineNet = (float) $lines->sum('amount');
-            $orderDiscount = ! empty($salesSettings['enable_order_discount'])
-                ? min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet)
-                : 0;
+            $orderDiscount = 0.0;
+            if (! empty($salesSettings['enable_vouchers']) && $cart->discount_voucher_id) {
+                $discountVoucher = Voucher::find($cart->discount_voucher_id);
+                if ($discountVoucher && $discountVoucher->voucher_kind === 'discount') {
+                    $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
+                }
+            } elseif (! empty($salesSettings['enable_order_discount'])) {
+                $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
+            }
             $total = max(0, $lineNet - $orderDiscount);
             $vat = (float) ($input['total_vat'] ?? $lines->sum('product_vat'));
             $isCredit = (bool) ($input['is_credit_sale'] ?? false);
@@ -148,6 +158,15 @@ class CheckoutController extends Controller
                 throw new InvalidArgumentException("Status [{$orderStatus}] is not allowed for this channel.");
             }
 
+            $floatSessionId = FloatSessionValidator::forUser($user)->resolveForCheckout($cart, $user, $input);
+
+            $creditBalance = $isCredit ? max(0, $total - $amountPaid) : 0;
+            CustomerCreditLimit::assertCreditSaleAllowed(
+                $customerNum ? (int) $customerNum : null,
+                $creditBalance,
+                $isCredit,
+            );
+
             $sale = Sale::create([
                 'order_num' => $orderNum,
                 'branch_id' => $cart->branch_id ?? $user->branch_id,
@@ -155,7 +174,7 @@ class CheckoutController extends Controller
                 'channel' => $cart->channel,
                 'order_source' => $cart->order_source ?? $cart->channel,
                 'till_id' => $cart->till_id,
-                'float_session_id' => $input['float_session_id'] ?? null,
+                'float_session_id' => $floatSessionId,
                 'cashier_id' => $user->id,
                 'customer_num' => $customerNum,
                 'customer_name_override' => $input['customer_name_override'] ?? null,
@@ -240,6 +259,15 @@ class CheckoutController extends Controller
                 }
             }
 
+            if ($orderDiscount > 0 && $cart->discount_voucher_id) {
+                $discountVoucher = Voucher::lockForUpdate()->find($cart->discount_voucher_id);
+                if ($discountVoucher && $discountVoucher->voucher_kind === 'discount') {
+                    $discountVoucher->update([
+                        'redemption_count' => (int) $discountVoucher->redemption_count + 1,
+                    ]);
+                }
+            }
+
             if ($pointsPayment > 0 && $loyaltyCardId) {
                 $card = LoyaltyCard::lockForUpdate()->find($loyaltyCardId);
                 if ($card) {
@@ -270,6 +298,7 @@ class CheckoutController extends Controller
                         'paid_at' => $input['payment_date'] ?? now(),
                     ]);
                 }
+                SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
             }
 
             if ($sale->status === 'completed') {
@@ -304,7 +333,17 @@ class CheckoutController extends Controller
 
             $sale = $sale->fresh(['items']);
 
-            $this->queueKraReceipt($sale, (bool) ($input['submit_kra'] ?? true));
+            $kraResponse = $this->submitKraForSale(
+                $sale,
+                $lines,
+                $gate,
+                (bool) ($input['submit_kra'] ?? true),
+                $input['customer_kra_pin'] ?? null,
+            );
+            if ($kraResponse) {
+                $sale->setRelation('kraResponse', $kraResponse);
+            }
+
             $this->postSaleJournalIfEnabled($sale, $user, $gate);
 
             return $sale;
@@ -328,6 +367,62 @@ class CheckoutController extends Controller
         return (int) (Sale::max('order_num') ?? 90000) + 1;
     }
 
+    protected function submitKraForSale(
+        Sale $sale,
+        $lines,
+        CapabilityGate $gate,
+        bool $submit,
+        ?string $buyerPin = null,
+    ): ?KraResponse {
+        if (! $submit) {
+            return null;
+        }
+
+        $finance = $gate->moduleSettings('finance');
+        if (empty($finance['enable_kra_device'])) {
+            return null;
+        }
+
+        $service = KraDeviceService::fromSettings($finance);
+        $invoiceNumber = $service->generateInvoiceNumber();
+        $orderItems = $lines->map(fn ($line) => [
+            'product_name' => $line->product_name ?? $line->product_code,
+            'product_code' => $line->product_code,
+            'quantity' => (float) $line->quantity,
+            'amount' => (float) $line->amount,
+            'product_vat' => (float) ($line->product_vat ?? 0),
+        ])->all();
+
+        $result = $service->sendSale(
+            $orderItems,
+            (float) $sale->order_total,
+            $invoiceNumber,
+            $buyerPin,
+        );
+
+        if (! ($result['success'] ?? false)) {
+            throw new InvalidArgumentException(
+                'KRA device submission failed: ' . ($result['message'] ?? 'Unknown error'),
+            );
+        }
+
+        $mapped = $result['response'] ?? [];
+
+        return KraResponse::create([
+            'sale_id' => $sale->id,
+            'order_no' => $sale->order_num,
+            'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
+            'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
+            'signature_link' => $mapped['signature_link'] ?? null,
+            'serial_number' => $mapped['serial_number'] ?? null,
+            'kra_timestamp' => $mapped['timestamp'] ?? null,
+            'request_payload' => $result['payload'] ?? null,
+            'response_payload' => $mapped,
+            'status' => 'success',
+        ]);
+    }
+
+    /** @deprecated Use submitKraForSale when KRA device is enabled. */
     protected function queueKraReceipt(Sale $sale, bool $submit = true): ?KraResponse
     {
         if (! $submit) {

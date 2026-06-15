@@ -10,6 +10,7 @@ use App\Models\Sale;
 use App\Models\SalePayment;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Erp\SalePaymentColumnMapper;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -79,7 +80,6 @@ class PaymentOperationsController extends Controller
             $updates = [
                 'amount_paid' => $newPaid,
                 'payment_status' => $paymentStatus,
-                'cash' => $sale->cash + (int) $amount,
             ];
 
             if ($sale->status !== 'cancelled' && $sale->status !== 'held') {
@@ -90,6 +90,7 @@ class PaymentOperationsController extends Controller
             }
 
             $sale->update($updates);
+            SalePaymentColumnMapper::applyToSale($sale->fresh(), $paymentMethodCode, $amount);
 
             if ($sale->customer_num) {
                 $invoice = CustomerInvoice::where('sale_id', $sale->id)->first();

@@ -1575,6 +1575,33 @@
                     }
                 },
                 {
+                    "name": "GET roles/permissions/matrix",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/roles/permissions/matrix",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "roles",
+                                "permissions",
+                                "matrix"
+                            ]
+                        }
+                    }
+                },
+                {
                     "name": "GET roles/{role}",
                     "request": {
                         "method": "GET",
@@ -1693,6 +1720,69 @@
                                 "roles",
                                 "{{id}}"
                             ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET roles/{role}/permissions",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/roles/{{id}}/permissions",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "roles",
+                                "{{id}}",
+                                "permissions"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT roles/{role}/permissions",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/roles/{{id}}/permissions",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "roles",
+                                "{{id}}",
+                                "permissions"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
                         }
                     }
                 },
@@ -2053,6 +2143,293 @@
                             ],
                             "path": [
                                 "users",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Attendance",
+            "item": [
+                {
+                    "name": "POST attendance/clock-in",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance/clock-in",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance",
+                                "clock-in"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST attendance/clock-out",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance/clock-out",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance",
+                                "clock-out"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET attendance/clock-sessions",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance/clock-sessions",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance",
+                                "clock-sessions"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Attendance Clock Devices",
+            "item": [
+                {
+                    "name": "GET attendance-clock-devices",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance-clock-devices",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance-clock-devices"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST attendance-clock-devices",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance-clock-devices",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance-clock-devices"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET attendance-clock-devices/{attendance_clock_device}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance-clock-devices/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance-clock-devices",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT attendance-clock-devices/{attendance_clock_device}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance-clock-devices/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance-clock-devices",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH attendance-clock-devices/{attendance_clock_device}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance-clock-devices/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance-clock-devices",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE attendance-clock-devices/{attendance_clock_device}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/attendance-clock-devices/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "attendance-clock-devices",
                                 "{{id}}"
                             ]
                         }
@@ -3517,6 +3894,124 @@
                     }
                 },
                 {
+                    "name": "GET customers/{customer}/sales",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/customers/{{id}}/sales",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "customers",
+                                "{{id}}",
+                                "sales"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST customers/{customer}/shop-image",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/customers/{{id}}/shop-image",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "customers",
+                                "{{id}}",
+                                "shop-image"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE customers/{customer}/shop-image",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/customers/{{id}}/shop-image",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "customers",
+                                "{{id}}",
+                                "shop-image"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET customers/{customer}/shop-image/file",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/customers/{{id}}/shop-image/file",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "customers",
+                                "{{id}}",
+                                "shop-image",
+                                "file"
+                            ]
+                        }
+                    }
+                },
+                {
                     "name": "GET routes",
                     "request": {
                         "method": "GET",
@@ -3692,6 +4187,1239 @@
                             ],
                             "path": [
                                 "routes",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Employee Allowances",
+            "item": [
+                {
+                    "name": "GET employee-allowances",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-allowances",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-allowances"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employee-allowances",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-allowances",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-allowances"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET employee-allowances/{employee_allowance}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-allowances/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-allowances",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employee-allowances/{employee_allowance}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-allowances/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-allowances",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH employee-allowances/{employee_allowance}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-allowances/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-allowances",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employee-allowances/{employee_allowance}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-allowances/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-allowances",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Employee Attendance",
+            "item": [
+                {
+                    "name": "GET employee-attendance",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-attendance",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-attendance"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employee-attendance",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-attendance",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-attendance"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET employee-attendance/day-preview",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-attendance/day-preview",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-attendance",
+                                "day-preview"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET employee-attendance/{employee_attendance}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-attendance/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-attendance",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employee-attendance/{employee_attendance}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-attendance/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-attendance",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH employee-attendance/{employee_attendance}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-attendance/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-attendance",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employee-attendance/{employee_attendance}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-attendance/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-attendance",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Employee Cash Advances",
+            "item": [
+                {
+                    "name": "GET employee-cash-advances",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-cash-advances",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-cash-advances"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employee-cash-advances",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-cash-advances",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-cash-advances"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET employee-cash-advances/{employee_cash_advance}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-cash-advances/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-cash-advances",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employee-cash-advances/{employee_cash_advance}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-cash-advances/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-cash-advances",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH employee-cash-advances/{employee_cash_advance}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-cash-advances/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-cash-advances",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employee-cash-advances/{employee_cash_advance}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-cash-advances/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-cash-advances",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Employee Deductions",
+            "item": [
+                {
+                    "name": "GET employee-deductions",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-deductions",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-deductions"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employee-deductions",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-deductions",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-deductions"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET employee-deductions/{employee_deduction}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-deductions/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-deductions",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employee-deductions/{employee_deduction}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-deductions/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-deductions",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH employee-deductions/{employee_deduction}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-deductions/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-deductions",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employee-deductions/{employee_deduction}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-deductions/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-deductions",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Employee Leave Balances",
+            "item": [
+                {
+                    "name": "GET employee-leave-balances",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-balances",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-balances"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employee-leave-balances/allocate-off-days",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-balances/allocate-off-days",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-balances",
+                                "allocate-off-days"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Employee Leave Days",
+            "item": [
+                {
+                    "name": "GET employee-leave-days",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-days",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-days"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employee-leave-days",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-days",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-days"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET employee-leave-days/calculate",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-days/calculate",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-days",
+                                "calculate"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET employee-leave-days/{employee_leave_day}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-days/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-days",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employee-leave-days/{employee_leave_day}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-days/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-days",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH employee-leave-days/{employee_leave_day}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-days/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-days",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employee-leave-days/{employee_leave_day}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-leave-days/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-leave-days",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Employee Overtime",
+            "item": [
+                {
+                    "name": "GET employee-overtime",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-overtime",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-overtime"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employee-overtime",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-overtime",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-overtime"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET employee-overtime/{employee_overtime}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-overtime/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-overtime",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employee-overtime/{employee_overtime}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-overtime/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-overtime",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH employee-overtime/{employee_overtime}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-overtime/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-overtime",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employee-overtime/{employee_overtime}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employee-overtime/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employee-overtime",
                                 "{{id}}"
                             ]
                         }
@@ -4251,6 +5979,33 @@
                     }
                 },
                 {
+                    "name": "GET drivers/{driver}/deliveries",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/drivers/{{id}}/deliveries",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "drivers",
+                                "{{id}}",
+                                "deliveries"
+                            ]
+                        }
+                    }
+                },
+                {
                     "name": "GET vehicles",
                     "request": {
                         "method": "GET",
@@ -4427,6 +6182,33 @@
                             "path": [
                                 "vehicles",
                                 "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET vehicles/{vehicle}/deliveries",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/vehicles/{{id}}/deliveries",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "vehicles",
+                                "{{id}}",
+                                "deliveries"
                             ]
                         }
                     }
@@ -4799,6 +6581,718 @@
                     }
                 },
                 {
+                    "name": "GET employees/{employee}/bank-accounts",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/bank-accounts",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "bank-accounts"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employees/{employee}/bank-accounts",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/bank-accounts",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "bank-accounts"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employees/{employee}/bank-accounts/{bankAccount}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/bank-accounts/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "bank-accounts",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employees/{employee}/bank-accounts/{bankAccount}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/bank-accounts/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "bank-accounts",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET employees/{employee}/documents",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/documents",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "documents"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employees/{employee}/documents",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/documents",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "documents"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET employees/{employee}/documents/{document}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/documents/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "documents",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employees/{employee}/documents/{document}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/documents/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "documents",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employees/{employee}/documents/{document}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/documents/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "documents",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET employees/{employee}/documents/{document}/file",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/documents/{{id}}/file",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "documents",
+                                "{{id}}",
+                                "file"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET employees/{employee}/emergency-contacts",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/emergency-contacts",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "emergency-contacts"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employees/{employee}/emergency-contacts",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/emergency-contacts",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "emergency-contacts"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employees/{employee}/emergency-contacts/{contact}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/emergency-contacts/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "emergency-contacts",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employees/{employee}/emergency-contacts/{contact}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/emergency-contacts/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "emergency-contacts",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employees/{employee}/leave-balances",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/leave-balances",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "leave-balances"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET employees/{employee}/leave-balances",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/leave-balances",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "leave-balances"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET employees/{employee}/next-of-kin",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/next-of-kin",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "next-of-kin"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT employees/{employee}/next-of-kin",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/next-of-kin",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "next-of-kin"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employees/{employee}/next-of-kin",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/next-of-kin",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "next-of-kin"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET employees/{employee}/payroll-lines",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/payroll-lines",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "payroll-lines"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST employees/{employee}/photo",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/photo",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "photo"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE employees/{employee}/photo",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/photo",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "photo"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET employees/{employee}/photo/file",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/employees/{{id}}/photo/file",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "employees",
+                                "{{id}}",
+                                "photo",
+                                "file"
+                            ]
+                        }
+                    }
+                },
+                {
                     "name": "GET pay-periods",
                     "request": {
                         "method": "GET",
@@ -4844,6 +7338,41 @@
                             ],
                             "path": [
                                 "pay-periods"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST pay-periods/ensure-runnable",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/pay-periods/ensure-runnable",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "pay-periods",
+                                "ensure-runnable"
                             ]
                         },
                         "body": {
@@ -5370,6 +7899,43 @@
                                 "runs",
                                 "{{id}}",
                                 "process"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST payroll/runs/{runId}/process-auto",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll/runs/{{id}}/process-auto",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll",
+                                "runs",
+                                "{{id}}",
+                                "process-auto"
                             ]
                         },
                         "body": {
@@ -7233,6 +9799,442 @@
             ]
         },
         {
+            "name": "Loyalty Cards",
+            "item": [
+                {
+                    "name": "GET loyalty-cards",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/loyalty-cards",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "loyalty-cards"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST loyalty-cards",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/loyalty-cards",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "loyalty-cards"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET loyalty-cards/{loyalty_card}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/loyalty-cards/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "loyalty-cards",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT loyalty-cards/{loyalty_card}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/loyalty-cards/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "loyalty-cards",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH loyalty-cards/{loyalty_card}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/loyalty-cards/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "loyalty-cards",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE loyalty-cards/{loyalty_card}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/loyalty-cards/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "loyalty-cards",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Organization Holidays",
+            "item": [
+                {
+                    "name": "GET organization-holidays",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organization-holidays",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organization-holidays"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST organization-holidays",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organization-holidays",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organization-holidays"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET organization-holidays/{organization_holiday}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organization-holidays/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organization-holidays",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT organization-holidays/{organization_holiday}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organization-holidays/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organization-holidays",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH organization-holidays/{organization_holiday}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organization-holidays/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organization-holidays",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE organization-holidays/{organization_holiday}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organization-holidays/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organization-holidays",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Organization Leave Settings",
+            "item": [
+                {
+                    "name": "GET organization-leave-settings",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organization-leave-settings",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organization-leave-settings"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT organization-leave-settings",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/organization-leave-settings",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "organization-leave-settings"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        {
             "name": "POS",
             "item": [
                 {
@@ -7639,6 +10641,80 @@
                     }
                 },
                 {
+                    "name": "POST pos/sessions/{sessionId}/add-float",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/pos/sessions/{{sessionId}}/add-float",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "pos",
+                                "sessions",
+                                "{{sessionId}}",
+                                "add-float"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST pos/sessions/{sessionId}/cash-movement",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/pos/sessions/{{sessionId}}/cash-movement",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "pos",
+                                "sessions",
+                                "{{sessionId}}",
+                                "cash-movement"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
                     "name": "POST pos/sessions/{sessionId}/close",
                     "request": {
                         "method": "POST",
@@ -7662,6 +10738,117 @@
                                 "sessions",
                                 "{{sessionId}}",
                                 "close"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST pos/sessions/{sessionId}/handover",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/pos/sessions/{{sessionId}}/handover",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "pos",
+                                "sessions",
+                                "{{sessionId}}",
+                                "handover"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST pos/sessions/{sessionId}/resume",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/pos/sessions/{{sessionId}}/resume",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "pos",
+                                "sessions",
+                                "{{sessionId}}",
+                                "resume"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST pos/sessions/{sessionId}/suspend",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/pos/sessions/{{sessionId}}/suspend",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "pos",
+                                "sessions",
+                                "{{sessionId}}",
+                                "suspend"
                             ]
                         },
                         "body": {
@@ -8278,6 +11465,114 @@
                             ]
                         }
                     }
+                },
+                {
+                    "name": "POST payments/c2b/confirmation",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payments/c2b/confirmation",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "c2b",
+                                "confirmation"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST payments/c2b/validation",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payments/c2b/validation",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "c2b",
+                                "validation"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST payments/stk/callback",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payments/stk/callback",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "stk",
+                                "callback"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
                 }
             ]
         },
@@ -8317,6 +11612,275 @@
                                     "language": "json"
                                 }
                             }
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Payroll",
+            "item": [
+                {
+                    "name": "GET payroll/calculate",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll/calculate",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll",
+                                "calculate"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET payroll/kenya-statutory",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll/kenya-statutory",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll",
+                                "kenya-statutory"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET payroll/run-schedule",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll/run-schedule",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll",
+                                "run-schedule"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Payroll Deduction Types",
+            "item": [
+                {
+                    "name": "GET payroll-deduction-types",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll-deduction-types",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll-deduction-types"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST payroll-deduction-types",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll-deduction-types",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll-deduction-types"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET payroll-deduction-types/{payroll_deduction_type}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll-deduction-types/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll-deduction-types",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT payroll-deduction-types/{payroll_deduction_type}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll-deduction-types/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll-deduction-types",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH payroll-deduction-types/{payroll_deduction_type}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll-deduction-types/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll-deduction-types",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE payroll-deduction-types/{payroll_deduction_type}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/payroll-deduction-types/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "payroll-deduction-types",
+                                "{{id}}"
+                            ]
                         }
                     }
                 }
@@ -8373,6 +11937,255 @@
                             "path": [
                                 "erp",
                                 "profiles"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET erp/settings/sales",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/erp/settings/sales",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "erp",
+                                "settings",
+                                "sales"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH erp/settings/sales",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/erp/settings/sales",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "erp",
+                                "settings",
+                                "sales"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Positions",
+            "item": [
+                {
+                    "name": "GET positions",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/positions",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "positions"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST positions",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/positions",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "positions"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET positions/{position}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/positions/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "positions",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT positions/{position}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/positions/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "positions",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH positions/{position}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/positions/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "positions",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE positions/{position}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/positions/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "positions",
+                                "{{id}}"
                             ]
                         }
                     }
@@ -8619,6 +12432,59 @@
                                     "language": "json"
                                 }
                             }
+                        }
+                    }
+                },
+                {
+                    "name": "GET lpo-mst/dashboard",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/lpo-mst/dashboard",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "lpo-mst",
+                                "dashboard"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET lpo-mst/{lpoNo}/summary",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/lpo-mst/{{id}}/summary",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "lpo-mst",
+                                "{{id}}",
+                                "summary"
+                            ]
                         }
                     }
                 },
@@ -9633,6 +13499,44 @@
                             "path": [
                                 "reports",
                                 "eod-cashier"
+                            ],
+                            "query": [
+                                {
+                                    "key": "branch_id",
+                                    "value": "1",
+                                    "disabled": true
+                                },
+                                {
+                                    "key": "per_page",
+                                    "value": "50",
+                                    "disabled": true
+                                }
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "GET reports/eod-report",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/reports/eod-report?branch_id=1&per_page=50",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "reports",
+                                "eod-report"
                             ],
                             "query": [
                                 {
@@ -11359,6 +15263,33 @@
                     }
                 },
                 {
+                    "name": "GET sales/loyalty-cards/lookup",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/loyalty-cards/lookup",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "loyalty-cards",
+                                "lookup"
+                            ]
+                        }
+                    }
+                },
+                {
                     "name": "GET sales/{sale}",
                     "request": {
                         "method": "GET",
@@ -11910,6 +15841,42 @@
                     }
                 },
                 {
+                    "name": "PATCH sales/carts/{cartId}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
                     "name": "POST sales/carts/{cartId}/checkout",
                     "request": {
                         "method": "POST",
@@ -12008,6 +15975,503 @@
                                 "{{cartId}}",
                                 "lines"
                             ]
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH sales/carts/{cartId}/lines/{lineRef}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/lines/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "lines",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE sales/carts/{cartId}/lines/{lineRef}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/lines/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "lines",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST sales/carts/{cartId}/loyalty",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/loyalty",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "loyalty"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE sales/carts/{cartId}/payment",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH sales/carts/{cartId}/payment/extras",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment/extras",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment",
+                                "extras"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST sales/carts/{cartId}/payment/mpesa/apply",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment/mpesa/apply",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment",
+                                "mpesa",
+                                "apply"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET sales/carts/{cartId}/payment/mpesa/incoming",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment/mpesa/incoming",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment",
+                                "mpesa",
+                                "incoming"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST sales/carts/{cartId}/payment/mpesa/skip",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment/mpesa/skip",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment",
+                                "mpesa",
+                                "skip"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET sales/carts/{cartId}/payment/mpesa/status",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment/mpesa/status",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment",
+                                "mpesa",
+                                "status"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST sales/carts/{cartId}/payment/mpesa/stk-push",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment/mpesa/stk-push",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment",
+                                "mpesa",
+                                "stk-push"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST sales/carts/{cartId}/payment/points",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment/points",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment",
+                                "points"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST sales/carts/{cartId}/payment/voucher",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/carts/{{cartId}}/payment/voucher",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "carts",
+                                "{{cartId}}",
+                                "payment",
+                                "voucher"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST sales/orders/{saleId}/cancel-held",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/orders/{{saleId}}/cancel-held",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "orders",
+                                "{{saleId}}",
+                                "cancel-held"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "POST sales/orders/{saleId}/restore-to-cart",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/sales/orders/{{saleId}}/restore-to-cart",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "sales",
+                                "orders",
+                                "{{saleId}}",
+                                "restore-to-cart"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
                         }
                     }
                 },
@@ -12229,6 +16693,378 @@
                             ],
                             "path": [
                                 "suppliers",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Vouchers",
+            "item": [
+                {
+                    "name": "GET vouchers",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/vouchers",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "vouchers"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST vouchers",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/vouchers",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "vouchers"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET vouchers/{voucher}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/vouchers/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "vouchers",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT vouchers/{voucher}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/vouchers/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "vouchers",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH vouchers/{voucher}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/vouchers/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "vouchers",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE vouchers/{voucher}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/vouchers/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "vouchers",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                }
+            ]
+        },
+        {
+            "name": "Work Shifts",
+            "item": [
+                {
+                    "name": "GET work-shifts",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/work-shifts",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "work-shifts"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "POST work-shifts",
+                    "request": {
+                        "method": "POST",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/work-shifts",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "work-shifts"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "GET work-shifts/{work_shift}",
+                    "request": {
+                        "method": "GET",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/work-shifts/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "work-shifts",
+                                "{{id}}"
+                            ]
+                        }
+                    }
+                },
+                {
+                    "name": "PUT work-shifts/{work_shift}",
+                    "request": {
+                        "method": "PUT",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/work-shifts/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "work-shifts",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "PATCH work-shifts/{work_shift}",
+                    "request": {
+                        "method": "PATCH",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/work-shifts/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "work-shifts",
+                                "{{id}}"
+                            ]
+                        },
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        }
+                    }
+                },
+                {
+                    "name": "DELETE work-shifts/{work_shift}",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [
+                            {
+                                "key": "Accept",
+                                "value": "application/json"
+                            },
+                            {
+                                "key": "Content-Type",
+                                "value": "application/json"
+                            }
+                        ],
+                        "url": {
+                            "raw": "{{baseUrl}}/work-shifts/{{id}}",
+                            "host": [
+                                "{{baseUrl}}"
+                            ],
+                            "path": [
+                                "work-shifts",
                                 "{{id}}"
                             ]
                         }

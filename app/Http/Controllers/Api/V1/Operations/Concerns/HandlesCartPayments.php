@@ -16,10 +16,10 @@ trait HandlesCartPayments
     {
         $lineQuery = CartLine::where('cart_id', $cart->id);
         $lineNet = (float) $lineQuery->sum('amount');
-        $vat = (float) CartLine::where('cart_id', $cart->id)->sum('product_vat');
         $orderDiscount = max(0, (float) ($cart->order_discount ?? 0));
 
-        return max(0, $lineNet - min($orderDiscount, $lineNet) + $vat);
+        // Line amounts are VAT-inclusive (Kenya retail / KRA fiscal device convention).
+        return max(0, $lineNet - min($orderDiscount, $lineNet));
     }
 
     protected function cartAmountDue(TemporaryCart $cart): float
@@ -72,6 +72,56 @@ trait HandlesCartPayments
         }
 
         return $voucher;
+    }
+
+    protected function findDiscountVoucher(int $organizationId, string $code): Voucher
+    {
+        $voucher = Voucher::where('organization_id', $organizationId)
+            ->where('voucher_code', strtoupper(trim($code)))
+            ->first();
+
+        if (! $voucher) {
+            throw new InvalidArgumentException('Voucher not found.');
+        }
+
+        if ($voucher->voucher_kind !== 'discount') {
+            throw new InvalidArgumentException('This voucher code is not a discount voucher.');
+        }
+
+        if (! $voucher->is_active) {
+            throw new InvalidArgumentException('Voucher is inactive.');
+        }
+
+        if ($voucher->valid_from && Carbon::parse($voucher->valid_from)->isFuture()) {
+            throw new InvalidArgumentException('Voucher is not yet valid.');
+        }
+
+        if ($voucher->valid_until && Carbon::parse($voucher->valid_until)->isPast()) {
+            throw new InvalidArgumentException('Voucher has expired.');
+        }
+
+        if ($voucher->max_redemptions !== null && (int) $voucher->redemption_count >= (int) $voucher->max_redemptions) {
+            throw new InvalidArgumentException('Voucher redemption limit reached.');
+        }
+
+        return $voucher;
+    }
+
+    protected function computeVoucherDiscountAmount(Voucher $voucher, float $lineNet): float
+    {
+        if ($lineNet <= 0) {
+            throw new InvalidArgumentException('Cart has no line total to discount.');
+        }
+
+        if ($voucher->min_order_amount && $lineNet + 0.001 < (float) $voucher->min_order_amount) {
+            throw new InvalidArgumentException('Order total is below the voucher minimum.');
+        }
+
+        if ($voucher->discount_type === 'percentage') {
+            return min($lineNet, round($lineNet * ((float) $voucher->discount_value / 100), 2));
+        }
+
+        return min($lineNet, max(0, (float) $voucher->discount_value));
     }
 
     protected function findLoyaltyCardByPhone(int $organizationId, string $phone, bool $requireRedeemableBalance = true): LoyaltyCard
@@ -172,7 +222,9 @@ trait HandlesCartPayments
 
         $cart->update([
             'payment_voucher_id' => null,
+            'discount_voucher_id' => null,
             'voucher_payment_amount' => 0,
+            'order_discount' => 0,
             'loyalty_card_id' => null,
             'points_redeemed' => 0,
             'points_payment_amount' => 0,

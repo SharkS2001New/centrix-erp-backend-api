@@ -4,12 +4,18 @@ namespace App\Services\Erp;
 
 use App\Models\Organization;
 use App\Models\SystemSetting;
+use App\Services\Mpesa\MpesaSettingsResolver;
 
 class CapabilityGate
 {
     public function __construct(
         protected ?Organization $organization = null,
     ) {}
+
+    public function organization(): ?Organization
+    {
+        return $this->organization;
+    }
 
     public function forOrganization(Organization $organization): self
     {
@@ -74,8 +80,15 @@ class CapabilityGate
     {
         $defaults = config("erp.module_settings_defaults.{$section}", []);
         $custom = $this->organization?->module_settings[$section] ?? [];
+        $merged = array_merge($defaults, is_array($custom) ? $custom : []);
 
-        return array_merge($defaults, is_array($custom) ? $custom : []);
+        if ($section === 'finance') {
+            $defaultMpesa = is_array($defaults['mpesa'] ?? null) ? $defaults['mpesa'] : [];
+            $customMpesa = is_array($custom['mpesa'] ?? null) ? $custom['mpesa'] : [];
+            $merged['mpesa'] = array_merge($defaultMpesa, $customMpesa);
+        }
+
+        return $merged;
     }
 
     /** @return array<string, mixed> */
@@ -99,6 +112,12 @@ class CapabilityGate
             $sales = is_array($moduleSettings['sales'] ?? null) ? $moduleSettings['sales'] : [];
             $sales['order_workflow'] = OrderWorkflowService::forGate($this)->config();
             $moduleSettings['sales'] = $sales;
+
+            $finance = is_array($moduleSettings['finance'] ?? null) ? $moduleSettings['finance'] : [];
+            if (isset($finance['mpesa']) && is_array($finance['mpesa'])) {
+                $finance['mpesa'] = MpesaSettingsResolver::maskForClient($finance['mpesa']);
+                $moduleSettings['finance'] = $finance;
+            }
         }
 
         return [

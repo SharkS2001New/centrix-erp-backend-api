@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Models\SystemSetting;
+use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Mpesa\MpesaSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -75,6 +77,8 @@ class ErpSettingsController extends Controller
             'enable_mobile_orders',
             'enable_pos_orders',
             'require_pos_till_float',
+            'blind_till_close',
+            'default_submit_kra',
             'order_document_type',
             'invoice_valid_days',
             'receipt_copies',
@@ -222,5 +226,101 @@ class ErpSettingsController extends Controller
             'sales' => $refreshed,
             'allow_negative_stock' => (bool) ($system?->allow_below_stock ?? false),
         ]);
+    }
+
+    public function finance(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+        $org = Organization::findOrFail($user->organization_id);
+        $finance = $this->mergedFinanceSettings($gate);
+        $mpesaConfig = MpesaSettingsResolver::forOrganization($org);
+        $finance['mpesa'] = $this->mpesaForResponse($mpesaConfig);
+        $finance['mpesa_status'] = MpesaSettingsResolver::describe($mpesaConfig);
+
+        return response()->json(['finance' => $finance]);
+    }
+
+    public function updateFinance(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+
+        $data = $request->validate([
+            'enable_kra_device' => 'sometimes|boolean',
+            'kra_device_ip' => 'sometimes|nullable|string|max:250',
+            'kra_serial_number' => 'sometimes|nullable|string|max:100',
+            'kra_pin_number' => 'sometimes|nullable|string|max:45',
+            'kra_device_test_mode' => 'sometimes|boolean',
+            'kra_plu_register_path' => 'sometimes|nullable|string|max:250',
+            'default_submit_kra' => 'sometimes|boolean',
+            'mpesa' => 'sometimes|array',
+            'mpesa.env' => 'sometimes|in:sandbox,live',
+            'mpesa.consumer_key' => 'sometimes|nullable|string|max:250',
+            'mpesa.consumer_secret' => 'sometimes|nullable|string|max:250',
+            'mpesa.shortcode' => 'sometimes|nullable|string|max:20',
+            'mpesa.till_number' => 'sometimes|nullable|string|max:20',
+            'mpesa.child_storecode' => 'sometimes|nullable|string|max:20',
+            'mpesa.passkey' => 'sometimes|nullable|string|max:250',
+            'mpesa.stk_callback_url' => 'sometimes|nullable|string|max:500',
+            'mpesa.c2b_confirmation_url' => 'sometimes|nullable|string|max:500',
+            'mpesa.c2b_validation_url' => 'sometimes|nullable|string|max:500',
+        ]);
+
+        if (! empty($data['enable_kra_device'])) {
+            $ip = trim((string) ($data['kra_device_ip'] ?? $gate->moduleSettings('finance')['kra_device_ip'] ?? ''));
+            $serial = trim((string) ($data['kra_serial_number'] ?? $gate->moduleSettings('finance')['kra_serial_number'] ?? ''));
+            $pin = trim((string) ($data['kra_pin_number'] ?? $gate->moduleSettings('finance')['kra_pin_number'] ?? ''));
+            if ($ip === '' || $serial === '' || $pin === '') {
+                throw ValidationException::withMessages([
+                    'enable_kra_device' => 'KRA device IP, serial number, and shop PIN are required when the device is enabled.',
+                ]);
+            }
+        }
+
+        $current = $gate->moduleSettings('finance');
+        $nextFinance = array_merge($current, array_filter(
+            $data,
+            fn ($key) => $key !== 'mpesa',
+            ARRAY_FILTER_USE_KEY,
+        ));
+
+        if (array_key_exists('mpesa', $data) && is_array($data['mpesa'])) {
+            $mergedMpesa = MpesaSettingsResolver::mergeFinanceMpesa($current, $data['mpesa']);
+            $nextFinance['mpesa'] = $mergedMpesa['mpesa'];
+        }
+
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['finance'] = $nextFinance;
+        $org->update(['module_settings' => $moduleSettings]);
+
+        $refreshedGate = $this->erp->gateForUser($user->fresh());
+        $finance = $this->mergedFinanceSettings($refreshedGate);
+        $mpesaConfig = MpesaSettingsResolver::forOrganization($org->fresh());
+        $finance['mpesa'] = $this->mpesaForResponse($mpesaConfig);
+        $finance['mpesa_status'] = MpesaSettingsResolver::describe($mpesaConfig);
+
+        return response()->json([
+            'finance' => $finance,
+        ]);
+    }
+
+    /** @param  array<string, mixed>  $mpesa */
+    protected function mpesaForResponse(array $mpesa): array
+    {
+        return MpesaSettingsResolver::maskForClient($mpesa);
+    }
+
+    protected function mergedFinanceSettings(CapabilityGate $gate): array
+    {
+        $finance = $gate->moduleSettings('finance');
+        $sales = $gate->moduleSettings('sales');
+
+        if (! array_key_exists('default_submit_kra', $finance) && array_key_exists('default_submit_kra', $sales)) {
+            $finance['default_submit_kra'] = (bool) $sales['default_submit_kra'];
+        }
+
+        return $finance;
     }
 }

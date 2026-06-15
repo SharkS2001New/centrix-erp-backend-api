@@ -76,6 +76,44 @@ class VoucherPaymentCheckoutTest extends TestCase
         $this->assertEquals(70.0, (float) $voucher->balance);
     }
 
+    public function test_discount_voucher_reduces_checkout_total(): void
+    {
+        $productCode = \App\Models\Product::first()->product_code;
+
+        Voucher::create([
+            'organization_id' => $this->user->organization_id,
+            'voucher_code' => 'SAVE10',
+            'voucher_kind' => 'discount',
+            'discount_type' => 'fixed',
+            'discount_value' => 10,
+            'is_active' => true,
+        ]);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $line = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $productCode,
+            'quantity' => 1,
+        ])->assertCreated()->json();
+
+        $lineTotal = (float) ($line['amount'] ?? 0);
+        $this->assertGreaterThan(10, $lineTotal);
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/payment/voucher", [
+            'voucher_code' => 'SAVE10',
+        ])->assertOk()->assertJsonPath('voucher.voucher_kind', 'discount');
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertCreated()->json();
+
+        $this->assertEquals(10.0, (float) ($sale['order_discount'] ?? 0));
+    }
+
     public function test_loyalty_points_reduce_amount_due(): void
     {
         $productCode = \App\Models\Product::first()->product_code;

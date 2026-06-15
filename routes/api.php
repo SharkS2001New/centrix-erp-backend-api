@@ -40,6 +40,7 @@ use App\Http\Controllers\Api\V1\LpoTxnController;
 use App\Http\Controllers\Api\V1\LpoAttachmentController;
 use App\Http\Controllers\Api\V1\LpoSupplierInvoiceController;
 use App\Http\Controllers\Api\V1\ReturnRecordController;
+use App\Http\Controllers\Api\V1\CustomerReturnController;
 use App\Http\Controllers\Api\V1\ExpenseGroupController;
 use App\Http\Controllers\Api\V1\ExpenseController;
 use App\Http\Controllers\Api\V1\KraResponseController;
@@ -67,6 +68,10 @@ Route::prefix('v1')->group(function () {
         Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::get('erp/settings/finance', [ErpSettingsController::class, 'finance'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
 
         Route::apiResource('organizations', OrganizationController::class);
@@ -120,6 +125,12 @@ Route::prefix('v1')->group(function () {
         Route::apiResource('lpo-attachments', LpoAttachmentController::class);
         Route::apiResource('lpo-supplier-invoices', LpoSupplierInvoiceController::class);
         Route::apiResource('returns', ReturnRecordController::class);
+        Route::middleware('erp.permission:inventory.manage')->group(function () {
+            Route::get('sales/{saleId}/return-lines', [CustomerReturnController::class, 'saleLines']);
+            Route::post('customer-returns/{id}/approve', [CustomerReturnController::class, 'approve']);
+            Route::post('customer-returns/{id}/reject', [CustomerReturnController::class, 'reject']);
+            Route::apiResource('customer-returns', CustomerReturnController::class);
+        });
         Route::apiResource('expense-groups', ExpenseGroupController::class);
         Route::apiResource('expenses', ExpenseController::class);
         Route::apiResource('kra-responses', KraResponseController::class);

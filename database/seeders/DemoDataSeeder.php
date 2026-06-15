@@ -75,6 +75,19 @@ class DemoDataSeeder extends Seeder
             'module_settings' => [
                 'sales' => ['auto_assign_truck' => true, 'auto_assign_driver' => true],
                 'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
+                'finance' => [
+                    'mpesa' => [
+                        'env' => 'sandbox',
+                        'consumer_key' => '',
+                        'consumer_secret' => '',
+                        'shortcode' => '',
+                        'till_number' => '',
+                        'passkey' => '',
+                        'stk_callback_url' => 'https://example.com/api/v1/payments/stk/callback',
+                        'c2b_confirmation_url' => 'https://example.com/api/v1/payments/c2b/confirmation',
+                        'c2b_validation_url' => 'https://example.com/api/v1/payments/c2b/validation',
+                    ],
+                ],
             ],
         ]);
 
@@ -324,8 +337,6 @@ class DemoDataSeeder extends Seeder
             'branch_id' => $hq->id,
             'till_number' => 'TILL-01',
             'cashier_id' => $admin->id,
-            'working_amount' => 5000,
-            'float_breakdown' => ['CASH' => 5000],
         ]);
 
         $session = TillFloatSession::create([
@@ -446,6 +457,10 @@ class DemoDataSeeder extends Seeder
         \App\Models\ChartOfAccount::firstOrCreate(
             ['organization_id' => $org->id, 'account_code' => '4000'],
             ['account_name' => 'Sales Revenue', 'account_type' => 'revenue', 'is_active' => true]
+        );
+        \App\Models\ChartOfAccount::firstOrCreate(
+            ['organization_id' => $org->id, 'account_code' => '5100'],
+            ['account_name' => 'Cash Over / Short', 'account_type' => 'expense', 'is_active' => true]
         );
 
         $this->command->info('Demo data seeded (schema v3). Login: admin / password');

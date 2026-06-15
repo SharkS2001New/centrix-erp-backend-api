@@ -3,9 +3,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\TillFloatSession;
+use App\Services\Erp\TillSessionAuthorization;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
+use Symfony\Component\HttpKernel\Exception\AccessDeniedHttpException;
 
 class TillFloatSessionController extends BaseResourceController
 {
@@ -57,6 +59,13 @@ class TillFloatSessionController extends BaseResourceController
         ));
     }
 
+    public function store(Request $request)
+    {
+        return response()->json([
+            'message' => 'Use POST /pos/sessions/open to start a cashier session.',
+        ], 422);
+    }
+
     public function update(\Illuminate\Http\Request $request, string $id)
     {
         $session = TillFloatSession::findOrFail($id);
@@ -65,6 +74,12 @@ class TillFloatSessionController extends BaseResourceController
             'float_breakdown' => 'nullable|array',
             'working_amount' => 'nullable|numeric|min:0',
         ]);
+
+        if (array_key_exists('float_breakdown', $data) || array_key_exists('working_amount', $data)) {
+            if (! TillSessionAuthorization::canCorrectFloat($request->user())) {
+                throw new AccessDeniedHttpException('Only managers can correct session float.');
+            }
+        }
 
         if (array_key_exists('float_breakdown', $data)) {
             $entries = $this->normalizeFloatEntries($data['float_breakdown']);
