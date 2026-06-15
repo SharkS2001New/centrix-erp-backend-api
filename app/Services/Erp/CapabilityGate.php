@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Models\Organization;
 use App\Models\SystemSetting;
+use App\Services\Ai\AiSettingsResolver;
 use App\Services\Mpesa\MpesaSettingsResolver;
 
 class CapabilityGate
@@ -118,6 +119,11 @@ class CapabilityGate
                 $finance['mpesa'] = MpesaSettingsResolver::maskForClient($finance['mpesa']);
                 $moduleSettings['finance'] = $finance;
             }
+
+            $ai = is_array($moduleSettings['ai'] ?? null) ? $moduleSettings['ai'] : [];
+            $moduleSettings['ai'] = AiSettingsResolver::maskForClient(
+                array_merge(AiSettingsResolver::defaults(), $ai)
+            );
         }
 
         return [
@@ -128,6 +134,9 @@ class CapabilityGate
             'channels' => $this->allowedChannels(),
             'workflows' => $this->workflowForOrg(),
             'module_settings' => $moduleSettings,
+            'ai_assistant' => $this->organization
+                ? AiSettingsResolver::clientCapabilities($this)
+                : ['enabled' => false, 'available' => false],
             'allow_negative_stock' => (bool) ($system?->allow_below_stock ?? false),
         ];
     }

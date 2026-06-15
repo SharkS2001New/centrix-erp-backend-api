@@ -331,5 +331,12 @@ return [
                 'environment' => 'sandbox',
             ],
         ],
+        'ai' => [
+            'enabled' => false,
+            'provider' => 'openai',
+            'model' => '',
+            'api_key' => '',
+            'base_url' => '',
+        ],
     ],
 ];

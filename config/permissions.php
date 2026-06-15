@@ -11,6 +11,8 @@ return [
     'inventory.manage' => 'Stock adjust, transfer, receive, returns',
     'inventory.view' => 'View stock availability',
     'reports.view' => 'Run reports',
+    'reports.builder' => 'Build custom reports',
+    'ai.assist' => 'Use AI assistant',
     'purchasing.manage' => 'LPO and supplier operations',
     'accounting.view' => 'View chart of accounts and journals',
     'accounting.manage' => 'Create, post, and reverse journal entries',

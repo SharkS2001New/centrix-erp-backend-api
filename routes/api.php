@@ -84,6 +84,10 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::get('erp/settings/ai', [\App\Http\Controllers\Api\V1\AiSettingsController::class, 'show'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::patch('erp/settings/ai', [\App\Http\Controllers\Api\V1\AiSettingsController::class, 'update'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
 
         Route::get('admin/organizations', [OrganizationProvisionController::class, 'index'])
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);

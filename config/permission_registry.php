@@ -121,6 +121,13 @@ return [
                 'till_sessions' => ['label' => 'Till sessions', 'actions' => ['view']],
                 'expenses' => ['label' => 'Expenses report', 'actions' => ['view']],
                 'customer_statement' => ['label' => 'Customer statement', 'actions' => ['view']],
+                'builder' => ['label' => 'Report builder', 'actions' => ['view', 'create', 'edit', 'delete']],
+            ],
+        ],
+        'ai' => [
+            'label' => 'AI assistant',
+            'features' => [
+                'assist' => ['label' => 'AI assistant', 'actions' => ['create']],
             ],
         ],
         'hr' => [

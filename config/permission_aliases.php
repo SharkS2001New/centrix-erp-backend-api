@@ -44,6 +44,17 @@ return [
         'reports.till_sessions.view',
         'reports.expenses.view',
         'reports.customer_statement.view',
+        'reports.builder.view',
+        'reports.builder.create',
+    ],
+    'reports.builder' => [
+        'reports.builder.view',
+        'reports.builder.create',
+        'reports.builder.edit',
+        'reports.builder.delete',
+    ],
+    'ai.assist' => [
+        'ai.assist.create',
     ],
     'purchasing.manage' => [
         'purchasing.lpo.create',

@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Operations\LpoReceiveController;
 use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
+use App\Http\Controllers\Api\V1\Operations\ReportBuilderController;
 use App\Http\Controllers\Api\V1\Operations\ExternalAccountingController;
 use App\Http\Controllers\Api\V1\Operations\FiscalPeriodController;
 use App\Http\Controllers\Api\V1\Operations\JournalOperationsController;
@@ -138,6 +139,18 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware(['erp.module:reports', 'erp.permission:reports.view'])->prefix('reports')->group(function () {
         Route::get('/', [ReportController::class, 'catalog']);
         Route::get('dashboard', [ReportController::class, 'dashboard']);
+
+        Route::middleware('erp.permission:reports.builder')->prefix('builder')->group(function () {
+            Route::get('schema', [ReportBuilderController::class, 'schema']);
+            Route::get('templates', [ReportBuilderController::class, 'indexTemplates']);
+            Route::post('templates', [ReportBuilderController::class, 'storeTemplate']);
+            Route::get('templates/{templateId}', [ReportBuilderController::class, 'showTemplate']);
+            Route::patch('templates/{templateId}', [ReportBuilderController::class, 'updateTemplate']);
+            Route::delete('templates/{templateId}', [ReportBuilderController::class, 'destroyTemplate']);
+            Route::post('preview', [ReportBuilderController::class, 'preview']);
+            Route::get('templates/{templateId}/run', [ReportBuilderController::class, 'runTemplate']);
+        });
+
         Route::get('sales-by-product', [ReportController::class, 'salesByProduct']);
         Route::get('sales-by-user', [ReportController::class, 'salesByUser']);
         Route::get('sales-by-customer', [ReportController::class, 'salesByCustomer']);
@@ -185,5 +198,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('price-list', [ReportController::class, 'priceList']);
         Route::get('returns', [ReportController::class, 'returns']);
         Route::get('customers/{customerNum}/statement', [ReportController::class, 'customerStatement']);
+    });
+
+    // ---- AI assistant ----
+    Route::middleware('erp.permission:ai.assist')->prefix('ai')->group(function () {
+        Route::get('status', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'status']);
+        Route::post('chat', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'chat']);
     });
 });
