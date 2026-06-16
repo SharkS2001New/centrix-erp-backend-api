@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartAccess;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesMpesaPayments;
 use App\Http\Controllers\Controller;
@@ -20,6 +21,7 @@ use InvalidArgumentException;
 
 class MpesaPaymentController extends Controller
 {
+    use HandlesCartAccess;
     use HandlesCartPayments;
     use HandlesMpesaPayments;
 
@@ -35,7 +37,15 @@ class MpesaPaymentController extends Controller
 
     public function stkPush(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
+        $org = Organization::findOrFail($request->user()->organization_id);
+        $mpesaConfig = MpesaSettingsResolver::forOrganization($org);
+        if (! MpesaSettingsResolver::isStkPushEnabled($mpesaConfig)) {
+            return response()->json([
+                'message' => 'STK push is disabled for this organization. Enable it under Admin → Settings → Finance.',
+            ], 422);
+        }
+
         $mpesaService = $this->mpesaForCart($cart, $request->user());
         $data = $request->validate([
             'phone_number' => ['required', 'string', 'max:45'],
@@ -118,7 +128,7 @@ class MpesaPaymentController extends Controller
 
     public function paymentStatus(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $phone = (string) ($request->query('phone') ?: $cart->mpesa_phone ?: '');
         $stkRequest = MpesaStkRequest::where('cart_id', $cart->id)
             ->where('organization_id', (int) $request->user()->organization_id)
@@ -151,7 +161,7 @@ class MpesaPaymentController extends Controller
 
     public function lookupIncomingPayments(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $data = $request->validate([
             'phone_number' => ['required', 'string', 'max:45'],
         ]);
@@ -169,7 +179,7 @@ class MpesaPaymentController extends Controller
 
     public function applyIncomingPayment(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $orgId = (int) $request->user()->organization_id;
         $data = $request->validate([
             'payment_id' => ['required', 'integer'],
@@ -234,7 +244,7 @@ class MpesaPaymentController extends Controller
 
     public function skipIncomingPayment(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $orgId = (int) $request->user()->organization_id;
         $data = $request->validate([
             'payment_id' => ['required', 'integer'],
@@ -410,15 +420,5 @@ class MpesaPaymentController extends Controller
             'received_at' => $payment->received_at?->toIso8601String(),
             'status' => $payment->status,
         ];
-    }
-
-    protected function findCart(int $cartId, ?\App\Models\User $user = null): TemporaryCart
-    {
-        $cart = TemporaryCart::with('lines')->findOrFail($cartId);
-        if ($user && (int) $cart->user_id !== (int) $user->id) {
-            abort(403, 'This cart belongs to another cashier.');
-        }
-
-        return $cart;
     }
 }

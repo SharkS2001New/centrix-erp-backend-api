@@ -44,6 +44,16 @@ class ProductController extends BaseResourceController
     {
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $data = $request->validate($rules);
+
+        if (empty($data['product_code'])) {
+            $orgId = (int) ($request->user()?->organization_id ?? $data['organization_id'] ?? 0);
+            $data['product_code'] = Product::generateNextProductCode($orgId);
+        }
+
+        if (empty($data['organization_id']) && $request->user()) {
+            $data['organization_id'] = $request->user()->organization_id;
+        }
+
         $model = Product::create($data);
 
         $this->logPriceChange(

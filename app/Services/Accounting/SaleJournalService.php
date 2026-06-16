@@ -33,7 +33,7 @@ class SaleJournalService
             return $this->exports->queueSale($sale, $user, $gate);
         }
 
-        $lines = $this->builder->buildLines($sale);
+        $lines = $this->builder->buildLines($sale, $gate);
         if ($lines === null || $lines === []) {
             return null;
         }

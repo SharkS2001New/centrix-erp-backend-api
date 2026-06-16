@@ -52,7 +52,7 @@ class RoleController extends BaseResourceController
 
     public function permissions(string $id)
     {
-        $role = Role::findOrFail($id);
+        $role = $this->findRoleOrFail($id);
         $permissionIds = DB::table('role_permissions')
             ->where('role_id', $role->id)
             ->pluck('permission_id')
@@ -68,15 +68,21 @@ class RoleController extends BaseResourceController
 
     public function syncPermissions(Request $request, string $id)
     {
-        $role = Role::findOrFail($id);
+        $role = $this->findRoleOrFail($id);
         $data = $request->validate([
-            'permission_ids' => 'array',
+            'permission_ids' => 'present|array',
             'permission_ids.*' => 'integer|exists:permissions,id',
         ]);
 
-        DB::transaction(function () use ($role, $data) {
+        $permissionIds = collect($data['permission_ids'] ?? [])
+            ->map(fn ($v) => (int) $v)
+            ->unique()
+            ->values()
+            ->all();
+
+        DB::transaction(function () use ($role, $permissionIds) {
             DB::table('role_permissions')->where('role_id', $role->id)->delete();
-            foreach ($data['permission_ids'] ?? [] as $permissionId) {
+            foreach ($permissionIds as $permissionId) {
                 DB::table('role_permissions')->insert([
                     'role_id' => $role->id,
                     'permission_id' => $permissionId,
@@ -103,7 +109,7 @@ class RoleController extends BaseResourceController
 
     public function destroy(Request $request, string $id)
     {
-        $role = Role::findOrFail($id);
+        $role = $this->findRoleOrFail($id);
         $usersCount = User::query()->where('role_id', $role->id)->count();
 
         if ($usersCount > 0) {
@@ -116,5 +122,14 @@ class RoleController extends BaseResourceController
         $role->delete();
 
         return response()->json(null, 204);
+    }
+
+    private function findRoleOrFail(string $id): Role
+    {
+        if ($id === '' || ! ctype_digit($id)) {
+            abort(404, 'Role not found.');
+        }
+
+        return Role::query()->findOrFail((int) $id);
     }
 }

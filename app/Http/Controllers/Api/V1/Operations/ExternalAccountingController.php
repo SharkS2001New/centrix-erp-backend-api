@@ -9,6 +9,7 @@ use App\Services\Accounting\AccountingSettingsResolver;
 use App\Services\Accounting\JournalExportService;
 use App\Services\Accounting\QuickBooksApiClient;
 use App\Services\Accounting\QuickBooksOAuthService;
+use App\Services\Accounting\QuickBooksSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -34,10 +35,14 @@ class ExternalAccountingController extends Controller
             ->where('provider', $provider)
             ->first();
 
+        $qbConfig = QuickBooksSettingsResolver::forOrganization($orgId);
+        $quickbooksMode = (! $qbConfig['client_id'] || ! $qbConfig['client_secret']) ? 'stub' : 'live';
+
         return response()->json([
             'accounting_mode' => $settings->mode(),
             'accounting_provider' => $provider,
             'sync_direction' => $settings->syncDirection(),
+            'quickbooks_mode' => $quickbooksMode,
             'connection' => $connection ? [
                 'provider' => $connection->provider,
                 'status' => $connection->status,
@@ -84,55 +89,6 @@ class ExternalAccountingController extends Controller
         return response()->json(['message' => 'QuickBooks disconnected.']);
     }
 
-    public function connectStub(Request $request, string $provider)
-    {
-        if (! in_array($provider, ['xero', 'sage'], true)) {
-            return response()->json(['message' => 'Stub connect is only available for Xero and Sage.'], 422);
-        }
-
-        $user = $request->user();
-        $orgId = (int) $user->organization_id;
-
-        AccountingConnection::updateOrCreate(
-            [
-                'organization_id' => $orgId,
-                'provider' => $provider,
-            ],
-            [
-                'realm_id' => strtoupper($provider).'-DEMO',
-                'access_token' => 'stub-access-'.$provider,
-                'refresh_token' => 'stub-refresh-'.$provider,
-                'token_expires_at' => now()->addDay(),
-                'status' => 'connected',
-                'last_error' => null,
-                'connected_at' => now(),
-                'connected_by' => $user->id,
-            ],
-        );
-
-        return response()->json(['message' => ucfirst($provider).' connected (demo stub).']);
-    }
-
-    public function disconnectProvider(Request $request, string $provider)
-    {
-        if (! in_array($provider, ['xero', 'sage'], true)) {
-            return response()->json(['message' => 'Invalid provider.'], 422);
-        }
-
-        AccountingConnection::query()
-            ->where('organization_id', $request->user()->organization_id)
-            ->where('provider', $provider)
-            ->update([
-                'status' => 'disconnected',
-                'access_token' => null,
-                'refresh_token' => null,
-                'token_expires_at' => null,
-                'realm_id' => null,
-            ]);
-
-        return response()->json(['message' => ucfirst($provider).' disconnected.']);
-    }
-
     public function listMappings(Request $request)
     {
         $orgId = (int) $request->user()->organization_id;
@@ -151,7 +107,7 @@ class ExternalAccountingController extends Controller
     {
         $orgId = (int) $request->user()->organization_id;
         $data = $request->validate([
-            'provider' => 'sometimes|in:quickbooks,xero,sage',
+            'provider' => 'sometimes|in:quickbooks',
             'mappings' => 'required|array',
             'mappings.*.local_account_code' => 'required|string|max:20',
             'mappings.*.external_account_id' => 'required|string|max:100',
@@ -203,6 +159,14 @@ class ExternalAccountingController extends Controller
     {
         $provider = $request->input('provider', 'quickbooks');
         $result = $this->exports->processPending((int) $request->user()->organization_id, $provider);
+
+        return response()->json($result);
+    }
+
+    public function retryFailedExports(Request $request)
+    {
+        $provider = $request->input('provider', 'quickbooks');
+        $result = $this->exports->retryFailed((int) $request->user()->organization_id, $provider);
 
         return response()->json($result);
     }

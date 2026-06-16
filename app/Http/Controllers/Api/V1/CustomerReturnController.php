@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\CustomerReturn;
 use App\Models\Sale;
+use App\Services\Auth\UserAccessService;
 use App\Services\Sales\CustomerReturnService;
 use Illuminate\Http\Request;
 
@@ -18,6 +19,8 @@ class CustomerReturnController extends Controller
         $query = CustomerReturn::query()
             ->with(['lines.product.unit', 'sale', 'customer', 'returnedByUser', 'creditNote'])
             ->where('organization_id', $user->organization_id);
+
+        app(UserAccessService::class)->scopeBranchIfLimited($query, $user);
 
         if ($request->filled('status')) {
             $query->where('status', $request->input('status'));
@@ -183,8 +186,12 @@ class CustomerReturnController extends Controller
 
     protected function findForUser(string $id): CustomerReturn
     {
-        return CustomerReturn::query()
-            ->where('organization_id', request()->user()->organization_id)
-            ->findOrFail($id);
+        $user = request()->user();
+        $query = CustomerReturn::query()
+            ->where('organization_id', $user->organization_id);
+
+        app(UserAccessService::class)->scopeBranchIfLimited($query, $user);
+
+        return $query->findOrFail($id);
     }
 }

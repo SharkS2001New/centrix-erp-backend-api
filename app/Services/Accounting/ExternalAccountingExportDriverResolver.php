@@ -10,18 +10,17 @@ class ExternalAccountingExportDriverResolver
     /** @var array<string, class-string<ExternalAccountingExportDriver>> */
     protected array $drivers = [
         'quickbooks' => QuickBooksExportDriver::class,
-        'xero' => XeroExportDriver::class,
-        'sage' => SageExportDriver::class,
     ];
 
     public function resolve(?string $provider): ExternalAccountingExportDriver
     {
         $provider = strtolower((string) ($provider ?: 'quickbooks'));
-        $class = $this->drivers[$provider] ?? null;
 
-        if (! $class) {
-            throw new InvalidArgumentException("Unsupported accounting export provider: {$provider}");
+        if (! in_array($provider, ['quickbooks'], true)) {
+            throw new InvalidArgumentException("Unsupported accounting export provider: {$provider}. Only QuickBooks Online is supported.");
         }
+
+        $class = $this->drivers[$provider];
 
         return app($class);
     }

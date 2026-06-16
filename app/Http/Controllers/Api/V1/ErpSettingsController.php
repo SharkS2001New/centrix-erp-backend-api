@@ -10,6 +10,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Accounting\QuickBooksSettingsResolver;
 use App\Services\Mpesa\MpesaSettingsResolver;
+use App\Services\Notifications\NotificationSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -84,6 +85,7 @@ class ErpSettingsController extends Controller
             'invoice_valid_days',
             'receipt_copies',
             'show_branch_on_receipt',
+            'stock_deduct_on',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -116,6 +118,7 @@ class ErpSettingsController extends Controller
             'order_workflow.checkout.unpaid.backend' => ['sometimes', 'string', $statusRule],
             'order_workflow.deduct_stock_on' => ['sometimes', 'string', $statusRule],
             'receipt_copies' => 'sometimes|integer|min:1|max:10',
+            'stock_deduct_on' => 'sometimes|in:order_completed,trip_load,trip_depart',
         ];
         foreach ($salesKeys as $key) {
             // Do not overwrite any rules that were explicitly defined above
@@ -191,6 +194,69 @@ class ErpSettingsController extends Controller
         return response()->json([
             'sales' => $refreshed,
             'allow_negative_stock' => (bool) ($system?->allow_below_stock ?? false),
+        ]);
+    }
+
+    public function distribution(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        return response()->json([
+            'distribution' => $gate->distributionSettings(),
+        ]);
+    }
+
+    public function updateDistribution(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+
+        $distributionKeys = [
+            'enable_distribution_ops',
+            'inherit_customer_route',
+            'assign_on_status',
+            'auto_assign_truck',
+            'auto_assign_driver',
+            'require_weight_on_load',
+            'set_delivery_date_on',
+            'require_pod_on_delivered',
+            'enforce_vehicle_capacity',
+            'enable_cod_reconciliation',
+            'require_trip_cash_settlement',
+        ];
+
+        $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
+
+        $rules = [
+            'assign_on_status' => ['sometimes', 'string', $statusRule],
+            'set_delivery_date_on' => ['sometimes', 'string', $statusRule],
+        ];
+        foreach ($distributionKeys as $key) {
+            if (array_key_exists($key, $rules)) {
+                continue;
+            }
+            $rules[$key] = 'sometimes|boolean';
+        }
+
+        $data = $request->validate($rules);
+
+        $current = $gate->distributionSettings();
+        $next = array_merge($current, array_filter(
+            $data,
+            fn ($key) => in_array($key, $distributionKeys, true),
+            ARRAY_FILTER_USE_KEY
+        ));
+
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['distribution'] = $next;
+        $org->update(['module_settings' => $moduleSettings]);
+
+        $refreshedGate = $this->erp->gateForUser($user->fresh());
+
+        return response()->json([
+            'distribution' => $refreshedGate->distributionSettings(),
         ]);
     }
 
@@ -401,6 +467,7 @@ class ErpSettingsController extends Controller
             'default_submit_kra' => 'sometimes|boolean',
             'mpesa' => 'sometimes|array',
             'mpesa.env' => 'sometimes|in:sandbox,live',
+            'mpesa.enable_stk_push' => 'sometimes|boolean',
             'mpesa.consumer_key' => 'sometimes|nullable|string|max:250',
             'mpesa.consumer_secret' => 'sometimes|nullable|string|max:250',
             'mpesa.shortcode' => 'sometimes|nullable|string|max:20',
@@ -411,7 +478,7 @@ class ErpSettingsController extends Controller
             'mpesa.c2b_confirmation_url' => 'sometimes|nullable|string|max:500',
             'mpesa.c2b_validation_url' => 'sometimes|nullable|string|max:500',
             'accounting_mode' => 'sometimes|in:native,external',
-            'accounting_provider' => 'sometimes|nullable|in:quickbooks,xero,sage',
+            'accounting_provider' => 'sometimes|nullable|in:quickbooks',
             'accounting_sync_direction' => 'sometimes|in:export,import,bidirectional',
             'quickbooks' => 'sometimes|array',
             'quickbooks.client_id' => 'sometimes|nullable|string|max:250',
@@ -484,5 +551,277 @@ class ErpSettingsController extends Controller
         }
 
         return $finance;
+    }
+
+    public function general(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        return response()->json([
+            'general' => \App\Services\Erp\GeneralSettingsResolver::forGate($gate),
+        ]);
+    }
+
+    public function updateGeneral(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+
+        $data = $request->validate([
+            'currency' => 'sometimes|string|max:10',
+            'timezone' => 'sometimes|string|max:64',
+            'date_format' => 'sometimes|in:DD/MM/YYYY,MM/DD/YYYY,YYYY-MM-DD',
+            'language' => 'sometimes|in:en,sw',
+            'decimal_places' => 'sometimes|integer|min:0|max:4',
+            'number_thousands_separator' => 'sometimes|in:comma,space,none',
+            'fiscal_year_start_month' => 'sometimes|integer|min:1|max:12',
+            'week_starts_on' => 'sometimes|in:monday,sunday',
+            'phone_country_code' => 'sometimes|string|max:8',
+            'default_country_code' => 'sometimes|string|max:4',
+            'document_footer_text' => 'sometimes|nullable|string|max:500',
+            'show_organization_on_documents' => 'sometimes|boolean',
+        ]);
+
+        $next = \App\Services\Erp\GeneralSettingsResolver::normalize(array_merge(
+            $gate->moduleSettings('general'),
+            $data,
+        ));
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['general'] = $next;
+        $org->update(['module_settings' => $moduleSettings]);
+
+        return response()->json([
+            'general' => \App\Services\Erp\GeneralSettingsResolver::forGate(
+                $this->erp->gateForUser($user->fresh()),
+            ),
+        ]);
+    }
+
+    public function notifications(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+        $settings = NotificationSettingsResolver::forGate($gate);
+
+        return response()->json([
+            'organization_id' => $org->id,
+            'organization_name' => $org->org_name,
+            'notifications' => NotificationSettingsResolver::maskForClient($settings),
+            'notifications_status' => NotificationSettingsResolver::describe($settings, $org),
+            'mail_from' => NotificationSettingsResolver::mailFrom($org, $settings),
+        ]);
+    }
+
+    public function updateNotifications(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+
+        $data = $request->validate([
+            'sms_enabled' => 'sometimes|boolean',
+            'sms_provider' => 'sometimes|in:africas_talking',
+            'africas_talking_username' => 'sometimes|nullable|string|max:120',
+            'africas_talking_api_key' => 'sometimes|nullable|string|max:250',
+            'africas_talking_sender_id' => 'sometimes|nullable|string|max:20',
+            'email_enabled' => 'sometimes|boolean',
+            'email_from_name' => 'sometimes|nullable|string|max:120',
+            'email_from_address' => 'sometimes|nullable|email|max:250',
+            'smtp_enabled' => 'sometimes|boolean',
+            'smtp_host' => 'sometimes|nullable|string|max:200',
+            'smtp_port' => 'sometimes|integer|min:1|max:65535',
+            'smtp_username' => 'sometimes|nullable|string|max:200',
+            'smtp_password' => 'sometimes|nullable|string|max:250',
+            'smtp_encryption' => 'sometimes|in:tls,ssl,none',
+            'notify_on_dispatch' => 'sometimes|boolean',
+            'notify_on_delivery' => 'sometimes|boolean',
+            'notify_on_order_placed' => 'sometimes|boolean',
+            'order_placed_scope' => 'sometimes|in:all,debtors,route_orders',
+            'notify_on_debtor_payment' => 'sometimes|boolean',
+            'debtor_payment_scope' => 'sometimes|in:all,debtors,route_orders',
+            'dispatch_sms_template' => 'sometimes|nullable|string|max:500',
+            'delivery_sms_template' => 'sometimes|nullable|string|max:500',
+            'dispatch_email_template' => 'sometimes|nullable|string|max:500',
+            'delivery_email_template' => 'sometimes|nullable|string|max:500',
+            'order_placed_sms_template' => 'sometimes|nullable|string|max:500',
+            'order_placed_email_template' => 'sometimes|nullable|string|max:500',
+            'debtor_payment_sms_template' => 'sometimes|nullable|string|max:500',
+            'debtor_payment_email_template' => 'sometimes|nullable|string|max:500',
+        ]);
+
+        $current = $gate->moduleSettings('notifications');
+        $merged = NotificationSettingsResolver::mergeStored($current, $data);
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['notifications'] = $merged['notifications'];
+        $org->update(['module_settings' => $moduleSettings]);
+
+        $refreshed = NotificationSettingsResolver::forOrganization($org->fresh());
+
+        return response()->json([
+            'organization_id' => $org->id,
+            'organization_name' => $org->org_name,
+            'notifications' => NotificationSettingsResolver::maskForClient($refreshed),
+            'notifications_status' => NotificationSettingsResolver::describe($refreshed, $org),
+            'mail_from' => NotificationSettingsResolver::mailFrom($org, $refreshed),
+        ]);
+    }
+
+    public function procurement(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        return response()->json([
+            'procurement' => \App\Services\Purchasing\ProcurementSettingsResolver::forGate($gate),
+        ]);
+    }
+
+    public function updateProcurement(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+
+        $procurementKeys = [
+            'default_payment_terms_days',
+            'require_lpo_approval',
+            'default_receive_location',
+            'auto_email_supplier_on_lpo',
+        ];
+
+        $rules = [
+            'default_payment_terms_days' => 'sometimes|integer|min:0|max:365',
+            'default_receive_location' => 'sometimes|in:shop,store',
+        ];
+        foreach ($procurementKeys as $key) {
+            if (array_key_exists($key, $rules)) {
+                continue;
+            }
+            $rules[$key] = 'sometimes|boolean';
+        }
+
+        $data = $request->validate($rules);
+        $next = \App\Services\Purchasing\ProcurementSettingsResolver::normalize(array_merge(
+            $gate->moduleSettings('procurement'),
+            array_filter(
+                $data,
+                fn ($key) => in_array($key, $procurementKeys, true),
+                ARRAY_FILTER_USE_KEY,
+            ),
+        ));
+
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['procurement'] = $next;
+        $org->update(['module_settings' => $moduleSettings]);
+
+        return response()->json([
+            'procurement' => \App\Services\Purchasing\ProcurementSettingsResolver::forGate(
+                $this->erp->gateForUser($user->fresh()),
+            ),
+        ]);
+    }
+
+    public function security(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+        return response()->json([
+            'security' => \App\Services\Auth\SecuritySettingsResolver::forGate($gate),
+        ]);
+    }
+
+    public function updateSecurity(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+
+        $data = $request->validate([
+            'session_idle_minutes' => 'sometimes|integer|min:5|max:480',
+            'require_strong_passwords' => 'sometimes|boolean',
+            'password_min_length' => 'sometimes|integer|min:6|max:128',
+        ]);
+
+        $next = \App\Services\Auth\SecuritySettingsResolver::normalize(array_merge(
+            $gate->moduleSettings('security'),
+            $data,
+        ));
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['security'] = $next;
+        $org->update(['module_settings' => $moduleSettings]);
+
+        return response()->json([
+            'security' => \App\Services\Auth\SecuritySettingsResolver::forOrganization($org->fresh()),
+        ]);
+    }
+
+    public function hr(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        return response()->json([
+            'hr_payroll' => \App\Services\Hr\HrPayrollSettingsResolver::forGate($gate),
+        ]);
+    }
+
+    public function updateHr(Request $request)
+    {
+        $user = $request->user();
+        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForUser($user);
+
+        $hrKeys = [
+            'pay_frequency',
+            'grace_days_after_month_end',
+            'payroll_run_delete_lock_minutes',
+            'auto_calculate_statutory',
+            'close_cycle_on_process',
+            'include_overtime_in_payroll',
+            'include_other_deductions_in_payroll',
+            'require_payroll_approval',
+            'require_attendance_for_payroll',
+            'standard_work_hours_per_day',
+            'overtime_rate_multiplier',
+            'default_probation_months',
+            'enable_cash_advance_deductions',
+            'deduct_cash_advances_on_payroll',
+        ];
+
+        $rules = [
+            'pay_frequency' => 'sometimes|in:monthly',
+            'grace_days_after_month_end' => 'sometimes|integer|min:1|max:31',
+            'payroll_run_delete_lock_minutes' => 'sometimes|integer|min:1|max:1440',
+            'standard_work_hours_per_day' => 'sometimes|numeric|min:1|max:24',
+            'overtime_rate_multiplier' => 'sometimes|numeric|min:1|max:5',
+            'default_probation_months' => 'sometimes|integer|min:0|max:24',
+        ];
+        foreach ($hrKeys as $key) {
+            if (array_key_exists($key, $rules)) {
+                continue;
+            }
+            $rules[$key] = 'sometimes|boolean';
+        }
+
+        $data = $request->validate($rules);
+        $next = \App\Services\Hr\HrPayrollSettingsResolver::normalize(array_merge(
+            $gate->moduleSettings('hr_payroll'),
+            array_filter(
+                $data,
+                fn ($key) => in_array($key, $hrKeys, true),
+                ARRAY_FILTER_USE_KEY,
+            ),
+        ));
+
+        $moduleSettings = $org->module_settings ?? [];
+        $moduleSettings['hr_payroll'] = $next;
+        $org->update(['module_settings' => $moduleSettings]);
+
+        return response()->json([
+            'hr_payroll' => \App\Services\Hr\HrPayrollSettingsResolver::forOrganization($org->fresh()),
+        ]);
     }
 }

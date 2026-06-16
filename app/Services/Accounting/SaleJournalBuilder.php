@@ -4,6 +4,7 @@ namespace App\Services\Accounting;
 
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Erp\CapabilityGate;
 
 class SaleJournalBuilder
 {
@@ -13,10 +14,11 @@ class SaleJournalBuilder
     ) {}
 
     /** @return array<int, array<string, mixed>>|null */
-    public function buildLines(Sale $sale): ?array
+    public function buildLines(Sale $sale, ?CapabilityGate $gate = null): ?array
     {
         $orgId = (int) $sale->organization_id;
-        $codes = $this->posting->defaultAccountCodes();
+        $codes = $this->posting->accountCodes($gate);
+        $paymentMap = $this->posting->paymentMethodAccounts($gate);
 
         $salesAccount = $this->posting->resolveAccount($orgId, $codes['sales_revenue'] ?? '4000');
         if (! $salesAccount) {
@@ -40,7 +42,7 @@ class SaleJournalBuilder
             $byAccount = [];
             foreach ($sale->payments as $payment) {
                 $methodCode = strtoupper((string) ($payment->paymentMethod?->method_code ?? 'CASH'));
-                $accountCode = $this->accountCodeForPaymentMethod($methodCode, $codes);
+                $accountCode = $this->accountCodeForPaymentMethod($methodCode, $codes, $paymentMap);
                 $account = $this->posting->resolveAccount($orgId, $accountCode);
                 if (! $account) {
                     return null;
@@ -62,7 +64,7 @@ class SaleJournalBuilder
             }
         } elseif ((float) $sale->amount_paid > 0) {
             $methodCode = strtoupper((string) ($sale->payment_method_code ?? 'CASH'));
-            $accountCode = $this->accountCodeForPaymentMethod($methodCode, $codes);
+            $accountCode = $this->accountCodeForPaymentMethod($methodCode, $codes, $paymentMap);
             $account = $this->posting->resolveAccount($orgId, $accountCode);
             if (! $account) {
                 return null;
@@ -147,12 +149,14 @@ class SaleJournalBuilder
         return $lines;
     }
 
-    /** @param  array<string, string>  $codes */
-    protected function accountCodeForPaymentMethod(string $methodCode, array $codes): string
+    /** @param  array<string, string>  $codes
+     *  @param  array<string, string>  $paymentMap
+     */
+    protected function accountCodeForPaymentMethod(string $methodCode, array $codes, array $paymentMap): string
     {
-        $map = config('erp.module_settings_defaults.accounting.payment_method_accounts', []);
+        $methodCode = strtoupper($methodCode);
 
-        return $map[$methodCode]
+        return $paymentMap[$methodCode]
             ?? match ($methodCode) {
                 'CASH' => $codes['cash'] ?? '1000',
                 'MPESA', 'CARD', 'BANK', 'TRANSFER' => $codes['bank'] ?? '1100',

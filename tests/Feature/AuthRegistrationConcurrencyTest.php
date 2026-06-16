@@ -261,6 +261,30 @@ class AuthRegistrationConcurrencyTest extends TestCase
         ])->assertOk()->assertJsonStructure(['token', 'user', 'organization', 'memberships']);
     }
 
+    public function test_login_with_email(): void
+    {
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => 'admin@demo.co.ke',
+            'password' => 'password',
+            'client_id' => 'PC_SETUP',
+        ])->assertOk()->assertJsonStructure(['token', 'user', 'organization', 'memberships']);
+    }
+
+    public function test_super_admin_login_with_email_only(): void
+    {
+        $email = config('erp.platform_super_admin_email', 'alpacke.tech@gmail.com');
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => '',
+            'username' => $email,
+            'password' => 'password',
+            'client_id' => 'PC_PLATFORM',
+        ])->assertOk()
+            ->assertJsonPath('user.is_super_admin', true)
+            ->assertJsonPath('organization.company_code', config('erp.platform_company_code', 'PLATFORM'));
+    }
+
     public function test_super_admin_login(): void
     {
         $this->postJson('/api/v1/auth/login', [

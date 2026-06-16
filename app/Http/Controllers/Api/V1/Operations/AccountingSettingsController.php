@@ -36,11 +36,28 @@ class AccountingSettingsController extends Controller
             'auto_post_payroll' => 'sometimes|boolean',
             'auto_post_returns' => 'sometimes|boolean',
             'post_till_variance' => 'sometimes|boolean',
+            'account_codes' => 'sometimes|array',
+            'account_codes.*' => 'nullable|string|max:20',
+            'payment_method_accounts' => 'sometimes|array',
+            'payment_method_accounts.*' => 'nullable|string|max:20',
         ]);
 
         $current = $gate->moduleSettings('accounting');
         $moduleSettings = $org->module_settings ?? [];
-        $moduleSettings['accounting'] = array_merge($current, $data);
+        $merged = array_merge($current, $data);
+        if (isset($data['account_codes']) && is_array($data['account_codes'])) {
+            $merged['account_codes'] = array_merge(
+                is_array($current['account_codes'] ?? null) ? $current['account_codes'] : [],
+                array_filter($data['account_codes'], fn ($v) => $v !== null && $v !== ''),
+            );
+        }
+        if (isset($data['payment_method_accounts']) && is_array($data['payment_method_accounts'])) {
+            $merged['payment_method_accounts'] = array_merge(
+                is_array($current['payment_method_accounts'] ?? null) ? $current['payment_method_accounts'] : [],
+                array_filter($data['payment_method_accounts'], fn ($v) => $v !== null && $v !== ''),
+            );
+        }
+        $moduleSettings['accounting'] = $merged;
         $org->update(['module_settings' => $moduleSettings]);
 
         $refreshed = $this->erp->gateForUser($user->fresh())->moduleSettings('accounting');

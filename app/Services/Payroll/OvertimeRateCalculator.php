@@ -4,6 +4,7 @@ namespace App\Services\Payroll;
 
 use App\Models\Employee;
 use App\Services\Attendance\LeaveRequestCalculator;
+use App\Services\Hr\HrPayrollSettingsResolver;
 use Carbon\Carbon;
 
 class OvertimeRateCalculator
@@ -34,7 +35,8 @@ class OvertimeRateCalculator
 
         $shiftHours = $this->leaveCalculator->shiftHoursForEmployee($employee);
         if ($shiftHours <= 0) {
-            $shiftHours = LeaveRequestCalculator::DEFAULT_SHIFT_HOURS;
+            $orgId = (int) ($employee->organization_id ?? 0);
+            $shiftHours = (float) (HrPayrollSettingsResolver::forOrganizationId($orgId)['standard_work_hours_per_day'] ?? LeaveRequestCalculator::DEFAULT_SHIFT_HOURS);
         }
 
         $daily = $base / $workDays;
@@ -47,7 +49,8 @@ class OvertimeRateCalculator
         $hourly = $this->hourlyFromSalary($employee, $referenceDate);
         $shiftHours = $this->leaveCalculator->shiftHoursForEmployee($employee);
         if ($shiftHours <= 0) {
-            $shiftHours = LeaveRequestCalculator::DEFAULT_SHIFT_HOURS;
+            $orgId = (int) ($employee->organization_id ?? 0);
+            $shiftHours = (float) (HrPayrollSettingsResolver::forOrganizationId($orgId)['standard_work_hours_per_day'] ?? LeaveRequestCalculator::DEFAULT_SHIFT_HOURS);
         }
 
         return round($hourly * $shiftHours, 2);

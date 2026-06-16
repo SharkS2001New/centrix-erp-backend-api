@@ -1,0 +1,406 @@
+<?php
+
+/**
+ * Entity field metadata for the AI assistant.
+ * Documents required vs optional fields, auto-generated codes, and FK relations.
+ */
+return [
+    'product' => [
+        'label' => 'Product',
+        'module' => 'catalogue',
+        'path' => '/products',
+        'create_action' => 'create_product',
+        'fields' => [
+            'product_code' => [
+                'label' => 'Product code / SKU',
+                'type' => 'string',
+                'required' => false,
+                'auto_generated' => true,
+                'important' => false,
+                'hint' => 'Auto-generated (PRD#0001) when left blank.',
+            ],
+            'product_name' => [
+                'label' => 'Product name',
+                'type' => 'string',
+                'required' => true,
+                'important' => true,
+            ],
+            'subcategory_id' => [
+                'label' => 'Subcategory',
+                'type' => 'select',
+                'required' => true,
+                'important' => true,
+                'relation' => [
+                    'table' => 'sub_categories',
+                    'value' => 'id',
+                    'label' => 'subcategory_name',
+                ],
+            ],
+            'unit_id' => [
+                'label' => 'Unit of measure',
+                'type' => 'select',
+                'required' => true,
+                'important' => true,
+                'relation' => ['table' => 'uoms', 'value' => 'id', 'label' => 'full_name'],
+            ],
+            'unit_price' => [
+                'label' => 'Selling price (KES)',
+                'type' => 'number',
+                'required' => true,
+                'important' => true,
+            ],
+            'last_cost_price' => [
+                'label' => 'Last cost price (KES)',
+                'type' => 'number',
+                'required' => false,
+                'important' => false,
+            ],
+            'vat_id' => [
+                'label' => 'VAT rate',
+                'type' => 'select',
+                'required' => true,
+                'important' => true,
+                'relation' => ['table' => 'vats', 'value' => 'id', 'label' => 'vat_name'],
+            ],
+            'supplier_id' => [
+                'label' => 'Default supplier',
+                'type' => 'select',
+                'required' => false,
+                'important' => false,
+                'relation' => [
+                    'table' => 'suppliers',
+                    'value' => 'id',
+                    'label' => 'supplier_name',
+                    'scope' => 'organization',
+                ],
+            ],
+            'reorder_point' => [
+                'label' => 'Reorder point',
+                'type' => 'number',
+                'required' => false,
+                'important' => false,
+            ],
+            'sell_on_retail' => [
+                'label' => 'Sell on retail',
+                'type' => 'boolean',
+                'required' => false,
+                'important' => false,
+            ],
+        ],
+    ],
+    'customer' => [
+        'label' => 'Customer',
+        'module' => 'customers_suppliers',
+        'path' => '/customers',
+        'fields' => [
+            'customer_num' => [
+                'label' => 'Customer number',
+                'type' => 'integer',
+                'required' => false,
+                'auto_generated' => true,
+                'hint' => 'System-assigned on create.',
+            ],
+            'customer_name' => [
+                'label' => 'Customer name',
+                'type' => 'string',
+                'required' => true,
+                'important' => true,
+            ],
+            'customer_type' => [
+                'label' => 'Customer type',
+                'type' => 'select',
+                'required' => true,
+                'important' => true,
+                'options' => [
+                    ['value' => 'route', 'label' => 'Route customer'],
+                    ['value' => 'debtor', 'label' => 'Debtor / account'],
+                ],
+            ],
+            'phone_number' => [
+                'label' => 'Phone',
+                'type' => 'string',
+                'required' => false,
+                'important' => true,
+            ],
+            'email' => [
+                'label' => 'Email',
+                'type' => 'email',
+                'required' => false,
+                'important' => false,
+            ],
+            'route_id' => [
+                'label' => 'Route',
+                'type' => 'select',
+                'required' => false,
+                'important' => false,
+                'relation' => [
+                    'table' => 'routes',
+                    'value' => 'id',
+                    'label' => 'route_name',
+                ],
+            ],
+            'credit_limit' => [
+                'label' => 'Credit limit (KES)',
+                'type' => 'number',
+                'required' => false,
+                'important' => false,
+            ],
+        ],
+    ],
+    'employee' => [
+        'label' => 'Employee',
+        'module' => 'hr_payroll',
+        'path' => '/hr/employees',
+        'create_action' => 'create_employee',
+        'fields' => [
+            'employee_code' => [
+                'label' => 'Employee code',
+                'type' => 'string',
+                'required' => false,
+                'auto_generated' => true,
+                'hint' => 'Auto-generated (EMP#0001) when left blank.',
+            ],
+            'first_name' => [
+                'label' => 'First name',
+                'type' => 'string',
+                'required' => true,
+                'important' => true,
+            ],
+            'last_name' => [
+                'label' => 'Last name',
+                'type' => 'string',
+                'required' => true,
+                'important' => true,
+            ],
+            'department_id' => [
+                'label' => 'Department',
+                'type' => 'select',
+                'required' => false,
+                'important' => true,
+                'relation' => [
+                    'table' => 'departments',
+                    'value' => 'id',
+                    'label' => 'department_name',
+                    'scope' => 'organization',
+                ],
+            ],
+            'shift_id' => [
+                'label' => 'Work shift',
+                'type' => 'select',
+                'required' => false,
+                'important' => false,
+                'relation' => [
+                    'table' => 'work_shifts',
+                    'value' => 'id',
+                    'label' => 'shift_name',
+                    'scope' => 'organization',
+                ],
+            ],
+            'position_id' => [
+                'label' => 'Position',
+                'type' => 'select',
+                'required' => false,
+                'important' => false,
+                'relation' => [
+                    'table' => 'positions',
+                    'value' => 'id',
+                    'label' => 'position_title',
+                    'scope' => 'organization',
+                ],
+            ],
+            'job_title' => [
+                'label' => 'Job title',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
+            'email' => [
+                'label' => 'Work email',
+                'type' => 'email',
+                'required' => false,
+                'important' => false,
+            ],
+            'phone' => [
+                'label' => 'Phone',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
+            'base_salary' => [
+                'label' => 'Base salary (KES)',
+                'type' => 'number',
+                'required' => false,
+                'important' => true,
+            ],
+            'hire_date' => [
+                'label' => 'Hire date',
+                'type' => 'date',
+                'required' => false,
+                'important' => true,
+            ],
+            'employment_type' => [
+                'label' => 'Employment type',
+                'type' => 'select',
+                'required' => false,
+                'important' => false,
+                'options' => [
+                    ['value' => 'permanent', 'label' => 'Permanent'],
+                    ['value' => 'contract', 'label' => 'Contract'],
+                    ['value' => 'casual', 'label' => 'Casual'],
+                ],
+            ],
+        ],
+    ],
+    'sales_order' => [
+        'label' => 'Sales order',
+        'module' => 'sales.backend',
+        'path' => '/sales/orders',
+        'create_action' => 'create_sales_order',
+        'fields' => [
+            'customer_num' => [
+                'label' => 'Customer',
+                'type' => 'select',
+                'required' => true,
+                'important' => true,
+                'relation' => [
+                    'table' => 'customers',
+                    'value' => 'customer_num',
+                    'label' => 'customer_name',
+                    'scope' => 'organization',
+                ],
+            ],
+            'lines' => [
+                'label' => 'Line items',
+                'type' => 'line_items',
+                'required' => true,
+                'important' => true,
+                'item_fields' => [
+                    'product_code' => [
+                        'label' => 'Product',
+                        'type' => 'select',
+                        'relation' => [
+                            'table' => 'products',
+                            'value' => 'product_code',
+                            'label' => 'product_name',
+                            'scope' => 'organization',
+                        ],
+                    ],
+                    'quantity' => [
+                        'label' => 'Quantity',
+                        'type' => 'number',
+                        'required' => true,
+                    ],
+                ],
+            ],
+            'payment_method_code' => [
+                'label' => 'Payment method',
+                'type' => 'select',
+                'required' => false,
+                'important' => true,
+                'relation' => ['table' => 'payment_methods', 'value' => 'method_code', 'label' => 'method_name'],
+            ],
+            'channel' => [
+                'label' => 'Channel',
+                'type' => 'select',
+                'required' => false,
+                'important' => false,
+                'options' => [
+                    ['value' => 'backend', 'label' => 'Backend / backoffice'],
+                    ['value' => 'pos', 'label' => 'POS'],
+                ],
+            ],
+        ],
+    ],
+    'supplier' => [
+        'label' => 'Supplier',
+        'module' => 'customers_suppliers',
+        'path' => '/suppliers',
+        'fields' => [
+            'supplier_name' => [
+                'label' => 'Supplier name',
+                'type' => 'string',
+                'required' => true,
+                'important' => true,
+            ],
+            'phone' => [
+                'label' => 'Phone',
+                'type' => 'string',
+                'required' => false,
+                'important' => true,
+            ],
+            'email' => [
+                'label' => 'Email',
+                'type' => 'email',
+                'required' => false,
+                'important' => false,
+            ],
+        ],
+    ],
+    'customer_payment' => [
+        'label' => 'Customer payment',
+        'module' => 'payments',
+        'path' => '/accounting/accounts-receivable',
+        'create_action' => 'record_customer_payment',
+        'fields' => [
+            'sale_id' => [
+                'label' => 'Order / outstanding invoice',
+                'type' => 'select',
+                'required' => true,
+                'important' => true,
+                'relation' => [
+                    'table' => 'sales',
+                    'value' => 'id',
+                    'label' => 'order_num',
+                    'scope' => 'organization',
+                    'join' => [
+                        ['customer_invoices as ci', 'ci.sale_id', '=', 'sales.id'],
+                        ['customers as c', 'c.customer_num', '=', 'sales.customer_num'],
+                    ],
+                    'where' => [
+                        ['ci.balance_due', '>', 0],
+                    ],
+                    'label_expr' => "CONCAT(sales.order_num, ' — ', c.customer_name, ' (KES ', ci.balance_due, ' due)')",
+                ],
+            ],
+            'amount' => [
+                'label' => 'Payment amount (KES)',
+                'type' => 'number',
+                'required' => false,
+                'important' => true,
+                'hint' => 'Leave blank to pay the full outstanding balance.',
+            ],
+            'payment_method_id' => [
+                'label' => 'Payment method',
+                'type' => 'select',
+                'required' => true,
+                'important' => true,
+                'relation' => ['table' => 'payment_methods', 'value' => 'id', 'label' => 'method_name'],
+            ],
+            'reference_number' => [
+                'label' => 'Reference (receipt / M-Pesa code)',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
+        ],
+    ],
+    'department' => [
+        'label' => 'Department',
+        'module' => 'hr_payroll',
+        'path' => '/hr/departments',
+        'fields' => [
+            'department_code' => [
+                'label' => 'Department code',
+                'type' => 'string',
+                'required' => true,
+                'important' => true,
+            ],
+            'department_name' => [
+                'label' => 'Department name',
+                'type' => 'string',
+                'required' => true,
+                'important' => true,
+            ],
+        ],
+    ],
+];

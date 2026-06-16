@@ -106,10 +106,12 @@ class UserPermissionService
     public function permissionMapForUser(User $user): array
     {
         if ($user->is_admin) {
-            return Permission::query()
+            $map = Permission::query()
                 ->pluck('permission_code')
                 ->mapWithKeys(fn ($code) => [$code => true])
                 ->all();
+
+            return $this->expandCapabilityAliases($map);
         }
 
         $codes = Permission::query()
@@ -121,6 +123,14 @@ class UserPermissionService
             $map[$code] = true;
         }
 
+        return $this->expandCapabilityAliases($map);
+    }
+
+    /** @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function expandCapabilityAliases(array $map): array
+    {
         foreach (config('permission_aliases', []) as $capability => $aliases) {
             if ($map[$capability] ?? false) {
                 continue;

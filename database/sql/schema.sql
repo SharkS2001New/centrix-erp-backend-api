@@ -372,6 +372,7 @@ CREATE TABLE customers (
     customer_type     ENUM('debtor','route') NOT NULL DEFAULT 'debtor',
     phone_number      VARCHAR(45),
     additional_phone  VARCHAR(45),
+    email             VARCHAR(200)  NULL,
     town              VARCHAR(200),
     latitude          DECIMAL(10,7) NULL,
     longitude         DECIMAL(10,7) NULL,
@@ -514,6 +515,52 @@ CREATE TABLE stock_receipts (
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     FOREIGN KEY (received_by)     REFERENCES users(id),
     INDEX idx_product_code (product_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS supplier_return_document_lines;
+DROP TABLE IF EXISTS supplier_return_documents;
+CREATE TABLE supplier_return_documents (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    organization_id     INT           NOT NULL,
+    supplier_id         INT           NOT NULL,
+    branch_id           INT           NOT NULL,
+    source_type         ENUM('lpo','manual') NOT NULL DEFAULT 'manual',
+    lpo_no              INT           NULL,
+    supplier_invoice_no VARCHAR(100)  NULL,
+    reason_scope        ENUM('order','per_product') NOT NULL DEFAULT 'order',
+    return_reason       TEXT          NULL,
+    notes               TEXT          NULL,
+    status              ENUM('pending_approval','approved','rejected') NOT NULL DEFAULT 'pending_approval',
+    returned_by         INT           NOT NULL,
+    approved_by         INT           NULL,
+    approved_at         TIMESTAMP     NULL,
+    rejected_by         INT           NULL,
+    rejected_at         TIMESTAMP     NULL,
+    rejection_reason    TEXT          NULL,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_srd_org_status (organization_id, status),
+    INDEX idx_srd_supplier_lpo (supplier_id, lpo_no),
+    INDEX idx_srd_branch (branch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE supplier_return_document_lines (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    document_id         BIGINT        NOT NULL,
+    product_code        VARCHAR(200)  NOT NULL,
+    product_name        VARCHAR(200)  NULL,
+    quantity            DOUBLE        NOT NULL,
+    package_type        ENUM('full_package','partial','pieces') NOT NULL DEFAULT 'partial',
+    package_type_label  VARCHAR(100)  NULL,
+    uom_label           VARCHAR(45)   NULL,
+    stock_location      ENUM('shop','store') NOT NULL DEFAULT 'store',
+    reason              TEXT          NULL,
+    lpo_txn_id          BIGINT        NULL,
+    stock_deduct_qty    DOUBLE        NULL,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (document_id) REFERENCES supplier_return_documents(id) ON DELETE CASCADE,
+    INDEX idx_srdl_product (product_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DROP TABLE IF EXISTS supplier_returns;
@@ -953,6 +1000,32 @@ CREATE TABLE lpo_supplier_invoices (
     INDEX idx_lpo_no (lpo_no)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+DROP TABLE IF EXISTS supplier_payments;
+CREATE TABLE supplier_payments (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    organization_id     INT           NOT NULL,
+    supplier_id         INT           NOT NULL,
+    lpo_no              INT           NULL,
+    payment_method_id   INT           NOT NULL,
+    amount_paid         DECIMAL(10,2) NOT NULL,
+    manual_amount       TINYINT(1)    DEFAULT 0,
+    declared_payable    DECIMAL(10,2) NULL,
+    amount_due_snapshot DECIMAL(10,2) NULL,
+    cheque_number       VARCHAR(45)   NULL,
+    reference_number    VARCHAR(100)  NULL,
+    date_paid           DATE          NOT NULL,
+    paid_by             INT           NOT NULL,
+    notes               TEXT          NULL,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (organization_id)   REFERENCES organizations(id),
+    FOREIGN KEY (supplier_id)       REFERENCES suppliers(id),
+    FOREIGN KEY (payment_method_id) REFERENCES payment_methods(id),
+    FOREIGN KEY (paid_by)           REFERENCES users(id),
+    INDEX idx_org_supplier_date (organization_id, supplier_id, date_paid),
+    INDEX idx_lpo_no (lpo_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ================================================================
 -- SECTION 9: RETURNS
 -- ================================================================
@@ -1092,6 +1165,13 @@ CREATE TABLE system_settings (
 -- SECTION 12: FULFILLMENT, STOCK TAKE, ACCOUNTING, HR
 -- ================================================================
 
+DROP TABLE IF EXISTS pod_lines;
+DROP TABLE IF EXISTS pod_records;
+DROP TABLE IF EXISTS loading_list_lines;
+DROP TABLE IF EXISTS loading_lists;
+DROP TABLE IF EXISTS dispatch_trip_sales;
+DROP TABLE IF EXISTS dispatch_trips;
+DROP TABLE IF EXISTS route_schedules;
 DROP TABLE IF EXISTS vehicles;
 CREATE TABLE vehicles (
     id              INT           PRIMARY KEY AUTO_INCREMENT,
@@ -1099,6 +1179,8 @@ CREATE TABLE vehicles (
     vehicle_code    VARCHAR(45)   NOT NULL,
     vehicle_name    VARCHAR(200)  NOT NULL,
     plate_number    VARCHAR(45),
+    max_weight_kg   DECIMAL(10,2) NULL,
+    max_volume_m3   DECIMAL(10,2) NULL,
     is_active       BOOLEAN       DEFAULT TRUE,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (branch_id) REFERENCES branches(id),
@@ -1124,6 +1206,148 @@ CREATE TABLE drivers (
     UNIQUE KEY uq_branch_driver (branch_id, driver_code),
     INDEX idx_default_vehicle (default_vehicle_id),
     INDEX idx_default_route (default_route_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS route_schedules;
+CREATE TABLE route_schedules (
+    id                  INT           PRIMARY KEY AUTO_INCREMENT,
+    branch_id           INT           NOT NULL,
+    route_id            INT           NOT NULL,
+    day_of_week         TINYINT UNSIGNED NOT NULL,
+    default_driver_id   INT           NULL,
+    default_vehicle_id  INT           NULL,
+    departure_time      TIME          NULL,
+    is_active           BOOLEAN       DEFAULT TRUE,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (branch_id) REFERENCES branches(id),
+    FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE CASCADE,
+    FOREIGN KEY (default_driver_id) REFERENCES drivers(id) ON DELETE SET NULL,
+    FOREIGN KEY (default_vehicle_id) REFERENCES vehicles(id) ON DELETE SET NULL,
+    UNIQUE KEY uq_branch_route_day (branch_id, route_id, day_of_week)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS dispatch_trips;
+CREATE TABLE dispatch_trips (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    branch_id           INT           NOT NULL,
+    trip_code           VARCHAR(50)   NOT NULL,
+    route_id            INT           NULL,
+    driver_id           INT           NULL,
+    vehicle_id          INT           NULL,
+    scheduled_date      DATE          NOT NULL,
+    status              ENUM('draft','loading','in_transit','completed','cancelled') NOT NULL DEFAULT 'draft',
+    notes               TEXT          NULL,
+    expected_cash       DECIMAL(14,2) NULL,
+    collected_cash      DECIMAL(14,2) NULL,
+    cash_variance       DECIMAL(14,2) NULL,
+    prepared_by_name    VARCHAR(200)  NULL,
+    prepared_at         TIMESTAMP     NULL,
+    checked_by_name     VARCHAR(200)  NULL,
+    checked_at          TIMESTAMP     NULL,
+    departed_at         TIMESTAMP     NULL,
+    completed_at        TIMESTAMP     NULL,
+    settled_at          TIMESTAMP     NULL,
+    settled_by          INT           NULL,
+    stock_deducted_at   TIMESTAMP     NULL,
+    created_by          INT           NULL,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (branch_id) REFERENCES branches(id),
+    FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE SET NULL,
+    FOREIGN KEY (driver_id) REFERENCES drivers(id) ON DELETE SET NULL,
+    FOREIGN KEY (vehicle_id) REFERENCES vehicles(id) ON DELETE SET NULL,
+    FOREIGN KEY (settled_by) REFERENCES users(id) ON DELETE SET NULL,
+    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+    UNIQUE KEY uq_branch_trip_code (branch_id, trip_code),
+    INDEX idx_branch_date_status (branch_id, scheduled_date, status),
+    INDEX idx_route_date (route_id, scheduled_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS dispatch_trip_sales;
+CREATE TABLE dispatch_trip_sales (
+    id              BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    trip_id         BIGINT        NOT NULL,
+    sale_id         BIGINT        NOT NULL,
+    stop_seq        SMALLINT UNSIGNED NOT NULL DEFAULT 1,
+    FOREIGN KEY (trip_id) REFERENCES dispatch_trips(id) ON DELETE CASCADE,
+    FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+    UNIQUE KEY uq_trip_sale (trip_id, sale_id),
+    INDEX idx_sale_id (sale_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS loading_lists;
+CREATE TABLE loading_lists (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    branch_id           INT           NOT NULL,
+    trip_id             BIGINT        NOT NULL,
+    route_id            INT           NULL,
+    list_date           DATE          NOT NULL,
+    status              ENUM('open','locked','loaded') NOT NULL DEFAULT 'open',
+    prepared_by_name    VARCHAR(200)  NULL,
+    checked_by_name     VARCHAR(200)  NULL,
+    locked_at           TIMESTAMP     NULL,
+    total_amount        DECIMAL(14,2) NOT NULL DEFAULT 0,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (branch_id) REFERENCES branches(id),
+    FOREIGN KEY (trip_id) REFERENCES dispatch_trips(id) ON DELETE CASCADE,
+    FOREIGN KEY (route_id) REFERENCES routes(id) ON DELETE SET NULL,
+    UNIQUE KEY uq_trip_loading_list (trip_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS loading_list_lines;
+CREATE TABLE loading_list_lines (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    loading_list_id     BIGINT        NOT NULL,
+    line_no             SMALLINT UNSIGNED NOT NULL,
+    product_code        VARCHAR(200)  NOT NULL,
+    product_name        VARCHAR(255)  NOT NULL,
+    quantity            FLOAT         NOT NULL,
+    quantity_label      VARCHAR(120)  NULL,
+    pack_breakdown      VARCHAR(200)  NULL,
+    unit_price          DECIMAL(12,2) NOT NULL DEFAULT 0,
+    line_total          DECIMAL(14,2) NOT NULL DEFAULT 0,
+    FOREIGN KEY (loading_list_id) REFERENCES loading_lists(id) ON DELETE CASCADE,
+    INDEX idx_loading_list_line (loading_list_id, line_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS pod_records;
+CREATE TABLE pod_records (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    branch_id           INT           NOT NULL,
+    sale_id             BIGINT        NOT NULL,
+    trip_id             BIGINT        NULL,
+    captured_at         TIMESTAMP     NOT NULL,
+    captured_by         INT           NULL,
+    recipient_name      VARCHAR(200)  NOT NULL,
+    notes               TEXT          NULL,
+    signature_path      VARCHAR(500)  NULL,
+    photo_path          VARCHAR(500)  NULL,
+    status              ENUM('complete','partial','refused') NOT NULL DEFAULT 'complete',
+    gps_lat             DECIMAL(10,7) NULL,
+    gps_lng             DECIMAL(10,7) NULL,
+    created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (branch_id) REFERENCES branches(id),
+    FOREIGN KEY (sale_id) REFERENCES sales(id) ON DELETE CASCADE,
+    FOREIGN KEY (trip_id) REFERENCES dispatch_trips(id) ON DELETE SET NULL,
+    FOREIGN KEY (captured_by) REFERENCES users(id) ON DELETE SET NULL,
+    INDEX idx_pod_sale (sale_id),
+    INDEX idx_pod_trip (trip_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+DROP TABLE IF EXISTS pod_lines;
+CREATE TABLE pod_lines (
+    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    pod_record_id       BIGINT        NOT NULL,
+    sale_item_id        BIGINT        NOT NULL,
+    qty_ordered         FLOAT         NOT NULL,
+    qty_delivered       FLOAT         NOT NULL,
+    qty_refused         FLOAT         NOT NULL DEFAULT 0,
+    reason              VARCHAR(255)  NULL,
+    FOREIGN KEY (pod_record_id) REFERENCES pod_records(id) ON DELETE CASCADE,
+    FOREIGN KEY (sale_item_id) REFERENCES sale_items(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DROP TABLE IF EXISTS stock_take_lines;
@@ -1209,6 +1433,7 @@ DROP TABLE IF EXISTS payroll_lines;
 DROP TABLE IF EXISTS payroll_runs;
 DROP TABLE IF EXISTS pay_periods;
 DROP TABLE IF EXISTS employee_documents;
+DROP TABLE IF EXISTS employee_kpis;
 DROP TABLE IF EXISTS employee_attendance;
 DROP TABLE IF EXISTS employee_cash_advances;
 DROP TABLE IF EXISTS employee_overtime;
@@ -1438,6 +1663,26 @@ CREATE TABLE employee_attendance (
     FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL,
     UNIQUE KEY uq_emp_attendance_date (employee_id, attendance_date),
     INDEX idx_att_org_date (organization_id, attendance_date)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE employee_kpis (
+    id               BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    organization_id  INT           NOT NULL,
+    employee_id      INT           NOT NULL,
+    kpi_code         VARCHAR(64)   NULL,
+    label            VARCHAR(200)  NOT NULL,
+    period_start     DATE          NULL,
+    period_end       DATE          NULL,
+    target_value     DECIMAL(12,2) NULL,
+    actual_value     DECIMAL(12,2) NULL,
+    unit             VARCHAR(32)   NULL,
+    notes            TEXT          NULL,
+    created_at       TIMESTAMP     NULL,
+    updated_at       TIMESTAMP     NULL,
+    FOREIGN KEY (employee_id) REFERENCES employees(id) ON DELETE CASCADE,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    INDEX idx_kpi_employee_period (employee_id, period_start),
+    INDEX idx_kpi_org (organization_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE employee_documents (

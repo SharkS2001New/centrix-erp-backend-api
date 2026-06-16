@@ -204,20 +204,10 @@ class ExternalAccountingTest extends TestCase
         });
     }
 
-    public function test_xero_stub_export_uses_xero_driver(): void
+    public function test_unsupported_provider_export_is_rejected(): void
     {
         $user = User::where('username', 'admin')->firstOrFail();
         $orgId = (int) $user->organization_id;
-
-        AccountingConnection::create([
-            'organization_id' => $orgId,
-            'provider' => 'xero',
-            'realm_id' => 'xero-tenant-1',
-            'access_token' => 'stub-token',
-            'status' => 'connected',
-            'connected_at' => now(),
-            'connected_by' => $user->id,
-        ]);
 
         AccountingExportQueue::create([
             'organization_id' => $orgId,
@@ -226,7 +216,7 @@ class ExternalAccountingTest extends TestCase
             'entry_date' => now()->toDateString(),
             'reference_type' => 'sale',
             'reference_id' => 77777,
-            'description' => 'Xero export test',
+            'description' => 'Unsupported provider',
             'lines' => [
                 ['account_code' => '1000', 'debit' => 50, 'credit' => 0],
                 ['account_code' => '4000', 'debit' => 0, 'credit' => 50],
@@ -234,28 +224,10 @@ class ExternalAccountingTest extends TestCase
             'status' => 'pending',
         ]);
 
-        $this->putJson('/api/v1/accounting/account-mappings', [
+        $this->postJson('/api/v1/accounting/export-queue/process', [
             'provider' => 'xero',
-            'mappings' => [
-                ['local_account_code' => '1000', 'external_account_id' => 'X-CASH', 'external_account_name' => 'Cash'],
-                ['local_account_code' => '4000', 'external_account_id' => 'X-SALES', 'external_account_name' => 'Sales'],
-            ],
-        ])->assertOk();
-
-        $result = $this->postJson('/api/v1/accounting/export-queue/process', [
-            'provider' => 'xero',
-        ])->assertOk()->json();
-
-        $this->assertSame(1, $result['exported']);
-        $this->assertDatabaseHas('accounting_export_queue', [
-            'reference_id' => 77777,
-            'status' => 'exported',
-        ]);
-
-        $externalId = AccountingExportQueue::query()
-            ->where('reference_id', 77777)
-            ->value('external_journal_id');
-
-        $this->assertStringStartsWith('XERO-STUB-', (string) $externalId);
+        ])->assertOk()
+            ->assertJsonPath('failed', 1)
+            ->assertJsonPath('exported', 0);
     }
 }

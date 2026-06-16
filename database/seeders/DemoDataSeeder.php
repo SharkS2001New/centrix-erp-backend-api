@@ -48,21 +48,7 @@ class DemoDataSeeder extends Seeder
             return;
         }
 
-        DB::statement('SET FOREIGN_KEY_CHECKS=0');
-        foreach ([
-            'stock_reservations', 'cart_lines', 'temporary_carts', 'customer_invoice_payments', 'customer_invoices',
-            'sale_payments', 'sale_items', 'sales', 'inventory_transactions', 'current_stock',
-            'damages', 'stock_receipts', 'supplier_returns', 'returns', 'lpo_supplier_invoices',
-            'lpo_attachments', 'lpo_txn', 'lpo_mst', 'expenses', 'kra_responses', 'audit_logs',
-            'retail_package_settings', 'price_history', 'products', 'sub_categories', 'categories',
-            'uoms', 'customers', 'routes', 'suppliers', 'till_float_sessions', 'tills', 'users',
-            'role_permissions', 'permissions', 'roles', 'branches', 'organizations', 'system_settings',
-        ] as $table) {
-            if (Schema::hasTable($table)) {
-                DB::table($table)->truncate();
-            }
-        }
-        DB::statement('SET FOREIGN_KEY_CHECKS=1');
+        $this->truncateDemoTables();
 
         $org = Organization::create([
             'company_code' => 'DEMO',
@@ -122,6 +108,7 @@ class DemoDataSeeder extends Seeder
             'sales.dashboard.view',
             'sales.orders.view',
             'sales.orders.create',
+            'payments.sale_payments.view',
             'payments.sale_payments.create',
             'inventory.stock.view',
         ];
@@ -134,6 +121,8 @@ class DemoDataSeeder extends Seeder
                 ]);
             }
         }
+
+        $this->call(ProductionRoleSeeder::class);
 
         $admin = User::create([
             'organization_id' => $org->id,
@@ -207,13 +196,17 @@ class DemoDataSeeder extends Seeder
             'is_primary' => true,
         ]);
 
-        User::create([
+        $cashier = User::create([
             'organization_id' => $org->id,
             'branch_id' => $hq->id,
             'role_id' => $rCash->id,
             'username' => 'cashier',
             'password' => Hash::make('password'),
             'full_name' => 'Peter Otieno',
+            'is_admin' => false,
+            'is_super_admin' => false,
+            'access_scope' => 'branch',
+            'login_channels' => ['pos', 'backoffice'],
             'is_active' => true,
         ]);
 
@@ -450,6 +443,57 @@ class DemoDataSeeder extends Seeder
             ['organization_id' => $org->id, 'allow_below_stock' => 0, 'stock_alert_mode' => 'per_product']
         );
 
+        AuditLog::insert([
+            [
+                'user_id' => $admin->id,
+                'branch_id' => $hq->id,
+                'action' => 'create',
+                'table_name' => 'products',
+                'record_id' => (string) $sugar->product_code,
+                'old_values' => null,
+                'new_values' => json_encode(['product_name' => $sugar->product_name, 'selling_price' => 125]),
+                'ip_address' => '127.0.0.1',
+                'user_agent' => 'DemoDataSeeder',
+                'created_at' => now()->subDays(3),
+            ],
+            [
+                'user_id' => $admin->id,
+                'branch_id' => $hq->id,
+                'action' => 'update',
+                'table_name' => 'products',
+                'record_id' => (string) $sugar->product_code,
+                'old_values' => json_encode(['selling_price' => 120]),
+                'new_values' => json_encode(['selling_price' => 125]),
+                'ip_address' => '127.0.0.1',
+                'user_agent' => 'DemoDataSeeder',
+                'created_at' => now()->subDays(2),
+            ],
+            [
+                'user_id' => $cashier->id,
+                'branch_id' => $hq->id,
+                'action' => 'create',
+                'table_name' => 'sales',
+                'record_id' => (string) $sale->id,
+                'old_values' => null,
+                'new_values' => json_encode(['order_num' => $sale->order_num, 'order_total' => 1250, 'status' => 'completed']),
+                'ip_address' => '10.0.0.12',
+                'user_agent' => 'POS Terminal',
+                'created_at' => now()->subDay(),
+            ],
+            [
+                'user_id' => $admin->id,
+                'branch_id' => $hq->id,
+                'action' => 'update',
+                'table_name' => 'users',
+                'record_id' => (string) $cashier->id,
+                'old_values' => json_encode(['is_active' => false]),
+                'new_values' => json_encode(['is_active' => true]),
+                'ip_address' => '127.0.0.1',
+                'user_agent' => 'Mozilla/5.0',
+                'created_at' => now()->subHours(6),
+            ],
+        ]);
+
         \App\Models\ChartOfAccount::firstOrCreate(
             ['organization_id' => $org->id, 'account_code' => '1000'],
             ['account_name' => 'Cash', 'account_type' => 'asset', 'is_active' => true]
@@ -504,13 +548,24 @@ class DemoDataSeeder extends Seeder
         );
 
         $platformCode = config('erp.platform_company_code', 'PLATFORM');
+        $platformEmail = config('erp.platform_super_admin_email', 'alpacke.tech@gmail.com');
+        $platformPassword = config('erp.platform_super_admin_password');
+        if (! is_string($platformPassword) || $platformPassword === '') {
+            $platformPassword = app()->environment('local', 'testing') ? 'password' : null;
+        }
+        if ($platformPassword === null) {
+            throw new \RuntimeException(
+                'Set PLATFORM_SUPER_ADMIN_PASSWORD in .env before seeding the platform super admin.',
+            );
+        }
+
         $platformOrg = Organization::create([
             'company_code' => $platformCode,
             'org_name' => 'Platform Administration',
-            'org_email' => 'platform@pos-erp.local',
+            'org_email' => $platformEmail,
             'primary_tel' => '0700000000',
             'org_address' => 'Platform',
-            'deployment_profile' => 'small_shop',
+            'deployment_profile' => 'platform',
             'module_settings' => ['platform' => true],
         ]);
 
@@ -533,8 +588,8 @@ class DemoDataSeeder extends Seeder
             'branch_id' => $platformBranch->id,
             'role_id' => $platformRole->id,
             'username' => 'superadmin',
-            'email' => 'superadmin@platform.local',
-            'password' => Hash::make('password'),
+            'email' => $platformEmail,
+            'password' => Hash::make($platformPassword),
             'full_name' => 'Platform Super Admin',
             'is_admin' => 0,
             'is_super_admin' => 1,
@@ -544,6 +599,30 @@ class DemoDataSeeder extends Seeder
         ]);
 
         $this->command->info("Demo data seeded. Org manager: DEMO / admin / password");
-        $this->command->info("Platform super admin: {$platformCode} / superadmin / password");
+        $this->command->info("Branch cashier (POS only, limited RBAC): DEMO / cashier / password");
+        $this->command->info("Platform super admin: {$platformEmail} (org code optional) or {$platformCode} / superadmin");
+    }
+
+    protected function truncateDemoTables(): void
+    {
+        $skip = [
+            'migrations',
+            'payment_methods',
+            'lpo_statuses',
+        ];
+
+        DB::statement('SET FOREIGN_KEY_CHECKS=0');
+
+        $tables = collect(DB::select('SHOW TABLES'))
+            ->map(fn ($row) => array_values((array) $row)[0])
+            ->reject(fn (string $table) => in_array($table, $skip, true));
+
+        foreach ($tables as $table) {
+            if (Schema::hasTable($table)) {
+                DB::table($table)->truncate();
+            }
+        }
+
+        DB::statement('SET FOREIGN_KEY_CHECKS=1');
     }
 }

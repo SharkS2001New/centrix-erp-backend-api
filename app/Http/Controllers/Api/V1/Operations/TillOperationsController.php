@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
 use App\Models\Till;
 use App\Models\TillFloatSession;
@@ -15,6 +16,8 @@ use InvalidArgumentException;
 
 class TillOperationsController extends Controller
 {
+    use HandlesBranchScope;
+
     /** @param  mixed  $breakdown */
     protected function normalizeFloatEntries($breakdown): array
     {
@@ -116,6 +119,8 @@ class TillOperationsController extends Controller
             'notes' => 'nullable|string',
         ]);
 
+        $data['branch_id'] = $this->userAccess()->resolveBranchId($request->user(), (int) $data['branch_id']);
+
         $existing = TillFloatSession::query()
             ->where('till_id', $data['till_id'])
             ->whereIn('status', ['open', 'suspended'])
@@ -184,7 +189,7 @@ class TillOperationsController extends Controller
             'payment_type' => 'required|string|max:45',
         ]);
 
-        $session = TillFloatSession::findOrFail($sessionId);
+        $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertSessionCashier($request->user(), $session);
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Cannot add float to a closed session.');
@@ -210,7 +215,7 @@ class TillOperationsController extends Controller
             'reason' => 'nullable|string|max:500',
         ]);
 
-        $session = TillFloatSession::findOrFail($sessionId);
+        $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertSessionCashier($request->user(), $session);
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Cannot record cash movements on a closed session.');
@@ -239,7 +244,7 @@ class TillOperationsController extends Controller
             'notes' => 'nullable|string',
         ]);
 
-        $session = TillFloatSession::findOrFail($sessionId);
+        $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertSessionCashier($request->user(), $session);
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Session is not open.');
@@ -281,7 +286,7 @@ class TillOperationsController extends Controller
 
     public function suspendSession(Request $request, int $sessionId)
     {
-        $session = TillFloatSession::findOrFail($sessionId);
+        $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertSessionCashier($request->user(), $session);
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Only an open session can be suspended.');
@@ -297,7 +302,7 @@ class TillOperationsController extends Controller
 
     public function resumeSession(Request $request, int $sessionId)
     {
-        $session = TillFloatSession::findOrFail($sessionId);
+        $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertSessionCashier($request->user(), $session);
         if ($session->status !== 'suspended') {
             throw new InvalidArgumentException('Session is not suspended.');
@@ -327,7 +332,7 @@ class TillOperationsController extends Controller
             'notes' => 'nullable|string|max:500',
         ]);
 
-        $session = TillFloatSession::findOrFail($sessionId);
+        $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertCanHandover($request->user(), $session);
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Only an open session can be handed over.');
@@ -387,7 +392,7 @@ class TillOperationsController extends Controller
 
     public function xReport(Request $request, int $sessionId)
     {
-        $session = TillFloatSession::findOrFail($sessionId);
+        $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertCanView($request->user(), $session);
 
         $report = $this->buildTillReport($sessionId, $session);
@@ -400,7 +405,7 @@ class TillOperationsController extends Controller
 
     public function zReport(Request $request, int $sessionId)
     {
-        $session = TillFloatSession::findOrFail($sessionId);
+        $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertCanView($request->user(), $session);
         if ($session->status !== 'closed') {
             return response()->json(['message' => 'Session must be closed for Z-report.'], 422);

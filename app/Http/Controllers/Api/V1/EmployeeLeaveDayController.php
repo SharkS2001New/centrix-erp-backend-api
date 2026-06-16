@@ -127,16 +127,53 @@ class EmployeeLeaveDayController extends HrOrgResourceController
         $data = $this->applyTotals($employee, $data);
         $data = $this->applyDeductionMeta($data);
         $this->assertNoOverlap($employee->id, $data['start_date'], $data['end_date'], null);
-        app(LeaveBalanceService::class)->assertCanDeduct(
-            $employee,
-            $data['deduct_from'],
-            (float) $data['days_deducted'],
-        );
+        $data['approval_status'] = $data['approval_status'] ?? 'pending';
+        if ($data['approval_status'] === 'approved') {
+            app(LeaveBalanceService::class)->assertCanDeduct(
+                $employee,
+                $data['deduct_from'],
+                (float) $data['days_deducted'],
+            );
+        }
 
         return response()->json(
             EmployeeLeaveDay::create($data)->load('employee'),
             201,
         );
+    }
+
+    /** POST /employee-leave-days/{id}/approve */
+    public function approve(string $id)
+    {
+        $row = $this->findScoped($id);
+        if ($row->approval_status === 'approved') {
+            return response()->json($row->load('employee'));
+        }
+        if ($row->approval_status === 'rejected') {
+            return response()->json(['message' => 'Rejected leave cannot be approved.'], 422);
+        }
+        $employee = Employee::findOrFail($row->employee_id);
+        app(LeaveBalanceService::class)->assertCanDeduct(
+            $employee,
+            $row->deduct_from,
+            (float) $row->days_deducted,
+            (int) $row->id,
+        );
+        $row->update(['approval_status' => 'approved']);
+
+        return response()->json($row->fresh(['employee']));
+    }
+
+    /** POST /employee-leave-days/{id}/reject */
+    public function reject(string $id)
+    {
+        $row = $this->findScoped($id);
+        if ($row->approval_status === 'approved') {
+            return response()->json(['message' => 'Approved leave cannot be rejected.'], 422);
+        }
+        $row->update(['approval_status' => 'rejected']);
+
+        return response()->json($row->fresh(['employee']));
     }
 
     public function update(Request $request, string $id)

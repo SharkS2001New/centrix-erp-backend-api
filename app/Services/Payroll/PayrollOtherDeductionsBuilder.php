@@ -6,6 +6,7 @@ use App\Models\Employee;
 use App\Models\EmployeeCashAdvance;
 use App\Models\EmployeeDeduction;
 use App\Models\PayrollDeductionType;
+use App\Services\Hr\HrPayrollSettingsResolver;
 
 class PayrollOtherDeductionsBuilder
 {
@@ -16,37 +17,47 @@ class PayrollOtherDeductionsBuilder
      *
      * @return array{total: float, detail: array<int, array<string, mixed>>}
      */
-    public function build(Employee $employee, float $contractGrossForPercent): array
+    public function build(Employee $employee, float $contractGrossForPercent, ?array $hrSettings = null): array
     {
+        $hr = $hrSettings ?? HrPayrollSettingsResolver::forOrganizationId((int) $employee->organization_id);
         $other = 0.0;
         $detail = [];
 
-        $advances = EmployeeCashAdvance::query()
-            ->where('employee_id', $employee->id)
-            ->where('status', 'open')
-            ->where('balance', '>', 0)
-            ->orderBy('advance_date')
-            ->get();
+        if ($hr['enable_cash_advance_deductions'] && $hr['deduct_cash_advances_on_payroll']) {
+            $advances = EmployeeCashAdvance::query()
+                ->where('employee_id', $employee->id)
+                ->where('status', 'open')
+                ->where('balance', '>', 0)
+                ->orderBy('advance_date')
+                ->get();
 
-        foreach ($advances as $advance) {
-            $advAmt = $advance->payrollDeductionAmount();
-            if ($advAmt <= 0) {
-                continue;
+            foreach ($advances as $advance) {
+                $advAmt = $advance->payrollDeductionAmount();
+                if ($advAmt <= 0) {
+                    continue;
+                }
+                $other += $advAmt;
+                $label = 'Cash advance';
+                if ($advance->notes) {
+                    $label .= ' — ' . $advance->notes;
+                }
+                $detail[] = [
+                    'type' => 'cash_advance',
+                    'scope' => 'employee',
+                    'id' => $advance->id,
+                    'name' => $label,
+                    'repayment_mode' => $advance->repayment_mode ?? 'full_next_cycle',
+                    'balance_before' => (float) $advance->balance,
+                    'amount' => round($advAmt, 2),
+                    'prorated' => false,
+                ];
             }
-            $other += $advAmt;
-            $label = 'Cash advance';
-            if ($advance->notes) {
-                $label .= ' — ' . $advance->notes;
-            }
-            $detail[] = [
-                'type' => 'cash_advance',
-                'scope' => 'employee',
-                'id' => $advance->id,
-                'name' => $label,
-                'repayment_mode' => $advance->repayment_mode ?? 'full_next_cycle',
-                'balance_before' => (float) $advance->balance,
-                'amount' => round($advAmt, 2),
-                'prorated' => false,
+        }
+
+        if (! ($hr['include_other_deductions_in_payroll'] ?? true)) {
+            return [
+                'total' => round($other, 2),
+                'detail' => $detail,
             ];
         }
 

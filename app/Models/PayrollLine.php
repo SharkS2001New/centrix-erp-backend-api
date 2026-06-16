@@ -48,4 +48,9 @@ class PayrollLine extends Model
     {
         return $this->belongsTo(Employee::class, 'employee_id');
     }
+
+    public function payrollRun()
+    {
+        return $this->belongsTo(PayrollRun::class, 'payroll_run_id');
+    }
 }

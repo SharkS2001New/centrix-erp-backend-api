@@ -4,9 +4,9 @@ namespace App\Services\Auth;
 
 use App\Models\User;
 use App\Models\UserPasswordReset;
+use App\Services\Notifications\OrganizationMailSender;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 
@@ -14,6 +14,7 @@ class PasswordResetService
 {
     public function __construct(
         protected TenantAccountResolver $resolver,
+        protected OrganizationMailSender $mailSender,
     ) {}
 
     /**
@@ -136,13 +137,21 @@ class PasswordResetService
         }
 
         try {
-            Mail::raw(
+            $sent = $this->mailSender->sendRaw(
+                $org,
+                $email,
+                "Password reset — {$org->org_name}",
                 "Reset your password for {$org->org_name} ({$org->company_code}).\n\nOpen this link within 1 hour:\n{$resetUrl}\n",
-                function ($message) use ($email, $org) {
-                    $message->to($email)
-                        ->subject("Password reset — {$org->org_name}");
-                },
+                requireNotificationsEnabled: false,
             );
+
+            if (! $sent) {
+                Log::warning('Password reset email could not be sent', [
+                    'organization' => $org->company_code,
+                    'username' => $user->username,
+                    'reset_url' => config('app.debug') ? $resetUrl : '[hidden]',
+                ]);
+            }
         } catch (\Throwable $e) {
             Log::warning('Password reset email could not be sent', [
                 'organization' => $org->company_code,

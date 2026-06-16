@@ -8,8 +8,10 @@ use App\Models\LpoSupplierInvoice;
 use App\Models\LpoTxn;
 use App\Models\Product;
 use App\Models\SupplierReturn;
+use App\Models\SupplierReturnDocument;
 use App\Models\Uom;
 use App\Models\User;
+use App\Services\Purchasing\SupplierReturnDocumentService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -23,13 +25,16 @@ class LpoModuleService
         return 'PO-' . $lpoNo;
     }
 
-    public function summary(int $lpoNo): array
+    public function summary(int $lpoNo, ?int $organizationId = null): array
     {
         $lpo = LpoMst::query()
             ->with('supplier')
             ->whereNull('deleted_at')
             ->where('lpo_no', $lpoNo)
             ->firstOrFail();
+
+        $settings = \App\Services\Purchasing\ProcurementSettingsResolver::forOrganizationId($organizationId);
+        $defaultReceiveLocation = $settings['default_receive_location'] ?? 'store';
 
         $status = LpoStatus::query()->find($lpo->lpo_status_code);
         $creator = $lpo->created_by ? User::query()->find($lpo->created_by) : null;
@@ -42,7 +47,7 @@ class LpoModuleService
             ->keyBy('product_code');
 
         $returnedByProduct = $this->returnedQtyByProduct($lpoNo, (int) $lpo->supplier_id, $lines);
-        $lineRows = $lines->map(fn (LpoTxn $txn) => $this->mapLine($txn, $products, $returnedByProduct));
+        $lineRows = $lines->map(fn (LpoTxn $txn) => $this->mapLine($txn, $products, $returnedByProduct, $defaultReceiveLocation));
 
         $paymentsTotal = $this->paymentsTotal($lpoNo);
         $receivedPayable = $this->receivedPayableTotal($lineRows);
@@ -90,6 +95,11 @@ class LpoModuleService
             'items_fully_returned_to_supplier' => $itemsFullyReturned,
             'amount_paid' => round($paymentsTotal, 2),
             'balance_due' => round($payableBalance, 2),
+            'workflow_actions' => app(\App\Services\Purchasing\LpoWorkflowService::class)
+                ->workflowActions($lpo, $organizationId),
+            'supplier_email' => $lpo->supplier?->email,
+            'supplier_phone' => $lpo->supplier?->phone ?? $lpo->supplier?->alternate_phone,
+            'default_receive_location' => $defaultReceiveLocation,
         ];
 
         return [
@@ -102,7 +112,7 @@ class LpoModuleService
         ];
     }
 
-    protected function mapLine(LpoTxn $txn, Collection $products, array $returnedByProduct): array
+    protected function mapLine(LpoTxn $txn, Collection $products, array $returnedByProduct, string $defaultReceiveLocation = 'store'): array
     {
         $product = $products->get($txn->product_code);
         $uom = $product?->unit;
@@ -131,11 +141,12 @@ class LpoModuleService
             'vat_rate' => (float) ($product?->vat?->vat_percentage ?? 0),
             'receive_status' => $this->lineReceiveStatus($ordered, $received, $returned),
             'received_qty_by_location' => [
-                'shop' => 0,
-                'store' => $received,
+                'shop' => $defaultReceiveLocation === 'shop' ? $received : 0,
+                'store' => $defaultReceiveLocation === 'store' ? $received : 0,
             ],
-            'received_location_options' => $received > 0 ? ['store'] : [],
-            'received_stock_location' => $received > 0 ? 'store' : null,
+            'received_location_options' => [$defaultReceiveLocation],
+            'received_stock_location' => $received > 0 ? $defaultReceiveLocation : null,
+            'default_receive_location' => $defaultReceiveLocation,
         ];
     }
 
@@ -158,6 +169,10 @@ class LpoModuleService
     {
         if ($lines->isEmpty()) {
             return [];
+        }
+
+        if (Schema::hasTable('supplier_return_documents')) {
+            return app(SupplierReturnDocumentService::class)->returnedQtyByProductForLpo($lpoNo);
         }
 
         $productCodes = $lines->pluck('product_code')->filter()->unique()->values();
@@ -205,6 +220,33 @@ class LpoModuleService
     {
         if ($lines->isEmpty()) {
             return [];
+        }
+
+        if (Schema::hasTable('supplier_return_documents')) {
+            return SupplierReturnDocument::query()
+                ->with('lines')
+                ->where('lpo_no', $lpoNo)
+                ->where('supplier_id', $supplierId)
+                ->orderByDesc('id')
+                ->get()
+                ->map(fn (SupplierReturnDocument $doc) => [
+                    'id' => (int) $doc->id,
+                    'status' => $doc->status === 'pending_approval' ? 'pending_approval' : $doc->status,
+                    'status_label' => match ($doc->status) {
+                        'approved' => 'Approved',
+                        'rejected' => 'Rejected',
+                        default => 'Pending approval',
+                    },
+                    'return_reason' => $doc->return_reason,
+                    'notes' => $doc->notes,
+                    'created_at' => $doc->created_at?->toDateTimeString(),
+                    'lines' => $doc->lines->map(fn ($line) => [
+                        'product_code' => $line->product_code,
+                        'quantity' => (float) $line->quantity,
+                    ])->values()->all(),
+                ])
+                ->values()
+                ->all();
         }
 
         $productCodes = $lines->pluck('product_code')->filter()->unique();

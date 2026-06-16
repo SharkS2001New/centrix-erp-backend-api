@@ -8,6 +8,8 @@ class CustomerInvoicePayment extends Model
 {
     use HasFactory;
 
+    public $timestamps = false;
+
     protected $table = 'customer_invoice_payments';
     protected $fillable = [
         'customer_invoice_id', 'customer_num', 'payment_method_id', 'amount_paid',

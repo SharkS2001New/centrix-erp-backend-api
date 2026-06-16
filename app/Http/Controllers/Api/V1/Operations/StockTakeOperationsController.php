@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
 use App\Models\StockTakeLine;
 use App\Models\StockTakeSession;
@@ -15,13 +16,14 @@ use InvalidArgumentException;
 
 class StockTakeOperationsController extends Controller
 {
+    use HandlesBranchScope;
     use HandlesInventory;
 
     public function __construct(protected ErpContext $erp) {}
 
     public function complete(Request $request, int $sessionId)
     {
-        $session = StockTakeSession::findOrFail($sessionId);
+        $session = $this->findScopedStockTakeSession($sessionId, $request->user());
 
         return response()->json(
             $this->completeStockTakeSession($session, $request->user())

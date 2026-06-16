@@ -3,6 +3,9 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\AuditLog;
+use App\Models\User;
+use App\Services\Audit\AuditLogger;
 use App\Services\Auth\UserAccessService;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Http\Request;
@@ -30,7 +33,17 @@ abstract class BaseResourceController extends Controller
     /** When true, branch-limited users only see rows for their branch (if the model has branch_id). */
     protected function scopesByBranch(): bool
     {
-        return false;
+        return in_array('branch_id', $this->fillableFields(), true);
+    }
+
+    protected function auditable(): bool
+    {
+        return $this->modelClass() !== AuditLog::class;
+    }
+
+    protected function auditLogger(): AuditLogger
+    {
+        return app(AuditLogger::class);
     }
 
     protected function fillableFields(): array
@@ -96,10 +109,18 @@ abstract class BaseResourceController extends Controller
     {
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $data = $request->validate($rules);
-        if ($request->user() && in_array('organization_id', $this->fillableFields(), true)) {
-            $data['organization_id'] = $request->user()->organization_id;
+        $user = $request->user();
+        if ($user && in_array('organization_id', $this->fillableFields(), true)) {
+            $data['organization_id'] = $user->organization_id;
+        }
+        if ($user) {
+            $this->applyBranchScopeToWriteData($user, $data);
         }
         $model = ($this->modelClass())::create($data);
+
+        if ($user && $this->auditable()) {
+            $this->auditLogger()->logModel($user, 'create', $model, request: $request);
+        }
 
         return response()->json($model, 201);
     }
@@ -115,15 +136,65 @@ abstract class BaseResourceController extends Controller
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $data = $request->validate($rules);
         unset($data['organization_id']);
+        if ($request->user()) {
+            $this->applyBranchScopeToWriteData($request->user(), $data);
+        }
+        $oldValues = $model->getAttributes();
         $model->update($data);
+        $model->refresh();
+
+        if ($request->user() && $this->auditable()) {
+            $this->auditLogger()->logModel(
+                $request->user(),
+                'update',
+                $model,
+                $oldValues,
+                $model->getAttributes(),
+                $request,
+            );
+        }
 
         return response()->json($model);
     }
 
     public function destroy(Request $request, string $id)
     {
-        $this->findScopedModel($request, $id)->delete();
+        $model = $this->findScopedModel($request, $id);
+        $user = $request->user();
+
+        if ($user && $this->auditable()) {
+            $this->auditLogger()->logModel(
+                $user,
+                'delete',
+                $model,
+                $model->getAttributes(),
+                null,
+                $request,
+            );
+        }
+
+        $model->delete();
 
         return response()->json(null, 204);
+    }
+
+    /** @param  array<string, mixed>  $data */
+    protected function applyBranchScopeToWriteData(User $user, array &$data): void
+    {
+        if (! in_array('branch_id', $this->fillableFields(), true)) {
+            return;
+        }
+
+        $limitedBranch = $this->access()->branchId($user);
+        if ($limitedBranch === null) {
+            return;
+        }
+
+        if (array_key_exists('branch_id', $data) && $data['branch_id'] !== null
+            && (int) $data['branch_id'] !== $limitedBranch) {
+            abort(403, 'You can only operate within your assigned branch.');
+        }
+
+        $data['branch_id'] = $limitedBranch;
     }
 }

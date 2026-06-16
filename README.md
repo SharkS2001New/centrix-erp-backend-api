@@ -105,3 +105,14 @@ See [`postman/README.md`](postman/README.md).
 ## Before production frontends
 
 See **Still to harden before production frontends** in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) (RBAC coverage, real KRA, broader tests, ops runbook).
+
+After deploying permission registry changes:
+
+```bash
+php artisan erp:permissions-sync
+php artisan erp:permissions-sync --grant-admin   # optional: grant all permissions to Administrator roles
+```
+
+Then re-save custom roles in **Admin → Roles & permissions** so new feature codes appear in the matrix.
+
+Production role templates (Branch Manager, Stock Clerk, Accountant, Payroll Clerk, Viewer) are seeded via `ProductionRoleSeeder` on `migrate:fresh --seed`.

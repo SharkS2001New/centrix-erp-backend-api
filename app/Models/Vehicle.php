@@ -16,11 +16,15 @@ class Vehicle extends Model
         'vehicle_code',
         'vehicle_name',
         'plate_number',
+        'max_weight_kg',
+        'max_volume_m3',
         'is_active',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'max_weight_kg' => 'float',
+        'max_volume_m3' => 'float',
     ];
 
     public function branch()

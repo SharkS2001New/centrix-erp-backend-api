@@ -8,10 +8,49 @@ use App\Models\UserMembership;
 
 class TenantAccountResolver
 {
-    public function resolve(Organization $organization, string $username): ?TenantAccount
+    public function resolve(Organization $organization, string $identifier): ?TenantAccount
     {
-        $username = trim($username);
+        $identifier = trim($identifier);
+        if ($identifier === '') {
+            return null;
+        }
 
+        $account = $this->resolveByUsername($organization, $identifier);
+        if ($account) {
+            return $account;
+        }
+
+        if (str_contains($identifier, '@')) {
+            return $this->resolveByEmail($organization, $identifier);
+        }
+
+        return null;
+    }
+
+    public function resolvePlatformSuperAdminByEmail(string $email): ?TenantAccount
+    {
+        $email = strtolower(trim($email));
+        if ($email === '' || ! str_contains($email, '@')) {
+            return null;
+        }
+
+        $user = User::query()
+            ->where('is_super_admin', true)
+            ->where('is_active', true)
+            ->whereNull('deleted_at')
+            ->whereRaw('LOWER(email) = ?', [$email])
+            ->with('organization')
+            ->first();
+
+        if (! $user?->organization) {
+            return null;
+        }
+
+        return new TenantAccount($user, $user->organization);
+    }
+
+    protected function resolveByUsername(Organization $organization, string $username): ?TenantAccount
+    {
         $user = User::query()
             ->where('organization_id', $organization->id)
             ->where('username', $username)
@@ -32,6 +71,24 @@ class TenantAccountResolver
 
         if ($membership?->user && $membership->user->is_active && ! $membership->user->deleted_at) {
             return new TenantAccount($membership->user, $organization, $membership);
+        }
+
+        return null;
+    }
+
+    protected function resolveByEmail(Organization $organization, string $email): ?TenantAccount
+    {
+        $email = strtolower(trim($email));
+
+        $user = User::query()
+            ->where('organization_id', $organization->id)
+            ->whereRaw('LOWER(email) = ?', [$email])
+            ->where('is_active', true)
+            ->whereNull('deleted_at')
+            ->first();
+
+        if ($user) {
+            return new TenantAccount($user, $organization);
         }
 
         return null;

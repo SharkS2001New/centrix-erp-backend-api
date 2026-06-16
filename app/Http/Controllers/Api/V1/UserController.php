@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\User;
 use App\Models\UserMembership;
+use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserLoginService;
@@ -28,8 +29,9 @@ class UserController extends BaseResourceController
 
     public function store(Request $request)
     {
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
-        $rules['password'] = 'required|string|min:6';
+        $rules['password'] = PasswordPolicy::validationRules($orgId ?: null, confirmed: false);
         $rules['access_scope'] = 'required|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile';
@@ -45,6 +47,7 @@ class UserController extends BaseResourceController
             (string) $data['username'],
         );
         if (! empty($data['password'])) {
+            PasswordPolicy::assertValid($orgId ?: null, (string) $data['password']);
             $data['password'] = Hash::make($data['password']);
         }
         $model = User::create($data);
@@ -76,6 +79,7 @@ class UserController extends BaseResourceController
         }
         unset($data['organization_id']);
         if (! empty($data['password'])) {
+            PasswordPolicy::assertValid((int) $model->organization_id, (string) $data['password']);
             $data['password'] = Hash::make($data['password']);
         }
         if (array_key_exists('is_active', $data) && $data['is_active']) {

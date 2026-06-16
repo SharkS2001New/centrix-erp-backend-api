@@ -22,6 +22,7 @@ use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 use App\Http\Controllers\Api\V1\Operations\KraProductRegistrationController;
+use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
 
 Route::middleware('auth:sanctum')->group(function () {
 
@@ -52,6 +53,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware('erp.permission:sales.manage')->prefix('sales')->group(function () {
         Route::post('orders/{saleId}/transition', [OrderWorkflowController::class, 'transition']);
+        Route::post('orders/{saleId}/pod', [\App\Http\Controllers\Api\V1\PodRecordController::class, 'storeForSale']);
     });
 
     Route::middleware(['erp.module:payments', 'erp.permission:payments.manage'])->group(function () {
@@ -104,30 +106,36 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('quickbooks/connect-url', [ExternalAccountingController::class, 'quickBooksConnectUrl']);
         Route::get('quickbooks/accounts', [ExternalAccountingController::class, 'quickBooksAccounts']);
         Route::post('quickbooks/disconnect', [ExternalAccountingController::class, 'quickBooksDisconnect']);
-        Route::post('{provider}/connect-stub', [ExternalAccountingController::class, 'connectStub'])
-            ->where('provider', 'xero|sage');
-        Route::post('{provider}/disconnect', [ExternalAccountingController::class, 'disconnectProvider'])
-            ->where('provider', 'xero|sage');
         Route::get('account-mappings', [ExternalAccountingController::class, 'listMappings']);
         Route::put('account-mappings', [ExternalAccountingController::class, 'syncMappings']);
         Route::get('export-queue', [ExternalAccountingController::class, 'exportQueue']);
         Route::post('export-queue/process', [ExternalAccountingController::class, 'processExportQueue']);
+        Route::post('export-queue/retry-failed', [ExternalAccountingController::class, 'retryFailedExports']);
     });
 
     // ---- HR / Attendance (clock device) ----
-    Route::middleware(['erp.module:hr_payroll', 'erp.permission:hr.manage'])->prefix('attendance')->group(function () {
-        Route::post('clock-in', [AttendanceClockController::class, 'clockIn']);
-        Route::post('clock-out', [AttendanceClockController::class, 'clockOut']);
-        Route::get('clock-sessions', [AttendanceClockController::class, 'sessions']);
+    Route::middleware(['erp.module:hr_payroll'])->prefix('attendance')->group(function () {
+        Route::middleware('erp.permission:hr.manage')->group(function () {
+            Route::post('clock-in', [AttendanceClockController::class, 'clockIn']);
+            Route::post('clock-out', [AttendanceClockController::class, 'clockOut']);
+        });
+        Route::get('clock-sessions', [AttendanceClockController::class, 'sessions'])
+            ->middleware('erp.permission:hr.view');
     });
 
     // ---- HR / Payroll ----
-    Route::middleware(['erp.module:hr_payroll', 'erp.permission:hr.manage'])->prefix('payroll')->group(function () {
-        Route::get('kenya-statutory', [PayrollOperationsController::class, 'kenyaStatutory']);
-        Route::get('run-schedule', [PayrollOperationsController::class, 'runSchedule']);
-        Route::get('calculate', [PayrollOperationsController::class, 'calculate']);
-        Route::post('runs/{runId}/process', [PayrollOperationsController::class, 'processRun']);
-        Route::post('runs/{runId}/process-auto', [PayrollOperationsController::class, 'processAuto']);
+    Route::middleware(['erp.module:hr_payroll'])->prefix('payroll')->group(function () {
+        Route::middleware('erp.permission:hr.view')->group(function () {
+            Route::get('kenya-statutory', [PayrollOperationsController::class, 'kenyaStatutory']);
+            Route::get('run-schedule', [PayrollOperationsController::class, 'runSchedule']);
+            Route::get('calculate', [PayrollOperationsController::class, 'calculate']);
+        });
+        Route::middleware('erp.permission:hr.manage')->group(function () {
+            Route::post('runs/{runId}/process', [PayrollOperationsController::class, 'processRun']);
+            Route::post('runs/{runId}/process-auto', [PayrollOperationsController::class, 'processAuto']);
+            Route::post('runs/{runId}/approve', [PayrollOperationsController::class, 'approveRun']);
+            Route::post('runs/{runId}/reject', [PayrollOperationsController::class, 'rejectRun']);
+        });
     });
 
     // ---- KRA device ----
@@ -135,74 +143,95 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('register-products', [KraProductRegistrationController::class, 'register']);
     });
 
-    // ---- Reports ----
-    Route::middleware(['erp.module:reports', 'erp.permission:reports.view'])->prefix('reports')->group(function () {
-        Route::get('/', [ReportController::class, 'catalog']);
-        Route::get('dashboard', [ReportController::class, 'dashboard']);
+    Route::middleware('erp.permission:admin.settings.view')->group(function () {
+        Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);
+        Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
+    });
 
-        Route::middleware('erp.permission:reports.builder')->prefix('builder')->group(function () {
-            Route::get('schema', [ReportBuilderController::class, 'schema']);
-            Route::get('templates', [ReportBuilderController::class, 'indexTemplates']);
-            Route::post('templates', [ReportBuilderController::class, 'storeTemplate']);
-            Route::get('templates/{templateId}', [ReportBuilderController::class, 'showTemplate']);
-            Route::patch('templates/{templateId}', [ReportBuilderController::class, 'updateTemplate']);
-            Route::delete('templates/{templateId}', [ReportBuilderController::class, 'destroyTemplate']);
-            Route::post('preview', [ReportBuilderController::class, 'preview']);
-            Route::get('templates/{templateId}/run', [ReportBuilderController::class, 'runTemplate']);
+    // ---- Reports ----
+    Route::middleware('erp.module:reports')->prefix('reports')->group(function () {
+        Route::middleware('erp.permission:reports.view')->group(function () {
+            Route::get('/', [ReportController::class, 'catalog']);
+            Route::get('dashboard', [ReportController::class, 'dashboard']);
+
+            Route::middleware('erp.permission:reports.builder')->prefix('builder')->group(function () {
+                Route::get('schema', [ReportBuilderController::class, 'schema']);
+                Route::get('sources', [ReportBuilderController::class, 'sources']);
+                Route::get('templates', [ReportBuilderController::class, 'indexTemplates']);
+                Route::post('templates', [ReportBuilderController::class, 'storeTemplate']);
+                Route::get('templates/{templateId}', [ReportBuilderController::class, 'showTemplate']);
+                Route::patch('templates/{templateId}', [ReportBuilderController::class, 'updateTemplate']);
+                Route::delete('templates/{templateId}', [ReportBuilderController::class, 'destroyTemplate']);
+                Route::post('preview', [ReportBuilderController::class, 'preview']);
+                Route::get('templates/{templateId}/run', [ReportBuilderController::class, 'runTemplate']);
+            });
+
+            Route::get('sales-by-product', [ReportController::class, 'salesByProduct']);
+            Route::get('sales-by-user', [ReportController::class, 'salesByUser']);
+            Route::get('sales-by-customer', [ReportController::class, 'salesByCustomer']);
+            Route::get('sales-by-channel', [ReportController::class, 'salesByChannel']);
+            Route::get('daily-sales', [ReportController::class, 'dailySales']);
+            Route::get('mobile-route-sales', [ReportController::class, 'routeSales']);
+            Route::get('sales-pipeline', [ReportController::class, 'salesPipeline']);
+            Route::get('vat-collected', [ReportController::class, 'vatCollected']);
+            Route::get('category-sales', [ReportController::class, 'categorySales']);
+            Route::get('discount-summary', [ReportController::class, 'discountSummary']);
+            Route::get('payment-collection', [ReportController::class, 'paymentCollection']);
+            Route::get('credit-outstanding', [ReportController::class, 'creditOutstanding']);
+            Route::get('stock-on-hand', [ReportController::class, 'stockOnHand']);
+            Route::get('low-stock', [ReportController::class, 'lowStock']);
+            Route::get('stock-movement', [ReportController::class, 'stockMovement']);
+            Route::get('stock-chain', [ReportController::class, 'stockChain']);
+            Route::get('stock-valuation', [ReportController::class, 'stockValuation']);
+            Route::get('stock-reservations', [ReportController::class, 'stockReservations']);
+            Route::get('stock-receipts', [ReportController::class, 'stockReceipts']);
+            Route::get('stock-transfers', [ReportController::class, 'stockTransfers']);
+            Route::get('open-lpo', [ReportController::class, 'openLpo']);
+            Route::get('profit-loss', [ReportController::class, 'profitLoss']);
+            Route::get('eod-cashier', [ReportController::class, 'eodCashier']);
+            Route::get('eod-report', [ReportController::class, 'eodReport']);
+            Route::get('ar-aging', [ReportController::class, 'arAging']);
+            Route::get('top-debtors', [ReportController::class, 'topDebtors']);
+            Route::get('invoice-payments', [ReportController::class, 'invoicePayments']);
+            Route::get('purchases-by-supplier', [ReportController::class, 'purchasesBySupplier']);
+            Route::get('expenses', [ReportController::class, 'expenses']);
+            Route::get('damages', [ReportController::class, 'damages']);
+            Route::get('supplier-returns', [ReportController::class, 'supplierReturns']);
+            Route::get('kra-receipts', [ReportController::class, 'kraReceipts']);
+            Route::get('till-sessions', [ReportController::class, 'tillSessions']);
+            Route::get('audit-trail', [ReportController::class, 'auditTrail']);
+            Route::get('price-list', [ReportController::class, 'priceList']);
+            Route::get('returns', [ReportController::class, 'returns']);
         });
 
-        Route::get('sales-by-product', [ReportController::class, 'salesByProduct']);
-        Route::get('sales-by-user', [ReportController::class, 'salesByUser']);
-        Route::get('sales-by-customer', [ReportController::class, 'salesByCustomer']);
-        Route::get('sales-by-channel', [ReportController::class, 'salesByChannel']);
-        Route::get('daily-sales', [ReportController::class, 'dailySales']);
-        Route::get('mobile-route-sales', [ReportController::class, 'routeSales']);
-        Route::get('sales-pipeline', [ReportController::class, 'salesPipeline']);
-        Route::get('vat-collected', [ReportController::class, 'vatCollected']);
-        Route::get('category-sales', [ReportController::class, 'categorySales']);
-        Route::get('discount-summary', [ReportController::class, 'discountSummary']);
-        Route::get('payment-collection', [ReportController::class, 'paymentCollection']);
-        Route::get('credit-outstanding', [ReportController::class, 'creditOutstanding']);
-        Route::get('stock-on-hand', [ReportController::class, 'stockOnHand']);
-        Route::get('low-stock', [ReportController::class, 'lowStock']);
-        Route::get('stock-movement', [ReportController::class, 'stockMovement']);
-        Route::get('stock-chain', [ReportController::class, 'stockChain']);
-        Route::get('stock-valuation', [ReportController::class, 'stockValuation']);
-        Route::get('stock-reservations', [ReportController::class, 'stockReservations']);
-        Route::get('stock-receipts', [ReportController::class, 'stockReceipts']);
-        Route::get('stock-transfers', [ReportController::class, 'stockTransfers']);
-        Route::get('open-lpo', [ReportController::class, 'openLpo']);
-        Route::get('profit-loss', [ReportController::class, 'profitLoss']);
-        Route::get('eod-cashier', [ReportController::class, 'eodCashier']);
-        Route::get('eod-report', [ReportController::class, 'eodReport']);
-        Route::get('ar-aging', [ReportController::class, 'arAging']);
-        Route::get('top-debtors', [ReportController::class, 'topDebtors']);
-        Route::get('invoice-payments', [ReportController::class, 'invoicePayments']);
-        Route::get('purchases-by-supplier', [ReportController::class, 'purchasesBySupplier']);
-        Route::get('expenses', [ReportController::class, 'expenses']);
-        Route::get('damages', [ReportController::class, 'damages']);
-        Route::get('supplier-returns', [ReportController::class, 'supplierReturns']);
-        Route::get('kra-receipts', [ReportController::class, 'kraReceipts']);
-        Route::get('journal-register', [ReportController::class, 'journalRegister']);
-        Route::get('general-ledger', [AccountingReportController::class, 'generalLedger']);
-        Route::get('trial-balance', [AccountingReportController::class, 'trialBalance']);
-        Route::get('balance-sheet', [AccountingReportController::class, 'balanceSheet']);
-        Route::get('profit-loss-gl', [AccountingReportController::class, 'profitLossGl']);
-        Route::get('cash-flow', [AccountingReportController::class, 'cashFlow']);
-        Route::get('accounts-receivable', [AccountingReportController::class, 'accountsReceivable']);
-        Route::get('accounts-payable', [AccountingReportController::class, 'accountsPayable']);
-        Route::get('subledger-reconciliation', [AccountingReportController::class, 'subledgerReconciliation']);
-        Route::get('till-sessions', [ReportController::class, 'tillSessions']);
-        Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
-        Route::get('audit-trail', [ReportController::class, 'auditTrail']);
-        Route::get('price-list', [ReportController::class, 'priceList']);
-        Route::get('returns', [ReportController::class, 'returns']);
-        Route::get('customers/{customerNum}/statement', [ReportController::class, 'customerStatement']);
+        Route::middleware('erp.permission:reports.view|hr.view')->group(function () {
+            Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
+        });
+
+        Route::middleware('erp.permission:reports.view|accounting.view')->group(function () {
+            Route::get('journal-register', [ReportController::class, 'journalRegister']);
+            Route::get('general-ledger', [AccountingReportController::class, 'generalLedger']);
+            Route::get('trial-balance', [AccountingReportController::class, 'trialBalance']);
+            Route::get('balance-sheet', [AccountingReportController::class, 'balanceSheet']);
+            Route::get('profit-loss-gl', [AccountingReportController::class, 'profitLossGl']);
+            Route::get('cash-flow', [AccountingReportController::class, 'cashFlow']);
+            Route::get('accounts-receivable', [AccountingReportController::class, 'accountsReceivable']);
+            Route::get('accounts-payable', [AccountingReportController::class, 'accountsPayable']);
+            Route::get('subledger-reconciliation', [AccountingReportController::class, 'subledgerReconciliation']);
+        });
+
+        Route::get('customers/{customerNum}/statement', [ReportController::class, 'customerStatement'])
+            ->middleware('erp.permission:reports.view|customers.view');
     });
 
     // ---- AI assistant ----
     Route::middleware('erp.permission:ai.assist')->prefix('ai')->group(function () {
         Route::get('status', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'status']);
+        Route::get('schemas', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'schemas']);
         Route::post('chat', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'chat']);
+        Route::post('teach', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'teach']);
+        Route::post('explore', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'explore']);
+        Route::post('knowledge/{id}/confirm', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'confirmKnowledge']);
+        Route::delete('knowledge/{id}', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'discardKnowledge']);
     });
 });

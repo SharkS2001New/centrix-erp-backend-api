@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\PayPeriod;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
+use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollRunScheduleService;
 use Illuminate\Http\Request;
@@ -43,13 +44,18 @@ class PayrollRunController extends BaseResourceController
         $data = $request->validate([
             'pay_period_id' => 'required|integer|exists:pay_periods,id',
             'run_date' => 'required|date',
-            'status' => 'nullable|in:draft,processed,paid,void',
+            'status' => 'nullable|in:draft,pending_approval,approved,processed,paid,void',
             'total_gross' => 'nullable|numeric|min:0',
             'total_net' => 'nullable|numeric|min:0',
         ]);
 
         $period = PayPeriod::findOrFail((int) $data['pay_period_id']);
         app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($period);
+
+        if (! isset($data['status'])) {
+            $hr = HrPayrollSettingsResolver::forOrganizationId((int) $period->organization_id);
+            $data['status'] = ($hr['require_payroll_approval'] ?? false) ? 'pending_approval' : 'draft';
+        }
 
         $run = PayrollRun::create($data);
 
@@ -74,15 +80,19 @@ class PayrollRunController extends BaseResourceController
             return response()->json(['message' => 'Only administrators can delete payroll runs.'], 403);
         }
 
-        $run = PayrollRun::findOrFail($id);
+        $run = PayrollRun::with('payPeriod')->findOrFail($id);
+        $orgId = (int) ($run->payPeriod?->organization_id ?? 0);
+        $schedule = app(PayrollRunScheduleService::class);
 
-        if (! app(PayrollRunScheduleService::class)->canDeletePayrollRun($run->created_at, $run->run_date)) {
-            $expires = app(PayrollRunScheduleService::class)
-                ->deleteLockExpiresAt($run->created_at, $run->run_date);
+        if (! $schedule->canDeletePayrollRun($run->created_at, $run->run_date, $orgId ?: null)) {
+            $expires = $schedule->deleteLockExpiresAt($run->created_at, $run->run_date, $orgId ?: null);
+            $lockMinutes = $orgId
+                ? (int) \App\Services\Hr\HrPayrollSettingsResolver::forOrganizationId($orgId)['payroll_run_delete_lock_minutes']
+                : PayrollRunScheduleService::DELETE_LOCK_MINUTES;
 
             return response()->json([
                 'message' => 'Payroll run can only be deleted within '
-                    . PayrollRunScheduleService::DELETE_LOCK_MINUTES
+                    . $lockMinutes
                     . ' minutes of creation (locked after '
                     . $expires->timezone(config('app.timezone'))->format('M j, Y g:i A')
                     . ').',

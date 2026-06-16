@@ -1,12 +1,83 @@
 <?php
+
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Controller;
 use App\Models\LpoAttachment;
+use App\Models\LpoMst;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\Response;
 
-class LpoAttachmentController extends BaseResourceController
+class LpoAttachmentController extends Controller
 {
-    protected function modelClass(): string
+    public function index(Request $request)
     {
-        return LpoAttachment::class;
+        $query = LpoAttachment::query()->orderByDesc('id');
+
+        if ($request->filled('filter.lpo_no')) {
+            $query->where('lpo_no', (int) $request->input('filter.lpo_no'));
+        }
+
+        return response()->json([
+            'data' => $query->limit(200)->get(),
+        ]);
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'lpo_no' => 'required|integer',
+            'file' => 'required|file|max:10240|mimes:pdf,jpeg,jpg,png,webp,doc,docx,xls,xlsx',
+        ]);
+
+        LpoMst::findOrFail((int) $data['lpo_no']);
+
+        $file = $request->file('file');
+        $path = $file->store('lpo/'.(int) $data['lpo_no'].'/attachments', 'public');
+
+        $attachment = LpoAttachment::create([
+            'lpo_no' => (int) $data['lpo_no'],
+            'file_name' => $file->getClientOriginalName(),
+            'file_path' => $path,
+            'mime_type' => $file->getMimeType(),
+            'file_size' => $file->getSize(),
+            'uploaded_by' => $request->user()?->id,
+            'created_at' => now(),
+        ]);
+
+        return response()->json($attachment, 201);
+    }
+
+    public function show(string $attachment)
+    {
+        return response()->json(LpoAttachment::findOrFail((int) $attachment));
+    }
+
+    public function destroy(string $attachment)
+    {
+        $row = LpoAttachment::findOrFail((int) $attachment);
+        if ($row->file_path) {
+            Storage::disk('public')->delete($row->file_path);
+        }
+        $row->delete();
+
+        return response()->json(null, 204);
+    }
+
+    public function file(string $attachment)
+    {
+        $row = LpoAttachment::findOrFail((int) $attachment);
+
+        if (! $row->file_path || ! Storage::disk('public')->exists($row->file_path)) {
+            abort(Response::HTTP_NOT_FOUND, 'Attachment file not found.');
+        }
+
+        $absolute = Storage::disk('public')->path($row->file_path);
+
+        return response()->file($absolute, [
+            'Content-Type' => $row->mime_type ?: 'application/octet-stream',
+            'Content-Disposition' => 'inline; filename="'.$row->file_name.'"',
+        ]);
     }
 }

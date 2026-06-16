@@ -41,4 +41,20 @@ class Product extends Model
         'low_stock_alert_enabled' => 'boolean',
         'deleted_at' => 'datetime',
     ];
+
+    public static function generateNextProductCode(int $organizationId): string
+    {
+        $codes = static::query()
+            ->where('organization_id', $organizationId)
+            ->pluck('product_code');
+
+        $max = 0;
+        foreach ($codes as $code) {
+            if (preg_match('/^PRD#?(\d+)$/i', (string) $code, $m)) {
+                $max = max($max, (int) $m[1]);
+            }
+        }
+
+        return 'PRD#'.str_pad((string) ($max + 1), 4, '0', STR_PAD_LEFT);
+    }
 }

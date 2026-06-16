@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Employee;
 use App\Models\EmployeeOvertime;
+use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Payroll\OvertimeRateCalculator;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use Illuminate\Http\Request;
@@ -107,7 +108,9 @@ class EmployeeOvertimeController extends HrOrgResourceController
 
         $hours = (float) ($data['hours'] ?? 0);
         $mode = $data['rate_mode'] ?? 'from_salary';
-        $mult = (float) ($data['rate_multiplier'] ?? 1);
+        $orgId = (int) ($employee?->organization_id ?? $data['organization_id'] ?? 0);
+        $hr = HrPayrollSettingsResolver::forOrganizationId($orgId ?: null);
+        $mult = (float) ($data['rate_multiplier'] ?? $hr['overtime_rate_multiplier'] ?? 1.5);
         if ($mult < 1) {
             $mult = 1;
         }

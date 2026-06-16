@@ -56,6 +56,7 @@ class MpesaSettingsResolver
     {
         $out = array_merge(self::defaults(), $mpesa);
         $out['env'] = in_array($out['env'] ?? 'sandbox', ['sandbox', 'live'], true) ? $out['env'] : 'sandbox';
+        $out['enable_stk_push'] = filter_var($out['enable_stk_push'] ?? true, FILTER_VALIDATE_BOOLEAN);
         foreach (['consumer_key', 'consumer_secret', 'shortcode', 'till_number', 'child_storecode', 'passkey', 'stk_callback_url', 'c2b_confirmation_url', 'c2b_validation_url'] as $key) {
             $out[$key] = trim((string) ($out[$key] ?? ''));
         }
@@ -92,14 +93,25 @@ class MpesaSettingsResolver
             'confirmation_url' => self::resolvedConfirmationUrl($config),
             'validation_url' => $config['c2b_validation_url'] ?? '',
             'stk_callback_url' => $config['stk_callback_url'] ?? '',
+            'stk_push_enabled' => self::isStkPushEnabled($config),
             'ready' => $ready,
             'issues' => $issues,
         ];
     }
 
     /** @param  array<string, mixed>  $config */
+    public static function isStkPushEnabled(array $config): bool
+    {
+        return filter_var($config['enable_stk_push'] ?? true, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    /** @param  array<string, mixed>  $config */
     public static function assertReadyForStkPush(array $config): void
     {
+        if (! self::isStkPushEnabled($config)) {
+            throw new \RuntimeException('STK push is disabled for this organization. Enable it under Admin → Settings → Finance.');
+        }
+
         if (($config['consumer_key'] ?? '') === '' || ($config['consumer_secret'] ?? '') === '') {
             throw new \RuntimeException('M-Pesa consumer key and secret are required in organization finance settings.');
         }

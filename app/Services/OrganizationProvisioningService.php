@@ -34,8 +34,16 @@ class OrganizationProvisioningService
                 'org_pin' => $data['org_pin'] ?? null,
                 'vat_regno' => $data['vat_regno'] ?? null,
                 'deployment_profile' => $data['deployment_profile'],
+                'enabled_modules' => $this->normalizeEnabledModules($data['enabled_modules'] ?? null),
                 'module_settings' => [
-                    'sales' => ['auto_assign_truck' => true, 'auto_assign_driver' => true],
+                    'distribution' => ($data['deployment_profile'] ?? '') === 'distribution'
+                        ? [
+                            'enable_distribution_ops' => true,
+                            'inherit_customer_route' => true,
+                            'auto_assign_truck' => true,
+                            'auto_assign_driver' => true,
+                        ]
+                        : [],
                     'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
                 ],
             ]);
@@ -132,6 +140,27 @@ class OrganizationProvisioningService
                 'branch' => $branch,
             ];
         });
+    }
+
+    /**
+     * @param  array<string, bool>|null  $enabledModules
+     * @return array<string, bool>|null
+     */
+    public function normalizeEnabledModules(?array $enabledModules): ?array
+    {
+        if ($enabledModules === null) {
+            return null;
+        }
+
+        $moduleKeys = array_keys(config('erp.modules', []));
+        $normalized = [];
+        foreach ($moduleKeys as $key) {
+            if (array_key_exists($key, $enabledModules)) {
+                $normalized[$key] = (bool) $enabledModules[$key];
+            }
+        }
+
+        return $normalized === [] ? null : $normalized;
     }
 
     protected function seedAccountingFoundation(Organization $org): void

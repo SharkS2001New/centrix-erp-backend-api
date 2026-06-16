@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Employee;
 use App\Models\EmployeeCashAdvance;
+use App\Services\Hr\HrPayrollSettingsResolver;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class EmployeeCashAdvanceController extends HrOrgResourceController
 {
@@ -36,12 +38,48 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
     {
         $data = $this->validated($request);
         $employee = Employee::findOrFail($data['employee_id']);
+        $hr = HrPayrollSettingsResolver::forOrganizationId((int) $employee->organization_id);
+        if (! $hr['enable_cash_advance_deductions']) {
+            throw ValidationException::withMessages([
+                'employee_id' => ['Employee cash advances are disabled in HR settings.'],
+            ]);
+        }
         $data['organization_id'] = $data['organization_id'] ?? $employee->organization_id;
         $data['balance'] = $data['balance'] ?? $data['amount'];
         $data['repayment_mode'] = $data['repayment_mode'] ?? 'full_next_cycle';
+        if (! isset($data['status'])) {
+            $data['status'] = 'pending';
+        }
         $data = $this->normalizeRepayment($data);
 
         return response()->json(EmployeeCashAdvance::create($data)->load('employee'), 201);
+    }
+
+    /** POST /employee-cash-advances/{id}/approve */
+    public function approve(string $id)
+    {
+        $row = $this->findScoped($id);
+        if ($row->status === 'open') {
+            return response()->json($row->load('employee'));
+        }
+        if ($row->status !== 'pending') {
+            return response()->json(['message' => 'Only pending advances can be approved.'], 422);
+        }
+        $row->update(['status' => 'open']);
+
+        return response()->json($row->fresh('employee'));
+    }
+
+    /** POST /employee-cash-advances/{id}/reject */
+    public function reject(string $id)
+    {
+        $row = $this->findScoped($id);
+        if ($row->status !== 'pending') {
+            return response()->json(['message' => 'Only pending advances can be rejected.'], 422);
+        }
+        $row->update(['status' => 'cancelled']);
+
+        return response()->json($row->fresh('employee'));
     }
 
     public function update(Request $request, string $id)
@@ -82,7 +120,7 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             'advance_date' => $req . 'date',
             'amount' => $req . 'numeric|min:0',
             'balance' => 'nullable|numeric|min:0',
-            'status' => 'nullable|in:open,repaid,cancelled',
+            'status' => 'nullable|in:pending,open,repaid,cancelled',
             'repayment_mode' => 'nullable|in:full_next_cycle,fixed_per_cycle',
             'repayment_amount' => 'nullable|numeric|min:0',
             'notes' => 'nullable|string|max:500',

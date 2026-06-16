@@ -2,19 +2,26 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Controller;
+use App\Models\Driver;
+use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
 use App\Services\Accounting\ReferenceJournalReversalService;
+use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Models\RouteSchedule;
+use App\Services\Fulfillment\PodService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 
 class OrderWorkflowController extends Controller
 {
+    use HandlesBranchScope;
     use HandlesInventory;
 
     public function __construct(protected ErpContext $erp) {}
@@ -26,23 +33,94 @@ class OrderWorkflowController extends Controller
             'fulfillment_meta' => 'nullable|array',
         ]);
 
-        $sale = Sale::findOrFail($saleId);
+        $sale = $this->findScopedSale($saleId, $request->user());
+        $gate = $this->erp->gateForUser($request->user());
         $updated = $this->transitionSale(
             $sale,
             $data['status'],
             $request->user(),
-            $data['fulfillment_meta'] ?? []
+            $data['fulfillment_meta'] ?? [],
+            $gate,
         );
 
         return response()->json($updated);
     }
 
-    protected function transitionSale(Sale $sale, string $toStatus, User $user, array $meta = []): Sale
+    protected function applyFulfillmentMeta(Sale $sale, string $status, array $meta, CapabilityGate $gate): Sale
     {
-        $workflow = OrderWorkflowService::forGate($this->erp->gateForUser($user));
-        $from = $sale->status;
+        $distributionSettings = $gate->distributionSettings();
+        $distributionEnabled = $gate->distributionOpsEnabled();
+
+        $assignOnStatus = (string) ($distributionSettings['assign_on_status'] ?? 'processed');
+        if ($distributionEnabled && $status === $assignOnStatus && ! empty($distributionSettings['require_weight_on_load'])) {
+            $this->assertLoadWeight($sale);
+        }
+
+        if ($distributionEnabled && empty($meta['driver_id']) && ! empty($distributionSettings['auto_assign_driver'])) {
+            $driver = $this->resolveAutoDriver($sale);
+            if ($driver) {
+                $meta['driver_id'] = $driver->id;
+                if (empty($meta['vehicle_id']) && ! empty($distributionSettings['auto_assign_truck']) && $driver->default_vehicle_id) {
+                    $meta['vehicle_id'] = $driver->default_vehicle_id;
+                }
+            }
+        }
+
+        $meta = array_merge($sale->fulfillment_meta ?? [], $meta);
+        $updates = ['fulfillment_meta' => $meta];
+
+        if (! empty($meta['driver_id'])) {
+            $driver = Driver::find($meta['driver_id']);
+            if ($driver) {
+                if (empty($meta['vehicle_id']) && $driver->default_vehicle_id) {
+                    $meta['vehicle_id'] = $driver->default_vehicle_id;
+                    $updates['fulfillment_meta'] = $meta;
+                }
+                if (! $sale->route_id && $driver->default_route_id) {
+                    $updates['route_id'] = $driver->default_route_id;
+                }
+            }
+        }
+
+        $sale->update($updates);
+
+        return $sale->fresh();
+    }
+
+    protected function transitionSale(
+        Sale $sale,
+        string $toStatus,
+        User $user,
+        array $meta = [],
+        ?CapabilityGate $gate = null,
+    ): Sale {
+        $gate ??= $this->erp->gateForUser($user);
+        $workflow = OrderWorkflowService::forGate($gate);
+        $from = (string) $sale->status;
+        $toStatus = (string) $toStatus;
+
+        if ($from === $toStatus) {
+            if ($this->hasFulfillmentUpdate($meta)) {
+                return $this->applyFulfillmentMeta($sale, $toStatus, $meta, $gate);
+            }
+
+            throw new InvalidArgumentException(
+                "Order is already marked as {$this->humanStatusLabel($toStatus)}.",
+            );
+        }
+
         if (! $workflow->canTransition($from, $toStatus, $sale->channel)) {
-            throw new InvalidArgumentException("Cannot transition from [{$from}] to [{$toStatus}].");
+            $allowed = array_values(array_filter(
+                $workflow->allowedTransitions($from, $sale->channel),
+                fn (string $status) => $status !== $from && $status !== 'cancelled',
+            ));
+            $hint = $allowed !== []
+                ? ' Allowed next steps: '.implode(', ', array_map([$this, 'humanStatusLabel'], $allowed)).'.'
+                : '';
+
+            throw new InvalidArgumentException(
+                "Cannot move order from {$this->humanStatusLabel($from)} to {$this->humanStatusLabel($toStatus)}.{$hint}",
+            );
         }
 
         if ($toStatus === 'cancelled') {
@@ -56,19 +134,48 @@ class OrderWorkflowController extends Controller
                 'sale',
                 (int) $sale->id,
                 $user,
-                $this->erp->gateForUser($user),
+                $gate,
             );
 
             return $sale->fresh();
         }
 
+        $salesSettings = $gate->moduleSettings('sales');
+        $distributionSettings = $gate->distributionSettings();
+        $distributionEnabled = $gate->distributionOpsEnabled();
+        $assignOnStatus = (string) ($distributionSettings['assign_on_status'] ?? 'processed');
+
         $updates = ['status' => $toStatus];
 
-        if (in_array($toStatus, ['processed', 'delivered', 'completed'], true)) {
+        if ($distributionEnabled && in_array($toStatus, ['processed', 'delivered', 'completed'], true)) {
+            if ($toStatus === $assignOnStatus && ! empty($distributionSettings['require_weight_on_load'])) {
+                $this->assertLoadWeight($sale);
+            }
+
+            if (empty($meta['driver_id']) && ! empty($distributionSettings['auto_assign_driver'])) {
+                $driver = $this->resolveAutoDriver($sale);
+                if ($driver) {
+                    $meta['driver_id'] = $driver->id;
+                    if (empty($meta['vehicle_id']) && ! empty($distributionSettings['auto_assign_truck']) && $driver->default_vehicle_id) {
+                        $meta['vehicle_id'] = $driver->default_vehicle_id;
+                    }
+                }
+            }
+
+            if (
+                $toStatus === 'delivered'
+                && ! empty($distributionSettings['require_pod_on_delivered'])
+                && empty($meta['pod_captured'])
+                && empty(($sale->fulfillment_meta ?? [])['pod_captured'])
+                && ! app(PodService::class)->hasPod($sale)
+            ) {
+                throw new InvalidArgumentException('Proof of delivery is required before marking this order as delivered.');
+            }
+
             $meta = array_merge($sale->fulfillment_meta ?? [], $meta);
 
             if (! empty($meta['driver_id'])) {
-                $driver = \App\Models\Driver::find($meta['driver_id']);
+                $driver = Driver::find($meta['driver_id']);
                 if ($driver) {
                     if (empty($meta['vehicle_id']) && $driver->default_vehicle_id) {
                         $meta['vehicle_id'] = $driver->default_vehicle_id;
@@ -82,9 +189,18 @@ class OrderWorkflowController extends Controller
             $updates['fulfillment_meta'] = $meta;
         }
 
+        $deliveryOn = (string) ($distributionSettings['set_delivery_date_on'] ?? 'delivered');
+        if ($distributionEnabled && $toStatus === $deliveryOn) {
+            $updates['delivery_date'] = now();
+        }
+
         if ($toStatus === 'completed') {
             $updates['completed_at'] = now();
-            if (! $sale->stock_balanced) {
+        }
+
+        $deductStatus = (string) ($workflow->config()['deduct_stock_on'] ?? 'completed');
+        if ($toStatus === $deductStatus) {
+            if (! $gate->shouldDeferStockToTrip() && ! $sale->stock_balanced) {
                 $this->deductSaleStockIfNeeded($sale, $user);
             }
         }
@@ -92,6 +208,69 @@ class OrderWorkflowController extends Controller
         $sale->update($updates);
 
         return $sale->fresh();
+    }
+
+    protected function resolveAutoDriver(Sale $sale): ?Driver
+    {
+        $query = Driver::query()->where('is_active', true);
+        if ($sale->branch_id) {
+            $query->where('branch_id', $sale->branch_id);
+        }
+
+        if ($sale->route_id) {
+            $date = $sale->required_date ?? $sale->created_at;
+            if ($date) {
+                $dayOfWeek = (int) date('w', strtotime((string) $date));
+                $schedule = RouteSchedule::query()
+                    ->where('branch_id', $sale->branch_id)
+                    ->where('route_id', $sale->route_id)
+                    ->where('day_of_week', $dayOfWeek)
+                    ->where('is_active', true)
+                    ->whereNotNull('default_driver_id')
+                    ->first();
+                if ($schedule?->default_driver_id) {
+                    $scheduled = Driver::query()
+                        ->where('id', $schedule->default_driver_id)
+                        ->where('is_active', true)
+                        ->first();
+                    if ($scheduled) {
+                        return $scheduled;
+                    }
+                }
+            }
+
+            $match = (clone $query)->where('default_route_id', $sale->route_id)->orderBy('id')->first();
+            if ($match) {
+                return $match;
+            }
+        }
+
+        return $query->orderBy('id')->first();
+    }
+
+    protected function assertLoadWeight(Sale $sale): void
+    {
+        $items = $sale->items ?? SaleItem::where('sale_id', $sale->id)->get();
+        if ($items->isEmpty()) {
+            throw new InvalidArgumentException('Cannot load an order with no line items.');
+        }
+
+        $codes = $items->pluck('product_code')->unique()->values()->all();
+        $weights = Product::query()
+            ->whereIn('product_code', $codes)
+            ->pluck('product_weight', 'product_code');
+
+        $totalWeight = 0.0;
+        foreach ($items as $item) {
+            $weight = (float) ($weights[$item->product_code] ?? 0);
+            $totalWeight += $weight * (float) $item->quantity;
+        }
+
+        if ($totalWeight <= 0) {
+            throw new InvalidArgumentException(
+                'Load weight is required. Ensure products have weights configured before processing for delivery.',
+            );
+        }
     }
 
     protected function deductSaleStockIfNeeded(Sale $sale, User $user): void
@@ -127,5 +306,25 @@ class OrderWorkflowController extends Controller
         }
 
         $sale->update(['stock_balanced' => 1]);
+    }
+
+    protected function humanStatusLabel(string $status): string
+    {
+        return str_replace('_', ' ', $status);
+    }
+
+    protected function hasFulfillmentUpdate(array $meta): bool
+    {
+        if ($meta === []) {
+            return false;
+        }
+
+        foreach (['driver_id', 'vehicle_id', 'pod_captured', 'pod_signer_name', 'trip_id'] as $key) {
+            if (! empty($meta[$key])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

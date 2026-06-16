@@ -24,6 +24,99 @@ class OrganizationProvisionController extends Controller
         ]);
     }
 
+    /** GET /api/v1/admin/organizations/provision-options — module presets for provisioning */
+    public function options()
+    {
+        $tenantProfiles = collect(config('erp.profiles', []))
+            ->except('platform')
+            ->map(fn (array $profile, string $key) => [
+                'key' => $key,
+                'label' => $profile['label'] ?? $key,
+                'modules' => $profile['modules'] ?? [],
+            ])
+            ->values();
+
+        $modules = collect(config('erp.modules', []))
+            ->map(fn (array $module, string $key) => [
+                'key' => $key,
+                'label' => $module['label'] ?? $key,
+            ])
+            ->values();
+
+        return response()->json([
+            'profiles' => $tenantProfiles,
+            'modules' => $modules,
+            'notes' => [
+                'platform_controlled' => 'Module toggles control which areas of the ERP this organization can access (navigation, routes, and features). Only a platform super admin sets these at registration or from Platform → Organizations.',
+                'org_settings' => 'Organization managers configure operational preferences (sales checkout options, finance, HR rules, etc.) under Administration → Organization settings — only for modules enabled here.',
+            ],
+        ]);
+    }
+
+    /** GET /api/v1/admin/organizations/{organization} */
+    public function show(int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+
+        return response()->json($this->organizationPayload($org));
+    }
+
+    /** PATCH /api/v1/admin/organizations/{organization} */
+    public function update(Request $request, int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+
+        $data = $request->validate([
+            'deployment_profile' => 'sometimes|in:small_shop,wholesale_retail,distribution',
+            'enabled_modules' => 'sometimes|array',
+            'enabled_modules.*' => 'boolean',
+        ]);
+
+        $moduleKeys = array_keys(config('erp.modules', []));
+        if (isset($data['enabled_modules'])) {
+            $unknown = array_diff(array_keys($data['enabled_modules']), $moduleKeys);
+            if ($unknown !== []) {
+                return response()->json([
+                    'message' => 'Unknown module keys: '.implode(', ', $unknown),
+                ], 422);
+            }
+        }
+
+        if (array_key_exists('deployment_profile', $data)) {
+            $org->deployment_profile = $data['deployment_profile'];
+        }
+        if (array_key_exists('enabled_modules', $data)) {
+            $org->enabled_modules = $this->provisioning->normalizeEnabledModules($data['enabled_modules']);
+        }
+        $org->save();
+
+        return response()->json($this->organizationPayload($org->fresh()));
+    }
+
+    protected function findTenantOrganization(int $id): Organization
+    {
+        $platformCode = config('erp.platform_company_code', 'PLATFORM');
+
+        return Organization::query()
+            ->where('id', $id)
+            ->where('company_code', '!=', $platformCode)
+            ->firstOrFail();
+    }
+
+    /** @return array<string, mixed> */
+    protected function organizationPayload(Organization $org): array
+    {
+        $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
+
+        return [
+            'organization' => $org->only([
+                'id', 'company_code', 'org_name', 'org_email', 'primary_tel', 'org_address',
+                'org_pin', 'vat_regno', 'deployment_profile', 'enabled_modules', 'created_at',
+            ]),
+            'effective_modules' => $gate->allModules(),
+        ];
+    }
+
     /** POST /api/v1/admin/organizations/provision */
     public function store(Request $request)
     {
@@ -36,11 +129,23 @@ class OrganizationProvisionController extends Controller
             'org_pin' => 'nullable|string|max:45',
             'vat_regno' => 'nullable|string|max:50',
             'deployment_profile' => 'required|in:small_shop,wholesale_retail,distribution',
+            'enabled_modules' => 'sometimes|array',
+            'enabled_modules.*' => 'boolean',
             'admin_username' => 'required|string|max:50',
             'admin_email' => 'required|email|max:255',
             'admin_password' => 'required|string|min:6',
             'admin_full_name' => 'required|string|max:200',
         ]);
+
+        $moduleKeys = array_keys(config('erp.modules', []));
+        if (isset($data['enabled_modules'])) {
+            $unknown = array_diff(array_keys($data['enabled_modules']), $moduleKeys);
+            if ($unknown !== []) {
+                return response()->json([
+                    'message' => 'Unknown module keys: '.implode(', ', $unknown),
+                ], 422);
+            }
+        }
 
         $result = $this->provisioning->provision($data);
 

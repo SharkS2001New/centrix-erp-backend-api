@@ -73,7 +73,11 @@ class AiSettingsResolver
 
         $baseUrl = trim((string) ($settings['base_url'] ?? ''));
         if ($baseUrl === '') {
-            $baseUrl = rtrim((string) config('ai.defaults.base_url', 'https://api.openai.com/v1'), '/');
+            $baseUrl = (string) config('ai.defaults.base_url', 'https://api.openai.com/v1');
+        }
+        $baseUrl = rtrim($baseUrl, '/');
+        if (str_ends_with($baseUrl, '/v1/v1')) {
+            $baseUrl = preg_replace('#/v1/v1$#', '/v1', $baseUrl) ?? $baseUrl;
         }
 
         return [

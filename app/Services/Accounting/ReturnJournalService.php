@@ -27,13 +27,13 @@ class ReturnJournalService
         }
 
         $orgId = (int) $return->organization_id;
-        $codes = $this->posting->defaultAccountCodes();
+        $codes = $this->posting->accountCodes($gate);
         $salesAccount = $this->posting->resolveAccount($orgId, $codes['sales_revenue'] ?? '4000');
         if (! $salesAccount) {
             return null;
         }
 
-        $vatRate = (float) (config('erp.module_settings_defaults.sales.default_tax_rate', 16));
+        $vatRate = (float) ($gate->moduleSettings('sales')['default_tax_rate'] ?? 16);
         $vat = $vatRate > 0 ? round($gross * ($vatRate / (100 + $vatRate)), 2) : 0.0;
         $net = round($gross - $vat, 2);
 
@@ -44,7 +44,7 @@ class ReturnJournalService
         if ($isCredit) {
             $refundCode = $codes['ar'] ?? '1200';
         } else {
-            $refundCode = $this->helper->accountCodeForPaymentMethod($refundMethod, $codes);
+            $refundCode = $this->helper->accountCodeForPaymentMethod($refundMethod, $codes, $gate);
         }
 
         $refundAccount = $this->posting->resolveAccount($orgId, $refundCode);

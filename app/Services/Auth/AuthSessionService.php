@@ -4,6 +4,7 @@ namespace App\Services\Auth;
 
 use App\Models\PersonalAccessToken;
 use App\Models\User;
+use App\Services\Auth\SecuritySettingsResolver;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -26,10 +27,16 @@ class AuthSessionService
         string $loginChannel = UserLoginChannelService::BACKOFFICE,
     ): array {
         $companyCode = strtoupper(trim($companyCode));
+        $username = trim($username);
+
         if ($companyCode === '') {
-            throw ValidationException::withMessages([
-                'company_code' => ['Organization code is required.'],
-            ]);
+            return $this->loginPlatformSuperAdminByEmail(
+                $username,
+                $password,
+                $clientId,
+                $forceLogout,
+                $loginChannel,
+            );
         }
 
         $org = \App\Models\Organization::where('company_code', $companyCode)->first();
@@ -40,6 +47,32 @@ class AuthSessionService
         }
 
         $account = $this->resolver->resolve($org, $username);
+        if (! $account || ! Hash::check($password, $account->authUser->password)) {
+            throw ValidationException::withMessages([
+                'username' => ['Invalid credentials.'],
+            ]);
+        }
+
+        return $this->issueSession($account, $clientId, $forceLogout, $loginChannel);
+    }
+
+    /**
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    protected function loginPlatformSuperAdminByEmail(
+        string $email,
+        string $password,
+        string $clientId,
+        bool $forceLogout,
+        string $loginChannel,
+    ): array {
+        if (! str_contains($email, '@')) {
+            throw ValidationException::withMessages([
+                'company_code' => ['Organization code is required.'],
+            ]);
+        }
+
+        $account = $this->resolver->resolvePlatformSuperAdminByEmail($email);
         if (! $account || ! Hash::check($password, $account->authUser->password)) {
             throw ValidationException::withMessages([
                 'username' => ['Invalid credentials.'],
@@ -120,7 +153,7 @@ class AuthSessionService
 
     protected function pruneStaleTokens(User $authUser): void
     {
-        $idleMinutes = max(1, (int) config('erp.session_idle_minutes', 15));
+        $idleMinutes = $this->resolveIdleMinutesForUser($authUser);
         $idleCutoff = now()->subMinutes($idleMinutes);
         // Tokens that were issued but never used (e.g. closed tab before first API call).
         $abandonedMinutes = min(5, $idleMinutes);
@@ -147,7 +180,7 @@ class AuthSessionService
 
     protected function assertNoActiveSessionElsewhere(User $authUser, string $clientId): void
     {
-        $idleMinutes = max(1, (int) config('erp.session_idle_minutes', 15));
+        $idleMinutes = $this->resolveIdleMinutesForUser($authUser);
 
         $activeTokenExists = $authUser->tokens()
             ->where('name', '!=', $clientId)
@@ -165,5 +198,12 @@ class AuthSessionService
                 'session' => ['This user is already logged in on another device.'],
             ]);
         }
+    }
+
+    protected function resolveIdleMinutesForUser(User $authUser): int
+    {
+        $orgId = (int) ($authUser->tokens()->value('organization_id') ?? 0);
+
+        return SecuritySettingsResolver::sessionIdleMinutesForOrganizationId($orgId ?: null);
     }
 }

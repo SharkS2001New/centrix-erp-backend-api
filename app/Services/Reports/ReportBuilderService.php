@@ -15,6 +15,7 @@ class ReportBuilderService
     {
         $sources = config('report_builder.sources', []);
         $out = [];
+        $modules = [];
         foreach ($sources as $key => $source) {
             $fields = [];
             foreach ($source['fields'] as $fieldKey => $field) {
@@ -26,21 +27,31 @@ class ReportBuilderService
                     'aggregates' => $field['aggregates'] ?? [],
                 ];
             }
+            $module = $source['module'] ?? 'General';
+            $modules[$module] = ($modules[$module] ?? 0) + 1;
             $out[] = [
                 'key' => $key,
                 'label' => $source['label'],
+                'module' => $module,
                 'description' => $source['description'] ?? '',
                 'default_date_column' => $source['default_date_column'] ?? null,
                 'fields' => $fields,
             ];
         }
 
+        ksort($modules);
+
         return [
             'sources' => $out,
+            'modules' => array_map(
+                fn (string $name, int $count) => ['name' => $name, 'source_count' => $count],
+                array_keys($modules),
+                array_values($modules)
+            ),
             'aggregates' => config('report_builder.aggregates', []),
             'chart_types' => config('report_builder.chart_types', []),
-            'max_columns' => config('report_builder.max_columns', 12),
-            'max_group_by' => config('report_builder.max_group_by', 4),
+            'max_columns' => config('report_builder.max_columns'),
+            'max_group_by' => config('report_builder.max_group_by'),
         ];
     }
 
@@ -72,7 +83,8 @@ class ReportBuilderService
         if (! is_array($columns) || count($columns) < 1) {
             throw ValidationException::withMessages(['columns' => 'Select at least one column.']);
         }
-        if (count($columns) > (int) config('report_builder.max_columns', 12)) {
+        $maxColumns = config('report_builder.max_columns');
+        if ($maxColumns !== null && $maxColumns > 0 && count($columns) > (int) $maxColumns) {
             throw ValidationException::withMessages(['columns' => 'Too many columns.']);
         }
 
@@ -80,7 +92,8 @@ class ReportBuilderService
         if (! is_array($groupBy)) {
             $groupBy = [];
         }
-        if (count($groupBy) > (int) config('report_builder.max_group_by', 4)) {
+        $maxGroupBy = config('report_builder.max_group_by');
+        if ($maxGroupBy !== null && $maxGroupBy > 0 && count($groupBy) > (int) $maxGroupBy) {
             throw ValidationException::withMessages(['group_by' => 'Too many group-by fields.']);
         }
 
@@ -227,11 +240,13 @@ class ReportBuilderService
             }
         }
 
+        $alwaysJoin = array_flip($source['always_join'] ?? []);
+        $leftJoins = array_flip($source['left_joins'] ?? []);
         foreach ($source['joins'] ?? [] as $joinKey => $joinDef) {
-            if (! isset($requiredJoins[$joinKey]) && ! $this->joinRequiredForSource($spec['source'], $joinKey)) {
+            if (! isset($requiredJoins[$joinKey]) && ! isset($alwaysJoin[$joinKey])) {
                 continue;
             }
-            $method = in_array($joinKey, ['customers', 'routes'], true) ? 'leftJoin' : 'join';
+            $method = isset($leftJoins[$joinKey]) ? 'leftJoin' : 'join';
             $query->{$method}($joinDef[0], $joinDef[1], $joinDef[2], $joinDef[3]);
         }
 
@@ -291,18 +306,6 @@ class ReportBuilderService
         return $query;
     }
 
-    protected function joinRequiredForSource(string $sourceKey, string $joinKey): bool
-    {
-        return match ($sourceKey) {
-            'sale_items' => in_array($joinKey, ['sales', 'products', 'branches'], true),
-            'stock' => in_array($joinKey, ['products', 'branches'], true),
-            'sales' => $joinKey === 'branches',
-            'customers' => false,
-            'invoices' => in_array($joinKey, ['customers', 'branches'], true),
-            default => false,
-        };
-    }
-
     /**
      * @param  array<int, array<string, mixed>>  $charts
      * @param  array<int, array<string, mixed>>  $columns
@@ -322,12 +325,17 @@ class ReportBuilderService
             if (! in_array($labelKey, $aliases, true) || ! in_array($valueKey, $aliases, true)) {
                 throw ValidationException::withMessages(["charts.{$i}" => 'Chart fields must match column aliases.']);
             }
+            $limit = max(1, (int) ($chart['limit'] ?? 5));
+            $maxChartLimit = config('report_builder.max_chart_limit');
+            if ($maxChartLimit !== null && $maxChartLimit > 0) {
+                $limit = min($limit, (int) $maxChartLimit);
+            }
             $valid[] = [
                 'type' => $type,
                 'title' => $chart['title'] ?? null,
                 'label_key' => $labelKey,
                 'value_key' => $valueKey,
-                'limit' => min((int) ($chart['limit'] ?? 5), 10),
+                'limit' => $limit,
             ];
         }
 

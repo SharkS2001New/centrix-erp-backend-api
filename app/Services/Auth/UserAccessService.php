@@ -53,6 +53,37 @@ class UserAccessService
         return $query;
     }
 
+    public function assertBranchAccess(User $user, ?int $branchId, string $message = 'You do not have access to this branch.'): void
+    {
+        if ($branchId === null) {
+            return;
+        }
+
+        $limitedBranch = $this->branchId($user);
+        if ($limitedBranch !== null && $limitedBranch !== $branchId) {
+            abort(403, $message);
+        }
+    }
+
+    public function resolveBranchId(User $user, ?int $requestedBranchId = null): int
+    {
+        $limitedBranch = $this->branchId($user);
+        if ($limitedBranch !== null) {
+            if ($requestedBranchId !== null && (int) $requestedBranchId !== $limitedBranch) {
+                abort(403, 'You can only operate within your assigned branch.');
+            }
+
+            return $limitedBranch;
+        }
+
+        $branchId = $requestedBranchId ?? $user->branch_id;
+        if (! $branchId) {
+            abort(422, 'Branch is required.');
+        }
+
+        return (int) $branchId;
+    }
+
     /**
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>

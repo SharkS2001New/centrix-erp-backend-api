@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Services\Auth\AuthSessionService;
+use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
 use App\Services\Auth\TenantAccountResolver;
 use Illuminate\Http\Request;
@@ -20,7 +21,7 @@ class AuthController extends Controller
     public function login(Request $request)
     {
         $data = $request->validate([
-            'company_code' => 'required|string',
+            'company_code' => 'nullable|string',
             'username' => 'required|string',
             'password' => 'required|string',
             'client_id' => 'required|string',
@@ -30,7 +31,7 @@ class AuthController extends Controller
 
         try {
             $result = $this->sessions->login(
-                $data['company_code'],
+                $data['company_code'] ?? '',
                 $data['username'],
                 $data['password'],
                 $data['client_id'],
@@ -107,8 +108,9 @@ class AuthController extends Controller
         $data = $request->validate([
             'company_code' => 'required|string',
             'token' => 'required|string',
-            'password' => 'required|string|min:6|confirmed',
+            'password' => PasswordPolicy::validationRules(null),
         ]);
+        PasswordPolicy::assertValid(null, $data['password']);
 
         $this->passwordResets->resetPassword(
             $data['company_code'],
@@ -123,10 +125,12 @@ class AuthController extends Controller
 
     public function changePassword(Request $request)
     {
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
         $data = $request->validate([
             'current_password' => 'required|string',
-            'password' => 'required|string|min:6|confirmed',
+            'password' => PasswordPolicy::validationRules($orgId ?: null),
         ]);
+        PasswordPolicy::assertValid($orgId ?: null, $data['password']);
 
         $this->passwordResets->changePassword(
             $request->user(),

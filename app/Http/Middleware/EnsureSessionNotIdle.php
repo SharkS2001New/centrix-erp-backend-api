@@ -21,7 +21,9 @@ class EnsureSessionNotIdle
             return $next($request);
         }
 
-        $idleMinutes = max(1, (int) config('erp.session_idle_minutes', 15));
+        $idleMinutes = \App\Services\Auth\SecuritySettingsResolver::sessionIdleMinutesForOrganizationId(
+            (int) ($accessToken->organization_id ?? 0) ?: null,
+        );
         $lastActivity = $accessToken->last_used_at ?? $accessToken->created_at;
 
         if ($lastActivity && $lastActivity->lt(now()->subMinutes($idleMinutes))) {

@@ -27,6 +27,7 @@ class EmployeeLeaveDay extends Model
         'days_deducted',
         'notes',
         'payroll_run_id',
+        'approval_status',
     ];
 
     protected $casts = [

@@ -133,6 +133,15 @@ Complete these before POS, mobile, or ERP web clients go live:
 
 Frontends should bootstrap from `GET /api/v1/erp/capabilities` and treat module flags as authoritative (do not hard-code feature visibility).
 
+After deploying permission registry changes, run `php artisan erp:permissions-sync` (optionally `--grant-admin`), then re-save custom roles in **Admin → Roles & permissions** so new codes (e.g. `purchasing.supplier_payments.view`, `admin.payment_methods.view`) appear in the matrix.
+
+## Email & notifications
+
+- **SMTP transport** — per organization under **Admin → Settings → Notifications** (`smtp_enabled`, host, port, username, password, encryption), stored in `module_settings.notifications`. When organization SMTP is off, the API falls back to server `MAIL_*` environment variables.
+- **From identity** — per organization (`email_from_name`, `email_from_address`); falls back to company profile (`org_name`, `org_email`).
+- **Channels** — SMS (Africa's Talking) and email are independent. Event toggles (`notify_on_order_placed`, `notify_on_dispatch`, etc.) auto-send through every enabled channel that has a reachable customer contact (phone and/or email on the customer record).
+- **Outbound mail** — `OrganizationMailSender` builds a dynamic SMTP mailer per org when configured; `CustomerNotificationDispatcher` fans out to SMS and email.
+
 ## Where the logic lives
 
 Business logic is in **operations controllers** under `app/Http/Controllers/Api/V1/Operations/`:

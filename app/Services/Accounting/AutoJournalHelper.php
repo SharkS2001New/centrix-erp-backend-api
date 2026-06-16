@@ -66,11 +66,11 @@ class AutoJournalHelper
         );
     }
 
-    public function accountCodeForPaymentMethod(string $methodCode, ?array $codes = null): string
+    public function accountCodeForPaymentMethod(string $methodCode, ?array $codes = null, ?CapabilityGate $gate = null): string
     {
-        $codes ??= $this->posting->defaultAccountCodes();
+        $codes ??= $this->posting->accountCodes($gate);
         $methodCode = strtoupper($methodCode);
-        $map = config('erp.module_settings_defaults.accounting.payment_method_accounts', []);
+        $map = $this->posting->paymentMethodAccounts($gate);
 
         return $map[$methodCode]
             ?? match ($methodCode) {

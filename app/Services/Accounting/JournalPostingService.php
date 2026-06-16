@@ -5,7 +5,9 @@ namespace App\Services\Accounting;
 use App\Models\ChartOfAccount;
 use App\Models\JournalEntry;
 use App\Models\JournalEntryLine;
+use App\Models\Organization;
 use App\Models\User;
+use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -229,9 +231,45 @@ class JournalPostingService
     }
 
     /** @return array<string, string> */
-    public function defaultAccountCodes(): array
+    public function defaultAccountCodes(?CapabilityGate $gate = null): array
     {
-        return config('erp.module_settings_defaults.accounting.account_codes', []);
+        return $this->accountCodes($gate);
+    }
+
+    /** @return array<string, string> */
+    public function accountCodes(?CapabilityGate $gate = null): array
+    {
+        $defaults = config('erp.module_settings_defaults.accounting.account_codes', []);
+        if (! $gate) {
+            return $defaults;
+        }
+
+        $custom = $gate->moduleSettings('accounting')['account_codes'] ?? [];
+
+        return array_merge($defaults, is_array($custom) ? $custom : []);
+    }
+
+    /** @return array<string, string> */
+    public function accountCodesForOrganizationId(int $orgId): array
+    {
+        $organization = Organization::find($orgId);
+
+        return $organization
+            ? $this->accountCodes(app(CapabilityGate::class)->forOrganization($organization))
+            : config('erp.module_settings_defaults.accounting.account_codes', []);
+    }
+
+    /** @return array<string, string> */
+    public function paymentMethodAccounts(?CapabilityGate $gate = null): array
+    {
+        $defaults = config('erp.module_settings_defaults.accounting.payment_method_accounts', []);
+        if (! $gate) {
+            return $defaults;
+        }
+
+        $custom = $gate->moduleSettings('accounting')['payment_method_accounts'] ?? [];
+
+        return array_merge($defaults, is_array($custom) ? $custom : []);
     }
 
     protected function nextReversalNumber(int $orgId, string $baseNumber): string

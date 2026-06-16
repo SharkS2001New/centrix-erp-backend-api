@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
+use App\Services\Auth\UserAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -367,9 +368,14 @@ class ReportController extends Controller
 
     public function lowStock(Request $request)
     {
-        return response()->json($this->reportFromView('v_low_stock', $this->filters($request), [
-            'branch_id', 'product_code',
-        ]));
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        if ($orgId <= 0) {
+            return response()->json(['data' => [], 'total' => 0]);
+        }
+
+        return response()->json(
+            app(\App\Services\Inventory\LowStockReportService::class)->paginate($request, $orgId),
+        );
     }
 
     public function stockMovement(Request $request)
@@ -754,20 +760,24 @@ class ReportController extends Controller
 
     public function auditTrail(Request $request)
     {
+        $filters = $this->filters($request);
         $q = DB::table('audit_logs');
+
         foreach (['user_id', 'branch_id', 'table_name', 'action'] as $col) {
-            if ($request->filled($col)) {
-                $q->where($col, $request->input($col));
+            if (! empty($filters[$col])) {
+                $q->where($col, $filters[$col]);
             }
         }
-        if ($request->filled('from_date')) {
-            $q->where('created_at', '>=', $request->input('from_date'));
+        if (! empty($filters['from_date'])) {
+            $q->where('created_at', '>=', $filters['from_date']);
         }
-        if ($request->filled('to_date')) {
-            $q->where('created_at', '<=', $request->input('to_date'));
+        if (! empty($filters['to_date'])) {
+            $q->where('created_at', '<=', $filters['to_date'].' 23:59:59');
         }
 
-        return response()->json($q->orderByDesc('id')->paginate(min((int) $request->input('per_page', 50), 200)));
+        return response()->json(
+            $q->orderByDesc('id')->paginate(min((int) ($filters['per_page'] ?? 50), 200))
+        );
     }
 
     public function priceList(Request $request)
@@ -800,7 +810,7 @@ class ReportController extends Controller
 
     protected function filters(Request $request): array
     {
-        return $request->only([
+        $filters = $request->only([
             'branch_id', 'product_code', 'channel', 'cashier_id', 'customer_num',
             'supplier_id', 'route_name', 'sale_date', 'sale_day', 'period',
             'from_date', 'to_date', 'date_column', 'per_page', 'aging_bucket',
@@ -811,6 +821,16 @@ class ReportController extends Controller
             'category_id', 'sub_category_id', 'till_id', 'reference_type', 'user_id',
             'table_name', 'action',
         ]);
+
+        $user = $request->user();
+        if ($user && empty($filters['branch_id'])) {
+            $branchId = app(UserAccessService::class)->branchId($user);
+            if ($branchId !== null) {
+                $filters['branch_id'] = $branchId;
+            }
+        }
+
+        return $filters;
     }
 
     protected function reportFromView(string $view, array $filters, array $allowedCols)

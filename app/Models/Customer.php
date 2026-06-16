@@ -13,7 +13,7 @@ class Customer extends Model
     public $incrementing = false;
     protected $fillable = [
         'customer_num', 'branch_id', 'organization_id', 'customer_name', 'customer_type',
-        'phone_number', 'additional_phone', 'town', 'latitude', 'longitude', 'shop_image',
+        'phone_number', 'additional_phone', 'email', 'town', 'latitude', 'longitude', 'shop_image',
         'route_id', 'created_by',
         'customer_status', 'kra_pin', 'terms_of_payment', 'credit_limit',
         'current_balance', 'deleted_by', 'deleted_at',

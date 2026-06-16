@@ -20,13 +20,20 @@ class EnsurePermission
             return $next($request);
         }
 
-        if (! app(UserPermissionService::class)->hasPermission($user, $permission)) {
-            return response()->json([
-                'message' => 'You do not have permission to perform this action.',
-                'permission' => $permission,
-            ], 403);
+        $service = app(UserPermissionService::class);
+        $codes = str_contains($permission, '|')
+            ? array_map('trim', explode('|', $permission))
+            : [$permission];
+
+        foreach ($codes as $code) {
+            if ($service->hasPermission($user, $code)) {
+                return $next($request);
+            }
         }
 
-        return $next($request);
+        return response()->json([
+            'message' => 'You do not have permission to perform this action.',
+            'permission' => $permission,
+        ], 403);
     }
 }

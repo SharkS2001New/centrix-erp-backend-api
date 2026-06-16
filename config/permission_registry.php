@@ -40,6 +40,7 @@ return [
             'features' => [
                 'dashboard' => ['label' => 'Sales dashboard', 'actions' => ['view']],
                 'orders' => ['label' => 'Orders & queues', 'actions' => ['view', 'create', 'edit', 'delete', 'approve']],
+                'carts' => ['label' => 'Carts (read-only)', 'actions' => ['view']],
                 'vouchers' => ['label' => 'Vouchers', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'loyalty_cards' => ['label' => 'Loyalty cards', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'reservations' => ['label' => 'Reservations', 'actions' => ['view', 'create', 'edit', 'delete']],
@@ -57,7 +58,9 @@ return [
         'payments' => [
             'label' => 'Payments',
             'features' => [
-                'sale_payments' => ['label' => 'Sale & invoice payments', 'actions' => ['create', 'edit']],
+                'sale_payments' => ['label' => 'Sale payments', 'actions' => ['view', 'create', 'edit']],
+                'customer_invoices' => ['label' => 'Customer invoices', 'actions' => ['view', 'create', 'edit']],
+                'customer_payments' => ['label' => 'Customer invoice payments', 'actions' => ['view', 'create', 'edit']],
             ],
         ],
         'inventory' => [
@@ -134,7 +137,9 @@ return [
             'label' => 'HR & Payroll',
             'features' => [
                 'employees' => ['label' => 'Employees', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'departments' => ['label' => 'Departments', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'positions' => ['label' => 'Positions', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'kpis' => ['label' => 'Employee KPIs', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'shifts' => ['label' => 'Shifts', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'allowances' => ['label' => 'Allowances', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'deductions' => ['label' => 'Deductions', 'actions' => ['view', 'create', 'edit', 'delete']],
@@ -143,6 +148,8 @@ return [
                 'attendance' => ['label' => 'Attendance', 'actions' => ['view', 'create']],
                 'leave' => ['label' => 'Leave & off days', 'actions' => ['view', 'create', 'edit', 'approve']],
                 'payroll' => ['label' => 'Payroll', 'actions' => ['view', 'create', 'approve']],
+                'holidays' => ['label' => 'Public holidays', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'leave_settings' => ['label' => 'Leave settings', 'actions' => ['view', 'edit']],
             ],
         ],
         'admin' => [
@@ -155,6 +162,7 @@ return [
                 'roles' => ['label' => 'Roles & permissions', 'actions' => ['view', 'edit']],
                 'audit' => ['label' => 'Audit trail', 'actions' => ['view']],
                 'settings' => ['label' => 'System settings', 'actions' => ['view', 'edit']],
+                'payment_methods' => ['label' => 'Payment methods', 'actions' => ['view', 'create', 'edit', 'delete']],
             ],
         ],
     ],

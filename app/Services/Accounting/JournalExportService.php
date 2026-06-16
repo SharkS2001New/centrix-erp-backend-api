@@ -140,6 +140,25 @@ class JournalExportService
         return compact('processed', 'exported', 'failed');
     }
 
+    /** @return array{reset: int, processed: int, exported: int, failed: int} */
+    public function retryFailed(int $orgId, ?string $provider = null): array
+    {
+        $provider = $provider ?? 'quickbooks';
+
+        $reset = AccountingExportQueue::query()
+            ->where('organization_id', $orgId)
+            ->where('provider', $provider)
+            ->where('status', 'failed')
+            ->update([
+                'status' => 'pending',
+                'last_error' => null,
+            ]);
+
+        $result = $this->processPending($orgId, $provider);
+
+        return array_merge(['reset' => $reset], $result);
+    }
+
     public function queueReversal(AccountingExportQueue $original, CapabilityGate $gate): ?AccountingExportQueue
     {
         $settings = $this->settings->fromFinanceSettings($gate->moduleSettings('finance'));

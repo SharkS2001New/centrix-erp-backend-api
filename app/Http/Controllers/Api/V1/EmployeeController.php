@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Employee;
 use App\Models\PayrollLine;
 use App\Services\Auth\UserLoginService;
+use App\Services\Hr\HrPayrollSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
@@ -183,6 +184,16 @@ class EmployeeController extends BaseResourceController
             throw \Illuminate\Validation\ValidationException::withMessages([
                 'shift_id' => ['Assign a work shift for payroll, attendance, and overtime.'],
             ]);
+        }
+
+        $orgId = (int) ($data['organization_id'] ?? $existing?->organization_id ?? 0);
+        if ($orgId && empty($data['probation_end_date']) && ! empty($data['hire_date']) && ! $existing?->probation_end_date) {
+            $months = (int) (HrPayrollSettingsResolver::forOrganizationId($orgId)['default_probation_months'] ?? 0);
+            if ($months > 0) {
+                $data['probation_end_date'] = \Carbon\Carbon::parse($data['hire_date'])
+                    ->addMonths($months)
+                    ->toDateString();
+            }
         }
 
         return $data;

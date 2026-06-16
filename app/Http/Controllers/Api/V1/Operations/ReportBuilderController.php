@@ -17,6 +17,29 @@ class ReportBuilderController extends Controller
         return response()->json($this->builder->schema());
     }
 
+    public function sources(Request $request)
+    {
+        $schema = $this->builder->schema();
+        $grouped = [];
+        foreach ($schema['sources'] as $source) {
+            $module = $source['module'] ?? 'General';
+            $grouped[$module][] = [
+                'key' => $source['key'],
+                'label' => $source['label'],
+                'description' => $source['description'] ?? '',
+                'field_count' => count($source['fields'] ?? []),
+                'has_date_filter' => ! empty($source['default_date_column']),
+            ];
+        }
+        ksort($grouped);
+
+        return response()->json([
+            'modules' => $schema['modules'] ?? [],
+            'source_count' => count($schema['sources']),
+            'sources_by_module' => $grouped,
+        ]);
+    }
+
     public function indexTemplates(Request $request)
     {
         $user = $request->user();

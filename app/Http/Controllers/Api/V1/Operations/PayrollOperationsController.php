@@ -8,6 +8,8 @@ use App\Models\PayrollLine;
 use App\Models\PayrollRun;
 use App\Services\Accounting\PayrollJournalService;
 use App\Services\Erp\ErpContext;
+use App\Services\Auth\UserPermissionService;
+use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Payroll\KenyaStatutoryCalculator;
 use App\Services\Payroll\KenyaStatutoryReference;
 use App\Models\PayPeriod;
@@ -36,9 +38,10 @@ class PayrollOperationsController extends Controller
     public function runSchedule(Request $request)
     {
         $orgId = $request->user()?->organization_id;
-        $schedule = app(PayrollRunScheduleService::class)->describe();
+        $scheduleService = app(PayrollRunScheduleService::class);
+        $schedule = $scheduleService->describe(null, $orgId ? (int) $orgId : null);
         if ($orgId) {
-            $schedule['periods'] = app(PayrollRunScheduleService::class)
+            $schedule['periods'] = $scheduleService
                 ->ensureRunnablePeriods((int) $orgId)
                 ->values();
         }
@@ -72,6 +75,8 @@ class PayrollOperationsController extends Controller
         if ($run->payPeriod) {
             app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($run->payPeriod);
         }
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $this->assertPayrollRunProcessable($run, $orgId);
         $payload = $request->validate([
             'auto_calculate' => 'nullable|boolean',
             'close_cycle' => 'nullable|boolean',
@@ -90,14 +95,17 @@ class PayrollOperationsController extends Controller
             'lines.*.deductions' => 'nullable|numeric|min:0',
         ]);
 
-        $autoCalculate = (bool) ($payload['auto_calculate'] ?? true);
-        $closeCycle = (bool) ($payload['close_cycle'] ?? true);
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $hr = HrPayrollSettingsResolver::forOrganizationId($orgId);
+
+        $autoCalculate = (bool) ($payload['auto_calculate'] ?? $hr['auto_calculate_statutory']);
+        $closeCycle = (bool) ($payload['close_cycle'] ?? $hr['close_cycle_on_process']);
         $settlementOptions = [
-            'include_overtime' => (bool) ($payload['include_overtime'] ?? true),
+            'include_overtime' => (bool) ($payload['include_overtime'] ?? $hr['include_overtime_in_payroll']),
             'include_other_deductions' => (bool) (
                 $payload['include_other_deductions']
                 ?? $payload['include_deductions']
-                ?? true
+                ?? $hr['include_other_deductions_in_payroll']
             ),
         ];
 
@@ -274,6 +282,65 @@ class PayrollOperationsController extends Controller
         }
 
         return response()->json($data, $response->getStatusCode());
+    }
+
+    /** POST /payroll/runs/{runId}/approve */
+    public function approveRun(Request $request, string $runId)
+    {
+        $run = PayrollRun::with('payPeriod')->findOrFail((int) $runId);
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $this->assertPayrollApprovalPermission($request->user(), $orgId);
+
+        if ($run->status !== 'pending_approval') {
+            return response()->json(['message' => 'Only payroll runs awaiting approval can be approved.'], 422);
+        }
+
+        $run->update(['status' => 'approved']);
+
+        return response()->json($run->fresh('payPeriod'));
+    }
+
+    /** POST /payroll/runs/{runId}/reject */
+    public function rejectRun(Request $request, string $runId)
+    {
+        $run = PayrollRun::with('payPeriod')->findOrFail((int) $runId);
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $this->assertPayrollApprovalPermission($request->user(), $orgId);
+
+        if ($run->status !== 'pending_approval') {
+            return response()->json(['message' => 'Only payroll runs awaiting approval can be rejected.'], 422);
+        }
+
+        $run->update(['status' => 'void']);
+
+        return response()->json($run->fresh('payPeriod'));
+    }
+
+    protected function assertPayrollRunProcessable(PayrollRun $run, int $orgId): void
+    {
+        $hr = HrPayrollSettingsResolver::forOrganizationId($orgId);
+        if (! ($hr['require_payroll_approval'] ?? false)) {
+            if (! in_array($run->status, ['draft', 'approved'], true)) {
+                abort(422, 'Payroll run cannot be processed in its current status.');
+            }
+
+            return;
+        }
+
+        if ($run->status !== 'approved') {
+            abort(422, 'Payroll run must be approved before processing.');
+        }
+    }
+
+    protected function assertPayrollApprovalPermission($user, int $orgId): void
+    {
+        if ($user?->is_admin) {
+            return;
+        }
+
+        if (! app(UserPermissionService::class)->hasPermission($user, 'hr.payroll.approve')) {
+            abort(403, 'You do not have permission to approve payroll runs.');
+        }
     }
 
     /** @param array<string, mixed> $lineInput */

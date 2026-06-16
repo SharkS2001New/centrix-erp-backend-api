@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
 use App\Models\CustomerInvoice;
 use App\Models\CustomerInvoicePayment;
+use App\Models\Organization;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\SalePayment;
@@ -12,17 +14,20 @@ use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\SalePaymentColumnMapper;
+use App\Services\Notifications\CustomerNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class PaymentOperationsController extends Controller
 {
+    use HandlesBranchScope;
+
     public function __construct(protected ErpContext $erp) {}
 
     public function paySale(Request $request, int $saleId)
     {
-        $sale = Sale::findOrFail($saleId);
+        $sale = $this->findScopedSale($saleId, $request->user());
         $data = $request->validate([
             'payment_method_id' => 'required|integer',
             'amount' => 'required|numeric|min:0.01',
@@ -125,6 +130,11 @@ class PaymentOperationsController extends Controller
                     $amount,
                     (int) $payment['payment_method_id'],
                 );
+            }
+
+            $organization = Organization::find($user->organization_id);
+            if ($organization) {
+                app(CustomerNotificationService::class)->notifyDebtorPayment($sale, $organization, $amount);
             }
 
             return $sale;

@@ -10,6 +10,7 @@ use App\Models\EmployeeOvertime;
 use App\Models\PayPeriod;
 use App\Services\Attendance\AttendanceDayPolicy;
 use App\Services\Attendance\LeaveRequestCalculator;
+use App\Services\Hr\HrPayrollSettingsResolver;
 use Carbon\Carbon;
 
 class PayrollEarningsService
@@ -44,6 +45,10 @@ class PayrollEarningsService
         $includeOther = (bool) ($options['include_other_deductions'] ?? false);
         $includeOvertime = (bool) ($options['include_overtime'] ?? true);
         $useProration = (bool) ($options['use_attendance_proration'] ?? true);
+        $hr = HrPayrollSettingsResolver::forOrganizationId((int) $employee->organization_id);
+        if ($hr['require_attendance_for_payroll']) {
+            $useProration = true;
+        }
 
         $start = $period->period_start->format('Y-m-d');
         $end = $period->period_end->format('Y-m-d');
@@ -51,6 +56,14 @@ class PayrollEarningsService
         $attendanceSummary = $useProration
             ? $this->summarizeAttendance($employee, $start, $end)
             : null;
+
+        if ($hr['require_attendance_for_payroll'] && $attendanceSummary) {
+            $attended = (float) ($attendanceSummary['attended_days'] ?? 0);
+            $paidLeave = (float) ($attendanceSummary['paid_leave_days'] ?? 0);
+            if ($attended <= 0 && $paidLeave <= 0) {
+                return null;
+            }
+        }
 
         $expectedDays = $attendanceSummary['expected_days'] ?? $this->expectedWorkDays($employee, $start, $end);
         if ($expectedDays <= 0) {
@@ -85,7 +98,7 @@ class PayrollEarningsService
         $deductionsDetail = [];
 
         if ($includeOther) {
-            $built = app(PayrollOtherDeductionsBuilder::class)->build($employee, $contractGrossForOther);
+            $built = app(PayrollOtherDeductionsBuilder::class)->build($employee, $contractGrossForOther, $hr);
             $other = $built['total'];
             $deductionsDetail = $built['detail'];
         }

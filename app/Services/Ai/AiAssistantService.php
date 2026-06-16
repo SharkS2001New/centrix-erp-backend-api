@@ -3,14 +3,23 @@
 namespace App\Services\Ai;
 
 use App\Models\User;
-use App\Services\Reports\ReportBuilderService;
-use Illuminate\Support\Facades\DB;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
+use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Validation\ValidationException;
 
 class AiAssistantService
 {
-    public function __construct(protected ReportBuilderService $reportBuilder) {}
+    public function __construct(
+        protected AiSystemContextBuilder $contextBuilder,
+        protected AiTopicGuard $topicGuard,
+        protected AiActionExecutor $actionExecutor,
+        protected AiFormSpecBuilder $formSpecBuilder,
+        protected AiKnowledgeService $knowledge,
+        protected AiPageExplorer $pageExplorer,
+        protected AiIntentResolver $intentResolver,
+    ) {}
 
     public function isAvailableForUser(User $user): bool
     {
@@ -19,10 +28,21 @@ class AiAssistantService
 
     /**
      * @param  array<int, array{role: string, content: string}>  $history
-     * @return array{reply: string, tools_used: array<int, string>, data?: array<string, mixed>}
+     * @param  array<string, mixed>|null  $pendingAction
+     * @return array<string, mixed>
      */
-    public function chat(User $user, string $context, string $message, array $history = []): array
-    {
+    public function chat(
+        User $user,
+        string $message,
+        array $history = [],
+        ?array $pendingAction = null,
+        bool $confirmAction = false,
+    ): array {
+        $teachResult = $this->tryCaptureUserTeaching($user, $message);
+        if ($teachResult) {
+            return $teachResult;
+        }
+
         $runtime = AiSettingsResolver::resolveRuntime($user);
         if (! $runtime) {
             $settings = AiSettingsResolver::forUser($user);
@@ -35,19 +55,42 @@ class AiAssistantService
             ];
         }
 
-        $system = $this->systemPrompt($context);
-        $messages = [['role' => 'system', 'content' => $system]];
-        foreach (array_slice($history, -8) as $turn) {
+        if ($confirmAction && $pendingAction) {
+            return $this->executeConfirmedAction($user, $pendingAction);
+        }
+
+        if ($pendingAction && $this->actionExecutor->isConfirmation($message)) {
+            return $this->executeConfirmedAction($user, $pendingAction);
+        }
+
+        if (! $this->topicGuard->isErpRelated($message)) {
+            return [
+                'reply' => $this->topicGuard->declineMessage(),
+                'tools_used' => [],
+                'declined_off_topic' => true,
+            ];
+        }
+
+        $systemContext = $this->contextBuilder->build($user, $message);
+        $messages = [
+            ['role' => 'system', 'content' => $this->systemPrompt()],
+            [
+                'role' => 'system',
+                'content' => "Organization ERP context (use for navigation, permissions, entity schemas, and data — do not invent):\n"
+                    .json_encode($systemContext, JSON_PRETTY_PRINT),
+            ],
+        ];
+
+        foreach (array_slice($history, -10) as $turn) {
             if (! empty($turn['role']) && ! empty($turn['content'])) {
                 $messages[] = ['role' => $turn['role'], 'content' => (string) $turn['content']];
             }
         }
 
-        $toolContext = $this->gatherToolContext($user, $context, $message);
-        if ($toolContext) {
+        if ($pendingAction) {
             $messages[] = [
                 'role' => 'system',
-                'content' => "Live ERP data (use in your answer, do not invent numbers):\n".json_encode($toolContext, JSON_PRETTY_PRINT),
+                'content' => 'Pending action awaiting user confirmation: '.json_encode($pendingAction),
             ];
         }
 
@@ -55,42 +98,243 @@ class AiAssistantService
 
         try {
             $response = Http::withToken($runtime['api_key'])
-                ->timeout(45)
+                ->timeout(60)
                 ->post($runtime['base_url'].'/chat/completions', [
                     'model' => $runtime['model'],
                     'messages' => $messages,
                     'max_tokens' => config('ai.defaults.max_tokens'),
-                    'temperature' => 0.3,
+                    'temperature' => 0.25,
                 ]);
 
             if (! $response->successful()) {
                 Log::warning('AI chat failed', ['status' => $response->status(), 'body' => $response->body()]);
 
                 return [
-                    'reply' => $this->formatApiFailure($response->status(), $response->json('error.message') ?? $response->body()),
-                    'tools_used' => array_keys($toolContext ?? []),
+                    'reply' => $this->formatApiFailure(
+                        $response->status(),
+                        $response->json('error.message') ?? $response->body(),
+                    ),
+                    'tools_used' => array_keys(array_diff_key($systemContext, array_flip(['organization', 'user']))),
                     'error_code' => $response->json('error.code') ?? (string) $response->status(),
                 ];
             }
 
-            $reply = trim($response->json('choices.0.message.content') ?? '');
-            if ($reply === '') {
-                $reply = 'I could not generate a response. Please try rephrasing your question.';
+            $rawReply = trim($response->json('choices.0.message.content') ?? '');
+            if ($rawReply === '') {
+                $rawReply = 'I could not generate a response. Please try rephrasing your question.';
             }
 
-            return [
+            if (str_contains($rawReply, 'DECLINE_OFF_TOPIC')) {
+                return [
+                    'reply' => $this->topicGuard->declineMessage(),
+                    'tools_used' => [],
+                    'declined_off_topic' => true,
+                ];
+            }
+
+            $parsedLearn = self::parseLearnBlock($rawReply);
+            $rawReply = self::stripLearnBlock($rawReply);
+
+            if ($parsedLearn && ! empty($parsedLearn['path'])) {
+                return $this->buildLearnProposal($user, $parsedLearn, AiActionExecutor::stripActionBlock($rawReply));
+            }
+
+            $parsedAction = AiActionExecutor::parseActionBlock($rawReply);
+            $reply = AiActionExecutor::stripActionBlock($rawReply);
+
+            $result = [
                 'reply' => $reply,
-                'tools_used' => array_keys($toolContext ?? []),
-                'data' => $toolContext ?: null,
+                'tools_used' => array_keys(array_diff_key(
+                    $systemContext,
+                    array_flip(['organization', 'user', 'enabled_modules']),
+                )),
+                'data' => $systemContext,
             ];
-        } catch (\Throwable $e) {
-            Log::error('AI chat exception', ['message' => $e->getMessage()]);
+
+            $pending = null;
+            if ($parsedAction) {
+                $pending = [
+                    'type' => $parsedAction['type'] ?? null,
+                    'summary' => $parsedAction['summary'] ?? ($parsedAction['label'] ?? 'Proposed action'),
+                    'params' => $parsedAction['params'] ?? [],
+                ];
+            } elseif ($pendingAction) {
+                $pending = $pendingAction;
+            } else {
+                $inferred = $this->intentResolver->inferCreateAction($message, $history);
+                if ($inferred) {
+                    $pending = $inferred;
+                    if ($this->looksLikeFetchingReply($reply)) {
+                        $result['reply'] = 'Use the form below to complete the details. Options are loaded from your organization data.';
+                    }
+                }
+            }
+
+            if ($pending) {
+                $actionType = (string) ($pending['type'] ?? '');
+                if ($actionType !== '' && ! $this->actionExecutor->canExecute($user, $actionType)) {
+                    $result['reply'] = $this->actionExecutor->permissionDeclineMessage($actionType);
+                    unset($pending);
+                } else {
+                    $result['pending_action'] = $pending;
+                    $result['form_spec'] = $this->formSpecBuilder->forAction($user, $pending);
+                    if (empty(trim($result['reply'] ?? ''))) {
+                        $result['reply'] = $actionType === 'record_customer_payment'
+                            ? 'Fill in the form below, then click Confirm & record payment.'
+                            : 'Fill in the form below, then click Confirm & create.';
+                    }
+                }
+            }
+
+            return $result;
+        } catch (ConnectionException $e) {
+            Log::error('AI chat connection failed', ['message' => $e->getMessage()]);
 
             return [
-                'reply' => 'AI assistant could not reach the provider. Check network access and OPENAI_BASE_URL.',
-                'tools_used' => array_keys($toolContext ?? []),
+                'reply' => 'Could not connect to the AI provider. Check network access and the base URL in Admin → Settings → AI.',
+                'tools_used' => [],
+                'error_code' => 'connection_failed',
+            ];
+        } catch (\Throwable $e) {
+            Log::error('AI chat exception', [
+                'message' => $e->getMessage(),
+                'exception' => $e::class,
+            ]);
+
+            return [
+                'reply' => $this->formatInternalFailure($e),
+                'tools_used' => [],
+                'error_code' => 'internal_error',
             ];
         }
+    }
+
+    /** @param  array<string, mixed>  $pendingAction
+     * @return array<string, mixed>
+     */
+    protected function executeConfirmedAction(User $user, array $pendingAction): array
+    {
+        try {
+            $outcome = $this->actionExecutor->execute($user, $pendingAction);
+            $result = $outcome['result'] ?? [];
+            $path = $result['path'] ?? null;
+            $linkHint = $path ? " Open: {$path}" : '';
+
+            return [
+                'reply' => ($outcome['message'] ?? 'Done.').$linkHint,
+                'tools_used' => ['action_executor'],
+                'action_result' => $outcome,
+                'pending_action' => null,
+                'form_spec' => null,
+            ];
+        } catch (ValidationException $e) {
+            $msg = collect($e->errors())->flatten()->first() ?? 'Action could not be completed.';
+
+            return [
+                'reply' => $msg,
+                'tools_used' => ['action_executor'],
+                'action_error' => true,
+                'pending_action' => $pendingAction,
+                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction),
+            ];
+        } catch (ModelNotFoundException $e) {
+            Log::error('AI action model not found', ['message' => $e->getMessage()]);
+
+            return [
+                'reply' => 'A referenced record was not found. Check product codes, customer numbers, and other selections, then try again.',
+                'tools_used' => ['action_executor'],
+                'action_error' => true,
+                'pending_action' => $pendingAction,
+                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction),
+            ];
+        } catch (\Throwable $e) {
+            Log::error('AI action failed', ['message' => $e->getMessage()]);
+
+            return [
+                'reply' => 'The action could not be completed: '.$e->getMessage(),
+                'tools_used' => ['action_executor'],
+                'action_error' => true,
+                'pending_action' => $pendingAction,
+                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction),
+            ];
+        }
+    }
+
+    /** @return array<string, mixed>|null */
+    protected function tryCaptureUserTeaching(User $user, string $message): ?array
+    {
+        if (! preg_match('/^(remember|note|teach)\s*(that|:)\s*(.+)$/is', trim($message), $m)) {
+            return null;
+        }
+
+        $content = trim($m[3] ?? '');
+        if ($content === '') {
+            return null;
+        }
+
+        $entry = $this->knowledge->teach($user, 'User note', $content);
+
+        return [
+            'reply' => 'Got it — I saved that for your organization and will use it in future answers.',
+            'tools_used' => ['user_teaching'],
+            'knowledge_saved' => $entry,
+        ];
+    }
+
+    /** @param  array<string, mixed>  $learn
+     * @return array<string, mixed>
+     */
+    protected function buildLearnProposal(User $user, array $learn, string $reply): array
+    {
+        $path = (string) ($learn['path'] ?? '/dashboard');
+        $analysis = $this->pageExplorer->analyze($user, $path);
+        $draft = $this->knowledge->storeDraft(
+            $user,
+            (string) $analysis['topic'],
+            (string) $analysis['summary'],
+            'page_explore',
+            $analysis['path'],
+        );
+
+        return [
+            'reply' => $reply !== ''
+                ? $reply
+                : 'I analyzed this screen. Please confirm to save what I learned for your organization.',
+            'tools_used' => ['page_explorer'],
+            'pending_learn' => [
+                'draft_id' => $draft['id'],
+                'path' => $analysis['path'],
+                'summary' => $analysis['summary'],
+                'topic' => $analysis['topic'],
+            ],
+            'explore_analysis' => $analysis,
+        ];
+    }
+
+    /** @return array<string, mixed>|null */
+    public static function parseLearnBlock(string $reply): ?array
+    {
+        if (preg_match('/```learn\s*([\s\S]*?)```/i', $reply, $m)) {
+            $decoded = json_decode(trim($m[1]), true);
+
+            return is_array($decoded) ? $decoded : null;
+        }
+
+        return null;
+    }
+
+    public static function stripLearnBlock(string $reply): string
+    {
+        return trim(preg_replace('/```learn\s*[\s\S]*?```/i', '', $reply) ?? $reply);
+    }
+
+    protected function formatInternalFailure(\Throwable $e): string
+    {
+        if (config('app.debug')) {
+            return 'AI assistant error: '.$e->getMessage();
+        }
+
+        return 'AI assistant encountered an internal error. Try again or contact your administrator.';
     }
 
     protected function formatApiFailure(int $status, ?string $providerMessage): string
@@ -101,166 +345,67 @@ class AiAssistantService
         }
 
         return match ($status) {
-            401 => 'OpenAI rejected the API key (401). Verify OPENAI_API_KEY in .env and restart the API server.'
+            401 => 'OpenAI rejected the API key (401). Verify the API key in Admin → Settings → AI.'
                 .($detail ? " Provider: {$detail}" : ''),
-            403 => 'OpenAI access denied (403). Your key may lack permission for this model.'
-                .($detail ? " Provider: {$detail}" : ''),
-            429 => 'OpenAI quota exceeded (429). Add billing or credits at https://platform.openai.com/account/billing'
+            429 => 'OpenAI quota exceeded (429). Check billing on your OpenAI account.'
                 .($detail ? " — {$detail}" : ''),
-            404 => 'Model not found (404). Set OPENAI_MODEL to a model your account can use (e.g. gpt-4o-mini).'
-                .($detail ? " Provider: {$detail}" : ''),
-            default => 'AI request failed (HTTP '.$status.').'
-                .($detail ? " {$detail}" : ' Check OPENAI_API_KEY, OPENAI_MODEL, and billing.'),
+            default => 'AI request failed (HTTP '.$status.').'.($detail ? " {$detail}" : ''),
         };
     }
 
-    protected function systemPrompt(string $context): string
+    protected function looksLikeFetchingReply(string $reply): bool
     {
-        $base = 'You are a helpful assistant for a POS/ERP system used in Kenya (currency KES). '
-            .'Be concise, actionable, and cite numbers from provided data only. '
-            .'If data is missing, say what report or screen to check.';
-
-        return match ($context) {
-            'products' => $base.' You help with catalog, stock levels, reorder points, pricing, and KRA product registration.',
-            'reports' => $base.' You help interpret sales, inventory, receivables, and custom reports. Suggest specific built-in reports when useful.',
-            'report_builder' => $base.' You help users design custom reports from allowlisted sources: sales, sale_items, customers, stock, invoices. '
-                .'Recommend group-by fields and aggregates; never suggest raw SQL.',
-            default => $base,
-        };
+        return (bool) preg_match('/\b(fetch|hold on|please wait|moment|loading|retrieve|look up)\b/i', $reply);
     }
 
-    /**
-     * @return array<string, mixed>
-     */
-    protected function gatherToolContext(User $user, string $context, string $message): array
+    protected function systemPrompt(): string
     {
-        $lower = strtolower($message);
-        $data = [];
+        return <<<'PROMPT'
+You are the in-app assistant for a Kenya-focused POS/ERP system (currency KES). You help users with EVERY module in this system.
 
-        if ($context === 'products' || str_contains($lower, 'stock') || str_contains($lower, 'product') || str_contains($lower, 'reorder')) {
-            $data['product_summary'] = $this->productSummary($user);
-        }
+Use entity_schemas in context — it lists every field, which are required, auto-generated, important, and FK relations (e.g. unit_id → uoms).
+Use organization_knowledge for facts users or confirmed page exploration have taught you.
 
-        if ($context === 'reports' || str_contains($lower, 'sales') || str_contains($lower, 'report') || str_contains($lower, 'profit')) {
-            $data['sales_summary'] = $this->salesSummary($user);
-            $data['report_sources'] = array_column($this->reportBuilder->schema()['sources'] ?? [], 'label', 'key');
-        }
+IN SCOPE: products, sales, inventory, purchasing, accounting, HR, logistics, reports, admin settings.
+Image uploads are NOT supported — never ask for photos or images.
 
-        if ($context === 'report_builder') {
-            $data['report_builder_schema'] = $this->reportBuilder->schema();
-        }
+RULES:
+1. Off-topic only for weather, recipes, trivia, unrelated coding → reply with DECLINE_OFF_TOPIC on its own line.
+2. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
+3. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
+4. When unsure about a screen/module, propose learning it:
+```learn
+{"path":"/products","reason":"Need product form field details"}
+```
+The user must confirm before saved knowledge is used.
+5. Users can teach you with "Remember that …" or POST /ai/teach.
+6. PERMISSIONS — read user_access in context:
+   - user.is_admin=true or user_access.has_full_permissions=true → user has ALL permissions; never say they lack access or tell them to contact an administrator.
+   - Answer read-only questions (sales totals, stock, debtors, etc.) using *_summary data in context. If sales_summary, product_summary, or receivables_summary is present, USE IT — do not refuse or claim you need reports module access.
+   - Only decline when the user requests a WRITE action (create/update/delete) that is NOT in available_actions.
+   - user_access.modules shows org_module_enabled vs user_has_permission — a disabled org module is not the same as missing user permission.
 
-        if (str_contains($lower, 'receivable') || str_contains($lower, 'debt') || str_contains($lower, 'invoice')) {
-            $data['receivables_summary'] = $this->receivablesSummary($user);
-        }
+DEBTORS & PAYMENTS:
+- Use receivables_summary (top_debtors, open_invoices) to analyze who owes money and outstanding balances.
+- To record payment use record_customer_payment with sale_id (from open_invoices), payment_method_id, and optional amount.
+- Omit amount or set mark_paid_full to pay the full outstanding balance; provide amount for partial payments.
+- Reports: /reports/top-debtors, /accounting/accounts-receivable, customer statements at /customers/{customerNum}/statement.
 
-        return $data;
-    }
+INTERACTIVE FORMS: Select options (subcategories, UOMs, VAT, customers, open invoices, payment methods, etc.) are ALREADY in entity_detail / entity_schemas — never say you are fetching or ask the user to wait. Immediately append the action block; the API builds the form with live dropdown options.
 
-    /**
-     * @return array<string, mixed>
-     */
-    protected function productSummary(User $user): array
-    {
-        $orgId = $user->organization_id;
+```action
+{"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
+```
 
-        $totalProducts = DB::table('products')
-            ->where('organization_id', $orgId)
-            ->whereNull('deleted_at')
-            ->count();
+Action types:
+- create_sales_order: customer_num + lines [{product_code, quantity}]; optional payment_method_code, channel.
+- create_held_order: save-only — only when user wants hold/defer payment.
+- create_product: product_name required; product_code auto-generated if omitted; unit_id/subcategory_id/vat_id from selects.
+- create_employee: first_name, last_name required; employee_code auto-generated if omitted.
+- create_report_template: name + spec.
+- record_customer_payment: sale_id (outstanding order), payment_method_id required; amount optional (full balance if omitted).
 
-        $lowStock = DB::table('current_stock as cs')
-            ->join('products as p', 'p.product_code', '=', 'cs.product_code')
-            ->where('p.organization_id', $orgId)
-            ->whereNull('p.deleted_at')
-            ->where('p.low_stock_alert_enabled', true)
-            ->whereRaw('(cs.shop_quantity + cs.store_quantity) <= COALESCE(p.reorder_point, 0)')
-            ->whereRaw('(cs.shop_quantity + cs.store_quantity) > 0')
-            ->count();
-
-        $outOfStock = DB::table('current_stock as cs')
-            ->join('products as p', 'p.product_code', '=', 'cs.product_code')
-            ->where('p.organization_id', $orgId)
-            ->whereNull('p.deleted_at')
-            ->whereRaw('(cs.shop_quantity + cs.store_quantity) <= 0')
-            ->count();
-
-        $topLow = DB::table('current_stock as cs')
-            ->join('products as p', 'p.product_code', '=', 'cs.product_code')
-            ->where('p.organization_id', $orgId)
-            ->whereNull('p.deleted_at')
-            ->where('p.low_stock_alert_enabled', true)
-            ->whereRaw('(cs.shop_quantity + cs.store_quantity) <= COALESCE(p.reorder_point, 0)')
-            ->orderByRaw('(cs.shop_quantity + cs.store_quantity) asc')
-            ->limit(5)
-            ->get(['p.product_code', 'p.product_name', 'cs.shop_quantity', 'cs.store_quantity', 'p.reorder_point']);
-
-        return [
-            'total_products' => $totalProducts,
-            'low_stock_skus' => $lowStock,
-            'out_of_stock_skus' => $outOfStock,
-            'urgent_reorder' => $topLow,
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    protected function salesSummary(User $user): array
-    {
-        $from = now()->subDays(29)->toDateString();
-        $to = now()->toDateString();
-
-        $q = DB::table('sales')
-            ->where('organization_id', $user->organization_id)
-            ->where('status', 'completed')
-            ->where('archived', 0)
-            ->whereDate('completed_at', '>=', $from)
-            ->whereDate('completed_at', '<=', $to);
-
-        return [
-            'period' => ['from' => $from, 'to' => $to],
-            'total_sales_kes' => (float) $q->sum('order_total'),
-            'order_count' => (int) $q->count(),
-            'by_channel' => DB::table('sales')
-                ->where('organization_id', $user->organization_id)
-                ->where('status', 'completed')
-                ->where('archived', 0)
-                ->whereDate('completed_at', '>=', $from)
-                ->whereDate('completed_at', '<=', $to)
-                ->selectRaw('channel, SUM(order_total) as revenue, COUNT(*) as orders')
-                ->groupBy('channel')
-                ->orderByDesc('revenue')
-                ->limit(5)
-                ->get()
-                ->all(),
-        ];
-    }
-
-    /**
-     * @return array<string, mixed>
-     */
-    protected function receivablesSummary(User $user): array
-    {
-        return [
-            'total_outstanding_kes' => (float) DB::table('customer_invoices')
-                ->where('organization_id', $user->organization_id)
-                ->whereNull('deleted_at')
-                ->where('balance_due', '>', 0)
-                ->sum('balance_due'),
-            'open_invoices' => (int) DB::table('customer_invoices')
-                ->where('organization_id', $user->organization_id)
-                ->whereNull('deleted_at')
-                ->where('balance_due', '>', 0)
-                ->count(),
-            'top_debtors' => DB::table('customers')
-                ->where('organization_id', $user->organization_id)
-                ->whereNull('deleted_at')
-                ->where('current_balance', '>', 0)
-                ->orderByDesc('current_balance')
-                ->limit(5)
-                ->get(['customer_num', 'customer_name', 'current_balance'])
-                ->all(),
-        ];
+Tell users to fill the form and confirm, or reply "confirm" when params are complete.
+PROMPT;
     }
 }

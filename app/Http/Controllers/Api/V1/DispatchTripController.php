@@ -1,0 +1,227 @@
+<?php
+
+namespace App\Http\Controllers\Api\V1;
+
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
+use App\Models\DispatchTrip;
+use App\Services\Fulfillment\DispatchTripService;
+use Illuminate\Http\Request;
+use InvalidArgumentException;
+
+class DispatchTripController extends BaseResourceController
+{
+    use HandlesBranchScope;
+
+    public function __construct(protected DispatchTripService $trips) {}
+
+    protected function modelClass(): string
+    {
+        return DispatchTrip::class;
+    }
+
+    protected function scopesByOrganization(): bool
+    {
+        return false;
+    }
+
+    public function index(Request $request)
+    {
+        $query = $this->baseQuery($request)
+            ->with(['route', 'driver', 'vehicle'])
+            ->withCount('sales');
+
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if (in_array($col, ['status', 'route_id', 'driver_id', 'scheduled_date', 'branch_id'], true)) {
+                $query->where($col, $val);
+            }
+        }
+
+        if ($from = $request->input('from_date')) {
+            $query->whereDate('scheduled_date', '>=', $from);
+        }
+        if ($to = $request->input('to_date')) {
+            $query->whereDate('scheduled_date', '<=', $to);
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+
+        return response()->json($query->orderByDesc('scheduled_date')->orderByDesc('id')->paginate($perPage));
+    }
+
+    public function show(Request $request, string $id)
+    {
+        $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
+
+        return response()->json(
+            $trip->load(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']),
+        );
+    }
+
+    public function store(Request $request)
+    {
+        $data = $request->validate([
+            'branch_id' => 'nullable|integer|exists:branches,id',
+            'route_id' => 'nullable|integer|exists:routes,id',
+            'driver_id' => 'nullable|integer|exists:drivers,id',
+            'vehicle_id' => 'nullable|integer|exists:vehicles,id',
+            'scheduled_date' => 'required|date',
+            'notes' => 'nullable|string|max:2000',
+            'sale_ids' => 'sometimes|array',
+            'sale_ids.*' => 'integer|exists:sales,id',
+        ]);
+
+        try {
+            $trip = $this->trips->createTrip($request->user(), $data);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($trip, 201);
+    }
+
+    public function update(Request $request, string $id)
+    {
+        $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
+        $data = $request->validate([
+            'route_id' => 'sometimes|nullable|integer|exists:routes,id',
+            'driver_id' => 'sometimes|nullable|integer|exists:drivers,id',
+            'vehicle_id' => 'sometimes|nullable|integer|exists:vehicles,id',
+            'scheduled_date' => 'sometimes|date',
+            'notes' => 'sometimes|nullable|string|max:2000',
+        ]);
+
+        try {
+            $trip = $this->trips->updateTrip($trip, $data);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($trip);
+    }
+
+    public function destroy(Request $request, string $id)
+    {
+        $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
+        if (! in_array($trip->status, ['draft', 'cancelled'], true)) {
+            return response()->json(['message' => 'Only draft trips can be deleted. Cancel the trip first.'], 422);
+        }
+        $trip->delete();
+
+        return response()->json(null, 204);
+    }
+
+    public function assignOrders(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $data = $request->validate([
+            'sale_ids' => 'required|array|min:1',
+            'sale_ids.*' => 'integer|exists:sales,id',
+        ]);
+
+        try {
+            $updated = $this->trips->assignOrders($model, $data['sale_ids']);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($updated);
+    }
+
+    public function loadingList(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $loadingList = app(\App\Services\Fulfillment\LoadingListBuilder::class)->syncLoadingList($model);
+
+        return response()->json([
+            'loading_list' => $loadingList->load(['lines', 'route', 'trip.route', 'trip.driver', 'trip.vehicle']),
+        ]);
+    }
+
+    public function lockLoadingList(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $data = $request->validate([
+            'prepared_by_name' => 'required|string|max:200',
+            'checked_by_name' => 'required|string|max:200',
+        ]);
+
+        try {
+            $updated = $this->trips->lockLoadingList($model, $request->user(), $data);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($updated);
+    }
+
+    public function start(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+
+        try {
+            $updated = $this->trips->startTrip($model, $request->user());
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($updated);
+    }
+
+    public function complete(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+
+        try {
+            $updated = $this->trips->completeTrip($model, $request->user());
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($updated);
+    }
+
+    public function settle(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $data = $request->validate([
+            'collected_cash' => 'required|numeric|min:0',
+        ]);
+
+        try {
+            $updated = $this->trips->settleTrip($model, $request->user(), $data);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($updated);
+    }
+
+    public function cancel(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        if ($model->status === 'completed') {
+            return response()->json(['message' => 'Completed trips cannot be cancelled.'], 422);
+        }
+        $model->update(['status' => 'cancelled']);
+
+        return response()->json($model->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']));
+    }
+
+    public function reorderStops(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $data = $request->validate([
+            'stops' => 'required|array|min:1',
+            'stops.*.sale_id' => 'required|integer|exists:sales,id',
+            'stops.*.stop_seq' => 'required|integer|min:1',
+        ]);
+
+        try {
+            $updated = $this->trips->reorderStops($model, $data['stops']);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($updated);
+    }
+}

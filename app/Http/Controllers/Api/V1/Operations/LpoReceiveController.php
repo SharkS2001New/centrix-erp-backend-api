@@ -20,7 +20,14 @@ class LpoReceiveController extends Controller
 
     public function store(StockReceiveRequest $request)
     {
-        $receipt = $this->receiveStockLine($request->validated(), $request->user());
+        $data = $request->validated();
+        if (empty($data['stock_location'])) {
+            $orgId = (int) ($request->user()?->organization_id ?? 0);
+            $procurement = \App\Services\Purchasing\ProcurementSettingsResolver::forOrganizationId($orgId);
+            $data['stock_location'] = $procurement['default_receive_location'] ?? 'store';
+        }
+
+        $receipt = $this->receiveStockLine($data, $request->user());
 
         $gate = $this->erp->gateForUser($request->user());
         app(PurchaseReceiveJournalService::class)->postIfEnabled($receipt, $request->user(), $gate);

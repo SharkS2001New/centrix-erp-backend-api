@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartAccess;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesMpesaPayments;
@@ -27,6 +28,7 @@ use Illuminate\Support\Str;
 
 class CartOperationsController extends Controller
 {
+    use HandlesCartAccess;
     use HandlesCartPayments;
     use HandlesInventory;
     use HandlesMpesaPayments;
@@ -44,12 +46,12 @@ class CartOperationsController extends Controller
 
     public function show(int $cartId)
     {
-        return response()->json($this->findCart($cartId, request()->user()));
+        return response()->json($this->findOwnedCart($cartId, request()->user()));
     }
 
     public function update(\Illuminate\Http\Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $salesSettings = $gate->moduleSettings('sales');
         $data = $request->validate([
@@ -77,7 +79,7 @@ class CartOperationsController extends Controller
 
     public function addLine(AddCartLineRequest $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $line = $this->addCartLine($cart, $request->validated(), $request->user(), $gate);
 
@@ -86,7 +88,7 @@ class CartOperationsController extends Controller
 
     public function updateLine(UpdateCartLineRequest $request, int $cartId, string $lineRef)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $line = $this->updateCartLine($cart, $lineRef, $request->validated(), $request->user(), $gate);
 
@@ -95,7 +97,7 @@ class CartOperationsController extends Controller
 
     public function deleteLine(int $cartId, string $lineRef)
     {
-        $cart = $this->findCart($cartId, request()->user());
+        $cart = $this->findOwnedCart($cartId, request()->user());
         $this->removeCartLine($cart, $lineRef);
 
         return response()->json($cart->fresh('lines'));
@@ -103,22 +105,18 @@ class CartOperationsController extends Controller
 
     public function clear(int $cartId)
     {
-        $this->clearCart($this->findCart($cartId, request()->user()));
+        $this->clearCart($this->findOwnedCart($cartId, request()->user()));
 
         return response()->json(['ok' => true]);
     }
 
     public function restoreHeldOrder(Request $request, int $saleId)
     {
-        $sale = Sale::with('items')->findOrFail($saleId);
         $user = $request->user();
+        $sale = $this->findScopedSale($saleId, $user)->load('items');
 
         if ($sale->status !== 'held') {
             throw new InvalidArgumentException('Only held orders can be restored to the cart.');
-        }
-
-        if ((int) $sale->organization_id !== (int) $user->organization_id) {
-            abort(403, 'This order belongs to another organization.');
         }
 
         $channel = $sale->channel ?: 'pos';
@@ -205,7 +203,7 @@ class CartOperationsController extends Controller
 
     public function attachLoyaltyCard(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $salesSettings = $gate->moduleSettings('sales');
         if (empty($salesSettings['enable_redeemable_points'])) {
@@ -233,7 +231,7 @@ class CartOperationsController extends Controller
 
     public function applyVoucherPayment(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $salesSettings = $gate->moduleSettings('sales');
         if (empty($salesSettings['enable_vouchers'])) {
@@ -324,7 +322,7 @@ class CartOperationsController extends Controller
 
     public function applyPointsPayment(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $salesSettings = $gate->moduleSettings('sales');
         if (empty($salesSettings['enable_redeemable_points'])) {
@@ -370,7 +368,7 @@ class CartOperationsController extends Controller
 
     public function updateCartPaymentExtras(Request $request, int $cartId)
     {
-        $cart = $this->findCart($cartId, $request->user());
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $data = $request->validate([
             'mpesa_phone' => 'nullable|string|max:45',
         ]);
@@ -385,7 +383,7 @@ class CartOperationsController extends Controller
 
     public function clearCartPayments(int $cartId)
     {
-        $cart = $this->findCart($cartId, request()->user());
+        $cart = $this->findOwnedCart($cartId, request()->user());
         $this->clearCartPaymentOptions($cart);
         $cart->increment('update_no');
 
@@ -394,15 +392,11 @@ class CartOperationsController extends Controller
 
     public function cancelHeldOrder(Request $request, int $saleId)
     {
-        $sale = Sale::findOrFail($saleId);
         $user = $request->user();
+        $sale = $this->findScopedSale($saleId, $user);
 
         if ($sale->status !== 'held') {
             throw new InvalidArgumentException('Only held orders can be deleted.');
-        }
-
-        if ((int) $sale->organization_id !== (int) $user->organization_id) {
-            abort(403, 'This order belongs to another organization.');
         }
 
         $sale->update([
@@ -435,19 +429,27 @@ class CartOperationsController extends Controller
             throw new InvalidArgumentException("Channel [{$channel}] is not enabled for this organization.");
         }
 
+        $branchId = $this->userAccess()->resolveBranchId($user, $input['branch_id'] ?? null);
+
         $cart = TemporaryCart::firstOrCreate(
             [
                 'user_id' => $user->id,
                 'channel' => $channel,
             ],
             [
-                'branch_id' => $input['branch_id'] ?? $user->branch_id,
+                'branch_id' => $branchId,
                 'order_source' => $orderSource,
                 'till_id' => $input['till_id'] ?? null,
                 'route_id' => $input['route_id'] ?? null,
                 'update_no' => 0,
             ]
         );
+
+        if ($cart->branch_id) {
+            $this->userAccess()->assertBranchAccess($user, (int) $cart->branch_id);
+        } else {
+            $cart->update(['branch_id' => $branchId]);
+        }
 
         if ($cart->order_source !== $orderSource) {
             $cart->update(['order_source' => $orderSource]);
@@ -462,17 +464,20 @@ class CartOperationsController extends Controller
         $qty = (float) ($line['quantity'] ?? 1);
         $onWholesaleRetailFlag = (bool) ($line['on_wholesale_retail'] ?? 0);
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
+        $salesSettings = $gate->moduleSettings('sales');
         $unitPrice = (float) ($line['unit_price'] ?? 0);
-        if ($unitPrice <= 0) {
+        if ($unitPrice <= 0 || empty($salesSettings['allow_edit_unit_price'])) {
             $unitPrice = $this->lineUnitPrice($product, 1, $isRetail, $cart->route_id) / max($qty, 1);
         }
         $amount = round($unitPrice * $qty, 2);
 
-        $salesSettings = $gate->moduleSettings('sales');
         $discountGiven = $this->resolveLineDiscountGiven(
             $salesSettings,
             (float) ($line['discount_given'] ?? 0),
         );
+        if (empty($salesSettings['allow_edit_line_discount'])) {
+            $discountGiven = 0;
+        }
 
         $product->loadMissing('vat');
         $grossForVat = max(0, $amount - $discountGiven);
@@ -545,19 +550,22 @@ class CartOperationsController extends Controller
             ? (bool) $input['on_wholesale_retail']
             : (bool) $row->on_wholesale_retail;
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
+        $salesSettings = $gate->moduleSettings('sales');
 
         $unitPrice = array_key_exists('unit_price', $input)
             ? (float) $input['unit_price']
             : (float) $row->unit_price;
-        if ($unitPrice <= 0) {
+        if ($unitPrice <= 0 || empty($salesSettings['allow_edit_unit_price'])) {
             $unitPrice = $this->lineUnitPrice($product, 1, $isRetail, $cart->route_id) / max($qty, 1);
         }
 
-        $salesSettings = $gate->moduleSettings('sales');
         $discountGiven = array_key_exists('discount_given', $input)
             ? (float) $input['discount_given']
             : (float) $row->discount_given;
         $discountGiven = $this->resolveLineDiscountGiven($salesSettings, $discountGiven);
+        if (empty($salesSettings['allow_edit_line_discount'])) {
+            $discountGiven = 0;
+        }
 
         $settings = $gate->moduleSettings('inventory');
         $stockAsRetail = $this->stockRouteAsRetail($product, $onWholesaleRetailFlag, $salesSettings);
@@ -618,16 +626,6 @@ class CartOperationsController extends Controller
         $cart->update(['order_discount' => 0, 'discount_voucher_id' => null]);
         $this->clearCartPaymentOptions($cart);
         $cart->increment('update_no');
-    }
-
-    protected function findCart(int $cartId, ?User $user = null): TemporaryCart
-    {
-        $cart = TemporaryCart::with('lines')->findOrFail($cartId);
-        if ($user && (int) $cart->user_id !== (int) $user->id) {
-            abort(403, 'This cart belongs to another cashier.');
-        }
-
-        return $cart;
     }
 
     protected function findCartLineByRef(TemporaryCart $cart, string $lineRef): CartLine

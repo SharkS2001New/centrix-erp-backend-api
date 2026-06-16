@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartAccess;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\LoyaltyCard;
@@ -9,10 +10,12 @@ use App\Models\Voucher;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Sales\CheckoutRequest;
 use App\Models\CartLine;
+use App\Models\Customer;
 use App\Models\CustomerInvoice;
 use App\Models\KraResponse;
 use App\Models\PaymentMethod;
 use App\Models\Product;
+use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\SalePayment;
@@ -25,12 +28,14 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Kra\KraDeviceService;
+use App\Services\Notifications\CustomerNotificationService;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class CheckoutController extends Controller
 {
+    use HandlesCartAccess;
     use HandlesCartPayments;
     use HandlesInventory;
 
@@ -38,10 +43,7 @@ class CheckoutController extends Controller
 
     public function fromCart(CheckoutRequest $request, int $cartId)
     {
-        $cart = TemporaryCart::with('lines')->findOrFail($cartId);
-        if ((int) $cart->user_id !== (int) $request->user()->id) {
-            abort(403, 'This cart belongs to another cashier.');
-        }
+        $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $sale = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
 
@@ -166,6 +168,8 @@ class CheckoutController extends Controller
                 $isCredit,
             );
 
+            $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
+
             $sale = Sale::create([
                 'order_num' => $orderNum,
                 'branch_id' => $cart->branch_id ?? $user->branch_id,
@@ -177,7 +181,7 @@ class CheckoutController extends Controller
                 'cashier_id' => $user->id,
                 'customer_num' => $customerNum,
                 'customer_name_override' => $input['customer_name_override'] ?? null,
-                'route_id' => $cart->route_id,
+                'route_id' => $routeId,
                 'status' => $orderStatus,
                 'total_vat' => $vat,
                 'order_total' => $total,
@@ -195,6 +199,13 @@ class CheckoutController extends Controller
             if ($orderStatus === 'completed') {
                 $sale->update(['completed_at' => now()]);
             }
+
+            $stockDeducted = false;
+            $deferStockToTrip = $gate->shouldDeferStockToTrip();
+            $deductStockRequested = (bool) ($input['deduct_stock'] ?? true);
+            $shouldDeductNow = ! $deferStockToTrip
+                && $deductStockRequested
+                && $workflow->shouldDeductStockOn($orderStatus, $cart->channel);
 
             foreach ($lines as $i => $line) {
                 $isRetailLine = (bool) $line->on_wholesale_retail;
@@ -219,7 +230,7 @@ class CheckoutController extends Controller
                     'on_wholesale_retail' => $line->on_wholesale_retail,
                 ]);
 
-                if ($input['deduct_stock'] ?? true) {
+                if ($shouldDeductNow) {
                     $unitCost = max(0, (float) (Product::query()->find($line->product_code)?->last_cost_price ?? 0));
                     $this->postStockLedger([
                         'branch_id' => $sale->branch_id,
@@ -334,11 +345,15 @@ class CheckoutController extends Controller
 
             $sale = $sale->fresh(['items', 'payments.paymentMethod']);
 
+            $submitKra = array_key_exists('submit_kra', $input)
+                ? (bool) $input['submit_kra']
+                : (bool) ($gate->moduleSettings('finance')['default_submit_kra'] ?? true);
+
             $kraResponse = $this->submitKraForSale(
                 $sale,
                 $lines,
                 $gate,
-                (bool) ($input['submit_kra'] ?? true),
+                $submitKra,
                 $input['customer_kra_pin'] ?? null,
             );
             if ($kraResponse) {
@@ -346,6 +361,11 @@ class CheckoutController extends Controller
             }
 
             app(SaleJournalService::class)->postIfEnabled($sale, $user, $gate);
+
+            $organization = Organization::find($user->organization_id);
+            if ($organization) {
+                app(CustomerNotificationService::class)->notifyOrderPlaced($sale, $organization);
+            }
 
             return $sale;
         });
@@ -442,5 +462,28 @@ class CheckoutController extends Controller
                 'channel' => $sale->channel,
             ],
         ]);
+    }
+
+    protected function resolveCheckoutRouteId(
+        TemporaryCart $cart,
+        ?int $customerNum,
+        CapabilityGate $gate,
+    ): ?int {
+        if ($cart->route_id) {
+            return (int) $cart->route_id;
+        }
+
+        if (! $gate->distributionOpsEnabled()) {
+            return null;
+        }
+
+        $distributionSettings = $gate->distributionSettings();
+        if (empty($distributionSettings['inherit_customer_route']) || ! $customerNum) {
+            return null;
+        }
+
+        $customer = Customer::find($customerNum);
+
+        return $customer?->route_id ? (int) $customer->route_id : null;
     }
 }

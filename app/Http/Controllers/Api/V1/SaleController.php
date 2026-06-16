@@ -16,21 +16,9 @@ class SaleController extends BaseResourceController
         return Sale::class;
     }
 
-    public function show(Request $request, string $id)
-    {
-        $sale = Sale::with(['items.product.unit'])->findOrFail($id);
-        $gate = $this->erp->gateForUser($request->user());
-        $channel = $sale->channel ?: 'backend';
-        $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
-
-        return response()->json(array_merge($sale->toArray(), [
-            'workflow' => $workflow,
-        ]));
-    }
-
     public function index(Request $request)
     {
-        $query = Sale::query();
+        $query = $this->baseQuery($request);
 
         if ($request->boolean('with_items')) {
             $query->with(['items.product.unit']);
@@ -56,5 +44,17 @@ class SaleController extends BaseResourceController
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         return response()->json($query->orderByDesc('id')->paginate($perPage));
+    }
+
+    public function show(Request $request, string $id)
+    {
+        $sale = $this->baseQuery($request)->with(['items.product.unit'])->findOrFail($id);
+        $gate = $this->erp->gateForUser($request->user());
+        $channel = $sale->channel ?: 'backend';
+        $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
+
+        return response()->json(array_merge($sale->toArray(), [
+            'workflow' => $workflow,
+        ]));
     }
 }
