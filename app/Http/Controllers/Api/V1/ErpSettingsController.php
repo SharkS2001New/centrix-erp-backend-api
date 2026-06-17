@@ -8,6 +8,7 @@ use App\Models\SystemSetting;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\OrganizationPlatformConfigService;
 use App\Services\Accounting\QuickBooksSettingsResolver;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\Notifications\NotificationSettingsResolver;
@@ -17,7 +18,10 @@ use Illuminate\Validation\ValidationException;
 
 class ErpSettingsController extends Controller
 {
-    public function __construct(protected ErpContext $erp) {}
+    public function __construct(
+        protected ErpContext $erp,
+        protected OrganizationPlatformConfigService $platformConfig,
+    ) {}
 
     public function sales(Request $request)
     {
@@ -139,6 +143,10 @@ class ErpSettingsController extends Controller
 
         $data = $request->validate($rules);
 
+        if (! $user->is_super_admin) {
+            $data = $this->platformConfig->filterOrgManagerSalesPayload($data);
+        }
+
         $currentSales = $gate->moduleSettings('sales');
         $nextSales = array_merge($currentSales, array_filter(
             $data,
@@ -146,7 +154,7 @@ class ErpSettingsController extends Controller
             ARRAY_FILTER_USE_KEY
         ));
 
-        if (array_key_exists('order_workflow', $data) && is_array($data['order_workflow'])) {
+        if (array_key_exists('order_workflow', $data) && is_array($data['order_workflow']) && $user->is_super_admin) {
             $workflowService = OrderWorkflowService::forGate($gate);
             $defaults = config('erp.default_order_workflow', []);
             $nextSales['order_workflow'] = $workflowService->normalize(
@@ -241,6 +249,10 @@ class ErpSettingsController extends Controller
         }
 
         $data = $request->validate($rules);
+
+        if (! $user->is_super_admin) {
+            $data = $this->platformConfig->filterOrgManagerDistributionPayload($data);
+        }
 
         $current = $gate->distributionSettings();
         $next = array_merge($current, array_filter(

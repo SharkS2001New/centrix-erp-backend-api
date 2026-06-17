@@ -44,6 +44,10 @@ class UserLoginService
             return;
         }
 
+        if ($user->is_admin) {
+            return;
+        }
+
         if (! $employee->is_active || $employee->employment_status !== 'active') {
             $this->disableLogin($user);
         }

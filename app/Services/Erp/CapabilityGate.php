@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Models\SystemSetting;
 use App\Services\Ai\AiSettingsResolver;
 use App\Services\Erp\GeneralSettingsResolver;
+use App\Services\Erp\ModuleRegistry;
 use App\Services\Mpesa\MpesaSettingsResolver;
 
 class CapabilityGate
@@ -30,25 +31,46 @@ class CapabilityGate
             return false;
         }
 
-        $overrides = $this->organization->enabled_modules ?? [];
-        if (is_array($overrides) && array_key_exists($moduleKey, $overrides)) {
+        if (! $this->selfEnabled($moduleKey)) {
+            return false;
+        }
+
+        $parent = ModuleRegistry::parentKey($moduleKey);
+        if ($parent !== null && $parent !== $moduleKey) {
+            return $this->enabled($parent);
+        }
+
+        return true;
+    }
+
+    public function selfEnabled(string $moduleKey): bool
+    {
+        if (! $this->organization) {
+            return false;
+        }
+
+        $overrides = ModuleRegistry::expandLegacyModules(
+            is_array($this->organization->enabled_modules) ? $this->organization->enabled_modules : [],
+        );
+        if (array_key_exists($moduleKey, $overrides)) {
             return (bool) $overrides[$moduleKey];
         }
 
         $profile = $this->organization->deployment_profile ?? 'wholesale_retail';
         $profiles = config('erp.profiles', []);
+        $profileModules = $profiles[$profile]['modules'] ?? [];
 
-        return (bool) ($profiles[$profile]['modules'][$moduleKey] ?? false);
+        return (bool) ($profileModules[$moduleKey] ?? false);
     }
 
     /** @return array<string, bool> */
     public function allModules(): array
     {
-        $keys = array_keys(config('erp.modules', []));
         $out = [];
-        foreach ($keys as $key) {
+        foreach (ModuleRegistry::keys() as $key) {
             $out[$key] = $this->enabled($key);
         }
+
         return $out;
     }
 
@@ -188,12 +210,16 @@ class CapabilityGate
 
     public function distributionOpsEnabled(): bool
     {
+        if (! $this->enabled('distribution')) {
+            return false;
+        }
+
         $dist = $this->distributionSettings();
         if (array_key_exists('enable_distribution_ops', $dist)) {
             return (bool) $dist['enable_distribution_ops'];
         }
 
-        return ($this->organization?->deployment_profile ?? '') === 'distribution';
+        return true;
     }
 
     /** @return array<string, mixed> */

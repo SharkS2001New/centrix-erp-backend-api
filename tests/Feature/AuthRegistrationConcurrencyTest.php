@@ -50,6 +50,57 @@ class AuthRegistrationConcurrencyTest extends TestCase
         ]);
     }
 
+    public function test_super_admin_can_update_organization_modules(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'MODORG',
+            'org_name' => 'Module Org Ltd',
+            'org_email' => 'mod@org.com',
+            'primary_tel' => '0711000000',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+            'enabled_modules' => ['sales' => true, 'sales.pos' => true, 'sales.reports' => false, 'hr_payroll' => true],
+            'admin_username' => 'mod_admin',
+            'admin_email' => 'mod@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Mod Admin',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+
+        $response = $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'enabled_modules' => [
+                'sales' => true,
+                'sales.pos' => false,
+                'sales.backend' => true,
+                'sales.reports' => true,
+            ],
+        ])->assertOk();
+
+        $modules = $response->json('effective_modules');
+        $this->assertFalse($modules['sales.pos']);
+        $this->assertTrue($modules['sales.backend']);
+        $this->assertTrue($modules['sales.reports']);
+    }
+
+    public function test_org_admin_cannot_change_enabled_modules(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $this->patchJson('/api/v1/organizations/'.$orgAdmin->organization_id, [
+            'enabled_modules' => ['sales.pos' => false],
+        ])->assertOk();
+
+        $org = \App\Models\Organization::findOrFail($orgAdmin->organization_id);
+        $this->assertNotSame(['sales.pos' => false], $org->enabled_modules);
+    }
+
     public function test_provision_requires_super_admin_and_feature_flag(): void
     {
         config(['erp.allow_org_provisioning' => false]);

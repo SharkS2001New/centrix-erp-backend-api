@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\User;
 use App\Models\UserMembership;
 use App\Services\Auth\PasswordPolicy;
+use App\Services\Auth\UserAccountGuard;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserLoginService;
@@ -82,6 +83,9 @@ class UserController extends BaseResourceController
             PasswordPolicy::assertValid((int) $model->organization_id, (string) $data['password']);
             $data['password'] = Hash::make($data['password']);
         }
+        if (array_key_exists('is_active', $data) && ! $data['is_active']) {
+            app(UserAccountGuard::class)->assertCanDisableLogin($model, $request->user());
+        }
         if (array_key_exists('is_active', $data) && $data['is_active']) {
             app(UserLoginService::class)->assertCanEnableLogin($model);
         }
@@ -99,11 +103,7 @@ class UserController extends BaseResourceController
         $model = $this->findOrgUser($id);
         $authUser = $request->user();
 
-        if ($authUser && (int) $authUser->id === (int) $model->id) {
-            throw ValidationException::withMessages([
-                'user' => 'You cannot delete your own account.',
-            ]);
-        }
+        app(UserAccountGuard::class)->assertCanDelete($model, $authUser);
 
         $model->forceFill(['deleted_by' => $authUser?->id])->save();
         app(UserLoginService::class)->disableLogin($model);

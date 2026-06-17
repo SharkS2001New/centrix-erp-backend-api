@@ -1,6 +1,6 @@
 /vendor
 /node_modules
-.env
+# .env
 .phpunit.result.cache
 storage/*.key
 storage/logs/*

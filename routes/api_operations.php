@@ -149,7 +149,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ---- Reports ----
-    Route::middleware('erp.module:reports')->prefix('reports')->group(function () {
+    Route::middleware(['erp.report_module'])->prefix('reports')->group(function () {
         Route::middleware('erp.permission:reports.view')->group(function () {
             Route::get('/', [ReportController::class, 'catalog']);
             Route::get('dashboard', [ReportController::class, 'dashboard']);

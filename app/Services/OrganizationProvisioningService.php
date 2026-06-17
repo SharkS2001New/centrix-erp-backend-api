@@ -13,6 +13,8 @@ use App\Models\User;
 use App\Services\Accounting\FiscalPeriodService;
 use App\Services\Accounting\StandardChartOfAccounts;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\ModuleRegistry;
+use App\Services\OrganizationPlatformConfigService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -36,17 +38,12 @@ class OrganizationProvisioningService
                 'deployment_profile' => $data['deployment_profile'],
                 'enabled_modules' => $this->normalizeEnabledModules($data['enabled_modules'] ?? null),
                 'module_settings' => [
-                    'distribution' => ($data['deployment_profile'] ?? '') === 'distribution'
-                        ? [
-                            'enable_distribution_ops' => true,
-                            'inherit_customer_route' => true,
-                            'auto_assign_truck' => true,
-                            'auto_assign_driver' => true,
-                        ]
-                        : [],
+                    'distribution' => [],
                     'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
                 ],
             ]);
+
+            $org = $this->syncModuleSettingsFromEnabledModules($org);
 
             $branchType = match ($data['deployment_profile']) {
                 'small_shop' => 'small_shop',
@@ -134,6 +131,17 @@ class OrganizationProvisioningService
 
             $this->seedAccountingFoundation($org);
 
+            if (! empty($data['sales_platform']) && is_array($data['sales_platform'])) {
+                $org = app(OrganizationPlatformConfigService::class)->applySalesPlatformConfig($org, $data['sales_platform']);
+            } else {
+                $org = app(OrganizationPlatformConfigService::class)->applySalesPlatformConfig(
+                    $org,
+                    app(OrganizationPlatformConfigService::class)->defaultSalesPlatformConfig(
+                        (string) ($data['deployment_profile'] ?? 'wholesale_retail'),
+                    ),
+                );
+            }
+
             return [
                 'organization' => $org,
                 'manager' => $manager,
@@ -152,7 +160,7 @@ class OrganizationProvisioningService
             return null;
         }
 
-        $moduleKeys = array_keys(config('erp.modules', []));
+        $moduleKeys = ModuleRegistry::keys();
         $normalized = [];
         foreach ($moduleKeys as $key) {
             if (array_key_exists($key, $enabledModules)) {
@@ -160,7 +168,30 @@ class OrganizationProvisioningService
             }
         }
 
+        $normalized = ModuleRegistry::cascade($normalized);
+
         return $normalized === [] ? null : $normalized;
+    }
+
+    public function syncModuleSettingsFromEnabledModules(Organization $org): Organization
+    {
+        $gate = app(CapabilityGate::class)->forOrganization($org);
+        $modules = $gate->allModules();
+        $settings = $org->module_settings ?? [];
+        $distributionEnabled = (bool) ($modules['distribution'] ?? false);
+
+        $dist = is_array($settings['distribution'] ?? null) ? $settings['distribution'] : [];
+        $dist['enable_distribution_ops'] = $distributionEnabled;
+        if ($distributionEnabled) {
+            $dist['inherit_customer_route'] = $dist['inherit_customer_route'] ?? true;
+            $dist['auto_assign_truck'] = $dist['auto_assign_truck'] ?? true;
+            $dist['auto_assign_driver'] = $dist['auto_assign_driver'] ?? true;
+        }
+        $settings['distribution'] = $dist;
+
+        $org->forceFill(['module_settings' => $settings])->save();
+
+        return $org->fresh();
     }
 
     protected function seedAccountingFoundation(Organization $org): void

@@ -6,6 +6,7 @@ use App\Models\Branch;
 use App\Models\Organization;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\Erp\ModuleRegistry;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\Hash;
 
@@ -22,6 +23,8 @@ class PlatformSuperAdminSeeder extends Seeder
             return;
         }
 
+        $platformModules = array_fill_keys(ModuleRegistry::keys(), false);
+
         $org = Organization::query()->firstOrCreate(
             ['company_code' => $platformCode],
             [
@@ -29,14 +32,15 @@ class PlatformSuperAdminSeeder extends Seeder
                 'org_email' => $email,
                 'primary_tel' => '0700000000',
                 'org_address' => 'Platform',
-                'deployment_profile' => 'platform',
+                'deployment_profile' => 'small_shop',
+                'enabled_modules' => $platformModules,
                 'module_settings' => ['platform' => true],
             ],
         );
 
         $org->forceFill([
-            'deployment_profile' => 'platform',
             'org_email' => $email,
+            'enabled_modules' => $platformModules,
         ])->save();
 
         $branch = Branch::query()->firstOrCreate(

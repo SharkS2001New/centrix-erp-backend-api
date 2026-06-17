@@ -559,13 +559,16 @@ class DemoDataSeeder extends Seeder
             );
         }
 
+        $platformModules = array_fill_keys(\App\Services\Erp\ModuleRegistry::keys(), false);
+
         $platformOrg = Organization::create([
             'company_code' => $platformCode,
             'org_name' => 'Platform Administration',
             'org_email' => $platformEmail,
             'primary_tel' => '0700000000',
             'org_address' => 'Platform',
-            'deployment_profile' => 'platform',
+            'deployment_profile' => 'small_shop',
+            'enabled_modules' => $platformModules,
             'module_settings' => ['platform' => true],
         ]);
 

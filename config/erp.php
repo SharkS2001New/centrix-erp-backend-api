@@ -6,6 +6,12 @@
  * Organizations store deployment_profile + optional enabled_modules overrides.
  * API middleware uses module keys (e.g. sales.pos) to gate routes.
  */
+$erpModuleTree = require __DIR__.'/erp_module_tree.php';
+$allModulesFalse = array_fill_keys(
+    array_filter(array_keys($erpModuleTree), fn (string $k) => $k !== 'report_modules'),
+    false,
+);
+
 return [
 
     'company_code' => env('APP_COMPANY_CODE'),
@@ -29,105 +35,106 @@ return [
     'profiles' => [
         'platform' => [
             'label' => 'Platform operator',
-            'modules' => [
-                'sales.backend' => false,
-                'sales.pos' => false,
-                'sales.mobile' => false,
-                'payments' => false,
-                'inventory' => false,
-                'accounting' => false,
-                'hr_payroll' => false,
-                'admin' => false,
-                'customers_suppliers' => false,
-                'reports' => false,
-            ],
+            'modules' => $allModulesFalse,
             'default_channels' => ['backend'],
         ],
         'small_shop' => [
             'label' => 'Small shop (backend sales only)',
-            'modules' => [
+            'modules' => array_merge($allModulesFalse, [
+                'sales' => true,
                 'sales.backend' => true,
-                'sales.pos' => false,
-                'sales.mobile' => false,
+                'sales.dashboard' => true,
+                'sales.reports' => true,
                 'payments' => true,
                 'inventory' => true,
-                'accounting' => false,
-                'hr_payroll' => false,
-                'admin' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
                 'customers_suppliers' => true,
-                'reports' => true,
-            ],
+                'customers_suppliers.reports' => true,
+                'admin' => true,
+            ]),
             'default_channels' => ['backend'],
         ],
         'wholesale_retail' => [
             'label' => 'Wholesale & retail (full stack)',
-            'modules' => [
+            'modules' => array_merge($allModulesFalse, [
+                'sales' => true,
                 'sales.backend' => true,
                 'sales.pos' => true,
                 'sales.mobile' => true,
+                'sales.dashboard' => true,
+                'sales.reports' => true,
                 'payments' => true,
                 'inventory' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
                 'accounting' => true,
+                'accounting.dashboard' => true,
+                'accounting.reports' => true,
                 'hr_payroll' => true,
+                'hr_payroll.dashboard' => true,
+                'hr_payroll.reports' => true,
                 'admin' => true,
                 'customers_suppliers' => true,
-                'reports' => true,
-            ],
+                'customers_suppliers.reports' => true,
+            ]),
             'default_channels' => ['pos', 'mobile', 'backend'],
         ],
         'distribution' => [
             'label' => 'Distribution / warehouse',
-            'modules' => [
+            'modules' => array_merge($allModulesFalse, [
+                'sales' => true,
                 'sales.backend' => true,
-                'sales.pos' => false,
                 'sales.mobile' => true,
+                'sales.dashboard' => true,
+                'sales.reports' => true,
                 'payments' => true,
                 'inventory' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
                 'accounting' => true,
+                'accounting.dashboard' => true,
+                'accounting.reports' => true,
                 'hr_payroll' => true,
+                'hr_payroll.dashboard' => true,
+                'hr_payroll.reports' => true,
                 'admin' => true,
                 'customers_suppliers' => true,
-                'reports' => true,
-            ],
+                'customers_suppliers.reports' => true,
+                'distribution' => true,
+                'distribution.dashboard' => true,
+                'distribution.reports' => true,
+            ]),
             'default_channels' => ['mobile', 'backend'],
         ],
     ],
 
-    'modules' => [
-        'sales.pos' => [
-            'label' => 'Point of Sale terminals',
-            'routes_prefix' => ['tills', 'till-float-sessions'],
-            'channel' => 'pos',
+    /*
+    | Module registry lives in config/erp_module_tree.php (hierarchical domains).
+    | Legacy flat keys in erp.modules are merged for backward compatibility.
+    */
+    'modules' => $erpModuleTree,
+
+    /** Sidebar section order when super admin configures module access. */
+    'nav_groups' => [
+        'Sales' => ['sort' => 10, 'description' => 'POS, orders, dashboard, and sales reports'],
+        'Inventory' => ['sort' => 20, 'description' => 'Stock, transfers, dashboard, and inventory reports'],
+        'Purchasing' => ['sort' => 30, 'description' => 'Suppliers, LPO, customers, and purchasing reports'],
+        'Distribution' => ['sort' => 35, 'description' => 'Dispatch, fleet, dashboard, and logistics reports'],
+        'Accounting' => ['sort' => 40, 'description' => 'GL, payments, dashboard, and financial reports'],
+        'Human resources' => ['sort' => 50, 'description' => 'Employees, payroll, dashboard, and HR reports'],
+        'Administration' => ['sort' => 70, 'description' => 'Users, roles, branches, org preferences'],
+    ],
+
+    /** Keys only platform super admin may set (registration or Platform → Organizations). */
+    'platform_controlled' => [
+        'sales' => [
+            'show_checkout_on_create_order',
+            'enable_mobile_orders',
+            'enable_pos_orders',
+            'stock_deduct_on',
         ],
-        'sales.mobile' => [
-            'label' => 'Mobile sales app',
-            'channel' => 'mobile',
-        ],
-        'sales.backend' => [
-            'label' => 'Backend sales / orders module',
-            'channel' => 'backend',
-        ],
-        'payments' => [
-            'label' => 'Payments & credit reconciliation',
-        ],
-        'inventory' => [
-            'label' => 'LPO, receipts, transfers, stock ledger',
-        ],
-        'accounting' => [
-            'label' => 'General ledger, journals & financial reports',
-        ],
-        'hr_payroll' => [
-            'label' => 'HR & payroll (planned)',
-        ],
-        'admin' => [
-            'label' => 'Users, roles, permissions',
-        ],
-        'customers_suppliers' => [
-            'label' => 'Customers & suppliers',
-        ],
-        'reports' => [
-            'label' => 'Reporting & analytics',
-        ],
+        'distribution' => [],
     ],
 
     /*
