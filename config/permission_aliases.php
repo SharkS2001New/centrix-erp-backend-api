@@ -7,6 +7,7 @@ return [
     'sales.create' => [
         'sales.orders.create',
         'pos.checkout.create',
+        'pos.terminal.view',
     ],
     'sales.manage' => [
         'sales.orders.edit',
@@ -250,6 +251,7 @@ return [
         'pos.till_management.create',
         'pos.till_management.edit',
         'pos.checkout.create',
+        'pos.terminal.view',
     ],
     'products.manage' => [
         'catalogue.products.create',

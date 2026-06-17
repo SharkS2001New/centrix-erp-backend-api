@@ -61,14 +61,25 @@ class UserLoginChannelService
     public function assertCanLogin(User $user, string $channel): void
     {
         $channel = $this->normalizeChannel($channel);
+        $allowed = $this->channelsFor($user);
 
-        if (! in_array($channel, $this->channelsFor($user), true)) {
-            throw ValidationException::withMessages([
-                'login_channel' => [
-                    sprintf('This account is not allowed to sign in via %s.', $this->label($channel)),
-                ],
-            ]);
+        if (in_array($channel, $allowed, true)) {
+            return;
         }
+
+        // Unified web login issues a backoffice token; POS-only accounts use the same sign-in page.
+        if ($channel === self::BACKOFFICE) {
+            $webEligible = array_intersect($allowed, [self::BACKOFFICE, self::POS]);
+            if ($webEligible !== []) {
+                return;
+            }
+        }
+
+        throw ValidationException::withMessages([
+            'login_channel' => [
+                sprintf('This account is not allowed to sign in via %s.', $this->label($channel)),
+            ],
+        ]);
     }
 
     public function normalizeChannel(string $channel): string
@@ -134,11 +145,14 @@ class UserLoginChannelService
 
         $prefixes = [
             'pos/',
+            'sales',
             'sales/carts',
             'sales/orders',
             'sales/loyalty-cards',
             'tills',
             'till-float-sessions',
+            'branches',
+            'routes',
             'products',
             'customers',
             'payment-methods',
@@ -146,6 +160,9 @@ class UserLoginChannelService
             'loyalty-cards',
             'inventory/availability',
             'current-stock',
+            'uoms',
+            'vats',
+            'retail-package-settings',
             'payments/',
         ];
 
@@ -159,9 +176,11 @@ class UserLoginChannelService
         }
 
         $prefixes = [
+            'mobile/',
             'sales/carts',
             'sales/orders',
             'sales/loyalty-cards',
+            'branches',
             'customers',
             'products',
             'payment-methods',
@@ -169,6 +188,9 @@ class UserLoginChannelService
             'inventory/availability',
             'current-stock',
             'routes',
+            'uoms',
+            'vats',
+            'retail-package-settings',
             'payments/',
         ];
 

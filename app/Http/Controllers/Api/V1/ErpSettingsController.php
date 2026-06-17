@@ -72,6 +72,7 @@ class ErpSettingsController extends Controller
             'other_bank_name',
             'enable_bank_amount',
             'enable_cheque',
+            'enable_cheque_number',
             'enable_payment_date',
             'enable_credit_payment',
             'allow_credit_pay_now',

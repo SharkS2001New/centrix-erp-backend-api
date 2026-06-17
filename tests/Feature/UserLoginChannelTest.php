@@ -28,6 +28,19 @@ class UserLoginChannelTest extends TestCase
             ->assertJsonValidationErrors(['login_channel']);
     }
 
+    public function test_pos_only_user_can_login_via_unified_backoffice_channel(): void
+    {
+        $user = $this->makeUser(['login_channels' => ['pos']]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'WEB_UNIFIED',
+            'login_channel' => 'backoffice',
+        ])->assertOk();
+    }
+
     public function test_mobile_only_user_can_login_via_mobile(): void
     {
         $user = $this->makeUser(['login_channels' => ['mobile']]);
@@ -80,6 +93,64 @@ class UserLoginChannelTest extends TestCase
             ->getJson('/api/v1/users')
             ->assertStatus(403)
             ->assertJsonPath('code', 'login_channel_forbidden');
+    }
+
+    public function test_pos_session_can_access_pos_sales_and_branches_but_not_admin_users(): void
+    {
+        $user = $this->makeUser(['login_channels' => ['pos']]);
+
+        $login = $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'POS_TERMINAL',
+            'login_channel' => 'pos',
+        ])->assertOk();
+
+        $token = $login->json('token');
+
+        $this->withToken($token)
+            ->getJson('/api/v1/branches')
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/tills')
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/products')
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/users')
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'login_channel_forbidden');
+    }
+
+    public function test_demo_cashier_can_search_products_for_pos_checkout(): void
+    {
+        $login = $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => 'cashier',
+            'password' => 'password',
+            'client_id' => 'POS_CASHIER_CATALOGUE',
+            'login_channel' => 'pos',
+        ])->assertOk();
+
+        $token = $login->json('token');
+
+        $this->withToken($token)
+            ->getJson('/api/v1/products?q=rice&per_page=10')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/uoms?per_page=10')
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/retail-package-settings?per_page=10')
+            ->assertOk();
     }
 
     public function test_admin_can_set_user_login_channels(): void

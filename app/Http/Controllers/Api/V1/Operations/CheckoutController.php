@@ -29,6 +29,7 @@ use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Notifications\CustomerNotificationService;
+use App\Services\Sales\OrderNumberAllocator;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -65,7 +66,8 @@ class CheckoutController extends Controller
 
         return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $inventorySettings, $salesSettings, $txnType, $allowBelowStock) {
             $stockDeducted = false;
-            $orderNum = (int) ($input['order_num'] ?? $this->nextOrderNum());
+            $orderNum = (int) ($input['order_num'] ?? app(OrderNumberAllocator::class)
+                ->nextForOrganization((int) $user->organization_id));
             $lineNet = (float) $lines->sum('amount');
             $orderDiscount = 0.0;
             if (! empty($salesSettings['enable_vouchers']) && $cart->discount_voucher_id) {
@@ -385,6 +387,11 @@ class CheckoutController extends Controller
 
     protected function nextOrderNum(): int
     {
+        $user = request()->user();
+        if ($user) {
+            return app(OrderNumberAllocator::class)->nextForOrganization((int) $user->organization_id);
+        }
+
         return (int) (Sale::max('order_num') ?? 90000) + 1;
     }
 

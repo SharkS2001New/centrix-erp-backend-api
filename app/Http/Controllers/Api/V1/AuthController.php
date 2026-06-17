@@ -51,6 +51,22 @@ class AuthController extends Controller
         return response()->json($result);
     }
 
+    public function switchWorkspace(Request $request)
+    {
+        $data = $request->validate([
+            'login_channel' => 'required|in:backoffice,pos,mobile',
+            'client_id' => 'required|string',
+        ]);
+
+        $result = $this->sessions->switchLoginChannel(
+            $request->user(),
+            $data['client_id'],
+            $data['login_channel'],
+        );
+
+        return response()->json($result);
+    }
+
     public function memberships(Request $request)
     {
         $memberships = $this->resolver->membershipsForCanonicalUser((int) $request->user()->id);

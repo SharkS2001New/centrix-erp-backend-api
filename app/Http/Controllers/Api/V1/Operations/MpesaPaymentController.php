@@ -120,7 +120,7 @@ class MpesaPaymentController extends Controller
                 'CustomerMessage' => $stkResponse['CustomerMessage'] ?? 'STK push sent. Check your phone.',
             ],
             'stk_request_id' => $stkRequest->id,
-            'cart' => $cart->fresh('lines'),
+            'cart' => $this->presentCart($cart->fresh('lines'), $request->user()),
             'amount' => $amount,
             'amount_due' => $this->cartAmountDue($cart->fresh('lines')),
         ]);
@@ -155,7 +155,7 @@ class MpesaPaymentController extends Controller
             'paid_amount' => (float) ($cart->mpesa_payment_amount ?? 0),
             'amount_due' => $this->cartAmountDue($cart),
             'candidates' => $candidates,
-            'cart' => $cart->fresh('lines'),
+            'cart' => $this->presentCart($cart->fresh('lines'), $request->user()),
         ]);
     }
 
@@ -173,7 +173,7 @@ class MpesaPaymentController extends Controller
         return response()->json([
             'candidates' => $candidates,
             'amount_due' => $this->cartAmountDue($cart),
-            'cart' => $cart->fresh('lines'),
+            'cart' => $this->presentCart($cart->fresh('lines'), $request->user()),
         ]);
     }
 

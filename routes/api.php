@@ -70,14 +70,15 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
         Route::get('auth/memberships', [AuthController::class, 'memberships']);
         Route::post('auth/switch-organization', [AuthController::class, 'switchOrganization']);
+        Route::post('auth/switch-workspace', [AuthController::class, 'switchWorkspace']);
 
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
         Route::get('erp/profiles', [ErpCapabilitiesController::class, 'profiles'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:admin', 'erp.module:sales', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:admin', 'erp.module:sales', 'erp.permission:admin.manage']);
         Route::get('erp/settings/distribution', [ErpSettingsController::class, 'distribution'])
             ->middleware(['erp.module:admin', 'erp.module:distribution', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/distribution', [ErpSettingsController::class, 'updateDistribution'])
@@ -87,9 +88,9 @@ Route::prefix('v1')->group(function () {
         Route::patch('erp/settings/inventory', [ErpSettingsController::class, 'updateInventory'])
             ->middleware(['erp.module:admin', 'erp.module:inventory', 'erp.permission:admin.manage']);
         Route::get('erp/settings/finance', [ErpSettingsController::class, 'finance'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:admin', 'erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:admin', 'erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
         Route::get('erp/settings/ai', [\App\Http\Controllers\Api\V1\AiSettingsController::class, 'show'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/ai', [\App\Http\Controllers\Api\V1\AiSettingsController::class, 'update'])
@@ -175,10 +176,10 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware(['erp.module:inventory'])->group(function () {
             Route::apiResource('vats', VatController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('uoms', UomController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('categories', CategoryController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
@@ -187,10 +188,10 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('retail-package-settings', RetailPackageSettingController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('price-history', PriceHistoryController::class)
                 ->middleware('erp.permission:catalogue.view');

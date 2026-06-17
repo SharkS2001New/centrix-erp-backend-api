@@ -102,16 +102,14 @@ class UserPermissionService
         return in_array((int) $permissionId, $this->effectivePermissionIds($user), true);
     }
 
-    /** @return array<string, bool> */
-    public function permissionMapForUser(User $user): array
+    /** @return array<string, bool> Feature permission codes assigned to the user (no capability alias expansion). */
+    public function directPermissionMapForUser(User $user): array
     {
         if ($user->is_admin) {
-            $map = Permission::query()
+            return Permission::query()
                 ->pluck('permission_code')
                 ->mapWithKeys(fn ($code) => [$code => true])
                 ->all();
-
-            return $this->expandCapabilityAliases($map);
         }
 
         $codes = Permission::query()
@@ -123,7 +121,13 @@ class UserPermissionService
             $map[$code] = true;
         }
 
-        return $this->expandCapabilityAliases($map);
+        return $map;
+    }
+
+    /** @return array<string, bool> */
+    public function permissionMapForUser(User $user): array
+    {
+        return $this->expandCapabilityAliases($this->directPermissionMapForUser($user));
     }
 
     /** @param  array<string, bool>  $map

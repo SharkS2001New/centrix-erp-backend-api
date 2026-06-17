@@ -23,8 +23,16 @@ use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 use App\Http\Controllers\Api\V1\Operations\KraProductRegistrationController;
 use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
+use App\Http\Controllers\Api\V1\Operations\MobileSalesController;
 
 Route::middleware('auth:sanctum')->group(function () {
+
+    // ---- Mobile field sales ----
+    Route::middleware(['erp.module:sales.mobile', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
+        Route::get('dashboard', [MobileSalesController::class, 'dashboard']);
+        Route::get('orders', [MobileSalesController::class, 'index']);
+        Route::get('orders/{saleId}', [MobileSalesController::class, 'show']);
+    });
 
     // ---- Sales ----
     Route::middleware('erp.permission:sales.create')->prefix('sales')->group(function () {
@@ -35,6 +43,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'updateLine']);
         Route::delete('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'deleteLine']);
         Route::delete('carts/{cartId}/lines', [CartOperationsController::class, 'clear']);
+        Route::get('customers/lookup', [CartOperationsController::class, 'lookupCustomers']);
         Route::get('loyalty-cards/lookup', [CartOperationsController::class, 'lookupLoyaltyCard']);
         Route::post('carts/{cartId}/loyalty', [CartOperationsController::class, 'attachLoyaltyCard']);
         Route::post('carts/{cartId}/payment/voucher', [CartOperationsController::class, 'applyVoucherPayment']);

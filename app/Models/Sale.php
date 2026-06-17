@@ -20,6 +20,17 @@ class Sale extends Model
     {
         return $this->hasMany(SalePayment::class, 'sale_id');
     }
+
+    public function customer()
+    {
+        return $this->belongsTo(Customer::class, 'customer_num', 'customer_num');
+    }
+
+    public function cashier()
+    {
+        return $this->belongsTo(User::class, 'cashier_id');
+    }
+
     protected $fillable = [
         'order_num', 'branch_id', 'organization_id', 'channel', 'order_source', 'till_id',
         'float_session_id', 'cashier_id', 'customer_num', 'customer_name_override',

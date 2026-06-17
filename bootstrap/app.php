@@ -28,6 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
         });
         $middleware->alias([
             'erp.module' => \App\Http\Middleware\EnsureErpModule::class,
+            'erp.module_any' => \App\Http\Middleware\EnsureAnyErpModule::class,
             'erp.report_module' => \App\Http\Middleware\EnsureReportModule::class,
             'erp.permission' => \App\Http\Middleware\EnsurePermission::class,
             'erp.admin' => \App\Http\Middleware\EnsureAdmin::class,

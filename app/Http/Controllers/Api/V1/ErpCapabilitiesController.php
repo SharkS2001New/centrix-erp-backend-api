@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\WorkspaceResolver;
 use Illuminate\Http\Request;
 
 class ErpCapabilitiesController extends Controller
@@ -27,6 +28,7 @@ class ErpCapabilitiesController extends Controller
                 : [],
             'allow_org_provisioning' => (bool) $user?->is_super_admin
                 && config('erp.allow_org_provisioning'),
+            'workspaces' => app(WorkspaceResolver::class)->availableForUser($user, $gate),
         ]));
     }
 

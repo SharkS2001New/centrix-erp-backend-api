@@ -111,7 +111,7 @@ class AiActionExecutor
     {
         $channel = (string) ($params['channel'] ?? 'backend');
         $module = $channel === 'pos' ? 'sales.pos' : 'sales.backend';
-        $permission = $channel === 'pos' ? 'pos.checkout.create' : 'sales.orders.create';
+        $permission = $channel === 'pos' ? 'sales.create' : 'sales.orders.create';
 
         $this->assertModule($user, $module);
         $this->assertPermission($user, $permission);

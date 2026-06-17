@@ -23,7 +23,8 @@ return [
             'id' => 'sales',
             'label' => 'Sales',
             'items' => [
-                ['label' => 'Point of sale', 'path' => '/sales/pos', 'module' => 'sales.pos', 'permission' => 'pos.checkout.create'],
+                ['label' => 'Backoffice POS', 'path' => '/sales/pos', 'module' => 'sales.pos', 'permission' => 'pos.checkout.create'],
+                ['label' => 'Cashier terminal', 'path' => '/pos', 'module' => 'sales.pos', 'permission' => 'pos.terminal.view'],
                 ['label' => 'Till management', 'path' => '/sales/till-management', 'module' => 'sales.pos', 'permission' => 'pos.till_management.view'],
                 ['label' => 'Sales orders', 'path' => '/sales/orders', 'module' => 'sales.backend', 'permission' => 'sales.orders.view'],
                 ['label' => 'Customers', 'path' => '/customers', 'module' => 'customers_suppliers', 'permission' => 'customers.customers.view'],

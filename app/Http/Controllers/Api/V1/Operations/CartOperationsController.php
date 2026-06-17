@@ -12,6 +12,7 @@ use App\Http\Requests\Sales\AddCartLineRequest;
 use App\Http\Requests\Sales\StoreCartRequest;
 use App\Http\Requests\Sales\UpdateCartLineRequest;
 use App\Models\CartLine;
+use App\Models\Customer;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\TemporaryCart;
@@ -21,6 +22,7 @@ use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
+use App\Services\Sales\OrderSourceResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -36,17 +38,24 @@ class CartOperationsController extends Controller
 
     public function __construct(protected ErpContext $erp) {}
 
+    protected function cartResponse(TemporaryCart $cart, User $user, int $status = 200, array $extra = [])
+    {
+        return response()->json($this->presentCart($cart, $user, $extra), $status);
+    }
+
     public function store(StoreCartRequest $request)
     {
         $cart = $this->getOrCreateCart($request->user(), $request->validated());
         $cart->load('lines');
 
-        return response()->json($cart, 201);
+        return $this->cartResponse($cart, $request->user(), 201);
     }
 
     public function show(int $cartId)
     {
-        return response()->json($this->findOwnedCart($cartId, request()->user()));
+        $user = request()->user();
+
+        return $this->cartResponse($this->findOwnedCart($cartId, $user), $user);
     }
 
     public function update(\Illuminate\Http\Request $request, int $cartId)
@@ -74,7 +83,7 @@ class CartOperationsController extends Controller
             $cart->increment('update_no');
         }
 
-        return response()->json($cart->fresh('lines'));
+        return $this->cartResponse($cart->fresh('lines'), $request->user());
     }
 
     public function addLine(AddCartLineRequest $request, int $cartId)
@@ -92,7 +101,7 @@ class CartOperationsController extends Controller
         $gate = $this->erp->gateForUser($request->user());
         $line = $this->updateCartLine($cart, $lineRef, $request->validated(), $request->user(), $gate);
 
-        return response()->json($cart->fresh('lines'));
+        return $this->cartResponse($cart->fresh('lines'), $request->user());
     }
 
     public function deleteLine(int $cartId, string $lineRef)
@@ -100,7 +109,7 @@ class CartOperationsController extends Controller
         $cart = $this->findOwnedCart($cartId, request()->user());
         $this->removeCartLine($cart, $lineRef);
 
-        return response()->json($cart->fresh('lines'));
+        return $this->cartResponse($cart->fresh('lines'), request()->user());
     }
 
     public function clear(int $cartId)
@@ -171,7 +180,58 @@ class CartOperationsController extends Controller
             return $cart->fresh('lines');
         });
 
-        return response()->json($cart);
+        return $this->cartResponse($cart, $user, 200, [
+            'held_order_num' => (int) $sale->order_num,
+        ]);
+    }
+
+    /** GET /sales/customers/lookup — search registered customers for POS credit checkout */
+    public function lookupCustomers(Request $request)
+    {
+        $data = $request->validate([
+            'q' => 'nullable|string|max:100',
+            'customer_num' => 'nullable|integer|min:1',
+            'per_page' => 'sometimes|integer|min:1|max:50',
+        ]);
+
+        $orgId = (int) $request->user()->organization_id;
+        $query = Customer::query()
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at');
+
+        if (! empty($data['customer_num'])) {
+            $query->where('customer_num', (int) $data['customer_num']);
+        } else {
+            $term = trim((string) ($data['q'] ?? ''));
+            if ($term === '') {
+                return response()->json(['data' => []]);
+            }
+            $like = '%'.$term.'%';
+            $query->where(function ($builder) use ($like, $term) {
+                $builder
+                    ->where('customer_name', 'like', $like)
+                    ->orWhere('phone_number', 'like', $like)
+                    ->orWhere('additional_phone', 'like', $like);
+                if (ctype_digit($term)) {
+                    $builder->orWhere('customer_num', 'like', $like);
+                }
+            });
+        }
+
+        $perPage = min((int) ($data['per_page'] ?? 20), 50);
+        $rows = $query
+            ->orderBy('customer_name')
+            ->limit($perPage)
+            ->get([
+                'customer_num',
+                'customer_name',
+                'phone_number',
+                'credit_limit',
+                'current_balance',
+                'customer_status',
+            ]);
+
+        return response()->json(['data' => $rows]);
     }
 
     public function lookupLoyaltyCard(Request $request)
@@ -218,7 +278,7 @@ class CartOperationsController extends Controller
         $cart->increment('update_no');
 
         return response()->json([
-            'cart' => $cart->fresh('lines'),
+            'cart' => $this->presentCart($cart->fresh('lines'), $request->user()),
             'loyalty' => [
                 'loyalty_card_id' => $card->id,
                 'card_number' => $card->card_number,
@@ -278,7 +338,7 @@ class CartOperationsController extends Controller
             $fresh = $cart->fresh('lines');
 
             return response()->json([
-                'cart' => $fresh,
+                'cart' => $this->presentCart($fresh, $request->user()),
                 'voucher' => [
                     'id' => $discountVoucher->id,
                     'voucher_code' => $discountVoucher->voucher_code,
@@ -308,7 +368,7 @@ class CartOperationsController extends Controller
         $fresh = $cart->fresh('lines');
 
         return response()->json([
-            'cart' => $fresh,
+            'cart' => $this->presentCart($fresh, $request->user()),
             'voucher' => [
                 'id' => $voucher->id,
                 'voucher_code' => $voucher->voucher_code,
@@ -353,7 +413,7 @@ class CartOperationsController extends Controller
         $fresh = $cart->fresh('lines');
 
         return response()->json([
-            'cart' => $fresh,
+            'cart' => $this->presentCart($fresh, $request->user()),
             'loyalty' => [
                 'loyalty_card_id' => $card->id,
                 'card_number' => $card->card_number,
@@ -378,7 +438,7 @@ class CartOperationsController extends Controller
             $cart->increment('update_no');
         }
 
-        return response()->json($cart->fresh('lines'));
+        return $this->cartResponse($cart->fresh('lines'), $request->user());
     }
 
     public function clearCartPayments(int $cartId)
@@ -387,7 +447,7 @@ class CartOperationsController extends Controller
         $this->clearCartPaymentOptions($cart);
         $cart->increment('update_no');
 
-        return response()->json($cart->fresh('lines'));
+        return $this->cartResponse($cart->fresh('lines'), request()->user());
     }
 
     public function cancelHeldOrder(Request $request, int $saleId)
@@ -423,7 +483,8 @@ class CartOperationsController extends Controller
     protected function getOrCreateCart(User $user, array $input): TemporaryCart
     {
         $channel = $input['channel'] ?? 'pos';
-        $orderSource = $input['order_source'] ?? 'backoffice';
+        $token = $user->currentAccessToken();
+        $orderSource = app(OrderSourceResolver::class)->defaultForCart($input, $token);
         $gate = $this->erp->gateForUser($user);
         if (! $gate->channelEnabled($channel)) {
             throw new InvalidArgumentException("Channel [{$channel}] is not enabled for this organization.");

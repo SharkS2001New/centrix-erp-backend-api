@@ -1,0 +1,218 @@
+<?php
+
+namespace App\Services\Sales;
+
+use App\Models\Customer;
+use App\Models\Sale;
+use App\Models\User;
+use App\Services\Auth\UserAccessService;
+use Carbon\Carbon;
+use Illuminate\Database\Eloquent\Builder;
+
+class MobileSalesService
+{
+    public function __construct(
+        protected UserAccessService $access,
+    ) {}
+
+    /**
+     * @return array{
+     *     summary: array<string, int|float>,
+     *     recent_orders: list<array<string, mixed>>,
+     *     weekly_sales: list<array<string, mixed>>,
+     *     monthly_sales: list<array<string, mixed>>
+     * }
+     */
+    public function dashboard(User $user, ?Carbon $from = null, ?Carbon $to = null): array
+    {
+        $to ??= now()->startOfDay();
+        $from ??= $to->copy();
+
+        $salesQuery = $this->mobileSalesQuery($user)
+            ->whereDate('created_at', '>=', $from->toDateString())
+            ->whereDate('created_at', '<=', $to->toDateString())
+            ->where('status', '!=', 'cancelled');
+
+        $summaryRow = (clone $salesQuery)
+            ->selectRaw('COUNT(*) as order_count')
+            ->selectRaw('COALESCE(ROUND(SUM(total_vat), 2), 0) as vat_total')
+            ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as order_total')
+            ->selectRaw(
+                'COALESCE(SUM(CASE WHEN payment_status = ? OR status IN (?, ?, ?) THEN 1 ELSE 0 END), 0) as paid_count',
+                ['paid', 'paid', 'completed', 'delivered'],
+            )
+            ->first();
+
+        $customerCount = Customer::query()
+            ->whereNull('deleted_at')
+            ->when(
+                $user->organization_id,
+                fn (Builder $q) => $q->where('organization_id', $user->organization_id),
+            );
+        $this->access->scopeBranchIfLimited($customerCount, $user);
+
+        return [
+            'summary' => [
+                'NoofOrders' => (int) ($summaryRow->order_count ?? 0),
+                'vatTotals' => (float) ($summaryRow->vat_total ?? 0),
+                'orderTotals' => (float) ($summaryRow->order_total ?? 0),
+                'noofPaidOrders' => (int) ($summaryRow->paid_count ?? 0),
+                'noofCustomers' => (int) $customerCount->count(),
+            ],
+            'recent_orders' => $this->recentOrders($user, $from, $to),
+            'weekly_sales' => $this->trendSales($user, $to->copy()->subDays(6), $to),
+            'monthly_sales' => $this->trendSales($user, $to->copy()->subDays(29), $to),
+        ];
+    }
+
+    /**
+     * @return array{data: list<array<string, mixed>>, meta: array<string, mixed>}
+     */
+    public function listOrders(User $user, array $filters = []): array
+    {
+        $from = isset($filters['from_date'])
+            ? Carbon::parse($filters['from_date'])->startOfDay()
+            : now()->startOfDay();
+        $to = isset($filters['to_date'])
+            ? Carbon::parse($filters['to_date'])->startOfDay()
+            : now()->startOfDay();
+
+        $query = $this->mobileSalesQuery($user)
+            ->whereDate('created_at', '>=', $from->toDateString())
+            ->whereDate('created_at', '<=', $to->toDateString())
+            ->where('status', '!=', 'cancelled')
+            ->orderByDesc('id');
+
+        if ($q = trim((string) ($filters['q'] ?? ''))) {
+            $query->where(function (Builder $sub) use ($q) {
+                $sub->where('order_num', 'like', "%{$q}%")
+                    ->orWhere('customer_name_override', 'like', "%{$q}%")
+                    ->orWhereHas('customer', function (Builder $customer) use ($q) {
+                        $customer->where('customer_name', 'like', "%{$q}%");
+                    });
+            });
+        }
+
+        $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
+        $page = $query->paginate($perPage);
+
+        return [
+            'data' => collect($page->items())
+                ->map(fn (Sale $sale) => $this->presentOrderSummary($sale))
+                ->values()
+                ->all(),
+            'meta' => [
+                'current_page' => $page->currentPage(),
+                'last_page' => $page->lastPage(),
+                'per_page' => $page->perPage(),
+                'total' => $page->total(),
+            ],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    public function showOrder(User $user, int $saleId): array
+    {
+        $sale = $this->mobileSalesQuery($user)
+            ->with(['items.product', 'cashier'])
+            ->findOrFail($saleId);
+
+        return array_merge(
+            $this->presentOrderSummary($sale),
+            [
+                'items' => $sale->items->map(fn ($item) => [
+                    'product_code' => $item->product_code,
+                    'product_name' => $item->product?->product_name ?? $item->product_code,
+                    'qty' => (float) $item->quantity,
+                    'qtyDisp' => trim((float) $item->quantity.' '.($item->uom ?? '')),
+                    'uom' => $item->uom,
+                    'unit_price' => (float) $item->selling_price,
+                    'product_vat' => (float) $item->product_vat,
+                    'amount' => (float) $item->amount,
+                    'sell_on_retail' => (int) $item->on_wholesale_retail,
+                ])->values()->all(),
+            ],
+        );
+    }
+
+    /** @return list<array<string, mixed>> */
+    protected function recentOrders(User $user, Carbon $from, Carbon $to): array
+    {
+        return $this->mobileSalesQuery($user)
+            ->with(['customer', 'cashier'])
+            ->whereDate('created_at', '>=', $from->toDateString())
+            ->whereDate('created_at', '<=', $to->toDateString())
+            ->where('status', '!=', 'cancelled')
+            ->orderByDesc('id')
+            ->limit(20)
+            ->get()
+            ->map(fn (Sale $sale) => $this->presentOrderSummary($sale))
+            ->values()
+            ->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    protected function trendSales(User $user, Carbon $from, Carbon $to): array
+    {
+        $rows = $this->mobileSalesQuery($user)
+            ->whereDate('created_at', '>=', $from->toDateString())
+            ->whereDate('created_at', '<=', $to->toDateString())
+            ->where('status', '!=', 'cancelled')
+            ->selectRaw('DATE(created_at) as sale_day')
+            ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
+            ->groupBy('sale_day')
+            ->orderBy('sale_day')
+            ->get();
+
+        return $rows->map(function ($row) {
+            $day = Carbon::parse($row->sale_day);
+
+            return [
+                'create_date' => $day->format('j-n'),
+                'total_amount' => (float) $row->total_amount,
+            ];
+        })->values()->all();
+    }
+
+    /** @return Builder<Sale> */
+    protected function mobileSalesQuery(User $user): Builder
+    {
+        $query = Sale::query()
+            ->where('channel', 'mobile')
+            ->where('archived', 0)
+            ->whereNull('deleted_at');
+
+        if ($user->organization_id) {
+            $query->where('organization_id', $user->organization_id);
+        }
+
+        $this->access->scopeBranchIfLimited($query, $user);
+
+        if (! $user->is_admin) {
+            $query->where('cashier_id', $user->id);
+        }
+
+        return $query;
+    }
+
+    /** @return array<string, mixed> */
+    protected function presentOrderSummary(Sale $sale): array
+    {
+        $sale->loadMissing(['customer', 'cashier']);
+        $labels = config('erp.order_status_labels', []);
+
+        return [
+            'id' => $sale->id,
+            'order_no' => (int) $sale->order_num,
+            'customer_name' => $sale->customer?->customer_name
+                ?? $sale->customer_name_override
+                ?? 'Walk-in',
+            'orderTotals' => round((float) $sale->order_total, 2),
+            'status' => $sale->status,
+            'status_name' => $labels[$sale->status] ?? ucfirst(str_replace('_', ' ', (string) $sale->status)),
+            'payment_status' => $sale->payment_status,
+            'createdBy' => $sale->cashier?->username ?? '',
+            'created_at' => $sale->created_at,
+        ];
+    }
+}

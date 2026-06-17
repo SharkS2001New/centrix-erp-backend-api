@@ -237,6 +237,18 @@ class RbacRegistryTest extends TestCase
         Sanctum::actingAs($cashier);
 
         $this->postJson('/api/v1/sales/carts', ['channel' => 'pos'])->assertCreated();
-        $this->getJson('/api/v1/sales?per_page=5')->assertOk();
+        $this->getJson('/api/v1/products?per_page=5')->assertOk();
+        $this->getJson('/api/v1/tills?per_page=5')->assertOk();
+    }
+
+    public function test_demo_cashier_only_has_external_pos_workspace(): void
+    {
+        PermissionMatrixService::ensure();
+        $cashier = User::where('username', 'cashier')->firstOrFail();
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($cashier);
+        $workspaces = app(\App\Services\Erp\WorkspaceResolver::class)->availableForUser($cashier, $gate);
+
+        $this->assertSame(['pos'], array_column($workspaces, 'id'));
+        $this->assertSame('/pos', $workspaces[0]['home_path'] ?? null);
     }
 }

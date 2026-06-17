@@ -20,7 +20,7 @@ class ProductController extends BaseResourceController
 
     public function index(Request $request)
     {
-        $query = Product::query()->whereNull('deleted_at');
+        $query = $this->baseQuery($request)->whereNull('deleted_at');
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if (in_array($col, $this->filterableColumns(), true)) {

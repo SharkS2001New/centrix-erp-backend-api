@@ -13,6 +13,7 @@ class AuthSessionService
     public function __construct(
         protected TenantAccountResolver $resolver,
         protected UserLoginChannelService $loginChannels,
+        protected UserPermissionService $permissions,
     ) {}
 
     /**
@@ -109,6 +110,29 @@ class AuthSessionService
     }
 
     /**
+     * Re-issue the session token with a different login channel (workspace switch).
+     *
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    public function switchLoginChannel(
+        User $currentUser,
+        string $clientId,
+        string $loginChannel,
+    ): array {
+        $org = \App\Models\Organization::findOrFail($currentUser->organization_id);
+        $account = $this->resolver->resolveForCanonicalUser($org, (int) $currentUser->id);
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'login_channel' => ['You do not have access to this organization.'],
+            ]);
+        }
+
+        $currentUser->currentAccessToken()?->delete();
+
+        return $this->issueSession($account, $clientId, forceLogout: false, loginChannel: $loginChannel);
+    }
+
+    /**
      * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
      */
     protected function issueSession(
@@ -121,6 +145,7 @@ class AuthSessionService
         $effective = $account->effectiveUser();
         $loginChannel = $this->loginChannels->normalizeChannel($loginChannel);
         $this->loginChannels->assertCanLogin($effective, $loginChannel);
+        $this->assertLoginChannelPermission($effective, $loginChannel);
 
         if ($forceLogout) {
             $authUser->tokens()->delete();
@@ -198,6 +223,21 @@ class AuthSessionService
                 'session' => ['This user is already logged in on another device.'],
             ]);
         }
+    }
+
+    protected function assertLoginChannelPermission(User $user, string $loginChannel): void
+    {
+        if ($loginChannel !== UserLoginChannelService::POS) {
+            return;
+        }
+
+        if ($this->permissions->hasPermission($user, 'pos.terminal.view')) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'login_channel' => ['You do not have permission to use the cashier terminal.'],
+        ]);
     }
 
     protected function resolveIdleMinutesForUser(User $authUser): int

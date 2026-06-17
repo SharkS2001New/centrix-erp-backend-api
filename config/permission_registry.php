@@ -48,11 +48,12 @@ return [
             ],
         ],
         'pos' => [
-            'label' => 'Point of sale',
+            'label' => 'Sales',
             'features' => [
-                'till_management' => ['label' => 'Till management', 'actions' => ['view', 'create', 'edit']],
-                'checkout' => ['label' => 'POS checkout', 'actions' => ['create']],
-                'end_of_day' => ['label' => 'End of day report', 'actions' => ['view']],
+                'till_management' => ['label' => 'POS till management', 'actions' => ['view', 'create', 'edit']],
+                'checkout' => ['label' => 'Create order (Backoffice POS)', 'actions' => ['create']],
+                'terminal' => ['label' => 'External POS', 'actions' => ['view']],
+                'end_of_day' => ['label' => 'POS end of day', 'actions' => ['view']],
             ],
         ],
         'payments' => [

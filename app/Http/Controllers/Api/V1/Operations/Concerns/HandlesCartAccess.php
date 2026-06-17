@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations\Concerns;
 
 use App\Models\TemporaryCart;
 use App\Models\User;
+use App\Services\Sales\OrderNumberAllocator;
 
 trait HandlesCartAccess
 {
@@ -23,5 +24,20 @@ trait HandlesCartAccess
         );
 
         return $cart;
+    }
+
+    /** @return array<string, mixed> */
+    protected function presentCart(TemporaryCart $cart, ?User $user = null, array $extra = []): array
+    {
+        $user ??= request()->user();
+        $cart->loadMissing('lines');
+        $payload = array_merge($cart->toArray(), $extra);
+
+        if ($user) {
+            $payload['next_order_num'] = app(OrderNumberAllocator::class)
+                ->nextForOrganization((int) $user->organization_id);
+        }
+
+        return $payload;
     }
 }
