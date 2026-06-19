@@ -100,7 +100,17 @@ class DemoDataSeeder extends Seeder
         }
 
         $cashierPerms = [
+            'dashboard.overview.view',
             'pos.terminal.view',
+            'pos.till_management.view',
+            'pos.till_management.create',
+            'pos.end_of_day.view',
+            'sales.dashboard.view',
+            'sales.orders.view',
+            'sales.orders.create',
+            'payments.sale_payments.view',
+            'payments.sale_payments.create',
+            'inventory.stock.view',
         ];
         foreach ($cashierPerms as $code) {
             $pid = Permission::where('permission_code', $code)->value('id');
@@ -333,7 +343,7 @@ class DemoDataSeeder extends Seeder
         ]);
 
         $sale = Sale::create([
-            'order_num' => 90001,
+            'order_num' => 1,
             'branch_id' => $hq->id,
             'organization_id' => $org->id,
             'channel' => 'pos',
@@ -364,7 +374,7 @@ class DemoDataSeeder extends Seeder
         ]);
 
         $completedDelivery = Sale::create([
-            'order_num' => 90002,
+            'order_num' => 2,
             'branch_id' => $hq->id,
             'organization_id' => $org->id,
             'channel' => 'mobile',
@@ -397,7 +407,7 @@ class DemoDataSeeder extends Seeder
         ]);
 
         $pendingDelivery = Sale::create([
-            'order_num' => 90003,
+            'order_num' => 3,
             'branch_id' => $hq->id,
             'organization_id' => $org->id,
             'channel' => 'mobile',

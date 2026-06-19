@@ -410,4 +410,65 @@ class AiAssistantTest extends TestCase
 
         return \App\Models\Sale::findOrFail($saleId);
     }
+
+    public function test_hr_question_declined_in_accounting_workspace_without_llm(): void
+    {
+        $this->patchJson('/api/v1/erp/settings/ai', [
+            'enabled' => true,
+            'api_key' => 'sk-test-org-key-123456',
+            'model' => 'gpt-4o-mini',
+        ])->assertOk();
+
+        Http::fake();
+
+        $scope = app(\App\Services\Ai\AiWorkspaceScope::class);
+
+        $this->postJson('/api/v1/ai/chat', [
+            'context' => 'erp',
+            'workspace_id' => 'accounting',
+            'pathname' => '/accounting',
+            'message' => 'How do I add a new employee to payroll?',
+        ])
+            ->assertOk()
+            ->assertJsonPath('declined_off_topic', true)
+            ->assertJsonPath('active_workspace', 'accounting')
+            ->assertJsonFragment([
+                'reply' => $scope->declineMessage(
+                    app(\App\Services\Ai\AiWorkspaceScope::class)->resolve(
+                        $this->user,
+                        app(\App\Services\Erp\ErpContext::class)->gateForUser($this->user),
+                        'accounting',
+                        '/accounting',
+                    ),
+                ),
+            ]);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_context_is_scoped_to_active_workspace(): void
+    {
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($this->user);
+        $scope = app(\App\Services\Ai\AiWorkspaceScope::class)->resolve(
+            $this->user,
+            $gate,
+            'hr',
+            '/hr/employees',
+        );
+
+        $context = app(AiSystemContextBuilder::class)->build(
+            $this->user,
+            'How do I add an employee?',
+            $scope,
+        );
+
+        $this->assertSame('hr', $context['active_workspace']['id']);
+        $this->assertNotEmpty($context['navigation']);
+        $this->assertTrue(
+            collect($context['navigation'])->contains(fn ($section) => ($section['id'] ?? null) === 'hr'),
+        );
+        $this->assertTrue(
+            collect($context['available_actions'])->contains(fn ($action) => ($action['type'] ?? null) === 'create_employee'),
+        );
+    }
 }

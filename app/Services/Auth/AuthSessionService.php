@@ -151,7 +151,7 @@ class AuthSessionService
             $authUser->tokens()->delete();
         } else {
             $this->pruneStaleTokens($authUser);
-            $this->assertNoActiveSessionElsewhere($authUser, $clientId);
+            $this->assertNoActiveSessionElsewhere($authUser, $clientId, $loginChannel);
             $authUser->tokens()->where('name', $clientId)->delete();
         }
 
@@ -203,12 +203,16 @@ class AuthSessionService
             ->delete();
     }
 
-    protected function assertNoActiveSessionElsewhere(User $authUser, string $clientId): void
-    {
+    protected function assertNoActiveSessionElsewhere(
+        User $authUser,
+        string $clientId,
+        string $loginChannel,
+    ): void {
         $idleMinutes = $this->resolveIdleMinutesForUser($authUser);
 
         $activeTokenExists = $authUser->tokens()
             ->where('name', '!=', $clientId)
+            ->where('login_channel', $loginChannel)
             ->where(function ($query) use ($idleMinutes) {
                 $query->where('last_used_at', '>=', now()->subMinutes($idleMinutes))
                     ->orWhere(function ($q) use ($idleMinutes) {

@@ -23,14 +23,40 @@ class AiSystemContextBuilder
     ) {}
 
     /** @return array<string, mixed> */
-    public function build(User $user, string $message): array
+    public function build(User $user, string $message, ?array $workspaceScope = null): array
     {
         $org = Organization::find($user->organization_id);
         $gate = $this->erp->gateForUser($user);
         $caps = $gate->toArray();
         $userAccess = $this->userAccessSummary($user, $gate);
+        $scope = $workspaceScope ?? [
+            'id' => 'backoffice',
+            'label' => 'Backoffice',
+            'nav_section_ids' => [],
+            'action_types' => [],
+            'module_catalog_keys' => [],
+            'workflow_keys' => [],
+        ];
+
+        $navigation = $this->visibleNavigation($gate, $user);
+        $actions = $this->availableActions($gate, $user);
+        $moduleCatalog = config('ai_knowledge.modules', []);
+        $workflows = config('ai_knowledge.workflows', []);
+
+        if ($workspaceScope !== null) {
+            $scopeService = app(AiWorkspaceScope::class);
+            $navigation = $scopeService->filterNavigation($navigation, $workspaceScope);
+            $actions = $scopeService->filterActions($actions, $workspaceScope);
+            $moduleCatalog = $scopeService->filterModuleCatalog($moduleCatalog, $workspaceScope);
+            $workflows = $scopeService->filterWorkflows($workflows, $workspaceScope);
+        }
 
         $context = [
+            'active_workspace' => [
+                'id' => $scope['id'],
+                'label' => $scope['label'],
+                'description' => $scope['description'] ?? '',
+            ],
             'organization' => [
                 'id' => $org?->id,
                 'name' => $org?->org_name,
@@ -45,11 +71,11 @@ class AiSystemContextBuilder
             ],
             'user_access' => $userAccess,
             'enabled_modules' => array_keys(array_filter($caps['modules'] ?? [])),
-            'navigation' => $this->visibleNavigation($gate, $user),
-            'available_actions' => $this->availableActions($gate, $user),
+            'navigation' => $navigation,
+            'available_actions' => $actions,
             'report_builder_modules' => array_column($this->reportBuilder->schema()['modules'] ?? [], 'name'),
-            'module_catalog' => config('ai_knowledge.modules', []),
-            'workflows' => config('ai_knowledge.workflows', []),
+            'module_catalog' => $moduleCatalog,
+            'workflows' => $workflows,
             'entity_schemas' => $this->entitySchemas->summaryForContext($user),
             'organization_knowledge' => $this->knowledge->confirmedForOrganization((int) $user->organization_id),
         ];
@@ -88,6 +114,11 @@ class AiSystemContextBuilder
         }
 
         return $context;
+    }
+
+    public function gateForUser(User $user): CapabilityGate
+    {
+        return $this->erp->gateForUser($user);
     }
 
     protected function needsLookup(string $lower, string ...$keywords): bool
@@ -221,6 +252,7 @@ class AiSystemContextBuilder
 
             if ($items !== []) {
                 $out[] = [
+                    'id' => $section['id'] ?? null,
                     'section' => $section['label'],
                     'items' => $items,
                 ];

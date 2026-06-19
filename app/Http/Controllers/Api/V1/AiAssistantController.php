@@ -65,6 +65,8 @@ class AiAssistantController extends Controller
 
         $data = $request->validate([
             'context' => 'nullable|string|in:products,reports,report_builder,general,erp',
+            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr',
+            'pathname' => 'nullable|string|max:300',
             'message' => ['required', 'string', 'max:4000', 'not_regex:/data:image\//i'],
             'history' => 'nullable|array|max:16',
             'history.*.role' => 'required_with:history|in:user,assistant',
@@ -100,6 +102,8 @@ class AiAssistantController extends Controller
             $data['history'] ?? [],
             $data['pending_action'] ?? null,
             (bool) ($data['confirm_action'] ?? false),
+            $data['workspace_id'] ?? null,
+            $data['pathname'] ?? null,
         );
 
         if (! empty($data['confirm_learn_id'])) {

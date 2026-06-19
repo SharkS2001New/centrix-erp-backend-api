@@ -166,6 +166,27 @@ class UserLoginChannelTest extends TestCase
             ->assertJsonPath('login_channels', ['mobile'])
             ->assertJsonPath('is_mobile_user', true);
     }
+    public function test_mobile_and_backoffice_sessions_can_coexist(): void
+    {
+        $user = $this->makeUser(['login_channels' => ['backoffice', 'pos', 'mobile']]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'ERP_BROWSER',
+            'login_channel' => 'backoffice',
+        ])->assertOk();
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'LIGHTSTORES_MOBILE',
+            'login_channel' => 'mobile',
+        ])->assertOk();
+    }
+
     protected function makeUser(array $overrides = []): User
     {
         $admin = User::where('username', 'admin')->firstOrFail();

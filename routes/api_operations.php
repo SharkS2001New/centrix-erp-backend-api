@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Operations\LpoReceiveController;
 use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
+use App\Http\Controllers\Api\V1\Operations\HrReportController;
 use App\Http\Controllers\Api\V1\Operations\ReportBuilderController;
 use App\Http\Controllers\Api\V1\Operations\ExternalAccountingController;
 use App\Http\Controllers\Api\V1\Operations\FiscalPeriodController;
@@ -215,6 +216,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {
             Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
+            Route::get('leave-balance', [HrReportController::class, 'leaveBalance']);
+            Route::get('statutory-deductions', [HrReportController::class, 'statutoryDeductions']);
+            Route::get('bank-transfer', [HrReportController::class, 'bankTransfer']);
+            Route::get('staff-turnover', [HrReportController::class, 'staffTurnover']);
+            Route::get('headcount', [HrReportController::class, 'headcount']);
+            Route::get('contract-expiry', [HrReportController::class, 'contractExpiry']);
+            Route::get('hr-dashboard-kpi', [HrReportController::class, 'hrDashboardKpi']);
         });
 
         Route::middleware('erp.permission:reports.view|accounting.view')->group(function () {

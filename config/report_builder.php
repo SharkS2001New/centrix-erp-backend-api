@@ -1620,4 +1620,25 @@ return [
     'max_columns' => null,
     'max_group_by' => null,
     'max_chart_limit' => null,
+    'max_sources' => 4,
+
+    'blend_dimensions' => is_file(__DIR__.'/report_builder_blend.php')
+        ? require __DIR__.'/report_builder_blend.php'
+        : [],
+
+    'source_links' => is_file(__DIR__.'/report_builder_links.php')
+        ? require __DIR__.'/report_builder_links.php'
+        : ['extra_edges' => []],
+
+    /*
+     * Report builder data sources allowed per product workspace.
+     * Keys match config/erp_workspaces.php and the web workspace switcher.
+     */
+    'workspace_source_modules' => [
+        'backoffice' => ['Sales', 'Inventory', 'Purchasing'],
+        'accounting' => ['Accounting'],
+        'hr' => ['HR'],
+        'admin' => ['Administration', 'Sales', 'Inventory', 'Purchasing', 'Accounting', 'HR'],
+        'pos' => [],
+    ],
 ];

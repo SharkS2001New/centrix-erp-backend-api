@@ -23,12 +23,12 @@ class MobileSalesService
      *     monthly_sales: list<array<string, mixed>>
      * }
      */
-    public function dashboard(User $user, ?Carbon $from = null, ?Carbon $to = null): array
+    public function dashboard(User $user, ?Carbon $from = null, ?Carbon $to = null, bool $allChannels = false): array
     {
         $to ??= now()->startOfDay();
         $from ??= $to->copy();
 
-        $salesQuery = $this->mobileSalesQuery($user)
+        $salesQuery = $this->mobileSalesQuery($user, $allChannels)
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled');
@@ -59,9 +59,9 @@ class MobileSalesService
                 'noofPaidOrders' => (int) ($summaryRow->paid_count ?? 0),
                 'noofCustomers' => (int) $customerCount->count(),
             ],
-            'recent_orders' => $this->recentOrders($user, $from, $to),
-            'weekly_sales' => $this->trendSales($user, $to->copy()->subDays(6), $to),
-            'monthly_sales' => $this->trendSales($user, $to->copy()->subDays(29), $to),
+            'recent_orders' => $this->recentOrders($user, $from, $to, $allChannels),
+            'weekly_sales' => $this->trendSales($user, $to->copy()->subDays(6), $to, $allChannels),
+            'monthly_sales' => $this->trendSales($user, $to->copy()->subDays(29), $to, $allChannels),
         ];
     }
 
@@ -77,7 +77,10 @@ class MobileSalesService
             ? Carbon::parse($filters['to_date'])->startOfDay()
             : now()->startOfDay();
 
-        $query = $this->mobileSalesQuery($user)
+        $query = $this->mobileSalesQuery(
+            $user,
+            filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN),
+        )
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')
@@ -111,9 +114,9 @@ class MobileSalesService
     }
 
     /** @return array<string, mixed> */
-    public function showOrder(User $user, int $saleId): array
+    public function showOrder(User $user, int $saleId, bool $allChannels = false): array
     {
-        $sale = $this->mobileSalesQuery($user)
+        $sale = $this->mobileSalesQuery($user, $allChannels)
             ->with(['items.product', 'cashier'])
             ->findOrFail($saleId);
 
@@ -136,9 +139,9 @@ class MobileSalesService
     }
 
     /** @return list<array<string, mixed>> */
-    protected function recentOrders(User $user, Carbon $from, Carbon $to): array
+    protected function recentOrders(User $user, Carbon $from, Carbon $to, bool $allChannels = false): array
     {
-        return $this->mobileSalesQuery($user)
+        return $this->mobileSalesQuery($user, $allChannels)
             ->with(['customer', 'cashier'])
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
@@ -152,9 +155,9 @@ class MobileSalesService
     }
 
     /** @return list<array<string, mixed>> */
-    protected function trendSales(User $user, Carbon $from, Carbon $to): array
+    protected function trendSales(User $user, Carbon $from, Carbon $to, bool $allChannels = false): array
     {
-        $rows = $this->mobileSalesQuery($user)
+        $rows = $this->mobileSalesQuery($user, $allChannels)
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')
@@ -175,22 +178,22 @@ class MobileSalesService
     }
 
     /** @return Builder<Sale> */
-    protected function mobileSalesQuery(User $user): Builder
+    protected function mobileSalesQuery(User $user, bool $allChannels = false): Builder
     {
         $query = Sale::query()
-            ->where('channel', 'mobile')
             ->where('archived', 0)
-            ->whereNull('deleted_at');
+            ->whereNull('deleted_at')
+            ->where('cashier_id', $user->id);
+
+        if (! $allChannels) {
+            $query->where('channel', 'mobile');
+        }
 
         if ($user->organization_id) {
             $query->where('organization_id', $user->organization_id);
         }
 
         $this->access->scopeBranchIfLimited($query, $user);
-
-        if (! $user->is_admin) {
-            $query->where('cashier_id', $user->id);
-        }
 
         return $query;
     }
@@ -212,6 +215,7 @@ class MobileSalesService
             'status_name' => $labels[$sale->status] ?? ucfirst(str_replace('_', ' ', (string) $sale->status)),
             'payment_status' => $sale->payment_status,
             'createdBy' => $sale->cashier?->username ?? '',
+            'channel' => $sale->channel,
             'created_at' => $sale->created_at,
         ];
     }

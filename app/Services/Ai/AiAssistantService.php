@@ -14,6 +14,7 @@ class AiAssistantService
     public function __construct(
         protected AiSystemContextBuilder $contextBuilder,
         protected AiTopicGuard $topicGuard,
+        protected AiWorkspaceScope $workspaceScope,
         protected AiActionExecutor $actionExecutor,
         protected AiFormSpecBuilder $formSpecBuilder,
         protected AiKnowledgeService $knowledge,
@@ -37,6 +38,8 @@ class AiAssistantService
         array $history = [],
         ?array $pendingAction = null,
         bool $confirmAction = false,
+        ?string $workspaceId = null,
+        ?string $pathname = null,
     ): array {
         $teachResult = $this->tryCaptureUserTeaching($user, $message);
         if ($teachResult) {
@@ -56,12 +59,15 @@ class AiAssistantService
         }
 
         if ($confirmAction && $pendingAction) {
-            return $this->executeConfirmedAction($user, $pendingAction);
+            return $this->executeConfirmedAction($user, $pendingAction, $workspaceId, $pathname);
         }
 
         if ($pendingAction && $this->actionExecutor->isConfirmation($message)) {
-            return $this->executeConfirmedAction($user, $pendingAction);
+            return $this->executeConfirmedAction($user, $pendingAction, $workspaceId, $pathname);
         }
+
+        $gate = $this->contextBuilder->gateForUser($user);
+        $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
 
         if (! $this->topicGuard->isErpRelated($message)) {
             return [
@@ -71,9 +77,18 @@ class AiAssistantService
             ];
         }
 
-        $systemContext = $this->contextBuilder->build($user, $message);
+        if (! $this->workspaceScope->isMessageInScope($message, $scope, $pendingAction)) {
+            return [
+                'reply' => $this->workspaceScope->declineMessage($scope),
+                'tools_used' => [],
+                'declined_off_topic' => true,
+                'active_workspace' => $scope['id'],
+            ];
+        }
+
+        $systemContext = $this->contextBuilder->build($user, $message, $scope);
         $messages = [
-            ['role' => 'system', 'content' => $this->systemPrompt()],
+            ['role' => 'system', 'content' => $this->systemPrompt($scope)],
             [
                 'role' => 'system',
                 'content' => "Organization ERP context (use for navigation, permissions, entity schemas, and data — do not invent):\n"
@@ -146,9 +161,10 @@ class AiAssistantService
                 'reply' => $reply,
                 'tools_used' => array_keys(array_diff_key(
                     $systemContext,
-                    array_flip(['organization', 'user', 'enabled_modules']),
+                    array_flip(['organization', 'user', 'enabled_modules', 'active_workspace']),
                 )),
                 'data' => $systemContext,
+                'active_workspace' => $scope['id'],
             ];
 
             $pending = null;
@@ -172,7 +188,10 @@ class AiAssistantService
 
             if ($pending) {
                 $actionType = (string) ($pending['type'] ?? '');
-                if ($actionType !== '' && ! $this->actionExecutor->canExecute($user, $actionType)) {
+                if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
+                    $result['reply'] = $this->workspaceScope->declineMessage($scope);
+                    unset($pending);
+                } elseif ($actionType !== '' && ! $this->actionExecutor->canExecute($user, $actionType)) {
                     $result['reply'] = $this->actionExecutor->permissionDeclineMessage($actionType);
                     unset($pending);
                 } else {
@@ -212,9 +231,27 @@ class AiAssistantService
     /** @param  array<string, mixed>  $pendingAction
      * @return array<string, mixed>
      */
-    protected function executeConfirmedAction(User $user, array $pendingAction): array
-    {
+    protected function executeConfirmedAction(
+        User $user,
+        array $pendingAction,
+        ?string $workspaceId = null,
+        ?string $pathname = null,
+    ): array {
         try {
+            $gate = $this->contextBuilder->gateForUser($user);
+            $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+            $actionType = (string) ($pendingAction['type'] ?? '');
+            if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
+                return [
+                    'reply' => $this->workspaceScope->declineMessage($scope),
+                    'tools_used' => ['action_executor'],
+                    'action_error' => true,
+                    'pending_action' => null,
+                    'form_spec' => null,
+                    'active_workspace' => $scope['id'],
+                ];
+            }
+
             $outcome = $this->actionExecutor->execute($user, $pendingAction);
             $result = $outcome['result'] ?? [];
             $path = $result['path'] ?? null;
@@ -358,52 +395,40 @@ class AiAssistantService
         return (bool) preg_match('/\b(fetch|hold on|please wait|moment|loading|retrieve|look up)\b/i', $reply);
     }
 
-    protected function systemPrompt(): string
+    protected function systemPrompt(array $scope): string
     {
-        return <<<'PROMPT'
-You are the in-app assistant for a Kenya-focused POS/ERP system (currency KES). You help users with EVERY module in this system.
+        $label = $scope['label'] ?? 'this workspace';
+        $description = $scope['description'] ?? '';
+
+        return <<<PROMPT
+You are the in-app assistant for Centrix ERP — a Kenya-focused business management system (currency KES).
+
+ACTIVE WORKSPACE: {$label}. {$description}
+The user currently has ONLY this workspace open. Answer ONLY questions related to {$label}.
+If they ask about another module (HR, Accounting, Admin, POS, etc.), tell them to switch workspace from the top bar — do not answer cross-module questions.
 
 Use entity_schemas in context — it lists every field, which are required, auto-generated, important, and FK relations (e.g. unit_id → uoms).
 Use organization_knowledge for facts users or confirmed page exploration have taught you.
+Use navigation and available_actions — they are already filtered to {$label} only.
 
-IN SCOPE: products, sales, inventory, purchasing, accounting, HR, logistics, reports, admin settings.
+INTERACTIVE FORMS: Select options are ALREADY in entity_detail / entity_schemas — never say you are fetching or ask the user to wait.
+
 Image uploads are NOT supported — never ask for photos or images.
 
 RULES:
 1. Off-topic only for weather, recipes, trivia, unrelated coding → reply with DECLINE_OFF_TOPIC on its own line.
-2. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
-3. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
-4. When unsure about a screen/module, propose learning it:
-```learn
-{"path":"/products","reason":"Need product form field details"}
-```
-The user must confirm before saved knowledge is used.
+2. Cross-module questions → politely decline and mention switching workspace; do not answer using other module knowledge.
+3. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
+4. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
 5. Users can teach you with "Remember that …" or POST /ai/teach.
 6. PERMISSIONS — read user_access in context:
-   - user.is_admin=true or user_access.has_full_permissions=true → user has ALL permissions; never say they lack access or tell them to contact an administrator.
-   - Answer read-only questions (sales totals, stock, debtors, etc.) using *_summary data in context. If sales_summary, product_summary, or receivables_summary is present, USE IT — do not refuse or claim you need reports module access.
-   - Only decline when the user requests a WRITE action (create/update/delete) that is NOT in available_actions.
-   - user_access.modules shows org_module_enabled vs user_has_permission — a disabled org module is not the same as missing user permission.
-
-DEBTORS & PAYMENTS:
-- Use receivables_summary (top_debtors, open_invoices) to analyze who owes money and outstanding balances.
-- To record payment use record_customer_payment with sale_id (from open_invoices), payment_method_id, and optional amount.
-- Omit amount or set mark_paid_full to pay the full outstanding balance; provide amount for partial payments.
-- Reports: /reports/top-debtors, /accounting/accounts-receivable, customer statements at /customers/{customerNum}/statement.
-
-INTERACTIVE FORMS: Select options (subcategories, UOMs, VAT, customers, open invoices, payment methods, etc.) are ALREADY in entity_detail / entity_schemas — never say you are fetching or ask the user to wait. Immediately append the action block; the API builds the form with live dropdown options.
+   - user.is_admin=true or user_access.has_full_permissions=true → user has ALL permissions; never say they lack access.
+   - Answer read-only questions using *_summary data in context when present.
+   - Only decline WRITE actions not listed in available_actions.
 
 ```action
 {"type":"create_product","summary":"New product Widget","params":{"product_name":"Widget","unit_price":150}}
 ```
-
-Action types:
-- create_sales_order: customer_num + lines [{product_code, quantity}]; optional payment_method_code, channel.
-- create_held_order: save-only — only when user wants hold/defer payment.
-- create_product: product_name required; product_code auto-generated if omitted; unit_id/subcategory_id/vat_id from selects.
-- create_employee: first_name, last_name required; employee_code auto-generated if omitted.
-- create_report_template: name + spec.
-- record_customer_payment: sale_id (outstanding order), payment_method_id required; amount optional (full balance if omitted).
 
 Tell users to fill the form and confirm, or reply "confirm" when params are complete.
 PROMPT;

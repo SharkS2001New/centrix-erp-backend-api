@@ -12,6 +12,6 @@ class OrderNumberAllocator
             ->where('organization_id', $organizationId)
             ->max('order_num');
 
-        return (int) ($max ?? 90000) + 1;
+        return (int) ($max ?? 0) + 1;
     }
 }

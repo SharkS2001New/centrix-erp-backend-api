@@ -64,8 +64,17 @@ class ReportController extends Controller
             ],
             'operations' => [
                 ['key' => 'till-sessions', 'path' => '/reports/till-sessions', 'label' => 'Till / float sessions'],
-                ['key' => 'payroll-summary', 'path' => '/reports/payroll-summary', 'label' => 'Payroll runs'],
                 ['key' => 'audit-trail', 'path' => '/reports/audit-trail', 'label' => 'Audit trail'],
+            ],
+            'hr' => [
+                ['key' => 'leave-balance', 'path' => '/reports/leave-balance', 'label' => 'Leave balance'],
+                ['key' => 'payroll-summary', 'path' => '/reports/payroll-summary', 'label' => 'Payroll summary'],
+                ['key' => 'statutory-deductions', 'path' => '/reports/statutory-deductions', 'label' => 'Statutory deductions'],
+                ['key' => 'bank-transfer', 'path' => '/reports/bank-transfer', 'label' => 'Bank transfer'],
+                ['key' => 'staff-turnover', 'path' => '/reports/staff-turnover', 'label' => 'Staff turnover'],
+                ['key' => 'headcount', 'path' => '/reports/headcount', 'label' => 'Headcount'],
+                ['key' => 'contract-expiry', 'path' => '/reports/contract-expiry', 'label' => 'Contract expiry'],
+                ['key' => 'hr-dashboard-kpi', 'path' => '/reports/hr-dashboard-kpi', 'label' => 'HR dashboard KPIs'],
             ],
             'customer' => [
                 ['key' => 'customer-statement', 'path' => '/reports/customers/{customerNum}/statement', 'label' => 'Customer statement'],
@@ -75,6 +84,8 @@ class ReportController extends Controller
                 'supplier_id', 'route_name', 'sale_date', 'sale_day', 'period',
                 'from_date', 'to_date', 'date_column', 'per_page', 'aging_bucket',
                 'status', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
+                'department_id', 'employment_status', 'employment_type', 'is_active',
+                'payroll_run_id', 'period_code', 'days_until_expiry',
             ],
         ]);
     }

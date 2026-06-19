@@ -1,11 +1,11 @@
-# Postman — POS / ERP API
+# Postman — Centrix ERP API
 
 ## Import
 
 1. Open Postman → **Import** → select both files:
    - `POS-ERP-API.postman_collection.json`
    - `Local.postman_environment.json`
-2. Choose environment **POS ERP — Local** (top-right).
+2. Choose environment **Centrix ERP — Local** (top-right).
 3. Run **Auth → POST auth/login** — the test script saves the Sanctum `token` automatically.
 4. All other requests use **Bearer {{token}}** (collection auth).
 

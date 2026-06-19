@@ -12,6 +12,36 @@ class MobileSalesApiTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    public function test_mobile_session_can_create_cart_and_add_line(): void
+    {
+        $user = $this->makeMobileUser();
+        $product = \App\Models\Product::firstOrFail();
+        $token = $this->loginMobile($user);
+
+        $cart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+                'product_code' => $product->product_code,
+                'quantity' => 1,
+                'unit_price' => 100,
+                'on_wholesale_retail' => 0,
+            ])
+            ->assertCreated();
+
+        $this->withToken($token)
+            ->getJson("/api/v1/sales/carts/{$cart['id']}")
+            ->assertOk()
+            ->assertJsonPath('channel', 'mobile')
+            ->assertJsonCount(1, 'lines');
+    }
+
     public function test_mobile_session_can_access_dashboard_orders_and_catalogue_helpers(): void
     {
         $user = $this->makeMobileUser();
@@ -44,6 +74,11 @@ class MobileSalesApiTest extends TestCase
         $this->withToken($token)
             ->getJson('/api/v1/vats?per_page=10')
             ->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/sales/customers/lookup?q=demo&per_page=10')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
     }
 
     public function test_mobile_dashboard_scopes_orders_to_signed_in_rep(): void
@@ -98,6 +133,90 @@ class MobileSalesApiTest extends TestCase
             ->assertOk()
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.order_no', 91001);
+    }
+
+    public function test_mobile_orders_can_include_all_channels_for_current_user(): void
+    {
+        $rep = $this->makeMobileUser(['username' => 'mobile_channels_'.uniqid()]);
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+
+        Sale::create([
+            'order_num' => 92001,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 10,
+            'order_total' => 100,
+            'payment_status' => 'paid',
+            'amount_paid' => 100,
+        ]);
+
+        Sale::create([
+            'order_num' => 92002,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 20,
+            'order_total' => 200,
+            'payment_status' => 'paid',
+            'amount_paid' => 200,
+        ]);
+
+        $token = $this->loginMobile($rep);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders')
+            ->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('data.0.order_no', 92001);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?all_channels=1')
+            ->assertOk()
+            ->assertJsonCount(2, 'data');
+    }
+
+    public function test_mobile_dashboard_admin_only_sees_own_orders(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $otherRep = $this->makeMobileUser(['username' => 'mobile_admin_scope_'.uniqid()]);
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+
+        Sale::create([
+            'order_num' => 93001,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $otherRep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 10,
+            'order_total' => 100,
+            'payment_status' => 'paid',
+            'amount_paid' => 100,
+        ]);
+
+        $token = $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $admin->username,
+            'password' => 'password',
+            'client_id' => 'MOBILE_ADMIN_'.uniqid(),
+            'login_channel' => 'mobile',
+        ])->assertOk()->json('token');
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders')
+            ->assertOk()
+            ->assertJsonMissing(['order_no' => 93001]);
     }
 
     public function test_mobile_order_detail_returns_line_items(): void

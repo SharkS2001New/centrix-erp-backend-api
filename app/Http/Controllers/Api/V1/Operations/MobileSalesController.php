@@ -19,6 +19,7 @@ class MobileSalesController extends Controller
         $data = $request->validate([
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date',
+            'all_channels' => 'nullable|boolean',
         ]);
 
         $to = isset($data['to_date'])
@@ -32,8 +33,10 @@ class MobileSalesController extends Controller
             [$from, $to] = [$to->copy(), $from->copy()];
         }
 
+        $allChannels = filter_var($data['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
         return response()->json(
-            $this->mobileSales->dashboard($request->user(), $from, $to),
+            $this->mobileSales->dashboard($request->user(), $from, $to, $allChannels),
         );
     }
 
@@ -45,7 +48,15 @@ class MobileSalesController extends Controller
             'to_date' => 'nullable|date',
             'q' => 'nullable|string|max:200',
             'per_page' => 'nullable|integer|min:1|max:200',
+            'all_channels' => 'nullable|boolean',
         ]);
+
+        if (array_key_exists('all_channels', $filters)) {
+            $filters['all_channels'] = filter_var(
+                $filters['all_channels'],
+                FILTER_VALIDATE_BOOLEAN,
+            );
+        }
 
         return response()->json(
             $this->mobileSales->listOrders($request->user(), $filters),
@@ -55,8 +66,14 @@ class MobileSalesController extends Controller
     /** GET /mobile/orders/{saleId} — order header + line items. */
     public function show(Request $request, int $saleId)
     {
+        $data = $request->validate([
+            'all_channels' => 'nullable|boolean',
+        ]);
+
+        $allChannels = filter_var($data['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
         return response()->json(
-            $this->mobileSales->showOrder($request->user(), $saleId),
+            $this->mobileSales->showOrder($request->user(), $saleId, $allChannels),
         );
     }
 }

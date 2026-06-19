@@ -178,6 +178,7 @@ class UserLoginChannelService
         $prefixes = [
             'mobile/',
             'sales/carts',
+            'sales/customers',
             'sales/orders',
             'sales/loyalty-cards',
             'branches',

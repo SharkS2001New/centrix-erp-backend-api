@@ -1,4 +1,4 @@
-# POS / ERP API — Modular architecture
+# Centrix ERP API — Modular architecture
 
 One Laravel API serves multiple frontends and deployment sizes. **What each customer gets** is controlled by `organizations.deployment_profile` and optional `enabled_modules` JSON overrides.
 

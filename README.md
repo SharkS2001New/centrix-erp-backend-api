@@ -1,6 +1,6 @@
-# POS / ERP — Laravel 11 API (v3)
+# Centrix ERP API (Laravel 11, v3)
 
-Modular ERP API for **small shop**, **wholesale/retail**, and **distribution** deployments. Enable or disable POS, mobile, backend sales, HR, accounting, etc. per organization.
+Modular ERP API for **Centrix ERP** by Alpac Software Solutions — small shop, wholesale/retail, and distribution deployments. Enable or disable POS, mobile, backend sales, HR, accounting, etc. per organization.
 
 - Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
 - Module config: [`config/erp.php`](config/erp.php)

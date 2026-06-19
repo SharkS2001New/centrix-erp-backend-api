@@ -392,7 +392,7 @@ class CheckoutController extends Controller
             return app(OrderNumberAllocator::class)->nextForOrganization((int) $user->organization_id);
         }
 
-        return (int) (Sale::max('order_num') ?? 90000) + 1;
+        return (int) (Sale::max('order_num') ?? 0) + 1;
     }
 
     protected function submitKraForSale(

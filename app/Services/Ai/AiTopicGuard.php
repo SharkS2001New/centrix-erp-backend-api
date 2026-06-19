@@ -52,7 +52,7 @@ class AiTopicGuard
 
     public function declineMessage(): string
     {
-        return 'I can only help with this POS/ERP system — products, sales, inventory, purchasing, '
+        return 'I can only help with Centrix ERP — products, sales, inventory, purchasing, '
             .'accounting, HR, logistics, reports, and admin settings. '
             .'Ask me to find a screen, explain a workflow, or create records you have permission for.';
     }
