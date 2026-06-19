@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Organization;
 use App\Services\Auth\AuthSessionService;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
 use App\Services\Auth\TenantAccountResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -17,6 +19,35 @@ class AuthController extends Controller
         protected TenantAccountResolver $resolver,
         protected PasswordResetService $passwordResets,
     ) {}
+
+    public function health()
+    {
+        return response()->json(['ok' => true]);
+    }
+
+    public function organizationPreview(Request $request)
+    {
+        $data = $request->validate([
+            'company_code' => 'required|string|max:45',
+        ]);
+
+        $code = strtoupper(trim($data['company_code']));
+        $organization = Organization::query()
+            ->whereRaw('UPPER(company_code) = ?', [$code])
+            ->first();
+
+        if (! $organization) {
+            throw ValidationException::withMessages([
+                'company_code' => ['Organization not found for this company code.'],
+            ]);
+        }
+
+        return response()->json([
+            'company_code' => $organization->company_code,
+            'org_name' => $organization->org_name,
+            'organization_id' => $organization->id,
+        ]);
+    }
 
     public function login(Request $request)
     {
@@ -104,7 +135,9 @@ class AuthController extends Controller
 
     public function me(Request $request)
     {
-        return response()->json($request->user());
+        return response()->json(
+            $request->user()->load(['branch', 'role', 'organization']),
+        );
     }
 
     public function forgotPassword(Request $request)
@@ -157,5 +190,25 @@ class AuthController extends Controller
         return response()->json([
             'message' => 'Password updated successfully.',
         ]);
+    }
+
+    public function verifyPassword(Request $request)
+    {
+        $data = $request->validate([
+            'password' => 'required|string',
+        ]);
+
+        if (! Hash::check($data['password'], $request->user()->password)) {
+            throw ValidationException::withMessages([
+                'password' => 'Incorrect password.',
+            ]);
+        }
+
+        $token = $request->user()->currentAccessToken();
+        if ($token instanceof \App\Models\PersonalAccessToken) {
+            $token->forceFill(['last_used_at' => now()])->save();
+        }
+
+        return response()->json(['verified' => true]);
     }
 }

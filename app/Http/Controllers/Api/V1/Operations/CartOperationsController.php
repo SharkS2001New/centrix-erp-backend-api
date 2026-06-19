@@ -23,6 +23,7 @@ use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\OrderSourceResolver;
+use App\Services\Auth\UserMobileOrderScopeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -70,7 +71,12 @@ class CartOperationsController extends Controller
 
         $updates = [];
         if (array_key_exists('route_id', $data)) {
-            $updates['route_id'] = $data['route_id'] ?? null;
+            $routeId = app(UserMobileOrderScopeService::class)->resolveCartRouteId(
+                $request->user(),
+                $data['route_id'] ?? null,
+            );
+            app(UserMobileOrderScopeService::class)->assertCartRouteId($request->user(), $routeId);
+            $updates['route_id'] = $routeId;
         }
         if (array_key_exists('order_discount', $data)) {
             $updates['order_discount'] = ! empty($salesSettings['enable_order_discount'])
@@ -124,9 +130,7 @@ class CartOperationsController extends Controller
         $user = $request->user();
         $sale = $this->findScopedSale($saleId, $user)->load('items');
 
-        if ($sale->status !== 'held') {
-            throw new InvalidArgumentException('Only held orders can be restored to the cart.');
-        }
+        $this->assertSaleRestorableToCart($sale, $user);
 
         $channel = $sale->channel ?: 'pos';
         $gate = $this->erp->gateForUser($user);
@@ -152,6 +156,8 @@ class CartOperationsController extends Controller
                 $this->clearCart($cart);
             }
 
+            $this->reverseSaleStockDeductions($sale, $user);
+
             $cart->update([
                 'route_id' => $sale->route_id,
                 'order_discount' => (float) ($sale->order_discount ?? 0),
@@ -173,6 +179,7 @@ class CartOperationsController extends Controller
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancelled_by' => $user->id,
+                'stock_balanced' => 0,
             ]);
 
             $this->reverseSaleJournalIfPosted($sale, $user);
@@ -203,19 +210,18 @@ class CartOperationsController extends Controller
             $query->where('customer_num', (int) $data['customer_num']);
         } else {
             $term = trim((string) ($data['q'] ?? ''));
-            if ($term === '') {
-                return response()->json(['data' => []]);
+            if ($term !== '') {
+                $like = '%'.$term.'%';
+                $query->where(function ($builder) use ($like, $term) {
+                    $builder
+                        ->where('customer_name', 'like', $like)
+                        ->orWhere('phone_number', 'like', $like)
+                        ->orWhere('additional_phone', 'like', $like);
+                    if (ctype_digit($term)) {
+                        $builder->orWhere('customer_num', 'like', $like);
+                    }
+                });
             }
-            $like = '%'.$term.'%';
-            $query->where(function ($builder) use ($like, $term) {
-                $builder
-                    ->where('customer_name', 'like', $like)
-                    ->orWhere('phone_number', 'like', $like)
-                    ->orWhere('additional_phone', 'like', $like);
-                if (ctype_digit($term)) {
-                    $builder->orWhere('customer_num', 'like', $like);
-                }
-            });
         }
 
         $perPage = min((int) ($data['per_page'] ?? 20), 50);
@@ -470,6 +476,35 @@ class CartOperationsController extends Controller
         return response()->json($sale->fresh());
     }
 
+    /** POST /sales/orders/{saleId}/cancel — cancel a mobile (or editable) order and restore stock. */
+    public function cancelOrder(Request $request, int $saleId)
+    {
+        $user = $request->user();
+        $sale = $this->findScopedSale($saleId, $user)->load('items');
+
+        $this->assertSaleRestorableToCart($sale, $user);
+
+        DB::transaction(function () use ($sale, $user) {
+            $this->reverseSaleStockDeductions($sale, $user);
+
+            $sale->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $user->id,
+                'stock_balanced' => 0,
+            ]);
+
+            $this->reverseSaleJournalIfPosted($sale, $user);
+        });
+
+        return response()->json([
+            'cancelled' => true,
+            'id' => (int) $sale->id,
+            'order_no' => (int) $sale->order_num,
+            'status' => 'cancelled',
+        ]);
+    }
+
     protected function reverseSaleJournalIfPosted(Sale $sale, User $user): void
     {
         app(ReferenceJournalReversalService::class)->reverseIfEnabled(
@@ -478,6 +513,28 @@ class CartOperationsController extends Controller
             $user,
             $this->erp->gateForUser($user),
         );
+    }
+
+    protected function assertSaleRestorableToCart(Sale $sale, User $user): void
+    {
+        if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
+            throw new InvalidArgumentException('This order cannot be edited.');
+        }
+
+        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
+            throw new InvalidArgumentException('You can only edit your own orders.');
+        }
+
+        $editable = match ($sale->channel) {
+            'mobile' => ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed'],
+            default => ['held'],
+        };
+
+        if (! in_array((string) $sale->status, $editable, true)) {
+            throw new InvalidArgumentException(
+                'This order cannot be edited in its current status.',
+            );
+        }
     }
 
     protected function getOrCreateCart(User $user, array $input): TemporaryCart
@@ -491,6 +548,17 @@ class CartOperationsController extends Controller
         }
 
         $branchId = $this->userAccess()->resolveBranchId($user, $input['branch_id'] ?? null);
+        $routeId = app(UserMobileOrderScopeService::class)->resolveCartRouteId(
+            $user,
+            $input['route_id'] ?? null,
+        );
+        $scope = app(UserMobileOrderScopeService::class)->scope($user);
+        if ($channel === 'mobile' && $scope === UserMobileOrderScopeService::NORMAL_ONLY) {
+            app(UserMobileOrderScopeService::class)->assertCartRouteId($user, $routeId);
+        }
+        if ($channel === 'mobile' && $scope === UserMobileOrderScopeService::ROUTE_ONLY && $user->assigned_route_id) {
+            app(UserMobileOrderScopeService::class)->assertCartRouteId($user, $routeId);
+        }
 
         $cart = TemporaryCart::firstOrCreate(
             [
@@ -501,7 +569,7 @@ class CartOperationsController extends Controller
                 'branch_id' => $branchId,
                 'order_source' => $orderSource,
                 'till_id' => $input['till_id'] ?? null,
-                'route_id' => $input['route_id'] ?? null,
+                'route_id' => $routeId,
                 'update_no' => 0,
             ]
         );
@@ -514,6 +582,10 @@ class CartOperationsController extends Controller
 
         if ($cart->order_source !== $orderSource) {
             $cart->update(['order_source' => $orderSource]);
+        }
+
+        if ($channel === 'mobile' && $cart->route_id !== $routeId) {
+            $cart->update(['route_id' => $routeId]);
         }
 
         return $cart;

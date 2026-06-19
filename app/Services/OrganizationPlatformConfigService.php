@@ -63,8 +63,7 @@ class OrganizationPlatformConfigService
     {
         return [
             'show_checkout_on_create_order' => true,
-            'enable_mobile_orders' => in_array($deploymentProfile, ['wholesale_retail', 'distribution'], true),
-            'enable_pos_orders' => $deploymentProfile === 'wholesale_retail',
+            'enable_mobile_orders' => true,
             'stock_deduct_on' => 'order_completed',
             'order_workflow' => config('erp.default_order_workflow', []),
         ];
@@ -81,8 +80,7 @@ class OrganizationPlatformConfigService
 
         return [
             'show_checkout_on_create_order' => (bool) ($sales['show_checkout_on_create_order'] ?? true),
-            'enable_mobile_orders' => (bool) ($sales['enable_mobile_orders'] ?? false),
-            'enable_pos_orders' => (bool) ($sales['enable_pos_orders'] ?? false),
+            'enable_mobile_orders' => (bool) ($sales['enable_mobile_orders'] ?? true),
             'stock_deduct_on' => (string) ($sales['stock_deduct_on'] ?? 'order_completed'),
             'order_workflow' => $workflow,
         ];

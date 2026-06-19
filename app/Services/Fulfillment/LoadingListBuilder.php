@@ -15,8 +15,17 @@ class LoadingListBuilder
     /** @return array<int, array<string, mixed>> */
     public function aggregateLines(DispatchTrip $trip): array
     {
-        $trip->loadMissing(['sales.items']);
-        $saleIds = $trip->sales->pluck('id')->all();
+        $trip->loadMissing(['sales']);
+
+        return $this->aggregateLinesFromSaleIds($trip->sales->pluck('id')->all());
+    }
+
+    /** @param  array<int, int|string>  $saleIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function aggregateLinesFromSaleIds(array $saleIds): array
+    {
+        $saleIds = array_values(array_unique(array_map('intval', $saleIds)));
         if ($saleIds === []) {
             return [];
         }

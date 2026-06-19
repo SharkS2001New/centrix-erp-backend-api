@@ -47,6 +47,17 @@ return [
                 'returns' => ['label' => 'Customer returns', 'actions' => ['view', 'create']],
             ],
         ],
+        'mobile' => [
+            'label' => 'Mobile application',
+            'features' => [
+                'dashboard' => ['label' => 'Dashboard & KPIs', 'actions' => ['view']],
+                'orders' => ['label' => 'Orders & checkout', 'actions' => ['view', 'create', 'edit']],
+                'customers' => ['label' => 'Customers', 'actions' => ['view', 'create', 'edit']],
+                'catalog' => ['label' => 'Product search', 'actions' => ['view']],
+                'stock' => ['label' => 'Stock levels', 'actions' => ['view']],
+                'routes' => ['label' => 'Route selection', 'actions' => ['view']],
+            ],
+        ],
         'pos' => [
             'label' => 'Sales',
             'features' => [

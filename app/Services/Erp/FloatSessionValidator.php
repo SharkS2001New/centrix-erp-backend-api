@@ -32,7 +32,13 @@ class FloatSessionValidator
         $isPosChannel = strtolower((string) $cart->channel) === 'pos';
 
         if (! $this->requirePosTillFloat() || ! $isPosChannel) {
-            return $sessionId ?: null;
+            if (! $this->requirePosTillFloat() && $isPosChannel && $sessionId) {
+                throw new InvalidArgumentException(
+                    'Till float sessions are not used when operating float is disabled.',
+                );
+            }
+
+            return null;
         }
 
         if (! $sessionId) {

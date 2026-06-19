@@ -24,6 +24,8 @@ class SaleController extends BaseResourceController
             $query->with(['items.product.unit']);
         }
 
+        $query->with(['cashier:id,username,full_name']);
+
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);

@@ -1,0 +1,95 @@
+<?php
+
+namespace App\Http\Controllers\Api\V1\Operations;
+
+use App\Http\Controllers\Controller;
+use App\Services\Erp\ErpContext;
+use App\Services\Sales\MobileFieldAttendanceService;
+use Illuminate\Http\Request;
+use InvalidArgumentException;
+
+class MobileAttendanceController extends Controller
+{
+    public function __construct(
+        protected ErpContext $erp,
+        protected MobileFieldAttendanceService $attendance,
+    ) {}
+
+    /** GET /mobile/attendance/session */
+    public function session(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+        $enabled = $this->attendance->isEnabled($gate);
+        $openSession = $enabled ? $this->attendance->openSessionForUser($user) : null;
+
+        return response()->json([
+            'feature_enabled' => $enabled,
+            'session' => $openSession
+                ? $this->attendance->serializeSession($openSession)
+                : null,
+        ]);
+    }
+
+    /** GET /mobile/attendance/summary — today's work summary for the signed-in rep. */
+    public function summary(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        return response()->json(
+            $this->attendance->userDaySummary($user, $gate),
+        );
+    }
+
+    /** POST /mobile/attendance/sign-in */
+    public function signIn(Request $request)
+    {
+        $data = $request->validate([
+            'photo' => 'required|image|max:10240',
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+            'address' => 'nullable|string|max:500',
+            'device_identifier' => 'nullable|string|max:100',
+        ]);
+
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        try {
+            $session = $this->attendance->signIn($user, $gate, $data);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Signed in successfully.',
+            'session' => $this->attendance->serializeSession($session),
+        ], 201);
+    }
+
+    /** POST /mobile/attendance/sign-out */
+    public function signOut(Request $request)
+    {
+        $data = $request->validate([
+            'photo' => 'required|image|max:10240',
+            'latitude' => 'required|numeric|between:-90,90',
+            'longitude' => 'required|numeric|between:-180,180',
+            'address' => 'nullable|string|max:500',
+        ]);
+
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        try {
+            $session = $this->attendance->signOut($user, $gate, $data);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Signed out successfully.',
+            'session' => $this->attendance->serializeSession($session),
+        ]);
+    }
+}

@@ -15,7 +15,7 @@ return [
                 ['label' => 'Inventory dashboard', 'path' => '/inventory', 'module' => 'inventory', 'permission' => 'inventory.stock.view'],
                 ['label' => 'Accounting dashboard', 'path' => '/accounting', 'module' => 'accounting', 'permission' => 'accounting.dashboard.view'],
                 ['label' => 'HR dashboard', 'path' => '/hr', 'module' => 'hr_payroll', 'permission' => 'hr.employees.view'],
-                ['label' => 'Logistics dashboard', 'path' => '/fulfillment', 'module' => 'customers_suppliers', 'permission' => 'fulfillment.drivers.view', 'requires_distribution_ops' => true],
+                ['label' => 'Fulfillment dashboard', 'path' => '/fulfillment', 'module' => 'customers_suppliers', 'permission' => 'fulfillment.drivers.view', 'requires_distribution_ops' => true],
                 ['label' => 'Reports hub', 'path' => '/reports', 'module' => 'reports', 'permission' => 'reports.hub.view'],
             ],
         ],
@@ -23,7 +23,7 @@ return [
             'id' => 'sales',
             'label' => 'Sales',
             'items' => [
-                ['label' => 'Backoffice POS', 'path' => '/sales/pos', 'module' => 'sales.pos', 'permission' => 'pos.checkout.create'],
+                ['label' => 'Create order', 'path' => '/sales/pos', 'module' => 'sales.pos', 'permission' => 'pos.checkout.create'],
                 ['label' => 'Cashier terminal', 'path' => '/pos', 'module' => 'sales.pos', 'permission' => 'pos.terminal.view'],
                 ['label' => 'Till management', 'path' => '/sales/till-management', 'module' => 'sales.pos', 'permission' => 'pos.till_management.view'],
                 ['label' => 'Sales orders', 'path' => '/sales/orders', 'module' => 'sales.backend', 'permission' => 'sales.orders.view'],
@@ -75,7 +75,7 @@ return [
         ],
         [
             'id' => 'logistics',
-            'label' => 'Logistics',
+            'label' => 'Fulfillment',
             'requires_distribution_ops' => true,
             'items' => [
                 ['label' => 'Dispatch', 'path' => '/fulfillment/dispatch', 'module' => 'customers_suppliers', 'permission' => 'fulfillment.drivers.view'],

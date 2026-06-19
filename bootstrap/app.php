@@ -16,7 +16,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withMiddleware(function (Middleware $middleware) {
         $middleware->statefulApi();
-        $middleware->prependToGroup('api', \App\Http\Middleware\EnsureSessionNotIdle::class);
+        // Inactivity is handled by the web app lock screen — do not revoke API tokens mid-session.
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureUserIsActive::class);
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureLoginChannel::class);
         $middleware->redirectGuestsTo(function (Request $request) {

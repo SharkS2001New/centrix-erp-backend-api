@@ -217,4 +217,17 @@ return [
 
         'audit-trail' => 'admin',
     ],
+
+    /*
+    | Operational finance reports usable without the full accounting domain.
+    | EnsureReportModule allows access when any listed module is enabled.
+    */
+    'backoffice_finance_reports' => [
+        'profit-loss',
+        'top-debtors',
+        'ar-aging',
+        'expenses',
+        'invoice-payments',
+        'kra-receipts',
+    ],
 ];

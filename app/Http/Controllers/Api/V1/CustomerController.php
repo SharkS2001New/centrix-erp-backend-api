@@ -3,6 +3,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Customer;
 use App\Models\Sale;
+use App\Services\Customers\CustomerUniquenessValidator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -11,6 +12,10 @@ use Symfony\Component\HttpFoundation\Response;
 
 class CustomerController extends BaseResourceController
 {
+    public function __construct(
+        protected CustomerUniquenessValidator $customerUniqueness,
+    ) {}
+
     protected function modelClass(): string
     {
         return Customer::class;
@@ -47,6 +52,14 @@ class CustomerController extends BaseResourceController
             $this->customerRules($fields),
         ));
 
+        $user = $request->user();
+        $this->customerUniqueness->assertUnique(
+            (int) ($user?->organization_id ?? $data['organization_id'] ?? 0),
+            $data['phone_number'] ?? null,
+            $data['additional_phone'] ?? null,
+            $data['kra_pin'] ?? null,
+        );
+
         $customer = DB::transaction(function () use ($data) {
             if (empty($data['customer_num'])) {
                 $max = Customer::query()->lockForUpdate()->max('customer_num');
@@ -65,6 +78,15 @@ class CustomerController extends BaseResourceController
         $data = $this->normalizeCustomerPayload($request->validate(
             $this->customerRules($this->fillableFields(), partial: true),
         ));
+
+        $this->customerUniqueness->assertUnique(
+            (int) $customer->organization_id,
+            $data['phone_number'] ?? $customer->phone_number,
+            $data['additional_phone'] ?? $customer->additional_phone,
+            $data['kra_pin'] ?? $customer->kra_pin,
+            (int) $customer->customer_num,
+        );
+
         $customer->update($data);
 
         return response()->json($customer->fresh());

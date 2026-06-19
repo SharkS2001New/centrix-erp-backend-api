@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V1\Operations\Concerns;
 use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
+use App\Models\Sale;
 use App\Models\StockReservation;
+use App\Models\User;
 use App\Models\SystemSetting;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -114,6 +116,37 @@ trait HandlesInventory
             'stock_in_shop' => $row->shop_quantity,
             'stock_in_store' => $row->store_quantity,
         ]);
+    }
+
+    protected function reverseSaleStockDeductions(Sale $sale, User $user): void
+    {
+        if (! $sale->stock_balanced) {
+            return;
+        }
+
+        $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+        $txns = InventoryTransaction::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $sale->id)
+            ->where('quantity_change', '<', 0)
+            ->get();
+
+        foreach ($txns as $txn) {
+            $this->postStockLedger([
+                'branch_id' => (int) $txn->branch_id,
+                'product_code' => (string) $txn->product_code,
+                'stock_location' => (string) $txn->stock_location,
+                'transaction_type' => 'RETURN',
+                'reference_type' => 'sale_cancel',
+                'reference_id' => $sale->id,
+                'quantity_change' => abs((float) $txn->quantity_change),
+                'unit_cost' => $txn->unit_cost,
+                'notes' => 'Sale restored to cart for editing',
+                'created_by' => $user->id,
+            ], $allowBelowStock);
+        }
+
+        $sale->stock_balanced = 0;
     }
 
     protected function saleStockLocation(string $channel, array $settings = []): string

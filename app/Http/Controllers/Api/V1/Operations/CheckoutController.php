@@ -21,6 +21,7 @@ use App\Models\SaleItem;
 use App\Models\SalePayment;
 use App\Models\TemporaryCart;
 use App\Models\User;
+use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
@@ -29,6 +30,7 @@ use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Notifications\CustomerNotificationService;
+use App\Services\Sales\MobileCheckoutLocationService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
@@ -171,6 +173,17 @@ class CheckoutController extends Controller
             );
 
             $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
+            app(UserMobileOrderScopeService::class)->assertCheckoutRoute($user, (string) $cart->channel, $routeId);
+
+            $customer = $customerNum
+                ? Customer::query()->where('customer_num', (int) $customerNum)->first()
+                : null;
+            $locationMeta = app(MobileCheckoutLocationService::class)->assertCheckoutLocation(
+                (string) $cart->channel,
+                $salesSettings,
+                $customer,
+                $input,
+            );
 
             $sale = Sale::create([
                 'order_num' => $orderNum,
@@ -196,6 +209,9 @@ class CheckoutController extends Controller
                 'payment_status' => $this->derivePaymentStatus($total, $amountPaid),
                 'amount_paid' => $amountPaid,
                 'completed_at' => null,
+                'fulfillment_meta' => $locationMeta !== []
+                    ? ['location_check' => $locationMeta]
+                    : null,
             ]);
 
             if ($orderStatus === 'completed') {
@@ -480,17 +496,28 @@ class CheckoutController extends Controller
             return (int) $cart->route_id;
         }
 
+        if (! $customerNum) {
+            return null;
+        }
+
+        $customer = Customer::find($customerNum);
+        if (! $customer?->route_id) {
+            return null;
+        }
+
+        if ($cart->channel === 'mobile') {
+            return (int) $customer->route_id;
+        }
+
         if (! $gate->distributionOpsEnabled()) {
             return null;
         }
 
         $distributionSettings = $gate->distributionSettings();
-        if (empty($distributionSettings['inherit_customer_route']) || ! $customerNum) {
+        if (empty($distributionSettings['inherit_customer_route'])) {
             return null;
         }
 
-        $customer = Customer::find($customerNum);
-
-        return $customer?->route_id ? (int) $customer->route_id : null;
+        return (int) $customer->route_id;
     }
 }

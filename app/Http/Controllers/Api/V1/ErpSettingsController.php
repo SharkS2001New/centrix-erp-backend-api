@@ -82,7 +82,10 @@ class ErpSettingsController extends Controller
             'add_route_markup_prices',
             'pos_order_type_mode',
             'enable_mobile_orders',
-            'enable_pos_orders',
+            'mobile_enable_checkout_location_verification',
+            'mobile_allow_offline_orders',
+            'mobile_checkout_location_radius_metres',
+            'mobile_enable_field_attendance',
             'require_pos_till_float',
             'blind_till_close',
             'default_submit_kra',
@@ -124,6 +127,7 @@ class ErpSettingsController extends Controller
             'order_workflow.deduct_stock_on' => ['sometimes', 'string', $statusRule],
             'receipt_copies' => 'sometimes|integer|min:1|max:10',
             'stock_deduct_on' => 'sometimes|in:order_completed,trip_load,trip_depart',
+            'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
         ];
         foreach ($salesKeys as $key) {
             // Do not overwrite any rules that were explicitly defined above
@@ -135,6 +139,9 @@ class ErpSettingsController extends Controller
             }
             if (in_array($key, ['point_cash_value', 'points_earn_per_kes'], true)) {
                 $rules[$key] = 'sometimes|numeric|min:0';
+                continue;
+            }
+            if ($key === 'mobile_checkout_location_radius_metres') {
                 continue;
             }
             $rules[$key] = str_starts_with($key, 'default_tax')
@@ -168,6 +175,17 @@ class ErpSettingsController extends Controller
 
         if (empty($nextSales['add_route_markup_prices'])) {
             $nextSales['pos_order_type_mode'] = 'normal';
+        }
+
+        if (empty($nextSales['mobile_enable_checkout_location_verification'])) {
+            $nextSales['mobile_allow_offline_orders'] = false;
+        }
+
+        if (array_key_exists('mobile_checkout_location_radius_metres', $data)) {
+            $nextSales['mobile_checkout_location_radius_metres'] = max(
+                1,
+                min(500, (float) ($data['mobile_checkout_location_radius_metres'] ?? 5)),
+            );
         }
 
         if (! empty($nextSales['allow_credit_pay_now']) && ! empty($nextSales['enable_credit_payment'])) {

@@ -8,6 +8,7 @@ use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\UserAccountGuard;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserLoginChannelService;
+use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Auth\UserLoginService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Auth\UsernameValidator;
@@ -36,12 +37,14 @@ class UserController extends BaseResourceController
         $rules['access_scope'] = 'required|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile';
+        $rules['assigned_route_id'] = 'nullable|integer|exists:routes,id';
         $data = $request->validate($rules);
         $data = $this->access()->validateAccessScope($data, (bool) ($data['is_admin'] ?? false));
         if (! array_key_exists('login_channels', $data)) {
             $data['login_channels'] = app(UserLoginChannelService::class)->defaultChannels();
         }
         $data = $this->normalizeLoginChannels($data);
+        $data = app(UserMobileOrderScopeService::class)->normalizeUserAttributes($data);
         $data['organization_id'] = $request->user()->organization_id;
         app(UsernameValidator::class)->assertUniqueInOrganization(
             (int) $data['organization_id'],
@@ -63,6 +66,7 @@ class UserController extends BaseResourceController
         $rules['access_scope'] = 'sometimes|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile';
+        $rules['assigned_route_id'] = 'nullable|integer|exists:routes,id';
         $data = $request->validate($rules);
         if (isset($data['access_scope']) || array_key_exists('branch_id', $data)) {
             $merged = array_merge($model->only(['access_scope', 'branch_id', 'is_admin']), $data);
@@ -70,6 +74,12 @@ class UserController extends BaseResourceController
         }
         if (array_key_exists('login_channels', $data)) {
             $data = $this->normalizeLoginChannels($data);
+        }
+        if (array_key_exists('mobile_order_scope', $data)
+            || array_key_exists('assigned_route_id', $data)
+            || array_key_exists('login_channels', $data)) {
+            $merged = array_merge($model->only(['login_channels', 'mobile_order_scope', 'assigned_route_id']), $data);
+            $data = array_merge($data, app(UserMobileOrderScopeService::class)->normalizeUserAttributes($merged));
         }
         if (! empty($data['username'])) {
             app(UsernameValidator::class)->assertUniqueInOrganization(

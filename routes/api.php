@@ -31,6 +31,8 @@ use App\Http\Controllers\Api\V1\SupplierReturnController;
 use App\Http\Controllers\Api\V1\PaymentMethodController;
 use App\Http\Controllers\Api\V1\VoucherController;
 use App\Http\Controllers\Api\V1\SaleController;
+use App\Http\Controllers\Api\V1\MobileLoadingSheetController;
+use App\Http\Controllers\Api\V1\MobileFieldAttendanceController;
 use App\Http\Controllers\Api\V1\SaleItemController;
 use App\Http\Controllers\Api\V1\SalePaymentController;
 use App\Http\Controllers\Api\V1\TemporaryCartController;
@@ -55,6 +57,8 @@ use App\Http\Controllers\Api\V1\StockReservationController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 
 Route::prefix('v1')->group(function () {
+    Route::get('health', [AuthController::class, 'health']);
+    Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview']);
     Route::post('auth/login', [AuthController::class, 'login']);
     Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword']);
     Route::post('auth/reset-password', [AuthController::class, 'resetPassword']);
@@ -68,6 +72,7 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
+        Route::post('auth/verify-password', [AuthController::class, 'verifyPassword']);
         Route::get('auth/memberships', [AuthController::class, 'memberships']);
         Route::post('auth/switch-organization', [AuthController::class, 'switchOrganization']);
         Route::post('auth/switch-workspace', [AuthController::class, 'switchWorkspace']);
@@ -297,6 +302,16 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('loyalty-cards', \App\Http\Controllers\Api\V1\LoyaltyCardController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);
+            Route::get('sales/mobile-loading-sheets', [MobileLoadingSheetController::class, 'index'])
+                ->middleware('erp.permission:sales.view');
+            Route::get('sales/mobile-loading-sheets/detail', [MobileLoadingSheetController::class, 'show'])
+                ->middleware('erp.permission:sales.view');
+            Route::get('sales/mobile-field-attendance', [MobileFieldAttendanceController::class, 'index'])
+                ->middleware('erp.permission:sales.view');
+            Route::get('sales/mobile-field-attendance/{sessionId}', [MobileFieldAttendanceController::class, 'show'])
+                ->middleware('erp.permission:sales.view');
+            Route::patch('sales/mobile-field-attendance/{sessionId}', [MobileFieldAttendanceController::class, 'update'])
+                ->middleware('erp.permission:sales.manage');
             Route::apiResource('sales', SaleController::class)
                 ->middleware('erp.permission:sales.view');
             Route::apiResource('sale-items', SaleItemController::class)

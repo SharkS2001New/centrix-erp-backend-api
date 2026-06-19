@@ -153,16 +153,23 @@ class TillOperationsController extends Controller
 
         $amount = (float) $data['working_amount'];
         $requireFloat = FloatSessionValidator::forUser($request->user())->requirePosTillFloat();
+        if (! $requireFloat && $amount > 0) {
+            throw new InvalidArgumentException('Operating float is disabled for this organization.');
+        }
         if ($requireFloat && $amount <= 0) {
             throw new InvalidArgumentException('Operating float is required to open a session.');
         }
 
         $entries = $data['float_breakdown'] ?? null;
-        $floatBreakdown = is_array($entries) && $entries !== []
-            ? $this->normalizeFloatEntries($entries)
-            : ($amount > 0
+        if (! $requireFloat) {
+            $floatBreakdown = [];
+        } elseif (is_array($entries) && $entries !== []) {
+            $floatBreakdown = $this->normalizeFloatEntries($entries);
+        } else {
+            $floatBreakdown = $amount > 0
                 ? $this->appendFloatEntry([], $amount, $data['payment_type'])
-                : []);
+                : [];
+        }
 
         $session = TillFloatSession::create([
             'till_id' => $data['till_id'],
@@ -191,6 +198,9 @@ class TillOperationsController extends Controller
 
         $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertSessionCashier($request->user(), $session);
+        if (! FloatSessionValidator::forUser($request->user())->requirePosTillFloat()) {
+            throw new InvalidArgumentException('Operating float is disabled for this organization.');
+        }
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Cannot add float to a closed session.');
         }
@@ -400,7 +410,11 @@ class TillOperationsController extends Controller
             abort(404);
         }
 
-        return response()->json(['type' => 'X', ...$report]);
+        return response()->json([
+            'type' => 'X',
+            'session' => $session,
+            'report' => $report,
+        ]);
     }
 
     public function zReport(Request $request, int $sessionId)
@@ -425,7 +439,7 @@ class TillOperationsController extends Controller
             'type' => 'Z',
             'session' => $session,
             'variance' => $variance,
-            ...$report,
+            'report' => $report,
         ]);
     }
 
@@ -488,6 +502,8 @@ class TillOperationsController extends Controller
                 : ($session->float_breakdown ?? []),
         );
 
+        $payments = $this->buildPaymentSummary($floatSessionId, $cash, $mpesa, $bank);
+
         return [
             'session' => $session,
             'float_entries' => $floatEntries,
@@ -503,10 +519,46 @@ class TillOperationsController extends Controller
                 'equity' => $equity,
                 'kcb' => $kcb,
             ],
+            'payments' => $payments,
             'expected_cash' => $expectedCash,
             'cash_movements' => $cashMovements,
             'session_expenses' => $sessionExpenses,
         ];
+    }
+
+    /** @return list<array{method_code: string, method_name: string, total: float}> */
+    protected function buildPaymentSummary(int $floatSessionId, float $cash, float $mpesa, float $bank): array
+    {
+        $rows = DB::table('sale_payments as sp')
+            ->join('sales as s', 's.id', '=', 'sp.sale_id')
+            ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
+            ->where('s.float_session_id', $floatSessionId)
+            ->where('s.status', 'completed')
+            ->selectRaw('pm.method_code, pm.method_name, COALESCE(SUM(sp.amount), 0) as total')
+            ->groupBy('pm.method_code', 'pm.method_name')
+            ->orderByDesc('total')
+            ->get();
+
+        if ($rows->isNotEmpty()) {
+            return $rows->map(fn ($row) => [
+                'method_code' => (string) $row->method_code,
+                'method_name' => (string) $row->method_name,
+                'total' => (float) $row->total,
+            ])->all();
+        }
+
+        $fallback = [];
+        if ($cash > 0) {
+            $fallback[] = ['method_code' => 'CASH', 'method_name' => 'Cash', 'total' => $cash];
+        }
+        if ($mpesa > 0) {
+            $fallback[] = ['method_code' => 'MPESA', 'method_name' => 'M-Pesa', 'total' => $mpesa];
+        }
+        if ($bank > 0) {
+            $fallback[] = ['method_code' => 'BANK', 'method_name' => 'Bank', 'total' => $bank];
+        }
+
+        return $fallback;
     }
 
     /** @param  mixed  $movements */

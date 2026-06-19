@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 use App\Http\Controllers\Api\V1\Operations\KraProductRegistrationController;
 use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
+use App\Http\Controllers\Api\V1\Operations\MobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\MobileSalesController;
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -31,8 +32,18 @@ Route::middleware('auth:sanctum')->group(function () {
     // ---- Mobile field sales ----
     Route::middleware(['erp.module:sales.mobile', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
         Route::get('dashboard', [MobileSalesController::class, 'dashboard']);
+        Route::get('routes', [MobileSalesController::class, 'indexRoutes']);
         Route::get('orders', [MobileSalesController::class, 'index']);
         Route::get('orders/{saleId}', [MobileSalesController::class, 'show']);
+        Route::post('orders/{saleId}/returns', [MobileSalesController::class, 'storeReturn']);
+        Route::get('customers', [MobileSalesController::class, 'indexCustomers']);
+        Route::get('customers/{customerNum}', [MobileSalesController::class, 'showCustomer']);
+        Route::post('customers', [MobileSalesController::class, 'storeCustomer']);
+        Route::put('customers/{customerNum}', [MobileSalesController::class, 'updateCustomer']);
+        Route::get('attendance/session', [MobileAttendanceController::class, 'session']);
+        Route::get('attendance/summary', [MobileAttendanceController::class, 'summary']);
+        Route::post('attendance/sign-in', [MobileAttendanceController::class, 'signIn']);
+        Route::post('attendance/sign-out', [MobileAttendanceController::class, 'signOut']);
     });
 
     // ---- Sales ----
@@ -59,6 +70,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('carts/{cartId}/checkout', [CheckoutController::class, 'fromCart']);
         Route::post('orders/{saleId}/restore-to-cart', [CartOperationsController::class, 'restoreHeldOrder']);
         Route::post('orders/{saleId}/cancel-held', [CartOperationsController::class, 'cancelHeldOrder']);
+        Route::post('orders/{saleId}/cancel', [CartOperationsController::class, 'cancelOrder']);
     });
 
     Route::middleware('erp.permission:sales.manage')->prefix('sales')->group(function () {

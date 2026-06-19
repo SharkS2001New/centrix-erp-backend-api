@@ -193,7 +193,6 @@ class OrganizationProvisionController extends Controller
             'sales_platform' => 'sometimes|array',
             'sales_platform.show_checkout_on_create_order' => 'sometimes|boolean',
             'sales_platform.enable_mobile_orders' => 'sometimes|boolean',
-            'sales_platform.enable_pos_orders' => 'sometimes|boolean',
             'sales_platform.stock_deduct_on' => 'sometimes|in:order_completed,trip_load,trip_depart',
             'sales_platform.order_workflow' => 'sometimes|array',
             'sales_platform.order_workflow.steps' => 'sometimes|array',

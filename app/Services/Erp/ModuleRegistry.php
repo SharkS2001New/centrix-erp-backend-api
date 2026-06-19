@@ -81,6 +81,19 @@ class ModuleRegistry
         return isset($map[$slug]) ? (string) $map[$slug] : null;
     }
 
+    /** @return list<string> */
+    public static function reportAccessModulesForSlug(string $slug): array
+    {
+        $backofficeFinance = config('erp_module_tree.backoffice_finance_reports', []);
+        if (in_array($slug, $backofficeFinance, true)) {
+            return ['sales.reports', 'accounting.reports'];
+        }
+
+        $primary = self::reportModuleForSlug($slug);
+
+        return $primary !== null ? [$primary] : [];
+    }
+
     /**
      * Expand legacy top-level `reports` flag into per-domain report modules.
      *

@@ -111,17 +111,14 @@ class TillSessionFlowTest extends TestCase
             ->json();
 
         $this->assertSame('X', $xReport['type']);
-        $this->assertGreaterThan(0, (float) ($xReport['sales']['cash'] ?? 0));
+        $this->assertGreaterThan(0, (float) ($xReport['report']['sales']['cash'] ?? 0));
         $this->assertGreaterThan(
             5000,
-            (float) ($xReport['expected_cash'] ?? 0),
+            (float) ($xReport['report']['expected_cash'] ?? 0),
         );
 
         $close = $this->postJson("/api/v1/pos/sessions/{$session->id}/close", [
-            'closing_amount' => $xReport['expected_cash'],
-            'closing_denominations' => [
-                ['denomination' => 1000, 'count' => 5],
-            ],
+            'closing_amount' => $xReport['report']['expected_cash'],
         ])->assertOk()->json();
 
         $this->assertEqualsWithDelta(0, (float) $close['variance'], 0.01);
@@ -152,7 +149,7 @@ class TillSessionFlowTest extends TestCase
 
         $this->assertEqualsWithDelta(
             2500,
-            (float) ($xReport['expected_cash'] ?? 0),
+            (float) ($xReport['report']['expected_cash'] ?? 0),
             0.01,
         );
     }

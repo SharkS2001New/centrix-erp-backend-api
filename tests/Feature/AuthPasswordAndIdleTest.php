@@ -14,7 +14,7 @@ class AuthPasswordAndIdleTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_idle_session_is_revoked(): void
+    public function test_idle_session_is_not_revoked_on_api_calls(): void
     {
         config(['erp.session_idle_minutes' => 15]);
 
@@ -24,9 +24,13 @@ class AuthPasswordAndIdleTest extends TestCase
             ->where('id', $token->accessToken->id)
             ->update(['last_used_at' => now()->subMinutes(20)]);
 
-        $response = $this->withToken($token->plainTextToken)->getJson('/api/v1/auth/me');
-        $this->assertSame(401, $response->status());
-        $response->assertJsonFragment(['code' => 'session_idle_timeout']);
+        $this->withToken($token->plainTextToken)
+            ->getJson('/api/v1/auth/me')
+            ->assertOk();
+
+        $this->assertDatabaseHas('personal_access_tokens', [
+            'id' => $token->accessToken->id,
+        ]);
     }
 
     public function test_forgot_and_reset_password(): void
@@ -82,6 +86,30 @@ class AuthPasswordAndIdleTest extends TestCase
             'password' => 'anotherpass',
             'password_confirmation' => 'anotherpass',
         ])->assertOk();
+    }
+
+    public function test_verify_password_for_screen_unlock(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        $token = $user->createToken('unlock-test');
+
+        $this->withToken($token->plainTextToken)
+            ->postJson('/api/v1/auth/verify-password', [
+                'password' => 'wrong',
+            ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['password']);
+
+        $this->withToken($token->plainTextToken)
+            ->postJson('/api/v1/auth/verify-password', [
+                'password' => 'password',
+            ])
+            ->assertOk()
+            ->assertJsonPath('verified', true);
+
+        $this->assertTrue(
+            $user->tokens()->where('last_used_at', '>=', now()->subMinute())->exists(),
+        );
     }
 
     public function test_username_unique_per_organization_on_create(): void

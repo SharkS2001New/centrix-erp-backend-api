@@ -3,16 +3,20 @@
 namespace App\Services\Sales;
 
 use App\Models\Customer;
+use App\Models\CustomerReturn;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
+use App\Services\Auth\UserMobileOrderScopeService;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Validation\ValidationException;
 
 class MobileSalesService
 {
     public function __construct(
         protected UserAccessService $access,
+        protected UserMobileOrderScopeService $mobileScope,
     ) {}
 
     /**
@@ -27,6 +31,10 @@ class MobileSalesService
     {
         $to ??= now()->startOfDay();
         $from ??= $to->copy();
+
+        if ($allChannels && ! $this->mobileScope->canUseAllChannels($user)) {
+            $allChannels = false;
+        }
 
         $salesQuery = $this->mobileSalesQuery($user, $allChannels)
             ->whereDate('created_at', '>=', $from->toDateString())
@@ -50,8 +58,10 @@ class MobileSalesService
                 fn (Builder $q) => $q->where('organization_id', $user->organization_id),
             );
         $this->access->scopeBranchIfLimited($customerCount, $user);
+        $this->mobileScope->applyCustomerScope($customerCount, $user);
 
         return [
+            'mobile_context' => $this->mobileScope->mobileContext($user),
             'summary' => [
                 'NoofOrders' => (int) ($summaryRow->order_count ?? 0),
                 'vatTotals' => (float) ($summaryRow->vat_total ?? 0),
@@ -77,10 +87,12 @@ class MobileSalesService
             ? Carbon::parse($filters['to_date'])->startOfDay()
             : now()->startOfDay();
 
-        $query = $this->mobileSalesQuery(
-            $user,
-            filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN),
-        )
+        $allChannels = filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        if ($allChannels && ! $this->mobileScope->canUseAllChannels($user)) {
+            $allChannels = false;
+        }
+
+        $query = $this->mobileSalesQuery($user, $allChannels)
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')
@@ -101,7 +113,10 @@ class MobileSalesService
 
         return [
             'data' => collect($page->items())
-                ->map(fn (Sale $sale) => $this->presentOrderSummary($sale))
+                ->map(fn (Sale $sale) => array_merge(
+                    $this->presentOrderSummary($sale),
+                    ['can_edit' => $this->canRestoreSaleToCart($sale, $user)],
+                ))
                 ->values()
                 ->all(),
             'meta' => [
@@ -116,6 +131,10 @@ class MobileSalesService
     /** @return array<string, mixed> */
     public function showOrder(User $user, int $saleId, bool $allChannels = false): array
     {
+        if ($allChannels && ! $this->mobileScope->canUseAllChannels($user)) {
+            $allChannels = false;
+        }
+
         $sale = $this->mobileSalesQuery($user, $allChannels)
             ->with(['items.product', 'cashier'])
             ->findOrFail($saleId);
@@ -123,7 +142,10 @@ class MobileSalesService
         return array_merge(
             $this->presentOrderSummary($sale),
             [
+                'can_edit' => $this->canRestoreSaleToCart($sale, $user),
+                'can_cancel' => $this->canRestoreSaleToCart($sale, $user),
                 'items' => $sale->items->map(fn ($item) => [
+                    'sale_item_id' => (int) $item->id,
                     'product_code' => $item->product_code,
                     'product_name' => $item->product?->product_name ?? $item->product_code,
                     'qty' => (float) $item->quantity,
@@ -149,7 +171,10 @@ class MobileSalesService
             ->orderByDesc('id')
             ->limit(20)
             ->get()
-            ->map(fn (Sale $sale) => $this->presentOrderSummary($sale))
+            ->map(fn (Sale $sale) => array_merge(
+                $this->presentOrderSummary($sale),
+                ['can_edit' => $this->canRestoreSaleToCart($sale, $user)],
+            ))
             ->values()
             ->all();
     }
@@ -189,6 +214,8 @@ class MobileSalesService
             $query->where('channel', 'mobile');
         }
 
+        $this->mobileScope->applySaleScope($query, $user);
+
         if ($user->organization_id) {
             $query->where('organization_id', $user->organization_id);
         }
@@ -218,5 +245,71 @@ class MobileSalesService
             'channel' => $sale->channel,
             'created_at' => $sale->created_at,
         ];
+    }
+
+    public function canRestoreSaleToCart(Sale $sale, User $user): bool
+    {
+        if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
+            return false;
+        }
+
+        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
+            return false;
+        }
+
+        $editable = match ($sale->channel) {
+            'mobile' => ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed'],
+            default => ['held'],
+        };
+
+        return in_array((string) $sale->status, $editable, true);
+    }
+
+    /** @param  array<string, mixed>  $data */
+    public function createOrderReturn(
+        User $user,
+        int $saleId,
+        array $data,
+        bool $allChannels = false,
+    ): CustomerReturn {
+        $sale = $this->mobileSalesQuery($user, $allChannels)
+            ->with(['items.product'])
+            ->findOrFail($saleId);
+
+        if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'Cannot return items from a cancelled order.',
+            ]);
+        }
+
+        $lines = $data['lines'] ?? null;
+        if (! empty($data['full_order']) || empty($lines)) {
+            $lines = $sale->items->map(static fn ($item) => [
+                'product_code' => $item->product_code,
+                'return_qty' => (float) $item->quantity,
+                'quantity_sold' => (float) $item->quantity,
+                'unit_price' => (float) $item->selling_price,
+                'amount' => (float) $item->amount,
+                'sale_item_id' => (int) $item->id,
+                'product_name' => $item->product?->product_name ?? $item->product_code,
+                'uom' => $item->uom,
+            ])->all();
+        }
+
+        if ($lines === [] || $lines === null) {
+            throw ValidationException::withMessages([
+                'lines' => 'No items available to return for this order.',
+            ]);
+        }
+
+        return app(CustomerReturnService::class)->create($user, [
+            'sale_id' => $sale->id,
+            'customer_num' => $sale->customer_num,
+            'branch_id' => $sale->branch_id,
+            'reason' => $data['reason'] ?? null,
+            'stock_location' => $data['stock_location'] ?? 'store',
+            'auto_approve' => true,
+            'lines' => $lines,
+        ]);
     }
 }

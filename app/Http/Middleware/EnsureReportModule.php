@@ -22,11 +22,11 @@ class EnsureReportModule
             return $next($request);
         }
 
-        $module = ModuleRegistry::reportModuleForSlug($slug);
-        if ($module !== null && ! $gate->enabled($module)) {
+        $accessModules = ModuleRegistry::reportAccessModulesForSlug($slug);
+        if ($accessModules !== [] && ! collect($accessModules)->contains(fn (string $key) => $gate->enabled($key))) {
             return response()->json([
                 'message' => 'This report is not enabled for your organization.',
-                'module' => $module,
+                'module' => $accessModules[0],
             ], 403);
         }
 

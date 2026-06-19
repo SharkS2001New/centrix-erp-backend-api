@@ -8,6 +8,15 @@ return [
         'sales.orders.create',
         'pos.checkout.create',
         'pos.terminal.view',
+        'mobile.dashboard.view',
+        'mobile.orders.view',
+        'mobile.orders.create',
+        'mobile.customers.view',
+        'mobile.customers.create',
+        'mobile.customers.edit',
+        'mobile.catalog.view',
+        'mobile.stock.view',
+        'mobile.routes.view',
     ],
     'sales.manage' => [
         'sales.orders.edit',
@@ -23,6 +32,7 @@ return [
         'sales.reservations.edit',
         'sales.reservations.delete',
         'sales.returns.create',
+        'mobile.orders.edit',
     ],
     'sales.view' => [
         'sales.orders.view',
@@ -52,6 +62,7 @@ return [
         'catalogue.retail_packages.view',
         'catalogue.vat_rates.view',
         'catalogue.price_history.view',
+        'mobile.catalog.view',
     ],
     'inventory.view' => [
         'inventory.stock.view',
@@ -60,6 +71,7 @@ return [
         'inventory.transfers.view',
         'inventory.damages.view',
         'inventory.stock_take.view',
+        'mobile.stock.view',
     ],
     'inventory.manage' => [
         'inventory.receipts.create',
@@ -112,16 +124,20 @@ return [
     'customers.view' => [
         'customers.customers.view',
         'customers.statements.view',
+        'mobile.customers.view',
     ],
     'customers.manage' => [
         'customers.customers.create',
         'customers.customers.edit',
         'customers.customers.delete',
+        'mobile.customers.create',
+        'mobile.customers.edit',
     ],
     'fulfillment.view' => [
         'fulfillment.drivers.view',
         'fulfillment.vehicles.view',
         'fulfillment.routes.view',
+        'mobile.routes.view',
     ],
     'fulfillment.manage' => [
         'fulfillment.drivers.create',
@@ -267,5 +283,16 @@ return [
         'catalogue.vat_rates.create',
         'catalogue.vat_rates.edit',
         'catalogue.vat_rates.delete',
+    ],
+    'mobile.access' => [
+        'mobile.dashboard.view',
+        'mobile.orders.view',
+        'mobile.orders.create',
+        'mobile.customers.view',
+        'mobile.customers.create',
+        'mobile.customers.edit',
+        'mobile.catalog.view',
+        'mobile.stock.view',
+        'mobile.routes.view',
     ],
 ];

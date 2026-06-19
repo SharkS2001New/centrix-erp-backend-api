@@ -115,6 +115,22 @@ class ProductionRoleSeeder extends Seeder
             'reports.daily_sales.view',
             'reports.stock_on_hand.view',
         ],
+        'Mobile Sales Rep' => [
+            'mobile.dashboard.view',
+            'mobile.orders.view',
+            'mobile.orders.create',
+            'mobile.orders.edit',
+            'mobile.customers.view',
+            'mobile.customers.create',
+            'mobile.customers.edit',
+            'mobile.catalog.view',
+            'mobile.stock.view',
+            'mobile.routes.view',
+            'sales.orders.create',
+            'catalogue.products.view',
+            'inventory.stock.view',
+            'payments.sale_payments.create',
+        ],
     ];
 
     public function run(): void

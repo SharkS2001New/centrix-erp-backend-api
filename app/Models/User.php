@@ -14,7 +14,8 @@ class User extends Authenticatable
     protected $table = 'users';
     protected $fillable = [
         'organization_id', 'branch_id', 'role_id', 'username', 'email', 'password',
-        'full_name', 'is_admin', 'is_super_admin', 'access_scope', 'is_mobile_user', 'login_channels', 'is_active', 'last_login',
+        'full_name', 'is_admin', 'is_super_admin', 'access_scope', 'is_mobile_user', 'login_channels',
+        'mobile_order_scope', 'assigned_route_id', 'is_active', 'last_login',
         'deleted_by', 'deleted_at',
     ];
     protected $hidden = ['password'];
@@ -26,7 +27,25 @@ class User extends Authenticatable
         'login_channels' => 'array',
         'last_login' => 'datetime',
         'deleted_at' => 'datetime',
+        'can_use_all_channels' => 'boolean',
     ];
+
+    protected $appends = [
+        'allowed_customer_types',
+        'can_use_all_channels',
+    ];
+
+    public function getAllowedCustomerTypesAttribute(): array
+    {
+        return app(\App\Services\Auth\UserMobileOrderScopeService::class)
+            ->allowedCustomerTypes($this);
+    }
+
+    public function getCanUseAllChannelsAttribute(): bool
+    {
+        return app(\App\Services\Auth\UserMobileOrderScopeService::class)
+            ->canUseAllChannels($this);
+    }
 
     public function getAuthPassword(): string
     {

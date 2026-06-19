@@ -28,6 +28,9 @@ class CheckoutRequest extends FormRequest
             'deduct_stock' => 'nullable|boolean',
             'save_only' => 'nullable|boolean',
             'submit_kra' => 'nullable|boolean',
+            'offline_order' => 'nullable|boolean',
+            'checkout_latitude' => 'nullable|numeric|between:-90,90',
+            'checkout_longitude' => 'nullable|numeric|between:-180,180',
         ];
     }
 }
