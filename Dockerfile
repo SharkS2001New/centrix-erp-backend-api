@@ -16,29 +16,25 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/include/
-RUN docker-php-ext-install -j$(nproc) \
-    bz2 \
-    intl \
-    iconv \
-    bcmath \
-    opcache \
-    calendar \
-    pdo_mysql \
-    gd \
-    zip
+RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/include/ \
+    && docker-php-ext-install -j"$(nproc)" \
+        bz2 \
+        intl \
+        bcmath \
+        opcache \
+        calendar \
+        pdo_mysql \
+        gd
 
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
-RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf
-RUN sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf
-RUN a2enmod rewrite headers
-
-RUN sed -i 's/Listen 80/Listen 8001/' /etc/apache2/ports.conf
-RUN sed -i 's/:80/:8001/' /etc/apache2/sites-available/*.conf
-RUN echo "ServerName localhost" >> /etc/apache2/apache2.conf
+RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
+    && sed -ri -e 's!/var/www/!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/apache2.conf /etc/apache2/conf-available/*.conf \
+    && a2enmod rewrite headers \
+    && sed -i 's/Listen 80/Listen 8001/' /etc/apache2/ports.conf \
+    && sed -i 's/:80/:8001/' /etc/apache2/sites-available/*.conf \
+    && echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
 ENV LOG_CHANNEL=stderr
-ENV APP_KEY=base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
 VOLUME /var/www/html
 
@@ -47,10 +43,6 @@ COPY . /var/www/html
 WORKDIR /var/www/html
 RUN git config --global --add safe.directory /var/www/html || true
 RUN composer install --no-dev --optimize-autoloader --no-interaction
-
-RUN php artisan cache:clear || true
-RUN php artisan view:clear && php artisan view:cache || true
-RUN php artisan route:clear || true
 
 COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
