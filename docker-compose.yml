@@ -29,13 +29,10 @@ services:
     environment:
       APP_ENV: local
       APP_DEBUG: "true"
-      APP_URL: http://localhost:8001
-      DB_CONNECTION: mysql
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_DATABASE: pos_erp
-      DB_USERNAME: root
-      DB_PASSWORD: root
+      DB_HOST_LOCAL: mysql
+      DB_DATABASE_LOCAL: pos_erp
+      DB_USERNAME_LOCAL: root
+      DB_PASSWORD_LOCAL: root
       CACHE_STORE: database
       QUEUE_CONNECTION: database
       SESSION_DRIVER: database

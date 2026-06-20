@@ -74,8 +74,9 @@ jobs:
           SHORT_SHA_PART="${{ steps.meta.outputs.tags }}"
           SHORT_SHA_PART="$(echo "$SHORT_SHA_PART" | awk -F':' '{print $2}' | cut -c1-11)"
           sed -i "s|tag:.*|tag: $SHORT_SHA_PART|" k8s-setup/centrix-erp-backend-api/values.yaml
+          sed -i "s|tag:.*|tag: $SHORT_SHA_PART|" k8s-setup/centrix-erp-scheduler/values.yaml
           echo "SHORT_SHA_PART=$SHORT_SHA_PART" >> "$GITHUB_ENV"
-          echo "Updated tag in values.yaml to $SHORT_SHA_PART"
+          echo "Updated API and scheduler tags in values.yaml to $SHORT_SHA_PART"
 
       - name: Commit and push changes to setup repo
         if: github.event_name != 'pull_request' && vars.K8S_SETUP_REPO != ''
@@ -83,8 +84,8 @@ jobs:
           cd k8s-setup
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git add centrix-erp-backend-api/values.yaml
-          git commit -m "Update centrix-erp-backend-api image tag to $SHORT_SHA_PART"
+          git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml
+          git commit -m "Update centrix-erp-backend-api and scheduler image tags to $SHORT_SHA_PART"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
