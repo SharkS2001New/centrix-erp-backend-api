@@ -1,5 +1,5 @@
 {
-    "name": "lovable/pos-erp-api",
+    "name": "centrix/centrix-erp-backend-api",
     "type": "project",
     "description": "Centrix ERP API v1 backend (Laravel 11).",
     "require": {

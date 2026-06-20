@@ -21,7 +21,26 @@ Modular ERP API for **Centrix ERP** by Alpac Software Solutions — small shop, 
 
 ## Frontend (Next.js)
 
-Sibling project: [`../pos-erp-web`](../pos-erp-web) — `npm run dev` on port 3000, connects to this API.
+Sibling project: [`../centrix-erp-frontend-web`](../centrix-erp-frontend-web) — `npm run dev` on port 3000, connects to this API.
+
+## Docker
+
+Build and run locally (inject DB and app env at runtime):
+
+```bash
+docker build -t centrix-erp-backend-api .
+docker run --rm -p 8001:8001 \
+  -e APP_KEY=base64:YOUR_KEY \
+  -e DB_HOST=host.docker.internal \
+  -e DB_DATABASE=centrix_erp \
+  -e DB_USERNAME=root \
+  -e DB_PASSWORD=secret \
+  centrix-erp-backend-api
+```
+
+Images are published to `ghcr.io/<owner>/centrix-erp-backend-api` on push to `main`/`master` via `.github/workflows/docker-publish.yml`.
+
+Optional GitOps: set repository variable `K8S_SETUP_REPO` and secret `PERSONAL_ACCESS_TOKEN` to auto-update Helm tags (same pattern as pitchpredictionswebsite → pitchpredk3ssetup).
 
 ## Setup
 
@@ -91,7 +110,7 @@ GET  /api/v1/reports/stock-on-hand
 
 Import into Postman:
 
-- `postman/POS-ERP-API.postman_collection.json` — all `/api/v1` routes (388 requests)
+- `postman/centrix-erp-api.postman_collection.json` — all `/api/v1` routes (388 requests)
 - `postman/Local.postman_environment.json` — `baseUrl` + `token`
 
 ```bash
@@ -118,6 +137,8 @@ Then re-save custom roles in **Admin → Roles & permissions** so new feature co
 Production role templates (Branch Manager, Stock Clerk, Accountant, Payroll Clerk, Viewer) are seeded via `ProductionRoleSeeder` on `migrate:fresh --seed`.
 
 ## Production safety
+
+Production uses database **`centrix-superdb`**. Copy `.env.production.example` and set `APP_ENV=production`, `APP_DEBUG=false`, and your DB credentials.
 
 Destructive database commands are **blocked when `APP_ENV=production`** unless you explicitly set `DB_ALLOW_DESTRUCTIVE_COMMANDS=true` (emergency only):
 
@@ -155,7 +176,7 @@ Backups are stored under `storage/app/backups/database/` by default (gzip SQL). 
 Enable the scheduler on the server:
 
 ```bash
-* * * * * cd /path/to/pos-erp-api && php artisan schedule:run >> /dev/null 2>&1
+* * * * * cd /path/to/centrix-erp-backend-api && php artisan schedule:run >> /dev/null 2>&1
 ```
 
 Verify scheduled tasks:

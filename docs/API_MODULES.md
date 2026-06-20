@@ -175,7 +175,7 @@ Organization config: `GET/PATCH /erp/settings/finance` → `finance.mpesa` (cons
 composer postman
 ```
 
-Import `postman/POS-ERP-API.postman_collection.json` and `postman/Local.postman_environment.json`. Run **Auth → POST auth/login** first.
+Import `postman/centrix-erp-api.postman_collection.json` and `postman/Local.postman_environment.json`. Run **Auth → POST auth/login** first.
 
 ## Permissions (RBAC)
 

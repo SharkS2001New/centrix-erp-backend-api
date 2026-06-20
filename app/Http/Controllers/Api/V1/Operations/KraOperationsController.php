@@ -18,8 +18,7 @@ class KraOperationsController extends Controller
 
     public function deviceStatus(Request $request)
     {
-        $user = $request->user();
-        $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
         $enabled = ! empty($finance['enable_kra_device']);
 
         $status = [
@@ -72,8 +71,7 @@ class KraOperationsController extends Controller
             return response()->json(['message' => 'Linked sale not found.'], 422);
         }
 
-        $user = $request->user();
-        $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
         if (empty($finance['enable_kra_device'])) {
             return response()->json(['message' => 'Enable KRA device in Finance settings first.'], 422);
         }

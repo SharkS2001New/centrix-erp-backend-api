@@ -100,8 +100,10 @@ class DatabaseBackupTest extends TestCase
 
     public function test_destructive_commands_are_blocked_in_production(): void
     {
+        $this->app['env'] = 'production';
         config(['database.allow_destructive_commands' => false]);
-        DB::prohibitDestructiveCommands();
+
+        (new \App\Providers\AppServiceProvider($this->app))->boot();
 
         $exitCode = Artisan::call('migrate:fresh', ['--force' => true]);
 

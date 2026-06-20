@@ -52,6 +52,7 @@ use App\Http\Controllers\Api\V1\CustomerReturnController;
 use App\Http\Controllers\Api\V1\ExpenseGroupController;
 use App\Http\Controllers\Api\V1\ExpenseController;
 use App\Http\Controllers\Api\V1\KraResponseController;
+use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\SystemSettingController;
 use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
@@ -193,6 +194,14 @@ Route::prefix('v1')->group(function () {
                 Route::apiResource('payment-methods', PaymentMethodController::class);
                 Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show']);
                 Route::apiResource('users', UserController::class);
+                Route::get('users/{user}/permissions', [UserController::class, 'permissions']);
+                Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions']);
+                Route::apiResource('routes', RouteModelController::class)->only(['index', 'show']);
+                Route::apiResource('vats', VatController::class);
+                Route::apiResource('products', ProductController::class)->only(['index', 'show']);
+                Route::apiResource('kra-responses', KraResponseController::class)->only(['index', 'show']);
+                Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);
+                Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
                 Route::apiResource('employees', EmployeeController::class)->only(['index', 'show']);
             });
 

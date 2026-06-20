@@ -1,6 +1,6 @@
 {
     "info": {
-        "_postman_id": "pos-erp-api-v3-collection",
+        "_postman_id": "centrix-erp-api-v3-collection",
         "name": "Centrix ERP API v3",
         "description": "All `/api/v1` routes. Run **Auth \u2192 Login** first; the test script saves `token` to the environment. Regenerate: `php artisan postman:generate`.",
         "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"

@@ -6,5 +6,5 @@ return [
         'database' => ['driver' => 'database', 'table' => 'cache', 'connection' => null],
         'file' => ['driver' => 'file', 'path' => storage_path('framework/cache/data')],
     ],
-    'prefix' => env('CACHE_PREFIX', 'pos_erp_cache'),
+    'prefix' => env('CACHE_PREFIX', 'centrix_erp_cache'),
 ];

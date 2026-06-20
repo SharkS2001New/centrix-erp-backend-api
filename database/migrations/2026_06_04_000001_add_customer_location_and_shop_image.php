@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Legacy patch for databases created before schema.sql included customer geo/shop image.
- * Fresh installs via 0002_01_01_000000_create_pos_erp_schema already have these columns.
+ * Fresh installs via 0002_01_01_000000_create_centrix_erp_schema already have these columns.
  */
 return new class extends Migration
 {

@@ -7,5 +7,5 @@ Route::get('/', fn () => response()->json([
     'product' => config('branding.product_name'),
     'version' => '3.1',
     'api' => url('/api/v1'),
-    'postman' => 'Import postman/POS-ERP-API.postman_collection.json',
+    'postman' => 'Import postman/centrix-erp-api.postman_collection.json',
 ]));
