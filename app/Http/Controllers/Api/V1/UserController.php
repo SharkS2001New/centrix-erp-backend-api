@@ -4,10 +4,12 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\User;
 use App\Models\UserMembership;
+use App\Models\Organization;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\UserAccountGuard;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserLoginChannelService;
+use App\Services\Auth\UserLoginChannelPolicy;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Auth\UserLoginService;
 use App\Services\Auth\UserPermissionService;
@@ -31,7 +33,7 @@ class UserController extends BaseResourceController
 
     public function store(Request $request)
     {
-        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $rules['password'] = PasswordPolicy::validationRules($orgId ?: null, confirmed: false);
         $rules['access_scope'] = 'required|in:org,branch';
@@ -43,9 +45,13 @@ class UserController extends BaseResourceController
         if (! array_key_exists('login_channels', $data)) {
             $data['login_channels'] = app(UserLoginChannelService::class)->defaultChannels();
         }
+        app(UserLoginChannelPolicy::class)->assertAllowedForOrganization(
+            Organization::findOrFail($orgId),
+            $data['login_channels'],
+        );
         $data = $this->normalizeLoginChannels($data);
         $data = app(UserMobileOrderScopeService::class)->normalizeUserAttributes($data);
-        $data['organization_id'] = $request->user()->organization_id;
+        $data['organization_id'] = $this->access()->organizationId($request->user(), $request);
         app(UsernameValidator::class)->assertUniqueInOrganization(
             (int) $data['organization_id'],
             (string) $data['username'],
@@ -53,6 +59,7 @@ class UserController extends BaseResourceController
         if (! empty($data['password'])) {
             PasswordPolicy::assertValid($orgId ?: null, (string) $data['password']);
             $data['password'] = Hash::make($data['password']);
+            $data['must_change_password'] = true;
         }
         $model = User::create($data);
 
@@ -73,6 +80,10 @@ class UserController extends BaseResourceController
             $data = array_merge($data, $this->access()->validateAccessScope($merged, (bool) ($merged['is_admin'] ?? false)));
         }
         if (array_key_exists('login_channels', $data)) {
+            app(UserLoginChannelPolicy::class)->assertAllowedForOrganization(
+                Organization::findOrFail((int) $model->organization_id),
+                $data['login_channels'],
+            );
             $data = $this->normalizeLoginChannels($data);
         }
         if (array_key_exists('mobile_order_scope', $data)
@@ -92,6 +103,8 @@ class UserController extends BaseResourceController
         if (! empty($data['password'])) {
             PasswordPolicy::assertValid((int) $model->organization_id, (string) $data['password']);
             $data['password'] = Hash::make($data['password']);
+            $data['must_change_password'] = true;
+            $model->tokens()->delete();
         }
         if (array_key_exists('is_active', $data) && ! $data['is_active']) {
             app(UserAccountGuard::class)->assertCanDisableLogin($model, $request->user());
@@ -201,9 +214,11 @@ class UserController extends BaseResourceController
 
     protected function findOrgUser(string $id): User
     {
+        $orgId = $this->access()->organizationId(request()->user(), request());
+
         return User::query()
             ->where('id', $id)
-            ->where('organization_id', request()->user()->organization_id)
+            ->where('organization_id', $orgId)
             ->firstOrFail();
     }
 
@@ -216,7 +231,11 @@ class UserController extends BaseResourceController
             return $data;
         }
 
-        $channels = app(UserLoginChannelService::class)->normalize($data['login_channels']);
+        $orgId = (int) ($data['organization_id'] ?? request()->user()?->organization_id ?? 0);
+        $organization = $orgId ? Organization::find($orgId) : null;
+        $channels = $organization
+            ? app(UserLoginChannelPolicy::class)->sanitizeForOrganization($organization, $data['login_channels'])
+            : app(UserLoginChannelService::class)->normalize($data['login_channels']);
         $data['login_channels'] = $channels;
         $data['is_mobile_user'] = app(UserLoginChannelService::class)->syncLegacyMobileFlag($channels);
 

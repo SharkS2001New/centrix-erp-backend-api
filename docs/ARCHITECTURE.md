@@ -129,7 +129,7 @@ Complete these before POS, mobile, or ERP web clients go live:
 | **Observability** | Structured audit on checkout/stock; rate limits; health checks for MySQL. |
 | **API contract** | Extend Postman examples / published collection when routes change (`composer postman`). |
 | **Testing** | Expand PHPUnit beyond cart/checkout (workflows, credit sales, stock-take, RBAC 403 cases). |
-| **Ops** | Backups, migration runbook, `.env` secrets; CORS and Sanctum token rotation policy. |
+| **Ops** | Backups (`erp:database-backup` + cron), migration runbook, `.env` secrets; CORS and Sanctum token rotation policy. |
 
 Frontends should bootstrap from `GET /api/v1/erp/capabilities` and treat module flags as authoritative (do not hard-code feature visibility).
 

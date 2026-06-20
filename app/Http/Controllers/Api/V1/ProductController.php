@@ -54,6 +54,10 @@ class ProductController extends BaseResourceController
             $data['organization_id'] = $request->user()->organization_id;
         }
 
+        if ($request->user()) {
+            $data['created_by'] = $request->user()->id;
+        }
+
         $model = Product::create($data);
 
         $this->logPriceChange(
@@ -75,7 +79,11 @@ class ProductController extends BaseResourceController
         $prevDisc = (float) ($model->discount_percentage ?? 0);
 
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
-        $model->update($request->validate($rules));
+        $data = $request->validate($rules);
+        if ($request->user()) {
+            $data['updated_by'] = $request->user()->id;
+        }
+        $model->update($data);
         $model->refresh();
 
         $this->logPriceChangeIfChanged(

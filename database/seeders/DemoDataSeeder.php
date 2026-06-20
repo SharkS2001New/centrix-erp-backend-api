@@ -100,17 +100,11 @@ class DemoDataSeeder extends Seeder
         }
 
         $cashierPerms = [
-            'dashboard.overview.view',
             'pos.terminal.view',
+            'pos.checkout.create',
             'pos.till_management.view',
             'pos.till_management.create',
             'pos.end_of_day.view',
-            'sales.dashboard.view',
-            'sales.orders.view',
-            'sales.orders.create',
-            'payments.sale_payments.view',
-            'payments.sale_payments.create',
-            'inventory.stock.view',
         ];
         foreach ($cashierPerms as $code) {
             $pid = Permission::where('permission_code', $code)->value('id');

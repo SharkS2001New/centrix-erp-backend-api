@@ -3,6 +3,7 @@
 namespace App\Services\Accounting;
 
 use App\Models\FiscalPeriod;
+use App\Models\JournalEntry;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -76,6 +77,8 @@ class FiscalPeriodService
             ]);
         }
 
+        $this->assertCanClose($period);
+
         $period->forceFill([
             'status' => 'closed',
             'closed_at' => now(),
@@ -83,6 +86,47 @@ class FiscalPeriodService
         ])->save();
 
         return $period->fresh();
+    }
+
+    public function assertCanClose(FiscalPeriod $period): void
+    {
+        $orgId = (int) $period->organization_id;
+        $start = $period->start_date?->toDateString() ?? (string) $period->start_date;
+        $end = $period->end_date?->toDateString() ?? (string) $period->end_date;
+
+        $draftCount = JournalEntry::query()
+            ->where('organization_id', $orgId)
+            ->where('status', 'draft')
+            ->whereBetween('entry_date', [$start, $end])
+            ->count();
+
+        if ($draftCount > 0) {
+            throw ValidationException::withMessages([
+                'period' => [
+                    sprintf(
+                        'Cannot close this period: %d draft journal %s remain within the date range.',
+                        $draftCount,
+                        $draftCount === 1 ? 'entry' : 'entries',
+                    ),
+                ],
+            ]);
+        }
+
+        $pendingExports = (int) DB::table('accounting_export_queue')
+            ->where('organization_id', $orgId)
+            ->where('status', 'pending')
+            ->count();
+
+        if ($pendingExports > 0) {
+            throw ValidationException::withMessages([
+                'period' => [
+                    sprintf(
+                        'Cannot close this period: %d journal export(s) are still pending.',
+                        $pendingExports,
+                    ),
+                ],
+            ]);
+        }
     }
 
     public function reopen(FiscalPeriod $period): FiscalPeriod

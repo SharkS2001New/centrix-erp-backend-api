@@ -9,7 +9,9 @@ use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
 use App\Services\Auth\TenantAccountResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
@@ -22,7 +24,20 @@ class AuthController extends Controller
 
     public function health()
     {
-        return response()->json(['ok' => true]);
+        $checks = ['app' => true];
+
+        try {
+            DB::connection()->getPdo();
+            DB::select('select 1');
+            $checks['database'] = true;
+        } catch (\Throwable) {
+            return response()->json([
+                'ok' => false,
+                'checks' => array_merge($checks, ['database' => false]),
+            ], 503);
+        }
+
+        return response()->json(['ok' => true, 'checks' => $checks]);
     }
 
     public function organizationPreview(Request $request)
@@ -87,12 +102,14 @@ class AuthController extends Controller
         $data = $request->validate([
             'login_channel' => 'required|in:backoffice,pos,mobile',
             'client_id' => 'required|string',
+            'workspace_id' => ['nullable', 'string', 'max:32', Rule::in(array_keys(config('erp_workspaces', [])))],
         ]);
 
         $result = $this->sessions->switchLoginChannel(
             $request->user(),
             $data['client_id'],
             $data['login_channel'],
+            $data['workspace_id'] ?? null,
         );
 
         return response()->json($result);
@@ -142,14 +159,32 @@ class AuthController extends Controller
 
     public function forgotPassword(Request $request)
     {
-        $data = $request->validate([
-            'company_code' => 'required|string',
-            'username' => 'required|string',
+        throw ValidationException::withMessages([
+            'username' => ['Password reset is managed by your organization administrator. Contact them to reset your password.'],
         ]);
+    }
 
-        return response()->json(
-            $this->passwordResets->requestReset($data['company_code'], $data['username']),
-        );
+    public function setRequiredPassword(Request $request)
+    {
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $data = $request->validate([
+            'password' => PasswordPolicy::validationRules($orgId ?: null),
+        ]);
+        PasswordPolicy::assertValid($orgId ?: null, $data['password']);
+
+        $user = $request->user();
+        if (! $user->must_change_password) {
+            throw ValidationException::withMessages([
+                'password' => ['Password change is not required for this account.'],
+            ]);
+        }
+
+        $this->passwordResets->setRequiredPassword($user, $data['password']);
+
+        return response()->json([
+            'message' => 'Password updated successfully.',
+            'must_change_password' => false,
+        ]);
     }
 
     public function resetPassword(Request $request)

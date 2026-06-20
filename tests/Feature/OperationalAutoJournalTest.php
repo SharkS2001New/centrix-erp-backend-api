@@ -41,6 +41,30 @@ class OperationalAutoJournalTest extends TestCase
         ]);
     }
 
+    public function test_expense_delete_reverses_posted_journal(): void
+    {
+        $expense = $this->postJson('/api/v1/expenses', [
+            'branch_id' => $this->user->branch_id,
+            'expense_group_id' => 1,
+            'description' => 'Reversible expense',
+            'expense_amount' => 250,
+            'expense_date' => now()->toDateString(),
+            'payment_method_id' => 1,
+        ])->assertCreated()->json();
+
+        $this->deleteJson("/api/v1/expenses/{$expense['id']}")->assertNoContent();
+
+        $this->assertDatabaseHas('journal_entries', [
+            'reference_type' => 'expense',
+            'reference_id' => $expense['id'],
+            'status' => 'void',
+        ]);
+        $this->assertDatabaseHas('journal_entries', [
+            'reference_type' => 'journal_reversal',
+            'status' => 'posted',
+        ]);
+    }
+
     public function test_stock_receive_posts_inventory_and_ap_journal(): void
     {
         $productCode = Product::first()->product_code;

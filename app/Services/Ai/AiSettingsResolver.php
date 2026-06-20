@@ -56,6 +56,11 @@ class AiSettingsResolver
      */
     public static function resolveRuntimeForOrganization(Organization $organization): ?array
     {
+        $gate = (new CapabilityGate)->forOrganization($organization);
+        if (! $gate->aiPlatformEnabled()) {
+            return null;
+        }
+
         $settings = self::forOrganization($organization);
         if (! ($settings['enabled'] ?? false)) {
             return null;
@@ -146,11 +151,23 @@ class AiSettingsResolver
     /** @return array<string, mixed> */
     public static function describeForClient(User $user): array
     {
-        $settings = self::maskForClient(self::forUser($user));
-        $runtime = self::resolveRuntime($user);
+        $org = Organization::find($user->organization_id);
+
+        return $org
+            ? self::describeForOrganization($org)
+            : self::describeForOrganization(new Organization);
+    }
+
+    /** @return array<string, mixed> */
+    public static function describeForOrganization(Organization $organization): array
+    {
+        $gate = (new CapabilityGate)->forOrganization($organization);
+        $settings = self::maskForClient(self::forOrganization($organization));
+        $runtime = $gate->aiPlatformEnabled() ? self::resolveRuntimeForOrganization($organization) : null;
 
         return [
             'settings' => $settings,
+            'platform_enabled' => $gate->aiPlatformEnabled(),
             'available' => $runtime !== null,
             'model' => $runtime['model'] ?? ($settings['model'] ?: config('ai.defaults.model')),
             'provider' => $settings['provider'] ?? 'openai',
@@ -168,8 +185,9 @@ class AiSettingsResolver
         $settings = self::forOrganization($org);
 
         return [
-            'enabled' => (bool) ($settings['enabled'] ?? false),
-            'available' => self::isAvailableForOrganization($org),
+            'platform_enabled' => $gate->aiPlatformEnabled(),
+            'enabled' => $gate->aiPlatformEnabled() && (bool) ($settings['enabled'] ?? false),
+            'available' => $gate->aiPlatformEnabled() && self::isAvailableForOrganization($org),
         ];
     }
 }

@@ -26,8 +26,8 @@ class ErpSettingsController extends Controller
     public function sales(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $system = SystemSetting::query()
             ->where('organization_id', $org->id)
@@ -46,8 +46,8 @@ class ErpSettingsController extends Controller
     public function updateSales(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $salesKeys = [
             'allow_sell_from_shop',
@@ -152,7 +152,7 @@ class ErpSettingsController extends Controller
         $data = $request->validate($rules);
 
         if (! $user->is_super_admin) {
-            $data = $this->platformConfig->filterOrgManagerSalesPayload($data);
+            $data = $this->platformConfig->filterOrgManagerSalesPayload($data, $gate);
         }
 
         $currentSales = $gate->moduleSettings('sales');
@@ -213,7 +213,7 @@ class ErpSettingsController extends Controller
             $system->update(['allow_below_stock' => $data['allow_negative_stock'] ? 1 : 0]);
         }
 
-        $refreshedGate = $this->erp->gateForUser($user->fresh());
+        $refreshedGate = $this->erp->gateForOrganization($org->fresh());
         $refreshed = $refreshedGate->moduleSettings('sales');
         $refreshed['order_workflow'] = OrderWorkflowService::forGate($refreshedGate)->config();
         $system = SystemSetting::query()->where('organization_id', $org->id)->orderBy('id')->first();
@@ -227,7 +227,7 @@ class ErpSettingsController extends Controller
     public function distribution(Request $request)
     {
         $user = $request->user();
-        $gate = $this->erp->gateForUser($user);
+        $gate = $this->erp->gateForRequest($request);
 
         return response()->json([
             'distribution' => $gate->distributionSettings(),
@@ -237,8 +237,8 @@ class ErpSettingsController extends Controller
     public function updateDistribution(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $distributionKeys = [
             'enable_distribution_ops',
@@ -252,6 +252,7 @@ class ErpSettingsController extends Controller
             'enforce_vehicle_capacity',
             'enable_cod_reconciliation',
             'require_trip_cash_settlement',
+            'include_normal_orders_in_loading_list',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -284,7 +285,7 @@ class ErpSettingsController extends Controller
         $moduleSettings['distribution'] = $next;
         $org->update(['module_settings' => $moduleSettings]);
 
-        $refreshedGate = $this->erp->gateForUser($user->fresh());
+        $refreshedGate = $this->erp->gateForOrganization($org->fresh());
 
         return response()->json([
             'distribution' => $refreshedGate->distributionSettings(),
@@ -294,8 +295,8 @@ class ErpSettingsController extends Controller
     public function inventory(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
         $sales = $gate->moduleSettings('sales');
         $inventory = $gate->moduleSettings('inventory');
         $system = SystemSetting::query()
@@ -311,8 +312,8 @@ class ErpSettingsController extends Controller
     public function updateInventory(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $inventoryKeys = [
             'default_receive_location',
@@ -391,7 +392,7 @@ class ErpSettingsController extends Controller
             }
         }
 
-        $refreshedGate = $this->erp->gateForUser($user->fresh());
+        $refreshedGate = $this->erp->gateForOrganization($org->fresh());
         $system = SystemSetting::query()->where('organization_id', $org->id)->orderBy('id')->first();
 
         return response()->json([
@@ -467,8 +468,8 @@ class ErpSettingsController extends Controller
     public function finance(Request $request)
     {
         $user = $request->user();
-        $gate = $this->erp->gateForUser($user);
-        $org = Organization::findOrFail($user->organization_id);
+        $gate = $this->erp->gateForRequest($request);
+        $org = $this->erp->resolveOrganization($request);
         $finance = $this->mergedFinanceSettings($gate);
         $mpesaConfig = MpesaSettingsResolver::forOrganization($org);
         $finance['mpesa'] = $this->mpesaForResponse($mpesaConfig);
@@ -479,14 +480,14 @@ class ErpSettingsController extends Controller
             QuickBooksSettingsResolver::forOrganization($org)
         );
 
-        return response()->json(['finance' => $finance]);
+        return response()->json(['finance' => $this->sanitizeFinanceForClient($finance, $gate)]);
     }
 
     public function updateFinance(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
             'enable_kra_device' => 'sometimes|boolean',
@@ -519,6 +520,11 @@ class ErpSettingsController extends Controller
         ]);
 
         if (! empty($data['enable_kra_device'])) {
+            if (! $gate->kraIntegrationPlatformEnabled()) {
+                throw ValidationException::withMessages([
+                    'enable_kra_device' => ['KRA integration is not enabled for this organization by the platform administrator.'],
+                ]);
+            }
             $ip = trim((string) ($data['kra_device_ip'] ?? $gate->moduleSettings('finance')['kra_device_ip'] ?? ''));
             $serial = trim((string) ($data['kra_serial_number'] ?? $gate->moduleSettings('finance')['kra_serial_number'] ?? ''));
             $pin = trim((string) ($data['kra_pin_number'] ?? $gate->moduleSettings('finance')['kra_pin_number'] ?? ''));
@@ -527,6 +533,12 @@ class ErpSettingsController extends Controller
                     'enable_kra_device' => 'KRA device IP, serial number, and shop PIN are required when the device is enabled.',
                 ]);
             }
+        }
+
+        if (array_key_exists('mpesa', $data) && is_array($data['mpesa']) && ! $gate->mpesaStkPlatformEnabled()) {
+            throw ValidationException::withMessages([
+                'mpesa' => ['M-Pesa STK Push is not enabled for this organization by the platform administrator.'],
+            ]);
         }
 
         $current = $gate->moduleSettings('finance');
@@ -550,7 +562,7 @@ class ErpSettingsController extends Controller
         $moduleSettings['finance'] = $nextFinance;
         $org->update(['module_settings' => $moduleSettings]);
 
-        $refreshedGate = $this->erp->gateForUser($user->fresh());
+        $refreshedGate = $this->erp->gateForOrganization($org->fresh());
         $finance = $this->mergedFinanceSettings($refreshedGate);
         $mpesaConfig = MpesaSettingsResolver::forOrganization($org->fresh());
         $finance['mpesa'] = $this->mpesaForResponse($mpesaConfig);
@@ -562,7 +574,7 @@ class ErpSettingsController extends Controller
         );
 
         return response()->json([
-            'finance' => $finance,
+            'finance' => $this->sanitizeFinanceForClient($finance, $refreshedGate),
         ]);
     }
 
@@ -587,7 +599,7 @@ class ErpSettingsController extends Controller
     public function general(Request $request)
     {
         $user = $request->user();
-        $gate = $this->erp->gateForUser($user);
+        $gate = $this->erp->gateForRequest($request);
 
         return response()->json([
             'general' => \App\Services\Erp\GeneralSettingsResolver::forGate($gate),
@@ -597,8 +609,8 @@ class ErpSettingsController extends Controller
     public function updateGeneral(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
             'currency' => 'sometimes|string|max:10',
@@ -625,7 +637,7 @@ class ErpSettingsController extends Controller
 
         return response()->json([
             'general' => \App\Services\Erp\GeneralSettingsResolver::forGate(
-                $this->erp->gateForUser($user->fresh()),
+                $this->erp->gateForOrganization($org->fresh()),
             ),
         ]);
     }
@@ -633,8 +645,8 @@ class ErpSettingsController extends Controller
     public function notifications(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
         $settings = NotificationSettingsResolver::forGate($gate);
 
         return response()->json([
@@ -649,8 +661,8 @@ class ErpSettingsController extends Controller
     public function updateNotifications(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
             'sms_enabled' => 'sometimes|boolean',
@@ -703,7 +715,7 @@ class ErpSettingsController extends Controller
     public function procurement(Request $request)
     {
         $user = $request->user();
-        $gate = $this->erp->gateForUser($user);
+        $gate = $this->erp->gateForRequest($request);
 
         return response()->json([
             'procurement' => \App\Services\Purchasing\ProcurementSettingsResolver::forGate($gate),
@@ -713,8 +725,8 @@ class ErpSettingsController extends Controller
     public function updateProcurement(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $procurementKeys = [
             'default_payment_terms_days',
@@ -750,7 +762,7 @@ class ErpSettingsController extends Controller
 
         return response()->json([
             'procurement' => \App\Services\Purchasing\ProcurementSettingsResolver::forGate(
-                $this->erp->gateForUser($user->fresh()),
+                $this->erp->gateForOrganization($org->fresh()),
             ),
         ]);
     }
@@ -758,7 +770,7 @@ class ErpSettingsController extends Controller
     public function security(Request $request)
     {
         $user = $request->user();
-        $gate = $this->erp->gateForUser($user);
+        $gate = $this->erp->gateForRequest($request);
         return response()->json([
             'security' => \App\Services\Auth\SecuritySettingsResolver::forGate($gate),
         ]);
@@ -767,8 +779,8 @@ class ErpSettingsController extends Controller
     public function updateSecurity(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
             'session_idle_minutes' => 'sometimes|integer|min:5|max:480',
@@ -792,7 +804,7 @@ class ErpSettingsController extends Controller
     public function hr(Request $request)
     {
         $user = $request->user();
-        $gate = $this->erp->gateForUser($user);
+        $gate = $this->erp->gateForRequest($request);
 
         return response()->json([
             'hr_payroll' => \App\Services\Hr\HrPayrollSettingsResolver::forGate($gate),
@@ -802,8 +814,8 @@ class ErpSettingsController extends Controller
     public function updateHr(Request $request)
     {
         $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
 
         $hrKeys = [
             'pay_frequency',
@@ -855,4 +867,23 @@ class ErpSettingsController extends Controller
             'hr_payroll' => \App\Services\Hr\HrPayrollSettingsResolver::forOrganization($org->fresh()),
         ]);
     }
+    /** @param  array<string, mixed>  $finance */
+    protected function sanitizeFinanceForClient(array $finance, CapabilityGate $gate): array
+    {
+        if (! $gate->kraIntegrationPlatformEnabled()) {
+            foreach ([
+                'enable_kra_device', 'kra_device_ip', 'kra_serial_number', 'kra_pin_number',
+                'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra',
+            ] as $key) {
+                unset($finance[$key]);
+            }
+        }
+
+        if (! $gate->mpesaStkPlatformEnabled()) {
+            unset($finance['mpesa'], $finance['mpesa_status']);
+        }
+
+        return $finance;
+    }
+
 }

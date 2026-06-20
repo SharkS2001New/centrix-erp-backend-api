@@ -8,6 +8,7 @@ use App\Models\RouteSchedule;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Erp\ErpContext;
+use App\Services\Sales\RouteOrderScope;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -88,9 +89,22 @@ class DispatchTripService
             throw new InvalidArgumentException('No valid orders were provided.');
         }
 
-        DB::transaction(function () use ($trip, $sales) {
+        $distributionSettings = $user
+            ? $this->erp->gateForUser($user)->distributionSettings()
+            : ($trip->branch?->organization_id
+                ? $this->erp->gateForOrganization(Organization::findOrFail($trip->branch->organization_id))->distributionSettings()
+                : []);
+        $includeNormalOrders = (bool) ($distributionSettings['include_normal_orders_in_loading_list'] ?? false);
+
+        DB::transaction(function () use ($trip, $sales, $includeNormalOrders) {
             $seq = (int) $trip->sales()->max('dispatch_trip_sales.stop_seq');
             foreach ($sales as $sale) {
+                if (! RouteOrderScope::eligibleForLoadingList($sale, $includeNormalOrders)) {
+                    throw new InvalidArgumentException(
+                        "Order #{$sale->order_num} is not a mobile or route order eligible for loading lists.",
+                    );
+                }
+
                 if ($trip->route_id && $sale->route_id && (int) $sale->route_id !== (int) $trip->route_id) {
                     throw new InvalidArgumentException("Order #{$sale->order_num} belongs to a different route.");
                 }
@@ -157,9 +171,14 @@ class DispatchTripService
             throw new InvalidArgumentException('Assign at least one order before starting the trip.');
         }
 
+        $trip->load(['loadingList.lines', 'vehicle', 'sales']);
+        $loadingList = $trip->loadingList;
+        if ($loadingList && $loadingList->lines->isNotEmpty() && $loadingList->status === 'open') {
+            throw new InvalidArgumentException('Lock the loading list before starting the trip.');
+        }
+
         $settings = $this->erp->gateForUser($user)->distributionSettings();
         $gate = $this->erp->gateForUser($user);
-        $trip->load(['vehicle', 'sales']);
         $this->capacityValidator->assertTripCapacity($trip, $settings);
 
         if ($gate->stockDeductTiming() === 'trip_depart') {
@@ -187,9 +206,9 @@ class DispatchTripService
             throw new InvalidArgumentException('Only in-transit trips can be completed.');
         }
 
-        $settings = $this->erp->gateForUser($user)->distributionSettings();
-        if (! empty($settings['enable_cod_reconciliation']) && ! empty($settings['require_trip_cash_settlement']) && ! $trip->settled_at) {
-            throw new InvalidArgumentException('Cash settlement is required before completing this trip.');
+        $reconciliation = app(TripReconciliationService::class)->build($trip, $user);
+        if (! empty($reconciliation['blockers'])) {
+            throw new InvalidArgumentException($reconciliation['blockers'][0]);
         }
 
         $trip->update([
@@ -197,12 +216,21 @@ class DispatchTripService
             'completed_at' => now(),
         ]);
 
+        $trip->load('loadingList');
+        if ($trip->loadingList && $trip->loadingList->status === 'locked') {
+            $trip->loadingList->update(['status' => 'loaded']);
+        }
+
         return $trip->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
     }
 
     /** @param  array<string, mixed>  $data */
     public function settleTrip(DispatchTrip $trip, User $user, array $data): DispatchTrip
     {
+        if (! in_array($trip->status, ['in_transit', 'completed'], true)) {
+            throw new InvalidArgumentException('Cash can only be recorded while the trip is in transit or after completion.');
+        }
+
         $settings = $this->erp->gateForUser($user)->distributionSettings();
         if (empty($settings['enable_cod_reconciliation'])) {
             throw new InvalidArgumentException('COD reconciliation is not enabled.');

@@ -69,7 +69,7 @@ abstract class BaseResourceController extends Controller
         $user = $request->user();
 
         if ($user && $this->scopesByOrganization() && in_array('organization_id', $this->fillableFields(), true)) {
-            $this->access()->scopeOrganization($query, $user);
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
         }
 
         if ($user && $this->scopesByBranch() && in_array('branch_id', $this->fillableFields(), true)) {
@@ -111,7 +111,10 @@ abstract class BaseResourceController extends Controller
         $data = $request->validate($rules);
         $user = $request->user();
         if ($user && in_array('organization_id', $this->fillableFields(), true)) {
-            $data['organization_id'] = $user->organization_id;
+            $orgId = $this->access()->organizationId($user, $request);
+            if ($orgId) {
+                $data['organization_id'] = $orgId;
+            }
         }
         if ($user) {
             $this->applyBranchScopeToWriteData($user, $data);

@@ -120,7 +120,12 @@ class PasswordResetService
             ]);
         }
 
-        $user->forceFill(['password' => Hash::make($newPassword)])->save();
+        $user->forceFill(['password' => Hash::make($newPassword), 'must_change_password' => false])->save();
+    }
+
+    public function setRequiredPassword(User $user, string $newPassword): void
+    {
+        $user->forceFill(['password' => Hash::make($newPassword), 'must_change_password' => false])->save();
     }
 
     protected function dispatchResetNotification(User $user, \App\Models\Organization $org, string $resetUrl): void

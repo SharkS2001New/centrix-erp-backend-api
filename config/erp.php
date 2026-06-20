@@ -80,6 +80,30 @@ return [
             ]),
             'default_channels' => ['pos', 'mobile', 'backend'],
         ],
+        'supermarket' => [
+            'label' => 'Supermarket (POS retail)',
+            'modules' => array_merge($allModulesFalse, [
+                'sales' => true,
+                'sales.backend' => true,
+                'sales.pos' => true,
+                'sales.dashboard' => true,
+                'sales.reports' => true,
+                'payments' => true,
+                'inventory' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
+                'accounting' => true,
+                'accounting.dashboard' => true,
+                'accounting.reports' => true,
+                'hr_payroll' => true,
+                'hr_payroll.dashboard' => true,
+                'hr_payroll.reports' => true,
+                'admin' => true,
+                'customers_suppliers' => true,
+                'customers_suppliers.reports' => true,
+            ]),
+            'default_channels' => ['pos', 'backend'],
+        ],
         'distribution' => [
             'label' => 'Distribution / warehouse',
             'modules' => array_merge($allModulesFalse, [
@@ -134,6 +158,13 @@ return [
             'stock_deduct_on',
         ],
         'distribution' => [],
+        'finance' => [
+            'enable_mpesa_stk',
+            'enable_kra_integration',
+        ],
+        'ai' => [
+            'enable_ai',
+        ],
     ],
 
     /*
@@ -310,7 +341,7 @@ return [
             'stock_deduct_on' => 'order_completed',
         ],
         'distribution' => [
-            'enable_distribution_ops' => false,
+            'enable_distribution_ops' => true,
             'inherit_customer_route' => true,
             'assign_on_status' => 'processed',
             'auto_assign_truck' => true,
@@ -321,6 +352,7 @@ return [
             'enforce_vehicle_capacity' => true,
             'enable_cod_reconciliation' => false,
             'require_trip_cash_settlement' => false,
+            'include_normal_orders_in_loading_list' => false,
         ],
         'inventory' => [
             'default_receive_location' => 'store',
@@ -329,6 +361,8 @@ return [
             'reserve_stock_on_cart' => true,
         ],
         'finance' => [
+            'enable_mpesa_stk' => true,
+            'enable_kra_integration' => true,
             'enable_kra_device' => false,
             'kra_device_ip' => '',
             'kra_serial_number' => '',
@@ -360,6 +394,7 @@ return [
             ],
         ],
         'ai' => [
+            'enable_ai' => true,
             'enabled' => false,
             'provider' => 'openai',
             'model' => '',

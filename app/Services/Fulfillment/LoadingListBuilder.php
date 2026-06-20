@@ -5,19 +5,46 @@ namespace App\Services\Fulfillment;
 use App\Models\DispatchTrip;
 use App\Models\LoadingList;
 use App\Models\LoadingListLine;
+use App\Models\Organization;
 use App\Models\Product;
 use App\Models\SaleItem;
 use App\Models\Uom;
+use App\Services\Erp\ErpContext;
+use App\Services\Sales\RouteOrderScope;
 use Illuminate\Support\Collection;
 
 class LoadingListBuilder
 {
+    public function __construct(protected ErpContext $erp) {}
+
+    /** @return array<int, int> */
+    protected function eligibleSaleIdsForTrip(DispatchTrip $trip): array
+    {
+        $trip->loadMissing(['sales', 'branch']);
+        $organizationId = $trip->branch?->organization_id
+            ?? $trip->sales->first()?->organization_id;
+
+        $includeNormalOrders = false;
+        if ($organizationId) {
+            $org = Organization::query()->find($organizationId);
+            if ($org) {
+                $settings = $this->erp->gateForOrganization($org)->distributionSettings();
+                $includeNormalOrders = (bool) ($settings['include_normal_orders_in_loading_list'] ?? false);
+            }
+        }
+
+        return $trip->sales
+            ->filter(fn ($sale) => RouteOrderScope::eligibleForLoadingList($sale, $includeNormalOrders))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
     /** @return array<int, array<string, mixed>> */
     public function aggregateLines(DispatchTrip $trip): array
     {
-        $trip->loadMissing(['sales']);
-
-        return $this->aggregateLinesFromSaleIds($trip->sales->pluck('id')->all());
+        return $this->aggregateLinesFromSaleIds($this->eligibleSaleIdsForTrip($trip));
     }
 
     /** @param  array<int, int|string>  $saleIds
@@ -74,8 +101,7 @@ class LoadingListBuilder
 
     public function computeTripWeightKg(DispatchTrip $trip): float
     {
-        $trip->loadMissing(['sales.items']);
-        $saleIds = $trip->sales->pluck('id')->all();
+        $saleIds = $this->eligibleSaleIdsForTrip($trip);
         if ($saleIds === []) {
             return 0.0;
         }

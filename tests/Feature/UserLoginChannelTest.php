@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
@@ -55,6 +56,26 @@ class UserLoginChannelTest extends TestCase
 
         $response->assertOk()
             ->assertJsonStructure(['token', 'user', 'organization']);
+    }
+
+    public function test_mobile_login_blocked_when_org_mobile_orders_disabled(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $settings = is_array($org->module_settings) ? $org->module_settings : [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], ['enable_mobile_orders' => false]);
+        $org->forceFill(['module_settings' => $settings])->save();
+
+        $user = $this->makeUser(['login_channels' => ['mobile']]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'MOBILE_DISABLED_ORG',
+            'login_channel' => 'mobile',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['login_channel']);
     }
 
     public function test_all_channel_user_can_login_from_any_client(): void

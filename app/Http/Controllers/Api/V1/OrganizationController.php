@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
+use Illuminate\Support\Facades\Storage;
 
 class OrganizationController extends BaseResourceController
 {
@@ -48,17 +50,45 @@ class OrganizationController extends BaseResourceController
         );
     }
 
+    public function show(Request $request, string $id)
+    {
+        $model = $this->findScopedModel($request, $id);
+
+        return response()->json($this->formatOrganization($model));
+    }
+
     public function update(Request $request, string $id)
     {
         /** @var User $user */
         $user = $request->user();
         $model = $this->findScopedModel($request, $id);
 
-        $rules = array_fill_keys($this->fillableFields(), 'nullable');
+        if ($user->is_super_admin) {
+            $rules = array_fill_keys(Organization::tenantManagedAttributes(), 'nullable');
+            $rules['org_name'] = 'sometimes|string|max:200';
+            $rules['primary_tel'] = 'sometimes|string|max:45';
+            $rules['org_address'] = 'sometimes|string|max:400';
+        } else {
+            $rules = [
+                'org_name' => 'sometimes|string|max:200',
+                'primary_tel' => 'sometimes|string|max:45',
+                'secondary_tel' => 'nullable|string|max:45',
+                'addn_tel1' => 'nullable|string|max:45',
+                'addn_tel2' => 'nullable|string|max:45',
+                'org_address' => 'sometimes|string|max:400',
+                'org_pin' => 'nullable|string|max:45',
+                'vat_regno' => 'nullable|string|max:50',
+            ];
+        }
+
         $data = $request->validate($rules);
 
-        if (! $user->is_super_admin) {
-            unset($data['deployment_profile'], $data['enabled_modules']);
+        foreach (array_merge(
+            Organization::immutableAttributes(),
+            ['logo'],
+            $user->is_super_admin ? [] : Organization::platformControlledAttributes(),
+        ) as $field) {
+            unset($data[$field]);
         }
 
         $oldValues = $model->getAttributes();
@@ -76,6 +106,68 @@ class OrganizationController extends BaseResourceController
             );
         }
 
-        return response()->json($model);
+        return response()->json($this->formatOrganization($model));
+    }
+
+    /** POST /organizations/{id}/logo */
+    public function uploadLogo(Request $request, string $id)
+    {
+        $model = $this->findScopedModel($request, $id);
+
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,jpg,png,webp|max:2048',
+        ]);
+
+        if (Organization::logoIsStoredFile($model->logo)) {
+            Storage::disk('public')->delete($model->logo);
+        }
+
+        $path = $request->file('image')->store('organizations/'.$model->id, 'public');
+        $model->update(['logo' => $path]);
+
+        return response()->json($this->formatOrganization($model->fresh()));
+    }
+
+    /** GET /organizations/{id}/logo/file */
+    public function logoFile(Request $request, string $id)
+    {
+        $model = $this->findScopedModel($request, $id);
+
+        if (! Organization::logoIsStoredFile($model->logo)
+            || ! Storage::disk('public')->exists($model->logo)) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $absolute = Storage::disk('public')->path($model->logo);
+        $mime = Storage::disk('public')->mimeType($model->logo) ?: 'image/png';
+
+        return response()->file($absolute, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'private, max-age=3600',
+        ]);
+    }
+
+    /** DELETE /organizations/{id}/logo */
+    public function deleteLogo(Request $request, string $id)
+    {
+        $model = $this->findScopedModel($request, $id);
+
+        if (Organization::logoIsStoredFile($model->logo)) {
+            Storage::disk('public')->delete($model->logo);
+        }
+
+        $model->update(['logo' => null]);
+
+        return response()->json($this->formatOrganization($model->fresh()));
+    }
+
+    /** @return array<string, mixed> */
+    protected function formatOrganization(Organization $org): array
+    {
+        $data = $org->toArray();
+        $data['has_logo'] = Organization::logoIsStoredFile($org->logo);
+        $data['logo_file_path'] = $data['has_logo'] ? "/organizations/{$org->id}/logo/file" : null;
+
+        return $data;
     }
 }

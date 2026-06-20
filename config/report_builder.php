@@ -1638,6 +1638,7 @@ return [
         'backoffice' => ['Sales', 'Inventory', 'Purchasing'],
         'accounting' => ['Accounting'],
         'hr' => ['HR'],
+        'distribution' => ['Sales', 'Distribution'],
         'admin' => ['Administration', 'Sales', 'Inventory', 'Purchasing', 'Accounting', 'HR'],
         'pos' => [],
     ],

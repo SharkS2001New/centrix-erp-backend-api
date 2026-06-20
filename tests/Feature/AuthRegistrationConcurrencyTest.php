@@ -101,6 +101,35 @@ class AuthRegistrationConcurrencyTest extends TestCase
         $this->assertNotSame(['sales.pos' => false], $org->enabled_modules);
     }
 
+    public function test_org_admin_cannot_change_organization_identity(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        $org = \App\Models\Organization::findOrFail($orgAdmin->organization_id);
+        $originalCode = $org->company_code;
+        $originalEmail = $org->org_email;
+
+        Sanctum::actingAs($orgAdmin);
+
+        $this->patchJson('/api/v1/organizations/'.$orgAdmin->organization_id, [
+            'org_name' => 'Renamed By Org Admin',
+            'company_code' => 'HACKED',
+            'org_email' => 'hacked@example.com',
+            'primary_tel' => '0799999999',
+            'secondary_tel' => '0700111222',
+            'org_address' => 'New address',
+            'org_pin' => 'A12345678Z',
+        ])->assertOk();
+
+        $org->refresh();
+        $this->assertSame('Renamed By Org Admin', $org->org_name);
+        $this->assertSame($originalCode, $org->company_code);
+        $this->assertSame($originalEmail, $org->org_email);
+        $this->assertSame('0799999999', $org->primary_tel);
+        $this->assertSame('0700111222', $org->secondary_tel);
+        $this->assertSame('New address', $org->org_address);
+        $this->assertSame('A12345678Z', $org->org_pin);
+    }
+
     public function test_provision_requires_super_admin_and_feature_flag(): void
     {
         config(['erp.allow_org_provisioning' => false]);

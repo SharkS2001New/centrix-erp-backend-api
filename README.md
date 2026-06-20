@@ -116,3 +116,50 @@ php artisan erp:permissions-sync --grant-admin   # optional: grant all permissio
 Then re-save custom roles in **Admin → Roles & permissions** so new feature codes appear in the matrix.
 
 Production role templates (Branch Manager, Stock Clerk, Accountant, Payroll Clerk, Viewer) are seeded via `ProductionRoleSeeder` on `migrate:fresh --seed`.
+
+## Production safety
+
+Destructive database commands are **blocked when `APP_ENV=production`** unless you explicitly set `DB_ALLOW_DESTRUCTIVE_COMMANDS=true` (emergency only):
+
+- `migrate:fresh`, `migrate:refresh`, `migrate:reset`, `migrate:rollback`, `db:wipe`
+
+Use normal migrations on production:
+
+```bash
+php artisan migrate --pretend   # review first
+php artisan migrate --force
+```
+
+Never run `migrate:fresh` or `db:wipe` against a live database.
+
+## Automated backups
+
+Daily compressed SQL backups via:
+
+```bash
+php artisan erp:database-backup
+```
+
+Configure in `.env`:
+
+| Variable | Purpose |
+|----------|---------|
+| `BACKUP_ENABLED` | Turn scheduled backups on/off |
+| `BACKUP_NOTIFY_EMAIL` | Email recipient for backup notifications |
+| `BACKUP_RETENTION_DAYS` | Delete local backups older than this |
+| `BACKUP_SCHEDULE_TIME` | Daily run time (24h clock, server timezone) |
+| `MAIL_*` | SMTP used to send backup emails |
+
+Backups are stored under `storage/app/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
+
+Enable the scheduler on the server:
+
+```bash
+* * * * * cd /path/to/pos-erp-api && php artisan schedule:run >> /dev/null 2>&1
+```
+
+Verify scheduled tasks:
+
+```bash
+php artisan schedule:list
+```

@@ -22,10 +22,13 @@ class AiAssistantController extends Controller
 
     public function status(Request $request)
     {
-        $desc = AiSettingsResolver::describeForClient($request->user());
+        $user = $request->user();
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
+        $desc = AiSettingsResolver::describeForClient($user);
 
         return response()->json([
             'enabled' => $desc['available'],
+            'platform_enabled' => (bool) ($desc['platform_enabled'] ?? $gate->aiPlatformEnabled()),
             'organization_enabled' => (bool) ($desc['settings']['enabled'] ?? false),
             'api_key_set' => (bool) ($desc['settings']['api_key_set'] ?? false),
             'provider' => $desc['provider'] ?? config('ai.provider'),

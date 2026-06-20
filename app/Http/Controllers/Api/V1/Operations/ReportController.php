@@ -20,7 +20,7 @@ class ReportController extends Controller
                 ['key' => 'sales-by-customer', 'path' => '/reports/sales-by-customer', 'label' => 'Sales by customer'],
                 ['key' => 'sales-by-channel', 'path' => '/reports/sales-by-channel', 'label' => 'Sales by channel & payment status'],
                 ['key' => 'daily-sales', 'path' => '/reports/daily-sales', 'label' => 'Daily sales summary'],
-                ['key' => 'mobile-route-sales', 'path' => '/reports/mobile-route-sales', 'label' => 'Mobile / route sales'],
+                ['key' => 'mobile-route-sales', 'path' => '/reports/mobile-route-sales', 'label' => 'Route order sales'],
                 ['key' => 'sales-pipeline', 'path' => '/reports/sales-pipeline', 'label' => 'Open orders pipeline'],
                 ['key' => 'vat-collected', 'path' => '/reports/vat-collected', 'label' => 'VAT collected'],
                 ['key' => 'category-sales', 'path' => '/reports/category-sales', 'label' => 'Sales by category'],
@@ -66,6 +66,13 @@ class ReportController extends Controller
                 ['key' => 'till-sessions', 'path' => '/reports/till-sessions', 'label' => 'Till / float sessions'],
                 ['key' => 'audit-trail', 'path' => '/reports/audit-trail', 'label' => 'Audit trail'],
             ],
+            'distribution' => [
+                ['key' => 'mobile-route-sales', 'path' => '/reports/mobile-route-sales', 'label' => 'Route order sales'],
+                ['key' => 'dispatch-trips', 'path' => '/reports/dispatch-trips', 'label' => 'Dispatch trips'],
+                ['key' => 'trip-cash-settlement', 'path' => '/reports/trip-cash-settlement', 'label' => 'Trip cash settlement'],
+                ['key' => 'pod-compliance', 'path' => '/reports/pod-compliance', 'label' => 'Proof of delivery'],
+                ['key' => 'driver-deliveries', 'path' => '/reports/driver-deliveries', 'label' => 'Driver deliveries'],
+            ],
             'hr' => [
                 ['key' => 'leave-balance', 'path' => '/reports/leave-balance', 'label' => 'Leave balance'],
                 ['key' => 'payroll-summary', 'path' => '/reports/payroll-summary', 'label' => 'Payroll summary'],
@@ -74,7 +81,7 @@ class ReportController extends Controller
                 ['key' => 'staff-turnover', 'path' => '/reports/staff-turnover', 'label' => 'Staff turnover'],
                 ['key' => 'headcount', 'path' => '/reports/headcount', 'label' => 'Headcount'],
                 ['key' => 'contract-expiry', 'path' => '/reports/contract-expiry', 'label' => 'Contract expiry'],
-                ['key' => 'hr-dashboard-kpi', 'path' => '/reports/hr-dashboard-kpi', 'label' => 'HR dashboard KPIs'],
+                ['key' => 'hr-dashboard-kpi', 'path' => '/reports/hr-dashboard-kpi', 'label' => 'Workforce summary'],
             ],
             'customer' => [
                 ['key' => 'customer-statement', 'path' => '/reports/customers/{customerNum}/statement', 'label' => 'Customer statement'],
@@ -324,7 +331,35 @@ class ReportController extends Controller
     public function routeSales(Request $request)
     {
         return response()->json($this->reportFromView('v_route_loading_summary', $this->filters($request), [
-            'loading_date', 'route_name',
+            'loading_date', 'route_name', 'channel',
+        ]));
+    }
+
+    public function dispatchTrips(Request $request)
+    {
+        return response()->json($this->reportFromView('v_dispatch_trips_summary', $this->filters($request), [
+            'scheduled_date', 'route_name', 'driver_name', 'status',
+        ]));
+    }
+
+    public function tripCashSettlement(Request $request)
+    {
+        return response()->json($this->reportFromView('v_trip_cash_settlement', $this->filters($request), [
+            'scheduled_date', 'route_name', 'driver_name', 'status',
+        ]));
+    }
+
+    public function podCompliance(Request $request)
+    {
+        return response()->json($this->reportFromView('v_pod_compliance', $this->filters($request), [
+            'capture_date', 'route_name', 'driver_name',
+        ]));
+    }
+
+    public function driverDeliveries(Request $request)
+    {
+        return response()->json($this->reportFromView('v_driver_deliveries', $this->filters($request), [
+            'delivery_date', 'driver_name', 'route_name',
         ]));
     }
 
@@ -827,6 +862,7 @@ class ReportController extends Controller
             'from_date', 'to_date', 'date_column', 'per_page', 'aging_bucket',
             'status', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
             'order_date', 'loading_date', 'receipt_date', 'return_date', 'damage_date',
+            'scheduled_date', 'capture_date', 'delivery_date',
             'transfer_date', 'payment_date', 'entry_date', 'session_date', 'method_code',
             'stock_location', 'from_location', 'to_location', 'lpo_status_code',
             'category_id', 'sub_category_id', 'till_id', 'reference_type', 'user_id',

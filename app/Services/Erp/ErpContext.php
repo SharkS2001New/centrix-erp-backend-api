@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Models\Organization;
 use App\Models\User;
+use Illuminate\Http\Request;
 
 class ErpContext
 {
@@ -21,7 +22,31 @@ class ErpContext
         $org = $this->organizationForUser($user);
 
         return $org
-            ? (new CapabilityGate)->forOrganization($org)
+            ? $this->gateForOrganization($org)
             : new CapabilityGate;
+    }
+
+    public function gateForOrganization(Organization $organization): CapabilityGate
+    {
+        return (new CapabilityGate)->forOrganization($organization);
+    }
+
+    public function resolveOrganization(Request $request): Organization
+    {
+        if ($actingId = $request->attributes->get('acting_organization_id')) {
+            return Organization::findOrFail($actingId);
+        }
+
+        $user = $request->user();
+        if (! $user?->organization_id) {
+            abort(403, 'Organization context required.');
+        }
+
+        return Organization::findOrFail($user->organization_id);
+    }
+
+    public function gateForRequest(Request $request): CapabilityGate
+    {
+        return $this->gateForOrganization($this->resolveOrganization($request));
     }
 }

@@ -145,6 +145,26 @@ CREATE TABLE users (
     INDEX idx_is_active  (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+DROP TABLE IF EXISTS personal_access_tokens;
+CREATE TABLE personal_access_tokens (
+    id                  BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    tokenable_type      VARCHAR(255)    NOT NULL,
+    tokenable_id        BIGINT UNSIGNED NOT NULL,
+    organization_id     INT             NULL,
+    user_membership_id  BIGINT UNSIGNED NULL,
+    login_channel       VARCHAR(20)     NOT NULL DEFAULT 'backoffice',
+    name                VARCHAR(255)    NOT NULL,
+    token               VARCHAR(64)     NOT NULL,
+    abilities           TEXT            NULL,
+    last_used_at        TIMESTAMP       NULL,
+    expires_at          TIMESTAMP       NULL,
+    created_at          TIMESTAMP       NULL,
+    updated_at          TIMESTAMP       NULL,
+    UNIQUE KEY personal_access_tokens_token_unique (token),
+    INDEX personal_access_tokens_tokenable_index (tokenable_type, tokenable_id),
+    INDEX personal_access_tokens_expires_at_index (expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 DROP TABLE IF EXISTS tills;
 CREATE TABLE tills (
     id              INT           PRIMARY KEY AUTO_INCREMENT,
@@ -1923,9 +1943,9 @@ LEFT JOIN (
 DROP VIEW IF EXISTS v_route_loading_summary;
 CREATE VIEW v_route_loading_summary AS
 SELECT
-    DATE(s.created_at) AS loading_date,
+    DATE(COALESCE(s.delivery_date, s.created_at)) AS loading_date,
     r.route_name,
-    r.route_markup_price,
+    s.channel,
     s.cashier_id,
     u.username AS salesperson,
     COUNT(DISTINCT s.id) AS total_orders,
@@ -1933,15 +1953,17 @@ SELECT
     SUM(si.quantity) AS total_qty,
     SUM(si.amount) AS total_value,
     SUM(s.order_total) AS grand_total,
-    SUM(CASE WHEN s.status='completed' THEN s.order_total ELSE 0 END) AS delivered_value,
-    SUM(CASE WHEN s.is_credit_sale=0 THEN s.order_total ELSE 0 END) AS cash_collected,
-    SUM(CASE WHEN s.is_credit_sale=1 THEN s.order_total ELSE 0 END) AS credit_outstanding
+    SUM(CASE WHEN s.status = 'completed' THEN s.order_total ELSE 0 END) AS delivered_value,
+    SUM(CASE WHEN s.is_credit_sale = 0 THEN s.order_total ELSE 0 END) AS cash_collected,
+    SUM(CASE WHEN s.is_credit_sale = 1 THEN s.order_total ELSE 0 END) AS credit_outstanding
 FROM sales s
 JOIN routes r ON s.route_id = r.id
 JOIN users u ON s.cashier_id = u.id
 JOIN sale_items si ON si.sale_id = s.id
-WHERE s.channel = 'mobile'
-GROUP BY DATE(s.created_at), s.route_id, s.cashier_id;
+WHERE s.route_id IS NOT NULL
+  AND s.channel IN ('mobile', 'pos')
+  AND s.archived = 0
+GROUP BY DATE(COALESCE(s.delivery_date, s.created_at)), s.route_id, s.cashier_id, s.channel;
 
 DROP VIEW IF EXISTS v_stock_chain;
 CREATE VIEW v_stock_chain AS

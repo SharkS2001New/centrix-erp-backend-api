@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Organization;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
@@ -250,5 +251,49 @@ class RbacRegistryTest extends TestCase
 
         $this->assertSame(['pos'], array_column($workspaces, 'id'));
         $this->assertSame('/pos', $workspaces[0]['home_path'] ?? null);
+    }
+
+    public function test_demo_admin_backoffice_workspace_lands_on_business_summary(): void
+    {
+        PermissionMatrixService::ensure();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($admin);
+        $workspaces = app(\App\Services\Erp\WorkspaceResolver::class)->availableForUser($admin, $gate);
+
+        $backoffice = collect($workspaces)->firstWhere('id', 'backoffice');
+        $this->assertNotNull($backoffice);
+        $this->assertSame('/dashboard', $backoffice['home_path'] ?? null);
+    }
+
+    public function test_demo_admin_has_distribution_workspace_when_module_enabled(): void
+    {
+        PermissionMatrixService::ensure();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['distribution'] = true;
+        $modules['distribution.dashboard'] = true;
+        $modules['distribution.reports'] = true;
+        $settings = $org->module_settings ?? [];
+        $settings['distribution'] = array_merge($settings['distribution'] ?? [], [
+            'enable_distribution_ops' => false,
+        ]);
+        $org->update([
+            'enabled_modules' => $modules,
+            'module_settings' => $settings,
+        ]);
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($admin);
+        $this->assertTrue($gate->distributionOpsEnabled());
+
+        $caps = $gate->toArray();
+        $this->assertTrue($caps['distribution_ops_enabled']);
+        $this->assertTrue($caps['module_settings']['distribution']['enable_distribution_ops']);
+
+        $workspaces = app(\App\Services\Erp\WorkspaceResolver::class)->availableForUser($admin, $gate);
+
+        $distribution = collect($workspaces)->firstWhere('id', 'distribution');
+        $this->assertNotNull($distribution);
+        $this->assertSame('/fulfillment', $distribution['home_path'] ?? null);
     }
 }

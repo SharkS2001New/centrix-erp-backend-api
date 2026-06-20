@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Sale;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Sales\RouteOrderScope;
 use Illuminate\Http\Request;
 
 class SaleController extends BaseResourceController
@@ -34,6 +35,19 @@ class SaleController extends BaseResourceController
 
         if ($exclude = $request->input('exclude_status')) {
             $query->where('status', '!=', $exclude);
+        }
+
+        if ($request->boolean('route_orders')) {
+            RouteOrderScope::apply($query);
+        }
+
+        if ($request->boolean('dispatch_orders') || $request->boolean('loading_list_orders')) {
+            $gate = $this->erp->gateForUser($request->user());
+            $settings = $gate->distributionSettings();
+            RouteOrderScope::applyForLoadingList(
+                $query,
+                (bool) ($settings['include_normal_orders_in_loading_list'] ?? false),
+            );
         }
 
         if ($q = $request->input('q')) {

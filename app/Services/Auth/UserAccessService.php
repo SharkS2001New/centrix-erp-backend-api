@@ -4,6 +4,7 @@ namespace App\Services\Auth;
 
 use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class UserAccessService
@@ -22,17 +23,25 @@ class UserAccessService
         return $user->branch_id ? (int) $user->branch_id : null;
     }
 
-    public function organizationId(User $user): ?int
+    public function organizationId(User $user, ?Request $request = null): ?int
     {
+        if ($actingId = $request?->attributes->get('acting_organization_id')) {
+            return (int) $actingId;
+        }
+
         return $user->organization_id ? (int) $user->organization_id : null;
     }
 
     /**
      * @param  Builder<\Illuminate\Database\Eloquent\Model>  $query
      */
-    public function scopeOrganization(Builder $query, User $user, string $column = 'organization_id'): Builder
-    {
-        $orgId = $this->organizationId($user);
+    public function scopeOrganization(
+        Builder $query,
+        User $user,
+        string $column = 'organization_id',
+        ?Request $request = null,
+    ): Builder {
+        $orgId = $this->organizationId($user, $request);
         if ($orgId) {
             $query->where($column, $orgId);
         }

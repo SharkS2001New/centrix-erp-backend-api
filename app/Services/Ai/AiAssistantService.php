@@ -49,11 +49,14 @@ class AiAssistantService
         $runtime = AiSettingsResolver::resolveRuntime($user);
         if (! $runtime) {
             $settings = AiSettingsResolver::forUser($user);
+            $gate = $this->contextBuilder->gateForUser($user);
 
             return [
-                'reply' => ! ($settings['enabled'] ?? false)
-                    ? 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.'
-                    : 'AI assistant is not configured for this organization. An admin must add an OpenAI API key under Administration → Settings → AI.',
+                'reply' => ! $gate->aiPlatformEnabled()
+                    ? 'AI assistant is not enabled for this organization. Contact your platform administrator.'
+                    : (! ($settings['enabled'] ?? false)
+                        ? 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.'
+                        : 'AI assistant is not configured for this organization. An admin must add an OpenAI API key under Administration → Settings → AI.'),
                 'tools_used' => [],
             ];
         }

@@ -81,7 +81,7 @@ class CapabilityGate
         if ($this->enabled('sales.pos')) {
             $channels[] = 'pos';
         }
-        if ($this->enabled('sales.mobile')) {
+        if ($this->mobileSalesEnabled()) {
             $channels[] = 'mobile';
         }
         if ($this->enabled('sales.backend')) {
@@ -94,10 +94,39 @@ class CapabilityGate
     {
         return match ($channel) {
             'pos' => $this->enabled('sales.pos'),
-            'mobile' => $this->enabled('sales.mobile'),
+            'mobile' => $this->mobileSalesEnabled(),
             'backend' => $this->enabled('sales.backend'),
             default => false,
         };
+    }
+
+    /** Mobile app + backoffice field sales when platform mobile orders toggle is on. */
+    public function mobileSalesEnabled(): bool
+    {
+        $sales = $this->moduleSettings('sales');
+
+        return (bool) ($sales['enable_mobile_orders'] ?? true);
+    }
+
+    public function mpesaStkPlatformEnabled(): bool
+    {
+        $finance = $this->moduleSettings('finance');
+
+        return (bool) ($finance['enable_mpesa_stk'] ?? true);
+    }
+
+    public function kraIntegrationPlatformEnabled(): bool
+    {
+        $finance = $this->moduleSettings('finance');
+
+        return (bool) ($finance['enable_kra_integration'] ?? true);
+    }
+
+    public function aiPlatformEnabled(): bool
+    {
+        $ai = $this->moduleSettings('ai');
+
+        return (bool) ($ai['enable_ai'] ?? true);
     }
 
     public function moduleSettings(string $section = 'sales'): array
@@ -176,6 +205,9 @@ class CapabilityGate
             $moduleSettings['ai'] = AiSettingsResolver::maskForClient(
                 array_merge(AiSettingsResolver::defaults(), $ai)
             );
+
+            $moduleSettings['distribution'] = $this->distributionSettings();
+            $moduleSettings = $this->maskPlatformDisabledModuleSettings($moduleSettings);
         }
 
         return [
@@ -183,6 +215,10 @@ class CapabilityGate
             'deployment_profile' => $profile,
             'profile_label' => $profileConfig['label'] ?? $profile,
             'distribution_ops_enabled' => $this->distributionOpsEnabled(),
+            'mobile_orders_enabled' => $this->mobileSalesEnabled(),
+            'platform_mpesa_stk_enabled' => $this->mpesaStkPlatformEnabled(),
+            'platform_kra_integration_enabled' => $this->kraIntegrationPlatformEnabled(),
+            'platform_ai_enabled' => $this->aiPlatformEnabled(),
             'modules' => $this->allModules(),
             'channels' => $this->allowedChannels(),
             'workflows' => $this->workflowForOrg(),
@@ -208,18 +244,45 @@ class CapabilityGate
         return OrderWorkflowService::forGate($this)->workflowsByChannel();
     }
 
+    /** @param  array<string, mixed>  $moduleSettings */
+    protected function maskPlatformDisabledModuleSettings(array $moduleSettings): array
+    {
+        if (! $this->aiPlatformEnabled()) {
+            unset($moduleSettings['ai']);
+        }
+
+        if (isset($moduleSettings['finance']) && is_array($moduleSettings['finance'])) {
+            if (! $this->mpesaStkPlatformEnabled()) {
+                unset($moduleSettings['finance']['mpesa'], $moduleSettings['finance']['enable_mpesa_stk']);
+            }
+            if (! $this->kraIntegrationPlatformEnabled()) {
+                foreach ([
+                    'enable_kra_device', 'kra_device_ip', 'kra_serial_number', 'kra_pin_number',
+                    'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra',
+                ] as $key) {
+                    unset($moduleSettings['finance'][$key]);
+                }
+            }
+        }
+
+        if (isset($moduleSettings['sales']) && is_array($moduleSettings['sales'])) {
+            if (! $this->mobileSalesEnabled()) {
+                unset(
+                    $moduleSettings['sales']['mobile_enable_checkout_location_verification'],
+                    $moduleSettings['sales']['mobile_allow_offline_orders'],
+                    $moduleSettings['sales']['mobile_checkout_location_radius_metres'],
+                    $moduleSettings['sales']['mobile_enable_field_attendance'],
+                );
+            }
+        }
+
+        return $moduleSettings;
+    }
+
     public function distributionOpsEnabled(): bool
     {
-        if (! $this->enabled('distribution')) {
-            return false;
-        }
-
-        $dist = $this->distributionSettings();
-        if (array_key_exists('enable_distribution_ops', $dist)) {
-            return (bool) $dist['enable_distribution_ops'];
-        }
-
-        return true;
+        // Platform enables the distribution module → operational features on by default.
+        return $this->enabled('distribution');
     }
 
     /** @return array<string, mixed> */
@@ -248,6 +311,8 @@ class CapabilityGate
                 $merged[$key] = $sales[$key];
             }
         }
+
+        $merged['enable_distribution_ops'] = $this->distributionOpsEnabled();
 
         return $merged;
     }

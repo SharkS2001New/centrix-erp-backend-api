@@ -224,4 +224,13 @@ class DispatchTripController extends BaseResourceController
 
         return response()->json($updated);
     }
+
+    public function reconciliation(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+
+        return response()->json(
+            app(\App\Services\Fulfillment\TripReconciliationService::class)->build($model, $request->user()),
+        );
+    }
 }

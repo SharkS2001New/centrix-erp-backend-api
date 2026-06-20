@@ -14,6 +14,7 @@ class PersonalAccessToken extends SanctumPersonalAccessToken
         'organization_id',
         'user_membership_id',
         'login_channel',
+        'active_workspace_id',
     ];
 
     protected $casts = [

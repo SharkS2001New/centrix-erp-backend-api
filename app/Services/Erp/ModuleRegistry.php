@@ -11,8 +11,11 @@ class ModuleRegistry
     public static function modules(): array
     {
         if (self::$modules === null) {
-            self::$modules = config('erp_module_tree', []);
-            unset(self::$modules['report_modules']);
+            $tree = config('erp_module_tree', []);
+            foreach (['report_modules', 'backoffice_finance_reports'] as $configOnlyKey) {
+                unset($tree[$configOnlyKey]);
+            }
+            self::$modules = $tree;
         }
 
         return self::$modules;
@@ -119,7 +122,8 @@ class ModuleRegistry
     }
 
     /**
-     * When a domain is disabled, force its descendants off. When a child is enabled, ensure its domain is on.
+     * Domain off disables all descendants. Domain on keeps explicit child overrides
+     * (e.g. sales.pos off while sales.backend stays on for backoffice-only tenants).
      *
      * @param  array<string, bool>  $modules
      * @return array<string, bool>
@@ -127,28 +131,67 @@ class ModuleRegistry
     public static function cascade(array $modules): array
     {
         $modules = self::expandLegacyModules($modules);
+        $input = $modules;
 
         foreach (self::domainRoots() as $domain) {
             $children = self::descendantKeys($domain);
-            $domainOn = (bool) ($modules[$domain] ?? false);
-
-            if (! $domainOn) {
-                foreach ($children as $child) {
-                    $modules[$child] = false;
-                }
-                continue;
-            }
+            $explicitChildKeys = array_values(array_filter(
+                $children,
+                fn (string $child) => array_key_exists($child, $input),
+            ));
 
             $anyChildOn = false;
             foreach ($children as $child) {
                 if ((bool) ($modules[$child] ?? false)) {
                     $anyChildOn = true;
-                    break;
                 }
             }
 
-            if ($anyChildOn) {
-                $modules[$domain] = true;
+            $domainOn = (bool) ($modules[$domain] ?? false) || $anyChildOn;
+
+            if (! $domainOn) {
+                $modules[$domain] = false;
+                foreach ($children as $child) {
+                    $modules[$child] = false;
+                }
+
+                continue;
+            }
+
+            $modules[$domain] = true;
+
+            $domainExplicitlyOn = array_key_exists($domain, $input) && (bool) $input[$domain];
+            if ($domainExplicitlyOn && $explicitChildKeys === []) {
+                foreach ($children as $child) {
+                    $modules[$child] = true;
+                }
+
+                continue;
+            }
+
+            foreach ($children as $child) {
+                if (! array_key_exists($child, $modules)) {
+                    $modules[$child] = false;
+                }
+            }
+        }
+
+        return self::applyModuleDependencies($modules);
+    }
+
+    /**
+     * Cross-domain rules outside the parent/child tree.
+     *
+     * @param  array<string, bool>  $modules
+     * @return array<string, bool>
+     */
+    public static function applyModuleDependencies(array $modules): array
+    {
+        // Distribution requires mobile field sales; mobile alone is valid without distribution.
+        if (! ($modules['sales.mobile'] ?? false)) {
+            $modules['distribution'] = false;
+            foreach (self::descendantKeys('distribution') as $child) {
+                $modules[$child] = false;
             }
         }
 

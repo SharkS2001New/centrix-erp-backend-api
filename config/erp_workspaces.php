@@ -3,6 +3,8 @@
 /**
  * Product workspaces — same login, different shells after sign-in.
  *
+ * Order here is the default application switcher order (web also sorts client-side).
+ *
  * `domain_modules` / `module_keys` gate org-level module toggles.
  * `permission_prefixes` gate user-level access (cashiers with only pos.* see POS only).
  */
@@ -18,36 +20,28 @@ return [
     ],
     'backoffice' => [
         'label' => 'Backoffice',
-        'description' => 'Sales, inventory, purchasing, logistics, and day-to-day operations.',
+        'description' => 'Sales, inventory, purchasing, and day-to-day operations.',
         'icon' => 'building',
         'home_path' => '/dashboard',
-        'domain_modules' => ['sales', 'inventory', 'customers_suppliers', 'distribution'],
+        'module_keys' => ['sales.backend'],
+        'domain_modules' => ['inventory', 'customers_suppliers'],
         'permission_prefixes' => [
             'catalogue.',
             'customers.',
             'sales.',
             'inventory.',
             'purchasing.',
-            'fulfillment.',
             'reports.',
         ],
-        'home_path_by_permissions' => [
-            ['prefixes' => ['sales.', 'pos.checkout.'], 'path' => '/sales'],
-            ['prefixes' => ['inventory.', 'catalogue.'], 'path' => '/inventory'],
-            ['prefixes' => ['customers.'], 'path' => '/customers'],
-            ['prefixes' => ['purchasing.'], 'path' => '/suppliers'],
-            ['prefixes' => ['fulfillment.'], 'path' => '/fulfillment'],
-            ['prefixes' => ['reports.'], 'path' => '/reports'],
-            ['prefixes' => ['dashboard.'], 'path' => '/dashboard'],
-        ],
     ],
-    'admin' => [
-        'label' => 'Administration',
-        'description' => 'Users, roles, permissions, company setup, and system settings.',
-        'icon' => 'building',
-        'home_path' => '/admin',
-        'domain_modules' => ['admin'],
-        'permission_prefixes' => ['admin.'],
+    'distribution' => [
+        'label' => 'Distribution',
+        'description' => 'Dispatch, trips, fleet, proof of delivery, and logistics reports.',
+        'icon' => 'truck',
+        'home_path' => '/fulfillment',
+        'domain_modules' => ['distribution'],
+        'permission_prefixes' => ['fulfillment.'],
+        'entry_permission' => 'fulfillment.drivers.view',
     ],
     'accounting' => [
         'label' => 'Accounting',
@@ -64,5 +58,13 @@ return [
         'home_path' => '/hr',
         'domain_modules' => ['hr_payroll'],
         'permission_prefixes' => ['hr.'],
+    ],
+    'admin' => [
+        'label' => 'Administration',
+        'description' => 'Users, roles, permissions, company setup, and system settings.',
+        'icon' => 'building',
+        'home_path' => '/admin',
+        'domain_modules' => ['admin'],
+        'permission_prefixes' => ['admin.'],
     ],
 ];

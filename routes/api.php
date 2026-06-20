@@ -3,13 +3,16 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\ErpSettingsController;
+use App\Http\Controllers\Api\V1\AiSettingsController;
 use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationProvisionController;
+use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\PermissionController;
 use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\TillController;
+use App\Http\Controllers\Api\V1\EmployeeController;
 use App\Http\Controllers\Api\V1\TillFloatSessionController;
 use App\Http\Controllers\Api\V1\SupplierController;
 use App\Http\Controllers\Api\V1\SupplierPaymentController;
@@ -72,6 +75,7 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
+        Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);
         Route::post('auth/verify-password', [AuthController::class, 'verifyPassword']);
         Route::get('auth/memberships', [AuthController::class, 'memberships']);
         Route::post('auth/switch-organization', [AuthController::class, 'switchOrganization']);
@@ -131,11 +135,77 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
         Route::patch('admin/organizations/{organization}', [OrganizationProvisionController::class, 'update'])
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::get('admin/organizations/{organization}/users', [OrganizationProvisionController::class, 'listUsers'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::post('admin/organizations/{organization}/users', [OrganizationProvisionController::class, 'createUser'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::patch('admin/organizations/{organization}/users/{user}', [OrganizationProvisionController::class, 'updateUser'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::get('admin/active-sessions', [PlatformActiveSessionsController::class, 'index'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::delete('admin/active-sessions/{token}', [PlatformActiveSessionsController::class, 'destroy'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::post('admin/active-sessions/{token}/disable-user', [PlatformActiveSessionsController::class, 'disableUser'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+
+        Route::prefix('admin/organizations/{organization}/settings')
+            ->middleware(['erp.super_admin', 'erp.org_provisioning', 'erp.act_as_organization'])
+            ->group(function () {
+                Route::get('sales', [ErpSettingsController::class, 'sales']);
+                Route::patch('sales', [ErpSettingsController::class, 'updateSales']);
+                Route::get('distribution', [ErpSettingsController::class, 'distribution']);
+                Route::patch('distribution', [ErpSettingsController::class, 'updateDistribution']);
+                Route::get('inventory', [ErpSettingsController::class, 'inventory']);
+                Route::patch('inventory', [ErpSettingsController::class, 'updateInventory']);
+                Route::get('finance', [ErpSettingsController::class, 'finance']);
+                Route::patch('finance', [ErpSettingsController::class, 'updateFinance']);
+                Route::get('ai', [AiSettingsController::class, 'show']);
+                Route::patch('ai', [AiSettingsController::class, 'update']);
+                Route::get('general', [ErpSettingsController::class, 'general']);
+                Route::patch('general', [ErpSettingsController::class, 'updateGeneral']);
+                Route::get('notifications', [ErpSettingsController::class, 'notifications']);
+                Route::patch('notifications', [ErpSettingsController::class, 'updateNotifications']);
+                Route::get('procurement', [ErpSettingsController::class, 'procurement']);
+                Route::patch('procurement', [ErpSettingsController::class, 'updateProcurement']);
+                Route::get('security', [ErpSettingsController::class, 'security']);
+                Route::patch('security', [ErpSettingsController::class, 'updateSecurity']);
+                Route::get('hr', [ErpSettingsController::class, 'hr']);
+                Route::patch('hr', [ErpSettingsController::class, 'updateHr']);
+            });
+
+        Route::prefix('admin/organizations/{organization}')
+            ->middleware(['erp.super_admin', 'erp.org_provisioning', 'erp.act_as_organization'])
+            ->group(function () {
+                Route::post('logo', function (\Illuminate\Http\Request $request, $organization) {
+                    return app(OrganizationController::class)->uploadLogo($request, (string) $organization);
+                });
+                Route::get('logo/file', function (\Illuminate\Http\Request $request, $organization) {
+                    return app(OrganizationController::class)->logoFile($request, (string) $organization);
+                });
+                Route::delete('logo', function (\Illuminate\Http\Request $request, $organization) {
+                    return app(OrganizationController::class)->deleteLogo($request, (string) $organization);
+                });
+                Route::apiResource('branches', BranchController::class);
+                Route::get('roles/permissions/matrix', [RoleController::class, 'permissionMatrix']);
+                Route::get('roles/{role}/permissions', [RoleController::class, 'permissions']);
+                Route::put('roles/{role}/permissions', [RoleController::class, 'syncPermissions']);
+                Route::apiResource('roles', RoleController::class);
+                Route::apiResource('payment-methods', PaymentMethodController::class);
+                Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show']);
+                Route::apiResource('users', UserController::class);
+                Route::apiResource('employees', EmployeeController::class)->only(['index', 'show']);
+            });
 
         Route::middleware(['erp.module:admin'])->group(function () {
             Route::apiResource('organizations', OrganizationController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
+            Route::post('organizations/{organization}/logo', [OrganizationController::class, 'uploadLogo'])
+                ->middleware(['erp.permission:admin.manage']);
+            Route::get('organizations/{organization}/logo/file', [OrganizationController::class, 'logoFile'])
+                ->middleware(['erp.permission:admin.view']);
+            Route::delete('organizations/{organization}/logo', [OrganizationController::class, 'deleteLogo'])
+                ->middleware(['erp.permission:admin.manage']);
             Route::apiResource('branches', BranchController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
@@ -520,6 +590,8 @@ Route::prefix('v1')->group(function () {
             Route::post('dispatch-trips/{trip}/assign-orders', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'assignOrders'])
                 ->middleware('erp.permission:fulfillment.manage');
             Route::get('dispatch-trips/{trip}/loading-list', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'loadingList'])
+                ->middleware('erp.permission:fulfillment.view');
+            Route::get('dispatch-trips/{trip}/reconciliation', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'reconciliation'])
                 ->middleware('erp.permission:fulfillment.view');
             Route::post('dispatch-trips/{trip}/loading-list/lock', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'lockLoadingList'])
                 ->middleware('erp.permission:fulfillment.manage');

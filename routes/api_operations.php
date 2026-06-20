@@ -194,6 +194,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('sales-by-channel', [ReportController::class, 'salesByChannel']);
             Route::get('daily-sales', [ReportController::class, 'dailySales']);
             Route::get('mobile-route-sales', [ReportController::class, 'routeSales']);
+            Route::get('dispatch-trips', [ReportController::class, 'dispatchTrips']);
+            Route::get('trip-cash-settlement', [ReportController::class, 'tripCashSettlement']);
+            Route::get('pod-compliance', [ReportController::class, 'podCompliance']);
+            Route::get('driver-deliveries', [ReportController::class, 'driverDeliveries']);
             Route::get('sales-pipeline', [ReportController::class, 'salesPipeline']);
             Route::get('vat-collected', [ReportController::class, 'vatCollected']);
             Route::get('category-sales', [ReportController::class, 'categorySales']);

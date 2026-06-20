@@ -4,7 +4,9 @@ namespace App\Services\Auth;
 
 use App\Models\PersonalAccessToken;
 use App\Models\User;
+use App\Services\Auth\OrganizationLoginGuard;
 use App\Services\Auth\SecuritySettingsResolver;
+use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -14,6 +16,7 @@ class AuthSessionService
         protected TenantAccountResolver $resolver,
         protected UserLoginChannelService $loginChannels,
         protected UserPermissionService $permissions,
+        protected OrganizationLoginGuard $organizationLoginGuard,
     ) {}
 
     /**
@@ -118,6 +121,7 @@ class AuthSessionService
         User $currentUser,
         string $clientId,
         string $loginChannel,
+        ?string $activeWorkspaceId = null,
     ): array {
         $org = \App\Models\Organization::findOrFail($currentUser->organization_id);
         $account = $this->resolver->resolveForCanonicalUser($org, (int) $currentUser->id);
@@ -129,7 +133,13 @@ class AuthSessionService
 
         $currentUser->currentAccessToken()?->delete();
 
-        return $this->issueSession($account, $clientId, forceLogout: false, loginChannel: $loginChannel);
+        return $this->issueSession(
+            $account,
+            $clientId,
+            forceLogout: false,
+            loginChannel: $loginChannel,
+            activeWorkspaceId: $activeWorkspaceId,
+        );
     }
 
     /**
@@ -140,12 +150,21 @@ class AuthSessionService
         string $clientId,
         bool $forceLogout,
         string $loginChannel,
+        ?string $activeWorkspaceId = null,
     ): array {
         $authUser = $account->authUser;
         $effective = $account->effectiveUser();
         $loginChannel = $this->loginChannels->normalizeChannel($loginChannel);
         $this->loginChannels->assertCanLogin($effective, $loginChannel);
         $this->assertLoginChannelPermission($effective, $loginChannel);
+        $this->assertOrganizationAllowsLoginChannel($account->organization, $loginChannel);
+        $this->organizationLoginGuard->assertOrganizationAllowsLogin($account->organization, $effective);
+
+        if (! $effective->is_active || $effective->deleted_at) {
+            throw ValidationException::withMessages([
+                'username' => ['Your account has been deactivated. Please contact an administrator.'],
+            ]);
+        }
 
         if ($forceLogout) {
             $authUser->tokens()->delete();
@@ -164,15 +183,19 @@ class AuthSessionService
             'organization_id' => $account->organization->id,
             'user_membership_id' => $account->membership?->id,
             'login_channel' => $loginChannel,
+            'active_workspace_id' => $activeWorkspaceId,
         ])->save();
 
         $memberships = $this->resolver->membershipsForCanonicalUser($account->canonicalUserId());
+
+        $effective->refresh();
 
         return [
             'token' => $newToken->plainTextToken,
             'user' => $effective,
             'organization' => $account->organization,
             'memberships' => $memberships,
+            'must_change_password' => (bool) $effective->must_change_password,
         ];
     }
 
@@ -241,6 +264,22 @@ class AuthSessionService
 
         throw ValidationException::withMessages([
             'login_channel' => ['You do not have permission to use the cashier terminal.'],
+        ]);
+    }
+
+    protected function assertOrganizationAllowsLoginChannel(?\App\Models\Organization $organization, string $loginChannel): void
+    {
+        if ($loginChannel !== UserLoginChannelService::MOBILE || ! $organization) {
+            return;
+        }
+
+        $gate = (new CapabilityGate)->forOrganization($organization);
+        if ($gate->mobileSalesEnabled()) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'login_channel' => ['Mobile sales is not enabled for this organization.'],
         ]);
     }
 

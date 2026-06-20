@@ -5,6 +5,20 @@ use Pdo\Mysql;
 
 return [
 
+    /*
+    |--------------------------------------------------------------------------
+    | Destructive Artisan commands
+    |--------------------------------------------------------------------------
+    |
+    | When false in production, migrate:fresh, db:wipe, migrate:rollback, etc.
+    | are blocked via DB::prohibitDestructiveCommands().
+    |
+    */
+    'allow_destructive_commands' => filter_var(
+        env('DB_ALLOW_DESTRUCTIVE_COMMANDS', false),
+        FILTER_VALIDATE_BOOL
+    ),
+
     'default' => env('DB_CONNECTION', 'sqlite'),
 
     'connections' => [

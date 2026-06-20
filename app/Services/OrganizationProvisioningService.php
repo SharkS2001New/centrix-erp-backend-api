@@ -15,6 +15,8 @@ use App\Services\Accounting\StandardChartOfAccounts;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\OrganizationPlatformConfigService;
+use App\Services\Auth\UserLoginChannelPolicy;
+use App\Services\Auth\UserLoginChannelService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -37,10 +39,7 @@ class OrganizationProvisioningService
                 'vat_regno' => $data['vat_regno'] ?? null,
                 'deployment_profile' => $data['deployment_profile'],
                 'enabled_modules' => $this->normalizeEnabledModules($data['enabled_modules'] ?? null),
-                'module_settings' => [
-                    'distribution' => [],
-                    'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
-                ],
+                'module_settings' => $this->defaultModuleSettingsForProfile((string) $data['deployment_profile']),
             ]);
 
             $org = $this->syncModuleSettingsFromEnabledModules($org);
@@ -48,7 +47,8 @@ class OrganizationProvisioningService
             $branchType = match ($data['deployment_profile']) {
                 'small_shop' => 'small_shop',
                 'distribution' => 'distribution',
-                default => 'supermarket',
+                'supermarket', 'wholesale_retail' => 'supermarket',
+                default => 'retail',
             };
 
             $branch = Branch::create([
@@ -88,8 +88,9 @@ class OrganizationProvisioningService
                 'is_admin' => 1,
                 'is_super_admin' => 0,
                 'access_scope' => 'org',
-                'login_channels' => ['backoffice', 'pos', 'mobile'],
+                'login_channels' => $this->profileLoginChannels((string) $data['deployment_profile']),
                 'is_active' => true,
+                'must_change_password' => false,
             ]);
 
             $adminDept = Department::create([
@@ -151,6 +152,39 @@ class OrganizationProvisioningService
     }
 
     /**
+     * @return array<string, mixed>
+     */
+    protected function defaultModuleSettingsForProfile(string $profile): array
+    {
+        $settings = [
+            'distribution' => [],
+            'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
+        ];
+
+        if ($profile === 'supermarket') {
+            $settings['sales'] = [
+                'enable_barcode_scanner' => true,
+                'allow_sell_from_shop' => true,
+                'allow_sell_from_store' => false,
+                'enable_retail_pricing' => true,
+            ];
+        }
+
+        return $settings;
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function profileLoginChannels(string $profile): array
+    {
+        $configChannels = config("erp.profiles.{$profile}.default_channels", ['backend']);
+        $map = ['backend' => 'backoffice', 'pos' => 'pos', 'mobile' => 'mobile'];
+
+        return array_values(array_map(fn (string $channel) => $map[$channel] ?? $channel, $configChannels));
+    }
+
+    /**
      * @param  array<string, bool>|null  $enabledModules
      * @return array<string, bool>|null
      */
@@ -203,5 +237,67 @@ class OrganizationProvisioningService
 
         app(StandardChartOfAccounts::class)->seedForOrganization($org);
         app(FiscalPeriodService::class)->seedYear((int) $org->id, (int) now()->year);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    public function createOrganizationUser(Organization $org, array $data): User
+    {
+        return DB::transaction(function () use ($org, $data) {
+            $branch = Branch::query()
+                ->where('organization_id', $org->id)
+                ->orderByRaw("CASE WHEN branch_code = 'HQ' THEN 0 ELSE 1 END")
+                ->orderBy('id')
+                ->first();
+
+            if (! $branch) {
+                throw new \RuntimeException('Organization has no branch. Register the organization first.');
+            }
+
+            $isAdmin = (bool) ($data['is_admin'] ?? false);
+            $role = $this->resolveOrganizationUserRole($isAdmin);
+
+            $channels = app(UserLoginChannelPolicy::class)->sanitizeForOrganization(
+                $org,
+                $data['login_channels'] ?? ['backoffice', 'pos'],
+            );
+
+            return User::create([
+                'organization_id' => $org->id,
+                'branch_id' => $branch->id,
+                'role_id' => $role->id,
+                'username' => $data['username'],
+                'email' => $data['email'],
+                'password' => Hash::make($data['password']),
+                'full_name' => $data['full_name'],
+                'is_admin' => $isAdmin ? 1 : 0,
+                'is_super_admin' => 0,
+                'access_scope' => 'org',
+                'login_channels' => $channels,
+                'is_mobile_user' => app(UserLoginChannelService::class)->syncLegacyMobileFlag($channels),
+                'is_active' => true,
+                'must_change_password' => (bool) ($data['must_change_password'] ?? true),
+            ]);
+        });
+    }
+
+    protected function resolveOrganizationUserRole(bool $isAdmin): Role
+    {
+        if ($isAdmin) {
+            $role = Role::where('role_name', 'Administrator')->where('scope', 'org')->first();
+            if ($role) {
+                return $role;
+            }
+        }
+
+        $role = Role::where('role_name', 'Branch Manager')->where('scope', 'org')->first()
+            ?? Role::where('role_name', 'Cashier')->where('scope', 'branch')->first();
+
+        if (! $role) {
+            throw new \RuntimeException('No suitable organization role found. Seed roles first.');
+        }
+
+        return $role;
     }
 }

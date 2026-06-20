@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Expense;
 use App\Models\TillFloatSession;
 use App\Services\Accounting\ExpenseJournalService;
+use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
@@ -49,5 +50,34 @@ class ExpenseController extends BaseResourceController
         app(ExpenseJournalService::class)->postIfEnabled($expense, $request->user(), $gate);
 
         return response()->json($expense, 201);
+    }
+
+    public function destroy(Request $request, string $id)
+    {
+        $expense = $this->findScopedModel($request, $id);
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        app(ReferenceJournalReversalService::class)->reverseIfEnabled(
+            'expense',
+            (int) $expense->id,
+            $user,
+            $gate,
+        );
+
+        if ($user && $this->auditable()) {
+            $this->auditLogger()->logModel(
+                $user,
+                'delete',
+                $expense,
+                $expense->getAttributes(),
+                null,
+                $request,
+            );
+        }
+
+        $expense->delete();
+
+        return response()->json(null, 204);
     }
 }

@@ -70,4 +70,32 @@ class FiscalPeriodTest extends TestCase
             ->assertOk()
             ->assertJsonPath('status', 'open');
     }
+
+    public function test_close_fiscal_period_blocked_when_draft_journals_exist(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        $period = FiscalPeriod::create([
+            'organization_id' => $orgId,
+            'period_name' => 'Draft Month',
+            'start_date' => '2026-03-01',
+            'end_date' => '2026-03-31',
+            'status' => 'open',
+        ]);
+
+        $cash = ChartOfAccount::query()->where('organization_id', $orgId)->where('account_code', '1000')->firstOrFail();
+        $sales = ChartOfAccount::query()->where('organization_id', $orgId)->where('account_code', '4000')->firstOrFail();
+
+        $this->postJson('/api/v1/accounting/journal-entries', [
+            'entry_number' => 'JE-DRAFT-BLOCK',
+            'entry_date' => '2026-03-15',
+            'lines' => [
+                ['account_id' => $cash->id, 'debit' => 50, 'credit' => 0],
+                ['account_id' => $sales->id, 'debit' => 0, 'credit' => 50],
+            ],
+        ])->assertCreated();
+
+        $this->postJson("/api/v1/accounting/fiscal-periods/{$period->id}/close")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['period']);
+    }
 }

@@ -35,6 +35,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.super_admin' => \App\Http\Middleware\EnsureSuperAdmin::class,
             'erp.org_provisioning' => \App\Http\Middleware\EnsureOrgProvisioningAllowed::class,
             'erp.tenant' => \App\Http\Middleware\ResolveActingTenantUser::class,
+            'erp.act_as_organization' => \App\Http\Middleware\ActAsOrganization::class,
             'erp.session_idle' => \App\Http\Middleware\EnsureSessionNotIdle::class,
         ]);
     })
