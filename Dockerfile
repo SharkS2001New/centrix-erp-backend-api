@@ -1,5 +1,5 @@
-# Laravel API — Apache + PHP (matches CI PHP 8.3)
-FROM php:8.3-apache
+# Laravel API — Apache + PHP 8.4 (matches composer.lock / Symfony 8.1)
+FROM php:8.4-apache
 
 RUN apt-get update && apt-get install -y \
     git \
