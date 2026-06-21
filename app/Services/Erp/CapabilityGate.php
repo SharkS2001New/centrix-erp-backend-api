@@ -32,6 +32,10 @@ class CapabilityGate
             return false;
         }
 
+        if (str_ends_with($moduleKey, '.reports')) {
+            return $this->reportModuleEnabled($moduleKey);
+        }
+
         if (! $this->selfEnabled($moduleKey)) {
             return false;
         }
@@ -42,6 +46,59 @@ class CapabilityGate
         }
 
         return true;
+    }
+
+    /**
+     * Report bundles inherit from their parent domain unless the org explicitly
+     * disabled the reports submodule in enabled_modules.
+     */
+    public function reportModuleEnabled(string $moduleKey): bool
+    {
+        if (! $this->organization) {
+            return false;
+        }
+
+        if ($this->selfEnabled($moduleKey)) {
+            return $this->parentDomainEnabled($moduleKey);
+        }
+
+        if (! str_ends_with($moduleKey, '.reports')) {
+            return false;
+        }
+
+        $parent = ModuleRegistry::parentKey($moduleKey);
+        if ($parent === null || ! $this->selfEnabled($parent)) {
+            return false;
+        }
+
+        $overrides = $this->organizationModuleOverrides();
+        if (array_key_exists($moduleKey, $overrides)) {
+            return (bool) $overrides[$moduleKey];
+        }
+
+        return true;
+    }
+
+    protected function parentDomainEnabled(string $moduleKey): bool
+    {
+        $parent = ModuleRegistry::parentKey($moduleKey);
+        if ($parent === null || $parent === $moduleKey) {
+            return true;
+        }
+
+        return $this->selfEnabled($parent);
+    }
+
+    /** @return array<string, bool> */
+    protected function organizationModuleOverrides(): array
+    {
+        if (! $this->organization) {
+            return [];
+        }
+
+        return ModuleRegistry::expandLegacyModules(
+            is_array($this->organization->enabled_modules) ? $this->organization->enabled_modules : [],
+        );
     }
 
     public function selfEnabled(string $moduleKey): bool
@@ -62,13 +119,31 @@ class CapabilityGate
 
         $profile = $this->organization->deployment_profile ?? 'wholesale_retail';
         $profileModules = config("erp.profiles.{$profile}.modules", []);
-        $overrides = ModuleRegistry::expandLegacyModules(
-            is_array($this->organization->enabled_modules) ? $this->organization->enabled_modules : [],
-        );
+        $overrides = $this->organizationModuleOverrides();
 
         $merged = array_merge($profileModules, $overrides);
 
-        return ModuleRegistry::cascade(ModuleRegistry::sanitizeModuleMap($merged));
+        $cascaded = ModuleRegistry::cascade(ModuleRegistry::sanitizeModuleMap($merged));
+
+        foreach (ModuleRegistry::domainRoots() as $domain) {
+            if (! ($cascaded[$domain] ?? false)) {
+                continue;
+            }
+
+            foreach (ModuleRegistry::descendantKeys($domain) as $child) {
+                if (! str_ends_with($child, '.reports') && ! str_ends_with($child, '.dashboard')) {
+                    continue;
+                }
+
+                if (array_key_exists($child, $overrides)) {
+                    continue;
+                }
+
+                $cascaded[$child] = true;
+            }
+        }
+
+        return $cascaded;
     }
 
     /** @return array<string, bool> */
@@ -108,9 +183,13 @@ class CapabilityGate
         };
     }
 
-    /** Mobile app + backoffice field sales when platform mobile orders toggle is on. */
+    /** Mobile app, mobile login channel, and backoffice mobile-order views when enabled for the org. */
     public function mobileSalesEnabled(): bool
     {
+        if (! $this->selfEnabled('sales.mobile')) {
+            return false;
+        }
+
         $sales = $this->moduleSettings('sales');
 
         return (bool) ($sales['enable_mobile_orders'] ?? true);

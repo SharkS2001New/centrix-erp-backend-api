@@ -101,6 +101,7 @@ class OrganizationPlatformConfigService
             'enable_kra_integration' => true,
             'enable_ai' => true,
             'stock_deduct_on' => 'order_completed',
+            'require_pos_till_float' => false,
             'order_workflow' => config('erp.default_order_workflow', []),
         ];
     }
@@ -123,6 +124,7 @@ class OrganizationPlatformConfigService
             'enable_kra_integration' => (bool) ($finance['enable_kra_integration'] ?? true),
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
             'stock_deduct_on' => (string) ($sales['stock_deduct_on'] ?? 'order_completed'),
+            'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'order_workflow' => $workflow,
         ];
     }
@@ -145,6 +147,8 @@ class OrganizationPlatformConfigService
 
         if (! $mobileOrders) {
             $enabledModules['sales.mobile'] = false;
+        } else {
+            $enabledModules['sales.mobile'] = true;
         }
 
         if (($enabledModules['distribution'] ?? false) && ! $mobileOrders) {

@@ -146,8 +146,7 @@ class OrganizationProvisionController extends Controller
 
         if (array_key_exists('sales_platform', $data) && is_array($data['sales_platform'])) {
             $this->platformConfig->applySalesPlatformConfig($org, $data['sales_platform']);
-            if (array_key_exists('enable_mobile_orders', $data['sales_platform'])
-                && ! (bool) $data['sales_platform']['enable_mobile_orders']) {
+            if (array_key_exists('enable_mobile_orders', $data['sales_platform'])) {
                 $modules = $org->enabled_modules ?? [];
                 $modules = $this->platformConfig->reconcileEnabledModules($org, $modules, $data['sales_platform']);
                 $org->enabled_modules = $this->provisioning->normalizeEnabledModules($modules);
@@ -403,6 +402,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform' => 'sometimes|array',
             'sales_platform.show_checkout_on_create_order' => 'sometimes|boolean',
             'sales_platform.enable_mobile_orders' => 'sometimes|boolean',
+            'sales_platform.require_pos_till_float' => 'sometimes|boolean',
             'sales_platform.enable_mpesa_stk' => 'sometimes|boolean',
             'sales_platform.enable_kra_integration' => 'sometimes|boolean',
             'sales_platform.enable_ai' => 'sometimes|boolean',

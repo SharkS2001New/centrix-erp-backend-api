@@ -25,7 +25,7 @@ class EnsureReportModule
         }
 
         $accessModules = ModuleRegistry::reportAccessModulesForSlug($slug);
-        if ($accessModules !== [] && ! collect($accessModules)->contains(fn (string $key) => $gate->enabled($key))) {
+        if ($accessModules !== [] && ! collect($accessModules)->contains(fn (string $key) => $gate->reportModuleEnabled($key))) {
             return response()->json([
                 'message' => 'This report is not enabled for your organization.',
                 'module' => $accessModules[0],

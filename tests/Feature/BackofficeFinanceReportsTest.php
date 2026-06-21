@@ -65,4 +65,41 @@ class BackofficeFinanceReportsTest extends TestCase
             ->assertForbidden()
             ->assertJsonPath('module', 'sales.reports');
     }
+
+    public function test_hr_reports_accessible_when_hr_domain_enabled_even_if_profile_disabled_reports(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->deployment_profile = 'small_shop';
+        $org->enabled_modules = ['hr_payroll' => true];
+        $org->save();
+
+        $gate = app(CapabilityGate::class)->forOrganization($org->fresh());
+        $this->assertTrue($gate->enabled('hr_payroll'));
+        $this->assertTrue($gate->reportModuleEnabled('hr_payroll.reports'));
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/reports/payroll-summary?from_date=2026-01-01&to_date=2026-06-30')
+            ->assertOk();
+    }
+
+    public function test_hr_reports_respect_explicit_org_disable(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->enabled_modules = ModuleRegistry::cascade([
+            'hr_payroll' => true,
+            'hr_payroll.reports' => false,
+        ]);
+        $org->save();
+
+        $gate = app(CapabilityGate::class)->forOrganization($org->fresh());
+        $this->assertFalse($gate->reportModuleEnabled('hr_payroll.reports'));
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/reports/payroll-summary?from_date=2026-01-01&to_date=2026-06-30')
+            ->assertForbidden();
+    }
 }

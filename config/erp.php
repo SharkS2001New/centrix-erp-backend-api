@@ -156,6 +156,7 @@ return [
             'show_checkout_on_create_order',
             'enable_mobile_orders',
             'stock_deduct_on',
+            'require_pos_till_float',
         ],
         'distribution' => [],
         'finance' => [
