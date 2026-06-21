@@ -15,7 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: 'api',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        $trusted = config('security.trusted_proxies', '*');
+        $trusted = env('TRUSTED_PROXIES', '*');
         if ($trusted === '*' || $trusted === '') {
             $middleware->trustProxies(at: '*');
         } else {

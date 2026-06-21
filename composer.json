@@ -1,10 +1,12 @@
 {
     "name": "lovable/pos-erp-api",
     "type": "project",
-    "description": "Centrix ERP API v1 backend (Laravel 11).",
+    "description": "Centrix ERP API v1 backend (Laravel 12).",
     "require": {
         "php": "^8.2",
-        "laravel/framework": "^11.0",
+        "guzzlehttp/guzzle": "^7.12.1",
+        "guzzlehttp/psr7": "^2.12.1",
+        "laravel/framework": "^12.61.1",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
         "predis/predis": "^2.3"
