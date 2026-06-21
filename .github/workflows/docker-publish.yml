@@ -40,7 +40,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          password: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
@@ -60,33 +60,32 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Optional: bump Helm values in pitchpredk3ssetup (set K8S_SETUP_REPO=pitchpredk3ssetup).
-      - name: Check out Kubernetes setup repo
-        if: github.event_name != 'pull_request' && vars.K8S_SETUP_REPO != ''
+      - name: Check out the pitchpredk3ssetup repo
+        if: github.event_name != 'pull_request'
         uses: actions/checkout@v4
         with:
-          repository: ${{ github.repository_owner }}/${{ vars.K8S_SETUP_REPO }}
-          path: k8s-setup
+          repository: ${{ github.repository_owner }}/pitchpredk3ssetup
+          path: pitchpredk3ssetup
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Update values.yaml with new image tag
-        if: github.event_name != 'pull_request' && vars.K8S_SETUP_REPO != ''
+        if: github.event_name != 'pull_request'
         run: |
           SHORT_SHA_PART="${{ steps.meta.outputs.tags }}"
           SHORT_SHA_PART="$(echo "$SHORT_SHA_PART" | awk -F':' '{print $2}' | cut -c1-11)"
-          sed -i "s|tag:.*|tag: $SHORT_SHA_PART|" k8s-setup/centrix-erp-backend-api/values.yaml
-          sed -i "s|tag:.*|tag: $SHORT_SHA_PART|" k8s-setup/centrix-erp-scheduler/values.yaml
+          sed -i "s|tag:.*|tag: $SHORT_SHA_PART|" pitchpredk3ssetup/centrix-erp-backend-api/values.yaml
+          sed -i "s|tag:.*|tag: $SHORT_SHA_PART|" pitchpredk3ssetup/centrix-erp-scheduler/values.yaml
           echo "SHORT_SHA_PART=$SHORT_SHA_PART" >> "$GITHUB_ENV"
-          echo "Updated API and scheduler tags in values.yaml to $SHORT_SHA_PART"
+          echo "Updated centrix-erp-backend-api and centrix-erp-scheduler tags to $SHORT_SHA_PART"
 
-      - name: Commit and push changes to setup repo
-        if: github.event_name != 'pull_request' && vars.K8S_SETUP_REPO != ''
+      - name: Commit and push changes to pitchpredk3ssetup repo
+        if: github.event_name != 'pull_request'
         run: |
-          cd k8s-setup
+          cd pitchpredk3ssetup
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
           git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml
-          git commit -m "Update centrix-erp-backend-api and scheduler image tags to $SHORT_SHA_PART"
+          git commit -m "Update centrix-erp-backend-api image tag to $SHORT_SHA_PART"
           git push
         env:
           GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}

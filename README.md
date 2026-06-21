@@ -38,9 +38,9 @@ docker run --rm -p 8001:8001 \
   centrix-erp-backend-api
 ```
 
-Images are published to `ghcr.io/<owner>/centrix-erp-backend-api` on push to `main`/`master` via `.github/workflows/docker-publish.yml`.
+Images are published to `ghcr.io/<owner>/centrix-erp-backend-api` on push to `main`/`master` via `.github/workflows/docker-publish.yml`. Each push also updates `tag` in `pitchpredk3ssetup/centrix-erp-backend-api/values.yaml` and `centrix-erp-scheduler/values.yaml` (same pattern as pitchpredictionsbackend).
 
-Optional GitOps: set repository variable `K8S_SETUP_REPO` and secret `PERSONAL_ACCESS_TOKEN` to auto-update Helm tags (same pattern as pitchpredictionswebsite → pitchpredk3ssetup).
+Requires GitHub secret `PERSONAL_ACCESS_TOKEN` with `repo` and `write:packages` scopes.
 
 ## Setup
 
