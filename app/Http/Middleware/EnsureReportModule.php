@@ -14,7 +14,9 @@ class EnsureReportModule
 
     public function handle(Request $request, Closure $next): Response
     {
-        $gate = $this->erp->gateForUser($request->user());
+        $gate = $request->user()
+            ? $this->erp->gateForRequest($request)
+            : $this->erp->gateForUser(null);
         $request->attributes->set('erp_gate', $gate);
 
         $slug = $this->resolveReportSlug($request);

@@ -137,6 +137,8 @@ class AuthRegistrationConcurrencyTest extends TestCase
         $superAdmin = User::where('username', 'superadmin')->firstOrFail();
         Sanctum::actingAs($superAdmin);
 
+        $this->getJson('/api/v1/admin/organizations')->assertOk();
+
         $this->postJson('/api/v1/admin/organizations/provision', [
             'company_code' => 'BLOCKED',
             'org_name' => 'Blocked Org',

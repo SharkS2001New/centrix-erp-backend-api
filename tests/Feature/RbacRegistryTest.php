@@ -240,6 +240,8 @@ class RbacRegistryTest extends TestCase
         $this->postJson('/api/v1/sales/carts', ['channel' => 'pos'])->assertCreated();
         $this->getJson('/api/v1/products?per_page=5')->assertOk();
         $this->getJson('/api/v1/tills?per_page=5')->assertOk();
+        $this->getJson('/api/v1/till-float-sessions?per_page=10&filter[status]=open&filter[cashier_id]='.$cashier->id)
+            ->assertOk();
     }
 
     public function test_demo_cashier_only_has_external_pos_workspace(): void

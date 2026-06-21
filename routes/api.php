@@ -135,42 +135,42 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:admin', 'erp.module:hr_payroll', 'erp.permission:admin.manage']);
 
         Route::get('admin/organizations/provision-options', [OrganizationProvisionController::class, 'options'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::get('admin/organizations', [OrganizationProvisionController::class, 'index'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/provision', [OrganizationProvisionController::class, 'store'])
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
         Route::get('admin/organizations/{organization}', [OrganizationProvisionController::class, 'show'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::patch('admin/organizations/{organization}', [OrganizationProvisionController::class, 'update'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::get('admin/organizations/{organization}/users', [OrganizationProvisionController::class, 'listUsers'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/{organization}/users', [OrganizationProvisionController::class, 'createUser'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::patch('admin/organizations/{organization}/users/{user}', [OrganizationProvisionController::class, 'updateUser'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::get('admin/active-sessions', [PlatformActiveSessionsController::class, 'index'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::delete('admin/active-sessions/{token}', [PlatformActiveSessionsController::class, 'destroy'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::post('admin/active-sessions/{token}/disable-user', [PlatformActiveSessionsController::class, 'disableUser'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
 
         Route::get('admin/database-backups', [PlatformDatabaseBackupController::class, 'index'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::post('admin/database-backups', [PlatformDatabaseBackupController::class, 'store'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
 
         Route::get('admin/organizations/{organization}/cache', [PlatformOrganizationCacheController::class, 'show'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/{organization}/cache/clear', [PlatformOrganizationCacheController::class, 'clear'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+            ->middleware(['erp.super_admin']);
 
         Route::prefix('admin/organizations/{organization}/settings')
-            ->middleware(['erp.super_admin', 'erp.org_provisioning', 'erp.act_as_organization'])
+            ->middleware(['erp.super_admin', 'erp.act_as_organization'])
             ->group(function () {
                 Route::get('sales', [ErpSettingsController::class, 'sales']);
                 Route::patch('sales', [ErpSettingsController::class, 'updateSales']);
@@ -195,7 +195,7 @@ Route::prefix('v1')->group(function () {
             });
 
         Route::prefix('admin/organizations/{organization}')
-            ->middleware(['erp.super_admin', 'erp.org_provisioning', 'erp.act_as_organization'])
+            ->middleware(['erp.super_admin', 'erp.act_as_organization'])
             ->group(function () {
                 Route::post('logo', function (\Illuminate\Http\Request $request, $organization) {
                     return app(OrganizationController::class)->uploadLogo($request, (string) $organization);

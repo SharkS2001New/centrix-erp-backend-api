@@ -71,4 +71,14 @@ class PlatformOrganizationSettingsTest extends TestCase
         $this->assertNotNull($demo);
         $this->assertArrayHasKey('administration_enabled', $demo);
     }
+
+    public function test_super_admin_can_list_organizations_when_provisioning_disabled(): void
+    {
+        config(['erp.allow_org_provisioning' => false]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $this->getJson('/api/v1/admin/organizations')->assertOk();
+    }
 }

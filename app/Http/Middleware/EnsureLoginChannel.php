@@ -31,7 +31,16 @@ class EnsureLoginChannel
             return $next($request);
         }
 
-        $accessToken->delete();
+        $normalizedPath = ltrim($request->path(), '/');
+        if (str_starts_with($normalizedPath, 'api/v1/')) {
+            $normalizedPath = substr($normalizedPath, 7);
+        }
+
+        /** @var \App\Models\User|null $user */
+        $user = $accessToken->tokenable;
+        if ($user?->is_super_admin && str_starts_with($normalizedPath, 'admin/')) {
+            return $next($request);
+        }
 
         return response()->json([
             'message' => sprintf(

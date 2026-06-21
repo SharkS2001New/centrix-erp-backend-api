@@ -16,7 +16,7 @@ return [
 
     'company_code' => env('APP_COMPANY_CODE'),
 
-    /** When true, org admins can provision new organizations via the admin API. */
+/** When true, super admins can register new tenant organizations via POST /admin/organizations/provision. */
     'allow_org_provisioning' => filter_var(env('APP_ALLOW_ORG_PROVISIONING', true), FILTER_VALIDATE_BOOL),
 
     /** Company code for the platform super-admin organization (login target). */

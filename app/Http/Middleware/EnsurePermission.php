@@ -16,7 +16,7 @@ class EnsurePermission
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        if ($user->is_admin) {
+        if ($user->is_admin || $user->is_super_admin) {
             return $next($request);
         }
 

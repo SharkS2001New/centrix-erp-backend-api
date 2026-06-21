@@ -13,7 +13,9 @@ class EnsureAnyErpModule
 
     public function handle(Request $request, Closure $next, string $modules): Response
     {
-        $gate = $this->erp->gateForUser($request->user());
+        $gate = $request->user()
+            ? $this->erp->gateForRequest($request)
+            : $this->erp->gateForUser(null);
         $keys = array_values(array_filter(array_map('trim', explode(',', $modules))));
 
         foreach ($keys as $module) {
