@@ -14,10 +14,12 @@ use App\Services\Auth\UserLoginChannelPolicy;
 use App\Services\Auth\UserLoginService;
 use App\Services\Auth\UsernameValidator;
 use App\Services\Erp\ModuleRegistry;
+use App\Services\Erp\ApplicationProvisioner;
 use App\Services\Ai\AiSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 use App\Services\Erp\OrderWorkflowService;
 
 class OrganizationProvisionController extends Controller
@@ -25,6 +27,7 @@ class OrganizationProvisionController extends Controller
     public function __construct(
         protected OrganizationProvisioningService $provisioning,
         protected OrganizationPlatformConfigService $platformConfig,
+        protected ApplicationProvisioner $applications,
     ) {}
 
     /** GET /api/v1/admin/organizations — list tenants (super admin only) */
@@ -61,19 +64,19 @@ class OrganizationProvisionController extends Controller
                 'key' => $key,
                 'label' => $profile['label'] ?? $key,
                 'modules' => $profile['modules'] ?? [],
+                'applications' => $this->applications->applicationsFromProfileModules($profile['modules'] ?? []),
             ])
             ->values();
 
-        $modules = collect(ModuleRegistry::optionsPayload())->values();
-
         return response()->json([
+            'applications' => $this->applications->optionsPayload(),
             'profiles' => $tenantProfiles,
-            'modules' => $modules,
+            'modules' => collect(ModuleRegistry::optionsPayload())->values(),
             'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig('wholesale_retail'),
             'notes' => [
-                'platform_controlled' => 'Module toggles match sidebar areas (Sales, HR, Inventory, etc.). Only the platform super admin sets these at registration or under Platform → Organizations.',
+                'applications' => 'Enable or disable the six tenant applications (External POS, Backoffice, Distribution, Accounting, Human Resources, Administration). The API stores the underlying module keys automatically.',
                 'sales_platform' => 'Checkout vs save order, order workflow, and stock timing are configured by the platform super admin — not the organization manager.',
-                'org_settings' => 'Organization managers configure day-to-day preferences (payment fields, receipts, SMTP, M-Pesa, etc.) under Administration → Organization settings.',
+                'org_settings' => 'Organization managers configure day-to-day preferences (payment fields, receipts, SMTP, M-Pesa, etc.) under Administration → Organization settings when Administration is enabled.',
             ],
         ]);
     }
@@ -94,6 +97,7 @@ class OrganizationProvisionController extends Controller
         $data = $request->validate(array_merge(
             $this->salesPlatformRules(),
             $this->tenantProfileRules(),
+            $this->applicationRules(),
             [
                 'is_active' => 'sometimes|boolean',
                 'enabled_modules' => 'sometimes|array',
@@ -101,14 +105,10 @@ class OrganizationProvisionController extends Controller
             ],
         ));
 
-        $moduleKeys = ModuleRegistry::keys();
-        if (isset($data['enabled_modules'])) {
-            $unknown = array_diff(array_keys($data['enabled_modules']), $moduleKeys);
-            if ($unknown !== []) {
-                return response()->json([
-                    'message' => 'Unknown module keys: '.implode(', ', $unknown),
-                ], 422);
-            }
+        if ($resolvedModules = $this->resolveEnabledModulesInput($data, $org)) {
+            $data['enabled_modules'] = $resolvedModules;
+        } elseif (isset($data['enabled_modules'])) {
+            $data['enabled_modules'] = $this->validateEnabledModulesMap($data['enabled_modules']);
         }
 
         if (array_key_exists('deployment_profile', $data)) {
@@ -316,6 +316,7 @@ class OrganizationProvisionController extends Controller
                 'id', 'company_code', 'org_name', 'org_email', 'primary_tel', 'org_address',
                 'org_pin', 'vat_regno', 'deployment_profile', 'enabled_modules', 'is_active', 'created_at',
             ]),
+            'applications' => $this->applications->applicationsFromEnabledModules($gate->allModules()),
             'effective_modules' => $gate->allModules(),
             'capabilities' => array_merge([
                 'modules' => $gate->allModules(),
@@ -351,16 +352,13 @@ class OrganizationProvisionController extends Controller
                 'admin_full_name' => 'required|string|max:200',
             ],
             $this->salesPlatformRules(),
+            $this->applicationRules(),
         ));
 
-        $moduleKeys = ModuleRegistry::keys();
-        if (isset($data['enabled_modules'])) {
-            $unknown = array_diff(array_keys($data['enabled_modules']), $moduleKeys);
-            if ($unknown !== []) {
-                return response()->json([
-                    'message' => 'Unknown module keys: '.implode(', ', $unknown),
-                ], 422);
-            }
+        if ($resolvedModules = $this->resolveEnabledModulesInput($data)) {
+            $data['enabled_modules'] = $resolvedModules;
+        } elseif (isset($data['enabled_modules'])) {
+            $data['enabled_modules'] = $this->validateEnabledModulesMap($data['enabled_modules']);
         }
 
         $result = $this->provisioning->provision($data);
@@ -418,5 +416,55 @@ class OrganizationProvisionController extends Controller
             'sales_platform.order_workflow.checkout' => 'sometimes|array',
             'sales_platform.order_workflow.deduct_stock_on' => ['sometimes', 'string', $statusRule],
         ];
+    }
+
+    /** @return array<string, mixed> */
+    protected function applicationRules(): array
+    {
+        $rules = ['applications' => 'sometimes|array'];
+        foreach (ApplicationProvisioner::ids() as $id) {
+            $rules["applications.{$id}"] = 'sometimes|boolean';
+        }
+
+        return $rules;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, bool>|null
+     */
+    protected function resolveEnabledModulesInput(array $data, ?Organization $org = null): ?array
+    {
+        if (! array_key_exists('applications', $data)) {
+            return null;
+        }
+
+        $mobileOrders = true;
+        if (array_key_exists('enable_mobile_orders', $data['sales_platform'] ?? [])) {
+            $mobileOrders = (bool) $data['sales_platform']['enable_mobile_orders'];
+        } elseif ($org) {
+            $mobileOrders = $this->platformConfig->mobileOrdersEnabledForOrganization($org);
+        }
+
+        $applications = $this->applications->sanitizeApplications($data['applications']);
+
+        return $this->applications->enabledModulesFromApplications($applications, $mobileOrders);
+    }
+
+    /**
+     * @param  array<string, bool>  $enabledModules
+     * @return array<string, bool>
+     */
+    protected function validateEnabledModulesMap(array $enabledModules): array
+    {
+        $enabledModules = ModuleRegistry::sanitizeModuleMap($enabledModules);
+        $unknown = array_diff(array_keys($enabledModules), ModuleRegistry::keys());
+        if ($unknown !== []) {
+            throw ValidationException::withMessages([
+                'enabled_modules' => ['Unknown module keys: '.implode(', ', $unknown)],
+            ]);
+        }
+
+        return $enabledModules;
     }
 }

@@ -50,6 +50,78 @@ class AuthRegistrationConcurrencyTest extends TestCase
         ]);
     }
 
+    public function test_provision_ignores_config_only_module_keys_in_enabled_modules(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'CFGKEY',
+            'org_name' => 'Config Key Org',
+            'org_email' => 'cfg@org.com',
+            'primary_tel' => '0711000099',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'enabled_modules' => [
+                'sales' => true,
+                'backoffice_finance_reports' => true,
+                'report_modules' => true,
+            ],
+            'admin_username' => 'cfg_admin',
+            'admin_email' => 'cfg@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Cfg Admin',
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('organizations', ['company_code' => 'CFGKEY']);
+    }
+
+    public function test_provision_accepts_applications_payload(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'APPORG',
+            'org_name' => 'Applications Org',
+            'org_email' => 'app@org.com',
+            'primary_tel' => '0711000088',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'applications' => [
+                'pos' => false,
+                'backoffice' => true,
+                'distribution' => false,
+                'accounting' => false,
+                'hr' => false,
+                'admin' => true,
+            ],
+            'admin_username' => 'app_admin',
+            'admin_email' => 'app@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'App Admin',
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('organizations', ['company_code' => 'APPORG']);
+        $this->assertFalse($response->json('organization.enabled_modules.sales.pos') ?? true);
+        $this->assertTrue($response->json('organization.enabled_modules.sales.backend') ?? false);
+    }
+
+    public function test_provision_options_exposes_applications(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $response = $this->getJson('/api/v1/admin/organizations/provision-options')->assertOk();
+
+        $this->assertCount(6, $response->json('applications'));
+        $this->assertArrayHasKey('applications', $response->json('profiles.0'));
+    }
+
     public function test_super_admin_can_update_organization_modules(): void
     {
         config(['erp.allow_org_provisioning' => true]);

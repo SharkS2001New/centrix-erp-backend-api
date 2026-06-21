@@ -8,7 +8,7 @@
  */
 $erpModuleTree = require __DIR__.'/erp_module_tree.php';
 $allModulesFalse = array_fill_keys(
-    array_filter(array_keys($erpModuleTree), fn (string $k) => $k !== 'report_modules'),
+    array_diff(array_keys($erpModuleTree), \App\Services\Erp\ModuleRegistry::configOnlyKeys()),
     false,
 );
 

@@ -7,18 +7,37 @@ class ModuleRegistry
     /** @var array<string, array<string, mixed>>|null */
     protected static ?array $modules = null;
 
+    /** Keys in erp_module_tree.php that are not tenant module toggles. */
+    public static function configOnlyKeys(): array
+    {
+        return ['report_modules', 'backoffice_finance_reports'];
+    }
+
     /** @return array<string, array<string, mixed>> */
     public static function modules(): array
     {
         if (self::$modules === null) {
             $tree = config('erp_module_tree', []);
-            foreach (['report_modules', 'backoffice_finance_reports'] as $configOnlyKey) {
+            foreach (self::configOnlyKeys() as $configOnlyKey) {
                 unset($tree[$configOnlyKey]);
             }
             self::$modules = $tree;
         }
 
         return self::$modules;
+    }
+
+    /**
+     * Drop config-only keys and unknown keys from a module map.
+     *
+     * @param  array<string, bool>  $modules
+     * @return array<string, bool>
+     */
+    public static function sanitizeModuleMap(array $modules): array
+    {
+        $allowed = array_flip(self::keys());
+
+        return array_intersect_key($modules, $allowed);
     }
 
     /** @return list<string> */
