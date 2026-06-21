@@ -158,9 +158,26 @@ class ExternalAccountingController extends Controller
     public function processExportQueue(Request $request)
     {
         $provider = $request->input('provider', 'quickbooks');
-        $result = $this->exports->processPending((int) $request->user()->organization_id, $provider);
 
-        return response()->json($result);
+        if ($request->boolean('sync')) {
+            $result = $this->exports->processPending((int) $request->user()->organization_id, $provider);
+
+            return response()->json($result);
+        }
+
+        $task = app(\App\Services\Background\BackgroundTaskService::class)->create(
+            'accounting_export',
+            $request->user(),
+            ['provider' => $provider],
+        );
+
+        \App\Jobs\ProcessAccountingExportsJob::dispatch($task->id);
+
+        return response()->json([
+            'message' => 'Accounting export processing queued.',
+            'task_id' => $task->id,
+            'queued' => true,
+        ], 202);
     }
 
     public function retryFailedExports(Request $request)

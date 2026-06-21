@@ -25,12 +25,23 @@ class SupplierController extends BaseResourceController
                 $query->where($col, $val);
             }
         }
-        if ($q = $request->input('q')) {
-            $searchCol = $this->routeKeyColumn() !== 'id'
-                ? $this->routeKeyColumn()
-                : ($this->fillableFields()[0] ?? 'id');
-            $query->where($searchCol, 'like', "%{$q}%");
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('supplier_name', 'like', "%{$q}%")
+                    ->orWhere('contact_person', 'like', "%{$q}%")
+                    ->orWhere('phone', 'like', "%{$q}%")
+                    ->orWhere('alternate_phone', 'like', "%{$q}%")
+                    ->orWhere('email', 'like', "%{$q}%")
+                    ->orWhere('town', 'like', "%{$q}%")
+                    ->orWhere('tax_pin', 'like', "%{$q}%")
+                    ->orWhere('address', 'like', "%{$q}%");
+            });
         }
+
+        if ($request->filled('is_active')) {
+            $query->where('is_active', $request->boolean('is_active'));
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
         $paginator = $query->paginate($perPage);
 

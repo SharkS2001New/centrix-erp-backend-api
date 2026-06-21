@@ -7,7 +7,7 @@ use App\Http\Controllers\Api\V1\AiSettingsController;
 use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationProvisionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
-use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
+use App\Http\Controllers\Api\V1\BackgroundTaskController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\RoleController;
@@ -136,6 +136,8 @@ Route::prefix('v1')->group(function () {
 
         Route::get('admin/organizations/provision-options', [OrganizationProvisionController::class, 'options'])
             ->middleware(['erp.super_admin']);
+        Route::get('background-tasks/{id}', [BackgroundTaskController::class, 'show']);
+
         Route::get('admin/organizations', [OrganizationProvisionController::class, 'index'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/provision', [OrganizationProvisionController::class, 'store'])
@@ -283,6 +285,10 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('sub-categories', SubCategoryController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
+            Route::get('products/catalog-summary', [ProductController::class, 'catalogSummary'])
+                ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
+            Route::post('products/import-batch', [\App\Http\Controllers\Api\V1\ProductImportController::class, 'store'])
+                ->middleware(['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
@@ -378,6 +384,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:customers.manage');
             Route::delete('customers/{customer}/shop-image', [CustomerController::class, 'deleteShopImage'])
                 ->middleware('erp.permission:customers.manage');
+            Route::get('customers/summary', [CustomerController::class, 'summary'])
+                ->middleware(['erp.permission:customers.view']);
             Route::apiResource('customers', CustomerController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:customers.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:customers.manage']);
@@ -441,6 +449,8 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('expense-groups', ExpenseGroupController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:accounting.manage']);
+            Route::get('expenses/summary', [ExpenseController::class, 'summary'])
+                ->middleware(['erp.permission:accounting.view']);
             Route::apiResource('expenses', ExpenseController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:accounting.manage']);
@@ -527,6 +537,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.manage');
             Route::delete('employees/{employee}/documents/{document}', [\App\Http\Controllers\Api\V1\EmployeeDocumentController::class, 'destroy'])
                 ->middleware('erp.permission:hr.manage');
+            Route::get('employees/summary', [\App\Http\Controllers\Api\V1\EmployeeController::class, 'summary'])
+                ->middleware(['erp.permission:hr.view']);
             Route::apiResource('employees', \App\Http\Controllers\Api\V1\EmployeeController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);

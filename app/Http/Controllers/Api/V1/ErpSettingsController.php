@@ -783,13 +783,23 @@ class ErpSettingsController extends Controller
         $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
+            'screen_lock_minutes' => 'sometimes|integer|min:1|max:120',
             'session_idle_minutes' => 'sometimes|integer|min:5|max:480',
             'require_strong_passwords' => 'sometimes|boolean',
             'password_min_length' => 'sometimes|integer|min:6|max:128',
         ]);
 
+        $current = $gate->moduleSettings('security');
+        $screenLock = (int) ($data['screen_lock_minutes'] ?? $current['screen_lock_minutes'] ?? 5);
+        $sessionIdle = (int) ($data['session_idle_minutes'] ?? $current['session_idle_minutes'] ?? 60);
+        if ($screenLock >= $sessionIdle) {
+            throw ValidationException::withMessages([
+                'screen_lock_minutes' => ['Screen lock must be less than the sign-out timeout.'],
+            ]);
+        }
+
         $next = \App\Services\Auth\SecuritySettingsResolver::normalize(array_merge(
-            $gate->moduleSettings('security'),
+            $current,
             $data,
         ));
         $moduleSettings = $org->module_settings ?? [];

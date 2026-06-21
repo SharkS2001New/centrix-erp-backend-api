@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\PriceHistory;
 use App\Models\Product;
+use App\Models\SubCategory;
 use App\Services\Catalog\ProductCatalogScopeService;
 use Illuminate\Http\Request;
 
@@ -43,13 +44,25 @@ class ProductController extends BaseResourceController
 
     public function index(Request $request)
     {
-        $query = Product::query()->whereNull('deleted_at');
+        $query = Product::query();
         $user = $request->user();
         if ($user) {
             $this->catalogScope->scopeForUser($query, $user, $request);
         }
 
+        $status = (string) $request->input('status', 'active');
+        if ($status === 'inactive') {
+            $query->whereNotNull('deleted_at');
+        } elseif ($status === 'all') {
+            $query->withTrashed();
+        } else {
+            $query->whereNull('deleted_at');
+        }
+
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($val === null || $val === '') {
+                continue;
+            }
             if ($col === 'catalog_scope') {
                 if ($val === 'organization') {
                     $query->whereNull('branch_id');
@@ -58,8 +71,41 @@ class ProductController extends BaseResourceController
                 }
                 continue;
             }
+            if ($col === 'category_id') {
+                $subIds = SubCategory::query()
+                    ->where('category_id', (int) $val)
+                    ->pluck('id');
+                $query->whereIn('subcategory_id', $subIds);
+                continue;
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
+            }
+        }
+
+        if ($pricing = (string) $request->input('pricing', '')) {
+            if ($pricing === 'retail') {
+                $query->where('sell_on_retail', true);
+            } elseif ($pricing === 'wholesale') {
+                $query->where(function ($inner) {
+                    $inner->where('sell_on_retail', false)->orWhereNull('sell_on_retail');
+                });
+            }
+        }
+
+        if ($stockStatus = (string) $request->input('stock_status', '')) {
+            if ($stockStatus === 'out_of_stock') {
+                $query->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) <= 0');
+            } elseif ($stockStatus === 'low_stock') {
+                $query->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) > 0')
+                    ->where('reorder_point', '>', 0)
+                    ->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) <= reorder_point');
+            } elseif ($stockStatus === 'in_stock') {
+                $query->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) > 0')
+                    ->where(function ($inner) {
+                        $inner->where('reorder_point', '<=', 0)
+                            ->orWhereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) > reorder_point');
+                    });
             }
         }
 
@@ -75,6 +121,33 @@ class ProductController extends BaseResourceController
         $paginator->getCollection()->transform(fn (Product $product) => $this->presentProduct($product));
 
         return response()->json($paginator);
+    }
+
+    /** GET /products/catalog-summary */
+    public function catalogSummary(Request $request)
+    {
+        $query = Product::query()->whereNull('deleted_at');
+        $user = $request->user();
+        if ($user) {
+            $this->catalogScope->scopeForUser($query, $user, $request);
+        }
+
+        $total = (clone $query)->count();
+        $outOfStock = (clone $query)
+            ->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) <= 0')
+            ->count();
+        $lowStock = (clone $query)
+            ->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) > 0')
+            ->where('reorder_point', '>', 0)
+            ->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) <= reorder_point')
+            ->count();
+
+        return response()->json([
+            'total' => $total,
+            'active' => $total,
+            'low_stock' => $lowStock,
+            'out_of_stock' => $outOfStock,
+        ]);
     }
 
     public function store(Request $request)

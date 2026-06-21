@@ -320,6 +320,8 @@ class OrganizationProvisionController extends Controller
             'capabilities' => array_merge([
                 'modules' => $gate->allModules(),
                 'module_settings' => $org->module_settings ?? [],
+                'screen_lock_minutes' => \App\Services\Auth\SecuritySettingsResolver::forGate($gate)['screen_lock_minutes'],
+                'session_idle_minutes' => \App\Services\Auth\SecuritySettingsResolver::forGate($gate)['session_idle_minutes'],
                 'mobile_orders_enabled' => $gate->mobileSalesEnabled(),
                 'platform_mpesa_stk_enabled' => $gate->mpesaStkPlatformEnabled(),
                 'platform_kra_integration_enabled' => $gate->kraIntegrationPlatformEnabled(),

@@ -26,6 +26,61 @@ class CustomerController extends BaseResourceController
         return 'customer_num';
     }
 
+    public function index(Request $request)
+    {
+        $query = $this->baseQuery($request);
+
+        $status = (string) $request->input('status', 'active');
+        if ($status === 'inactive') {
+            $query->whereNotNull('deleted_at');
+        } elseif ($status === 'all') {
+            $query->withTrashed();
+        } else {
+            $query->whereNull('deleted_at');
+        }
+
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($val === null || $val === '') {
+                continue;
+            }
+            if (in_array($col, $this->filterableColumns(), true)) {
+                $query->where($col, $val);
+            }
+        }
+
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('customer_name', 'like', "%{$q}%")
+                    ->orWhere('phone_number', 'like', "%{$q}%")
+                    ->orWhere('additional_phone', 'like', "%{$q}%")
+                    ->orWhere('customer_num', 'like', "%{$q}%")
+                    ->orWhere('town', 'like', "%{$q}%")
+                    ->orWhere('kra_pin', 'like', "%{$q}%");
+            });
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 100);
+
+        return response()->json($query->orderByDesc('customer_num')->paginate($perPage));
+    }
+
+    /** GET /customers/summary */
+    public function summary(Request $request)
+    {
+        $query = $this->baseQuery($request)->whereNull('deleted_at');
+        $now = now();
+
+        return response()->json([
+            'active' => (clone $query)->count(),
+            'new_this_month' => (clone $query)
+                ->whereMonth('created_at', $now->month)
+                ->whereYear('created_at', $now->year)
+                ->count(),
+            'on_routes' => (clone $query)->whereNotNull('route_id')->count(),
+            'outstanding_balance' => (float) (clone $query)->sum('current_balance'),
+        ]);
+    }
+
     /** GET /customers/{customerNum}/sales — orders with line items */
     public function sales(Request $request, string $customer)
     {

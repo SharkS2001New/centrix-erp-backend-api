@@ -3,7 +3,9 @@
 namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\RegisterKraProductsJob;
 use App\Models\Product;
+use App\Services\Background\BackgroundTaskService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\ErpContext;
 use App\Services\Kra\KraDeviceService;
@@ -12,7 +14,10 @@ use Illuminate\Validation\ValidationException;
 
 class KraProductRegistrationController extends Controller
 {
-    public function __construct(protected ErpContext $erp) {}
+    public function __construct(
+        protected ErpContext $erp,
+        protected BackgroundTaskService $tasks,
+    ) {}
 
     /** POST /api/v1/kra/register-products */
     public function register(Request $request)
@@ -21,6 +26,7 @@ class KraProductRegistrationController extends Controller
             'product_codes' => 'sometimes|array|min:1',
             'product_codes.*' => 'string|max:50',
             'all' => 'sometimes|boolean',
+            'sync' => 'sometimes|boolean',
         ]);
 
         $gate = $this->erp->gateForUser($request->user());
@@ -47,13 +53,44 @@ class KraProductRegistrationController extends Controller
             $query->whereIn('product_code', $data['product_codes']);
         }
 
-        $products = $query->orderBy('product_name')->get();
-        if ($products->isEmpty()) {
+        if ($query->count() === 0) {
             throw ValidationException::withMessages([
                 'product_codes' => 'No matching active products found.',
             ]);
         }
 
+        if ($request->boolean('sync')) {
+            return $this->registerSynchronously($request, $finance, $hasCodes, $registerAll);
+        }
+
+        $task = $this->tasks->create('kra_product_registration', $request->user(), [
+            'product_codes' => $data['product_codes'] ?? [],
+            'all' => $registerAll,
+        ]);
+
+        RegisterKraProductsJob::dispatch($task->id);
+
+        return response()->json([
+            'message' => 'KRA product registration queued.',
+            'task_id' => $task->id,
+            'queued' => true,
+        ], 202);
+    }
+
+    /** @param array<string, mixed> $finance */
+    protected function registerSynchronously(
+        Request $request,
+        array $finance,
+        bool $hasCodes,
+        bool $registerAll,
+    ) {
+        $query = Product::query()->whereNull('deleted_at');
+        app(ProductCatalogScopeService::class)->scopeForUser($query, $request->user(), $request);
+        if ($hasCodes) {
+            $query->whereIn('product_code', $request->input('product_codes', []));
+        }
+
+        $products = $query->orderBy('product_name')->get();
         $path = trim((string) ($finance['kra_plu_register_path'] ?? '/api/register-plu'));
         $service = KraDeviceService::fromSettings($finance);
         $result = $service->registerProducts($products->all(), $path);

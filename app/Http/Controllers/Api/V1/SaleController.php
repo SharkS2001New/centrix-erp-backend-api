@@ -41,6 +41,27 @@ class SaleController extends BaseResourceController
             RouteOrderScope::apply($query);
         }
 
+        if ($request->input('order_source') === 'backoffice') {
+            $query->where(function ($sub) {
+                $sub->whereIn('order_source', ['backoffice', 'backend'])
+                    ->orWhereIn('channel', ['backoffice', 'backend']);
+            });
+        } elseif ($request->filled('order_source')) {
+            $query->where('order_source', $request->input('order_source'));
+        }
+
+        if ($request->filled('channel')) {
+            $query->where('channel', $request->input('channel'));
+        }
+
+        if ($request->filled('from_date')) {
+            $query->whereDate('completed_at', '>=', $request->input('from_date'));
+        }
+
+        if ($request->filled('to_date')) {
+            $query->whereDate('completed_at', '<=', $request->input('to_date'));
+        }
+
         if ($request->boolean('dispatch_orders') || $request->boolean('loading_list_orders')) {
             $gate = $this->erp->gateForUser($request->user());
             $settings = $gate->distributionSettings();
@@ -53,7 +74,8 @@ class SaleController extends BaseResourceController
         if ($q = $request->input('q')) {
             $query->where(function ($sub) use ($q) {
                 $sub->where('order_num', 'like', "%{$q}%")
-                    ->orWhere('customer_name_override', 'like', "%{$q}%");
+                    ->orWhere('customer_name_override', 'like', "%{$q}%")
+                    ->orWhere('customer_num', 'like', "%{$q}%");
             });
         }
 

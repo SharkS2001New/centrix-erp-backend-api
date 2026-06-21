@@ -321,7 +321,10 @@ class CapabilityGate
                 : GeneralSettingsResolver::normalize(GeneralSettingsResolver::defaults()),
             'session_idle_minutes' => $this->organization
                 ? \App\Services\Auth\SecuritySettingsResolver::forGate($this)['session_idle_minutes']
-                : (int) config('erp.session_idle_minutes', 15),
+                : (int) config('erp.session_idle_minutes', 60),
+            'screen_lock_minutes' => $this->organization
+                ? \App\Services\Auth\SecuritySettingsResolver::forGate($this)['screen_lock_minutes']
+                : (int) config('erp.screen_lock_minutes', 5),
             'catalog' => $this->organization
                 ? app(ProductCatalogScopeService::class)->metadata((int) $this->organization->id)
                 : [

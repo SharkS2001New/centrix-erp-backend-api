@@ -60,6 +60,10 @@ class DemoDataSeeder extends Seeder
             'vat_regno' => '0123456789',
             'deployment_profile' => 'wholesale_retail',
             'module_settings' => [
+                'security' => [
+                    'screen_lock_minutes' => 5,
+                    'session_idle_minutes' => 60,
+                ],
                 'sales' => ['auto_assign_truck' => true, 'auto_assign_driver' => true],
                 'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
                 'finance' => [

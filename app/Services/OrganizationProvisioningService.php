@@ -156,7 +156,12 @@ class OrganizationProvisioningService
      */
     protected function defaultModuleSettingsForProfile(string $profile): array
     {
+        $security = \App\Services\Auth\SecuritySettingsResolver::normalize(
+            config('erp.module_settings_defaults.security', []),
+        );
+
         $settings = [
+            'security' => $security,
             'distribution' => [],
             'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
         ];

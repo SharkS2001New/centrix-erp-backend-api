@@ -96,19 +96,33 @@ class AppServiceProvider extends ServiceProvider
     {
         $raw = $this->readRuntimeEnv('CORS_ALLOWED_ORIGINS')
             ?: $this->readRuntimeEnv('FRONTEND_URL');
-        if (! is_string($raw) || trim($raw) === '') {
-            return;
+        if (is_string($raw) && trim($raw) !== '') {
+            $origins = array_values(array_filter(array_map('trim', explode(',', $raw))));
+            if ($origins !== []) {
+                config(['cors.allowed_origins' => $origins]);
+            }
         }
 
-        $origins = array_values(array_filter(array_map('trim', explode(',', $raw))));
-        if ($origins !== []) {
-            config(['cors.allowed_origins' => $origins]);
+        $cookieAuth = $this->runtimeEnvBool('WEB_COOKIE_AUTH', (bool) config('security.api_token_cookie.enabled', false));
+        if ($cookieAuth) {
+            config(['security.api_token_cookie.enabled' => true]);
+            config(['cors.supports_credentials' => true]);
+        } else {
+            $credentials = $this->readRuntimeEnv('CORS_SUPPORTS_CREDENTIALS');
+            if ($credentials !== null) {
+                config(['cors.supports_credentials' => $this->runtimeEnvBool('CORS_SUPPORTS_CREDENTIALS', false)]);
+            }
+        }
+    }
+
+    protected function runtimeEnvBool(string $key, bool $default = false): bool
+    {
+        $value = $this->readRuntimeEnv($key);
+        if ($value === null) {
+            return $default;
         }
 
-        $credentials = $this->readRuntimeEnv('CORS_SUPPORTS_CREDENTIALS');
-        if ($credentials !== null) {
-            config(['cors.supports_credentials' => filter_var($credentials, FILTER_VALIDATE_BOOL)]);
-        }
+        return filter_var($value, FILTER_VALIDATE_BOOL);
     }
 
     protected function enforceProductionSafety(): void
@@ -125,17 +139,17 @@ class AppServiceProvider extends ServiceProvider
 
     protected function readRuntimeEnv(string $key): ?string
     {
-        $value = getenv($key);
-        if (is_string($value) && trim($value) !== '') {
-            return trim($value);
-        }
+        foreach ([getenv($key), $_ENV[$key] ?? null, $_SERVER[$key] ?? null] as $value) {
+            if (! is_string($value)) {
+                continue;
+            }
 
-        if (isset($_ENV[$key]) && is_string($_ENV[$key]) && trim($_ENV[$key]) !== '') {
-            return trim($_ENV[$key]);
-        }
+            $trimmed = trim($value);
+            if ($trimmed === '') {
+                continue;
+            }
 
-        if (isset($_SERVER[$key]) && is_string($_SERVER[$key]) && trim($_SERVER[$key]) !== '') {
-            return trim($_SERVER[$key]);
+            return $trimmed;
         }
 
         return null;

@@ -92,6 +92,23 @@ class ApiSecurityTest extends TestCase
             ->assertJsonMissing(['message' => 'CSRF token mismatch.']);
     }
 
+    public function test_cors_preflight_allows_credentials_for_frontend_origin(): void
+    {
+        config([
+            'cors.allowed_origins' => ['https://centrixerp.betsassured.com'],
+            'cors.supports_credentials' => true,
+        ]);
+
+        $this->options('/api/v1/auth/login', [], [
+            'Origin' => 'https://centrixerp.betsassured.com',
+            'Access-Control-Request-Method' => 'POST',
+            'Access-Control-Request-Headers' => 'content-type',
+        ])
+            ->assertNoContent()
+            ->assertHeader('Access-Control-Allow-Origin', 'https://centrixerp.betsassured.com')
+            ->assertHeader('Access-Control-Allow-Credentials', 'true');
+    }
+
     public function test_cors_allows_frontend_url_origin(): void
     {
         config(['cors.allowed_origins' => ['https://centrixerp.betsassured.com']]);

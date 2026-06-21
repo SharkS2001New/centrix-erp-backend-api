@@ -407,9 +407,11 @@ class ReportController extends Controller
 
     public function stockOnHand(Request $request)
     {
-        return response()->json($this->reportFromView('v_stock_on_hand', $this->filters($request), [
-            'branch_id', 'product_code',
-        ]));
+        return response()->json($this->paginatedStockReport(
+            $request,
+            'v_stock_on_hand',
+            ['branch_id', 'product_code'],
+        ));
     }
 
     public function lowStock(Request $request)
@@ -451,9 +453,11 @@ class ReportController extends Controller
 
     public function stockValuation(Request $request)
     {
-        return response()->json($this->reportFromView('v_stock_valuation', $this->filters($request), [
-            'branch_id', 'product_code',
-        ]));
+        return response()->json($this->paginatedStockReport(
+            $request,
+            'v_stock_valuation',
+            ['branch_id', 'product_code'],
+        ));
     }
 
     public function stockReservations(Request $request)
@@ -896,6 +900,48 @@ class ReportController extends Controller
         }
 
         return $q->paginate(min((int) ($filters['per_page'] ?? 50), 200));
+    }
+
+    /** @param list<string> $allowedCols */
+    protected function paginatedStockReport(Request $request, string $view, array $allowedCols)
+    {
+        $filters = $this->filters($request);
+        $q = DB::table($view);
+
+        foreach ($allowedCols as $col) {
+            if (isset($filters[$col]) && $filters[$col] !== '') {
+                $q->where($col, $filters[$col]);
+            }
+        }
+
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($inner) use ($search) {
+                $inner->where('product_code', 'like', "%{$search}%")
+                    ->orWhere('product_name', 'like', "%{$search}%");
+            });
+        }
+
+        if ($request->filled('category_id')) {
+            $q->whereIn('product_code', function ($sub) use ($request) {
+                $sub->select('p.product_code')
+                    ->from('products as p')
+                    ->join('sub_categories as sc', 'sc.id', '=', 'p.subcategory_id')
+                    ->where('sc.category_id', (int) $request->input('category_id'))
+                    ->whereNull('p.deleted_at');
+            });
+        }
+
+        if ($location = (string) $request->input('location', '')) {
+            if ($location === 'shop') {
+                $q->where('shop_quantity', '>', 0);
+            } elseif ($location === 'store') {
+                $q->where('store_quantity', '>', 0);
+            }
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+
+        return $q->orderBy('product_name')->paginate($perPage);
     }
 
     protected function buildCustomerStatement(int $customerNum): array

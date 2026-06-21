@@ -60,6 +60,17 @@ class AuthPasswordAndIdleTest extends TestCase
         ]);
     }
 
+    public function test_security_settings_keep_screen_lock_below_session_idle(): void
+    {
+        $normalized = SecuritySettingsResolver::normalize([
+            'screen_lock_minutes' => 60,
+            'session_idle_minutes' => 60,
+        ]);
+
+        $this->assertSame(59, $normalized['screen_lock_minutes']);
+        $this->assertSame(60, $normalized['session_idle_minutes']);
+    }
+
     public function test_backoffice_token_expires_before_mobile_default(): void
     {
         config([

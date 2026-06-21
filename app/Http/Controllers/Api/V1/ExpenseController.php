@@ -18,6 +18,64 @@ class ExpenseController extends BaseResourceController
         return Expense::class;
     }
 
+    public function index(Request $request)
+    {
+        $query = $this->baseQuery($request);
+
+        $status = (string) $request->input('status', 'active');
+        if ($status === 'deleted') {
+            $query->onlyTrashed();
+        } elseif ($status === 'all') {
+            $query->withTrashed();
+        }
+
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($val === null || $val === '') {
+                continue;
+            }
+            if (in_array($col, $this->filterableColumns(), true)) {
+                $query->where($col, $val);
+            }
+        }
+
+        if ($request->filled('from_date')) {
+            $query->whereDate('expense_date', '>=', $request->input('from_date'));
+        }
+        if ($request->filled('to_date')) {
+            $query->whereDate('expense_date', '<=', $request->input('to_date'));
+        }
+
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('description', 'like', "%{$q}%")
+                    ->orWhere('invoice_no', 'like', "%{$q}%")
+                    ->orWhere('notes', 'like', "%{$q}%");
+            });
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+
+        return response()->json($query->orderByDesc('expense_date')->paginate($perPage));
+    }
+
+    /** GET /expenses/summary */
+    public function summary(Request $request)
+    {
+        $query = $this->baseQuery($request)->whereNull('deleted_at');
+        $now = now();
+
+        return response()->json([
+            'today' => (float) (clone $query)->whereDate('expense_date', $now->toDateString())->sum('expense_amount'),
+            'month' => (float) (clone $query)
+                ->whereYear('expense_date', $now->year)
+                ->whereMonth('expense_date', $now->month)
+                ->sum('expense_amount'),
+            'year' => (float) (clone $query)
+                ->whereYear('expense_date', $now->year)
+                ->sum('expense_amount'),
+        ]);
+    }
+
     public function store(Request $request)
     {
         $data = $request->validate([

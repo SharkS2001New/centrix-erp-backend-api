@@ -27,7 +27,10 @@ return [
     'platform_super_admin_password' => env('PLATFORM_SUPER_ADMIN_PASSWORD'),
 
     /** Idle API tokens are revoked after this many minutes without a request. */
-    'session_idle_minutes' => (int) env('AUTH_SESSION_IDLE_MINUTES', 15),
+    'session_idle_minutes' => (int) env('AUTH_SESSION_IDLE_MINUTES', 60),
+
+    /** Default screen lock delay for new organizations (minutes). */
+    'screen_lock_minutes' => (int) env('AUTH_SCREEN_LOCK_MINUTES', 5),
 
     /** Frontend base URL for password-reset links (no trailing slash). */
     'frontend_url' => rtrim(env('FRONTEND_URL', 'http://localhost:3000'), '/'),
@@ -453,7 +456,8 @@ return [
             'auto_email_supplier_on_lpo' => false,
         ],
         'security' => [
-            'session_idle_minutes' => 30,
+            'screen_lock_minutes' => 5,
+            'session_idle_minutes' => 60,
             'require_strong_passwords' => false,
             'password_min_length' => 8,
         ],

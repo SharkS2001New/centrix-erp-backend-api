@@ -55,9 +55,28 @@ class EmployeeController extends BaseResourceController
             });
         }
 
+        if ($request->filled('is_active')) {
+            $query->where('is_active', $request->boolean('is_active'));
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         return response()->json($query->orderBy('full_name')->paginate($perPage));
+    }
+
+    /** GET /employees/summary */
+    public function summary(Request $request)
+    {
+        $activeQuery = Employee::query()->where('is_active', '!=', false);
+
+        return response()->json([
+            'total' => Employee::query()->count(),
+            'active' => (clone $activeQuery)->count(),
+            'departments' => \App\Models\Department::query()
+                ->where('is_active', '!=', false)
+                ->count(),
+            'payroll_cost' => (float) (clone $activeQuery)->sum('base_salary'),
+        ]);
     }
 
     public function show(Request $request, string $id)

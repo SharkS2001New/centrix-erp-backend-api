@@ -69,8 +69,13 @@ class SecuritySettingsResolver
         $defaults = self::defaults();
         $out = array_merge($defaults, $settings);
 
-        $fallback = max(1, (int) config('erp.session_idle_minutes', 15));
+        $fallback = max(1, (int) config('erp.session_idle_minutes', 60));
+        $lockFallback = max(1, (int) config('erp.screen_lock_minutes', 5));
         $out['session_idle_minutes'] = max(5, min(480, (int) ($out['session_idle_minutes'] ?? $fallback)));
+        $out['screen_lock_minutes'] = max(1, min(120, (int) ($out['screen_lock_minutes'] ?? $lockFallback)));
+        if ($out['screen_lock_minutes'] >= $out['session_idle_minutes']) {
+            $out['screen_lock_minutes'] = max(1, $out['session_idle_minutes'] - 1);
+        }
         $out['require_strong_passwords'] = (bool) ($out['require_strong_passwords'] ?? false);
         $out['password_min_length'] = max(6, min(128, (int) ($out['password_min_length'] ?? 8)));
 

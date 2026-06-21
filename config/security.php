@@ -19,7 +19,10 @@ return [
             'http://127.0.0.1:3000',
         ]))),
 
-    'cors_supports_credentials' => env('CORS_SUPPORTS_CREDENTIALS', false),
+    'cors_supports_credentials' => filter_var(
+        env('CORS_SUPPORTS_CREDENTIALS', env('WEB_COOKIE_AUTH', false)),
+        FILTER_VALIDATE_BOOL,
+    ),
 
     /*
     | When true, idle Sanctum tokens are revoked server-side (erp.session_idle middleware).
