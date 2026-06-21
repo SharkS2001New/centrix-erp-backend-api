@@ -41,4 +41,20 @@ class ErpCapabilitiesTest extends TestCase
         $this->assertNotSame('super-secret', $mpesa['consumer_secret']);
         $this->assertNotSame('demo-passkey', $mpesa['passkey']);
     }
+
+    public function test_allow_org_provisioning_reflects_current_config_not_stale_cache(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        config(['erp.allow_org_provisioning' => false]);
+        $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->assertJsonPath('allow_org_provisioning', false);
+
+        config(['erp.allow_org_provisioning' => true]);
+        $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->assertJsonPath('allow_org_provisioning', true);
+    }
 }

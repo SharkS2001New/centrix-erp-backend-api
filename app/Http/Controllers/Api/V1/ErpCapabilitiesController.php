@@ -31,7 +31,7 @@ class ErpCapabilitiesController extends Controller
             fn () => $this->buildCapabilitiesPayload($request),
         );
 
-        return response()->json($payload);
+        return response()->json($this->applyRuntimeCapabilityFlags($request, $payload));
     }
 
     /** GET /api/v1/erp/profiles — deployment profile definitions (for admin UI) */
@@ -63,5 +63,22 @@ class ErpCapabilitiesController extends Controller
                 && config('erp.allow_org_provisioning'),
             'workspaces' => app(WorkspaceResolver::class)->availableForUser($user, $gate),
         ]);
+    }
+
+    /** @param  array<string, mixed>  $payload */
+    protected function applyRuntimeCapabilityFlags(Request $request, array $payload): array
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        $payload['is_super_admin'] = (bool) $user?->is_super_admin;
+        $payload['is_admin'] = (bool) $user?->is_admin;
+        $payload['access_scope'] = $user?->access_scope ?? 'org';
+        $payload['branch_id'] = $user?->branch_id;
+        $payload['allow_org_provisioning'] = (bool) $user?->is_super_admin
+            && config('erp.allow_org_provisioning');
+        $payload['workspaces'] = app(WorkspaceResolver::class)->availableForUser($user, $gate);
+
+        return $payload;
     }
 }
