@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Jobs\RunDatabaseBackupJob;
+use App\Services\Background\BackgroundTaskService;
 use App\Services\Backup\DatabaseBackupService;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\StreamedResponse;
@@ -11,6 +13,7 @@ class PlatformDatabaseBackupController extends Controller
 {
     public function __construct(
         protected DatabaseBackupService $backups,
+        protected BackgroundTaskService $tasks,
     ) {}
 
     /** GET /api/v1/admin/database-backups */
@@ -34,30 +37,46 @@ class PlatformDatabaseBackupController extends Controller
         $validated = $request->validate([
             'send_email' => ['sometimes', 'boolean'],
             'upload_google_drive' => ['sometimes', 'boolean'],
+            'sync' => ['sometimes', 'boolean'],
         ]);
 
-        try {
-            $result = $this->backups->runBackupCycle(
-                sendEmail: (bool) ($validated['send_email'] ?? true),
-                prune: true,
-                uploadGoogleDrive: (bool) ($validated['upload_google_drive'] ?? true),
-            );
-        } catch (\Throwable $e) {
-            report($e);
+        if ($request->boolean('sync')) {
+            try {
+                $result = $this->backups->runBackupCycle(
+                    sendEmail: (bool) ($validated['send_email'] ?? true),
+                    prune: true,
+                    uploadGoogleDrive: (bool) ($validated['upload_google_drive'] ?? true),
+                );
+            } catch (\Throwable $e) {
+                report($e);
+
+                return response()->json([
+                    'message' => 'Database backup failed.',
+                    'error' => config('app.debug') ? $e->getMessage() : null,
+                ], 500);
+            }
 
             return response()->json([
-                'message' => 'Database backup failed.',
-                'error' => config('app.debug') ? $e->getMessage() : null,
-            ], 500);
+                'message' => 'Database backup completed.',
+                'data' => $result['backup'],
+                'google_drive' => $result['google_drive'],
+                'email_sent' => $result['email_sent'],
+                'pruned' => $result['pruned'],
+            ], 201);
         }
 
+        $task = $this->tasks->create('database_backup', $request->user(), [
+            'send_email' => (bool) ($validated['send_email'] ?? true),
+            'upload_google_drive' => (bool) ($validated['upload_google_drive'] ?? true),
+        ]);
+
+        RunDatabaseBackupJob::dispatch($task->id);
+
         return response()->json([
-            'message' => 'Database backup completed.',
-            'data' => $result['backup'],
-            'google_drive' => $result['google_drive'],
-            'email_sent' => $result['email_sent'],
-            'pruned' => $result['pruned'],
-        ], 201);
+            'message' => 'Database backup queued.',
+            'task_id' => $task->id,
+            'queued' => true,
+        ], 202);
     }
 
     /** GET /api/v1/admin/database-backups/{filename}/download */

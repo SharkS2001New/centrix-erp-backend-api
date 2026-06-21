@@ -222,6 +222,29 @@ class UserController extends BaseResourceController
             ->firstOrFail();
     }
 
+    public function index(Request $request)
+    {
+        $query = $this->baseQuery($request)->whereNull('deleted_at');
+
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if (in_array($col, $this->filterableColumns(), true)) {
+                $query->where($col, $val);
+            }
+        }
+
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('full_name', 'like', "%{$q}%")
+                    ->orWhere('email', 'like', "%{$q}%")
+                    ->orWhere('username', 'like', "%{$q}%");
+            });
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+
+        return response()->json($query->orderBy('full_name')->paginate($perPage));
+    }
+
     /** @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */

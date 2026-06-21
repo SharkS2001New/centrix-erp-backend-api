@@ -62,6 +62,28 @@ class SaleController extends BaseResourceController
             $query->whereDate('completed_at', '<=', $request->input('to_date'));
         }
 
+        if ($request->filled('required_date')) {
+            $query->whereDate('required_date', $request->input('required_date'));
+        }
+
+        if ($request->filled('route_id')) {
+            $query->where('route_id', $request->input('route_id'));
+        }
+
+        if ($request->filled('status_in')) {
+            $statuses = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('status_in')))));
+            if ($statuses !== []) {
+                $query->whereIn('status', $statuses);
+            }
+        }
+
+        if ($request->filled('exclude_statuses')) {
+            $statuses = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('exclude_statuses')))));
+            if ($statuses !== []) {
+                $query->whereNotIn('status', $statuses);
+            }
+        }
+
         if ($request->boolean('dispatch_orders') || $request->boolean('loading_list_orders')) {
             $gate = $this->erp->gateForUser($request->user());
             $settings = $gate->distributionSettings();

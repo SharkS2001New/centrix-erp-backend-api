@@ -435,13 +435,24 @@ class ReportController extends Controller
             }
         }
         if ($request->filled('from_date')) {
-            $q->where('created_at', '>=', $request->input('from_date'));
+            $q->whereDate('created_at', '>=', $request->input('from_date'));
         }
         if ($request->filled('to_date')) {
-            $q->where('created_at', '<=', $request->input('to_date'));
+            $q->whereDate('created_at', '<=', $request->input('to_date'));
         }
 
-        return response()->json($q->orderByDesc('id')->paginate(min((int) $request->input('per_page', 50), 200)));
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($inner) use ($search) {
+                $inner->where('product_code', 'like', "%{$search}%")
+                    ->orWhereHas('product', fn ($product) => $product->where('product_name', 'like', "%{$search}%"));
+            });
+        }
+
+        return response()->json(
+            $q->with(['product:product_code,product_name,unit_id'])
+                ->orderByDesc('id')
+                ->paginate(min((int) $request->input('per_page', 50), 200)),
+        );
     }
 
     public function stockChain(Request $request)

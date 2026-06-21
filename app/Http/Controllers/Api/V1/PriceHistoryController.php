@@ -36,6 +36,38 @@ class PriceHistoryController extends BaseResourceController
         return response()->json($row, 201);
     }
 
+    public function index(Request $request)
+    {
+        $query = $this->baseQuery($request)
+            ->with(['product.subcategory', 'changedByUser:id,username,full_name']);
+
+        if ($days = (int) $request->input('days', 0)) {
+            $query->where('changed_at', '>=', now()->subDays(max(1, $days))->startOfDay());
+        }
+
+        if ($request->filled('changed_by')) {
+            $query->where('changed_by', $request->input('changed_by'));
+        }
+
+        if ($request->filled('category_id')) {
+            $categoryId = (int) $request->input('category_id');
+            $query->whereHas('product.subcategory', fn ($sub) => $sub->where('category_id', $categoryId));
+        }
+
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('product_code', 'like', "%{$q}%")
+                    ->orWhereHas('product', fn ($product) => $product->where('product_name', 'like', "%{$q}%"));
+            });
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+
+        return response()->json(
+            $query->orderByDesc('changed_at')->paginate($perPage),
+        );
+    }
+
     public function update(Request $request, string $id)
     {
         $model = PriceHistory::findOrFail($id);

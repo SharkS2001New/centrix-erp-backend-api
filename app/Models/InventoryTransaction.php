@@ -15,5 +15,11 @@ class InventoryTransaction extends Model
         'reference_type', 'reference_id', 'quantity_change', 'quantity_before',
         'quantity_after', 'unit_cost', 'notes', 'created_by',
     ];
+
     const CREATED_AT = 'created_at';
+
+    public function product()
+    {
+        return $this->belongsTo(Product::class, 'product_code', 'product_code');
+    }
 }
