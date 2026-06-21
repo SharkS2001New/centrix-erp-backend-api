@@ -22,6 +22,7 @@ class AppServiceProvider extends ServiceProvider
         Organization::observe(OrganizationObserver::class);
 
         $this->configureRateLimiting();
+        $this->configureCorsFromRuntimeEnv();
 
         if (
             $this->app->environment('production')
@@ -76,5 +77,21 @@ class AppServiceProvider extends ServiceProvider
                 max(1, (int) ($api['max_attempts'] ?? 120)),
             )->by($key);
         });
+    }
+
+    /**
+     * Override cached CORS config from runtime env (k8s secrets survive config:cache).
+     */
+    protected function configureCorsFromRuntimeEnv(): void
+    {
+        $raw = getenv('CORS_ALLOWED_ORIGINS') ?: getenv('FRONTEND_URL');
+        if (! is_string($raw) || trim($raw) === '') {
+            return;
+        }
+
+        $origins = array_values(array_filter(array_map('trim', explode(',', $raw))));
+        if ($origins !== []) {
+            config(['cors.allowed_origins' => $origins]);
+        }
     }
 }

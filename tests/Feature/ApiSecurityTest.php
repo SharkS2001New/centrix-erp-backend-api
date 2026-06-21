@@ -62,4 +62,16 @@ class ApiSecurityTest extends TestCase
             ->assertNoContent()
             ->assertHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
     }
+
+    public function test_cors_allows_frontend_url_origin(): void
+    {
+        config(['cors.allowed_origins' => ['https://centrixerp.betsassured.com']]);
+
+        $this->options('/api/v1/health', [], [
+            'Origin' => 'https://centrixerp.betsassured.com',
+            'Access-Control-Request-Method' => 'GET',
+        ])
+            ->assertNoContent()
+            ->assertHeader('Access-Control-Allow-Origin', 'https://centrixerp.betsassured.com');
+    }
 }
