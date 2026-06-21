@@ -21,7 +21,10 @@ return [
 
     'google_drive' => [
         'enabled' => filter_var(env('BACKUP_GOOGLE_DRIVE_ENABLED', false), FILTER_VALIDATE_BOOL),
+        // Path to service account JSON inside the container (local dev or K8s volume mount).
         'credentials' => env('BACKUP_GOOGLE_DRIVE_CREDENTIALS'),
+        // Raw JSON string — preferred on K8s (store in centrix-erp-env secret, no file mount).
+        'credentials_json' => env('BACKUP_GOOGLE_DRIVE_CREDENTIALS_JSON'),
         'folder_id' => env('BACKUP_GOOGLE_DRIVE_FOLDER_ID'),
     ],
 ];

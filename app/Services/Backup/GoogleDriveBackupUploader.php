@@ -20,13 +20,9 @@ class GoogleDriveBackupUploader
             return false;
         }
 
-        $credentials = trim((string) config('backup.google_drive.credentials', ''));
         $folderId = trim((string) config('backup.google_drive.folder_id', ''));
 
-        return $credentials !== ''
-            && is_file($credentials)
-            && is_readable($credentials)
-            && $folderId !== '';
+        return $folderId !== '' && $this->resolveAuthConfig() !== null;
     }
 
     /**
@@ -92,10 +88,33 @@ class GoogleDriveBackupUploader
 
     protected function driveService(): Drive
     {
+        $authConfig = $this->resolveAuthConfig();
+        if ($authConfig === null) {
+            throw new \RuntimeException('Google Drive credentials are not configured.');
+        }
+
         $client = new GoogleClient;
-        $client->setAuthConfig((string) config('backup.google_drive.credentials'));
+        $client->setAuthConfig($authConfig);
         $client->setScopes([Drive::DRIVE_FILE]);
 
         return new Drive($client);
+    }
+
+    /** @return array<string, mixed>|string|null */
+    protected function resolveAuthConfig(): array|string|null
+    {
+        $json = trim((string) config('backup.google_drive.credentials_json', ''));
+        if ($json !== '') {
+            $decoded = json_decode($json, true);
+
+            return is_array($decoded) ? $decoded : null;
+        }
+
+        $path = trim((string) config('backup.google_drive.credentials', ''));
+        if ($path === '' || ! is_file($path) || ! is_readable($path)) {
+            return null;
+        }
+
+        return $path;
     }
 }

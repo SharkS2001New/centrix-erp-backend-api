@@ -74,7 +74,8 @@ jobs:
           TAG="${{ steps.image_tag.outputs.value }}"
           for file in \
             pitchpredk3ssetup/centrix-erp-backend-api/values.yaml \
-            pitchpredk3ssetup/centrix-erp-scheduler/values.yaml
+            pitchpredk3ssetup/centrix-erp-scheduler/values.yaml \
+            pitchpredk3ssetup/centrix-erp-queue-worker/values.yaml
           do
             sed -i "s|^\([[:space:]]*tag:\).*|\1 ${TAG}|" "$file"
             echo "Updated ${file} -> ${TAG}"
@@ -87,7 +88,7 @@ jobs:
           cd pitchpredk3ssetup
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml
+          git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml centrix-erp-queue-worker/values.yaml
           if git diff --staged --quiet; then
             echo "No tag changes to commit."
             exit 0
