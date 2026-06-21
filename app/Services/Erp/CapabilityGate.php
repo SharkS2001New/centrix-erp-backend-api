@@ -50,18 +50,25 @@ class CapabilityGate
             return false;
         }
 
-        $overrides = ModuleRegistry::expandLegacyModules(
-            is_array($this->organization->enabled_modules) ? $this->organization->enabled_modules : [],
-        );
-        if (array_key_exists($moduleKey, $overrides)) {
-            return (bool) $overrides[$moduleKey];
+        return (bool) ($this->resolvedModuleMap()[$moduleKey] ?? false);
+    }
+
+    /** @return array<string, bool> */
+    protected function resolvedModuleMap(): array
+    {
+        if (! $this->organization) {
+            return [];
         }
 
         $profile = $this->organization->deployment_profile ?? 'wholesale_retail';
-        $profiles = config('erp.profiles', []);
-        $profileModules = $profiles[$profile]['modules'] ?? [];
+        $profileModules = config("erp.profiles.{$profile}.modules", []);
+        $overrides = ModuleRegistry::expandLegacyModules(
+            is_array($this->organization->enabled_modules) ? $this->organization->enabled_modules : [],
+        );
 
-        return (bool) ($profileModules[$moduleKey] ?? false);
+        $merged = array_merge($profileModules, $overrides);
+
+        return ModuleRegistry::cascade(ModuleRegistry::sanitizeModuleMap($merged));
     }
 
     /** @return array<string, bool> */
