@@ -26,7 +26,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -46,8 +46,11 @@ jobs:
           images: ghcr.io/${{ github.repository_owner }}/${{ env.IMAGE_NAME }}
           tags: type=sha,format=short
 
+      - name: Resolve image tag for Helm
+        id: image_tag
+        run: echo "value=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+
       - name: Build and push Docker image
-        id: build-and-push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -58,45 +61,35 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Check out pitchpredk3ssetup
-        if: github.event_name != 'pull_request' && secrets.PERSONAL_ACCESS_TOKEN != ''
-        uses: actions/checkout@v4
+        if: github.event_name != 'pull_request'
+        uses: actions/checkout@v5
         with:
           repository: ${{ github.repository_owner }}/pitchpredk3ssetup
           path: pitchpredk3ssetup
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
 
       - name: Update Helm image tags
-        if: github.event_name != 'pull_request' && secrets.PERSONAL_ACCESS_TOKEN != ''
-        id: helm_tag
+        if: github.event_name != 'pull_request'
         run: |
-          set -euo pipefail
-          IMAGE_TAG="$(echo "${{ steps.meta.outputs.tags }}" | awk -F':' '{print $2}' | head -n1 | tr -d '[:space:]')"
+          TAG="${{ steps.image_tag.outputs.value }}"
           for file in \
             pitchpredk3ssetup/centrix-erp-backend-api/values.yaml \
             pitchpredk3ssetup/centrix-erp-scheduler/values.yaml
           do
-            if [ ! -f "$file" ]; then
-              echo "Missing ${file} in pitchpredk3ssetup checkout" >&2
-              exit 1
-            fi
-            sed -i "s|^\([[:space:]]*tag:\).*|\1 ${IMAGE_TAG}|" "$file"
-            echo "Updated ${file} -> ${IMAGE_TAG}"
+            sed -i "s|^\([[:space:]]*tag:\).*|\1 ${TAG}|" "$file"
+            echo "Updated ${file} -> ${TAG}"
           done
-          echo "value=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Commit and push pitchpredk3ssetup
-        if: github.event_name != 'pull_request' && secrets.PERSONAL_ACCESS_TOKEN != ''
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+        if: github.event_name != 'pull_request'
         run: |
-          set -euo pipefail
           cd pitchpredk3ssetup
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml
           if git diff --staged --quiet; then
-            echo "Helm tags already up to date (${{ steps.helm_tag.outputs.value }})." >&2
+            echo "No tag changes to commit."
             exit 0
           fi
-          git commit -m "chore(centrix-erp-backend-api): bump image tag to ${{ steps.helm_tag.outputs.value }}"
+          git commit -m "chore(centrix-erp-backend-api): bump image tag to ${{ steps.image_tag.outputs.value }}"
           git push
