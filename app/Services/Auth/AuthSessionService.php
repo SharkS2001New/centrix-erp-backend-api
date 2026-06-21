@@ -170,8 +170,9 @@ class AuthSessionService
             $authUser->tokens()->delete();
         } else {
             $this->pruneStaleTokens($authUser);
-            $this->assertNoActiveSessionElsewhere($authUser, $clientId, $loginChannel);
             $authUser->tokens()->where('name', $clientId)->delete();
+            $this->revokeAbandonedTokensElsewhere($authUser, $clientId);
+            $this->assertNoActiveSessionElsewhere($authUser, $clientId, $loginChannel);
         }
 
         $authUser->forceFill(['last_login' => now()])->save();
@@ -205,8 +206,8 @@ class AuthSessionService
     {
         $idleMinutes = $this->resolveIdleMinutesForUser($authUser);
         $idleCutoff = now()->subMinutes($idleMinutes);
-        // Tokens that were issued but never used (e.g. closed tab before first API call).
-        $abandonedMinutes = min(5, $idleMinutes);
+        // Tokens that were issued but never used (e.g. cookie auth handoff failed).
+        $abandonedMinutes = min(2, $idleMinutes);
         $abandonedCutoff = now()->subMinutes($abandonedMinutes);
 
         $authUser->tokens()
@@ -228,22 +229,35 @@ class AuthSessionService
             ->delete();
     }
 
+    protected function revokeAbandonedTokensElsewhere(User $authUser, string $clientId): void
+    {
+        $authUser->tokens()
+            ->where('name', '!=', $clientId)
+            ->whereNull('last_used_at')
+            ->where('created_at', '<', now()->subMinutes(2))
+            ->delete();
+    }
+
     protected function assertNoActiveSessionElsewhere(
         User $authUser,
         string $clientId,
         string $loginChannel,
     ): void {
         $idleMinutes = $this->resolveIdleMinutesForUser($authUser);
+        $handshakeMinutes = 2;
 
         $activeTokenExists = $authUser->tokens()
             ->where('name', '!=', $clientId)
             ->where('login_channel', $loginChannel)
-            ->where(function ($query) use ($idleMinutes) {
-                $query->where('last_used_at', '>=', now()->subMinutes($idleMinutes))
-                    ->orWhere(function ($q) use ($idleMinutes) {
-                        $q->whereNull('last_used_at')
-                            ->where('created_at', '>=', now()->subMinutes($idleMinutes));
-                    });
+            ->where(function ($query) use ($idleMinutes, $handshakeMinutes) {
+                $query->where(function ($q) use ($idleMinutes) {
+                    $q->whereNotNull('last_used_at')
+                        ->where('last_used_at', '>=', now()->subMinutes($idleMinutes));
+                })->orWhere(function ($q) use ($handshakeMinutes) {
+                    // Short grace for a login still completing on another device.
+                    $q->whereNull('last_used_at')
+                        ->where('created_at', '>=', now()->subMinutes($handshakeMinutes));
+                });
             })
             ->exists();
 
