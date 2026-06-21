@@ -115,6 +115,7 @@ class RoleController extends BaseResourceController
             'permissions' => $permissions
                 ->filter(fn (Permission $permission) => $allowedIds->has((int) $permission->id))
                 ->values(),
+            'applications' => PermissionMatrixService::applicationsForUi($gate),
             'groups' => PermissionMatrixService::groupedForUi($gate),
             'modules' => PermissionMatrixService::modules(),
             'actions' => PermissionMatrixService::actions(),

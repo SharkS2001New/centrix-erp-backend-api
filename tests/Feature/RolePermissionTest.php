@@ -75,6 +75,28 @@ class RolePermissionTest extends TestCase
         $this->assertFalse($dashboardIds->intersect($catalogueIds)->isNotEmpty());
     }
 
+    public function test_permission_matrix_applications_group_modules_for_ui(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $res = $this->getJson('/api/v1/roles/permissions/matrix')->assertOk();
+        $applications = collect($res->json('applications'));
+
+        $accounting = $applications->firstWhere('id', 'accounting');
+        $this->assertNotNull($accounting);
+        $this->assertSame('Accounting', $accounting['label']);
+
+        $moduleKeys = collect($accounting['modules'])->pluck('module')->all();
+        $this->assertContains('accounting', $moduleKeys);
+        $this->assertContains('payments', $moduleKeys);
+
+        $mobile = $applications->firstWhere('id', 'mobile');
+        $this->assertNotNull($mobile);
+        $this->assertTrue($mobile['standalone']);
+        $this->assertSame('mobile', $mobile['modules'][0]['module'] ?? null);
+    }
+
     public function test_clearing_role_permissions_persists_empty_set(): void
     {
         PermissionMatrixService::ensure();
