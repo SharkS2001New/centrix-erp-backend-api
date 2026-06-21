@@ -53,8 +53,8 @@ COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs bootstrap/cache \
-    && chown -R www-data:www-data storage bootstrap/cache \
+RUN mkdir -p resources/views storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache resources \
     && chmod -R 775 storage bootstrap/cache
 
 EXPOSE 8001
