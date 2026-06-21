@@ -9,7 +9,8 @@ class DatabaseBackupCommand extends Command
 {
     protected $signature = 'erp:database-backup
                             {--no-email : Skip sending the backup notification email}
-                            {--no-prune : Skip deleting backups older than retention days}';
+                            {--no-prune : Skip deleting backups older than retention days}
+                            {--no-google-drive : Skip uploading the backup to Google Drive}';
 
     protected $description = 'Create a compressed database backup and optionally email it';
 
@@ -22,12 +23,18 @@ class DatabaseBackupCommand extends Command
         }
 
         try {
-            $backup = $backups->createBackup();
+            $result = $backups->runBackupCycle(
+                sendEmail: ! $this->option('no-email'),
+                prune: ! $this->option('no-prune'),
+                uploadGoogleDrive: ! $this->option('no-google-drive'),
+            );
         } catch (\Throwable $e) {
             $this->error('Database backup failed: '.$e->getMessage());
 
             return self::FAILURE;
         }
+
+        $backup = $result['backup'];
 
         $this->info(sprintf(
             'Backup created: %s (%s)',
@@ -35,17 +42,16 @@ class DatabaseBackupCommand extends Command
             $this->formatBytes($backup['size_bytes']),
         ));
 
-        if (! $this->option('no-prune')) {
-            $deleted = $backups->pruneOldBackups();
-            if ($deleted > 0) {
-                $this->line("Pruned {$deleted} old backup(s).");
-            }
+        if ($result['google_drive'] !== null) {
+            $this->line('Uploaded to Google Drive: '.$result['google_drive']['file_id']);
+        }
+
+        if ($result['pruned'] > 0) {
+            $this->line("Pruned {$result['pruned']} old backup(s).");
         }
 
         if (! $this->option('no-email')) {
-            $sent = $backups->notifyByEmail($backup);
-
-            if ($sent) {
+            if ($result['email_sent']) {
                 $this->line('Backup notification email sent.');
             } elseif (trim((string) config('backup.notify_email', '')) === '') {
                 $this->comment('Set BACKUP_NOTIFY_EMAIL to receive backup notifications.');

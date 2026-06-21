@@ -4,6 +4,7 @@
     "description": "Centrix ERP API v1 backend (Laravel 11).",
     "require": {
         "php": "^8.4",
+        "google/apiclient": "^2.0",
         "laravel/framework": "^11.0",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9"

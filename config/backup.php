@@ -18,4 +18,10 @@ return [
     'compress' => filter_var(env('BACKUP_COMPRESS', true), FILTER_VALIDATE_BOOL),
 
     'mysqldump_binary' => env('BACKUP_MYSQLDUMP_BINARY', 'mysqldump'),
+
+    'google_drive' => [
+        'enabled' => filter_var(env('BACKUP_GOOGLE_DRIVE_ENABLED', false), FILTER_VALIDATE_BOOL),
+        'credentials' => env('BACKUP_GOOGLE_DRIVE_CREDENTIALS'),
+        'folder_id' => env('BACKUP_GOOGLE_DRIVE_FOLDER_ID'),
+    ],
 ];

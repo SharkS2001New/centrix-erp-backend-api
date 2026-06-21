@@ -71,7 +71,128 @@ class DatabaseBackupService
             'compressed' => $compressed,
             'driver' => $driver,
             'database' => $database,
+            'created_at' => now()->toIso8601String(),
         ];
+    }
+
+    /**
+     * @return list<array{
+     *     filename: string,
+     *     relative_path: string,
+     *     size_bytes: int,
+     *     compressed: bool,
+     *     created_at: string,
+     * }>
+     */
+    public function listBackups(?string $disk = null): array
+    {
+        $disk = $disk ?: (string) config('backup.disk', 'local');
+        $directory = trim((string) config('backup.path', 'backups/database'), '/');
+        $files = [];
+
+        foreach (Storage::disk($disk)->files($directory) as $path) {
+            if (! $this->isBackupFilename(basename($path))) {
+                continue;
+            }
+
+            $files[] = [
+                'filename' => basename($path),
+                'relative_path' => $path,
+                'size_bytes' => (int) Storage::disk($disk)->size($path),
+                'compressed' => str_ends_with($path, '.gz'),
+                'created_at' => now()->createFromTimestamp(
+                    Storage::disk($disk)->lastModified($path)
+                )->toIso8601String(),
+            ];
+        }
+
+        usort($files, fn (array $a, array $b) => strcmp($b['created_at'], $a['created_at']));
+
+        return $files;
+    }
+
+    /**
+     * @return array{
+     *     disk: string,
+     *     relative_path: string,
+     *     absolute_path: string,
+     *     filename: string,
+     *     size_bytes: int,
+     *     compressed: bool,
+     *     created_at: string,
+     * }|null
+     */
+    public function findBackup(string $filename, ?string $disk = null): ?array
+    {
+        if (! $this->isBackupFilename($filename)) {
+            return null;
+        }
+
+        $disk = $disk ?: (string) config('backup.disk', 'local');
+        $directory = trim((string) config('backup.path', 'backups/database'), '/');
+        $relativePath = $directory.'/'.$filename;
+
+        if (! Storage::disk($disk)->exists($relativePath)) {
+            return null;
+        }
+
+        return [
+            'disk' => $disk,
+            'relative_path' => $relativePath,
+            'absolute_path' => Storage::disk($disk)->path($relativePath),
+            'filename' => $filename,
+            'size_bytes' => (int) Storage::disk($disk)->size($relativePath),
+            'compressed' => str_ends_with($filename, '.gz'),
+            'created_at' => now()->createFromTimestamp(
+                Storage::disk($disk)->lastModified($relativePath)
+            )->toIso8601String(),
+        ];
+    }
+
+    /**
+     * @return array{
+     *     backup: array<string, mixed>,
+     *     google_drive: array<string, mixed>|null,
+     *     email_sent: bool,
+     *     pruned: int,
+     * }
+     */
+    public function runBackupCycle(
+        bool $sendEmail = true,
+        bool $prune = true,
+        bool $uploadGoogleDrive = true,
+    ): array {
+        $backup = $this->createBackup();
+        $googleDrive = null;
+
+        if ($uploadGoogleDrive && app(GoogleDriveBackupUploader::class)->isEnabled()) {
+            try {
+                $googleDrive = app(GoogleDriveBackupUploader::class)->upload(
+                    $backup['absolute_path'],
+                    $backup['filename'],
+                );
+            } catch (\Throwable $e) {
+                Log::warning('Google Drive backup upload failed', [
+                    'filename' => $backup['filename'],
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        }
+
+        $pruned = $prune ? $this->pruneOldBackups() : 0;
+        $emailSent = $sendEmail ? $this->notifyByEmail($backup) : false;
+
+        return [
+            'backup' => $backup,
+            'google_drive' => $googleDrive,
+            'email_sent' => $emailSent,
+            'pruned' => $pruned,
+        ];
+    }
+
+    protected function isBackupFilename(string $filename): bool
+    {
+        return (bool) preg_match('/^[A-Za-z0-9._-]+\.sql(\.gz)?$/', $filename);
     }
 
     public function pruneOldBackups(?string $disk = null, ?int $retentionDays = null): int

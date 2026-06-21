@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\AiSettingsController;
 use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationProvisionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
+use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\PermissionController;
@@ -148,6 +149,14 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
         Route::post('admin/active-sessions/{token}/disable-user', [PlatformActiveSessionsController::class, 'disableUser'])
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+
+        Route::get('admin/database-backups', [PlatformDatabaseBackupController::class, 'index'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::post('admin/database-backups', [PlatformDatabaseBackupController::class, 'store'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning'])
+            ->where('filename', '[A-Za-z0-9._-]+\.sql(\.gz)?');
 
         Route::prefix('admin/organizations/{organization}/settings')
             ->middleware(['erp.super_admin', 'erp.org_provisioning', 'erp.act_as_organization'])

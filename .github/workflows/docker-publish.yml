@@ -60,6 +60,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+      # Optional: bump Helm values in pitchpredk3ssetup (set K8S_SETUP_REPO=pitchpredk3ssetup).
       - name: Check out Kubernetes setup repo
         if: github.event_name != 'pull_request' && vars.K8S_SETUP_REPO != ''
         uses: actions/checkout@v4

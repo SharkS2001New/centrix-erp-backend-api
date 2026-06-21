@@ -170,8 +170,23 @@ Configure in `.env`:
 | `BACKUP_RETENTION_DAYS` | Delete local backups older than this |
 | `BACKUP_SCHEDULE_TIME` | Daily run time (24h clock, server timezone) |
 | `MAIL_*` | SMTP used to send backup emails |
+| `BACKUP_GOOGLE_DRIVE_ENABLED` | Upload each backup copy to Google Drive |
+| `BACKUP_GOOGLE_DRIVE_CREDENTIALS` | Path to Google service-account JSON |
+| `BACKUP_GOOGLE_DRIVE_FOLDER_ID` | Drive folder ID (shared with the service account) |
 
-Backups are stored under `storage/app/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
+Backups are stored under `storage/app/private/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
+
+When Google Drive is enabled, each scheduled or manual backup is also uploaded to the configured folder.
+
+### Platform super-admin API
+
+Super admins can manage backups from the platform UI via:
+
+| Method | Endpoint | Purpose |
+|--------|----------|---------|
+| `GET` | `/api/v1/admin/database-backups` | List local backup files |
+| `POST` | `/api/v1/admin/database-backups` | Run backup now (optional `send_email`, `upload_google_drive`) |
+| `GET` | `/api/v1/admin/database-backups/{filename}/download` | Download `.sql` or `.sql.gz` file |
 
 Enable the scheduler on the server:
 
