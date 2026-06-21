@@ -2,14 +2,6 @@
 
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
-use Illuminate\Support\Facades\Schema;
-
-return new class extends Migration
-{
-<?php
-
-use Illuminate\Database\Migrations\Migration;
-use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -26,14 +18,6 @@ return new class extends Migration
         }
 
         Schema::table('products', function (Blueprint $table) {
-            if (! $this->foreignKeyExists('products', 'products_branch_id_foreign')) {
-                $table->foreign('branch_id')->references('id')->on('branches')->nullOnDelete();
-            }
-            if (! $this->indexExists('products', 'products_org_branch_idx')) {
-                $table->index(['organization_id', 'branch_id'], 'products_org_branch_idx');
-            }
-        });
-    }
             if (! $this->foreignKeyExists('products', 'products_branch_id_foreign')) {
                 $table->foreign('branch_id')->references('id')->on('branches')->nullOnDelete();
             }

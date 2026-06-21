@@ -21,26 +21,7 @@ Modular ERP API for **Centrix ERP** by Alpac Software Solutions — small shop, 
 
 ## Frontend (Next.js)
 
-Sibling project: [`../centrix-erp-frontend-web`](../centrix-erp-frontend-web) — `npm run dev` on port 3000, connects to this API.
-
-## Docker
-
-Build and run locally (inject DB and app env at runtime):
-
-```bash
-docker build -t centrix-erp-backend-api .
-docker run --rm -p 8001:8001 \
-  -e APP_KEY=base64:YOUR_KEY \
-  -e DB_HOST=host.docker.internal \
-  -e DB_DATABASE=centrix_erp \
-  -e DB_USERNAME=root \
-  -e DB_PASSWORD=secret \
-  centrix-erp-backend-api
-```
-
-Images are published to `ghcr.io/<owner>/centrix-erp-backend-api` on push to `main`/`master` via `.github/workflows/docker-publish.yml`. Each push also updates `tag` in `pitchpredk3ssetup/centrix-erp-backend-api/values.yaml` and `centrix-erp-scheduler/values.yaml` (same pattern as pitchpredictionsbackend).
-
-Requires GitHub secret `PERSONAL_ACCESS_TOKEN` with `repo` and `write:packages` scopes.
+Sibling project: [`../pos-erp-web`](../pos-erp-web) — `npm run dev` on port 3000, connects to this API.
 
 ## Setup
 
@@ -110,7 +91,7 @@ GET  /api/v1/reports/stock-on-hand
 
 Import into Postman:
 
-- `postman/centrix-erp-api.postman_collection.json` — all `/api/v1` routes (388 requests)
+- `postman/POS-ERP-API.postman_collection.json` — all `/api/v1` routes (388 requests)
 - `postman/Local.postman_environment.json` — `baseUrl` + `token`
 
 ```bash
@@ -137,8 +118,6 @@ Then re-save custom roles in **Admin → Roles & permissions** so new feature co
 Production role templates (Branch Manager, Stock Clerk, Accountant, Payroll Clerk, Viewer) are seeded via `ProductionRoleSeeder` on `migrate:fresh --seed`.
 
 ## Production safety
-
-Production uses database **`centrix_erp`**. Copy `.env.production.example` and set `APP_ENV=production`, `APP_DEBUG=false`, and your DB credentials.
 
 Destructive database commands are **blocked when `APP_ENV=production`** unless you explicitly set `DB_ALLOW_DESTRUCTIVE_COMMANDS=true` (emergency only):
 
@@ -170,28 +149,13 @@ Configure in `.env`:
 | `BACKUP_RETENTION_DAYS` | Delete local backups older than this |
 | `BACKUP_SCHEDULE_TIME` | Daily run time (24h clock, server timezone) |
 | `MAIL_*` | SMTP used to send backup emails |
-| `BACKUP_GOOGLE_DRIVE_ENABLED` | Upload each backup copy to Google Drive |
-| `BACKUP_GOOGLE_DRIVE_CREDENTIALS` | Path to Google service-account JSON |
-| `BACKUP_GOOGLE_DRIVE_FOLDER_ID` | Drive folder ID (shared with the service account) |
 
-Backups are stored under `storage/app/private/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
-
-When Google Drive is enabled, each scheduled or manual backup is also uploaded to the configured folder.
-
-### Platform super-admin API
-
-Super admins can manage backups from the platform UI via:
-
-| Method | Endpoint | Purpose |
-|--------|----------|---------|
-| `GET` | `/api/v1/admin/database-backups` | List local backup files |
-| `POST` | `/api/v1/admin/database-backups` | Run backup now (optional `send_email`, `upload_google_drive`) |
-| `GET` | `/api/v1/admin/database-backups/{filename}/download` | Download `.sql` or `.sql.gz` file |
+Backups are stored under `storage/app/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
 
 Enable the scheduler on the server:
 
 ```bash
-* * * * * cd /path/to/centrix-erp-backend-api && php artisan schedule:run >> /dev/null 2>&1
+* * * * * cd /path/to/pos-erp-api && php artisan schedule:run >> /dev/null 2>&1
 ```
 
 Verify scheduled tasks:

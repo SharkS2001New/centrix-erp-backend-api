@@ -11,8 +11,6 @@ on:
     branches:
       - master
       - main
-  schedule:
-    - cron: "44 2 * * *"
 
 env:
   REGISTRY: ghcr.io
@@ -25,7 +23,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-      id-token: write
 
     steps:
       - name: Checkout repository
@@ -40,7 +37,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract Docker metadata
         id: meta
@@ -50,7 +47,6 @@ jobs:
           tags: type=sha,format=short
 
       - name: Build and push Docker image
-        id: build-and-push
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -59,33 +55,3 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
-
-      - name: Check out the pitchpredk3ssetup repo
-        if: github.event_name != 'pull_request'
-        uses: actions/checkout@v4
-        with:
-          repository: ${{ github.repository_owner }}/pitchpredk3ssetup
-          path: pitchpredk3ssetup
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-
-      - name: Update values.yaml with new image tag
-        if: github.event_name != 'pull_request'
-        run: |
-          SHORT_SHA_PART="${{ steps.meta.outputs.tags }}"
-          SHORT_SHA_PART="$(echo "$SHORT_SHA_PART" | awk -F':' '{print $2}' | cut -c1-11)"
-          sed -i "s|tag:.*|tag: $SHORT_SHA_PART|" pitchpredk3ssetup/centrix-erp-backend-api/values.yaml
-          sed -i "s|tag:.*|tag: $SHORT_SHA_PART|" pitchpredk3ssetup/centrix-erp-scheduler/values.yaml
-          echo "SHORT_SHA_PART=$SHORT_SHA_PART" >> "$GITHUB_ENV"
-          echo "Updated centrix-erp-backend-api and centrix-erp-scheduler tags to $SHORT_SHA_PART"
-
-      - name: Commit and push changes to pitchpredk3ssetup repo
-        if: github.event_name != 'pull_request'
-        run: |
-          cd pitchpredk3ssetup
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
-          git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml
-          git commit -m "Update centrix-erp-backend-api image tag to $SHORT_SHA_PART"
-          git push
-        env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}

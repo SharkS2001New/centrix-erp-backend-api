@@ -9,7 +9,7 @@ use Illuminate\Support\Str;
 
 class GeneratePostmanCollectionCommand extends Command
 {
-    protected $signature = 'postman:generate {--output=postman/centrix-erp-api.postman_collection.json}';
+    protected $signature = 'postman:generate {--output=postman/POS-ERP-API.postman_collection.json}';
 
     protected $description = 'Generate Postman Collection v2.1 from all /api/v1 routes (incl. Sanctum login)';
 
@@ -108,7 +108,7 @@ class GeneratePostmanCollectionCommand extends Command
 
         $collection = [
             'info' => [
-                '_postman_id' => 'centrix-erp-api-v3-collection',
+                '_postman_id' => 'pos-erp-api-v3-collection',
                 'name' => config('branding.postman_collection_name'),
                 'description' => 'All `/api/v1` routes. Run **Auth → Login** first; the test script saves `token` to the environment. Regenerate: `php artisan postman:generate`.',
                 'schema' => 'https://schema.getpostman.com/json/collection/v2.1.0/collection.json',
@@ -130,7 +130,7 @@ class GeneratePostmanCollectionCommand extends Command
         $envPath = base_path('postman/Local.postman_environment.json');
         if (! File::exists($envPath)) {
             File::put($envPath, json_encode([
-                'id' => 'centrix-erp-local-env',
+                'id' => 'pos-erp-local-env',
                 'name' => config('branding.postman_environment_name'),
                 'values' => [
                     ['key' => 'baseUrl', 'value' => 'http://localhost:8000/api/v1', 'enabled' => true],
