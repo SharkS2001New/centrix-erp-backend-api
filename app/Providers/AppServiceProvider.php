@@ -113,6 +113,22 @@ class AppServiceProvider extends ServiceProvider
                 config(['cors.supports_credentials' => $this->runtimeEnvBool('CORS_SUPPORTS_CREDENTIALS', false)]);
             }
         }
+
+        foreach ([
+            'name' => 'API_TOKEN_COOKIE_NAME',
+            'domain' => 'API_TOKEN_COOKIE_DOMAIN',
+            'same_site' => 'API_TOKEN_COOKIE_SAME_SITE',
+        ] as $configKey => $envKey) {
+            $value = $this->readRuntimeEnv($envKey);
+            if ($value !== null) {
+                config(["security.api_token_cookie.{$configKey}" => $value]);
+            }
+        }
+
+        $secure = $this->readRuntimeEnv('API_TOKEN_COOKIE_SECURE');
+        if ($secure !== null) {
+            config(['security.api_token_cookie.secure' => $this->runtimeEnvBool('API_TOKEN_COOKIE_SECURE', true)]);
+        }
     }
 
     protected function runtimeEnvBool(string $key, bool $default = false): bool
