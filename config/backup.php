@@ -13,7 +13,7 @@ return [
 
     'notify_email' => env('BACKUP_NOTIFY_EMAIL'),
 
-    'attach_max_bytes' => (int) env('BACKUP_ATTACH_MAX_BYTES', 10 * 1024 * 1024),
+    'attach_max_bytes' => (int) env('BACKUP_ATTACH_MAX_BYTES', 0),
 
     'compress' => filter_var(env('BACKUP_COMPRESS', true), FILTER_VALIDATE_BOOL),
 

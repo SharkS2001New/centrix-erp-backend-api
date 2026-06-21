@@ -1,8 +1,12 @@
 /vendor
 /node_modules
-# .env
+.env
+.env.*
+!.env.example
+!.env.production.example
 .phpunit.result.cache
 storage/*.key
 storage/app/private/google-drive-service-account.json
+storage/app/private/backups/
 storage/logs/*
 !storage/logs/.gitkeep

@@ -23,6 +23,7 @@ class AppServiceProvider extends ServiceProvider
 
         $this->configureRateLimiting();
         $this->configureCorsFromRuntimeEnv();
+        $this->enforceProductionSafety();
 
         if (
             $this->app->environment('production')
@@ -60,10 +61,19 @@ class AppServiceProvider extends ServiceProvider
 
         $preview = config('security.rate_limits.auth_org_preview');
         RateLimiter::for('auth-org-preview', function (Request $request) use ($preview) {
-            return Limit::perMinutes(
-                max(1, (int) ($preview['decay_minutes'] ?? 1)),
-                max(1, (int) ($preview['max_attempts'] ?? 20)),
-            )->by($request->ip());
+            $decay = max(1, (int) ($preview['decay_minutes'] ?? 1));
+            $max = max(1, (int) ($preview['max_attempts'] ?? 10));
+            $companyCode = strtoupper(trim((string) $request->input('company_code', '')));
+
+            $limits = [
+                Limit::perMinutes($decay, $max)->by('ip:'.$request->ip()),
+            ];
+
+            if ($companyCode !== '') {
+                $limits[] = Limit::perMinutes($decay, min(5, $max))->by('org:'.$companyCode);
+            }
+
+            return $limits;
         });
 
         $api = config('security.rate_limits.api');
@@ -84,7 +94,8 @@ class AppServiceProvider extends ServiceProvider
      */
     protected function configureCorsFromRuntimeEnv(): void
     {
-        $raw = getenv('CORS_ALLOWED_ORIGINS') ?: getenv('FRONTEND_URL');
+        $raw = $this->readRuntimeEnv('CORS_ALLOWED_ORIGINS')
+            ?: $this->readRuntimeEnv('FRONTEND_URL');
         if (! is_string($raw) || trim($raw) === '') {
             return;
         }
@@ -93,5 +104,40 @@ class AppServiceProvider extends ServiceProvider
         if ($origins !== []) {
             config(['cors.allowed_origins' => $origins]);
         }
+
+        $credentials = $this->readRuntimeEnv('CORS_SUPPORTS_CREDENTIALS');
+        if ($credentials !== null) {
+            config(['cors.supports_credentials' => filter_var($credentials, FILTER_VALIDATE_BOOL)]);
+        }
+    }
+
+    protected function enforceProductionSafety(): void
+    {
+        if (! $this->app->environment('production')) {
+            return;
+        }
+
+        if (filter_var(env('APP_DEBUG', false), FILTER_VALIDATE_BOOL)) {
+            config(['app.debug' => false]);
+            logger()->warning('APP_DEBUG was enabled in production and has been forced to false.');
+        }
+    }
+
+    protected function readRuntimeEnv(string $key): ?string
+    {
+        $value = getenv($key);
+        if (is_string($value) && trim($value) !== '') {
+            return trim($value);
+        }
+
+        if (isset($_ENV[$key]) && is_string($_ENV[$key]) && trim($_ENV[$key]) !== '') {
+            return trim($_ENV[$key]);
+        }
+
+        if (isset($_SERVER[$key]) && is_string($_SERVER[$key]) && trim($_SERVER[$key]) !== '') {
+            return trim($_SERVER[$key]);
+        }
+
+        return null;
     }
 }

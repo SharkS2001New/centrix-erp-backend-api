@@ -1,9 +1,10 @@
+# Local development only — do not deploy this compose file to production.
 services:
   mysql:
     image: mysql:8.0
     restart: unless-stopped
     ports:
-      - "3306:3306"
+      - "127.0.0.1:3306:3306"
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: pos_erp
@@ -20,7 +21,7 @@ services:
     image: ghcr.io/sharks2001new/centrix-erp-backend-api:local
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "127.0.0.1:8001:8001"
     depends_on:
       mysql:
         condition: service_healthy

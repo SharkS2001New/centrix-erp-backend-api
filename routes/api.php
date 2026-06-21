@@ -80,7 +80,7 @@ Route::prefix('v1')->group(function () {
     Route::get('accounting/quickbooks/callback', [\App\Http\Controllers\Api\V1\Operations\ExternalAccountingController::class, 'quickBooksCallback'])
         ->middleware('throttle:auth-org-preview');
 
-    Route::middleware(['auth:sanctum', 'erp.tenant', 'throttle:api'])->group(function () {
+    Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'throttle:api'])->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);

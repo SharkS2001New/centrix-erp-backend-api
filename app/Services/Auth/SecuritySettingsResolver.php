@@ -51,6 +51,18 @@ class SecuritySettingsResolver
         return (int) self::forOrganizationId($organizationId)['session_idle_minutes'];
     }
 
+    public static function tokenExpirationMinutesForChannel(string $loginChannel): ?int
+    {
+        $channel = in_array($loginChannel, ['backoffice', 'pos', 'mobile'], true)
+            ? $loginChannel
+            : UserLoginChannelService::BACKOFFICE;
+
+        $byChannel = config('security.token_expiration_minutes_by_channel', []);
+        $minutes = (int) ($byChannel[$channel] ?? config('security.sanctum_token_expiration_minutes', 60 * 24));
+
+        return $minutes > 0 ? $minutes : null;
+    }
+
     /** @param  array<string, mixed>  $settings */
     public static function normalize(array $settings): array
     {

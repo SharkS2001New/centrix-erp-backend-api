@@ -23,7 +23,7 @@ return [
     'platform_company_code' => strtoupper(env('APP_PLATFORM_COMPANY_CODE', 'PLATFORM')),
 
     /** Platform super-admin account (seeded / upserted via PlatformSuperAdminSeeder). */
-    'platform_super_admin_email' => env('PLATFORM_SUPER_ADMIN_EMAIL', 'alpacke.tech@gmail.com'),
+    'platform_super_admin_email' => env('PLATFORM_SUPER_ADMIN_EMAIL'),
     'platform_super_admin_password' => env('PLATFORM_SUPER_ADMIN_PASSWORD'),
 
     /** Idle API tokens are revoked after this many minutes without a request. */

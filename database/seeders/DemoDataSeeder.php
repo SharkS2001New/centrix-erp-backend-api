@@ -542,7 +542,17 @@ class DemoDataSeeder extends Seeder
         );
 
         $platformCode = config('erp.platform_company_code', 'PLATFORM');
-        $platformEmail = config('erp.platform_super_admin_email', 'alpacke.tech@gmail.com');
+        $platformEmail = config('erp.platform_super_admin_email');
+        if (! is_string($platformEmail) || trim($platformEmail) === '') {
+            $platformEmail = app()->environment('local', 'testing') ? 'platform-admin@example.test' : null;
+        } else {
+            $platformEmail = trim($platformEmail);
+        }
+        if ($platformEmail === null) {
+            throw new \RuntimeException(
+                'Set PLATFORM_SUPER_ADMIN_EMAIL in .env before seeding the platform super admin.',
+            );
+        }
         $platformPassword = config('erp.platform_super_admin_password');
         if (! is_string($platformPassword) || $platformPassword === '') {
             $platformPassword = app()->environment('local', 'testing') ? 'password' : null;

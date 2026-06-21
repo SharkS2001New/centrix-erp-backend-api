@@ -176,7 +176,9 @@ class AuthSessionService
 
         $authUser->forceFill(['last_login' => now()])->save();
 
-        $newToken = $authUser->createToken($clientId);
+        $expirationMinutes = SecuritySettingsResolver::tokenExpirationMinutesForChannel($loginChannel);
+        $expiresAt = $expirationMinutes !== null ? now()->addMinutes($expirationMinutes) : null;
+        $newToken = $authUser->createToken($clientId, ['*'], $expiresAt);
         /** @var PersonalAccessToken $accessToken */
         $accessToken = $newToken->accessToken;
         $accessToken->forceFill([

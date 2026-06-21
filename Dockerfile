@@ -5,7 +5,6 @@ RUN apt-get update && apt-get install -y \
     git \
     zip \
     curl \
-    sudo \
     unzip \
     libicu-dev \
     libbz2-dev \

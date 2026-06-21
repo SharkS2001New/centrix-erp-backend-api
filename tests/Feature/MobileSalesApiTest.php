@@ -599,7 +599,8 @@ class MobileSalesApiTest extends TestCase
     {
         $this->getJson('/api/v1/auth/organization-preview?company_code=DEMO')
             ->assertOk()
-            ->assertJsonStructure(['company_code', 'org_name', 'organization_id']);
+            ->assertJsonStructure(['company_code', 'org_name'])
+            ->assertJsonMissing(['organization_id']);
     }
 
     public function test_mobile_session_cannot_access_admin_users_api(): void

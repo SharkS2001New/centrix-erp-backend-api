@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Services\Auth\UserPermissionService;
+use App\Services\Erp\ErpContext;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -16,17 +17,14 @@ class EnsurePermission
             return response()->json(['message' => 'Unauthenticated.'], 401);
         }
 
-        if ($user->is_admin || $user->is_super_admin) {
-            return $next($request);
-        }
-
         $service = app(UserPermissionService::class);
+        $gate = app(ErpContext::class)->gateForRequest($request);
         $codes = str_contains($permission, '|')
             ? array_map('trim', explode('|', $permission))
             : [$permission];
 
         foreach ($codes as $code) {
-            if ($service->hasPermission($user, $code)) {
+            if ($service->hasPermission($user, $code, $gate)) {
                 return $next($request);
             }
         }

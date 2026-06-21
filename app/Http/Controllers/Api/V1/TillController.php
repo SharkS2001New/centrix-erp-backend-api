@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\Branch;
 use App\Models\Till;
 use App\Models\TillFloatSession;
 use Illuminate\Http\Request;
@@ -12,6 +13,30 @@ class TillController extends BaseResourceController
     protected function modelClass(): string
     {
         return Till::class;
+    }
+
+    protected function scopesByBranch(): bool
+    {
+        return true;
+    }
+
+    protected function findScopedTill(Request $request, string $id): Till
+    {
+        $query = Till::query()->where($this->routeKeyColumn(), $id);
+        $user = $request->user();
+
+        if ($user) {
+            $orgId = $this->access()->organizationId($user, $request);
+            if ($orgId) {
+                $query->whereIn(
+                    'branch_id',
+                    Branch::query()->where('organization_id', $orgId)->select('id'),
+                );
+            }
+            $this->access()->scopeBranchIfLimited($query, $user);
+        }
+
+        return $query->firstOrFail();
     }
 
     protected function suggestNextTillLabel(?int $branchId = null): string
@@ -71,6 +96,11 @@ class TillController extends BaseResourceController
             throw new \InvalidArgumentException('Branch is required.');
         }
 
+        $user = $request->user();
+        if ($user) {
+            $this->access()->assertBranchAccess($user, $branchId);
+        }
+
         $label = $this->suggestNextTillLabel($branchId);
         if (empty(trim((string) ($data['till_number'] ?? '')))) {
             $data['till_number'] = $label;
@@ -94,7 +124,7 @@ class TillController extends BaseResourceController
 
     public function update(\Illuminate\Http\Request $request, string $id)
     {
-        $model = Till::where($this->routeKeyColumn(), $id)->firstOrFail();
+        $model = $this->findScopedTill($request, $id);
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $data = $request->validate($rules);
 
@@ -103,6 +133,10 @@ class TillController extends BaseResourceController
         $branchId = (int) ($data['branch_id'] ?? $model->branch_id);
         if ($branchId <= 0) {
             throw new \InvalidArgumentException('Branch is required.');
+        }
+
+        if ($request->user()) {
+            $this->access()->assertBranchAccess($request->user(), $branchId);
         }
 
         if (array_key_exists('cashier_id', $data)) {
@@ -135,7 +169,7 @@ class TillController extends BaseResourceController
 
     public function destroy(Request $request, string $id)
     {
-        $till = $this->findScopedModel($request, $id);
+        $till = $this->findScopedTill($request, $id);
 
         DB::transaction(function () use ($till) {
             $sessionIds = TillFloatSession::query()

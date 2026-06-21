@@ -427,7 +427,10 @@ class AuthRegistrationConcurrencyTest extends TestCase
 
     public function test_super_admin_login_with_email_only(): void
     {
-        $email = config('erp.platform_super_admin_email', 'alpacke.tech@gmail.com');
+        $email = config('erp.platform_super_admin_email');
+        if (! is_string($email) || $email === '') {
+            $email = 'platform-admin@example.test';
+        }
 
         $this->postJson('/api/v1/auth/login', [
             'company_code' => '',

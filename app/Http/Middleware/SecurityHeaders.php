@@ -19,7 +19,7 @@ class SecurityHeaders
         $response->headers->set('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
         $response->headers->set('X-XSS-Protection', '0');
 
-        if ($request->isSecure()) {
+        if ($request->isSecure() || $this->isHttpsViaProxy($request)) {
             $response->headers->set(
                 'Strict-Transport-Security',
                 'max-age=31536000; includeSubDomains',
@@ -27,5 +27,12 @@ class SecurityHeaders
         }
 
         return $response;
+    }
+
+    protected function isHttpsViaProxy(Request $request): bool
+    {
+        $forwarded = strtolower((string) $request->header('X-Forwarded-Proto', ''));
+
+        return $forwarded === 'https';
     }
 }

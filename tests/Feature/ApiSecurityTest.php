@@ -23,6 +23,14 @@ class ApiSecurityTest extends TestCase
         $response->assertHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     }
 
+    public function test_hsts_header_when_request_is_https_via_proxy(): void
+    {
+        $this->getJson('/api/v1/health', [
+            'X-Forwarded-Proto' => 'https',
+        ])
+            ->assertHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    }
+
     public function test_login_is_rate_limited(): void
     {
         for ($i = 0; $i < 5; $i++) {

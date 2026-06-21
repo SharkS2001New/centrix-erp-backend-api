@@ -82,6 +82,7 @@ jobs:
 
       - name: Commit and push pitchpredk3ssetup
         if: github.event_name != 'pull_request'
+        # Uses PERSONAL_ACCESS_TOKEN — scope to repo contents only; protect pitchpredk3ssetup main branch.
         run: |
           cd pitchpredk3ssetup
           git config user.name "github-actions[bot]"

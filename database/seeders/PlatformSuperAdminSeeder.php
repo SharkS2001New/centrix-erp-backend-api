@@ -15,7 +15,13 @@ class PlatformSuperAdminSeeder extends Seeder
     public function run(): void
     {
         $platformCode = config('erp.platform_company_code', 'PLATFORM');
-        $email = config('erp.platform_super_admin_email', 'alpacke.tech@gmail.com');
+        $email = config('erp.platform_super_admin_email');
+        if (! is_string($email) || trim($email) === '') {
+            $this->command?->warn('Skipped platform super admin — set PLATFORM_SUPER_ADMIN_EMAIL in .env.');
+
+            return;
+        }
+        $email = trim($email);
         $password = config('erp.platform_super_admin_password');
         if (! is_string($password) || $password === '') {
             $this->command?->warn('Skipped platform super admin — set PLATFORM_SUPER_ADMIN_PASSWORD in .env.');

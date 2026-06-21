@@ -227,10 +227,10 @@ class DatabaseBackupService
             return false;
         }
 
-        $attachMaxBytes = (int) config('backup.attach_max_bytes', 10 * 1024 * 1024);
+        $attachMaxBytes = (int) config('backup.attach_max_bytes', 0);
         $attachPath = null;
 
-        if ($backup['size_bytes'] <= $attachMaxBytes) {
+        if ($attachMaxBytes > 0 && $backup['size_bytes'] <= $attachMaxBytes) {
             $attachPath = $backup['absolute_path'];
         }
 
@@ -243,7 +243,7 @@ class DatabaseBackupService
             'Size: '.$this->formatBytes($backup['size_bytes']),
             'Stored on disk: '.$backup['disk'].'/'.$backup['relative_path'],
             'Completed at: '.now()->toDateTimeString(),
-            $attachPath ? null : 'The backup was too large to attach. Download it from the server storage path above.',
+            $attachPath ? null : 'The backup file was not attached. Download it from the platform admin backup screen or server storage.',
         ]));
 
         try {

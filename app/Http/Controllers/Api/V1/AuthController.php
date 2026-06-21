@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Concerns\RespondsWithAuthSession;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Services\Auth\AuthSessionService;
@@ -17,6 +18,8 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
+    use RespondsWithAuthSession;
+
     public function __construct(
         protected AuthSessionService $sessions,
         protected TenantAccountResolver $resolver,
@@ -77,7 +80,6 @@ class AuthController extends Controller
         return response()->json([
             'company_code' => $organization->company_code,
             'org_name' => $organization->org_name,
-            'organization_id' => $organization->id,
         ]);
     }
 
@@ -111,7 +113,7 @@ class AuthController extends Controller
             throw $e;
         }
 
-        return response()->json($result);
+        return $this->respondWithAuthSession($result, $request);
     }
 
     public function switchWorkspace(Request $request)
@@ -129,7 +131,7 @@ class AuthController extends Controller
             $data['workspace_id'] ?? null,
         );
 
-        return response()->json($result);
+        return $this->respondWithAuthSession($result, $request);
     }
 
     public function memberships(Request $request)
@@ -157,14 +159,14 @@ class AuthController extends Controller
             $data['login_channel'] ?? 'backoffice',
         );
 
-        return response()->json($result);
+        return $this->respondWithAuthSession($result, $request);
     }
 
     public function logout(Request $request)
     {
         $request->user()->currentAccessToken()->delete();
 
-        return response()->json(['ok' => true]);
+        return $this->respondWithAuthLogout();
     }
 
     public function me(Request $request)

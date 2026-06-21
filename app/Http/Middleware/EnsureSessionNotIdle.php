@@ -11,6 +11,10 @@ class EnsureSessionNotIdle
 {
     public function handle(Request $request, Closure $next): Response
     {
+        if (! config('security.revoke_idle_tokens', false)) {
+            return $next($request);
+        }
+
         $plainTextToken = $request->bearerToken();
         if (! $plainTextToken) {
             return $next($request);

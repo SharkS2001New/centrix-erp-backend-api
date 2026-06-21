@@ -43,9 +43,11 @@ class PlatformDatabaseBackupController extends Controller
                 uploadGoogleDrive: (bool) ($validated['upload_google_drive'] ?? true),
             );
         } catch (\Throwable $e) {
+            report($e);
+
             return response()->json([
                 'message' => 'Database backup failed.',
-                'error' => $e->getMessage(),
+                'error' => config('app.debug') ? $e->getMessage() : null,
             ], 500);
         }
 
@@ -59,13 +61,19 @@ class PlatformDatabaseBackupController extends Controller
     }
 
     /** GET /api/v1/admin/database-backups/{filename}/download */
-    public function download(string $filename): StreamedResponse
+    public function download(Request $request, string $filename): StreamedResponse
     {
         $backup = $this->backups->findBackup($filename);
 
         if ($backup === null) {
             abort(404, 'Backup file not found.');
         }
+
+        \Illuminate\Support\Facades\Log::warning('Platform database backup downloaded', [
+            'filename' => $backup['filename'],
+            'user_id' => $request->user()?->id,
+            'ip' => $request->ip(),
+        ]);
 
         $mimeType = $backup['compressed'] ? 'application/gzip' : 'application/sql';
 

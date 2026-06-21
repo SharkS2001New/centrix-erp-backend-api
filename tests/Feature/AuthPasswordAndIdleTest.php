@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Auth\SecuritySettingsResolver;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
@@ -14,9 +15,12 @@ class AuthPasswordAndIdleTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_idle_session_is_not_revoked_on_api_calls(): void
+    public function test_idle_session_is_not_revoked_when_server_revoke_disabled(): void
     {
-        config(['erp.session_idle_minutes' => 15]);
+        config([
+            'erp.session_idle_minutes' => 15,
+            'security.revoke_idle_tokens' => false,
+        ]);
 
         $user = User::where('username', 'admin')->firstOrFail();
         $token = $user->createToken('idle-test');
@@ -31,6 +35,43 @@ class AuthPasswordAndIdleTest extends TestCase
         $this->assertDatabaseHas('personal_access_tokens', [
             'id' => $token->accessToken->id,
         ]);
+    }
+
+    public function test_idle_session_is_revoked_when_server_revoke_enabled(): void
+    {
+        config([
+            'erp.session_idle_minutes' => 15,
+            'security.revoke_idle_tokens' => true,
+        ]);
+
+        $user = User::where('username', 'admin')->firstOrFail();
+        $token = $user->createToken('idle-revoke-test');
+        DB::table('personal_access_tokens')
+            ->where('id', $token->accessToken->id)
+            ->update(['last_used_at' => now()->subMinutes(20)]);
+
+        $this->withToken($token->plainTextToken)
+            ->getJson('/api/v1/auth/me')
+            ->assertStatus(401)
+            ->assertJsonPath('code', 'session_idle_timeout');
+
+        $this->assertDatabaseMissing('personal_access_tokens', [
+            'id' => $token->accessToken->id,
+        ]);
+    }
+
+    public function test_backoffice_token_expires_before_mobile_default(): void
+    {
+        config([
+            'security.token_expiration_minutes_by_channel' => [
+                'backoffice' => 60,
+                'pos' => 1440,
+                'mobile' => 1440,
+            ],
+        ]);
+
+        $this->assertSame(60, SecuritySettingsResolver::tokenExpirationMinutesForChannel('backoffice'));
+        $this->assertSame(1440, SecuritySettingsResolver::tokenExpirationMinutesForChannel('mobile'));
     }
 
     public function test_forgot_and_reset_password(): void

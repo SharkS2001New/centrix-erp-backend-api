@@ -29,11 +29,12 @@ class CustomerController extends BaseResourceController
     /** GET /customers/{customerNum}/sales — orders with line items */
     public function sales(Request $request, string $customer)
     {
-        Customer::where('customer_num', $customer)->firstOrFail();
+        $model = $this->findScopedModel($request, $customer);
 
         $query = Sale::query()
             ->with(['items.product'])
-            ->where('customer_num', $customer)
+            ->where('customer_num', $model->customer_num)
+            ->where('organization_id', $model->organization_id)
             ->whereNull('deleted_at')
             ->orderByDesc('id');
 
@@ -53,16 +54,20 @@ class CustomerController extends BaseResourceController
         ));
 
         $user = $request->user();
+        $organizationId = (int) ($this->access()->organizationId($user, $request) ?? $data['organization_id'] ?? 0);
         $this->customerUniqueness->assertUnique(
-            (int) ($user?->organization_id ?? $data['organization_id'] ?? 0),
+            $organizationId,
             $data['phone_number'] ?? null,
             $data['additional_phone'] ?? null,
             $data['kra_pin'] ?? null,
         );
 
-        $customer = DB::transaction(function () use ($data) {
+        $customer = DB::transaction(function () use ($data, $organizationId) {
             if (empty($data['customer_num'])) {
-                $max = Customer::query()->lockForUpdate()->max('customer_num');
+                $max = Customer::query()
+                    ->where('organization_id', $organizationId)
+                    ->lockForUpdate()
+                    ->max('customer_num');
                 $data['customer_num'] = ((int) $max) + 1;
             }
 
@@ -74,7 +79,7 @@ class CustomerController extends BaseResourceController
 
     public function update(Request $request, string $id)
     {
-        $customer = Customer::where($this->routeKeyColumn(), $id)->firstOrFail();
+        $customer = $this->findScopedModel($request, $id);
         $data = $this->normalizeCustomerPayload($request->validate(
             $this->customerRules($this->fillableFields(), partial: true),
         ));
@@ -93,9 +98,9 @@ class CustomerController extends BaseResourceController
     }
 
     /** GET /customers/{customerNum}/shop-image/file — authenticated image bytes */
-    public function shopImageFile(string $customer)
+    public function shopImageFile(Request $request, string $customer)
     {
-        $model = Customer::where('customer_num', $customer)->firstOrFail();
+        $model = $this->findScopedModel($request, $customer);
 
         if (! $model->shop_image || ! Storage::disk('public')->exists($model->shop_image)) {
             abort(Response::HTTP_NOT_FOUND);
@@ -113,7 +118,7 @@ class CustomerController extends BaseResourceController
     /** POST /customers/{customerNum}/shop-image — multipart shop photo */
     public function uploadShopImage(Request $request, string $customer)
     {
-        $model = Customer::where('customer_num', $customer)->firstOrFail();
+        $model = $this->findScopedModel($request, $customer);
 
         $request->validate([
             'image' => 'required|image|mimes:jpeg,jpg,png,webp|max:5120',
@@ -134,9 +139,9 @@ class CustomerController extends BaseResourceController
     }
 
     /** DELETE /customers/{customerNum}/shop-image */
-    public function deleteShopImage(string $customer)
+    public function deleteShopImage(Request $request, string $customer)
     {
-        $model = Customer::where('customer_num', $customer)->firstOrFail();
+        $model = $this->findScopedModel($request, $customer);
 
         if ($model->shop_image) {
             Storage::disk('public')->delete($model->shop_image);
