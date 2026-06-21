@@ -9,6 +9,7 @@ use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
 use App\Services\Auth\TenantAccountResolver;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
@@ -35,6 +36,22 @@ class AuthController extends Controller
                 'ok' => false,
                 'checks' => array_merge($checks, ['database' => false]),
             ], 503);
+        }
+
+        if (config('cache.default') === 'redis') {
+            try {
+                Cache::store('redis')->put('health:ping', '1', 5);
+                $checks['redis'] = Cache::store('redis')->get('health:ping') === '1';
+            } catch (\Throwable) {
+                $checks['redis'] = false;
+            }
+
+            if ($checks['redis'] === false) {
+                return response()->json([
+                    'ok' => false,
+                    'checks' => $checks,
+                ], 503);
+            }
         }
 
         return response()->json(['ok' => true, 'checks' => $checks]);
