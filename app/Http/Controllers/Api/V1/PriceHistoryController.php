@@ -39,7 +39,7 @@ class PriceHistoryController extends BaseResourceController
     public function index(Request $request)
     {
         $query = $this->baseQuery($request)
-            ->with(['product.subcategory', 'changedByUser:id,username,full_name']);
+            ->with(['product:product_code,product_name,subcategory_id,unit_id', 'changedByUser:id,username,full_name']);
 
         if ($days = (int) $request->input('days', 0)) {
             $query->where('changed_at', '>=', now()->subDays(max(1, $days))->startOfDay());
@@ -51,7 +51,13 @@ class PriceHistoryController extends BaseResourceController
 
         if ($request->filled('category_id')) {
             $categoryId = (int) $request->input('category_id');
-            $query->whereHas('product.subcategory', fn ($sub) => $sub->where('category_id', $categoryId));
+            $query->whereHas('product', function ($product) use ($categoryId) {
+                $product->whereIn('subcategory_id', function ($sub) use ($categoryId) {
+                    $sub->select('id')
+                        ->from('sub_categories')
+                        ->where('category_id', $categoryId);
+                });
+            });
         }
 
         if ($q = trim((string) $request->input('q', ''))) {

@@ -28,6 +28,7 @@ class PriceHistory extends Model
     {
         return $this->belongsTo(User::class, 'changed_by');
     }
+
     protected $casts = [
         'changed_at' => 'datetime',
     ];
