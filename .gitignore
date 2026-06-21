@@ -3,5 +3,6 @@
 # .env
 .phpunit.result.cache
 storage/*.key
+storage/app/private/google-drive-service-account.json
 storage/logs/*
 !storage/logs/.gitkeep
