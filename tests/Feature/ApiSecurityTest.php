@@ -71,6 +71,19 @@ class ApiSecurityTest extends TestCase
             ->assertHeader('Access-Control-Allow-Origin', 'http://localhost:3000');
     }
 
+    public function test_login_does_not_require_csrf_from_frontend_origin(): void
+    {
+        $this->postJson('/api/v1/auth/login', [
+            'username' => 'nobody',
+            'password' => 'wrong-password',
+            'client_id' => 'test-client',
+        ], [
+            'Origin' => 'https://centrixerp.betsassured.com',
+        ])
+            ->assertStatus(422)
+            ->assertJsonMissing(['message' => 'CSRF token mismatch.']);
+    }
+
     public function test_cors_allows_frontend_url_origin(): void
     {
         config(['cors.allowed_origins' => ['https://centrixerp.betsassured.com']]);
