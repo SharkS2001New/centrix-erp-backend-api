@@ -12,10 +12,12 @@ return [
     | Comma-separated browser origins allowed to call the API (CORS).
     | Local default includes Next.js dev server.
     */
-    'cors_allowed_origins' => env(
-        'CORS_ALLOWED_ORIGINS',
-        'http://localhost:3000,http://127.0.0.1:3000',
-    ),
+    'cors_allowed_origins' => env('CORS_ALLOWED_ORIGINS')
+        ?: implode(',', array_unique(array_filter([
+            rtrim((string) env('FRONTEND_URL', ''), '/'),
+            'http://localhost:3000',
+            'http://127.0.0.1:3000',
+        ]))),
 
     'cors_supports_credentials' => env('CORS_SUPPORTS_CREDENTIALS', false),
 
