@@ -106,12 +106,20 @@ class AppServiceProvider extends ServiceProvider
         $cookieAuth = $this->runtimeEnvBool('WEB_COOKIE_AUTH', (bool) config('security.api_token_cookie.enabled', false));
         if ($cookieAuth) {
             config(['security.api_token_cookie.enabled' => true]);
+            config(['security.cors_supports_credentials' => true]);
             config(['cors.supports_credentials' => true]);
         } else {
             $credentials = $this->readRuntimeEnv('CORS_SUPPORTS_CREDENTIALS');
             if ($credentials !== null) {
-                config(['cors.supports_credentials' => $this->runtimeEnvBool('CORS_SUPPORTS_CREDENTIALS', false)]);
+                $supports = $this->runtimeEnvBool('CORS_SUPPORTS_CREDENTIALS', false);
+                config(['security.cors_supports_credentials' => $supports]);
+                config(['cors.supports_credentials' => $supports]);
             }
+        }
+
+        $idleRevoke = $this->readRuntimeEnv('AUTH_SERVER_IDLE_REVOKE');
+        if ($idleRevoke !== null) {
+            config(['security.revoke_idle_tokens' => $this->runtimeEnvBool('AUTH_SERVER_IDLE_REVOKE', false)]);
         }
 
         foreach ([

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Concerns\RespondsWithAuthSession;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
+use App\Services\Auth\ApiTokenCookie;
 use App\Services\Auth\AuthSessionService;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
@@ -13,6 +14,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\Sanctum;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 
@@ -164,7 +166,19 @@ class AuthController extends Controller
 
     public function logout(Request $request)
     {
-        $request->user()->currentAccessToken()->delete();
+        $plainTextToken = $request->bearerToken();
+        if ((! is_string($plainTextToken) || $plainTextToken === '') && ApiTokenCookie::enabled()) {
+            $cookieToken = $request->cookie((string) config('security.api_token_cookie.name', 'centrix_api_token'));
+            if (is_string($cookieToken) && $cookieToken !== '') {
+                $plainTextToken = $cookieToken;
+            }
+        }
+
+        if (is_string($plainTextToken) && $plainTextToken !== '') {
+            Sanctum::personalAccessTokenModel()::findToken($plainTextToken)?->delete();
+        } elseif ($request->user() !== null) {
+            $request->user()->currentAccessToken()?->delete();
+        }
 
         return $this->respondWithAuthLogout();
     }

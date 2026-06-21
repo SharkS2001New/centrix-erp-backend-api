@@ -117,4 +117,30 @@ class WebCookieAuthTest extends TestCase
         $this->assertNotNull($cleared);
         $this->assertTrue($cleared->getExpiresTime() < time());
     }
+
+    public function test_logout_revokes_token_from_cookie_without_sanctum_auth(): void
+    {
+        $user = User::query()->where('username', 'admin')->first();
+        $this->assertNotNull($user);
+
+        $login = $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'WEB_COOKIE_GUEST_LOGOUT',
+            'login_channel' => 'backoffice',
+        ])->assertOk();
+
+        $cookie = collect($login->headers->getCookies())
+            ->first(fn ($c) => $c->getName() === 'centrix_api_token');
+        $this->assertNotNull($cookie);
+
+        $this->withCookie('centrix_api_token', $cookie->getValue())
+            ->postJson('/api/v1/auth/logout')
+            ->assertOk();
+
+        $this->withCookie('centrix_api_token', $cookie->getValue())
+            ->getJson('/api/v1/auth/me')
+            ->assertUnauthorized();
+    }
 }

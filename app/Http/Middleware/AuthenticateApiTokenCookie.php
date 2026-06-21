@@ -9,9 +9,21 @@ use Symfony\Component\HttpFoundation\Response;
 
 class AuthenticateApiTokenCookie
 {
+    /** @var list<string> */
+    protected array $cookieBypassPaths = [
+        'api/v1/auth/login',
+        'api/v1/auth/logout',
+        'api/v1/auth/forgot-password',
+        'api/v1/auth/reset-password',
+    ];
+
     public function handle(Request $request, Closure $next): Response
     {
         if (! ApiTokenCookie::enabled()) {
+            return $next($request);
+        }
+
+        if ($this->shouldBypassCookieAuth($request)) {
             return $next($request);
         }
 
@@ -23,5 +35,18 @@ class AuthenticateApiTokenCookie
         }
 
         return $next($request);
+    }
+
+    protected function shouldBypassCookieAuth(Request $request): bool
+    {
+        $path = ltrim($request->path(), '/');
+
+        foreach ($this->cookieBypassPaths as $bypassPath) {
+            if ($path === $bypassPath) {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

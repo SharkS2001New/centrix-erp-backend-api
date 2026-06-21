@@ -19,9 +19,15 @@ return [
             'http://127.0.0.1:3000',
         ]))),
 
-    'cors_supports_credentials' => env('CORS_SUPPORTS_CREDENTIALS', false),
+    'cors_supports_credentials' => filter_var(env('CORS_SUPPORTS_CREDENTIALS', env('WEB_COOKIE_AUTH', false)), FILTER_VALIDATE_BOOL),
 
     'sanctum_token_expiration_minutes' => (int) env('SANCTUM_TOKEN_EXPIRATION_MINUTES', 60 * 24),
+
+    /*
+    | Server-side idle token revocation (401 session_idle_timeout).
+    | Keep false when the web app lock screen handles inactivity locally.
+    */
+    'revoke_idle_tokens' => filter_var(env('AUTH_SERVER_IDLE_REVOKE', false), FILTER_VALIDATE_BOOL),
 
     /*
     | Reject M-Pesa payment callbacks unless the client IP is in Safaricom ranges.

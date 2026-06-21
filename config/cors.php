@@ -11,5 +11,8 @@ return [
     'allowed_headers' => ['*'],
     'exposed_headers' => [],
     'max_age' => 0,
-    'supports_credentials' => (bool) config('security.cors_supports_credentials', false),
+    'supports_credentials' => filter_var(
+        env('CORS_SUPPORTS_CREDENTIALS', env('WEB_COOKIE_AUTH', false)),
+        FILTER_VALIDATE_BOOL,
+    ),
 ];

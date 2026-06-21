@@ -67,6 +67,8 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:auth-org-preview');
     Route::post('auth/login', [AuthController::class, 'login'])
         ->middleware('throttle:auth-login');
+    Route::post('auth/logout', [AuthController::class, 'logout'])
+        ->middleware('throttle:auth-login');
     Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword'])
         ->middleware('throttle:auth-password');
     Route::post('auth/reset-password', [AuthController::class, 'resetPassword'])
@@ -81,7 +83,6 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:auth-org-preview');
 
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'throttle:api'])->group(function () {
-        Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
         Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);
