@@ -53,6 +53,14 @@ class ApiSecurityTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_root_blocks_unauthorized_public_access(): void
+    {
+        $this->getJson('/')
+            ->assertForbidden()
+            ->assertJsonPath('message', 'Unauthorized. Public access to this API is not permitted.')
+            ->assertJsonStructure(['message', 'hint', 'application']);
+    }
+
     public function test_cors_allows_configured_origin(): void
     {
         $this->options('/api/v1/health', [], [
