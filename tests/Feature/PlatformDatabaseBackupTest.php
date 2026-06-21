@@ -93,4 +93,24 @@ class PlatformDatabaseBackupTest extends TestCase
             ->assertCreated()
             ->assertJsonPath('data.filename', 'pos_erp_2026-06-20.sql.gz');
     }
+
+    public function test_backup_failure_returns_actionable_detail(): void
+    {
+        Sanctum::actingAs(User::where('username', 'superadmin')->firstOrFail());
+
+        $mock = Mockery::mock(DatabaseBackupService::class);
+        $mock->shouldReceive('runBackupCycle')
+            ->once()
+            ->andThrow(new \App\Services\Backup\DatabaseBackupException(
+                'Could not reach the database server from the API pod.',
+                'mysqldump_failed',
+            ));
+
+        $this->app->instance(DatabaseBackupService::class, $mock);
+
+        $this->postJson('/api/v1/admin/database-backups')
+            ->assertStatus(500)
+            ->assertJsonPath('code', 'mysqldump_failed')
+            ->assertJsonPath('detail', 'Could not reach the database server from the API pod.');
+    }
 }

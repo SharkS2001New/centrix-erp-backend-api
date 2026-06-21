@@ -19,6 +19,8 @@ return [
 
     'mysqldump_binary' => env('BACKUP_MYSQLDUMP_BINARY', 'mysqldump'),
 
+    'expose_error_detail' => filter_var(env('BACKUP_EXPOSE_ERROR_DETAIL', true), FILTER_VALIDATE_BOOL),
+
     'google_drive' => [
         'enabled' => filter_var(env('BACKUP_GOOGLE_DRIVE_ENABLED', false), FILTER_VALIDATE_BOOL),
         // Path to service account JSON inside the container (local dev or K8s volume mount).

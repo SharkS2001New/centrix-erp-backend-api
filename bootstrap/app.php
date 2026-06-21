@@ -57,6 +57,35 @@ return Application::configure(basePath: dirname(__DIR__))
                 return response()->json(['message' => 'Unauthenticated.'], 401);
             }
         });
+        $exceptions->renderable(function (\Throwable $e, Request $request) {
+            if (! $request->is('api/*') || ! $request->expectsJson()) {
+                return null;
+            }
+
+            if ($e instanceof AuthenticationException
+                || $e instanceof \Illuminate\Validation\ValidationException
+                || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                return null;
+            }
+
+            if (! $request->is('api/v1/admin/database-backups*')) {
+                return null;
+            }
+
+            report($e);
+
+            $detail = $e instanceof \App\Services\Backup\DatabaseBackupException
+                ? $e->getMessage()
+                : (config('app.debug') || config('backup.expose_error_detail', true) ? $e->getMessage() : null);
+
+            return response()->json(array_filter([
+                'message' => 'Database backup failed.',
+                'code' => $e instanceof \App\Services\Backup\DatabaseBackupException
+                    ? $e->codeKey
+                    : 'backup_failed',
+                'detail' => $detail,
+            ], fn ($value) => $value !== null && $value !== ''), 500);
+        });
         $exceptions->renderable(function (\InvalidArgumentException $e, Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
                 return response()->json(['message' => $e->getMessage()], 422);

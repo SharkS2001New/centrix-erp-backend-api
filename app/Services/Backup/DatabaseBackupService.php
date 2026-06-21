@@ -28,7 +28,10 @@ class DatabaseBackupService
         $config = config("database.connections.{$connection}");
 
         if (! is_array($config)) {
-            throw new \InvalidArgumentException("Unknown database connection [{$connection}].");
+            throw new DatabaseBackupException(
+                "Unknown database connection [{$connection}].",
+                'unknown_connection',
+            );
         }
 
         $driver = (string) ($config['driver'] ?? '');
@@ -40,24 +43,53 @@ class DatabaseBackupService
         $filename = sprintf('%s_%s.sql', $databaseLabel, $timestamp);
         $relativePath = $directory.'/'.$filename;
 
-        Storage::disk($disk)->makeDirectory($directory);
+        $this->assertBackupStorageReady($disk, $directory);
+
         $absolutePath = Storage::disk($disk)->path($relativePath);
 
-        match ($driver) {
-            'mysql', 'mariadb' => $this->dumpMysql($config, $absolutePath),
-            'sqlite' => $this->dumpSqlite($config, $absolutePath),
-            default => throw new \RuntimeException("Database driver [{$driver}] is not supported for backups."),
-        };
+        try {
+            match ($driver) {
+                'mysql', 'mariadb' => $this->dumpMysql($config, $absolutePath),
+                'sqlite' => $this->dumpSqlite($config, $absolutePath),
+                default => throw new DatabaseBackupException(
+                    "Database driver [{$driver}] is not supported for backups.",
+                    'unsupported_driver',
+                ),
+            };
+        } catch (DatabaseBackupException $e) {
+            throw $e;
+        } catch (ProcessFailedException $e) {
+            throw new DatabaseBackupException(
+                $this->describeProcessFailure($e),
+                'mysqldump_failed',
+                $e,
+            );
+        } catch (\Throwable $e) {
+            throw new DatabaseBackupException(
+                'Database backup failed while exporting data.',
+                'export_failed',
+                $e,
+            );
+        }
 
         $compressed = false;
         if (config('backup.compress', true)) {
-            $gzipPath = $absolutePath.'.gz';
-            $this->gzipFile($absolutePath, $gzipPath);
-            @unlink($absolutePath);
-            $relativePath .= '.gz';
-            $absolutePath = $gzipPath;
-            $filename .= '.gz';
-            $compressed = true;
+            try {
+                $gzipPath = $absolutePath.'.gz';
+                $this->gzipFile($absolutePath, $gzipPath);
+                @unlink($absolutePath);
+                $relativePath .= '.gz';
+                $absolutePath = $gzipPath;
+                $filename .= '.gz';
+                $compressed = true;
+            } catch (\Throwable $e) {
+                @unlink($absolutePath);
+                throw new DatabaseBackupException(
+                    'Database backup could not be compressed.',
+                    'compress_failed',
+                    $e,
+                );
+            }
         }
 
         $sizeBytes = (int) filesize($absolutePath);
@@ -300,6 +332,12 @@ class DatabaseBackupService
     protected function dumpMysql(array $config, string $absolutePath): void
     {
         $binary = (string) config('backup.mysqldump_binary', 'mysqldump');
+        if ($binary !== 'mysqldump' && ! is_executable($binary)) {
+            throw new DatabaseBackupException(
+                "Backup binary [{$binary}] was not found or is not executable.",
+                'mysqldump_missing',
+            );
+        }
 
         $process = new Process([
             $binary,
@@ -392,5 +430,56 @@ class DatabaseBackupService
         }
 
         return round($bytes / (1024 * 1024), 1).' MB';
+    }
+
+    protected function assertBackupStorageReady(string $disk, string $directory): void
+    {
+        try {
+            Storage::disk($disk)->makeDirectory($directory);
+        } catch (\Throwable $e) {
+            throw new DatabaseBackupException(
+                'Backup storage directory could not be created.',
+                'storage_not_writable',
+                $e,
+            );
+        }
+
+        $root = Storage::disk($disk)->path($directory);
+        if (! is_dir($root)) {
+            throw new DatabaseBackupException(
+                'Backup storage directory does not exist.',
+                'storage_missing',
+            );
+        }
+
+        if (! is_writable($root)) {
+            throw new DatabaseBackupException(
+                'Backup storage directory is not writable by the API process.',
+                'storage_not_writable',
+            );
+        }
+    }
+
+    protected function describeProcessFailure(ProcessFailedException $e): string
+    {
+        $output = trim($e->getProcess()->getErrorOutput()."\n".$e->getProcess()->getOutput());
+
+        if (str_contains($output, 'command not found') || str_contains($output, 'No such file or directory')) {
+            return 'mysqldump is not installed on the API server.';
+        }
+
+        if (str_contains($output, 'Access denied')) {
+            return 'Database rejected the backup connection. Check DB credentials and allow remote access from the API pod.';
+        }
+
+        if (str_contains($output, "Can't connect")) {
+            return 'Could not reach the database server from the API pod.';
+        }
+
+        if ($output !== '') {
+            return 'mysqldump failed: '.substr(preg_replace('/\s+/', ' ', $output), 0, 240);
+        }
+
+        return 'mysqldump failed.';
     }
 }
