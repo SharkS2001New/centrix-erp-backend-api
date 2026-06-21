@@ -138,7 +138,7 @@ Production role templates (Branch Manager, Stock Clerk, Accountant, Payroll Cler
 
 ## Production safety
 
-Production uses database **`centrix-superdb`**. Copy `.env.production.example` and set `APP_ENV=production`, `APP_DEBUG=false`, and your DB credentials.
+Production uses database **`centrix_erp`**. Copy `.env.production.example` and set `APP_ENV=production`, `APP_DEBUG=false`, and your DB credentials.
 
 Destructive database commands are **blocked when `APP_ENV=production`** unless you explicitly set `DB_ALLOW_DESTRUCTIVE_COMMANDS=true` (emergency only):
 

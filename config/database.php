@@ -13,7 +13,7 @@ $mysql = [
     'port' => $resolveDb('DB_PORT', '3306'),
     'database' => $resolveDb(
         'DB_DATABASE',
-        EnvironmentSettings::isProduction() ? 'centrix-superdb' : 'pos_erp',
+        EnvironmentSettings::isProduction() ? 'centrix_erp' : 'pos_erp',
     ),
     'username' => $resolveDb('DB_USERNAME', 'root'),
     'password' => $resolveDb('DB_PASSWORD', ''),
