@@ -37,12 +37,17 @@ RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-av
     && echo "ServerName localhost" >> /etc/apache2/apache2.conf
 
 ENV LOG_CHANNEL=stderr
+ENV REDIS_CLIENT=phpredis
+ENV CACHE_STORE=redis
+ENV SESSION_DRIVER=redis
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 COPY . /var/www/html
 WORKDIR /var/www/html
 RUN git config --global --add safe.directory /var/www/html || true
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+RUN composer install --no-dev --optimize-autoloader --no-interaction \
+    && php -m | grep -qi redis \
+    && composer show predis/predis >/dev/null
 
 COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
