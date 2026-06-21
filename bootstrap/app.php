@@ -15,7 +15,15 @@ return Application::configure(basePath: dirname(__DIR__))
         apiPrefix: 'api',
     )
     ->withMiddleware(function (Middleware $middleware) {
+        $trusted = config('security.trusted_proxies', '*');
+        if ($trusted === '*' || $trusted === '') {
+            $middleware->trustProxies(at: '*');
+        } else {
+            $middleware->trustProxies(at: array_values(array_filter(array_map('trim', explode(',', (string) $trusted)))));
+        }
+
         $middleware->statefulApi();
+        $middleware->prependToGroup('api', \App\Http\Middleware\SecurityHeaders::class);
         // Inactivity is handled by the web app lock screen — do not revoke API tokens mid-session.
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureUserIsActive::class);
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureLoginChannel::class);
@@ -37,6 +45,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.tenant' => \App\Http\Middleware\ResolveActingTenantUser::class,
             'erp.act_as_organization' => \App\Http\Middleware\ActAsOrganization::class,
             'erp.session_idle' => \App\Http\Middleware\EnsureSessionNotIdle::class,
+            'erp.mpesa_callback_ip' => \App\Http\Middleware\EnsureMpesaCallbackIp::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {

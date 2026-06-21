@@ -5,6 +5,7 @@ namespace App\Services\Erp;
 use App\Models\Organization;
 use App\Models\SystemSetting;
 use App\Services\Ai\AiSettingsResolver;
+use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\GeneralSettingsResolver;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\Mpesa\MpesaSettingsResolver;
@@ -235,6 +236,16 @@ class CapabilityGate
             'session_idle_minutes' => $this->organization
                 ? \App\Services\Auth\SecuritySettingsResolver::forGate($this)['session_idle_minutes']
                 : (int) config('erp.session_idle_minutes', 15),
+            'catalog' => $this->organization
+                ? app(ProductCatalogScopeService::class)->metadata((int) $this->organization->id)
+                : [
+                    'multi_branch' => false,
+                    'branch_count' => 0,
+                    'head_office_branch_id' => null,
+                    'head_office_branch_code' => null,
+                    'head_office_branch_name' => null,
+                    'default_branch_id' => null,
+                ],
         ];
     }
 

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Models\Product;
+use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\ErpContext;
 use App\Services\Kra\KraDeviceService;
 use Illuminate\Http\Request;
@@ -41,6 +42,7 @@ class KraProductRegistrationController extends Controller
         }
 
         $query = Product::query()->whereNull('deleted_at');
+        app(ProductCatalogScopeService::class)->scopeForUser($query, $request->user(), $request);
         if ($hasCodes) {
             $query->whereIn('product_code', $data['product_codes']);
         }

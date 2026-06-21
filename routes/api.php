@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationProvisionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
+use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\RoleController;
 use App\Http\Controllers\Api\V1\PermissionController;
@@ -53,7 +54,6 @@ use App\Http\Controllers\Api\V1\CustomerReturnController;
 use App\Http\Controllers\Api\V1\ExpenseGroupController;
 use App\Http\Controllers\Api\V1\ExpenseController;
 use App\Http\Controllers\Api\V1\KraResponseController;
-use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\SystemSettingController;
 use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
@@ -63,17 +63,24 @@ use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 
 Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
-    Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview']);
-    Route::post('auth/login', [AuthController::class, 'login']);
-    Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword']);
-    Route::post('auth/reset-password', [AuthController::class, 'resetPassword']);
+    Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview'])
+        ->middleware('throttle:auth-org-preview');
+    Route::post('auth/login', [AuthController::class, 'login'])
+        ->middleware('throttle:auth-login');
+    Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword'])
+        ->middleware('throttle:auth-password');
+    Route::post('auth/reset-password', [AuthController::class, 'resetPassword'])
+        ->middleware('throttle:auth-password');
     // Safaricom rejects callback URLs containing the word "mpesa" in the path.
-    Route::post('payments/stk/callback', [MpesaPaymentController::class, 'stkCallback']);
-    Route::post('payments/c2b/validation', [MpesaPaymentController::class, 'validationRequest']);
-    Route::post('payments/c2b/confirmation', [MpesaPaymentController::class, 'c2bConfirmation']);
-    Route::get('accounting/quickbooks/callback', [\App\Http\Controllers\Api\V1\Operations\ExternalAccountingController::class, 'quickBooksCallback']);
+    Route::middleware('erp.mpesa_callback_ip')->group(function () {
+        Route::post('payments/stk/callback', [MpesaPaymentController::class, 'stkCallback']);
+        Route::post('payments/c2b/validation', [MpesaPaymentController::class, 'validationRequest']);
+        Route::post('payments/c2b/confirmation', [MpesaPaymentController::class, 'c2bConfirmation']);
+    });
+    Route::get('accounting/quickbooks/callback', [\App\Http\Controllers\Api\V1\Operations\ExternalAccountingController::class, 'quickBooksCallback'])
+        ->middleware('throttle:auth-org-preview');
 
-    Route::middleware(['auth:sanctum', 'erp.tenant'])->group(function () {
+    Route::middleware(['auth:sanctum', 'erp.tenant', 'throttle:api'])->group(function () {
         Route::post('auth/logout', [AuthController::class, 'logout']);
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
@@ -155,8 +162,12 @@ Route::prefix('v1')->group(function () {
         Route::post('admin/database-backups', [PlatformDatabaseBackupController::class, 'store'])
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
-            ->middleware(['erp.super_admin', 'erp.org_provisioning'])
-            ->where('filename', '[A-Za-z0-9._-]+\.sql(\.gz)?');
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+
+        Route::get('admin/organizations/{organization}/cache', [PlatformOrganizationCacheController::class, 'show'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
+        Route::post('admin/organizations/{organization}/cache/clear', [PlatformOrganizationCacheController::class, 'clear'])
+            ->middleware(['erp.super_admin', 'erp.org_provisioning']);
 
         Route::prefix('admin/organizations/{organization}/settings')
             ->middleware(['erp.super_admin', 'erp.org_provisioning', 'erp.act_as_organization'])
@@ -203,14 +214,6 @@ Route::prefix('v1')->group(function () {
                 Route::apiResource('payment-methods', PaymentMethodController::class);
                 Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show']);
                 Route::apiResource('users', UserController::class);
-                Route::get('users/{user}/permissions', [UserController::class, 'permissions']);
-                Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions']);
-                Route::apiResource('routes', RouteModelController::class)->only(['index', 'show']);
-                Route::apiResource('vats', VatController::class);
-                Route::apiResource('products', ProductController::class)->only(['index', 'show']);
-                Route::apiResource('kra-responses', KraResponseController::class)->only(['index', 'show']);
-                Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);
-                Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
                 Route::apiResource('employees', EmployeeController::class)->only(['index', 'show']);
             });
 

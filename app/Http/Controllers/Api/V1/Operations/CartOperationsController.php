@@ -24,6 +24,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\OrderSourceResolver;
 use App\Services\Auth\UserMobileOrderScopeService;
+use App\Services\Catalog\ProductCatalogScopeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -593,7 +594,7 @@ class CartOperationsController extends Controller
 
     protected function addCartLine(TemporaryCart $cart, array $line, User $user, CapabilityGate $gate): CartLine
     {
-        $product = Product::with('unit')->where('product_code', $line['product_code'])->firstOrFail();
+        $product = $this->findProductForCart($cart, (string) $line['product_code']);
         $qty = (float) ($line['quantity'] ?? 1);
         $onWholesaleRetailFlag = (bool) ($line['on_wholesale_retail'] ?? 0);
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
@@ -676,7 +677,7 @@ class CartOperationsController extends Controller
         }
 
         $row = $this->findCartLineByRef($cart, $lineRef);
-        $product = Product::with('unit')->where('product_code', $row->product_code)->firstOrFail();
+        $product = $this->findProductForCart($cart, (string) $row->product_code);
 
         $qty = array_key_exists('quantity', $input) ? (float) $input['quantity'] : (float) $row->quantity;
         $onWholesaleRetailFlag = array_key_exists('on_wholesale_retail', $input)
@@ -794,5 +795,16 @@ class CartOperationsController extends Controller
         }
 
         return max(0, $amount);
+    }
+
+    protected function findProductForCart(TemporaryCart $cart, string $productCode): Product
+    {
+        $product = app(ProductCatalogScopeService::class)->findAccessibleProduct(
+            $productCode,
+            (int) $cart->organization_id,
+            (int) $cart->branch_id,
+        );
+
+        return $product->loadMissing('unit');
     }
 }

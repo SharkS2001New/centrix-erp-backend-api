@@ -24,7 +24,9 @@ RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/i
         opcache \
         calendar \
         pdo_mysql \
-        gd
+        gd \
+    && pecl install redis \
+    && docker-php-ext-enable redis
 
 ENV APACHE_DOCUMENT_ROOT=/var/www/html/public
 RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-available/*.conf \
@@ -36,8 +38,6 @@ RUN sed -ri -e 's!/var/www/html!${APACHE_DOCUMENT_ROOT}!g' /etc/apache2/sites-av
 
 ENV LOG_CHANNEL=stderr
 
-VOLUME /var/www/html
-
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 COPY . /var/www/html
 WORKDIR /var/www/html
@@ -48,7 +48,9 @@ COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-RUN chown -R www-data:www-data storage bootstrap/cache && chmod -R 775 storage bootstrap/cache
+RUN mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs bootstrap/cache \
+    && chown -R www-data:www-data storage bootstrap/cache \
+    && chmod -R 775 storage bootstrap/cache
 
 EXPOSE 8001
 

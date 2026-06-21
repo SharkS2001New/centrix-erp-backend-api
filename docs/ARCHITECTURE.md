@@ -126,10 +126,10 @@ Complete these before POS, mobile, or ERP web clients go live:
 | **Validation** | Extend Form Requests to remaining ops controllers (transfers, LPO receive, payroll, journals). |
 | **Integrations** | Replace KRA `pending` stub with real device/API; configure `system_settings` URLs and secrets per env. |
 | **Accounting** | Purchase receipts → auto journal; void/reversal entries; period close. |
-| **Observability** | Structured audit on checkout/stock; rate limits; health checks for MySQL. |
+| **Observability** | Structured audit on checkout/stock; health checks for MySQL. Rate limits, CORS lockdown, Sanctum token expiry, M-Pesa IP allowlist, and security headers are implemented — see `config/security.php`. |
 | **API contract** | Extend Postman examples / published collection when routes change (`composer postman`). |
 | **Testing** | Expand PHPUnit beyond cart/checkout (workflows, credit sales, stock-take, RBAC 403 cases). |
-| **Ops** | Backups (`erp:database-backup` + cron), migration runbook, `.env` secrets; CORS and Sanctum token rotation policy. |
+| **Ops** | Backups (`erp:database-backup` + cron), migration runbook, `.env` secrets; set `CORS_ALLOWED_ORIGINS` and `MPESA_CALLBACK_IP_CHECK` per env. |
 
 Frontends should bootstrap from `GET /api/v1/erp/capabilities` and treat module flags as authoritative (do not hard-code feature visibility).
 

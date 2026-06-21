@@ -317,6 +317,7 @@ CREATE TABLE products (
     sell_on_retail          TINYINT       DEFAULT 0,
     vat_id                  INT           NOT NULL,
     organization_id         INT           NOT NULL,
+    branch_id               INT           NULL,
     reorder_point           DECIMAL(10,2) DEFAULT 0,
     low_stock_alert_enabled BOOLEAN       DEFAULT TRUE,
     created_by              INT           NULL,
@@ -330,11 +331,13 @@ CREATE TABLE products (
     FOREIGN KEY (vat_id)          REFERENCES vats(id),
     FOREIGN KEY (supplier_id)     REFERENCES suppliers(id),
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    FOREIGN KEY (branch_id)         REFERENCES branches(id),
     FOREIGN KEY (created_by)      REFERENCES users(id),
     FOREIGN KEY (updated_by)      REFERENCES users(id),
     INDEX idx_product_code (product_code),
     INDEX idx_subcategory_id (subcategory_id),
-    INDEX idx_deleted_at   (deleted_at)
+    INDEX idx_deleted_at   (deleted_at),
+    INDEX idx_products_org_branch (organization_id, branch_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DROP TABLE IF EXISTS retail_package_settings;

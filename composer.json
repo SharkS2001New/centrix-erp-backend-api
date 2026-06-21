@@ -1,13 +1,13 @@
 {
-    "name": "centrix/centrix-erp-backend-api",
+    "name": "lovable/pos-erp-api",
     "type": "project",
     "description": "Centrix ERP API v1 backend (Laravel 11).",
     "require": {
-        "php": "^8.4",
-        "google/apiclient": "^2.0",
+        "php": "^8.2",
         "laravel/framework": "^11.0",
         "laravel/sanctum": "^4.0",
-        "laravel/tinker": "^2.9"
+        "laravel/tinker": "^2.9",
+        "predis/predis": "^2.3"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
@@ -31,6 +31,7 @@
     "scripts": {
         "postman": "php artisan postman:generate",
         "test": "php artisan test",
+        "audit": "composer audit",
         "post-autoload-dump": [
             "Illuminate\\Foundation\\ComposerScripts::postAutoloadDump",
             "@php artisan package:discover --ansi"

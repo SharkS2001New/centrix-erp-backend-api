@@ -6,7 +6,7 @@ class EnvironmentSettings
 {
     public static function isProduction(): bool
     {
-        return env('APP_ENV') === 'production';
+        return config('app.env', env('APP_ENV', 'production')) === 'production';
     }
 
     /**
