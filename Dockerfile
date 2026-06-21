@@ -6,6 +6,7 @@ RUN apt-get update && apt-get install -y \
     zip \
     curl \
     unzip \
+    default-mysql-client \
     libicu-dev \
     libbz2-dev \
     libpng-dev \
@@ -52,7 +53,7 @@ COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p resources/views storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs bootstrap/cache \
+RUN mkdir -p resources/views storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs storage/app/private/backups/database bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache resources \
     && chmod -R 775 storage bootstrap/cache
 

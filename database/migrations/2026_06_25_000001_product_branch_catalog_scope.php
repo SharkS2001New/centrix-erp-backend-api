@@ -11,14 +11,15 @@ return new class extends Migration
     {
         if (! Schema::hasColumn('products', 'branch_id')) {
             Schema::table('products', function (Blueprint $table) {
-                $table->unsignedInteger('branch_id')->nullable()->after('organization_id');
+                // Must match branches.id (signed INT) for MySQL 8 FK compatibility.
+                $table->integer('branch_id')->nullable()->after('organization_id');
             });
         } else {
-            DB::statement('ALTER TABLE products MODIFY branch_id INT UNSIGNED NULL');
+            DB::statement('ALTER TABLE products MODIFY branch_id INT NULL');
         }
 
         Schema::table('products', function (Blueprint $table) {
-            if (! $this->foreignKeyExists('products', 'products_branch_id_foreign')) {
+            if (! $this->branchIdForeignKeyExists()) {
                 $table->foreign('branch_id')->references('id')->on('branches')->nullOnDelete();
             }
             if (! $this->indexExists('products', 'products_org_branch_idx')) {
@@ -31,7 +32,7 @@ return new class extends Migration
     {
         Schema::table('products', function (Blueprint $table) {
             if (Schema::hasColumn('products', 'branch_id')) {
-                if ($this->foreignKeyExists('products', 'products_branch_id_foreign')) {
+                if ($this->branchIdForeignKeyExists()) {
                     $table->dropForeign(['branch_id']);
                 }
                 if ($this->indexExists('products', 'products_org_branch_idx')) {
@@ -42,14 +43,17 @@ return new class extends Migration
         });
     }
 
-    protected function foreignKeyExists(string $table, string $name): bool
+    protected function branchIdForeignKeyExists(): bool
     {
         $connection = Schema::getConnection();
         $database = $connection->getDatabaseName();
 
         return (bool) $connection->selectOne(
-            'SELECT CONSTRAINT_NAME FROM information_schema.TABLE_CONSTRAINTS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = ? AND CONSTRAINT_TYPE = ?',
-            [$database, $table, $name, 'FOREIGN KEY'],
+            'SELECT CONSTRAINT_NAME FROM information_schema.KEY_COLUMN_USAGE
+             WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND COLUMN_NAME = ?
+               AND REFERENCED_TABLE_NAME = ? AND REFERENCED_COLUMN_NAME = ?
+             LIMIT 1',
+            [$database, 'products', 'branch_id', 'branches', 'id'],
         );
     }
 

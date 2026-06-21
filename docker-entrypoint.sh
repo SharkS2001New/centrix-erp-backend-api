@@ -1,6 +1,7 @@
 #!/bin/sh
 set -e
 
+mkdir -p storage/app/private/backups/database
 mkdir -p resources/views
 mkdir -p storage/framework/cache/data
 mkdir -p storage/framework/sessions

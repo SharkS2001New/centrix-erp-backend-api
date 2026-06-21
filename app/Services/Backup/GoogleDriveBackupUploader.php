@@ -16,11 +16,16 @@ class GoogleDriveBackupUploader
 
     public function isConfigured(): bool
     {
+        if (! class_exists(\Google\Client::class)) {
+            return false;
+        }
+
         $credentials = trim((string) config('backup.google_drive.credentials', ''));
         $folderId = trim((string) config('backup.google_drive.folder_id', ''));
 
         return $credentials !== ''
             && is_file($credentials)
+            && is_readable($credentials)
             && $folderId !== '';
     }
 
@@ -62,6 +67,27 @@ class GoogleDriveBackupUploader
             'name' => (string) $file->getName(),
             'web_view_link' => $file->getWebViewLink(),
         ];
+    }
+
+    /** @return array{enabled: bool, configured: bool} */
+    public static function status(): array
+    {
+        try {
+            /** @var self $uploader */
+            $uploader = app(self::class);
+
+            return [
+                'enabled' => $uploader->isEnabled(),
+                'configured' => $uploader->isConfigured(),
+            ];
+        } catch (\Throwable $e) {
+            report($e);
+
+            return [
+                'enabled' => false,
+                'configured' => false,
+            ];
+        }
     }
 
     protected function driveService(): Drive

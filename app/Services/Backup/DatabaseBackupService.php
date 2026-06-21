@@ -88,22 +88,46 @@ class DatabaseBackupService
     {
         $disk = $disk ?: (string) config('backup.disk', 'local');
         $directory = trim((string) config('backup.path', 'backups/database'), '/');
+
+        try {
+            if (! Storage::disk($disk)->exists($directory)) {
+                return [];
+            }
+
+            $paths = Storage::disk($disk)->files($directory);
+        } catch (\Throwable $e) {
+            Log::warning('Could not list database backup directory', [
+                'disk' => $disk,
+                'directory' => $directory,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [];
+        }
+
         $files = [];
 
-        foreach (Storage::disk($disk)->files($directory) as $path) {
+        foreach ($paths as $path) {
             if (! $this->isBackupFilename(basename($path))) {
                 continue;
             }
 
-            $files[] = [
-                'filename' => basename($path),
-                'relative_path' => $path,
-                'size_bytes' => (int) Storage::disk($disk)->size($path),
-                'compressed' => str_ends_with($path, '.gz'),
-                'created_at' => now()->createFromTimestamp(
-                    Storage::disk($disk)->lastModified($path)
-                )->toIso8601String(),
-            ];
+            try {
+                $files[] = [
+                    'filename' => basename($path),
+                    'relative_path' => $path,
+                    'size_bytes' => (int) Storage::disk($disk)->size($path),
+                    'compressed' => str_ends_with($path, '.gz'),
+                    'created_at' => \Illuminate\Support\Carbon::createFromTimestamp(
+                        (int) Storage::disk($disk)->lastModified($path)
+                    )->toIso8601String(),
+                ];
+            } catch (\Throwable $e) {
+                Log::warning('Skipping unreadable database backup file', [
+                    'path' => $path,
+                    'error' => $e->getMessage(),
+                ]);
+            }
         }
 
         usort($files, fn (array $a, array $b) => strcmp($b['created_at'], $a['created_at']));
@@ -143,8 +167,8 @@ class DatabaseBackupService
             'filename' => $filename,
             'size_bytes' => (int) Storage::disk($disk)->size($relativePath),
             'compressed' => str_ends_with($filename, '.gz'),
-            'created_at' => now()->createFromTimestamp(
-                Storage::disk($disk)->lastModified($relativePath)
+            'created_at' => \Illuminate\Support\Carbon::createFromTimestamp(
+                (int) Storage::disk($disk)->lastModified($relativePath)
             )->toIso8601String(),
         ];
     }
