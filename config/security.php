@@ -19,37 +19,9 @@ return [
             'http://127.0.0.1:3000',
         ]))),
 
-    'cors_supports_credentials' => filter_var(
-        env('CORS_SUPPORTS_CREDENTIALS', env('WEB_COOKIE_AUTH', false)),
-        FILTER_VALIDATE_BOOL,
-    ),
-
-    /*
-    | When true, idle Sanctum tokens are revoked server-side (erp.session_idle middleware).
-    | Default false — the web app lock screen handles inactivity UX client-side.
-    */
-    'revoke_idle_tokens' => filter_var(env('AUTH_SERVER_IDLE_REVOKE', false), FILTER_VALIDATE_BOOL),
-
-    /*
-    | HttpOnly API token cookie for browser clients (backoffice/POS web).
-    | Mobile keeps Bearer tokens. Requires CORS_SUPPORTS_CREDENTIALS=true.
-    */
-    'api_token_cookie' => [
-        'enabled' => env('WEB_COOKIE_AUTH', false),
-        'name' => env('API_TOKEN_COOKIE_NAME', 'centrix_api_token'),
-        'domain' => env('API_TOKEN_COOKIE_DOMAIN'),
-        'secure' => env('API_TOKEN_COOKIE_SECURE', env('APP_ENV') === 'production'),
-        'same_site' => env('API_TOKEN_COOKIE_SAME_SITE', 'none'),
-    ],
+    'cors_supports_credentials' => env('CORS_SUPPORTS_CREDENTIALS', false),
 
     'sanctum_token_expiration_minutes' => (int) env('SANCTUM_TOKEN_EXPIRATION_MINUTES', 60 * 24),
-
-    /** Per login_channel overrides (minutes). Falls back to sanctum_token_expiration_minutes. */
-    'token_expiration_minutes_by_channel' => [
-        'backoffice' => (int) env('SANCTUM_TOKEN_EXPIRATION_BACKOFFICE', 480),
-        'pos' => (int) env('SANCTUM_TOKEN_EXPIRATION_POS', 1440),
-        'mobile' => (int) env('SANCTUM_TOKEN_EXPIRATION_MOBILE', 1440),
-    ],
 
     /*
     | Reject M-Pesa payment callbacks unless the client IP is in Safaricom ranges.
@@ -92,7 +64,7 @@ return [
             'decay_minutes' => (int) env('RATE_LIMIT_AUTH_PASSWORD_DECAY', 15),
         ],
         'auth_org_preview' => [
-            'max_attempts' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW', 10),
+            'max_attempts' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW', 20),
             'decay_minutes' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW_DECAY', 1),
         ],
         'api' => [

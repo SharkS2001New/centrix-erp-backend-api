@@ -72,10 +72,6 @@ class UserPermissionService
 
     public function hasPermission(User $user, string $permissionCode, ?CapabilityGate $gate = null): bool
     {
-        if ($user->is_super_admin) {
-            return true;
-        }
-
         if ($user->is_admin) {
             if ($gate === null) {
                 return true;

@@ -22,8 +22,8 @@ return Application::configure(basePath: dirname(__DIR__))
             $middleware->trustProxies(at: array_values(array_filter(array_map('trim', explode(',', (string) $trusted)))));
         }
 
-        // Token-based API auth (Bearer). Web clients may also send an HttpOnly cookie when enabled.
-        $middleware->prependToGroup('api', \App\Http\Middleware\AuthenticateApiTokenCookie::class);
+        // Token-based API auth (Bearer). Do not enable statefulApi() — the web/mobile
+        // clients do not use Sanctum cookie sessions or CSRF cookies.
         $middleware->prependToGroup('api', \App\Http\Middleware\SecurityHeaders::class);
         // Inactivity is handled by the web app lock screen — do not revoke API tokens mid-session.
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureUserIsActive::class);
