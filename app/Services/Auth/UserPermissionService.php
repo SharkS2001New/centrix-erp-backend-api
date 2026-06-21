@@ -4,6 +4,8 @@ namespace App\Services\Auth;
 
 use App\Models\Permission;
 use App\Models\User;
+use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\PermissionMatrixService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -68,10 +70,22 @@ class UserPermissionService
             ->all();
     }
 
-    public function hasPermission(User $user, string $permissionCode): bool
+    public function hasPermission(User $user, string $permissionCode, ?CapabilityGate $gate = null): bool
     {
         if ($user->is_admin) {
-            return true;
+            if ($gate === null) {
+                return true;
+            }
+
+            $permission = Permission::query()
+                ->where('permission_code', $permissionCode)
+                ->first();
+
+            if (! $permission) {
+                return true;
+            }
+
+            return PermissionMatrixService::isRegistryModuleEnabled((string) $permission->module, $gate);
         }
 
         if ($this->hasDirectPermission($user, $permissionCode)) {
@@ -103,13 +117,25 @@ class UserPermissionService
     }
 
     /** @return array<string, bool> Feature permission codes assigned to the user (no capability alias expansion). */
-    public function directPermissionMapForUser(User $user): array
+    public function directPermissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
         if ($user->is_admin) {
-            return Permission::query()
-                ->pluck('permission_code')
-                ->mapWithKeys(fn ($code) => [$code => true])
-                ->all();
+            $permissions = Permission::query()->get();
+            if ($gate !== null) {
+                $permissions = $permissions->filter(
+                    fn (Permission $permission) => PermissionMatrixService::isRegistryModuleEnabled(
+                        (string) $permission->module,
+                        $gate,
+                    ),
+                );
+            }
+
+            $map = [];
+            foreach ($permissions as $permission) {
+                $map[(string) $permission->permission_code] = true;
+            }
+
+            return $map;
         }
 
         $codes = Permission::query()
@@ -125,9 +151,9 @@ class UserPermissionService
     }
 
     /** @return array<string, bool> */
-    public function permissionMapForUser(User $user): array
+    public function permissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
-        return $this->expandCapabilityAliases($this->directPermissionMapForUser($user));
+        return $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
     }
 
     /** @param  array<string, bool>  $map

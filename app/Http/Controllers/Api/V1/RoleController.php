@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\Erp\ErpContext;
 use App\Services\Erp\PermissionMatrixService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -80,6 +81,15 @@ class RoleController extends BaseResourceController
             ->values()
             ->all();
 
+        $gate = app(ErpContext::class)->gateForUser($request->user());
+        $allowedIds = PermissionMatrixService::enabledPermissionIds($gate);
+        $invalid = array_diff($permissionIds, $allowedIds);
+        if ($invalid !== []) {
+            throw ValidationException::withMessages([
+                'permission_ids' => ['One or more permissions belong to modules that are not enabled for this organization.'],
+            ]);
+        }
+
         DB::transaction(function () use ($role, $permissionIds) {
             DB::table('role_permissions')->where('role_id', $role->id)->delete();
             foreach ($permissionIds as $permissionId) {
@@ -93,15 +103,19 @@ class RoleController extends BaseResourceController
         return $this->permissions($id);
     }
 
-    public function permissionMatrix()
+    public function permissionMatrix(Request $request)
     {
         PermissionMatrixService::ensure();
 
+        $gate = app(ErpContext::class)->gateForUser($request->user());
         $permissions = Permission::query()->orderBy('module')->orderBy('permission_name')->get();
+        $allowedIds = collect(PermissionMatrixService::enabledPermissionIds($gate))->flip();
 
         return response()->json([
-            'permissions' => $permissions,
-            'groups' => PermissionMatrixService::groupedForUi(),
+            'permissions' => $permissions
+                ->filter(fn (Permission $permission) => $allowedIds->has((int) $permission->id))
+                ->values(),
+            'groups' => PermissionMatrixService::groupedForUi($gate),
             'modules' => PermissionMatrixService::modules(),
             'actions' => PermissionMatrixService::actions(),
         ]);

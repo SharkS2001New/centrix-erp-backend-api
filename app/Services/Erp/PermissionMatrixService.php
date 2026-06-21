@@ -107,8 +107,45 @@ class PermissionMatrixService
         }
     }
 
+    /** @return array<string, list<string>> */
+    public static function erpModuleMap(): array
+    {
+        return config('permission_module_map', []);
+    }
+
+    public static function isRegistryModuleEnabled(string $registryModule, CapabilityGate $gate): bool
+    {
+        if ($registryModule === 'ai') {
+            return $gate->aiPlatformEnabled();
+        }
+
+        $erpKeys = self::erpModuleMap()[$registryModule] ?? [$registryModule];
+
+        foreach ($erpKeys as $key) {
+            if ($gate->enabled((string) $key)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return list<int> Permission ids whose registry module is enabled for the org. */
+    public static function enabledPermissionIds(CapabilityGate $gate): array
+    {
+        self::ensure();
+
+        return Permission::query()
+            ->get()
+            ->filter(fn (Permission $permission) => self::isRegistryModuleEnabled((string) $permission->module, $gate))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
     /** @return list<array<string, mixed>> */
-    public static function groupedForUi(): array
+    public static function groupedForUi(?CapabilityGate $gate = null): array
     {
         self::ensure();
 
@@ -116,6 +153,9 @@ class PermissionMatrixService
         $groups = [];
 
         foreach (config('permission_registry.groups', []) as $moduleKey => $groupDef) {
+            if ($gate !== null && ! self::isRegistryModuleEnabled($moduleKey, $gate)) {
+                continue;
+            }
             $features = [];
             foreach ($groupDef['features'] as $featureKey => $featureDef) {
                 $permissions = [];

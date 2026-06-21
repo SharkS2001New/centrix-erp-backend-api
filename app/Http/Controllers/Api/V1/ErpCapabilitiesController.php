@@ -57,7 +57,7 @@ class ErpCapabilitiesController extends Controller
             'access_scope' => $user?->access_scope ?? 'org',
             'branch_id' => $user?->branch_id,
             'permissions' => $user
-                ? app(UserPermissionService::class)->permissionMapForUser($user)
+                ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
                 : [],
             'allow_org_provisioning' => (bool) $user?->is_super_admin
                 && config('erp.allow_org_provisioning'),
