@@ -79,6 +79,23 @@ Walk-in customers: `customer_name_override` on `sales` only (no `customers` row)
 
 Distribution wholesale often sells from **store**; retail POS from **shop** (branch `module_settings`).
 
+## Tenant catalog scope (organization vs branch)
+
+Every organization is provisioned with a **Head Office** branch (`branch_code=HQ`). Operational data (stock, sales, carts) is always branch-aware.
+
+**Products** support optional branch catalog scope:
+
+| `branch_id` | Meaning |
+|-------------|---------|
+| `NULL` | Organization-wide — visible at every branch |
+| set | Branch-only — visible only at that branch |
+
+When an organization has **only one active branch**, the API treats the catalog as single-branch: new products are always organization-wide and scope pickers stay hidden in the UI.
+
+When **multiple branches** exist, org-wide admins can create organization-wide or branch-scoped products. Branch-limited users only see org-wide products plus their branch’s scoped products, and can only create branch-scoped products for their branch.
+
+`GET /erp/capabilities` includes `catalog.multi_branch`, `catalog.head_office_branch_id`, and related metadata for the frontend.
+
 ## Fulfillment (distribution / mobile)
 
 ` sales.fulfillment_meta` JSON — vehicle, driver, weights, loading sheet.  
