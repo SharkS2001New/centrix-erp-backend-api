@@ -62,11 +62,16 @@ class LightStoresLegacyImporter
      * @param  list<string>|null  $only
      * @return array<string, int>
      */
-    public function run(bool $dryRun = false, ?array $only = null, bool $force = false): array
+    public function run(bool $dryRun = false, ?array $only = null, bool $force = false, ?int $organizationId = null): array
     {
         $this->dryRun = $dryRun;
         $this->only = $only ?? [];
         $this->stats = [];
+
+        if ($organizationId) {
+            $org = Organization::query()->findOrFail($organizationId);
+            $this->useLegacyConnectionForOrganization($org);
+        }
 
         $this->assertLegacyDatabase();
 
@@ -90,13 +95,15 @@ class LightStoresLegacyImporter
      * Import one legacy sale into Centrix so it can be returned / credited like any other sale.
      * Safe to call repeatedly — returns the existing Centrix sale when already materialized.
      */
-    public function materializeSale(string $channel, int $legacyOrderNum): Sale
+    public function materializeSale(Organization $org, string $channel, int $legacyOrderNum): Sale
     {
         if (! in_array($channel, ['pos', 'mobile', 'debtor'], true)) {
             throw new RuntimeException('Channel must be pos, mobile, or debtor.');
         }
 
-        $this->bootContext();
+        $this->useLegacyConnectionForOrganization($org);
+        $this->assertLegacyDatabase();
+        $this->bootContext($org);
 
         $existing = $this->findMaterializedSale($channel, $legacyOrderNum);
         if ($existing) {
@@ -127,6 +134,11 @@ class LightStoresLegacyImporter
         }
 
         return $sale->load(['items.product.unit', 'customer']);
+    }
+
+    protected function useLegacyConnectionForOrganization(Organization $org): void
+    {
+        $this->legacy = app(LegacyArchiveConnectionManager::class)->configureForOrganization($org);
     }
 
     public function findMaterializedSale(string $channel, int $legacyOrderNum): ?Sale
@@ -1076,18 +1088,23 @@ class LightStoresLegacyImporter
         };
     }
 
-    protected function bootContext(): void
+    protected function bootContext(?Organization $organization = null): void
     {
         if ($this->organization && $this->branch && $this->migrationUser) {
             return;
         }
 
-        $legacyOrg = DB::connection($this->legacy)->table('org_info')->first();
-        if (! $legacyOrg) {
-            throw new RuntimeException('Legacy org_info row not found.');
+        if ($organization) {
+            $this->organization = $organization;
+        } else {
+            $legacyOrg = DB::connection($this->legacy)->table('org_info')->first();
+            if (! $legacyOrg) {
+                throw new RuntimeException('Legacy org_info row not found.');
+            }
+
+            $this->organization = Organization::query()->where('company_code', $legacyOrg->company_code)->firstOrFail();
         }
 
-        $this->organization = Organization::query()->where('company_code', $legacyOrg->company_code)->firstOrFail();
         $this->branch = Branch::query()
             ->where('organization_id', $this->organization->id)
             ->where('branch_code', 'HQ')

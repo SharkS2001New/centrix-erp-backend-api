@@ -11,6 +11,7 @@ class ImportLightStoresLegacyCommand extends Command
                             {--dry-run : Count legacy rows without writing to Centrix}
                             {--force : Allow import when the target organization already exists}
                             {--master-data : Import org, users, products, customers, and routes only (sales stay in legacy archive)}
+                            {--organization= : Centrix organization id — uses that tenant legacy-archive database settings}
                             {--only= : Comma-separated phases: foundation,catalog,customers,sales}';
 
     protected $description = 'Import LightStores master data and/or sales from LEGACY_DB_* into Centrix';
@@ -37,6 +38,7 @@ class ImportLightStoresLegacyCommand extends Command
                 dryRun: (bool) $this->option('dry-run'),
                 only: $only,
                 force: (bool) $this->option('force'),
+                organizationId: $this->option('organization') ? (int) $this->option('organization') : null,
             );
         } catch (\Throwable $e) {
             $this->error($e->getMessage());

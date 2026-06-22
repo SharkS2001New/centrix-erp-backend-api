@@ -479,5 +479,15 @@ return [
             'enable_cash_advance_deductions' => true,
             'deduct_cash_advances_on_payroll' => true,
         ],
+        'legacy_archive' => [
+            'enabled' => false,
+            'database' => null,
+            'host' => null,
+            'port' => null,
+            'username' => null,
+            'password' => null,
+            'label' => 'LightStores archive',
+            'cutover_date' => null,
+        ],
     ],
 ];

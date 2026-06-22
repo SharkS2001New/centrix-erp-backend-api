@@ -2,42 +2,31 @@
 
 namespace App\Services\Legacy;
 
+use App\Models\Organization;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
 
 class LegacyArchiveReader
 {
-    protected string $connection;
+    public function __construct(
+        protected OrganizationLegacyArchiveService $settings,
+        protected LegacyArchiveConnectionManager $connections,
+    ) {}
 
-    public function __construct()
+    public function isEnabled(Organization $org): bool
     {
-        $this->connection = (string) config('legacy_archive.connection', 'legacy');
+        return $this->settings->isEnabled($org);
     }
 
-    public function isEnabled(): bool
+    public function isAvailable(Organization $org): bool
     {
-        return (bool) config('legacy_archive.enabled', false);
+        return $this->connections->isReachable($org);
     }
 
-    public function isAvailable(): bool
+    public function cutoverDate(Organization $org): ?Carbon
     {
-        if (! $this->isEnabled()) {
-            return false;
-        }
-
-        try {
-            DB::connection($this->connection)->select('SELECT 1');
-
-            return DB::connection($this->connection)->getSchemaBuilder()->hasTable('org_info');
-        } catch (\Throwable) {
-            return false;
-        }
-    }
-
-    public function cutoverDate(): ?Carbon
-    {
-        $value = config('legacy_archive.cutover_date');
+        $value = $this->settings->forOrganization($org)['cutover_date'] ?? null;
 
         return $value ? Carbon::parse($value)->startOfDay() : null;
     }
@@ -45,28 +34,33 @@ class LegacyArchiveReader
     /**
      * @return array<string, mixed>
      */
-    public function status(): array
+    public function status(Organization $org): array
     {
-        $available = $this->isAvailable();
+        $configured = $this->settings->isConfigured($org);
+        $available = $configured && $this->isAvailable($org);
+        $config = $this->settings->maskForClient($this->settings->forOrganization($org));
 
         return [
-            'enabled' => $this->isEnabled(),
+            'organization_id' => $org->id,
+            'enabled' => (bool) $config['enabled'],
+            'configured' => $configured,
             'available' => $available,
-            'label' => (string) config('legacy_archive.label', 'LightStores archive'),
-            'database' => config('database.connections.'.$this->connection.'.database'),
-            'cutover_date' => $this->cutoverDate()?->toDateString(),
-    'read_only' => true,
-    'materialize_on_demand' => true,
-    'counts' => $available ? $this->tableCounts() : null,
+            'label' => $config['label'],
+            'database' => $config['database'],
+            'host' => $config['host'],
+            'cutover_date' => $config['cutover_date'] ?: null,
+            'read_only' => true,
+            'materialize_on_demand' => true,
+            'counts' => $available ? $this->tableCounts($org) : null,
         ];
     }
 
     /**
      * @return array<string, int>
      */
-    protected function tableCounts(): array
+    protected function tableCounts(Organization $org): array
     {
-        $legacy = DB::connection($this->connection);
+        $legacy = DB::connection($this->connection($org));
 
         return [
             'products' => (int) $legacy->table('product')->count(),
@@ -80,11 +74,11 @@ class LegacyArchiveReader
     /**
      * @return array{transactions: int, order_total: float, total_vat: float, by_channel: array<string, array{transactions: int, order_total: float}>}
      */
-    public function salesSummary(?Carbon $from = null, ?Carbon $to = null): array
+    public function salesSummary(Organization $org, ?Carbon $from = null, ?Carbon $to = null): array
     {
-        $this->assertAvailable();
+        $this->assertAvailable($org);
 
-        $legacy = DB::connection($this->connection);
+        $legacy = DB::connection($this->connection($org));
 
         $pos = $legacy->table('sale_masters');
         $this->applyDateFilter($pos, 'create_time', $from, $to);
@@ -132,9 +126,9 @@ class LegacyArchiveReader
      * @param  array{channel?: string|null, from_date?: string|null, to_date?: string|null, q?: string|null, page?: int, per_page?: int}  $filters
      * @return array{data: list<array<string, mixed>>, meta: array<string, mixed>}
      */
-    public function listSales(array $filters = [], ?int $organizationId = null): array
+    public function listSales(Organization $org, array $filters = []): array
     {
-        $this->assertAvailable();
+        $this->assertAvailable($org);
 
         $channel = $filters['channel'] ?? null;
         $from = isset($filters['from_date']) ? Carbon::parse($filters['from_date'])->startOfDay() : null;
@@ -147,17 +141,18 @@ class LegacyArchiveReader
             throw new RuntimeException('Specify channel=pos, mobile, or debtor when listing legacy archive sales.');
         }
 
+        $connection = $this->connection($org);
         $query = match ($channel) {
-            'pos' => $this->posSalesQuery($from, $to, $q),
-            'mobile' => $this->mobileSalesQuery($from, $to, $q),
-            'debtor' => $this->debtorSalesQuery($from, $to, $q),
+            'pos' => $this->posSalesQuery($connection, $from, $to, $q),
+            'mobile' => $this->mobileSalesQuery($connection, $from, $to, $q),
+            'debtor' => $this->debtorSalesQuery($connection, $from, $to, $q),
         };
 
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);
 
         return [
             'data' => collect($paginator->items())
-                ->map(fn ($row) => $this->presentSaleRow($channel, $row, $organizationId))
+                ->map(fn ($row) => $this->presentSaleRow($org, $channel, $row))
                 ->values()
                 ->all(),
             'meta' => [
@@ -174,13 +169,13 @@ class LegacyArchiveReader
     /**
      * @return array{archive: array<string, mixed>, combined: array<string, mixed>}|null
      */
-    public function mergeSummaryForReports(array $liveSummary, ?Carbon $from, ?Carbon $to): ?array
+    public function mergeSummaryForReports(Organization $org, array $liveSummary, ?Carbon $from, ?Carbon $to): ?array
     {
-        if (! $this->shouldMergeForRange($from, $to)) {
+        if (! $this->shouldMergeForRange($org, $from, $to)) {
             return null;
         }
 
-        $archive = $this->salesSummary($from, $to);
+        $archive = $this->salesSummary($org, $from, $to);
 
         return [
             'archive' => $archive,
@@ -192,13 +187,13 @@ class LegacyArchiveReader
         ];
     }
 
-    public function shouldMergeForRange(?Carbon $from, ?Carbon $to): bool
+    public function shouldMergeForRange(Organization $org, ?Carbon $from, ?Carbon $to): bool
     {
-        if (! $this->isAvailable()) {
+        if (! $this->isAvailable($org)) {
             return false;
         }
 
-        $cutover = $this->cutoverDate();
+        $cutover = $this->cutoverDate($org);
         if (! $cutover) {
             return true;
         }
@@ -214,10 +209,15 @@ class LegacyArchiveReader
         return true;
     }
 
-    protected function assertAvailable(): void
+    public function connection(Organization $org): string
     {
-        if (! $this->isAvailable()) {
-            throw new RuntimeException('Legacy archive is not enabled or the LightStores database is not reachable.');
+        return $this->connections->configureForOrganization($org);
+    }
+
+    protected function assertAvailable(Organization $org): void
+    {
+        if (! $this->isAvailable($org)) {
+            throw new RuntimeException('Legacy archive is not enabled or the LightStores database is not reachable for this organization.');
         }
     }
 
@@ -231,9 +231,9 @@ class LegacyArchiveReader
         }
     }
 
-    protected function posSalesQuery(?Carbon $from, ?Carbon $to, string $q)
+    protected function posSalesQuery(string $connection, ?Carbon $from, ?Carbon $to, string $q)
     {
-        $query = DB::connection($this->connection)
+        $query = DB::connection($connection)
             ->table('sale_masters as sm')
             ->leftJoin('sale_customers as sc', 'sc.order_no', '=', 'sm.order_num')
             ->selectRaw('sm.*, sc.customer_name as walk_in_name');
@@ -250,9 +250,9 @@ class LegacyArchiveReader
         return $query->orderByDesc('sm.create_time')->orderByDesc('sm.order_num');
     }
 
-    protected function mobileSalesQuery(?Carbon $from, ?Carbon $to, string $q)
+    protected function mobileSalesQuery(string $connection, ?Carbon $from, ?Carbon $to, string $q)
     {
-        $query = DB::connection($this->connection)
+        $query = DB::connection($connection)
             ->table('route_master as rm')
             ->leftJoin('customer as c', 'c.customer_num', '=', 'rm.customer_num')
             ->whereNull('rm.DLT_ON')
@@ -270,9 +270,9 @@ class LegacyArchiveReader
         return $query->orderByDesc('rm.create_time')->orderByDesc('rm.order_num');
     }
 
-    protected function debtorSalesQuery(?Carbon $from, ?Carbon $to, string $q)
+    protected function debtorSalesQuery(string $connection, ?Carbon $from, ?Carbon $to, string $q)
     {
-        $query = DB::connection($this->connection)
+        $query = DB::connection($connection)
             ->table('debtor_masters as dm')
             ->leftJoin('customer as c', 'c.customer_num', '=', 'dm.customer_num')
             ->whereNull('dm.dlt_on')
@@ -293,7 +293,7 @@ class LegacyArchiveReader
     /**
      * @return array<string, mixed>
      */
-    protected function presentSaleRow(string $channel, object $row, ?int $organizationId = null): array
+    protected function presentSaleRow(Organization $org, string $channel, object $row): array
     {
         $legacyOrderNum = (int) ($row->order_num ?? 0);
         $labelPrefix = match ($channel) {
@@ -302,7 +302,7 @@ class LegacyArchiveReader
             default => 'R',
         };
 
-        $materializedSaleId = $this->materializedSaleId($channel, $legacyOrderNum, $organizationId);
+        $materializedSaleId = $this->materializedSaleId($org, $channel, $legacyOrderNum);
 
         $base = [
             'archive_source' => 'lightstores',
@@ -350,7 +350,7 @@ class LegacyArchiveReader
         };
     }
 
-    protected function materializedSaleId(string $channel, int $legacyOrderNum, ?int $organizationId): ?int
+    protected function materializedSaleId(Organization $org, string $channel, int $legacyOrderNum): ?int
     {
         $legacySource = match ($channel) {
             'mobile' => 'route_master',
@@ -358,16 +358,12 @@ class LegacyArchiveReader
             default => 'sale_masters',
         };
 
-        $query = DB::table('sales')
+        $id = DB::table('sales')
+            ->where('organization_id', $org->id)
             ->where('fulfillment_meta->legacy_import', true)
             ->where('fulfillment_meta->legacy_order_num', $legacyOrderNum)
-            ->where('fulfillment_meta->legacy_source', $legacySource);
-
-        if ($organizationId) {
-            $query->where('organization_id', $organizationId);
-        }
-
-        $id = $query->value('id');
+            ->where('fulfillment_meta->legacy_source', $legacySource)
+            ->value('id');
 
         return $id ? (int) $id : null;
     }

@@ -3,11 +3,13 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\Organization;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\WorkspaceResolver;
 use App\Services\Legacy\LegacyArchiveReader;
+use App\Services\Legacy\OrganizationLegacyArchiveService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 
@@ -85,10 +87,18 @@ class ErpCapabilitiesController extends Controller
         $payload['platform_ai_enabled'] = $gate->aiPlatformEnabled();
 
         $archive = app(LegacyArchiveReader::class);
-        $payload['legacy_archive_enabled'] = $archive->isEnabled();
-        $payload['legacy_archive_available'] = $archive->isAvailable();
-        $payload['legacy_archive_cutover_date'] = $archive->cutoverDate()?->toDateString();
-        $payload['legacy_archive_label'] = (string) config('legacy_archive.label', 'LightStores archive');
+        $org = $user?->organization_id ? Organization::query()->find($user->organization_id) : null;
+        if ($org) {
+            $payload['legacy_archive_enabled'] = $archive->isEnabled($org);
+            $payload['legacy_archive_available'] = $archive->isAvailable($org);
+            $payload['legacy_archive_cutover_date'] = $archive->cutoverDate($org)?->toDateString();
+            $payload['legacy_archive_label'] = app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive';
+        } else {
+            $payload['legacy_archive_enabled'] = false;
+            $payload['legacy_archive_available'] = false;
+            $payload['legacy_archive_cutover_date'] = null;
+            $payload['legacy_archive_label'] = null;
+        }
 
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
             $payload['module_settings'] = $gate->maskPlatformDisabledModuleSettings($payload['module_settings']);

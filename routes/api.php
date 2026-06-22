@@ -198,6 +198,8 @@ Route::prefix('v1')->group(function () {
                 Route::patch('procurement', [ErpSettingsController::class, 'updateProcurement']);
                 Route::get('security', [ErpSettingsController::class, 'security']);
                 Route::patch('security', [ErpSettingsController::class, 'updateSecurity']);
+                Route::get('legacy-archive', [ErpSettingsController::class, 'legacyArchive']);
+                Route::patch('legacy-archive', [ErpSettingsController::class, 'updateLegacyArchive']);
                 Route::get('hr', [ErpSettingsController::class, 'hr']);
                 Route::patch('hr', [ErpSettingsController::class, 'updateHr']);
             });

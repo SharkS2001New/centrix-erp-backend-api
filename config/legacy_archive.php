@@ -4,22 +4,19 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | LightStores legacy archive (read-only sales)
+    | LightStores legacy archive
     |--------------------------------------------------------------------------
     |
-    | Master data (products, customers, routes, users) should live in Centrix
-    | after legacy:import-lightstores --master-data. This archive connection is
-    | for historical sales only — browse, report, or materialize on demand.
-    | Restore LightStoresDBBackup.sql into LEGACY_DB_DATABASE first.
+    | Per-organization settings live in organizations.module_settings.legacy_archive
+    | (super admin: PATCH /admin/organizations/{id}/settings/legacy-archive).
+    |
+    | Master data (products, customers, routes) belongs in Centrix. Each tenant may
+    | attach their own restored LightStores MySQL database for historical sales.
+    |
+    | database.connections.legacy supplies shared host/credentials defaults when an
+    | organization does not override host, port, username, or password.
     |
     */
-    'enabled' => filter_var(env('LEGACY_ARCHIVE_ENABLED', false), FILTER_VALIDATE_BOOL),
-
     'connection' => env('LEGACY_ARCHIVE_CONNECTION', 'legacy'),
-
-    /** Sales on or before this date are treated as archive-era when merging reports. */
-    'cutover_date' => env('LEGACY_ARCHIVE_CUTOVER_DATE'),
-
-    'label' => env('LEGACY_ARCHIVE_LABEL', 'LightStores archive'),
 
 ];

@@ -12,6 +12,8 @@ use App\Services\OrganizationPlatformConfigService;
 use App\Services\Accounting\QuickBooksSettingsResolver;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\Notifications\NotificationSettingsResolver;
+use App\Services\Legacy\LegacyArchiveReader;
+use App\Services\Legacy\OrganizationLegacyArchiveService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -811,6 +813,41 @@ class ErpSettingsController extends Controller
 
         return response()->json([
             'security' => \App\Services\Auth\SecuritySettingsResolver::forOrganization($org->fresh()),
+        ]);
+    }
+
+    public function legacyArchive(Request $request, OrganizationLegacyArchiveService $legacySettings, LegacyArchiveReader $archive)
+    {
+        $org = $this->erp->resolveOrganization($request);
+        $settings = $legacySettings->maskForClient($legacySettings->forOrganization($org));
+
+        return response()->json([
+            'legacy_archive' => $settings,
+            'legacy_archive_status' => $archive->status($org),
+        ]);
+    }
+
+    public function updateLegacyArchive(Request $request, OrganizationLegacyArchiveService $legacySettings, LegacyArchiveReader $archive)
+    {
+        $org = $this->erp->resolveOrganization($request);
+
+        $data = $request->validate([
+            'enabled' => 'sometimes|boolean',
+            'database' => 'sometimes|nullable|string|max:120',
+            'host' => 'sometimes|nullable|string|max:200',
+            'port' => 'sometimes|nullable|integer|min:1|max:65535',
+            'username' => 'sometimes|nullable|string|max:120',
+            'password' => 'sometimes|nullable|string|max:250',
+            'label' => 'sometimes|nullable|string|max:120',
+            'cutover_date' => 'sometimes|nullable|date',
+        ]);
+
+        $org = $legacySettings->updateOrganization($org, $data);
+        $settings = $legacySettings->maskForClient($legacySettings->forOrganization($org));
+
+        return response()->json([
+            'legacy_archive' => $settings,
+            'legacy_archive_status' => $archive->status($org),
         ]);
     }
 

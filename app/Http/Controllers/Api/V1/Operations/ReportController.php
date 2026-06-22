@@ -6,11 +6,14 @@ use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Services\Auth\UserAccessService;
 use App\Services\Legacy\LegacyArchiveReader;
+use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class ReportController extends Controller
 {
+    public function __construct(protected ErpContext $erp) {}
+
     /** Report catalog for ERP clients (bootstrap UI). */
     public function catalog()
     {
@@ -286,16 +289,17 @@ class ReportController extends Controller
         ];
 
         if ($request->boolean('include_legacy_archive')) {
+            $org = $this->erp->resolveOrganization($request);
             $archive = app(LegacyArchiveReader::class);
-            if ($archive->isAvailable() && $archive->shouldMergeForRange($from, $to)) {
-                $merged = $archive->mergeSummaryForReports([
+            if ($archive->isAvailable($org) && $archive->shouldMergeForRange($org, $from, $to)) {
+                $merged = $archive->mergeSummaryForReports($org, [
                     'order_total' => $totalSales,
                 ], $from, $to);
 
                 if ($merged) {
                     $payload['legacy_archive'] = [
-                        'label' => (string) config('legacy_archive.label', 'LightStores archive'),
-                        'cutover_date' => $archive->cutoverDate()?->toDateString(),
+                        'label' => app(\App\Services\Legacy\OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive',
+                        'cutover_date' => $archive->cutoverDate($org)?->toDateString(),
                         'summary' => $merged['archive'],
                         'kpis' => [
                             'total_sales' => [
