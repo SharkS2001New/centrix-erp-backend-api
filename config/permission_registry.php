@@ -83,6 +83,7 @@ return [
                 'movements' => ['label' => 'Stock movements', 'actions' => ['view']],
                 'transfers' => ['label' => 'Stock transfers', 'actions' => ['view', 'create']],
                 'damages' => ['label' => 'Damages', 'actions' => ['view', 'create']],
+                'adjustments' => ['label' => 'Stock adjustments', 'actions' => ['view', 'create']],
                 'stock_take' => ['label' => 'Stock take', 'actions' => ['view', 'create', 'approve']],
             ],
         ],

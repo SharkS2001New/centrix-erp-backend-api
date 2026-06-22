@@ -6,12 +6,14 @@ use App\Models\PriceHistory;
 use App\Models\Product;
 use App\Models\SubCategory;
 use App\Services\Catalog\ProductCatalogScopeService;
+use App\Services\Inventory\BranchStockService;
 use Illuminate\Http\Request;
 
 class ProductController extends BaseResourceController
 {
     public function __construct(
         protected ProductCatalogScopeService $catalogScope,
+        protected BranchStockService $branchStock,
     ) {}
 
     protected function modelClass(): string
@@ -35,11 +37,25 @@ class ProductController extends BaseResourceController
     }
 
     /** @return array<string, mixed> */
-    protected function presentProduct(Product $product): array
-    {
-        return array_merge($product->toArray(), [
+    protected function presentProduct(
+        Product $product,
+        ?Request $request = null,
+        bool $skipBranchOverlay = false,
+    ): array {
+        $data = array_merge($product->toArray(), [
             'catalog_scope' => $this->catalogScope->catalogScopeForProduct($product),
         ]);
+
+        if ($skipBranchOverlay || ! $request) {
+            return $data;
+        }
+
+        $branchId = $this->branchStock->resolveBranchIdOptional($request->user(), $request);
+        if ($branchId !== null) {
+            $data = $this->branchStock->overlayPayload($data, $branchId);
+        }
+
+        return $data;
     }
 
     public function index(Request $request)
@@ -92,19 +108,8 @@ class ProductController extends BaseResourceController
         }
 
         if ($stockStatus = (string) $request->input('stock_status', '')) {
-            if ($stockStatus === 'out_of_stock') {
-                $query->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) <= 0');
-            } elseif ($stockStatus === 'low_stock') {
-                $query->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) > 0')
-                    ->where('reorder_point', '>', 0)
-                    ->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) <= reorder_point');
-            } elseif ($stockStatus === 'in_stock') {
-                $query->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) > 0')
-                    ->where(function ($inner) {
-                        $inner->where('reorder_point', '<=', 0)
-                            ->orWhereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) > reorder_point');
-                    });
-            }
+            $branchIdForFilter = $this->branchStock->resolveBranchIdOptional($user, $request);
+            $this->branchStock->applyStockStatusFilter($query, $stockStatus, $branchIdForFilter);
         }
 
         if ($q = trim((string) $request->input('q', ''))) {
@@ -115,8 +120,22 @@ class ProductController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
-        $paginator = $query->with('branch:id,branch_code,branch_name')->orderBy('product_name')->paginate($perPage);
-        $paginator->getCollection()->transform(fn (Product $product) => $this->presentProduct($product));
+        $paginator = $query
+            ->select('products.*')
+            ->with('branch:id,branch_code,branch_name')
+            ->orderBy('product_name')
+            ->paginate($perPage);
+
+        $branchId = $this->branchStock->resolveBranchIdOptional($user, $request);
+        $presented = $paginator->getCollection()->map(
+            fn (Product $product) => $this->presentProduct($product, $request, skipBranchOverlay: $branchId !== null),
+        );
+
+        if ($branchId !== null) {
+            $presented = $this->branchStock->overlayCollection($presented, $branchId);
+        }
+
+        $paginator->setCollection($presented);
 
         return response()->json($paginator);
     }
@@ -130,21 +149,24 @@ class ProductController extends BaseResourceController
             $this->catalogScope->scopeForUser($query, $user, $request);
         }
 
+        $branchId = $this->branchStock->resolveBranchIdOptional($user, $request);
+
         $total = (clone $query)->count();
-        $outOfStock = (clone $query)
-            ->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) <= 0')
-            ->count();
-        $lowStock = (clone $query)
-            ->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) > 0')
-            ->where('reorder_point', '>', 0)
-            ->whereRaw('(COALESCE(stock_in_shop, 0) + COALESCE(stock_in_store, 0)) <= reorder_point')
-            ->count();
+
+        $outQuery = clone $query;
+        $this->branchStock->applyStockStatusFilter($outQuery, 'out_of_stock', $branchId);
+        $outOfStock = $outQuery->count();
+
+        $lowQuery = clone $query;
+        $this->branchStock->applyStockStatusFilter($lowQuery, 'low_stock', $branchId);
+        $lowStock = $lowQuery->count();
 
         return response()->json([
             'total' => $total,
             'active' => $total,
             'low_stock' => $lowStock,
             'out_of_stock' => $outOfStock,
+            'branch_id' => $branchId,
         ]);
     }
 
@@ -169,6 +191,8 @@ class ProductController extends BaseResourceController
             $data = $this->catalogScope->normalizeWriteData($request->user(), $data);
         }
 
+        unset($data['stock_in_shop'], $data['stock_in_store']);
+
         $model = Product::create($data);
 
         $this->logPriceChange(
@@ -179,12 +203,12 @@ class ProductController extends BaseResourceController
             $request->user()
         );
 
-        return response()->json($this->presentProduct($model->load('branch:id,branch_code,branch_name')), 201);
+        return response()->json($this->presentProduct($model->load('branch:id,branch_code,branch_name'), $request), 201);
     }
 
     public function show(Request $request, string $id)
     {
-        return response()->json($this->presentProduct($this->findScopedProduct($request, $id)));
+        return response()->json($this->presentProduct($this->findScopedProduct($request, $id), $request));
     }
 
     public function update(Request $request, string $id)
@@ -207,6 +231,8 @@ class ProductController extends BaseResourceController
             }
         }
 
+        unset($data['stock_in_shop'], $data['stock_in_store']);
+
         $model->update($data);
         $model->refresh();
 
@@ -218,7 +244,7 @@ class ProductController extends BaseResourceController
             $request->user()
         );
 
-        return response()->json($this->presentProduct($model->load('branch:id,branch_code,branch_name')));
+        return response()->json($this->presentProduct($model->load('branch:id,branch_code,branch_name'), $request));
     }
 
     public function destroy(Request $request, string $id)

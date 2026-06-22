@@ -169,10 +169,41 @@ class OrganizationProvisionController extends Controller
             ->firstOrFail();
 
         $data = $request->validate([
+            'full_name' => 'sometimes|string|max:200',
+            'username' => 'sometimes|string|max:50',
+            'email' => 'sometimes|email|max:255',
             'password' => 'sometimes|string|min:6',
             'is_active' => 'sometimes|boolean',
             'must_change_password' => 'sometimes|boolean',
         ]);
+
+        if (array_key_exists('username', $data) && $data['username'] !== null) {
+            app(UsernameValidator::class)->assertUniqueInOrganization(
+                (int) $org->id,
+                (string) $data['username'],
+                ignoreUserId: (int) $model->id,
+            );
+        }
+
+        if (array_key_exists('email', $data) && $data['email'] !== null) {
+            $emailTaken = User::query()
+                ->where('organization_id', $org->id)
+                ->where('email', $data['email'])
+                ->where('id', '!=', $model->id)
+                ->whereNull('deleted_at')
+                ->exists();
+            if ($emailTaken) {
+                throw ValidationException::withMessages([
+                    'email' => ['This email is already used by another user in this organization.'],
+                ]);
+            }
+        }
+
+        foreach (['full_name', 'username', 'email'] as $field) {
+            if (array_key_exists($field, $data) && $data[$field] !== null) {
+                $model->{$field} = $data[$field];
+            }
+        }
 
         if (! empty($data['password'])) {
             PasswordPolicy::assertValid((int) $org->id, (string) $data['password']);

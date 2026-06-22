@@ -307,8 +307,8 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('price-history', PriceHistoryController::class)
                 ->middleware('erp.permission:catalogue.view');
             Route::apiResource('current-stock', CurrentStockController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
+                ->only(['index', 'show'])
+                ->middleware('erp.permission:inventory.view');
             Route::apiResource('inventory-transactions', InventoryTransactionController::class)
                 ->middleware('erp.permission:inventory.view');
             Route::apiResource('damages', DamageController::class)

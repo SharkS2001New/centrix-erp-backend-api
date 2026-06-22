@@ -40,6 +40,7 @@ return [
                 ['label' => 'Categories', 'path' => '/categories', 'permission' => 'catalogue.categories.view'],
                 ['label' => 'Current stock', 'path' => '/inventory/stock', 'module' => 'inventory', 'permission' => 'inventory.stock.view'],
                 ['label' => 'Stock receipts (GRN)', 'path' => '/inventory/receipts', 'module' => 'inventory', 'permission' => 'inventory.receipts.view'],
+                ['label' => 'Stock adjustments', 'path' => '/inventory/adjustments', 'module' => 'inventory', 'permission' => 'inventory.adjustments.view'],
                 ['label' => 'Stock take', 'path' => '/inventory/stock-take', 'module' => 'inventory', 'permission' => 'inventory.stock_take.view'],
             ],
         ],

@@ -100,8 +100,13 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('availability', [StockOperationsController::class, 'availability']);
     });
 
+    Route::middleware(['erp.module:inventory', 'erp.permission:inventory.adjustments.create|inventory.manage'])
+        ->prefix('inventory')
+        ->group(function () {
+            Route::post('adjust', [StockOperationsController::class, 'adjust']);
+        });
+
     Route::middleware(['erp.module:inventory', 'erp.permission:inventory.manage'])->prefix('inventory')->group(function () {
-        Route::post('adjust', [StockOperationsController::class, 'adjust']);
         Route::post('transfer', [StockTransferController::class, 'store']);
         Route::post('receive', [LpoReceiveController::class, 'store']);
         Route::post('returns', [ReturnOperationsController::class, 'store']);
