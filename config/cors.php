@@ -7,7 +7,11 @@ return [
         'trim',
         explode(',', (string) config('security.cors_allowed_origins', 'http://localhost:3000')),
     ))),
-    'allowed_origins_patterns' => [],
+    'allowed_origins_patterns' => [
+        // Flutter web dev server (random localhost / 127.0.0.1 ports).
+        '#^https?://localhost(:\d+)?$#',
+        '#^https?://127\.0\.0\.1(:\d+)?$#',
+    ],
     'allowed_headers' => ['*'],
     'exposed_headers' => [],
     'max_age' => 0,

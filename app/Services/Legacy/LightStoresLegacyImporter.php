@@ -12,6 +12,7 @@ use App\Models\Role;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\SubCategory;
+use App\Models\Supplier;
 use App\Models\Uom;
 use App\Models\User;
 use App\Models\Vat;
@@ -25,6 +26,19 @@ use RuntimeException;
 
 class LightStoresLegacyImporter
 {
+    /** Phases that copy master data into Centrix; legacy MySQL stays a read-only sales archive. */
+    public const MASTER_DATA_PHASES = ['foundation', 'catalog', 'customers'];
+
+    /** Centrix tables populated by --master-data (plus categories, sub_categories, routes, users). */
+    public const MASTER_DATA_ENTITIES = [
+        'vats',
+        'uoms',
+        'suppliers',
+        'products',
+        'retail_package_settings',
+        'customers',
+    ];
+
     protected string $legacy = 'legacy';
 
     protected bool $dryRun = false;
@@ -95,10 +109,45 @@ class LightStoresLegacyImporter
             $this->importCustomers();
         }
         if ($this->shouldRun('sales')) {
+            $this->assertSalesImportAllowed();
             $this->importSales();
         }
 
         return $this->stats;
+    }
+
+    protected function assertSalesImportAllowed(): void
+    {
+        if ($this->dryRun) {
+            return;
+        }
+
+        $org = $this->organization;
+        if (! $org && $this->targetOrganizationId) {
+            $org = Organization::query()->find($this->targetOrganizationId);
+        }
+
+        if (! $org) {
+            return;
+        }
+
+        if (app(OrganizationLegacyArchiveService::class)->isConfigured($org)) {
+            throw new RuntimeException(
+                'Bulk sales import into Centrix is disabled while legacy archive is enabled for this organization. '
+                .'Run with --master-data to import products, customers, VAT, UOMs, suppliers, and retail packages into Centrix. '
+                .'Historical sales remain in the legacy database and can be browsed or materialized on demand.',
+            );
+        }
+    }
+
+    public function isMasterDataRun(): bool
+    {
+        if ($this->only === []) {
+            return false;
+        }
+
+        return ! in_array('sales', $this->only, true)
+            && array_values(array_intersect($this->only, self::MASTER_DATA_PHASES)) === $this->only;
     }
 
     /**
@@ -257,7 +306,8 @@ class LightStoresLegacyImporter
         if ($this->dryRun) {
             $this->bump('organizations', 1);
             $this->bump('branches', 1);
-            $this->bump('users', 1);
+            $this->bump('users', DB::connection($this->legacy)->table('user')->whereNull('dlt_on')->count() + 1);
+            $this->bump('vats', DB::connection($this->legacy)->table('vat_status')->count());
 
             return;
         }
@@ -417,7 +467,8 @@ class LightStoresLegacyImporter
         if ($this->dryRun) {
             $this->bump('categories', DB::connection($this->legacy)->table('category')->count());
             $this->bump('sub_categories', DB::connection($this->legacy)->table('sub_category')->count());
-            $this->bump('uoms', DB::connection($this->legacy)->table('uom')->whereNull('deleted_on')->count());
+            $this->bump('uoms', DB::connection($this->legacy)->table('uom')->count());
+            $this->bump('suppliers', DB::connection($this->legacy)->table('suppliers')->count());
             $this->bump('products', $this->legacyProductQuery()->count());
             $this->bump('retail_package_settings', DB::connection($this->legacy)->table('retail_package_setting')->count());
 
@@ -458,6 +509,8 @@ class LightStoresLegacyImporter
                 $this->bump('uoms');
             }
 
+            $this->importLegacySuppliers();
+
             $defaultVatId = (int) Vat::query()->orderBy('id')->value('id');
 
             foreach ($this->legacyProductQuery()->orderBy('id')->cursor() as $row) {
@@ -475,9 +528,9 @@ class LightStoresLegacyImporter
                         'product_weight' => $row->product_weight,
                         'stock_in_shop' => 0,
                         'stock_in_store' => 0,
-                        'supplier_id' => $row->supplier_id ?: null,
+                        'supplier_id' => $this->resolveLegacySupplierId($row->supplier_id),
                         'sell_on_retail' => (bool) $row->sell_on_retail,
-                        'vat_id' => (int) ($row->vat_statusid ?: $defaultVatId),
+                        'vat_id' => $this->resolveLegacyVatId($row->vat_statusid, $defaultVatId),
                         'organization_id' => $this->organization->id,
                         'branch_id' => null,
                         'reorder_point' => 0,
@@ -512,6 +565,10 @@ class LightStoresLegacyImporter
         });
     }
 
+    /**
+     * Active catalog rows for Centrix, plus any product codes referenced on legacy sale lines
+     * (including deleted SKUs needed when materializing historical sales).
+     */
     protected function legacyProductQuery()
     {
         $referencedCodes = collect()
@@ -547,15 +604,12 @@ class LightStoresLegacyImporter
 
         DB::transaction(function () {
             foreach (DB::connection($this->legacy)->table('routes')->orderBy('id')->get() as $row) {
-                RouteModel::query()->updateOrCreate(
-                    ['id' => (int) $row->id],
-                    [
-                        'route_name' => (string) $row->route_name,
-                        'route_markup_price' => (int) ($row->route_markup_price ?? 0),
-                        'direction' => $row->direction,
-                        'is_active' => true,
-                    ],
-                );
+                $this->upsertById(RouteModel::class, (int) $row->id, [
+                    'route_name' => (string) $row->route_name,
+                    'route_markup_price' => (int) ($row->route_markup_price ?? 0),
+                    'direction' => $row->direction,
+                    'is_active' => true,
+                ]);
                 $this->bump('routes');
             }
 
@@ -1136,6 +1190,62 @@ class LightStoresLegacyImporter
             }
         }
         $this->cashierMap[0] = $this->migrationUser->id;
+    }
+
+    protected function importLegacySuppliers(): void
+    {
+        foreach (DB::connection($this->legacy)->table('suppliers')->orderBy('SPLR_ID')->get() as $row) {
+            $contacts = DB::connection($this->legacy)
+                ->table('supplier_addnl_contacts')
+                ->where('SPLR_REF', $row->SPLR_ID)
+                ->get()
+                ->map(fn ($contact) => array_filter([
+                    'label' => 'Additional',
+                    'phone' => $contact->PHONE_NO,
+                    'email' => $contact->SPLR_EMAIL,
+                ], fn ($value) => filled($value)))
+                ->filter(fn (array $contact) => $contact !== [])
+                ->values()
+                ->all();
+
+            $this->upsertById(Supplier::class, (int) $row->SPLR_ID, [
+                'supplier_code' => 'LS-'.(int) $row->SPLR_ID,
+                'supplier_name' => (string) ($row->SPLR_NAME ?: 'Supplier '.$row->SPLR_ID),
+                'contact_person' => $row->CNTCT_PRSN,
+                'email' => $row->SPLR_EMAIL,
+                'phone' => $row->SPLR_CNTCT,
+                'address' => $row->SPLR_ADDRS,
+                'town' => $row->SPLR_TOWN,
+                'additional_info' => $row->ADDNL_INFO,
+                'contacts' => $contacts !== [] ? $contacts : null,
+                'organization_id' => $this->organization->id,
+                'is_active' => (bool) ($row->ACTV_FLG ?? true),
+                'created_by' => $this->migrationUser->id,
+                'deleted_at' => $row->DLT_ON,
+                'deleted_by' => filled($row->DLT_BY) ? $this->migrationUser->id : null,
+            ]);
+            $this->bump('suppliers');
+        }
+    }
+
+    protected function resolveLegacySupplierId(mixed $legacySupplierId): ?int
+    {
+        $id = (int) $legacySupplierId;
+        if ($id <= 0) {
+            return null;
+        }
+
+        return Supplier::query()->whereKey($id)->exists() ? $id : null;
+    }
+
+    protected function resolveLegacyVatId(mixed $legacyVatId, int $defaultVatId): int
+    {
+        $id = (int) $legacyVatId;
+        if ($id > 0 && Vat::query()->whereKey($id)->exists()) {
+            return $id;
+        }
+
+        return $defaultVatId;
     }
 
     protected function bump(string $key, int $count = 1): void

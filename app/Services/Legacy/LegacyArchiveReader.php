@@ -51,24 +51,36 @@ class LegacyArchiveReader
             'cutover_date' => $config['cutover_date'] ?: null,
             'read_only' => true,
             'materialize_on_demand' => true,
-            'counts' => $available ? $this->tableCounts($org) : null,
+            'master_data_in_centrix' => true,
+            'scope' => 'sales_only',
+            'counts' => $available ? $this->salesCounts($org) : null,
         ];
     }
 
     /**
+     * Legacy archive exposes historical sales only — catalog and customers live in Centrix.
+     *
      * @return array<string, int>
      */
-    protected function tableCounts(Organization $org): array
+    protected function salesCounts(Organization $org): array
     {
         $legacy = DB::connection($this->connection($org));
 
         return [
-            'products' => (int) $legacy->table('product')->count(),
-            'customers' => (int) $legacy->table('customer')->whereNull('dlt_on')->count(),
             'sales_pos' => (int) $legacy->table('sale_masters')->count(),
             'sales_mobile' => (int) $legacy->table('route_master')->whereNull('DLT_ON')->count(),
             'sales_debtor' => (int) $legacy->table('debtor_masters')->whereNull('dlt_on')->count(),
         ];
+    }
+
+    /**
+     * @deprecated Use salesCounts() — kept for internal report merges.
+     *
+     * @return array<string, int>
+     */
+    protected function tableCounts(Organization $org): array
+    {
+        return $this->salesCounts($org);
     }
 
     /**
