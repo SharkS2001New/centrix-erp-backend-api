@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Services\Auth\UserAccessService;
+use App\Services\Legacy\LegacyArchiveReader;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -104,6 +105,7 @@ class ReportController extends Controller
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date',
             'branch_id' => 'nullable|integer',
+            'include_legacy_archive' => 'nullable|boolean',
         ]);
 
         $to = isset($data['to_date'])
@@ -253,7 +255,7 @@ class ReportController extends Controller
             'share_pct' => $channelTotal > 0 ? round(((float) $row->revenue / $channelTotal) * 100, 1) : 0,
         ])->values()->all();
 
-        return response()->json([
+        $payload = [
             'period' => [
                 'from_date' => $from->toDateString(),
                 'to_date' => $to->toDateString(),
@@ -281,7 +283,33 @@ class ReportController extends Controller
             'sales_trend' => $salesTrend,
             'top_products' => $topProducts,
             'sales_by_channel' => $salesByChannel,
-        ]);
+        ];
+
+        if ($request->boolean('include_legacy_archive')) {
+            $archive = app(LegacyArchiveReader::class);
+            if ($archive->isAvailable() && $archive->shouldMergeForRange($from, $to)) {
+                $merged = $archive->mergeSummaryForReports([
+                    'order_total' => $totalSales,
+                ], $from, $to);
+
+                if ($merged) {
+                    $payload['legacy_archive'] = [
+                        'label' => (string) config('legacy_archive.label', 'LightStores archive'),
+                        'cutover_date' => $archive->cutoverDate()?->toDateString(),
+                        'summary' => $merged['archive'],
+                        'kpis' => [
+                            'total_sales' => [
+                                'live' => $totalSales,
+                                'archive' => $merged['archive']['order_total'],
+                                'combined' => $merged['combined']['order_total'],
+                            ],
+                        ],
+                    ];
+                }
+            }
+        }
+
+        return response()->json($payload);
     }
 
     protected function pctChange(float $current, float $previous): ?float

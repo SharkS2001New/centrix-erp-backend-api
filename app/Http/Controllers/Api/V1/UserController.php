@@ -40,6 +40,7 @@ class UserController extends BaseResourceController
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile';
         $rules['assigned_route_id'] = 'nullable|integer|exists:routes,id';
+        $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         $data = $this->access()->validateAccessScope($data, (bool) ($data['is_admin'] ?? false));
         if (! array_key_exists('login_channels', $data)) {
@@ -59,7 +60,9 @@ class UserController extends BaseResourceController
         if (! empty($data['password'])) {
             PasswordPolicy::assertValid($orgId ?: null, (string) $data['password']);
             $data['password'] = Hash::make($data['password']);
-            $data['must_change_password'] = true;
+            $data['must_change_password'] = (bool) ($data['must_change_password'] ?? true);
+        } else {
+            unset($data['must_change_password']);
         }
         $model = User::create($data);
 
@@ -74,6 +77,7 @@ class UserController extends BaseResourceController
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile';
         $rules['assigned_route_id'] = 'nullable|integer|exists:routes,id';
+        $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         if (isset($data['access_scope']) || array_key_exists('branch_id', $data)) {
             $merged = array_merge($model->only(['access_scope', 'branch_id', 'is_admin']), $data);
@@ -103,8 +107,12 @@ class UserController extends BaseResourceController
         if (! empty($data['password'])) {
             PasswordPolicy::assertValid((int) $model->organization_id, (string) $data['password']);
             $data['password'] = Hash::make($data['password']);
-            $data['must_change_password'] = true;
+            $data['must_change_password'] = array_key_exists('must_change_password', $data)
+                ? (bool) $data['must_change_password']
+                : true;
             $model->tokens()->delete();
+        } else {
+            unset($data['must_change_password']);
         }
         if (array_key_exists('is_active', $data) && ! $data['is_active']) {
             app(UserAccountGuard::class)->assertCanDisableLogin($model, $request->user());

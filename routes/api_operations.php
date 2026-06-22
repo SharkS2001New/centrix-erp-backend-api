@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\V1\Operations\LpoReceiveController;
 use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
+use App\Http\Controllers\Api\V1\Operations\LegacyArchiveController;
 use App\Http\Controllers\Api\V1\Operations\HrReportController;
 use App\Http\Controllers\Api\V1\Operations\ReportBuilderController;
 use App\Http\Controllers\Api\V1\Operations\ExternalAccountingController;
@@ -235,6 +236,14 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('audit-trail', [ReportController::class, 'auditTrail']);
             Route::get('price-list', [ReportController::class, 'priceList']);
             Route::get('returns', [ReportController::class, 'returns']);
+
+            Route::prefix('legacy-archive')->group(function () {
+                Route::get('status', [LegacyArchiveController::class, 'status']);
+                Route::get('summary', [LegacyArchiveController::class, 'summary']);
+                Route::get('sales', [LegacyArchiveController::class, 'sales']);
+                Route::post('sales/materialize', [LegacyArchiveController::class, 'materialize'])
+                    ->middleware('erp.permission:sales.manage');
+            });
         });
 
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {

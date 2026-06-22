@@ -7,6 +7,7 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\WorkspaceResolver;
+use App\Services\Legacy\LegacyArchiveReader;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 
@@ -82,6 +83,12 @@ class ErpCapabilitiesController extends Controller
         $payload['platform_mpesa_stk_enabled'] = $gate->mpesaStkPlatformEnabled();
         $payload['platform_kra_integration_enabled'] = $gate->kraIntegrationPlatformEnabled();
         $payload['platform_ai_enabled'] = $gate->aiPlatformEnabled();
+
+        $archive = app(LegacyArchiveReader::class);
+        $payload['legacy_archive_enabled'] = $archive->isEnabled();
+        $payload['legacy_archive_available'] = $archive->isAvailable();
+        $payload['legacy_archive_cutover_date'] = $archive->cutoverDate()?->toDateString();
+        $payload['legacy_archive_label'] = (string) config('legacy_archive.label', 'LightStores archive');
 
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
             $payload['module_settings'] = $gate->maskPlatformDisabledModuleSettings($payload['module_settings']);
