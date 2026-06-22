@@ -10,6 +10,7 @@ use App\Models\Organization;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\SalePayment;
+use App\Models\TillFloatSession;
 use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
@@ -32,6 +33,7 @@ class PaymentOperationsController extends Controller
             'payment_method_id' => 'required|integer',
             'amount' => 'required|numeric|min:0.01',
             'reference_number' => 'nullable|string',
+            'float_session_id' => 'nullable|integer',
         ]);
         $data['received_by'] = $request->user()->id;
 
@@ -68,6 +70,7 @@ class PaymentOperationsController extends Controller
                 'payment_method_id' => $payment['payment_method_id'],
                 'amount' => $amount,
                 'reference_number' => $payment['reference_number'] ?? null,
+                'float_session_id' => $this->resolvePaymentFloatSessionId($payment, $user),
             ]);
 
             $newPaid = (float) $sale->amount_paid + $amount;
@@ -139,5 +142,24 @@ class PaymentOperationsController extends Controller
 
             return $sale;
         });
+    }
+
+    /** @param  array<string, mixed>  $payment */
+    protected function resolvePaymentFloatSessionId(array $payment, $user): ?int
+    {
+        $sessionId = isset($payment['float_session_id']) ? (int) $payment['float_session_id'] : null;
+        if (! $sessionId) {
+            return null;
+        }
+
+        $session = TillFloatSession::find($sessionId);
+        if (! $session || strtolower((string) $session->status) !== 'open') {
+            throw new InvalidArgumentException('Payments can only be linked to an open till session.');
+        }
+        if ((int) $session->cashier_id !== (int) $user->id) {
+            throw new InvalidArgumentException('Till session belongs to another cashier.');
+        }
+
+        return $sessionId;
     }
 }

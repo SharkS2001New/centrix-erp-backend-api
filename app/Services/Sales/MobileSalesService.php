@@ -307,7 +307,7 @@ class MobileSalesService
             'customer_num' => $sale->customer_num,
             'branch_id' => $sale->branch_id,
             'reason' => $data['reason'] ?? null,
-            'stock_location' => $data['stock_location'] ?? 'store',
+            'stock_location' => $data['stock_location'] ?? null,
             'auto_approve' => true,
             'lines' => $lines,
         ]);

@@ -23,6 +23,7 @@ use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\OrderSourceResolver;
+use App\Services\Sales\PosLinePricingService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use Illuminate\Http\Request;
@@ -56,6 +57,7 @@ class CartOperationsController extends Controller
     public function show(int $cartId)
     {
         $user = request()->user();
+        $this->releaseExpiredReservations($cartId);
 
         return $this->cartResponse($this->findOwnedCart($cartId, $user), $user);
     }
@@ -96,6 +98,7 @@ class CartOperationsController extends Controller
     public function addLine(AddCartLineRequest $request, int $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
+        $this->releaseExpiredReservations($cartId);
         $gate = $this->erp->gateForUser($request->user());
         $line = $this->addCartLine($cart, $request->validated(), $request->user(), $gate);
 
@@ -599,12 +602,6 @@ class CartOperationsController extends Controller
         $onWholesaleRetailFlag = (bool) ($line['on_wholesale_retail'] ?? 0);
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
         $salesSettings = $gate->moduleSettings('sales');
-        $unitPrice = (float) ($line['unit_price'] ?? 0);
-        if ($unitPrice <= 0 || empty($salesSettings['allow_edit_unit_price'])) {
-            $unitPrice = $this->lineUnitPrice($product, 1, $isRetail, $cart->route_id) / max($qty, 1);
-        }
-        $amount = round($unitPrice * $qty, 2);
-
         $discountGiven = $this->resolveLineDiscountGiven(
             $salesSettings,
             (float) ($line['discount_given'] ?? 0),
@@ -613,8 +610,18 @@ class CartOperationsController extends Controller
             $discountGiven = 0;
         }
 
+        [$unitPrice, $amount] = app(PosLinePricingService::class)->resolveLineAmounts(
+            $product,
+            $qty,
+            $isRetail,
+            $discountGiven,
+            $cart->route_id ? (int) $cart->route_id : null,
+            array_key_exists('unit_price', $line) ? (float) $line['unit_price'] : null,
+            ! empty($salesSettings['allow_edit_unit_price']),
+        );
+
         $product->loadMissing('vat');
-        $grossForVat = max(0, $amount - $discountGiven);
+        $grossForVat = max(0, $amount);
         $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
             ? max(0, (float) $line['product_vat'])
             : SalesVatCalculator::vatFromInclusiveGross(
@@ -686,13 +693,6 @@ class CartOperationsController extends Controller
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
         $salesSettings = $gate->moduleSettings('sales');
 
-        $unitPrice = array_key_exists('unit_price', $input)
-            ? (float) $input['unit_price']
-            : (float) $row->unit_price;
-        if ($unitPrice <= 0 || empty($salesSettings['allow_edit_unit_price'])) {
-            $unitPrice = $this->lineUnitPrice($product, 1, $isRetail, $cart->route_id) / max($qty, 1);
-        }
-
         $discountGiven = array_key_exists('discount_given', $input)
             ? (float) $input['discount_given']
             : (float) $row->discount_given;
@@ -700,6 +700,16 @@ class CartOperationsController extends Controller
         if (empty($salesSettings['allow_edit_line_discount'])) {
             $discountGiven = 0;
         }
+
+        [$unitPrice, $amount] = app(PosLinePricingService::class)->resolveLineAmounts(
+            $product,
+            $qty,
+            $isRetail,
+            $discountGiven,
+            $cart->route_id ? (int) $cart->route_id : null,
+            array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : null,
+            ! empty($salesSettings['allow_edit_unit_price']),
+        );
 
         $settings = $gate->moduleSettings('inventory');
         $stockAsRetail = $this->stockRouteAsRetail($product, $onWholesaleRetailFlag, $salesSettings);
@@ -720,8 +730,7 @@ class CartOperationsController extends Controller
             );
         }
 
-        $amount = round($unitPrice * $qty, 2);
-        $grossForVat = max(0, $amount - $discountGiven);
+        $grossForVat = max(0, $amount);
         $product->loadMissing('vat');
         $productVat = array_key_exists('product_vat', $input) && $input['product_vat'] !== null
             ? max(0, (float) $input['product_vat'])

@@ -11,6 +11,7 @@ class SalePayment extends Model
     public $timestamps = false;
     protected $fillable = [
         'sale_id',
+        'float_session_id',
         'payment_method_id',
         'amount',
         'reference_number',

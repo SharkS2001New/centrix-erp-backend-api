@@ -87,6 +87,7 @@ class ErpSettingsController extends Controller
             'mobile_checkout_location_radius_metres',
             'mobile_enable_field_attendance',
             'require_pos_till_float',
+            'require_backoffice_till_float',
             'blind_till_close',
             'default_submit_kra',
             'order_document_type',
@@ -320,6 +321,7 @@ class ErpSettingsController extends Controller
             'default_pos_sale_location',
             'default_distribution_sale_location',
             'reserve_stock_on_cart',
+            'cart_reservation_ttl_minutes',
         ];
 
         $stockSourceKeys = [
@@ -335,6 +337,7 @@ class ErpSettingsController extends Controller
             'default_pos_sale_location' => 'sometimes|in:shop,store',
             'default_distribution_sale_location' => 'sometimes|in:shop,store',
             'reserve_stock_on_cart' => 'sometimes|boolean',
+            'cart_reservation_ttl_minutes' => 'sometimes|integer|min:0|max:15',
             'allow_sell_from_shop' => 'sometimes|boolean',
             'allow_sell_from_store' => 'sometimes|boolean',
             'enable_retail_pricing' => 'sometimes|boolean',

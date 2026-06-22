@@ -16,4 +16,25 @@ class OrderNumberAllocatorTest extends TestCase
 
         $this->assertSame(1, $allocator->nextForOrganization(99));
     }
+
+    public function test_legacy_imported_order_numbers_are_ignored(): void
+    {
+        \DB::table('sales')->insert([
+            'order_num' => OrderNumberAllocator::LEGACY_IMPORTED_ORDER_NUM_MIN + 42,
+            'branch_id' => 1,
+            'organization_id' => 99,
+            'channel' => 'pos',
+            'payment_status' => 'paid',
+            'amount_paid' => 0,
+            'cashier_id' => 1,
+            'status' => 'completed',
+            'total_vat' => 0,
+            'order_total' => 0,
+            'stock_balanced' => 1,
+        ]);
+
+        $allocator = app(OrderNumberAllocator::class);
+
+        $this->assertSame(1, $allocator->nextForOrganization(99));
+    }
 }

@@ -4,8 +4,11 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
+use App\Models\Expense;
 use App\Models\Till;
 use App\Models\TillFloatSession;
+use App\Services\Accounting\ExpenseJournalService;
+use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\TillSessionAuthorization;
 use App\Services\Erp\TillVarianceJournal;
@@ -152,7 +155,8 @@ class TillOperationsController extends Controller
         $this->assertCashierHasNoOtherOpenSession($userId, (int) $till->id);
 
         $amount = (float) $data['working_amount'];
-        $requireFloat = FloatSessionValidator::forUser($request->user())->requirePosTillFloat();
+        $validator = FloatSessionValidator::forUser($request->user());
+        $requireFloat = $validator->tillFloatEnabled();
         if (! $requireFloat && $amount > 0) {
             throw new InvalidArgumentException('Operating float is disabled for this organization.');
         }
@@ -198,7 +202,7 @@ class TillOperationsController extends Controller
 
         $session = $this->findScopedTillSession($sessionId, $request->user());
         TillSessionAuthorization::assertSessionCashier($request->user(), $session);
-        if (! FloatSessionValidator::forUser($request->user())->requirePosTillFloat()) {
+        if (! FloatSessionValidator::forUser($request->user())->tillFloatEnabled()) {
             throw new InvalidArgumentException('Operating float is disabled for this organization.');
         }
         if ($session->status !== 'open') {
@@ -243,6 +247,48 @@ class TillOperationsController extends Controller
         $session->update(['cash_movements' => $movements]);
 
         return response()->json($session->fresh());
+    }
+
+    public function expenseGroups(Request $request)
+    {
+        $rows = DB::table('expense_groups')
+            ->select('id', 'group_name')
+            ->orderBy('group_name')
+            ->get();
+
+        return response()->json(['data' => $rows]);
+    }
+
+    public function recordSessionExpense(Request $request, int $sessionId)
+    {
+        $data = $request->validate([
+            'expense_group_id' => 'required|integer',
+            'expense_amount' => 'required|numeric|min:0.01',
+            'description' => 'nullable|string|max:200',
+            'payment_method_id' => 'required|integer',
+        ]);
+
+        $session = $this->findScopedTillSession($sessionId, $request->user());
+        TillSessionAuthorization::assertSessionCashier($request->user(), $session);
+        if ($session->status !== 'open') {
+            throw new InvalidArgumentException('Cannot record expenses on a closed session.');
+        }
+
+        $expense = Expense::create([
+            'branch_id' => $session->branch_id,
+            'expense_group_id' => $data['expense_group_id'],
+            'float_session_id' => $session->id,
+            'description' => $data['description'] ?? null,
+            'expense_amount' => $data['expense_amount'],
+            'expense_date' => now()->toDateString(),
+            'payment_method_id' => $data['payment_method_id'],
+            'recorded_by' => $request->user()->id,
+        ]);
+
+        $gate = app(ErpContext::class)->gateForUser($request->user());
+        app(ExpenseJournalService::class)->postIfEnabled($expense, $request->user(), $gate);
+
+        return response()->json($expense, 201);
     }
 
     public function closeSession(Request $request, int $sessionId)
@@ -477,13 +523,16 @@ class TillOperationsController extends Controller
 
         $gross = (float) ($salesAgg->gross ?? 0);
         $discounts = (float) ($salesAgg->discounts ?? 0);
-        $cash = (float) ($salesAgg->cash ?? 0);
+        $cashBreakdown = $this->sessionCashCollected($floatSessionId);
+        $cash = (float) ($cashBreakdown['cash'] ?? 0);
+        $debtorCollections = (float) ($cashBreakdown['debtor_collections'] ?? 0);
         $mpesa = (float) ($salesAgg->mpesa ?? 0);
         $equity = (float) ($salesAgg->equity ?? 0);
         $kcb = (float) ($salesAgg->kcb ?? 0);
         $bank = $equity + $kcb;
-        $net = max(0, $gross - $discounts - $refunds);
+        $netSales = max(0, $gross - $refunds);
         $openingFloat = (float) ($session->working_amount ?? 0);
+        $grossTillTotal = $openingFloat + $cash;
         $cashMovements = $this->normalizeCashMovements(
             is_string($session->cash_movements ?? null)
                 ? json_decode($session->cash_movements, true)
@@ -509,20 +558,66 @@ class TillOperationsController extends Controller
             'float_entries' => $floatEntries,
             'sales' => [
                 'transactions' => (int) ($salesAgg->transactions ?? 0),
-                'gross' => $gross,
-                'discounts' => $discounts,
+                'net_sales' => $netSales,
+                'net' => $netSales,
+                'order_discounts' => $discounts,
                 'refunds' => $refunds,
-                'net' => $net,
                 'cash' => $cash,
+                'debtor_collections' => $debtorCollections,
                 'mpesa' => $mpesa,
                 'bank' => $bank,
                 'equity' => $equity,
                 'kcb' => $kcb,
             ],
+            'till' => [
+                'opening_float' => $openingFloat,
+                'cash_collected' => $cash,
+                'gross_total' => $grossTillTotal,
+                'session_expenses' => $sessionExpenses,
+            ],
             'payments' => $payments,
             'expected_cash' => $expectedCash,
             'cash_movements' => $cashMovements,
             'session_expenses' => $sessionExpenses,
+        ];
+    }
+
+    /** @return array{cash: float, debtor_collections: float} */
+    protected function sessionCashCollected(int $floatSessionId): array
+    {
+        $fromPayments = (float) DB::table('sale_payments as sp')
+            ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
+            ->where('sp.float_session_id', $floatSessionId)
+            ->where('pm.method_code', 'CASH')
+            ->sum('sp.amount');
+
+        $legacyCash = (float) DB::table('sales as s')
+            ->where('s.float_session_id', $floatSessionId)
+            ->where('s.status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                    ->from('sale_payments as sp')
+                    ->whereColumn('sp.sale_id', 's.id')
+                    ->whereNotNull('sp.float_session_id');
+            })
+            ->sum('s.cash');
+
+        $cash = $fromPayments + $legacyCash;
+
+        $debtorCollections = (float) DB::table('sale_payments as sp')
+            ->join('sales as s', 's.id', '=', 'sp.sale_id')
+            ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
+            ->where('sp.float_session_id', $floatSessionId)
+            ->where('pm.method_code', 'CASH')
+            ->where(function ($query) use ($floatSessionId) {
+                $query->whereNull('s.float_session_id')
+                    ->orWhere('s.float_session_id', '!=', $floatSessionId);
+            })
+            ->sum('sp.amount');
+
+        return [
+            'cash' => $cash,
+            'debtor_collections' => $debtorCollections,
         ];
     }
 

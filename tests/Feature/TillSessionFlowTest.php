@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Organization;
+use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\Till;
@@ -197,6 +198,56 @@ class TillSessionFlowTest extends TestCase
 
         $session->refresh();
         $this->assertSame($other->id, (int) $session->cashier_id);
+    }
+
+    public function test_debtor_payment_collected_in_session_appears_on_x_report(): void
+    {
+        $session = $this->openFreshSession(5000);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+            'till_id' => $this->till->id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'payment_method_code' => 'CREDIT',
+            'is_credit_sale' => true,
+            'float_session_id' => $session->id,
+            'sales_workspace' => 'pos',
+        ]);
+
+        if ($sale->status() === 422) {
+            $this->markTestSkipped('Credit checkout not enabled for demo org.');
+        }
+
+        $saleId = $sale->assertCreated()->json('id');
+        $cashMethod = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+
+        $this->postJson("/api/v1/sales/{$saleId}/payments", [
+            'payment_method_id' => $cashMethod->id,
+            'amount' => 1500,
+            'float_session_id' => $session->id,
+        ])->assertOk();
+
+        $xReport = $this->getJson("/api/v1/pos/sessions/{$session->id}/x-report")
+            ->assertOk()
+            ->json('report');
+
+        $this->assertGreaterThanOrEqual(
+            1500,
+            (float) ($xReport['sales']['debtor_collections'] ?? 0),
+        );
+        $this->assertEqualsWithDelta(
+            6500,
+            (float) ($xReport['till']['gross_total'] ?? 0),
+            1.0,
+        );
     }
 
     public function test_till_float_session_crud_store_is_blocked(): void

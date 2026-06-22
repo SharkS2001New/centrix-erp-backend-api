@@ -17,4 +17,9 @@ class SalesVatCalculatorTest extends TestCase
     {
         $this->assertEquals(0.0, SalesVatCalculator::vatFromInclusiveGross(100, 0));
     }
+
+    public function test_vat_on_net_line_amount_not_double_discounted(): void
+    {
+        $this->assertEquals(12.41, SalesVatCalculator::vatFromInclusiveGross(90, 16));
+    }
 }

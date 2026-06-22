@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\CreditNote;
 use App\Models\CustomerReturn;
 use App\Models\CustomerReturnLine;
+use App\Models\InventoryTransaction;
 use App\Models\Organization;
 use App\Models\ReturnRecord;
 use App\Models\Sale;
@@ -60,7 +61,8 @@ class CustomerReturnService
                 'notes' => $data['notes'] ?? null,
                 'status' => 'pending',
                 'total_amount' => $total,
-                'stock_location' => $data['stock_location'] ?? 'shop',
+                'stock_location' => $data['stock_location']
+                    ?? $this->inferDefaultReturnStockLocation($saleId, $user, $lines),
                 'returned_by' => $user->id,
             ]);
 
@@ -123,7 +125,7 @@ class CustomerReturnService
         }
 
         return DB::transaction(function () use ($return, $user) {
-            $return->load('lines');
+            $return->load(['lines', 'sale.items']);
 
             if ($return->sale_id) {
                 $this->validateLinesAgainstSale(
@@ -146,7 +148,7 @@ class CustomerReturnService
                 $this->postStockLedger([
                     'branch_id' => $return->branch_id,
                     'product_code' => $line->product_code,
-                    'stock_location' => $return->stock_location,
+                    'stock_location' => $this->resolveReturnStockLocation($return, $line, $user),
                     'transaction_type' => 'RETURN',
                     'reference_type' => 'customer_return',
                     'reference_id' => $return->id,
@@ -503,7 +505,7 @@ class CustomerReturnService
 
     protected function reverseApprovedStock(CustomerReturn $return, User $user): void
     {
-        $return->load('lines');
+        $return->load(['lines', 'sale.items']);
 
         foreach ($return->lines as $line) {
             if ((float) $line->return_qty <= 0) {
@@ -513,7 +515,7 @@ class CustomerReturnService
             $this->postStockLedger([
                 'branch_id' => $return->branch_id,
                 'product_code' => $line->product_code,
-                'stock_location' => $return->stock_location,
+                'stock_location' => $this->resolveReturnStockLocation($return, $line, $user),
                 'transaction_type' => 'RETURN',
                 'reference_type' => 'customer_return_reversal',
                 'reference_id' => $return->id,
@@ -521,6 +523,106 @@ class CustomerReturnService
                 'created_by' => $user->id,
             ], true);
         }
+    }
+
+    /** Restore stock to the same location the original sale line deducted from. */
+    protected function resolveReturnStockLocation(
+        CustomerReturn $return,
+        CustomerReturnLine $line,
+        User $user,
+    ): string {
+        if ($return->sale_id) {
+            $sale = $return->relationLoaded('sale') && $return->sale
+                ? $return->sale
+                : Sale::with('items')->find($return->sale_id);
+
+            if ($sale) {
+                $sale->loadMissing('items');
+                $gate = $this->capabilityGateForUser($user);
+                if ($gate) {
+                    $inventory = $gate->moduleSettings('inventory');
+                    $sales = $gate->moduleSettings('sales');
+                    $saleItem = $line->sale_item_id
+                        ? $sale->items->firstWhere('id', (int) $line->sale_item_id)
+                        : null;
+                    $saleItem ??= $sale->items->firstWhere('product_code', $line->product_code);
+
+                    if ($saleItem) {
+                        return $this->saleLineStockLocation(
+                            (string) $sale->channel,
+                            $inventory,
+                            $sales,
+                            (bool) $saleItem->on_wholesale_retail,
+                        );
+                    }
+                }
+
+                $ledgerLocation = InventoryTransaction::query()
+                    ->where('reference_type', 'sale')
+                    ->where('reference_id', $sale->id)
+                    ->where('product_code', $line->product_code)
+                    ->where('quantity_change', '<', 0)
+                    ->value('stock_location');
+
+                if ($ledgerLocation) {
+                    return (string) $ledgerLocation;
+                }
+            }
+        }
+
+        return (string) ($return->stock_location ?? 'shop');
+    }
+
+    /** @param  list<array<string, mixed>>  $lines */
+    protected function inferDefaultReturnStockLocation(?int $saleId, User $user, array $lines): string
+    {
+        if (! $saleId || $lines === []) {
+            return 'shop';
+        }
+
+        $sale = Sale::with('items')->find($saleId);
+        if (! $sale) {
+            return 'shop';
+        }
+
+        $gate = $this->capabilityGateForUser($user);
+        if (! $gate) {
+            return 'shop';
+        }
+
+        $inventory = $gate->moduleSettings('inventory');
+        $sales = $gate->moduleSettings('sales');
+        $locations = [];
+
+        foreach ($lines as $lineData) {
+            $saleItem = ! empty($lineData['sale_item_id'])
+                ? $sale->items->firstWhere('id', (int) $lineData['sale_item_id'])
+                : null;
+            $saleItem ??= $sale->items->firstWhere(
+                'product_code',
+                (string) ($lineData['product_code'] ?? ''),
+            );
+
+            if ($saleItem) {
+                $locations[] = $this->saleLineStockLocation(
+                    (string) $sale->channel,
+                    $inventory,
+                    $sales,
+                    (bool) $saleItem->on_wholesale_retail,
+                );
+            }
+        }
+
+        $unique = array_values(array_unique($locations));
+
+        return $unique[0] ?? 'shop';
+    }
+
+    protected function capabilityGateForUser(User $user): ?CapabilityGate
+    {
+        $organization = Organization::find($user->organization_id);
+
+        return $organization ? new CapabilityGate($organization) : null;
     }
 
     protected function deleteLegacySyncRows(CustomerReturn $return): void

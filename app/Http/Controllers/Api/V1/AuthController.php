@@ -5,11 +5,13 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Concerns\RespondsWithAuthSession;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
+use App\Models\User;
 use App\Services\Auth\ApiTokenCookie;
 use App\Services\Auth\AuthSessionService;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
 use App\Services\Auth\TenantAccountResolver;
+use App\Services\Sales\UserCartCleanupService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
@@ -172,6 +174,19 @@ class AuthController extends Controller
             if (is_string($cookieToken) && $cookieToken !== '') {
                 $plainTextToken = $cookieToken;
             }
+        }
+
+        $user = $request->user();
+        if ($user === null && is_string($plainTextToken) && $plainTextToken !== '') {
+            $token = Sanctum::personalAccessTokenModel()::findToken($plainTextToken);
+            $tokenable = $token?->tokenable;
+            if ($tokenable instanceof User) {
+                $user = $tokenable;
+            }
+        }
+
+        if ($user instanceof User) {
+            app(UserCartCleanupService::class)->clearAllForUser($user);
         }
 
         if (is_string($plainTextToken) && $plainTextToken !== '') {

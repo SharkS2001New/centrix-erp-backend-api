@@ -335,6 +335,7 @@ return [
             'mobile_checkout_location_radius_metres' => 5,
             'mobile_enable_field_attendance' => false,
             'require_pos_till_float' => false,
+            'require_backoffice_till_float' => false,
             'blind_till_close' => false,
             'default_submit_kra' => true,
             'order_document_type' => 'receipt',
@@ -363,6 +364,7 @@ return [
             'default_pos_sale_location' => 'shop',
             'default_distribution_sale_location' => 'store',
             'reserve_stock_on_cart' => true,
+            'cart_reservation_ttl_minutes' => 15,
         ],
         'finance' => [
             'enable_mpesa_stk' => true,

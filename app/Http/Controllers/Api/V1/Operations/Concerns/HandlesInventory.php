@@ -34,11 +34,10 @@ trait HandlesInventory
 
     protected function stockReserved(string $productCode, int $branchId, string $location = 'shop'): float
     {
-        return (float) DB::table('stock_reservations')
+        return (float) $this->activeStockReservationQuery()
             ->where('product_code', $productCode)
             ->where('branch_id', $branchId)
             ->where('stock_location', $location)
-            ->whereNull('released_at')
             ->sum('quantity');
     }
 
@@ -229,7 +228,56 @@ trait HandlesInventory
             'cart_id' => $cartId,
             'cart_line_id' => $cartLineId,
             'reserved_by' => $userId,
+            'expires_at' => $this->reservationExpiresAt($userId),
         ]);
+    }
+
+    protected function reservationExpiresAt(int $userId): ?\Illuminate\Support\Carbon
+    {
+        $user = User::query()->find($userId);
+        if (! $user) {
+            return null;
+        }
+
+        $ttl = $this->cartReservationTtlMinutes(
+            app(\App\Services\Erp\ErpContext::class)->gateForUser($user)->moduleSettings('inventory'),
+        );
+
+        return $ttl > 0 ? now()->addMinutes($ttl) : null;
+    }
+
+    protected function cartReservationTtlMinutes(array $inventorySettings): int
+    {
+        if (array_key_exists('cart_reservation_ttl_minutes', $inventorySettings)) {
+            return min(15, max(0, (int) $inventorySettings['cart_reservation_ttl_minutes']));
+        }
+
+        return min(15, max(0, (int) config('erp.module_settings_defaults.inventory.cart_reservation_ttl_minutes', 15)));
+    }
+
+    protected function activeStockReservationQuery()
+    {
+        return DB::table('stock_reservations')
+            ->whereNull('released_at')
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            });
+    }
+
+    /** Release expired reservations so abandoned carts stop blocking stock. */
+    protected function releaseExpiredReservations(?int $cartId = null): int
+    {
+        $query = StockReservation::query()
+            ->whereNull('released_at')
+            ->whereNotNull('expires_at')
+            ->where('expires_at', '<=', now());
+
+        if ($cartId !== null) {
+            $query->where('cart_id', $cartId);
+        }
+
+        return $query->update(['released_at' => now()]);
     }
 
     protected function releaseLineReservation(int $cartLineId): void

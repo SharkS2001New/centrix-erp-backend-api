@@ -276,6 +276,7 @@ class CheckoutController extends Controller
                     if ($method) {
                         SalePayment::create([
                             'sale_id' => $sale->id,
+                            'float_session_id' => $floatSessionId,
                             'payment_method_id' => $method->id,
                             'amount' => $voucherPayment,
                             'reference_number' => $voucher->voucher_code,
@@ -305,6 +306,7 @@ class CheckoutController extends Controller
                     if ($method) {
                         SalePayment::create([
                             'sale_id' => $sale->id,
+                            'float_session_id' => $floatSessionId,
                             'payment_method_id' => $method->id,
                             'amount' => $pointsPayment,
                             'reference_number' => $card->card_number,
@@ -322,6 +324,7 @@ class CheckoutController extends Controller
                 if ($method) {
                     SalePayment::create([
                         'sale_id' => $sale->id,
+                        'float_session_id' => $floatSessionId,
                         'payment_method_id' => $method->id,
                         'amount' => $payNow,
                         'reference_number' => $input['payment_reference'] ?? null,
@@ -408,7 +411,9 @@ class CheckoutController extends Controller
             return app(OrderNumberAllocator::class)->nextForOrganization((int) $user->organization_id);
         }
 
-        return (int) (Sale::max('order_num') ?? 0) + 1;
+        return (int) (Sale::query()
+            ->where('order_num', '<', OrderNumberAllocator::LEGACY_IMPORTED_ORDER_NUM_MIN)
+            ->max('order_num') ?? 0) + 1;
     }
 
     protected function submitKraForSale(

@@ -7,3 +7,7 @@ Schedule::command('erp:database-backup')
     ->when(fn () => (bool) config('backup.enabled', true))
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/backup.log'));
+
+Schedule::command('erp:release-expired-stock-reservations')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();
