@@ -887,6 +887,8 @@ class ErpSettingsController extends Controller
             'company_premises_longitude',
             'company_premises_radius_metres',
             'company_face_match_threshold',
+            'company_fingerprint_match_threshold',
+            'company_mobile_verification_method',
         ];
 
         $rules = [
@@ -901,6 +903,8 @@ class ErpSettingsController extends Controller
             'company_premises_longitude' => 'sometimes|nullable|numeric|between:-180,180',
             'company_premises_radius_metres' => 'sometimes|numeric|min:1|max:500',
             'company_face_match_threshold' => 'sometimes|numeric|min:0.5|max:0.99',
+            'company_fingerprint_match_threshold' => 'sometimes|numeric|min:0.5|max:0.99',
+            'company_mobile_verification_method' => 'sometimes|in:face,fingerprint,face_or_fingerprint,device_biometric,face_or_device_biometric',
         ];
         foreach ($hrKeys as $key) {
             if (array_key_exists($key, $rules)) {

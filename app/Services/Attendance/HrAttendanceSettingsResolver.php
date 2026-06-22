@@ -61,11 +61,62 @@ class HrAttendanceSettingsResolver
             0.5,
             min(0.99, (float) ($out['company_face_match_threshold'] ?? 0.72)),
         );
+        $out['company_fingerprint_match_threshold'] = max(
+            0.5,
+            min(0.99, (float) ($out['company_fingerprint_match_threshold'] ?? 0.85)),
+        );
 
         $out['company_premises_latitude'] = self::nullableCoordinate($out['company_premises_latitude'] ?? null);
         $out['company_premises_longitude'] = self::nullableCoordinate($out['company_premises_longitude'] ?? null);
 
+        $verification = $out['company_mobile_verification_method'] ?? 'face_or_fingerprint';
+        $verification = match ($verification) {
+            'device_biometric' => 'fingerprint',
+            'face_or_device_biometric' => 'face_or_fingerprint',
+            default => $verification,
+        };
+        $out['company_mobile_verification_method'] = in_array($verification, [
+            'face',
+            'fingerprint',
+            'face_or_fingerprint',
+        ], true) ? $verification : 'face_or_fingerprint';
+
         return $out;
+    }
+
+    /** @return array<int, string> */
+    public static function allowedVerificationMethods(array $settings): array
+    {
+        $settings = self::normalize($settings);
+
+        return match ($settings['company_mobile_verification_method']) {
+            'face' => ['face'],
+            'fingerprint' => ['fingerprint'],
+            default => ['face', 'fingerprint'],
+        };
+    }
+
+    public static function allowsFaceVerification(array $settings): bool
+    {
+        return in_array('face', self::allowedVerificationMethods($settings), true);
+    }
+
+    public static function allowsFingerprintVerification(array $settings): bool
+    {
+        return in_array('fingerprint', self::allowedVerificationMethods($settings), true);
+    }
+
+    /** @deprecated Use allowsFingerprintVerification */
+    public static function allowsDeviceBiometricVerification(array $settings): bool
+    {
+        return self::allowsFingerprintVerification($settings);
+    }
+
+    public static function assertVerificationMethodAllowed(array $settings, string $method): void
+    {
+        if (! in_array($method, self::allowedVerificationMethods($settings), true)) {
+            throw new \InvalidArgumentException('This verification method is not enabled for your organization.');
+        }
     }
 
     /** @return array<string, mixed> */
@@ -83,6 +134,12 @@ class HrAttendanceSettingsResolver
             'face_match_threshold' => $normalized['company_face_match_threshold'],
             'premises_latitude' => $branchPremises['latitude'] ?? $normalized['company_premises_latitude'],
             'premises_longitude' => $branchPremises['longitude'] ?? $normalized['company_premises_longitude'],
+            'verification_method' => $normalized['company_mobile_verification_method'],
+            'allowed_verification_methods' => self::allowedVerificationMethods($normalized),
+            'allows_face_verification' => self::allowsFaceVerification($normalized),
+            'allows_fingerprint_verification' => self::allowsFingerprintVerification($normalized),
+            'fingerprint_match_threshold' => $normalized['company_fingerprint_match_threshold'],
+            'allows_device_biometric_verification' => self::allowsFingerprintVerification($normalized),
         ];
     }
 

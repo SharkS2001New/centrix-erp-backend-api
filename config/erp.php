@@ -483,6 +483,8 @@ return [
             'company_premises_longitude' => null,
             'company_premises_radius_metres' => 5,
             'company_face_match_threshold' => 0.72,
+            'company_fingerprint_match_threshold' => 0.85,
+            'company_mobile_verification_method' => 'face_or_fingerprint',
         ],
         'legacy_archive' => [
             'enabled' => false,

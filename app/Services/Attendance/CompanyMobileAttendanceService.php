@@ -2,6 +2,7 @@
 
 namespace App\Services\Attendance;
 
+use App\Models\EmployeeFingerprintProfile;
 use App\Models\AttendanceMobileDevice;
 use App\Models\Employee;
 use App\Models\EmployeeAttendance;
@@ -21,6 +22,7 @@ class CompanyMobileAttendanceService
     public function __construct(
         protected CompanyPremisesLocationService $premises,
         protected EmployeeFaceVerificationService $faceVerification,
+        protected EmployeeFingerprintVerificationService $fingerprintVerification,
         protected AttendanceMobileDeviceService $mobileDevices,
         protected AttendanceBranchPremisesService $branchPremises,
     ) {}
@@ -106,6 +108,9 @@ class CompanyMobileAttendanceService
             $hasFaceProfile = EmployeeFaceProfile::query()
                 ->where('employee_id', $employee->id)
                 ->exists();
+            $hasFingerprintProfile = EmployeeFingerprintProfile::query()
+                ->where('employee_id', $employee->id)
+                ->exists();
             $openSession = $this->openSessionForEmployee($employee->id);
 
             return [
@@ -114,6 +119,7 @@ class CompanyMobileAttendanceService
                 'employee_code' => $employee->employee_code,
                 'branch_id' => $employee->branch_id,
                 'face_enrolled' => $hasFaceProfile,
+                'fingerprint_enrolled' => $hasFingerprintProfile,
                 'has_open_session' => $openSession !== null,
                 'open_session_id' => $openSession?->id,
             ];
@@ -129,6 +135,9 @@ class CompanyMobileAttendanceService
         $hasFaceProfile = EmployeeFaceProfile::query()
             ->where('employee_id', $employee->id)
             ->exists();
+        $hasFingerprintProfile = EmployeeFingerprintProfile::query()
+            ->where('employee_id', $employee->id)
+            ->exists();
 
         return [
             'employee' => [
@@ -136,6 +145,7 @@ class CompanyMobileAttendanceService
                 'full_name' => $employee->full_name,
                 'employee_code' => $employee->employee_code,
                 'face_enrolled' => $hasFaceProfile,
+                'fingerprint_enrolled' => $hasFingerprintProfile,
             ],
             'session' => $openSession ? $this->serializeSession($openSession) : null,
             'next_action' => $openSession ? 'clock_out' : 'clock_in',
@@ -160,12 +170,6 @@ class CompanyMobileAttendanceService
             throw new InvalidArgumentException('Employee already has an open shift session.');
         }
 
-        $photo = $data['photo'] ?? null;
-        if (! $photo instanceof UploadedFile) {
-            throw new InvalidArgumentException('A face photo is required.');
-        }
-
-        $embedding = $this->faceVerification->parseEmbedding($data['face_embedding'] ?? null);
         $geo = $this->premises->assertWithinPremises(
             $organization,
             (int) $device->branch_id,
@@ -174,27 +178,15 @@ class CompanyMobileAttendanceService
             (float) $data['longitude'],
         );
 
-        $face = $this->faceVerification->verifyOrEnroll(
-            $employee,
-            $embedding,
-            $photo,
-            (float) $settings['company_face_match_threshold'],
-            $this->trimDeviceId($data['device_identifier'] ?? null),
-        );
+        $verification = $this->resolveVerification($settings, $employee, $data, 'clock-in');
 
         return DB::transaction(function () use (
             $employee,
             $organization,
             $data,
-            $photo,
             $geo,
-            $face,
+            $verification,
         ) {
-            $photoPath = $photo->store(
-                "company-mobile-attendance/{$organization->id}/{$employee->id}/clock-in",
-                'public',
-            );
-
             $session = EmployeeClockSession::create([
                 'employee_id' => $employee->id,
                 'organization_id' => $employee->organization_id,
@@ -205,14 +197,16 @@ class CompanyMobileAttendanceService
                 'clock_in_latitude' => (float) $data['latitude'],
                 'clock_in_longitude' => (float) $data['longitude'],
                 'clock_in_address' => $this->trimAddress($data['address'] ?? null),
-                'clock_in_photo_path' => $photoPath,
-                'clock_in_face_match_score' => $face['score'],
+                'clock_in_photo_path' => $verification['photo_path'],
+                'clock_in_face_match_score' => $verification['face_score'],
                 'clock_in_geofence_distance_metres' => $geo['distance_metres'],
+                'clock_in_verification_method' => $verification['method'],
             ]);
 
             return [
                 'session' => $session->load('employee'),
-                'face_enrolled' => (bool) $face['enrolled'],
+                'face_enrolled' => (bool) $verification['face_enrolled'],
+                'fingerprint_enrolled' => (bool) $verification['fingerprint_enrolled'],
             ];
         });
     }
@@ -230,12 +224,6 @@ class CompanyMobileAttendanceService
             throw new InvalidArgumentException('No open shift session found for this employee.');
         }
 
-        $photo = $data['photo'] ?? null;
-        if (! $photo instanceof UploadedFile) {
-            throw new InvalidArgumentException('A face photo is required.');
-        }
-
-        $embedding = $this->faceVerification->parseEmbedding($data['face_embedding'] ?? null);
         $geo = $this->premises->assertWithinPremises(
             $organization,
             (int) $device->branch_id,
@@ -244,29 +232,19 @@ class CompanyMobileAttendanceService
             (float) $data['longitude'],
         );
 
-        $face = $this->faceVerification->verifyOrEnroll(
-            $employee,
-            $embedding,
-            $photo,
-            (float) $settings['company_face_match_threshold'],
-            $this->trimDeviceId($data['device_identifier'] ?? null),
-        );
+        $verification = $this->resolveVerification($settings, $employee, $data, 'clock-out');
 
-        $photoPath = $photo->store(
-            "company-mobile-attendance/{$organization->id}/{$employee->id}/clock-out",
-            'public',
-        );
-
-        return DB::transaction(function () use ($session, $employee, $data, $photoPath, $face, $geo) {
+        return DB::transaction(function () use ($session, $employee, $data, $verification, $geo) {
             $out = now();
             $session->fill([
                 'clock_out_at' => $out,
                 'clock_out_latitude' => (float) $data['latitude'],
                 'clock_out_longitude' => (float) $data['longitude'],
                 'clock_out_address' => $this->trimAddress($data['address'] ?? null),
-                'clock_out_photo_path' => $photoPath,
-                'clock_out_face_match_score' => $face['score'],
+                'clock_out_photo_path' => $verification['photo_path'],
+                'clock_out_face_match_score' => $verification['face_score'],
                 'clock_out_geofence_distance_metres' => $geo['distance_metres'],
+                'clock_out_verification_method' => $verification['method'],
             ]);
             $session->save();
 
@@ -303,9 +281,69 @@ class CompanyMobileAttendanceService
             return [
                 'session' => $this->serializeSession($session->fresh(['employee'])),
                 'attendance' => $attendance,
-                'face_enrolled' => $face['enrolled'],
+                'face_enrolled' => (bool) $verification['face_enrolled'],
+                'fingerprint_enrolled' => (bool) $verification['fingerprint_enrolled'],
             ];
         });
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @param  array<string, mixed>  $data
+     * @return array{method: string, photo_path: ?string, face_score: ?float, face_enrolled: bool, fingerprint_enrolled: bool}
+     */
+    protected function resolveVerification(array $settings, Employee $employee, array $data, string $action): array
+    {
+        $method = (string) ($data['verification_method'] ?? 'face');
+        HrAttendanceSettingsResolver::assertVerificationMethodAllowed($settings, $method);
+
+        if ($method === 'fingerprint') {
+            $encodedTemplate = trim((string) ($data['fingerprint_template'] ?? ''));
+            $templateVector = $this->fingerprintVerification->parseTemplate($encodedTemplate);
+            $fingerprint = $this->fingerprintVerification->verifyOrEnroll(
+                $employee,
+                $templateVector,
+                $encodedTemplate,
+                (float) $settings['company_fingerprint_match_threshold'],
+                $this->trimDeviceId($data['device_identifier'] ?? null),
+                isset($data['scanner_model']) ? (string) $data['scanner_model'] : null,
+            );
+
+            return [
+                'method' => 'fingerprint',
+                'photo_path' => null,
+                'face_score' => $fingerprint['score'],
+                'face_enrolled' => false,
+                'fingerprint_enrolled' => (bool) $fingerprint['enrolled'],
+            ];
+        }
+
+        $photo = $data['photo'] ?? null;
+        if (! $photo instanceof UploadedFile) {
+            throw new InvalidArgumentException('A face photo is required.');
+        }
+
+        $embedding = $this->faceVerification->parseEmbedding($data['face_embedding'] ?? null);
+        $face = $this->faceVerification->verifyOrEnroll(
+            $employee,
+            $embedding,
+            $photo,
+            (float) $settings['company_face_match_threshold'],
+            $this->trimDeviceId($data['device_identifier'] ?? null),
+        );
+
+        $photoPath = $photo->store(
+            "company-mobile-attendance/{$employee->organization_id}/{$employee->id}/{$action}",
+            'public',
+        );
+
+        return [
+            'method' => 'face',
+            'photo_path' => $photoPath,
+            'face_score' => $face['score'],
+            'face_enrolled' => (bool) $face['enrolled'],
+            'fingerprint_enrolled' => false,
+        ];
     }
 
     /** @param  array<string, mixed>  $filters */

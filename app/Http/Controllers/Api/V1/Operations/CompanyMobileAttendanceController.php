@@ -125,8 +125,11 @@ class CompanyMobileAttendanceController extends Controller
             'company_code' => 'required|string|max:45',
             'device_identifier' => 'required|string|max:120',
             'employee_id' => 'required|integer',
-            'photo' => 'required|image|max:10240',
-            'face_embedding' => 'required|string',
+            'verification_method' => 'required|in:face,fingerprint',
+            'photo' => 'nullable|required_if:verification_method,face|image|max:10240',
+            'face_embedding' => 'nullable|required_if:verification_method,face|string',
+            'fingerprint_template' => 'nullable|required_if:verification_method,fingerprint|string|max:20000',
+            'scanner_model' => 'nullable|string|max:120',
             'latitude' => 'required|numeric|between:-90,90',
             'longitude' => 'required|numeric|between:-180,180',
             'address' => 'nullable|string|max:500',
@@ -139,11 +142,17 @@ class CompanyMobileAttendanceController extends Controller
             return response()->json(['message' => $exception->getMessage()], 422);
         }
 
+        $message = match (true) {
+            ($result['face_enrolled'] ?? false) => 'Face enrolled and shift started successfully.',
+            ($result['fingerprint_enrolled'] ?? false) => 'Fingerprint enrolled and shift started successfully.',
+            ($data['verification_method'] ?? '') === 'fingerprint' => 'Shift started successfully.',
+            default => 'Shift started successfully.',
+        };
+
         return response()->json([
-            'message' => ($result['face_enrolled'] ?? false)
-                ? 'Face enrolled and shift started successfully.'
-                : 'Shift started successfully.',
+            'message' => $message,
             'face_enrolled' => (bool) ($result['face_enrolled'] ?? false),
+            'fingerprint_enrolled' => (bool) ($result['fingerprint_enrolled'] ?? false),
             'session' => $this->attendance->serializeSession($result['session']),
         ], 201);
     }
@@ -155,8 +164,11 @@ class CompanyMobileAttendanceController extends Controller
             'company_code' => 'required|string|max:45',
             'device_identifier' => 'required|string|max:120',
             'employee_id' => 'required|integer',
-            'photo' => 'required|image|max:10240',
-            'face_embedding' => 'required|string',
+            'verification_method' => 'required|in:face,fingerprint',
+            'photo' => 'nullable|required_if:verification_method,face|image|max:10240',
+            'face_embedding' => 'nullable|required_if:verification_method,face|string',
+            'fingerprint_template' => 'nullable|required_if:verification_method,fingerprint|string|max:20000',
+            'scanner_model' => 'nullable|string|max:120',
             'latitude' => 'required|numeric|between:-90,90',
             'longitude' => 'required|numeric|between:-180,180',
             'address' => 'nullable|string|max:500',
@@ -172,6 +184,7 @@ class CompanyMobileAttendanceController extends Controller
         return response()->json([
             'message' => 'Shift ended successfully.',
             'face_enrolled' => (bool) ($result['face_enrolled'] ?? false),
+            'fingerprint_enrolled' => (bool) ($result['fingerprint_enrolled'] ?? false),
             'session' => $result['session'],
             'attendance' => $result['attendance'],
         ]);
