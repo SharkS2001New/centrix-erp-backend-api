@@ -62,7 +62,12 @@ class KraOperationsController extends Controller
 
     public function retry(Request $request, int $kraResponse)
     {
-        $row = KraResponse::findOrFail($kraResponse);
+        $user = $request->user();
+        $orgId = (int) $this->erp->gateForUser($user)->organization()?->id;
+
+        $row = KraResponse::query()
+            ->whereHas('sale', fn ($saleQuery) => $saleQuery->where('organization_id', $orgId))
+            ->findOrFail($kraResponse);
         if ($row->status === 'success') {
             return response()->json(['message' => 'Receipt already succeeded.'], 422);
         }

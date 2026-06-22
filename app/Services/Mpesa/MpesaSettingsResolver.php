@@ -105,6 +105,23 @@ class MpesaSettingsResolver
         return filter_var($config['enable_stk_push'] ?? true, FILTER_VALIDATE_BOOLEAN);
     }
 
+    public static function isStkPushEnabledForOrganization(Organization $organization): bool
+    {
+        $gate = app(CapabilityGate::class)->forOrganization($organization);
+        if (! $gate->mpesaStkPlatformEnabled()) {
+            return false;
+        }
+
+        return self::isStkPushEnabled(self::forOrganization($organization));
+    }
+
+    public static function assertStkPushEnabledForOrganization(Organization $organization): void
+    {
+        if (! self::isStkPushEnabledForOrganization($organization)) {
+            throw new \RuntimeException('STK push is disabled for this organization. Enable it under Admin → Settings → Finance.');
+        }
+    }
+
     /** @param  array<string, mixed>  $config */
     public static function assertReadyForStkPush(array $config): void
     {
@@ -183,7 +200,7 @@ class MpesaSettingsResolver
         ));
 
         if ($shortCode === '') {
-            return Organization::query()->orderBy('id')->value('id');
+            return null;
         }
 
         $organizations = Organization::query()->get(['id', 'module_settings']);
@@ -212,7 +229,7 @@ class MpesaSettingsResolver
             }
         }
 
-        return Organization::query()->orderBy('id')->value('id');
+        return null;
     }
 
     /** @param  array<string, mixed>  $mpesa */

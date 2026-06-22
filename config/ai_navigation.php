@@ -108,7 +108,6 @@ return [
             'label' => 'Administration & settings',
             'items' => [
                 ['label' => 'Admin home', 'path' => '/admin', 'module' => 'admin', 'permission' => 'admin.overview.view'],
-                ['label' => 'Organization settings', 'path' => '/admin/settings', 'module' => 'admin', 'permission' => 'admin.settings.view'],
                 ['label' => 'Users', 'path' => '/admin/users', 'module' => 'admin', 'permission' => 'admin.users.view', 'requires_admin' => true],
                 ['label' => 'Roles and permissions', 'path' => '/admin/roles', 'module' => 'admin', 'permission' => 'admin.roles.view'],
             ],

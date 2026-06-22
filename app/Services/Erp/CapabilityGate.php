@@ -316,8 +316,11 @@ class CapabilityGate
             $finance = is_array($moduleSettings['finance'] ?? null) ? $moduleSettings['finance'] : [];
             if (isset($finance['mpesa']) && is_array($finance['mpesa'])) {
                 $finance['mpesa'] = MpesaSettingsResolver::maskForClient($finance['mpesa']);
-                $moduleSettings['finance'] = $finance;
             }
+            if (! empty($finance['kra_pin_number'])) {
+                $finance['kra_pin_number'] = '********';
+            }
+            $moduleSettings['finance'] = $finance;
 
             $ai = is_array($moduleSettings['ai'] ?? null) ? $moduleSettings['ai'] : [];
             $moduleSettings['ai'] = AiSettingsResolver::maskForClient(
@@ -373,7 +376,7 @@ class CapabilityGate
     }
 
     /** @param  array<string, mixed>  $moduleSettings */
-    protected function maskPlatformDisabledModuleSettings(array $moduleSettings): array
+    public function maskPlatformDisabledModuleSettings(array $moduleSettings): array
     {
         if (! $this->aiPlatformEnabled()) {
             unset($moduleSettings['ai']);

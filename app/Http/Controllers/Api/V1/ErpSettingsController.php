@@ -893,6 +893,10 @@ class ErpSettingsController extends Controller
             unset($finance['mpesa'], $finance['mpesa_status']);
         }
 
+        if (! empty($finance['kra_pin_number'])) {
+            $finance['kra_pin_number'] = '********';
+        }
+
         return $finance;
     }
 

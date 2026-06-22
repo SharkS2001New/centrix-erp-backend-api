@@ -173,7 +173,6 @@ return [
                 'users' => ['label' => 'Users', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'roles' => ['label' => 'Roles & permissions', 'actions' => ['view', 'edit']],
                 'audit' => ['label' => 'Audit trail', 'actions' => ['view']],
-                'settings' => ['label' => 'System settings', 'actions' => ['view', 'edit']],
                 'payment_methods' => ['label' => 'Payment methods', 'actions' => ['view', 'create', 'edit', 'delete']],
             ],
         ],

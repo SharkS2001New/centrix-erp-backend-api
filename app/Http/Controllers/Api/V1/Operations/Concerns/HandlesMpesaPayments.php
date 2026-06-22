@@ -117,9 +117,7 @@ trait HandlesMpesaPayments
             ->where('status', 'available')
             ->whereIn('phone_number', $variants)
             ->where('received_at', '>=', now()->subDay())
-            ->when($organizationId, fn ($q) => $q->where(fn ($inner) => $inner
-                ->where('organization_id', $organizationId)
-                ->orWhereNull('organization_id')))
+            ->when($organizationId, fn ($q) => $q->where('organization_id', $organizationId))
             ->when($skippedIds->isNotEmpty(), fn ($q) => $q->whereNotIn('id', $skippedIds))
             ->orderByDesc('received_at')
             ->limit(10)

@@ -39,11 +39,10 @@ class MpesaPaymentController extends Controller
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $org = Organization::findOrFail($request->user()->organization_id);
-        $mpesaConfig = MpesaSettingsResolver::forOrganization($org);
-        if (! MpesaSettingsResolver::isStkPushEnabled($mpesaConfig)) {
-            return response()->json([
-                'message' => 'STK push is disabled for this organization. Enable it under Admin → Settings → Finance.',
-            ], 422);
+        try {
+            MpesaSettingsResolver::assertStkPushEnabledForOrganization($org);
+        } catch (\RuntimeException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
         }
 
         $mpesaService = $this->mpesaForCart($cart, $request->user());
@@ -189,7 +188,7 @@ class MpesaPaymentController extends Controller
         $payment = MpesaIncomingPayment::query()
             ->where('id', $data['payment_id'])
             ->where('status', 'available')
-            ->where(fn ($q) => $q->where('organization_id', $orgId)->orWhereNull('organization_id'))
+            ->where('organization_id', $orgId)
             ->first();
 
         if (! $payment) {
@@ -253,7 +252,7 @@ class MpesaPaymentController extends Controller
         $payment = MpesaIncomingPayment::query()
             ->where('id', $data['payment_id'])
             ->where('status', 'available')
-            ->where(fn ($q) => $q->where('organization_id', $orgId)->orWhereNull('organization_id'))
+            ->where('organization_id', $orgId)
             ->firstOrFail();
 
         MpesaPaymentSkip::firstOrCreate([
@@ -369,12 +368,25 @@ class MpesaPaymentController extends Controller
             ]);
         }
 
+        $organizationId = MpesaSettingsResolver::organizationIdForC2bPayload($payload);
+        if ($organizationId === null) {
+            Log::warning('M-Pesa C2B confirmation ignored — organization could not be resolved', [
+                'transaction_id' => $transactionId,
+                'business_short_code' => $payload['BusinessShortCode'] ?? $payload['business_short_code'] ?? null,
+            ]);
+
+            return response()->json([
+                'ResultCode' => 0,
+                'ResultDesc' => 'Accepted',
+            ]);
+        }
+
         $payment = $this->recordIncomingMpesaPayment(
             $transactionId,
             $phone,
             $amount,
             'c2b',
-            MpesaSettingsResolver::organizationIdForC2bPayload($payload),
+            $organizationId,
         );
 
         Log::info('M-Pesa C2B payment stored for check payment', [

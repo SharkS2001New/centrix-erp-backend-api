@@ -50,6 +50,7 @@ class MpesaC2bConfirmationTest extends TestCase
         $this->assertSame(250, (int) $payment->amount);
         $this->assertSame('c2b', $payment->source);
         $this->assertSame('available', $payment->status);
+        $this->assertSame((int) $org->id, (int) $payment->organization_id);
     }
 
     public function test_c2b_confirmation_is_idempotent_for_duplicate_trans_id(): void
@@ -58,6 +59,7 @@ class MpesaC2bConfirmationTest extends TestCase
             'TransID' => 'QBC9999999',
             'TransAmount' => '100',
             'MSISDN' => '254700000001',
+            'BusinessShortCode' => '6563610',
         ];
 
         $this->postJson('/api/v1/payments/c2b/confirmation', $payload)->assertOk();

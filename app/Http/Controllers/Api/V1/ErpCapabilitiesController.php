@@ -79,6 +79,14 @@ class ErpCapabilitiesController extends Controller
             && config('erp.allow_org_provisioning');
         $payload['workspaces'] = app(WorkspaceResolver::class)->availableForUser($user, $gate);
 
+        $payload['platform_mpesa_stk_enabled'] = $gate->mpesaStkPlatformEnabled();
+        $payload['platform_kra_integration_enabled'] = $gate->kraIntegrationPlatformEnabled();
+        $payload['platform_ai_enabled'] = $gate->aiPlatformEnabled();
+
+        if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
+            $payload['module_settings'] = $gate->maskPlatformDisabledModuleSettings($payload['module_settings']);
+        }
+
         return $payload;
     }
 }

@@ -245,7 +245,6 @@ return [
         'admin.users.view',
         'admin.roles.view',
         'admin.audit.view',
-        'admin.settings.view',
         'admin.payment_methods.view',
     ],
     'admin.manage' => [
@@ -257,7 +256,6 @@ return [
         'admin.users.edit',
         'admin.users.delete',
         'admin.roles.edit',
-        'admin.settings.edit',
         'admin.payment_methods.create',
         'admin.payment_methods.edit',
         'admin.payment_methods.delete',
