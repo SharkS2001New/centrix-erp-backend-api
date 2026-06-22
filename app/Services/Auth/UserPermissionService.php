@@ -77,6 +77,13 @@ class UserPermissionService
                 return true;
             }
 
+            if (
+                in_array($permissionCode, ['admin.view', 'admin.manage'], true)
+                && $gate->enabled('admin')
+            ) {
+                return true;
+            }
+
             $permission = Permission::query()
                 ->where('permission_code', $permissionCode)
                 ->first();

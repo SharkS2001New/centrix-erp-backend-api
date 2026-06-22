@@ -222,6 +222,9 @@ Route::prefix('v1')->group(function () {
                 Route::apiResource('payment-methods', PaymentMethodController::class);
                 Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show']);
                 Route::apiResource('users', UserController::class);
+                Route::get('users/{user}/permissions', [UserController::class, 'permissions']);
+                Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions']);
+                Route::apiResource('routes', RouteModelController::class)->only(['index', 'show']);
                 Route::apiResource('employees', EmployeeController::class)->only(['index', 'show']);
             });
 
@@ -396,7 +399,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:customers.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:customers.manage']);
             Route::apiResource('routes', RouteModelController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|admin.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
         });
 
