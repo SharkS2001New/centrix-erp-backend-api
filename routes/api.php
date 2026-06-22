@@ -93,6 +93,10 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/switch-workspace', [AuthController::class, 'switchWorkspace']);
 
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
+        Route::get('erp/organization/profile', [OrganizationController::class, 'currentProfile'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.company.view|admin.view']);
+        Route::patch('erp/organization/profile', [OrganizationController::class, 'updateCurrentProfile'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.company.edit|admin.manage']);
         Route::get('erp/profiles', [ErpCapabilitiesController::class, 'profiles'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])

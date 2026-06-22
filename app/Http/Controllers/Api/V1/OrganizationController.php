@@ -54,7 +54,41 @@ class OrganizationController extends BaseResourceController
     {
         $model = $this->findScopedModel($request, $id);
 
-        return response()->json($this->formatOrganization($model));
+        return response()->json([
+            'organization' => $this->formatOrganization($model),
+        ]);
+    }
+
+    /** GET /api/v1/erp/organization/profile — current tenant company profile */
+    public function currentProfile(Request $request)
+    {
+        /** @var User $user */
+        $user = $request->user();
+        $orgId = (int) ($user->organization_id ?? 0);
+
+        if ($orgId <= 0) {
+            abort(403, 'No organization context.');
+        }
+
+        $model = $this->findScopedModel($request, (string) $orgId);
+
+        return response()->json([
+            'organization' => $this->formatOrganization($model),
+        ]);
+    }
+
+    /** PATCH /api/v1/erp/organization/profile — update current tenant company profile */
+    public function updateCurrentProfile(Request $request)
+    {
+        /** @var User $user */
+        $user = $request->user();
+        $orgId = (int) ($user->organization_id ?? 0);
+
+        if ($orgId <= 0) {
+            abort(403, 'No organization context.');
+        }
+
+        return $this->update($request, (string) $orgId);
     }
 
     public function update(Request $request, string $id)
@@ -106,7 +140,9 @@ class OrganizationController extends BaseResourceController
             );
         }
 
-        return response()->json($this->formatOrganization($model));
+        return response()->json([
+            'organization' => $this->formatOrganization($model),
+        ]);
     }
 
     /** POST /organizations/{id}/logo */
