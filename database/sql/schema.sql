@@ -1731,13 +1731,20 @@ CREATE TABLE payroll_runs (
     id               INT           PRIMARY KEY AUTO_INCREMENT,
     pay_period_id    INT           NOT NULL,
     run_date         DATE          NOT NULL,
-    status           ENUM('draft','processed','paid','void') DEFAULT 'draft',
+    status           ENUM('draft','pending_approval','approved','processed','paid','void') DEFAULT 'draft',
     processed_by     INT           NULL,
+    approved_by      INT           NULL,
+    approved_at      TIMESTAMP     NULL,
+    paid_by          INT           NULL,
+    paid_at          TIMESTAMP     NULL,
+    payment_reference VARCHAR(120) NULL,
     total_gross      DECIMAL(14,2) DEFAULT 0,
     total_net        DECIMAL(14,2) DEFAULT 0,
     created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (pay_period_id) REFERENCES pay_periods(id),
-    FOREIGN KEY (processed_by) REFERENCES users(id)
+    FOREIGN KEY (processed_by) REFERENCES users(id),
+    FOREIGN KEY (approved_by) REFERENCES users(id),
+    FOREIGN KEY (paid_by) REFERENCES users(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE payroll_lines (

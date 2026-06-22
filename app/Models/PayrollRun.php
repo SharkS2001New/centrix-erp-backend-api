@@ -19,6 +19,11 @@ class PayrollRun extends Model
         'run_date',
         'status',
         'processed_by',
+        'approved_by',
+        'approved_at',
+        'paid_by',
+        'paid_at',
+        'payment_reference',
         'total_gross',
         'total_net',
     ];
@@ -26,6 +31,8 @@ class PayrollRun extends Model
     protected $casts = [
         'run_date' => 'date',
         'created_at' => 'datetime',
+        'approved_at' => 'datetime',
+        'paid_at' => 'datetime',
         'total_gross' => 'decimal:2',
         'total_net' => 'decimal:2',
     ];
@@ -57,5 +64,20 @@ class PayrollRun extends Model
     public function lines()
     {
         return $this->hasMany(PayrollLine::class, 'payroll_run_id');
+    }
+
+    public function approvedByUser()
+    {
+        return $this->belongsTo(User::class, 'approved_by');
+    }
+
+    public function paidByUser()
+    {
+        return $this->belongsTo(User::class, 'paid_by');
+    }
+
+    public function processedByUser()
+    {
+        return $this->belongsTo(User::class, 'processed_by');
     }
 }

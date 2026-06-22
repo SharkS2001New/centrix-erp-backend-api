@@ -3,6 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Services\Legacy\LightStoresLegacyImporter;
+use App\Models\Organization;
+use App\Services\Legacy\LegacyArchiveConnectionManager;
 use Illuminate\Console\Command;
 
 class ImportLightStoresLegacyCommand extends Command
@@ -26,7 +28,10 @@ class ImportLightStoresLegacyCommand extends Command
             $only = ['foundation', 'catalog', 'customers'];
         }
 
-        $this->line('Legacy source: '.config('database.connections.legacy.database'));
+        $legacyDatabase = $this->resolveLegacyDatabaseName(
+            $this->option('organization') ? (int) $this->option('organization') : null,
+        );
+        $this->line('Legacy source: '.$legacyDatabase);
         $this->line('Centrix target: '.config('database.connections.'.config('database.default').'.database'));
 
         if ($this->option('dry-run')) {
@@ -68,5 +73,19 @@ class ImportLightStoresLegacyCommand extends Command
         }
 
         return self::SUCCESS;
+    }
+
+    protected function resolveLegacyDatabaseName(?int $organizationId): string
+    {
+        if ($organizationId) {
+            $org = Organization::query()->find($organizationId);
+            if ($org) {
+                $connection = app(LegacyArchiveConnectionManager::class)->configureForOrganization($org);
+
+                return (string) config('database.connections.'.$connection.'.database', '');
+            }
+        }
+
+        return (string) config('database.connections.legacy.database', '');
     }
 }

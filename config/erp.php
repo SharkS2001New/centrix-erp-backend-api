@@ -478,6 +478,11 @@ return [
             'default_probation_months' => 3,
             'enable_cash_advance_deductions' => true,
             'deduct_cash_advances_on_payroll' => true,
+            'attendance_capture_mode' => 'clock_device',
+            'company_premises_latitude' => null,
+            'company_premises_longitude' => null,
+            'company_premises_radius_metres' => 5,
+            'company_face_match_threshold' => 0.72,
         ],
         'legacy_archive' => [
             'enabled' => false,

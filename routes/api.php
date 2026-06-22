@@ -59,6 +59,7 @@ use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\SystemSettingController;
 use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
 use App\Http\Controllers\Api\V1\StockReservationController;
+use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
 
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 
@@ -66,6 +67,15 @@ Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
     Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview'])
         ->middleware('throttle:auth-org-preview');
+    Route::prefix('company-mobile-attendance')->middleware('throttle:auth-org-preview')->group(function () {
+        Route::get('device-status', [CompanyMobileAttendanceController::class, 'deviceStatus']);
+        Route::get('branches', [CompanyMobileAttendanceController::class, 'branches']);
+        Route::get('config', [CompanyMobileAttendanceController::class, 'config']);
+        Route::get('employees', [CompanyMobileAttendanceController::class, 'employees']);
+        Route::get('employees/{employeeId}/session', [CompanyMobileAttendanceController::class, 'employeeSession']);
+        Route::post('clock-in', [CompanyMobileAttendanceController::class, 'clockIn']);
+        Route::post('clock-out', [CompanyMobileAttendanceController::class, 'clockOut']);
+    });
     Route::post('auth/login', [AuthController::class, 'login'])
         ->middleware('throttle:auth-login');
     Route::post('auth/logout', [AuthController::class, 'logout'])
@@ -581,6 +591,9 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::apiResource('attendance-clock-devices', \App\Http\Controllers\Api\V1\AttendanceClockDeviceController::class)
+                ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
+            Route::apiResource('attendance-mobile-devices', \App\Http\Controllers\Api\V1\AttendanceMobileDeviceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::apiResource('organization-holidays', \App\Http\Controllers\Api\V1\OrganizationHolidayController::class)

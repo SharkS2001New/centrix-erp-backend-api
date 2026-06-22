@@ -19,7 +19,9 @@ class PayrollRunController extends BaseResourceController
 
     public function index(Request $request)
     {
-        $query = PayrollRun::query()->with('payPeriod')->withCount('lines as employee_count');
+        $query = PayrollRun::query()
+            ->with(['payPeriod', 'approvedByUser:id,full_name,username', 'paidByUser:id,full_name,username'])
+            ->withCount('lines as employee_count');
 
         if ($orgId = $request->user()?->organization_id) {
             $query->whereHas('payPeriod', fn ($q) => $q->where('organization_id', $orgId));
@@ -64,7 +66,12 @@ class PayrollRunController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        $run = PayrollRun::with('payPeriod')
+        $run = PayrollRun::with([
+            'payPeriod',
+            'approvedByUser:id,full_name,username',
+            'paidByUser:id,full_name,username',
+            'processedByUser:id,full_name,username',
+        ])
             ->withCount('lines as employee_count')
             ->findOrFail($id);
 

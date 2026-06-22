@@ -16,6 +16,7 @@ use App\Models\Uom;
 use App\Models\User;
 use App\Models\Vat;
 use App\Services\Erp\PermissionMatrixService;
+use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -58,6 +59,13 @@ class LightStoresLegacyImporter
 
     protected int $legacyDebtorSequence = 0;
 
+    protected ?int $targetOrganizationId = null;
+
+    public function legacyDatabaseName(): string
+    {
+        return (string) config('database.connections.'.$this->legacy.'.database', '');
+    }
+
     /**
      * @param  list<string>|null  $only
      * @return array<string, int>
@@ -67,9 +75,11 @@ class LightStoresLegacyImporter
         $this->dryRun = $dryRun;
         $this->only = $only ?? [];
         $this->stats = [];
+        $this->targetOrganizationId = null;
 
         if ($organizationId) {
             $org = Organization::query()->findOrFail($organizationId);
+            $this->targetOrganizationId = $organizationId;
             $this->useLegacyConnectionForOrganization($org);
         }
 
@@ -226,8 +236,19 @@ class LightStoresLegacyImporter
             throw new RuntimeException('Legacy org_info row not found.');
         }
 
-        $existing = Organization::query()->where('company_code', $legacyOrg->company_code)->first();
-        if ($existing && ! $force) {
+        if ($this->targetOrganizationId) {
+            $existing = Organization::query()->findOrFail($this->targetOrganizationId);
+            if (strcasecmp((string) $existing->company_code, (string) $legacyOrg->company_code) !== 0) {
+                throw new RuntimeException(
+                    "Organization #{$existing->id} [{$existing->company_code}] does not match legacy org_info [{$legacyOrg->company_code}]. "
+                    .'Use the Centrix org that matches the legacy company code, or fix company_code before importing.',
+                );
+            }
+        } else {
+            $existing = Organization::query()->where('company_code', $legacyOrg->company_code)->first();
+        }
+
+        if ($existing && ! $this->targetOrganizationId && ! $force) {
             throw new RuntimeException(
                 "Organization [{$legacyOrg->company_code}] already exists. Pass --force to import into a fresh database or reuse it.",
             );
@@ -365,16 +386,13 @@ class LightStoresLegacyImporter
         $legacyRows = DB::connection($this->legacy)->table('vat_status')->get();
 
         foreach ($legacyRows as $row) {
-            Vat::query()->updateOrCreate(
-                ['id' => (int) $row->id],
-                [
-                    'vat_code' => (string) ($row->vat_code ?: 'VAT'.$row->id),
-                    'vat_name' => (string) ($row->vstatus ?: $row->vat_code ?: 'VAT '.$row->vat_percentage.'%'),
-                    'vat_percentage' => (float) $row->vat_percentage,
-                    'is_active' => true,
-                    'created_by' => $this->migrationUser->id,
-                ],
-            );
+            $this->upsertById(Vat::class, (int) $row->id, [
+                'vat_code' => (string) ($row->vat_code ?: 'VAT'.$row->id),
+                'vat_name' => (string) ($row->vstatus ?: $row->vat_code ?: 'VAT '.$row->vat_percentage.'%'),
+                'vat_percentage' => (float) $row->vat_percentage,
+                'is_active' => true,
+                'created_by' => $this->migrationUser->id,
+            ]);
             $this->bump('vats');
         }
 
@@ -408,44 +426,35 @@ class LightStoresLegacyImporter
 
         DB::transaction(function () {
             foreach (DB::connection($this->legacy)->table('category')->orderBy('id')->get() as $row) {
-                Category::query()->updateOrCreate(
-                    ['id' => (int) $row->id],
-                    [
-                        'category_name' => (string) $row->category_name,
-                        'created_by' => $this->migrationUser->id,
-                    ],
-                );
+                $this->upsertById(Category::class, (int) $row->id, [
+                    'category_name' => (string) $row->category_name,
+                    'created_by' => $this->migrationUser->id,
+                ]);
                 $this->bump('categories');
             }
 
             foreach (DB::connection($this->legacy)->table('sub_category')->orderBy('id')->get() as $row) {
-                SubCategory::query()->updateOrCreate(
-                    ['id' => (int) $row->id],
-                    [
-                        'category_id' => (int) $row->category_id,
-                        'subcategory_name' => (string) $row->subcategory_name,
-                        'created_by' => $this->migrationUser->id,
-                    ],
-                );
+                $this->upsertById(SubCategory::class, (int) $row->id, [
+                    'category_id' => (int) $row->category_id,
+                    'subcategory_name' => (string) $row->subcategory_name,
+                    'created_by' => $this->migrationUser->id,
+                ]);
                 $this->bump('sub_categories');
             }
 
             foreach (DB::connection($this->legacy)->table('uom')->orderBy('id')->get() as $row) {
                 $factor = is_numeric($row->short_name) ? (float) $row->short_name : 1.0;
-                Uom::query()->updateOrCreate(
-                    ['id' => (int) $row->id],
-                    [
-                        'conversion_factor' => $factor > 0 ? $factor : 1,
-                        'full_name' => (string) $row->full_name,
-                        'measure_name' => is_numeric($row->short_name) ? null : (string) $row->short_name,
-                        'uom_type' => (string) ($row->uom_type ?: 'UNIT'),
-                        'is_base_unit' => abs($factor - 1.0) < 0.0001,
-                        'is_active' => $row->deleted_on === null,
-                        'created_by' => $this->migrationUser->id,
-                        'deleted_at' => $row->deleted_on,
-                        'deleted_by' => $row->deleted_by ? $this->migrationUser->id : null,
-                    ],
-                );
+                $this->upsertById(Uom::class, (int) $row->id, [
+                    'conversion_factor' => $factor > 0 ? $factor : 1,
+                    'full_name' => (string) $row->full_name,
+                    'measure_name' => is_numeric($row->short_name) ? null : (string) $row->short_name,
+                    'uom_type' => (string) ($row->uom_type ?: 'UNIT'),
+                    'is_base_unit' => abs($factor - 1.0) < 0.0001,
+                    'is_active' => $row->deleted_on === null,
+                    'created_by' => $this->migrationUser->id,
+                    'deleted_at' => $row->deleted_on,
+                    'deleted_by' => $row->deleted_by ? $this->migrationUser->id : null,
+                ]);
                 $this->bump('uoms');
             }
 
@@ -1096,6 +1105,8 @@ class LightStoresLegacyImporter
 
         if ($organization) {
             $this->organization = $organization;
+        } elseif ($this->targetOrganizationId) {
+            $this->organization = Organization::query()->findOrFail($this->targetOrganizationId);
         } else {
             $legacyOrg = DB::connection($this->legacy)->table('org_info')->first();
             if (! $legacyOrg) {
@@ -1130,5 +1141,16 @@ class LightStoresLegacyImporter
     protected function bump(string $key, int $count = 1): void
     {
         $this->stats[$key] = ($this->stats[$key] ?? 0) + $count;
+    }
+
+    /**
+     * @param  class-string<Model>  $modelClass
+     * @param  array<string, mixed>  $attributes
+     */
+    protected function upsertById(string $modelClass, int $id, array $attributes): void
+    {
+        $modelClass::unguarded(function () use ($modelClass, $id, $attributes) {
+            $modelClass::query()->updateOrCreate(['id' => $id], $attributes);
+        });
     }
 }

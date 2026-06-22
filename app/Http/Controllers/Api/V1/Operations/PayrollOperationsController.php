@@ -295,9 +295,13 @@ class PayrollOperationsController extends Controller
             return response()->json(['message' => 'Only payroll runs awaiting approval can be approved.'], 422);
         }
 
-        $run->update(['status' => 'approved']);
+        $run->update([
+            'status' => 'approved',
+            'approved_by' => $request->user()->id,
+            'approved_at' => now(),
+        ]);
 
-        return response()->json($run->fresh('payPeriod'));
+        return response()->json($run->fresh(['payPeriod', 'approvedByUser']));
     }
 
     /** POST /payroll/runs/{runId}/reject */
@@ -314,6 +318,35 @@ class PayrollOperationsController extends Controller
         $run->update(['status' => 'void']);
 
         return response()->json($run->fresh('payPeriod'));
+    }
+
+    /** POST /payroll/runs/{runId}/mark-paid */
+    public function markPaidRun(Request $request, string $runId)
+    {
+        $run = PayrollRun::with(['payPeriod', 'lines'])->findOrFail((int) $runId);
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $this->assertPayrollApprovalPermission($request->user(), $orgId);
+
+        if ($run->status !== 'processed') {
+            return response()->json(['message' => 'Only processed payroll runs can be marked as paid.'], 422);
+        }
+
+        if ($run->lines->isEmpty()) {
+            return response()->json(['message' => 'Payroll run has no lines to pay.'], 422);
+        }
+
+        $payload = $request->validate([
+            'payment_reference' => 'nullable|string|max:120',
+        ]);
+
+        $run->update([
+            'status' => 'paid',
+            'paid_by' => $request->user()->id,
+            'paid_at' => now(),
+            'payment_reference' => $payload['payment_reference'] ?? null,
+        ]);
+
+        return response()->json($run->fresh(['payPeriod', 'paidByUser', 'approvedByUser']));
     }
 
     protected function assertPayrollRunProcessable(PayrollRun $run, int $orgId): void

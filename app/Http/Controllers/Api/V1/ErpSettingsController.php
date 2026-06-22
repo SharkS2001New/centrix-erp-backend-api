@@ -882,6 +882,11 @@ class ErpSettingsController extends Controller
             'default_probation_months',
             'enable_cash_advance_deductions',
             'deduct_cash_advances_on_payroll',
+            'attendance_capture_mode',
+            'company_premises_latitude',
+            'company_premises_longitude',
+            'company_premises_radius_metres',
+            'company_face_match_threshold',
         ];
 
         $rules = [
@@ -891,6 +896,11 @@ class ErpSettingsController extends Controller
             'standard_work_hours_per_day' => 'sometimes|numeric|min:1|max:24',
             'overtime_rate_multiplier' => 'sometimes|numeric|min:1|max:5',
             'default_probation_months' => 'sometimes|integer|min:0|max:24',
+            'attendance_capture_mode' => 'sometimes|in:clock_device,company_mobile',
+            'company_premises_latitude' => 'sometimes|nullable|numeric|between:-90,90',
+            'company_premises_longitude' => 'sometimes|nullable|numeric|between:-180,180',
+            'company_premises_radius_metres' => 'sometimes|numeric|min:1|max:500',
+            'company_face_match_threshold' => 'sometimes|numeric|min:0.5|max:0.99',
         ];
         foreach ($hrKeys as $key) {
             if (array_key_exists($key, $rules)) {

@@ -145,6 +145,11 @@ class Employee extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
+    public function faceProfile()
+    {
+        return $this->hasOne(EmployeeFaceProfile::class, 'employee_id');
+    }
+
     public function reportsTo()
     {
         return $this->belongsTo(self::class, 'reports_to_employee_id');

@@ -20,6 +20,8 @@ use App\Http\Controllers\Api\V1\Operations\AccountingSettingsController;
 use App\Http\Controllers\Api\V1\Operations\YearEndCloseController;
 use App\Http\Controllers\Api\V1\Operations\AccountingReportController;
 use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
+use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
+use App\Http\Controllers\Api\V1\Operations\CompanyPremisesController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
@@ -148,8 +150,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('erp.permission:hr.manage')->group(function () {
             Route::post('clock-in', [AttendanceClockController::class, 'clockIn']);
             Route::post('clock-out', [AttendanceClockController::class, 'clockOut']);
+            Route::get('company-premises', [CompanyPremisesController::class, 'show']);
+            Route::post('company-premises', [CompanyPremisesController::class, 'update']);
         });
         Route::get('clock-sessions', [AttendanceClockController::class, 'sessions'])
+            ->middleware('erp.permission:hr.view');
+        Route::get('company-mobile-sessions', [CompanyPremisesController::class, 'sessions'])
             ->middleware('erp.permission:hr.view');
     });
 
@@ -165,6 +171,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('runs/{runId}/process-auto', [PayrollOperationsController::class, 'processAuto']);
             Route::post('runs/{runId}/approve', [PayrollOperationsController::class, 'approveRun']);
             Route::post('runs/{runId}/reject', [PayrollOperationsController::class, 'rejectRun']);
+            Route::post('runs/{runId}/mark-paid', [PayrollOperationsController::class, 'markPaidRun']);
         });
     });
 

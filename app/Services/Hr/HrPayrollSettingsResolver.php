@@ -71,6 +71,6 @@ class HrPayrollSettingsResolver
             ? $out['pay_frequency']
             : 'monthly';
 
-        return $out;
+        return \App\Services\Attendance\HrAttendanceSettingsResolver::normalize($out);
     }
 }
