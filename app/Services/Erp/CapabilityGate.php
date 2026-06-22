@@ -96,9 +96,40 @@ class CapabilityGate
             return [];
         }
 
-        return ModuleRegistry::expandLegacyModules(
+        $overrides = ModuleRegistry::expandLegacyModules(
             is_array($this->organization->enabled_modules) ? $this->organization->enabled_modules : [],
         );
+
+        return $this->compactDenseModuleOverrides($overrides);
+    }
+
+    /**
+     * Legacy org records stored every module key as false/true. Drop inherited false
+     * flags so report bundles follow their parent domain unless a sparse map explicitly
+     * disabled them.
+     *
+     * @param  array<string, bool>  $overrides
+     * @return array<string, bool>
+     */
+    protected function compactDenseModuleOverrides(array $overrides): array
+    {
+        if ($overrides === []) {
+            return [];
+        }
+
+        $isSparseMap = count($overrides) < (int) (count(ModuleRegistry::keys()) / 2);
+        if ($isSparseMap) {
+            return $overrides;
+        }
+
+        $compact = [];
+        foreach ($overrides as $key => $value) {
+            if ($value) {
+                $compact[$key] = true;
+            }
+        }
+
+        return $compact;
     }
 
     public function selfEnabled(string $moduleKey): bool

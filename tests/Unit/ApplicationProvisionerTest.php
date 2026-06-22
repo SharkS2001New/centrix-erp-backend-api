@@ -66,6 +66,10 @@ class ApplicationProvisionerTest extends TestCase
         $this->assertTrue($roundTrip['hr']);
         $this->assertFalse($roundTrip['pos']);
         $this->assertFalse($roundTrip['admin']);
+        $this->assertTrue($modules['accounting.reports']);
+        $this->assertTrue($modules['accounting.dashboard']);
+        $this->assertTrue($modules['payments']);
+        $this->assertTrue($modules['hr_payroll.reports']);
     }
 
     public function test_distribution_requires_mobile_orders(): void

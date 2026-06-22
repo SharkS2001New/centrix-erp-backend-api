@@ -68,7 +68,7 @@ class ApplicationProvisioner
     public function enabledModulesFromApplications(array $applications, bool $mobileOrdersEnabled = true): array
     {
         $applications = $this->fillApplicationDefaults($this->sanitizeApplications($applications));
-        $modules = array_fill_keys(ModuleRegistry::keys(), false);
+        $modules = [];
 
         if ($applications['pos']) {
             $modules = $this->mergeModulePatch($modules, $this->enablePatch('pos'));
@@ -208,9 +208,22 @@ class ApplicationProvisioner
                 'customers_suppliers' => true,
                 'customers_suppliers.reports' => true,
             ],
-            'distribution' => ['distribution' => true],
-            'accounting' => ['accounting' => true],
-            'hr' => ['hr_payroll' => true],
+            'distribution' => [
+                'distribution' => true,
+                'distribution.dashboard' => true,
+                'distribution.reports' => true,
+            ],
+            'accounting' => [
+                'accounting' => true,
+                'payments' => true,
+                'accounting.dashboard' => true,
+                'accounting.reports' => true,
+            ],
+            'hr' => [
+                'hr_payroll' => true,
+                'hr_payroll.dashboard' => true,
+                'hr_payroll.reports' => true,
+            ],
             'admin' => ['admin' => true],
             default => [],
         };

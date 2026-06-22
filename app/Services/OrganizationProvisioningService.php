@@ -200,16 +200,39 @@ class OrganizationProvisioningService
         }
 
         $moduleKeys = ModuleRegistry::keys();
-        $normalized = [];
+        $input = [];
         foreach ($moduleKeys as $key) {
             if (array_key_exists($key, $enabledModules)) {
-                $normalized[$key] = (bool) $enabledModules[$key];
+                $input[$key] = (bool) $enabledModules[$key];
             }
         }
 
-        $normalized = ModuleRegistry::cascade($normalized);
+        $cascaded = ModuleRegistry::cascade($input);
+        $sparse = [];
 
-        return $normalized === [] ? null : $normalized;
+        foreach ($cascaded as $key => $value) {
+            if ($value) {
+                $sparse[$key] = true;
+            }
+        }
+
+        // Full module maps (legacy provisioning) can persist false report bundles even when
+        // the parent domain is on. Only honor explicit report disables from sparse maps.
+        $isSparseMap = count($input) < (int) (count($moduleKeys) / 2);
+        if ($isSparseMap) {
+            foreach (ModuleRegistry::reportModuleKeys() as $reportKey) {
+                if (! array_key_exists($reportKey, $input) || ($input[$reportKey] ?? true)) {
+                    continue;
+                }
+
+                $parent = ModuleRegistry::parentKey($reportKey);
+                if ($parent !== null && ($cascaded[$parent] ?? false)) {
+                    $sparse[$reportKey] = false;
+                }
+            }
+        }
+
+        return $sparse === [] ? null : $sparse;
     }
 
     public function syncModuleSettingsFromEnabledModules(Organization $org): Organization
