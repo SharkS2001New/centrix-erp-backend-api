@@ -52,11 +52,9 @@ class ProductController extends BaseResourceController
 
         $status = (string) $request->input('status', 'active');
         if ($status === 'inactive') {
-            $query->whereNotNull('deleted_at');
+            $query->onlyTrashed();
         } elseif ($status === 'all') {
             $query->withTrashed();
-        } else {
-            $query->whereNull('deleted_at');
         }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
@@ -226,6 +224,11 @@ class ProductController extends BaseResourceController
     public function destroy(Request $request, string $id)
     {
         $model = $this->findScopedProduct($request, $id);
+
+        if ($request->user()) {
+            $model->forceFill(['deleted_by' => $request->user()->id])->save();
+        }
+
         $model->delete();
 
         return response()->json(null, 204);

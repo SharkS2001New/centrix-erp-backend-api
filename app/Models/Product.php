@@ -6,10 +6,11 @@ use App\Models\Branch;
 use App\Models\Uom;
 use App\Models\Vat;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Product extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $table = 'products';
     protected $primaryKey = 'product_code';

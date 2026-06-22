@@ -32,11 +32,9 @@ class CustomerController extends BaseResourceController
 
         $status = (string) $request->input('status', 'active');
         if ($status === 'inactive') {
-            $query->whereNotNull('deleted_at');
+            $query->onlyTrashed();
         } elseif ($status === 'all') {
             $query->withTrashed();
-        } else {
-            $query->whereNull('deleted_at');
         }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {

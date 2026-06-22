@@ -145,4 +145,13 @@ class ProductCatalogScopeTest extends TestCase
             ->assertJsonPath('catalog.multi_branch', false)
             ->assertJsonPath('catalog.head_office_branch_code', 'HQ');
     }
+
+    public function test_products_index_supports_status_all_without_error(): void
+    {
+        Sanctum::actingAs(User::where('username', 'admin')->firstOrFail());
+
+        $this->getJson('/api/v1/products?page=1&per_page=10&status=all')
+            ->assertOk()
+            ->assertJsonStructure(['data', 'current_page', 'per_page', 'total']);
+    }
 }

@@ -12,7 +12,26 @@ class OrganizationSecuritySettingsTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_org_admin_can_update_per_organization_security_settings(): void
+    public function test_super_admin_can_update_tenant_security_settings_via_platform_proxy(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+
+        $this->patchJson("/api/v1/admin/organizations/{$org->id}/settings/security", [
+            'screen_lock_minutes' => 5,
+            'session_idle_minutes' => 60,
+        ])
+            ->assertOk()
+            ->assertJsonPath('security.screen_lock_minutes', 5)
+            ->assertJsonPath('security.session_idle_minutes', 60);
+
+        $this->assertSame(5, $org->fresh()->module_settings['security']['screen_lock_minutes']);
+        $this->assertSame(60, $org->fresh()->module_settings['security']['session_idle_minutes']);
+    }
+
+    public function test_tenant_org_admin_cannot_use_erp_settings_security_routes(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
@@ -21,26 +40,18 @@ class OrganizationSecuritySettingsTest extends TestCase
             'screen_lock_minutes' => 5,
             'session_idle_minutes' => 60,
         ])
-            ->assertOk()
-            ->assertJsonPath('security.screen_lock_minutes', 5)
-            ->assertJsonPath('security.session_idle_minutes', 60);
-
-        $this->getJson('/api/v1/erp/capabilities')
-            ->assertOk()
-            ->assertJsonPath('screen_lock_minutes', 5)
-            ->assertJsonPath('session_idle_minutes', 60);
-
-        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
-        $this->assertSame(5, $org->fresh()->module_settings['security']['screen_lock_minutes']);
-        $this->assertSame(60, $org->fresh()->module_settings['security']['session_idle_minutes']);
+            ->assertForbidden()
+            ->assertJsonPath('message', 'Organization settings are managed by the platform administrator.');
     }
 
     public function test_screen_lock_must_be_less_than_sign_out_timeout(): void
     {
-        $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
 
-        $this->patchJson('/api/v1/erp/settings/security', [
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+
+        $this->patchJson("/api/v1/admin/organizations/{$org->id}/settings/security", [
             'screen_lock_minutes' => 30,
             'session_idle_minutes' => 20,
         ])

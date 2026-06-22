@@ -47,6 +47,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.org_provisioning' => \App\Http\Middleware\EnsureOrgProvisioningAllowed::class,
             'erp.tenant' => \App\Http\Middleware\ResolveActingTenantUser::class,
             'erp.act_as_organization' => \App\Http\Middleware\ActAsOrganization::class,
+            'erp.forbid_tenant_settings' => \App\Http\Middleware\ForbidTenantOrganizationSettings::class,
             'erp.session_idle' => \App\Http\Middleware\EnsureSessionNotIdle::class,
             'erp.mpesa_callback_ip' => \App\Http\Middleware\EnsureMpesaCallbackIp::class,
         ]);
