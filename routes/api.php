@@ -162,11 +162,15 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::patch('admin/organizations/{organization}', [OrganizationProvisionController::class, 'update'])
             ->middleware(['erp.super_admin']);
+        Route::delete('admin/organizations/{organization}', [OrganizationProvisionController::class, 'destroy'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/organizations/{organization}/users', [OrganizationProvisionController::class, 'listUsers'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/{organization}/users', [OrganizationProvisionController::class, 'createUser'])
             ->middleware(['erp.super_admin']);
         Route::patch('admin/organizations/{organization}/users/{user}', [OrganizationProvisionController::class, 'updateUser'])
+            ->middleware(['erp.super_admin']);
+        Route::delete('admin/organizations/{organization}/users/{user}', [OrganizationProvisionController::class, 'deleteUser'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/active-sessions', [PlatformActiveSessionsController::class, 'index'])
             ->middleware(['erp.super_admin']);

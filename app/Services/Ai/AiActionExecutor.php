@@ -2,20 +2,24 @@
 
 namespace App\Services\Ai;
 
+use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\EmployeeController;
 use App\Http\Controllers\Api\V1\Operations\CartOperationsController;
 use App\Http\Controllers\Api\V1\Operations\CheckoutController;
 use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReportBuilderController;
 use App\Http\Controllers\Api\V1\ProductController;
+use App\Http\Controllers\Api\V1\SupplierController;
 use App\Http\Requests\Sales\AddCartLineRequest;
 use App\Http\Requests\Sales\CheckoutRequest;
 use App\Http\Requests\Sales\StoreCartRequest;
 use App\Models\CustomReportTemplate;
+use App\Models\Customer;
 use App\Models\Employee;
 use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\Supplier;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use Illuminate\Support\Facades\DB;
@@ -45,6 +49,8 @@ class AiActionExecutor
             'create_sales_order' => $this->createSalesOrder($user, $params, hold: false),
             'create_held_order' => $this->createSalesOrder($user, $params, hold: true),
             'create_product' => $this->createProduct($user, $params),
+            'create_supplier' => $this->createSupplier($user, $params),
+            'create_customer' => $this->createCustomer($user, $params),
             'create_employee' => $this->createEmployee($user, $params),
             'create_report_template' => $this->createReportTemplate($user, $params),
             'record_customer_payment' => $this->recordCustomerPayment($user, $params),
@@ -218,12 +224,14 @@ class AiActionExecutor
         $payload = array_filter([
             'product_code' => $productCode !== '' ? $productCode : null,
             'product_name' => $productName,
-            'unit_price' => $params['unit_price'] ?? 0,
+            'unit_price' => $this->numericParam($params, 'unit_price', 0),
             'unit_id' => $params['unit_id'] ?? null,
             'subcategory_id' => $params['subcategory_id'] ?? null,
-            'last_cost_price' => $params['last_cost_price'] ?? null,
-            'reorder_point' => $params['reorder_point'] ?? null,
+            'last_cost_price' => $this->numericParam($params, 'last_cost_price'),
+            'product_weight' => $this->numericParam($params, 'product_weight'),
+            'reorder_point' => $this->numericParam($params, 'reorder_point'),
             'vat_id' => $params['vat_id'] ?? null,
+            'supplier_id' => $params['supplier_id'] ?? null,
             'sell_on_retail' => $params['sell_on_retail'] ?? null,
             'organization_id' => $user->organization_id,
         ], fn ($v) => $v !== null && $v !== '');
@@ -268,6 +276,99 @@ class AiActionExecutor
                 'path' => '/products/'.rawurlencode($code),
             ],
         ];
+    }
+
+    /** @param  array<string, mixed>  $params */
+    protected function createSupplier(User $user, array $params): array
+    {
+        $this->assertModule($user, 'customers_suppliers');
+        $this->assertPermission($user, 'purchasing.suppliers.create');
+
+        $supplierName = trim((string) ($params['supplier_name'] ?? ''));
+        if ($supplierName === '') {
+            throw ValidationException::withMessages(['supplier_name' => ['Supplier name is required.']]);
+        }
+
+        $payload = array_filter([
+            'supplier_name' => $supplierName,
+            'contact_person' => $params['contact_person'] ?? null,
+            'phone' => $params['phone'] ?? null,
+            'alternate_phone' => $params['alternate_phone'] ?? null,
+            'email' => $params['email'] ?? null,
+            'town' => $params['town'] ?? null,
+            'tax_pin' => $params['tax_pin'] ?? null,
+            'address' => $params['address'] ?? null,
+            'is_active' => true,
+            'organization_id' => $user->organization_id,
+        ], fn ($v) => $v !== null && $v !== '');
+
+        $req = Request::create('/suppliers', 'POST', $payload);
+        $req->setUserResolver(fn () => $user);
+
+        /** @var Supplier $supplier */
+        $supplier = app(SupplierController::class)->store($req)->getData(true);
+
+        return [
+            'success' => true,
+            'message' => 'Supplier created successfully.',
+            'result' => [
+                'supplier_id' => $supplier['id'] ?? null,
+                'supplier_name' => $supplier['supplier_name'] ?? $supplierName,
+                'path' => isset($supplier['id']) ? '/suppliers/'.$supplier['id'] : '/suppliers',
+            ],
+        ];
+    }
+
+    /** @param  array<string, mixed>  $params */
+    protected function createCustomer(User $user, array $params): array
+    {
+        $this->assertModule($user, 'customers_suppliers');
+        $this->assertPermission($user, 'customers.customers.create');
+
+        $customerName = trim((string) ($params['customer_name'] ?? ''));
+        if ($customerName === '') {
+            throw ValidationException::withMessages(['customer_name' => ['Customer name is required.']]);
+        }
+
+        $payload = array_filter([
+            'customer_name' => $customerName,
+            'customer_type' => $params['customer_type'] ?? 'debtor',
+            'phone_number' => $params['phone_number'] ?? null,
+            'additional_phone' => $params['additional_phone'] ?? null,
+            'town' => $params['town'] ?? null,
+            'route_id' => $params['route_id'] ?? null,
+            'credit_limit' => $this->numericParam($params, 'credit_limit'),
+            'kra_pin' => $params['kra_pin'] ?? null,
+            'terms_of_payment' => $params['terms_of_payment'] ?? null,
+            'branch_id' => $params['branch_id'] ?? $user->branch_id,
+            'organization_id' => $user->organization_id,
+        ], fn ($v) => $v !== null && $v !== '');
+
+        $req = Request::create('/customers', 'POST', $payload);
+        $req->setUserResolver(fn () => $user);
+
+        /** @var Customer $customer */
+        $customer = app(CustomerController::class)->store($req)->getData(true);
+
+        return [
+            'success' => true,
+            'message' => 'Customer created successfully.',
+            'result' => [
+                'customer_num' => $customer['customer_num'] ?? null,
+                'customer_name' => $customer['customer_name'] ?? $customerName,
+                'path' => isset($customer['customer_num']) ? '/customers/'.$customer['customer_num'] : '/customers',
+            ],
+        ];
+    }
+
+    /** @param  array<string, mixed>  $params */
+    protected function numericParam(array $params, string $key, ?float $default = null): ?float
+    {
+        if (! array_key_exists($key, $params) || $params[$key] === '' || $params[$key] === null) {
+            return $default;
+        }
+
+        return (float) $params[$key];
     }
 
     /** @param  array<string, mixed>  $params */

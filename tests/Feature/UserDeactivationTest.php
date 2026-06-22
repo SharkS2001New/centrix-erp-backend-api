@@ -14,7 +14,7 @@ class UserDeactivationTest extends TestCase
 {
     use RefreshesErpDatabase;
 
-    public function test_soft_delete_user_archives_record(): void
+    public function test_delete_user_without_activity_removes_record(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
@@ -32,13 +32,10 @@ class UserDeactivationTest extends TestCase
 
         $this->deleteJson("/api/v1/users/{$target->id}")
             ->assertOk()
-            ->assertJsonFragment(['message' => 'User archived (soft deleted). Sales and activity history are retained.']);
+            ->assertJsonPath('mode', 'deleted')
+            ->assertJsonFragment(['message' => 'User permanently deleted.']);
 
-        $this->assertSoftDeleted('users', [
-            'id' => $target->id,
-            'username' => 'cashier_old',
-            'is_active' => 0,
-        ]);
+        $this->assertDatabaseMissing('users', ['id' => $target->id]);
     }
 
     public function test_deactivated_user_cannot_log_in(): void

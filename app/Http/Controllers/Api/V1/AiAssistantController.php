@@ -86,7 +86,7 @@ class AiAssistantController extends Controller
         if (! empty($data['form_values']) && ! empty($data['pending_action'])) {
             $data['pending_action']['params'] = array_merge(
                 $data['pending_action']['params'] ?? [],
-                $data['form_values'],
+                $this->normalizeFormValues($data['form_values']),
             );
         }
 
@@ -196,5 +196,25 @@ class AiAssistantController extends Controller
                 'message' => ['Image uploads are not supported in the AI assistant.'],
             ]);
         }
+    }
+
+    /** @param  array<string, mixed>  $values
+     * @return array<string, mixed>
+     */
+    protected function normalizeFormValues(array $values): array
+    {
+        $normalized = [];
+        foreach ($values as $key => $value) {
+            if ($value === '') {
+                continue;
+            }
+            if (is_string($value) && is_numeric($value) && ! str_contains($key, 'phone') && ! str_contains($key, 'pin')) {
+                $normalized[$key] = str_contains($value, '.') ? (float) $value : (int) $value;
+                continue;
+            }
+            $normalized[$key] = $value;
+        }
+
+        return $normalized;
     }
 }

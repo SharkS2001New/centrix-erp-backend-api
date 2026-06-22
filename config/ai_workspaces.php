@@ -36,10 +36,12 @@ return [
         'report_exclude_paths' => ['/reports/payroll-summary'],
         'module_catalog_keys' => ['catalogue', 'sales', 'inventory', 'purchasing', 'reports'],
         'action_types' => [
-            'create_sales_order', 'create_held_order', 'create_product', 'create_report_template', 'record_customer_payment',
+            'create_sales_order', 'create_held_order', 'create_product', 'create_supplier', 'create_customer',
+            'create_report_template', 'record_customer_payment',
         ],
         'workflow_keys' => [
-            'create_product', 'create_sales_order', 'create_held_order', 'record_customer_payment', 'create_report_template',
+            'create_product', 'create_supplier', 'create_customer', 'create_sales_order', 'create_held_order',
+            'record_customer_payment', 'create_report_template',
         ],
         'keywords' => [
             'product', 'catalog', 'category', 'stock', 'inventory', 'sales', 'order', 'customer', 'supplier', 'lpo',

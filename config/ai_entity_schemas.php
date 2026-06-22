@@ -10,6 +10,19 @@ return [
         'module' => 'catalogue',
         'path' => '/products',
         'create_action' => 'create_product',
+        'ai_form_fields' => [
+            'product_code',
+            'product_name',
+            'subcategory_id',
+            'supplier_id',
+            'unit_id',
+            'unit_price',
+            'last_cost_price',
+            'product_weight',
+            'vat_id',
+            'reorder_point',
+            'sell_on_retail',
+        ],
         'fields' => [
             'product_code' => [
                 'label' => 'Product code / SKU',
@@ -34,6 +47,8 @@ return [
                     'table' => 'sub_categories',
                     'value' => 'id',
                     'label' => 'subcategory_name',
+                    'join' => ['categories as c', 'c.id', '=', 'sub_categories.category_id'],
+                    'label_expr' => "CONCAT(sub_categories.subcategory_name, ' (', c.category_name, ')')",
                 ],
             ],
             'unit_id' => [
@@ -51,6 +66,12 @@ return [
             ],
             'last_cost_price' => [
                 'label' => 'Last cost price (KES)',
+                'type' => 'number',
+                'required' => false,
+                'important' => false,
+            ],
+            'product_weight' => [
+                'label' => 'Product weight (kg)',
                 'type' => 'number',
                 'required' => false,
                 'important' => false,
@@ -92,6 +113,18 @@ return [
         'label' => 'Customer',
         'module' => 'customers_suppliers',
         'path' => '/customers',
+        'create_action' => 'create_customer',
+        'ai_form_fields' => [
+            'customer_name',
+            'customer_type',
+            'phone_number',
+            'additional_phone',
+            'town',
+            'route_id',
+            'credit_limit',
+            'kra_pin',
+            'terms_of_payment',
+        ],
         'fields' => [
             'customer_num' => [
                 'label' => 'Customer number',
@@ -122,6 +155,18 @@ return [
                 'required' => false,
                 'important' => true,
             ],
+            'additional_phone' => [
+                'label' => 'Additional phone',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
+            'town' => [
+                'label' => 'Town',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
             'email' => [
                 'label' => 'Email',
                 'type' => 'email',
@@ -142,6 +187,18 @@ return [
             'credit_limit' => [
                 'label' => 'Credit limit (KES)',
                 'type' => 'number',
+                'required' => false,
+                'important' => false,
+            ],
+            'kra_pin' => [
+                'label' => 'KRA PIN',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
+            'terms_of_payment' => [
+                'label' => 'Terms of payment',
+                'type' => 'string',
                 'required' => false,
                 'important' => false,
             ],
@@ -315,11 +372,28 @@ return [
         'label' => 'Supplier',
         'module' => 'customers_suppliers',
         'path' => '/suppliers',
+        'create_action' => 'create_supplier',
+        'ai_form_fields' => [
+            'supplier_name',
+            'contact_person',
+            'phone',
+            'alternate_phone',
+            'email',
+            'town',
+            'tax_pin',
+            'address',
+        ],
         'fields' => [
             'supplier_name' => [
                 'label' => 'Supplier name',
                 'type' => 'string',
                 'required' => true,
+                'important' => true,
+            ],
+            'contact_person' => [
+                'label' => 'Contact person',
+                'type' => 'string',
+                'required' => false,
                 'important' => true,
             ],
             'phone' => [
@@ -328,9 +402,33 @@ return [
                 'required' => false,
                 'important' => true,
             ],
+            'alternate_phone' => [
+                'label' => 'Alternate phone',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
             'email' => [
                 'label' => 'Email',
                 'type' => 'email',
+                'required' => false,
+                'important' => false,
+            ],
+            'town' => [
+                'label' => 'Town',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
+            'tax_pin' => [
+                'label' => 'Tax PIN',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
+            'address' => [
+                'label' => 'Address',
+                'type' => 'textarea',
                 'required' => false,
                 'important' => false,
             ],

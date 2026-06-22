@@ -7,11 +7,13 @@ use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use App\Services\Erp\WorkspaceSessionLabel;
+use App\Services\OrganizationDeprovisioningService;
 use App\Services\OrganizationPlatformConfigService;
 use App\Services\OrganizationProvisioningService;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\UserLoginChannelPolicy;
 use App\Services\Auth\UserLoginService;
+use App\Services\Auth\UserDeletionService;
 use App\Services\Auth\UsernameValidator;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\Erp\ApplicationProvisioner;
@@ -28,6 +30,7 @@ class OrganizationProvisionController extends Controller
         protected OrganizationProvisioningService $provisioning,
         protected OrganizationPlatformConfigService $platformConfig,
         protected ApplicationProvisioner $applications,
+        protected OrganizationDeprovisioningService $deprovisioning,
     ) {}
 
     /** GET /api/v1/admin/organizations — list tenants (super admin only) */
@@ -158,6 +161,35 @@ class OrganizationProvisionController extends Controller
         return response()->json($this->organizationPayload($org->fresh()));
     }
 
+    /** DELETE /api/v1/admin/organizations/{organization} */
+    public function destroy(Request $request, int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+
+        $data = $request->validate([
+            'password' => 'required|string',
+            'confirmation' => 'required|string|max:200',
+        ]);
+
+        if (trim($data['confirmation']) !== trim((string) $org->org_name)) {
+            throw ValidationException::withMessages([
+                'confirmation' => ['Type the organization name exactly to confirm deletion.'],
+            ]);
+        }
+
+        if (! Hash::check($data['password'], $request->user()->password)) {
+            throw ValidationException::withMessages([
+                'password' => ['Incorrect password.'],
+            ]);
+        }
+
+        $this->deprovisioning->delete($org);
+
+        return response()->json([
+            'message' => 'Organization deleted. All users have been signed out and can no longer sign in.',
+        ]);
+    }
+
     /** PATCH /api/v1/admin/organizations/{organization}/users/{user} */
     public function updateUser(Request $request, int $organization, int $user)
     {
@@ -225,6 +257,24 @@ class OrganizationProvisionController extends Controller
             'user' => $model->only([
                 'id', 'username', 'email', 'full_name', 'is_admin', 'login_channels', 'is_active', 'must_change_password',
             ]),
+        ]);
+    }
+
+    /** DELETE /api/v1/admin/organizations/{organization}/users/{user} */
+    public function deleteUser(Request $request, int $organization, int $user)
+    {
+        $org = $this->findTenantOrganization($organization);
+        $model = User::query()
+            ->where('organization_id', $org->id)
+            ->where('id', $user)
+            ->where('is_super_admin', false)
+            ->firstOrFail();
+
+        $result = app(UserDeletionService::class)->delete($model, $request->user());
+
+        return response()->json([
+            'message' => $result['message'],
+            'mode' => $result['mode'],
         ]);
     }
 

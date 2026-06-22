@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\UserAccountGuard;
 use App\Services\Auth\UserAccessService;
+use App\Services\Auth\UserDeletionService;
 use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserLoginChannelPolicy;
 use App\Services\Auth\UserMobileOrderScopeService;
@@ -136,12 +137,11 @@ class UserController extends BaseResourceController
 
         app(UserAccountGuard::class)->assertCanDelete($model, $authUser);
 
-        $model->forceFill(['deleted_by' => $authUser?->id])->save();
-        app(UserLoginService::class)->disableLogin($model);
-        $model->delete();
+        $result = app(UserDeletionService::class)->delete($model, $authUser);
 
         return response()->json([
-            'message' => 'User archived (soft deleted). Sales and activity history are retained.',
+            'message' => $result['message'],
+            'mode' => $result['mode'],
         ]);
     }
 

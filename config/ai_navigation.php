@@ -136,6 +136,20 @@ return [
             'permission' => 'catalogue.products.create',
         ],
         [
+            'type' => 'create_supplier',
+            'label' => 'Create a supplier',
+            'description' => 'Add a new supplier for purchases and accounts payable.',
+            'permission' => 'purchasing.suppliers.create',
+            'module' => 'customers_suppliers',
+        ],
+        [
+            'type' => 'create_customer',
+            'label' => 'Create a customer',
+            'description' => 'Add a new customer for sales and receivables.',
+            'permission' => 'customers.customers.create',
+            'module' => 'customers_suppliers',
+        ],
+        [
             'type' => 'create_employee',
             'label' => 'Create an employee',
             'description' => 'Add a new employee record in HR.',

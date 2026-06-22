@@ -191,7 +191,8 @@ class AuthSessionService
 
         $memberships = $this->resolver->membershipsForCanonicalUser($account->canonicalUserId());
 
-        $effective->refresh();
+        $authUser->refresh();
+        $effective = $account->effectiveUser();
 
         return [
             'token' => $newToken->plainTextToken,

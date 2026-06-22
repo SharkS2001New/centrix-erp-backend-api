@@ -67,9 +67,21 @@ class AiPageExplorer
     protected function entitiesForPath(string $path): array
     {
         $matches = [];
+        $bestLength = -1;
+
         foreach (config('ai_entity_schemas', []) as $entity => $schema) {
-            if (($schema['path'] ?? '') === $path) {
-                $matches[] = $entity;
+            $entityPath = (string) ($schema['path'] ?? '');
+            if ($entityPath === '') {
+                continue;
+            }
+
+            $prefix = rtrim($entityPath, '/');
+            if ($path === $prefix || str_starts_with($path, $prefix.'/')) {
+                $length = strlen($prefix);
+                if ($length > $bestLength) {
+                    $matches = [$entity];
+                    $bestLength = $length;
+                }
             }
         }
 

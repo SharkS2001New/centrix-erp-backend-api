@@ -20,6 +20,12 @@ class OrganizationLoginGuard
             ]);
         }
 
+        if ($organization->trashed()) {
+            throw ValidationException::withMessages([
+                'username' => ['This organization is no longer available. Please contact your platform administrator.'],
+            ]);
+        }
+
         $hasActiveAdmin = User::query()
             ->where('organization_id', $organization->id)
             ->where('is_admin', true)

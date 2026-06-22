@@ -37,6 +37,10 @@ class CompanyPremisesController extends Controller
     public function update(Request $request)
     {
         $user = $request->user();
+        if (! $user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
+
         $org = $this->erp->resolveOrganization($request);
 
         $data = $request->validate([

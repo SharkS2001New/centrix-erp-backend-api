@@ -5,13 +5,13 @@ namespace App\Services\Ai;
 class AiIntentResolver
 {
     /**
-     * Infer a create action from the user message and recent history when the LLM
-     * did not emit an action block (e.g. "please hold on while I fetch options").
+     * Infer a create action from the user message, recent history, and current page
+     * when the LLM did not emit an action block.
      *
      * @param  array<int, array{role?: string, content?: string}>  $history
      * @return array<string, mixed>|null
      */
-    public function inferCreateAction(string $message, array $history = []): ?array
+    public function inferCreateAction(string $message, array $history = [], ?string $pathname = null): ?array
     {
         $text = strtolower($message);
         foreach (array_slice($history, -6) as $turn) {
@@ -20,11 +20,29 @@ class AiIntentResolver
             }
         }
 
-        if ($this->matchesProductCreate($text)) {
+        $pathEntity = $this->entityFromPath($pathname);
+
+        if (($pathEntity === 'product' || $pathEntity === null) && $this->matchesProductCreate($text)) {
             return [
                 'type' => 'create_product',
                 'summary' => $this->productSummary($message, $history),
                 'params' => $this->extractProductParams($message, $history),
+            ];
+        }
+
+        if (($pathEntity === 'supplier' || ($pathEntity === null && $this->matchesSupplierCreate($text))) && $this->matchesSupplierCreate($text)) {
+            return [
+                'type' => 'create_supplier',
+                'summary' => $this->supplierSummary($message, $history),
+                'params' => $this->extractNamedParam($message, $history, 'supplier_name'),
+            ];
+        }
+
+        if (($pathEntity === 'customer' || ($pathEntity === null && $this->matchesCustomerCreate($text))) && $this->matchesCustomerCreate($text)) {
+            return [
+                'type' => 'create_customer',
+                'summary' => $this->customerSummary($message, $history),
+                'params' => $this->extractNamedParam($message, $history, 'customer_name'),
             ];
         }
 
@@ -55,10 +73,51 @@ class AiIntentResolver
         return null;
     }
 
+    protected function entityFromPath(?string $pathname): ?string
+    {
+        $path = '/'.trim((string) $pathname, '/');
+        if ($path === '/') {
+            return null;
+        }
+
+        $bestEntity = null;
+        $bestLength = -1;
+
+        foreach (config('ai_entity_schemas', []) as $entity => $schema) {
+            $entityPath = (string) ($schema['path'] ?? '');
+            if ($entityPath === '') {
+                continue;
+            }
+
+            $prefix = rtrim($entityPath, '/');
+            if ($path === $prefix || str_starts_with($path, $prefix.'/')) {
+                $length = strlen($prefix);
+                if ($length > $bestLength) {
+                    $bestEntity = $entity;
+                    $bestLength = $length;
+                }
+            }
+        }
+
+        return $bestEntity;
+    }
+
     protected function matchesProductCreate(string $text): bool
     {
         return (bool) preg_match('/\b(create|add|new|register)\b.*\b(product|item|sku|catalog)/i', $text)
             || (bool) preg_match('/\b(product|item|sku)\b.*\b(create|add|new)\b/i', $text);
+    }
+
+    protected function matchesSupplierCreate(string $text): bool
+    {
+        return (bool) preg_match('/\b(create|add|new|register)\b.*\bsupplier/i', $text)
+            || (bool) preg_match('/\bsupplier\b.*\b(create|add|new)\b/i', $text);
+    }
+
+    protected function matchesCustomerCreate(string $text): bool
+    {
+        return (bool) preg_match('/\b(create|add|new|register)\b.*\bcustomer/i', $text)
+            || (bool) preg_match('/\bcustomer\b.*\b(create|add|new)\b/i', $text);
     }
 
     protected function matchesEmployeeCreate(string $text): bool
@@ -109,6 +168,30 @@ class AiIntentResolver
             }
             if (preg_match('/(?:code|sku)\s+["\']?([A-Za-z0-9\-#]+)["\']?/i', $source, $m)) {
                 $params['product_code'] = trim($m[1]);
+            }
+        }
+
+        return array_filter($params, fn ($v) => $v !== null && $v !== '');
+    }
+
+    /** @param  array<int, array{role?: string, content?: string}>  $history
+     * @return array<string, mixed>
+     */
+    protected function extractNamedParam(string $message, array $history, string $field): array
+    {
+        $params = [];
+        $sources = [$message];
+        foreach (array_reverse($history) as $turn) {
+            if (($turn['role'] ?? '') === 'user') {
+                $sources[] = (string) ($turn['content'] ?? '');
+            }
+        }
+
+        foreach ($sources as $source) {
+            if (preg_match('/(?:named|called|name(?:d)?)\s+["\']([^"\']+)["\']/i', $source, $m)) {
+                $params[$field] = trim($m[1]);
+            } elseif (preg_match('/(?:named|called|name(?:d)?)\s+([A-Za-z0-9][A-Za-z0-9 \-&]{1,80})/i', $source, $m)) {
+                $params[$field] = trim($m[1]);
             }
         }
 
@@ -194,5 +277,25 @@ class AiIntentResolver
         return ! empty($params['product_name'])
             ? 'Create product: '.$params['product_name']
             : 'Create product';
+    }
+
+    /** @param  array<int, array{role?: string, content?: string}>  $history */
+    protected function supplierSummary(string $message, array $history): string
+    {
+        $params = $this->extractNamedParam($message, $history, 'supplier_name');
+
+        return ! empty($params['supplier_name'])
+            ? 'Add supplier: '.$params['supplier_name']
+            : 'Add supplier';
+    }
+
+    /** @param  array<int, array{role?: string, content?: string}>  $history */
+    protected function customerSummary(string $message, array $history): string
+    {
+        $params = $this->extractNamedParam($message, $history, 'customer_name');
+
+        return ! empty($params['customer_name'])
+            ? 'Add customer: '.$params['customer_name']
+            : 'Add customer';
     }
 }

@@ -53,6 +53,20 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
+        $exceptions->renderable(function (\Illuminate\Database\Eloquent\ModelNotFoundException $e, Request $request) {
+            if (! $request->is('api/*') || ! $request->expectsJson()) {
+                return null;
+            }
+
+            if ($e->getModel() === \App\Models\User::class) {
+                return response()->json([
+                    'message' => 'The requested user account was not found. Sign out and sign in again if this persists.',
+                    'code' => 'user_not_found',
+                ], 404);
+            }
+
+            return null;
+        });
         $exceptions->renderable(function (AuthenticationException $e, Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
                 return response()->json(['message' => 'Unauthenticated.'], 401);

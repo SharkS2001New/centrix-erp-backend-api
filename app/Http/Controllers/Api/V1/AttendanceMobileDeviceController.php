@@ -35,6 +35,9 @@ class AttendanceMobileDeviceController extends Controller
     {
         $org = $this->erp->resolveOrganization($request);
         $user = $request->user();
+        if (! $user) {
+            return response()->json(['message' => 'Unauthenticated.'], 401);
+        }
 
         $data = $request->validate([
             'device_identifier' => 'required|string|max:120',

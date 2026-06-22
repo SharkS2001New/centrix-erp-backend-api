@@ -4,6 +4,7 @@ namespace App\Http\Middleware;
 
 use App\Models\UserMembership;
 use Closure;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Request;
 use Laravel\Sanctum\Sanctum;
 use Symfony\Component\HttpFoundation\Response;
@@ -25,10 +26,25 @@ class EnsureUserIsActive
         /** @var \App\Models\User|null $user */
         $user = $accessToken->tokenable;
         if (! $user) {
-            return $next($request);
+            $accessToken->delete();
+
+            return response()->json([
+                'message' => 'Your session is no longer valid. Please sign in again.',
+                'code' => 'session_invalid',
+            ], 401);
         }
 
-        $user->refresh();
+        try {
+            $user->refresh();
+        } catch (ModelNotFoundException) {
+            $accessToken->delete();
+
+            return response()->json([
+                'message' => 'Your session is no longer valid. Please sign in again.',
+                'code' => 'session_invalid',
+            ], 401);
+        }
+
         if (! $user->is_active || $user->deleted_at) {
             $accessToken->delete();
 

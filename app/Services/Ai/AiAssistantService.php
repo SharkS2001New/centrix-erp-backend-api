@@ -180,7 +180,7 @@ class AiAssistantService
             } elseif ($pendingAction) {
                 $pending = $pendingAction;
             } else {
-                $inferred = $this->intentResolver->inferCreateAction($message, $history);
+                $inferred = $this->intentResolver->inferCreateAction($message, $history, $pathname);
                 if ($inferred) {
                     $pending = $inferred;
                     if ($this->looksLikeFetchingReply($reply)) {
@@ -199,7 +199,7 @@ class AiAssistantService
                     unset($pending);
                 } else {
                     $result['pending_action'] = $pending;
-                    $result['form_spec'] = $this->formSpecBuilder->forAction($user, $pending);
+                    $result['form_spec'] = $this->formSpecBuilder->forAction($user, $pending, $pathname);
                     if (empty(trim($result['reply'] ?? ''))) {
                         $result['reply'] = $actionType === 'record_customer_payment'
                             ? 'Fill in the form below, then click Confirm & record payment.'
@@ -275,7 +275,7 @@ class AiAssistantService
                 'tools_used' => ['action_executor'],
                 'action_error' => true,
                 'pending_action' => $pendingAction,
-                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction),
+                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction, $pathname),
             ];
         } catch (ModelNotFoundException $e) {
             Log::error('AI action model not found', ['message' => $e->getMessage()]);
@@ -285,7 +285,7 @@ class AiAssistantService
                 'tools_used' => ['action_executor'],
                 'action_error' => true,
                 'pending_action' => $pendingAction,
-                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction),
+                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction, $pathname),
             ];
         } catch (\Throwable $e) {
             Log::error('AI action failed', ['message' => $e->getMessage()]);
@@ -295,7 +295,7 @@ class AiAssistantService
                 'tools_used' => ['action_executor'],
                 'action_error' => true,
                 'pending_action' => $pendingAction,
-                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction),
+                'form_spec' => $this->formSpecBuilder->forAction($user, $pendingAction, $pathname),
             ];
         }
     }
