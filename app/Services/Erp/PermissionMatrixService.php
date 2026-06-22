@@ -195,4 +195,40 @@ class PermissionMatrixService
 
         return $groups;
     }
+
+    /** @return list<array<string, mixed>> */
+    public static function applicationsGroupedForUi(?CapabilityGate $gate = null): array
+    {
+        $groupsByModule = collect(self::groupedForUi($gate))->keyBy('module');
+        $applications = [];
+
+        foreach (config('permission_applications.order', []) as $appId) {
+            $def = config("permission_applications.applications.{$appId}");
+            if (! is_array($def)) {
+                continue;
+            }
+
+            $modules = [];
+            foreach ($def['registry_modules'] ?? [] as $registryModule) {
+                $group = $groupsByModule->get($registryModule);
+                if (is_array($group)) {
+                    $modules[] = $group;
+                }
+            }
+
+            if ($modules === []) {
+                continue;
+            }
+
+            $applications[] = [
+                'id' => (string) $appId,
+                'label' => (string) ($def['label'] ?? $appId),
+                'description' => $def['description'] ?? null,
+                'standalone' => (bool) ($def['standalone'] ?? false),
+                'modules' => $modules,
+            ];
+        }
+
+        return $applications;
+    }
 }

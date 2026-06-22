@@ -164,10 +164,6 @@ class OrganizationController extends BaseResourceController
     /** @return array<string, mixed> */
     protected function formatOrganization(Organization $org): array
     {
-        $data = $org->toArray();
-        $data['has_logo'] = Organization::logoIsStoredFile($org->logo);
-        $data['logo_file_path'] = $data['has_logo'] ? "/organizations/{$org->id}/logo/file" : null;
-
-        return $data;
+        return $org->toProfileArray();
     }
 }

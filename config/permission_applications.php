@@ -3,23 +3,32 @@
 /**
  * Groups permission registry modules under tenant applications (workspaces).
  * Used by the roles & permissions UI for parent → child layout.
+ *
+ * Provisioning still uses the six login workspaces in config/erp_applications.php;
+ * Mobile application appears here as its own permission group.
  */
 return [
     'order' => [
         'pos',
+        'mobile',
         'backoffice',
-        'distribution',
         'accounting',
         'hr',
+        'distribution',
         'admin',
-        'mobile',
     ],
 
     'applications' => [
         'pos' => [
-            'label' => 'External POS',
-            'description' => 'Cashier terminal, till sessions, and end of day.',
+            'label' => 'External ERP',
+            'description' => 'External POS terminal, till sessions, and end of day.',
             'registry_modules' => ['pos'],
+        ],
+        'mobile' => [
+            'label' => 'Mobile application',
+            'description' => 'Field sales mobile app — orders, customers, stock, and routes.',
+            'standalone' => true,
+            'registry_modules' => ['mobile'],
         ],
         'backoffice' => [
             'label' => 'Backoffice',
@@ -35,11 +44,6 @@ return [
                 'ai',
             ],
         ],
-        'distribution' => [
-            'label' => 'Distribution',
-            'description' => 'Drivers, vehicles, routes, dispatch, and logistics.',
-            'registry_modules' => ['fulfillment'],
-        ],
         'accounting' => [
             'label' => 'Accounting',
             'description' => 'General ledger, journals, receivables, payables, and financial reports.',
@@ -50,16 +54,15 @@ return [
             'description' => 'Employees, attendance, leave, and payroll.',
             'registry_modules' => ['hr'],
         ],
+        'distribution' => [
+            'label' => 'Distribution',
+            'description' => 'Drivers, vehicles, routes, dispatch, and logistics.',
+            'registry_modules' => ['fulfillment'],
+        ],
         'admin' => [
             'label' => 'Administration',
             'description' => 'Users, roles, branches, audit trail, and system settings.',
             'registry_modules' => ['admin'],
-        ],
-        'mobile' => [
-            'label' => 'Mobile application',
-            'description' => 'Field sales mobile app — separate from web workspaces.',
-            'standalone' => true,
-            'registry_modules' => ['mobile'],
         ],
     ],
 ];

@@ -57,4 +57,32 @@ class Organization extends Model
     {
         return is_string($logo) && str_starts_with($logo, 'organizations/');
     }
+
+    /** @return array<string, mixed> */
+    public function toProfileArray(): array
+    {
+        $data = $this->only([
+            'id',
+            'company_code',
+            'org_name',
+            'org_email',
+            'primary_tel',
+            'secondary_tel',
+            'addn_tel1',
+            'addn_tel2',
+            'org_address',
+            'org_pin',
+            'vat_regno',
+            'deployment_profile',
+            'enabled_modules',
+            'module_settings',
+            'is_active',
+            'created_at',
+            'updated_at',
+        ]);
+        $data['has_logo'] = self::logoIsStoredFile($this->logo);
+        $data['logo_file_path'] = $data['has_logo'] ? "/organizations/{$this->id}/logo/file" : null;
+
+        return $data;
+    }
 }

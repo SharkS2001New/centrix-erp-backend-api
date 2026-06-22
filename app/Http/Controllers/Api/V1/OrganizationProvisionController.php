@@ -74,7 +74,7 @@ class OrganizationProvisionController extends Controller
             'modules' => collect(ModuleRegistry::optionsPayload())->values(),
             'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig('wholesale_retail'),
             'notes' => [
-                'applications' => 'Enable or disable the six tenant applications (External POS, Backoffice, Distribution, Accounting, Human Resources, Administration). The API stores the underlying module keys automatically.',
+                'applications' => 'Enable or disable the six tenant applications (External ERP, Backoffice, Accounting, Human Resources, Distribution, Administration). The API stores the underlying module keys automatically.',
                 'sales_platform' => 'Checkout vs save order, order workflow, and stock timing are configured by the platform super admin — not the organization manager.',
                 'org_settings' => 'Organization managers configure day-to-day preferences (payment fields, receipts, SMTP, M-Pesa, etc.) under Administration → Organization settings when Administration is enabled.',
             ],
@@ -311,10 +311,7 @@ class OrganizationProvisionController extends Controller
         $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
 
         return [
-            'organization' => $org->only([
-                'id', 'company_code', 'org_name', 'org_email', 'primary_tel', 'org_address',
-                'org_pin', 'vat_regno', 'deployment_profile', 'enabled_modules', 'is_active', 'created_at',
-            ]),
+            'organization' => $org->toProfileArray(),
             'applications' => $this->applications->applicationsFromEnabledModules($gate->allModules()),
             'effective_modules' => $gate->allModules(),
             'capabilities' => array_merge([

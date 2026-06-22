@@ -83,18 +83,28 @@ class RolePermissionTest extends TestCase
         $res = $this->getJson('/api/v1/roles/permissions/matrix')->assertOk();
         $applications = collect($res->json('applications'));
 
+        $this->assertSame(
+            ['pos', 'mobile', 'backoffice', 'accounting', 'hr', 'distribution', 'admin'],
+            $applications->pluck('id')->all(),
+        );
+
         $accounting = $applications->firstWhere('id', 'accounting');
-        $this->assertNotNull($accounting);
         $this->assertSame('Accounting', $accounting['label']);
 
         $moduleKeys = collect($accounting['modules'])->pluck('module')->all();
         $this->assertContains('accounting', $moduleKeys);
         $this->assertContains('payments', $moduleKeys);
 
+        $externalErp = $applications->firstWhere('id', 'pos');
+        $this->assertNotNull($externalErp);
+        $this->assertSame('External ERP', $externalErp['label']);
+        $this->assertSame(['pos'], collect($externalErp['modules'])->pluck('module')->all());
+
         $mobile = $applications->firstWhere('id', 'mobile');
         $this->assertNotNull($mobile);
+        $this->assertSame('Mobile application', $mobile['label']);
         $this->assertTrue($mobile['standalone']);
-        $this->assertSame('mobile', $mobile['modules'][0]['module'] ?? null);
+        $this->assertSame(['mobile'], collect($mobile['modules'])->pluck('module')->all());
     }
 
     public function test_clearing_role_permissions_persists_empty_set(): void
