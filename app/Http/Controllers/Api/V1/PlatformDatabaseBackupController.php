@@ -9,8 +9,10 @@ use App\Services\Backup\DatabaseBackupException;
 use App\Services\Backup\DatabaseBackupService;
 use App\Services\Backup\GoogleDriveBackupUploader;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
-use Symfony\Component\HttpFoundation\StreamedResponse;
+use Illuminate\Support\Facades\Storage;
+use Symfony\Component\HttpFoundation\Response;
 
 class PlatformDatabaseBackupController extends Controller
 {
@@ -100,27 +102,37 @@ class PlatformDatabaseBackupController extends Controller
     }
 
     /** GET /api/v1/admin/database-backups/{filename}/download */
-    public function download(Request $request, string $filename): StreamedResponse
+    public function download(Request $request, string $filename): Response
     {
-        $backup = $this->backups->findBackup($filename);
+        try {
+            $backup = $this->backups->findBackup($filename);
 
-        if ($backup === null) {
-            abort(404, 'Backup file not found.');
+            if ($backup === null) {
+                abort(404, 'Backup file not found.');
+            }
+
+            Log::warning('Platform database backup downloaded', [
+                'filename' => $backup['filename'],
+                'user_id' => $request->user()?->id,
+                'ip' => $request->ip(),
+            ]);
+
+            $mimeType = $backup['compressed'] ? 'application/gzip' : 'application/sql';
+
+            return Storage::disk($backup['disk'])->download(
+                $backup['relative_path'],
+                $backup['filename'],
+                ['Content-Type' => $mimeType],
+            );
+        } catch (\Throwable $e) {
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                throw $e;
+            }
+
+            report($e);
+
+            return $this->backupErrorResponse($e, 'Could not download database backup.', 500);
         }
-
-        \Illuminate\Support\Facades\Log::warning('Platform database backup downloaded', [
-            'filename' => $backup['filename'],
-            'user_id' => $request->user()?->id,
-            'ip' => $request->ip(),
-        ]);
-
-        $mimeType = $backup['compressed'] ? 'application/gzip' : 'application/sql';
-
-        return response()->download(
-            $backup['absolute_path'],
-            $backup['filename'],
-            ['Content-Type' => $mimeType],
-        );
     }
 
     protected function backupErrorResponse(\Throwable $e, string $message, int $status)
