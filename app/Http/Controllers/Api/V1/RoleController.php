@@ -51,9 +51,9 @@ class RoleController extends BaseResourceController
         return response()->json($payload);
     }
 
-    public function permissions(string $id)
+    public function permissions(string $id, ?string $nestedId = null)
     {
-        $role = $this->findRoleOrFail($id);
+        $role = $this->findRoleOrFail($this->resolveResourceId($id, $nestedId));
         $permissionIds = DB::table('role_permissions')
             ->where('role_id', $role->id)
             ->pluck('permission_id')
@@ -67,9 +67,10 @@ class RoleController extends BaseResourceController
         ]);
     }
 
-    public function syncPermissions(Request $request, string $id)
+    public function syncPermissions(Request $request, string $id, ?string $nestedId = null)
     {
-        $role = $this->findRoleOrFail($id);
+        $resourceId = $this->resolveResourceId($id, $nestedId);
+        $role = $this->findRoleOrFail($resourceId);
         $data = $request->validate([
             'permission_ids' => 'present|array',
             'permission_ids.*' => 'integer|exists:permissions,id',
@@ -100,7 +101,7 @@ class RoleController extends BaseResourceController
             }
         });
 
-        return $this->permissions($id);
+        return $this->permissions($resourceId);
     }
 
     public function permissionMatrix(Request $request)
@@ -122,9 +123,9 @@ class RoleController extends BaseResourceController
         ]);
     }
 
-    public function destroy(Request $request, string $id)
+    public function destroy(Request $request, string $id, ?string $nestedId = null)
     {
-        $role = $this->findRoleOrFail($id);
+        $role = $this->findRoleOrFail($this->resolveResourceId($id, $nestedId));
         $usersCount = User::query()->where('role_id', $role->id)->count();
 
         if ($usersCount > 0) {

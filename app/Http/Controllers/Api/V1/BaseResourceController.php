@@ -79,10 +79,21 @@ abstract class BaseResourceController extends Controller
         return $query;
     }
 
-    protected function findScopedModel(Request $request, string $id): Model
+    /**
+     * Resolve the resource id for show/update/destroy. Nested platform routes under
+     * admin/organizations/{organization}/... pass the organization id first.
+     */
+    protected function resolveResourceId(string $id, ?string $nestedId = null): string
     {
+        return $nestedId ?? $id;
+    }
+
+    protected function findScopedModel(Request $request, string $id, ?string $nestedId = null): Model
+    {
+        $resourceId = $this->resolveResourceId($id, $nestedId);
+
         return $this->baseQuery($request)
-            ->where($this->routeKeyColumn(), $id)
+            ->where($this->routeKeyColumn(), $resourceId)
             ->firstOrFail();
     }
 
@@ -128,14 +139,14 @@ abstract class BaseResourceController extends Controller
         return response()->json($model, 201);
     }
 
-    public function show(Request $request, string $id)
+    public function show(Request $request, string $id, ?string $nestedId = null)
     {
-        return response()->json($this->findScopedModel($request, $id));
+        return response()->json($this->findScopedModel($request, $id, $nestedId));
     }
 
-    public function update(Request $request, string $id)
+    public function update(Request $request, string $id, ?string $nestedId = null)
     {
-        $model = $this->findScopedModel($request, $id);
+        $model = $this->findScopedModel($request, $id, $nestedId);
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $data = $request->validate($rules);
         unset($data['organization_id']);
@@ -160,9 +171,9 @@ abstract class BaseResourceController extends Controller
         return response()->json($model);
     }
 
-    public function destroy(Request $request, string $id)
+    public function destroy(Request $request, string $id, ?string $nestedId = null)
     {
-        $model = $this->findScopedModel($request, $id);
+        $model = $this->findScopedModel($request, $id, $nestedId);
         $user = $request->user();
 
         if ($user && $this->auditable()) {

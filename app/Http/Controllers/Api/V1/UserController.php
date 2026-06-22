@@ -70,9 +70,9 @@ class UserController extends BaseResourceController
         return response()->json($model, 201);
     }
 
-    public function update(Request $request, string $id)
+    public function update(Request $request, string $id, ?string $nestedId = null)
     {
-        $model = $this->findOrgUser($id);
+        $model = $this->findOrgUser($this->resolveResourceId($id, $nestedId));
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $rules['access_scope'] = 'sometimes|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
@@ -130,9 +130,9 @@ class UserController extends BaseResourceController
         return response()->json($model);
     }
 
-    public function destroy(Request $request, string $id)
+    public function destroy(Request $request, string $id, ?string $nestedId = null)
     {
-        $model = $this->findOrgUser($id);
+        $model = $this->findOrgUser($this->resolveResourceId($id, $nestedId));
         $authUser = $request->user();
 
         app(UserAccountGuard::class)->assertCanDelete($model, $authUser);
@@ -145,18 +145,21 @@ class UserController extends BaseResourceController
         ]);
     }
 
-    public function permissions(string $id)
+    public function permissions(string $id, ?string $nestedId = null)
     {
         PermissionMatrixService::ensure();
 
         return response()->json(
-            app(UserPermissionService::class)->describeForUser($this->findOrgUser($id)),
+            app(UserPermissionService::class)->describeForUser(
+                $this->findOrgUser($this->resolveResourceId($id, $nestedId)),
+            ),
         );
     }
 
-    public function syncPermissions(Request $request, string $id)
+    public function syncPermissions(Request $request, string $id, ?string $nestedId = null)
     {
-        $user = $this->findOrgUser($id);
+        $resourceId = $this->resolveResourceId($id, $nestedId);
+        $user = $this->findOrgUser($resourceId);
 
         if ($user->is_admin) {
             throw ValidationException::withMessages([
@@ -177,7 +180,7 @@ class UserController extends BaseResourceController
             $data['denied_permission_ids'] ?? [],
         );
 
-        return $this->permissions($id);
+        return $this->permissions($resourceId);
     }
 
     /** POST /users/{id}/memberships — grant access to another organization (same credentials). */

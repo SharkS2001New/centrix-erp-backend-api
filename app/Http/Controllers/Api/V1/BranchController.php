@@ -14,9 +14,9 @@ class BranchController extends BaseResourceController
         return Branch::class;
     }
 
-    public function destroy(Request $request, string $id)
+    public function destroy(Request $request, string $id, ?string $nestedId = null)
     {
-        $branch = $this->findScopedModel($request, $id);
+        $branch = $this->findScopedModel($request, $id, $nestedId);
         $usersCount = User::query()->where('branch_id', $branch->id)->count();
 
         if ($usersCount > 0) {
