@@ -14,14 +14,14 @@ class UsernameValidator
         ?int $ignoreUserId = null,
         ?int $ignoreMembershipId = null,
     ): void {
-        $username = trim($username);
+        $username = UsernameNormalizer::forLookup($username);
         if ($username === '') {
             return;
         }
 
         $userQuery = User::query()
             ->where('organization_id', $organizationId)
-            ->where('username', $username)
+            ->whereUsernameInsensitive($username)
             ->whereNull('deleted_at');
 
         if ($ignoreUserId) {
@@ -36,7 +36,7 @@ class UsernameValidator
 
         $membershipQuery = UserMembership::query()
             ->where('organization_id', $organizationId)
-            ->where('username', $username);
+            ->whereRaw('UPPER(username) = ?', [$username]);
 
         if ($ignoreMembershipId) {
             $membershipQuery->where('id', '!=', $ignoreMembershipId);

@@ -1,6 +1,8 @@
 <?php
 namespace App\Models;
 
+use App\Services\Auth\UsernameNormalizer;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Foundation\Auth\User as Authenticatable;
 use Illuminate\Notifications\Notifiable;
 use Laravel\Sanctum\HasApiTokens;
@@ -51,6 +53,21 @@ class User extends Authenticatable
     public function getAuthPassword(): string
     {
         return $this->password;
+    }
+
+    protected function username(): Attribute
+    {
+        return Attribute::make(
+            set: fn (?string $value) => UsernameNormalizer::forStorage($value),
+        );
+    }
+
+    /** @param  \Illuminate\Database\Eloquent\Builder<static>  $query */
+    public function scopeWhereUsernameInsensitive($query, string $username)
+    {
+        return $query->whereRaw('UPPER(username) = ?', [
+            UsernameNormalizer::forLookup($username),
+        ]);
     }
 
     public function organization()

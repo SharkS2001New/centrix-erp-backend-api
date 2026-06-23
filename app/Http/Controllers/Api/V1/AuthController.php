@@ -71,9 +71,7 @@ class AuthController extends Controller
         ]);
 
         $code = strtoupper(trim($data['company_code']));
-        $organization = Organization::query()
-            ->whereRaw('UPPER(company_code) = ?', [$code])
-            ->first();
+        $organization = Organization::findByCompanyCodeIdentifier($code);
 
         if (! $organization) {
             throw ValidationException::withMessages([

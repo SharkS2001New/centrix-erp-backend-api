@@ -419,6 +419,7 @@ class LightStoresLegacyImporter
                     'password' => Hash::make(Str::password(24)),
                     'full_name' => strtoupper((string) $legacyUser->username),
                     'is_admin' => (bool) $legacyUser->is_admin,
+                    'access_scope' => (bool) $legacyUser->is_admin ? 'org' : 'branch',
                     'is_active' => true,
                     'login_channels' => (bool) $legacyUser->user_is_mobile ? ['backoffice', 'mobile'] : ['backoffice'],
                     'is_mobile_user' => (bool) $legacyUser->user_is_mobile,

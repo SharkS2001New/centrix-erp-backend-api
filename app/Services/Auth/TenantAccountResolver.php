@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Models\Organization;
 use App\Models\User;
 use App\Models\UserMembership;
+use App\Services\Auth\UsernameNormalizer;
 
 class TenantAccountResolver
 {
@@ -51,9 +52,10 @@ class TenantAccountResolver
 
     protected function resolveByUsername(Organization $organization, string $username): ?TenantAccount
     {
+        $normalized = UsernameNormalizer::forLookup($username);
         $user = User::query()
             ->where('organization_id', $organization->id)
-            ->where('username', $username)
+            ->whereUsernameInsensitive($username)
             ->where('is_active', true)
             ->whereNull('deleted_at')
             ->first();
@@ -64,7 +66,7 @@ class TenantAccountResolver
 
         $membership = UserMembership::query()
             ->where('organization_id', $organization->id)
-            ->where('username', $username)
+            ->whereRaw('UPPER(username) = ?', [$normalized])
             ->where('is_active', true)
             ->with('user')
             ->first();

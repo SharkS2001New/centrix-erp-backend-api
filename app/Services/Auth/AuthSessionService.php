@@ -43,7 +43,7 @@ class AuthSessionService
             );
         }
 
-        $org = \App\Models\Organization::where('company_code', $companyCode)->first();
+        $org = \App\Models\Organization::findByCompanyCodeIdentifier($companyCode);
         if (! $org) {
             throw ValidationException::withMessages([
                 'username' => ['Invalid credentials.'],
@@ -97,7 +97,12 @@ class AuthSessionService
     ): array
     {
         $companyCode = strtoupper(trim($companyCode));
-        $org = \App\Models\Organization::where('company_code', $companyCode)->firstOrFail();
+        $org = \App\Models\Organization::findByCompanyCodeIdentifier($companyCode);
+        if (! $org) {
+            throw ValidationException::withMessages([
+                'company_code' => ['You do not have access to this organization.'],
+            ]);
+        }
 
         $canonicalId = (int) $currentUser->id;
         $account = $this->resolver->resolveForCanonicalUser($org, $canonicalId);

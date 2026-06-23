@@ -2,6 +2,8 @@
 
 namespace App\Models;
 
+use App\Services\Auth\UsernameNormalizer;
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -22,6 +24,13 @@ class UserMembership extends Model
         'is_admin' => 'boolean',
         'is_active' => 'boolean',
     ];
+
+    protected function username(): Attribute
+    {
+        return Attribute::make(
+            set: fn (?string $value) => UsernameNormalizer::forStorage($value),
+        );
+    }
 
     public function user(): BelongsTo
     {

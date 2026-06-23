@@ -21,6 +21,26 @@ class Organization extends Model
         'is_active' => 'boolean',
     ];
 
+    public static function normalizeCompanyCodeIdentifier(string $code): string
+    {
+        return strtoupper(preg_replace('/[^A-Z0-9]/', '', trim($code)) ?? '');
+    }
+
+    public static function findByCompanyCodeIdentifier(string $code): ?self
+    {
+        $normalized = self::normalizeCompanyCodeIdentifier($code);
+        if ($normalized === '') {
+            return null;
+        }
+
+        return static::query()
+            ->whereRaw(
+                "UPPER(REPLACE(REPLACE(REPLACE(company_code, '-', ''), ' ', ''), '_', '')) = ?",
+                [$normalized],
+            )
+            ->first();
+    }
+
     /** Set at registration only — never updated afterward. */
     public static function immutableAttributes(): array
     {

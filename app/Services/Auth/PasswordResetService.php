@@ -30,7 +30,7 @@ class PasswordResetService
             return ['message' => $message];
         }
 
-        $org = \App\Models\Organization::where('company_code', $companyCode)->first();
+        $org = \App\Models\Organization::findByCompanyCodeIdentifier($companyCode);
         if (! $org) {
             return ['message' => $message];
         }
@@ -77,7 +77,7 @@ class PasswordResetService
             ]);
         }
 
-        $org = \App\Models\Organization::where('company_code', $companyCode)->first();
+        $org = \App\Models\Organization::findByCompanyCodeIdentifier($companyCode);
         if (! $org) {
             throw ValidationException::withMessages([
                 'token' => ['This password reset link is invalid or has expired.'],
