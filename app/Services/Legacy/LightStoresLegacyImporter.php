@@ -315,10 +315,10 @@ class LightStoresLegacyImporter
 
         if ($this->targetOrganizationId) {
             $existing = Organization::query()->findOrFail($this->targetOrganizationId);
-            if (strcasecmp((string) $existing->company_code, (string) $legacyOrg->company_code) !== 0) {
+            if (! $existing->matchesLegacyCompanyCode((string) $legacyOrg->company_code)) {
                 throw new RuntimeException(
                     "Organization #{$existing->id} [{$existing->company_code}] does not match legacy org_info [{$legacyOrg->company_code}]. "
-                    .'Use the Centrix org that matches the legacy company code, or fix company_code before importing.',
+                    .'Set legacy_archive.legacy_company_code on the organization, add the legacy code as a company_code alias, or rename the Centrix company code to match.',
                 );
             }
         } else {

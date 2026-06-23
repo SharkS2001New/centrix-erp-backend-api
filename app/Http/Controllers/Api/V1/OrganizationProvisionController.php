@@ -8,6 +8,7 @@ use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use App\Services\Erp\WorkspaceSessionLabel;
 use App\Services\OrganizationDeprovisioningService;
+use App\Services\Organization\OrganizationCompanyCodeService;
 use App\Services\OrganizationPlatformConfigService;
 use App\Services\OrganizationProvisioningService;
 use App\Services\Auth\PasswordPolicy;
@@ -31,6 +32,7 @@ class OrganizationProvisionController extends Controller
         protected OrganizationPlatformConfigService $platformConfig,
         protected ApplicationProvisioner $applications,
         protected OrganizationDeprovisioningService $deprovisioning,
+        protected OrganizationCompanyCodeService $companyCodes,
     ) {}
 
     /** GET /api/v1/admin/organizations — list tenants (super admin only) */
@@ -90,6 +92,23 @@ class OrganizationProvisionController extends Controller
         $org = $this->findTenantOrganization($organization);
 
         return response()->json($this->organizationPayload($org));
+    }
+
+    /** PATCH /api/v1/admin/organizations/{organization}/company-code */
+    public function renameCompanyCode(Request $request, int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+
+        $data = $request->validate([
+            'company_code' => 'required|string|max:45',
+        ]);
+
+        $org = $this->companyCodes->rename($org, $data['company_code']);
+
+        return response()->json([
+            'organization' => $org->toProfileArray(),
+            'message' => 'Company code updated. Previous codes remain valid for sign-in.',
+        ]);
     }
 
     /** PATCH /api/v1/admin/organizations/{organization} */

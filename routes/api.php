@@ -162,6 +162,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::patch('admin/organizations/{organization}', [OrganizationProvisionController::class, 'update'])
             ->middleware(['erp.super_admin']);
+        Route::patch('admin/organizations/{organization}/company-code', [OrganizationProvisionController::class, 'renameCompanyCode'])
+            ->middleware(['erp.super_admin']);
         Route::delete('admin/organizations/{organization}', [OrganizationProvisionController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/organizations/{organization}/users', [OrganizationProvisionController::class, 'listUsers'])
@@ -185,6 +187,17 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
             ->middleware(['erp.super_admin']);
+
+        Route::prefix('admin/ai-training')
+            ->middleware(['erp.super_admin'])
+            ->group(function () {
+                Route::get('status', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'status']);
+                Route::get('knowledge', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'listKnowledge']);
+                Route::post('knowledge', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'teach']);
+                Route::patch('knowledge/{entry}', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'updateKnowledge']);
+                Route::delete('knowledge/{entry}', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'deleteKnowledge']);
+                Route::post('chat', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'chat']);
+            });
 
         Route::get('admin/organizations/{organization}/cache', [PlatformOrganizationCacheController::class, 'show'])
             ->middleware(['erp.super_admin']);

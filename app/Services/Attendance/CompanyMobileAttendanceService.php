@@ -29,9 +29,7 @@ class CompanyMobileAttendanceService
 
     public function resolveOrganization(string $companyCode): Organization
     {
-        $organization = Organization::query()
-            ->whereRaw('UPPER(company_code) = ?', [strtoupper(trim($companyCode))])
-            ->first();
+        $organization = Organization::findByCompanyCodeIdentifier($companyCode);
 
         if (! $organization) {
             throw new InvalidArgumentException('Organization not found for this company code.');

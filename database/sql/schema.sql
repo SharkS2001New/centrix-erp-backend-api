@@ -37,6 +37,7 @@ DROP TABLE IF EXISTS organizations;
 CREATE TABLE organizations (
     id              INT           PRIMARY KEY AUTO_INCREMENT,
     company_code    VARCHAR(45)   UNIQUE NOT NULL,
+    company_code_aliases JSON     NULL,
     logo            VARCHAR(200),
     org_name        VARCHAR(200)  NOT NULL,
     org_email       VARCHAR(200)  NOT NULL,

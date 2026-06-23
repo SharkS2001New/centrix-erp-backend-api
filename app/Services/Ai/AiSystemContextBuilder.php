@@ -23,12 +23,15 @@ class AiSystemContextBuilder
     ) {}
 
     /** @return array<string, mixed> */
-    public function build(User $user, string $message, ?array $workspaceScope = null): array
+    public function build(User $user, string $message, ?array $workspaceScope = null, ?Organization $organization = null, bool $trainingMode = false): array
     {
-        $org = Organization::find($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $organization ?? Organization::find($user->organization_id);
+        $orgId = (int) ($org?->id ?? $user->organization_id);
+        $gate = $organization
+            ? $this->erp->gateForOrganization($organization)
+            : $this->erp->gateForUser($user);
         $caps = $gate->toArray();
-        $userAccess = $this->userAccessSummary($user, $gate);
+        $userAccess = $this->userAccessSummary($user, $gate, $trainingMode);
         $scope = $workspaceScope ?? [
             'id' => 'backoffice',
             'label' => 'Backoffice',
@@ -38,8 +41,10 @@ class AiSystemContextBuilder
             'workflow_keys' => [],
         ];
 
-        $navigation = $this->visibleNavigation($gate, $user);
-        $actions = $this->availableActions($gate, $user);
+        $contextUser = $this->contextUser($user, $organization, $orgId, $trainingMode);
+
+        $navigation = $this->visibleNavigation($gate, $contextUser);
+        $actions = $this->availableActions($gate, $contextUser);
         $moduleCatalog = config('ai_knowledge.modules', []);
         $workflows = config('ai_knowledge.workflows', []);
 
@@ -67,7 +72,7 @@ class AiSystemContextBuilder
                 'id' => $user->id,
                 'name' => $user->full_name ?? $user->username,
                 'branch_id' => $user->branch_id,
-                'is_admin' => (bool) $user->is_admin,
+                'is_admin' => $trainingMode || (bool) $user->is_admin,
             ],
             'user_access' => $userAccess,
             'enabled_modules' => array_keys(array_filter($caps['modules'] ?? [])),
@@ -76,41 +81,44 @@ class AiSystemContextBuilder
             'report_builder_modules' => array_column($this->reportBuilder->schema()['modules'] ?? [], 'name'),
             'module_catalog' => $moduleCatalog,
             'workflows' => $workflows,
-            'entity_schemas' => $this->entitySchemas->summaryForContext($user),
-            'organization_knowledge' => $this->knowledge->confirmedForOrganization((int) $user->organization_id),
+            'entity_schemas' => $this->entitySchemas->summaryForContext($contextUser),
+            'platform_knowledge' => $this->knowledge->confirmedForContext(
+                30,
+                $scope['id'] ?? null,
+            ),
         ];
 
         $lower = strtolower($message);
         if ($this->needsLookup($lower, 'product', 'catalog', 'sku')) {
-            $context['entity_detail']['product'] = $this->entitySchemas->forEntityWithOptions($user, 'product');
+            $context['entity_detail']['product'] = $this->entitySchemas->forEntityWithOptions($contextUser, 'product');
         }
         if ($this->needsLookup($lower, 'employee', 'hire', 'staff', 'hr')) {
-            $context['entity_detail']['employee'] = $this->entitySchemas->forEntityWithOptions($user, 'employee');
+            $context['entity_detail']['employee'] = $this->entitySchemas->forEntityWithOptions($contextUser, 'employee');
         }
         if ($this->needsLookup($lower, 'order', 'sale', 'checkout')) {
-            $context['entity_detail']['sales_order'] = $this->entitySchemas->forEntityWithOptions($user, 'sales_order');
+            $context['entity_detail']['sales_order'] = $this->entitySchemas->forEntityWithOptions($contextUser, 'sales_order');
         }
         if ($this->needsLookup($lower, 'product', 'stock', 'reorder', 'catalog', 'category', 'sku')) {
-            $context['product_summary'] = $this->productSummary($user);
-            $context['product_search'] = $this->searchProducts($user, $message);
+            $context['product_summary'] = $this->productSummary($contextUser);
+            $context['product_search'] = $this->searchProducts($contextUser, $message);
         }
-        if ($this->shouldIncludeSalesSummary($user, $lower, $userAccess)) {
-            $context['sales_summary'] = $this->salesSummary($user);
+        if ($this->shouldIncludeSalesSummary($contextUser, $lower, $userAccess)) {
+            $context['sales_summary'] = $this->salesSummary($contextUser);
         }
         if ($this->needsLookup($lower, 'receivable', 'debt', 'invoice', 'balance', 'debtor', 'owed', 'outstanding', 'ar ')) {
-            $context['receivables_summary'] = $this->receivablesSummary($user);
+            $context['receivables_summary'] = $this->receivablesSummary($contextUser);
         }
         if ($this->needsLookup($lower, 'payment', 'pay', 'collect', 'partial', 'debtor', 'receivable')) {
-            $context['entity_detail']['customer_payment'] = $this->entitySchemas->forEntityWithOptions($user, 'customer_payment');
+            $context['entity_detail']['customer_payment'] = $this->entitySchemas->forEntityWithOptions($contextUser, 'customer_payment');
         }
         if ($this->needsLookup($lower, 'report', 'builder', 'template')) {
             $context['report_builder_schema'] = $this->reportBuilder->schema();
         }
         if ($this->needsLookup($lower, 'employee', 'hire', 'staff', 'hr')) {
-            $context['hr_reference'] = $this->hrReference($user);
+            $context['hr_reference'] = $this->hrReference($contextUser);
         }
         if ($this->needsLookup($lower, 'customer', 'order', 'held')) {
-            $context['customer_search'] = $this->searchCustomers($user, $message);
+            $context['customer_search'] = $this->searchCustomers($contextUser, $message);
         }
 
         return $context;
@@ -132,9 +140,44 @@ class AiSystemContextBuilder
         return false;
     }
 
-    /** @return array<string, mixed> */
-    protected function userAccessSummary(User $user, CapabilityGate $gate): array
+    protected function contextUser(User $user, ?Organization $organization, int $orgId, bool $trainingMode = false): User
     {
+        if (! $organization || ((int) $user->organization_id === $orgId && ! $trainingMode)) {
+            return $user;
+        }
+
+        $clone = clone $user;
+        $clone->organization_id = $orgId;
+        if ($trainingMode) {
+            $clone->is_admin = true;
+        }
+
+        return $clone;
+    }
+
+    /** @return array<string, mixed> */
+    protected function userAccessSummary(User $user, CapabilityGate $gate, bool $trainingMode = false): array
+    {
+        if ($trainingMode) {
+            $modules = [];
+            foreach (['sales', 'reports', 'payments', 'inventory', 'accounting', 'hr', 'catalogue'] as $key) {
+                $modules[$key] = [
+                    'org_module_enabled' => true,
+                    'user_has_permission' => true,
+                    'can_access' => true,
+                ];
+            }
+
+            return [
+                'is_admin' => true,
+                'has_full_permissions' => true,
+                'modules' => $modules,
+                'guidance' => [
+                    'Training sandbox — permissions are simulated as full access for testing.',
+                ],
+            ];
+        }
+
         $moduleChecks = [
             'sales' => [
                 'org_enabled' => $gate->enabled('sales.backend') || $gate->enabled('sales.pos'),

@@ -212,20 +212,24 @@ class AiAssistantTest extends TestCase
         $this->assertNotEmpty($unitField['options'] ?? []);
     }
 
-    public function test_user_can_teach_ai(): void
+    public function test_regular_user_cannot_teach_via_api(): void
     {
         $this->postJson('/api/v1/ai/teach', [
             'topic' => 'Pricing policy',
             'content' => 'All sugar products use VAT standard rate.',
         ])
-            ->assertCreated()
-            ->assertJsonPath('confirmed', true);
+            ->assertForbidden();
+    }
 
+    public function test_remember_that_directs_users_to_platform_training(): void
+    {
         $this->postJson('/api/v1/ai/chat', [
             'message' => 'Remember that walk-in POS sales do not need a customer number.',
         ])
             ->assertOk()
-            ->assertJsonPath('tools_used.0', 'user_teaching');
+            ->assertJsonFragment([
+                'reply' => 'Training notes are managed platform-wide and apply to every organization. Ask your platform administrator to add notes under Platform → AI training.',
+            ]);
     }
 
     public function test_explore_page_returns_draft_for_confirmation(): void

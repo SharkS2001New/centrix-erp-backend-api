@@ -13,6 +13,7 @@ class AiKnowledgeEntry extends Model
         'source',
         'topic',
         'path',
+        'workspace_id',
         'content',
         'confirmed',
         'confirmed_at',

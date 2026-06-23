@@ -37,6 +37,9 @@ class LightStoresLegacySchema
     /** Legacy catalog — sale line FKs reference product.product_code. */
     public const PRODUCTS = 'product';
 
+    /** Legacy users (cashiers / sales people). */
+    public const USERS = 'user';
+
     /**
      * @return array<string, array{role: string, channel: string|null, tables: list<string>}>
      */

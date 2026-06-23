@@ -7,13 +7,17 @@ use App\Models\Product;
 use App\Models\SubCategory;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
+use App\Services\Inventory\OpeningStockService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
+use InvalidArgumentException;
 
 class ProductController extends BaseResourceController
 {
     public function __construct(
         protected ProductCatalogScopeService $catalogScope,
         protected BranchStockService $branchStock,
+        protected OpeningStockService $openingStock,
     ) {}
 
     protected function modelClass(): string
@@ -175,6 +179,10 @@ class ProductController extends BaseResourceController
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $rules['catalog_scope'] = 'nullable|in:organization,branch';
         $rules['branch_id'] = 'nullable|integer|exists:branches,id';
+        $rules['opening_stock'] = 'nullable|array';
+        $rules['opening_stock.branch_id'] = 'required_with:opening_stock|integer|exists:branches,id';
+        $rules['opening_stock.shop_quantity'] = 'nullable|numeric|min:0';
+        $rules['opening_stock.store_quantity'] = 'nullable|numeric|min:0';
         $data = $request->validate($rules);
 
         if (empty($data['product_code'])) {
@@ -191,17 +199,45 @@ class ProductController extends BaseResourceController
             $data = $this->catalogScope->normalizeWriteData($request->user(), $data);
         }
 
-        unset($data['stock_in_shop'], $data['stock_in_store']);
+        $openingStock = $data['opening_stock'] ?? null;
+        unset($data['opening_stock'], $data['stock_in_shop'], $data['stock_in_store']);
 
-        $model = Product::create($data);
+        if ($openingStock !== null) {
+            $shopQty = (float) ($openingStock['shop_quantity'] ?? 0);
+            $storeQty = (float) ($openingStock['store_quantity'] ?? 0);
+            if ($shopQty <= 0 && $storeQty <= 0) {
+                $openingStock = null;
+            }
+        }
 
-        $this->logPriceChange(
-            $model,
-            (float) $model->unit_price,
-            (float) ($model->last_cost_price ?? 0),
-            (float) ($model->discount_percentage ?? 0),
-            $request->user()
-        );
+        $user = $request->user();
+
+        $model = DB::transaction(function () use ($data, $openingStock, $user) {
+            $model = Product::create($data);
+
+            if ($openingStock !== null) {
+                if (! $user) {
+                    throw new InvalidArgumentException('Opening stock requires an authenticated user.');
+                }
+
+                $this->openingStock->applyOnProductCreate(
+                    $user,
+                    (string) $model->product_code,
+                    (int) $model->id,
+                    $openingStock,
+                );
+            }
+
+            $this->logPriceChange(
+                $model,
+                (float) $model->unit_price,
+                (float) ($model->last_cost_price ?? 0),
+                (float) ($model->discount_percentage ?? 0),
+                $user,
+            );
+
+            return $model;
+        });
 
         return response()->json($this->presentProduct($model->load('branch:id,branch_code,branch_name'), $request), 201);
     }

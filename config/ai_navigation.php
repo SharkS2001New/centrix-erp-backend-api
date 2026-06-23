@@ -13,8 +13,6 @@ return [
                 ['label' => 'Overview', 'path' => '/dashboard', 'permission' => 'dashboard.overview.view'],
                 ['label' => 'Sales dashboard', 'path' => '/sales', 'module' => 'sales.backend', 'permission' => 'sales.dashboard.view'],
                 ['label' => 'Inventory dashboard', 'path' => '/inventory', 'module' => 'inventory', 'permission' => 'inventory.stock.view'],
-                ['label' => 'Accounting dashboard', 'path' => '/accounting', 'module' => 'accounting', 'permission' => 'accounting.dashboard.view'],
-                ['label' => 'HR Overview', 'path' => '/hr', 'module' => 'hr_payroll', 'permission' => 'hr.employees.view'],
                 ['label' => 'Fulfillment dashboard', 'path' => '/fulfillment', 'module' => 'customers_suppliers', 'permission' => 'fulfillment.drivers.view', 'requires_distribution_ops' => true],
                 ['label' => 'Report overview', 'path' => '/reports', 'module' => 'reports', 'permission' => 'reports.hub.view'],
             ],
@@ -57,6 +55,7 @@ return [
             'id' => 'accounting',
             'label' => 'Accounting',
             'items' => [
+                ['label' => 'Finance overview', 'path' => '/accounting', 'module' => 'accounting', 'permission' => 'accounting.dashboard.view'],
                 ['label' => 'Chart of accounts', 'path' => '/accounting/chart-of-accounts', 'module' => 'accounting', 'permission' => 'accounting.chart_of_accounts.view'],
                 ['label' => 'Journal entries', 'path' => '/accounting/journal-entries', 'module' => 'accounting', 'permission' => 'accounting.journal_entries.view'],
                 ['label' => 'Expenses', 'path' => '/expenses', 'module' => 'accounting', 'permission' => 'accounting.expenses.view'],
@@ -67,6 +66,7 @@ return [
             'id' => 'hr',
             'label' => 'Human resources',
             'items' => [
+                ['label' => 'HR Overview', 'path' => '/hr', 'module' => 'hr_payroll', 'permission' => 'hr.employees.view'],
                 ['label' => 'Employees', 'path' => '/hr/employees', 'module' => 'hr_payroll', 'permission' => 'hr.employees.view'],
                 ['label' => 'Departments', 'path' => '/hr/departments', 'module' => 'hr_payroll', 'permission' => 'hr.departments.view'],
                 ['label' => 'Attendance', 'path' => '/hr/attendance', 'module' => 'hr_payroll', 'permission' => 'hr.attendance.view'],

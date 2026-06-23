@@ -840,6 +840,7 @@ class ErpSettingsController extends Controller
             'password' => 'sometimes|nullable|string|max:250',
             'label' => 'sometimes|nullable|string|max:120',
             'cutover_date' => 'sometimes|nullable|date',
+            'legacy_company_code' => 'sometimes|nullable|string|max:45',
         ]);
 
         $org = $legacySettings->updateOrganization($org, $data);

@@ -2,6 +2,7 @@
 
 namespace App\Services\Ai;
 
+use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Client\ConnectionException;
@@ -231,6 +232,206 @@ class AiAssistantService
         }
     }
 
+    /**
+     * Chat in the context of a target organization (platform AI training sandbox).
+     *
+     * @param  array<int, array{role: string, content: string}>  $history
+     * @param  array<string, mixed>|null  $pendingAction
+     * @return array<string, mixed>
+     */
+    public function chatForOrganization(
+        User $user,
+        Organization $organization,
+        string $message,
+        array $history = [],
+        ?array $pendingAction = null,
+        bool $confirmAction = false,
+        ?string $workspaceId = null,
+        ?string $pathname = null,
+        bool $trainingMode = false,
+    ): array {
+        if ($confirmAction && $pendingAction) {
+            return [
+                'reply' => 'Training mode — actions are not executed against tenant data.',
+                'tools_used' => ['training_mode'],
+                'training_mode' => true,
+            ];
+        }
+
+        $runtime = AiSettingsResolver::resolveRuntimeForOrganization($organization);
+        if (! $runtime) {
+            $gate = (new \App\Services\Erp\CapabilityGate)->forOrganization($organization);
+            $settings = AiSettingsResolver::forOrganization($organization);
+
+            return [
+                'reply' => ! $gate->aiPlatformEnabled()
+                    ? 'AI assistant is not enabled at platform level for this organization.'
+                    : (! ($settings['enabled'] ?? false)
+                        ? 'AI assistant is disabled for this organization. Enable it under Organization settings → AI.'
+                        : 'AI assistant is not configured — add an OpenAI API key under Organization settings → AI.'),
+                'tools_used' => [],
+                'training_mode' => $trainingMode,
+            ];
+        }
+
+        $gate = (new \App\Services\Erp\CapabilityGate)->forOrganization($organization);
+        $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
+
+        if (! $this->topicGuard->isErpRelated($message)) {
+            return [
+                'reply' => $this->topicGuard->declineMessage(),
+                'tools_used' => [],
+                'declined_off_topic' => true,
+                'training_mode' => $trainingMode,
+            ];
+        }
+
+        if (! $this->workspaceScope->isMessageInScope($message, $scope, $pendingAction)) {
+            return [
+                'reply' => $this->workspaceScope->declineMessage($scope),
+                'tools_used' => [],
+                'declined_off_topic' => true,
+                'active_workspace' => $scope['id'],
+                'training_mode' => $trainingMode,
+            ];
+        }
+
+        $systemContext = $this->contextBuilder->build($user, $message, $scope, $organization, $trainingMode);
+        $messages = [
+            ['role' => 'system', 'content' => $this->systemPrompt($scope)],
+            [
+                'role' => 'system',
+                'content' => "Organization ERP context (use for navigation, permissions, entity schemas, and data — do not invent):\n"
+                    .json_encode($systemContext, JSON_PRETTY_PRINT),
+            ],
+        ];
+
+        foreach (array_slice($history, -10) as $turn) {
+            if (! empty($turn['role']) && ! empty($turn['content'])) {
+                $messages[] = ['role' => $turn['role'], 'content' => (string) $turn['content']];
+            }
+        }
+
+        if ($pendingAction) {
+            $messages[] = [
+                'role' => 'system',
+                'content' => 'Pending action awaiting user confirmation: '.json_encode($pendingAction),
+            ];
+        }
+
+        $messages[] = ['role' => 'user', 'content' => $message];
+
+        try {
+            $response = Http::withToken($runtime['api_key'])
+                ->timeout(60)
+                ->post($runtime['base_url'].'/chat/completions', [
+                    'model' => $runtime['model'],
+                    'messages' => $messages,
+                    'max_tokens' => config('ai.defaults.max_tokens'),
+                    'temperature' => 0.25,
+                ]);
+
+            if (! $response->successful()) {
+                Log::warning('AI training chat failed', ['status' => $response->status(), 'body' => $response->body()]);
+
+                return [
+                    'reply' => $this->formatApiFailure(
+                        $response->status(),
+                        $response->json('error.message') ?? $response->body(),
+                    ),
+                    'tools_used' => array_keys(array_diff_key($systemContext, array_flip(['organization', 'user']))),
+                    'error_code' => $response->json('error.code') ?? (string) $response->status(),
+                    'training_mode' => $trainingMode,
+                ];
+            }
+
+            $rawReply = trim($response->json('choices.0.message.content') ?? '');
+            if ($rawReply === '') {
+                $rawReply = 'I could not generate a response. Please try rephrasing your question.';
+            }
+
+            if (str_contains($rawReply, 'DECLINE_OFF_TOPIC')) {
+                return [
+                    'reply' => $this->topicGuard->declineMessage(),
+                    'tools_used' => [],
+                    'declined_off_topic' => true,
+                    'training_mode' => $trainingMode,
+                ];
+            }
+
+            $parsedAction = AiActionExecutor::parseActionBlock($rawReply);
+            $reply = AiActionExecutor::stripActionBlock($rawReply);
+
+            $result = [
+                'reply' => $reply,
+                'tools_used' => array_keys(array_diff_key(
+                    $systemContext,
+                    array_flip(['organization', 'user', 'enabled_modules', 'active_workspace']),
+                )),
+                'active_workspace' => $scope['id'],
+                'training_mode' => $trainingMode,
+            ];
+
+            $pending = null;
+            if ($parsedAction) {
+                $pending = [
+                    'type' => $parsedAction['type'] ?? null,
+                    'summary' => $parsedAction['summary'] ?? ($parsedAction['label'] ?? 'Proposed action'),
+                    'params' => $parsedAction['params'] ?? [],
+                ];
+            } elseif ($pendingAction) {
+                $pending = $pendingAction;
+            } else {
+                $inferred = $this->intentResolver->inferCreateAction($message, $history, $pathname);
+                if ($inferred) {
+                    $pending = $inferred;
+                    if ($this->looksLikeFetchingReply($reply)) {
+                        $result['reply'] = 'Use the form below to preview the fields. Confirm is disabled in training mode.';
+                    }
+                }
+            }
+
+            if ($pending) {
+                $actionType = (string) ($pending['type'] ?? '');
+                if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
+                    $result['reply'] = $this->workspaceScope->declineMessage($scope);
+                } else {
+                    $contextUser = clone $user;
+                    $contextUser->organization_id = $organization->id;
+                    $contextUser->is_admin = true;
+                    $result['pending_action'] = $pending;
+                    $result['form_spec'] = $this->formSpecBuilder->forAction($contextUser, $pending, $pathname);
+                    if (empty(trim($result['reply'] ?? ''))) {
+                        $result['reply'] = 'Preview the form below. Training mode does not execute actions against tenant data.';
+                    }
+                }
+            }
+
+            return $result;
+        } catch (ConnectionException $e) {
+            Log::error('AI training chat connection failed', ['message' => $e->getMessage()]);
+
+            return [
+                'reply' => 'Could not connect to the AI provider. Check the API key and base URL in Organization settings → AI.',
+                'tools_used' => [],
+                'error_code' => 'connection_failed',
+                'training_mode' => $trainingMode,
+            ];
+        } catch (\Throwable $e) {
+            Log::error('AI training chat exception', [
+                'message' => $e->getMessage(),
+                'exception' => $e::class,
+            ]);
+
+            return [
+                'reply' => $this->formatInternalFailure($e),
+                'tools_used' => [],
+                'error_code' => 'internal_error',
+                'training_mode' => $trainingMode,
+            ];
+        }
+    }
+
     /** @param  array<string, mixed>  $pendingAction
      * @return array<string, mixed>
      */
@@ -312,10 +513,17 @@ class AiAssistantService
             return null;
         }
 
-        $entry = $this->knowledge->teach($user, 'User note', $content);
+        if (! $user->is_super_admin) {
+            return [
+                'reply' => 'Training notes are managed platform-wide and apply to every organization. Ask your platform administrator to add notes under Platform → AI training.',
+                'tools_used' => [],
+            ];
+        }
+
+        $entry = $this->knowledge->teachGlobal($user, 'User note', $content, null, null, 'user_teaching');
 
         return [
-            'reply' => 'Got it — I saved that for your organization and will use it in future answers.',
+            'reply' => 'Got it — I saved that as platform-wide training. Every organization will use it in future answers.',
             'tools_used' => ['user_teaching'],
             'knowledge_saved' => $entry,
         ];
@@ -339,7 +547,7 @@ class AiAssistantService
         return [
             'reply' => $reply !== ''
                 ? $reply
-                : 'I analyzed this screen. Please confirm to save what I learned for your organization.',
+                : 'I analyzed this screen. Please confirm to save what I learned as platform-wide training.',
             'tools_used' => ['page_explorer'],
             'pending_learn' => [
                 'draft_id' => $draft['id'],
@@ -411,7 +619,7 @@ The user currently has ONLY this workspace open. Answer ONLY questions related t
 If they ask about another module (HR, Accounting, Admin, POS, etc.), tell them to switch workspace from the top bar — do not answer cross-module questions.
 
 Use entity_schemas in context — it lists every field, which are required, auto-generated, important, and FK relations (e.g. unit_id → uoms).
-Use organization_knowledge for facts users or confirmed page exploration have taught you.
+Use platform_knowledge for ERP-wide facts trained by platform administrators — they apply to every organization.
 Use navigation and available_actions — they are already filtered to {$label} only.
 
 INTERACTIVE FORMS: Select options are ALREADY in entity_detail / entity_schemas — never say you are fetching or ask the user to wait.
@@ -423,7 +631,7 @@ RULES:
 2. Cross-module questions → politely decline and mention switching workspace; do not answer using other module knowledge.
 3. Use entity_schemas.field metadata: skip auto-generated fields unless user provides a value; use select options for FK fields.
 4. Normal orders = create_sales_order; held/save-only = create_held_order only when explicitly requested.
-5. Users can teach you with "Remember that …" or POST /ai/teach.
+5. Platform administrators train ERP-wide notes under Platform → AI training; they apply to all tenants.
 6. PERMISSIONS — read user_access in context:
    - user.is_admin=true or user_access.has_full_permissions=true → user has ALL permissions; never say they lack access.
    - Answer read-only questions using *_summary data in context when present.

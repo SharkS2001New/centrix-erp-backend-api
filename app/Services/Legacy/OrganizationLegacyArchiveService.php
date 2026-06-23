@@ -55,6 +55,7 @@ class OrganizationLegacyArchiveService
             'password',
             'label',
             'cutover_date',
+            'legacy_company_code',
         ])));
 
         if (array_key_exists('password', $input) && blank($input['password'])) {
@@ -99,6 +100,9 @@ class OrganizationLegacyArchiveService
             'password' => filled($settings['password'] ?? null) ? (string) $settings['password'] : null,
             'label' => (string) ($settings['label'] ?? 'LightStores archive'),
             'cutover_date' => filled($settings['cutover_date'] ?? null) ? (string) $settings['cutover_date'] : null,
+            'legacy_company_code' => filled($settings['legacy_company_code'] ?? null)
+                ? (string) $settings['legacy_company_code']
+                : null,
         ];
     }
 }

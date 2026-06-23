@@ -68,7 +68,7 @@ class AiAssistantController extends Controller
 
         $data = $request->validate([
             'context' => 'nullable|string|in:products,reports,report_builder,general,erp',
-            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr',
+            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
             'pathname' => 'nullable|string|max:300',
             'message' => ['required', 'string', 'max:4000', 'not_regex:/data:image\//i'],
             'history' => 'nullable|array|max:16',
@@ -118,17 +118,24 @@ class AiAssistantController extends Controller
 
     public function teach(Request $request)
     {
+        if (! $request->user()?->is_super_admin) {
+            abort(403, 'AI training notes are managed platform-wide under Platform → AI training.');
+        }
+
         $data = $request->validate([
             'topic' => 'required|string|max:200',
             'content' => 'required|string|max:8000',
             'path' => 'nullable|string|max:200',
+            'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
         ]);
 
-        $entry = $this->knowledge->teach(
+        $entry = $this->knowledge->teachGlobal(
             $request->user(),
             $data['topic'],
             $data['content'],
             $data['path'] ?? null,
+            $data['workspace_id'] ?? null,
+            'user_teaching',
         );
 
         return response()->json($entry, 201);
@@ -165,7 +172,7 @@ class AiAssistantController extends Controller
             'analysis' => $analysis,
             'draft' => $draft,
             'requires_confirmation' => true,
-            'message' => 'Review the summary below. Confirm to save this knowledge for your organization.',
+            'message' => 'Review the summary below. Confirm to save this as platform-wide ERP training (all tenants).',
         ]);
     }
 

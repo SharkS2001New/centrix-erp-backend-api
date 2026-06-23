@@ -101,7 +101,7 @@ class LegacyArchiveController extends Controller
         }
 
         $filters = $request->validate([
-            'channel' => 'required|in:pos,mobile,debtor',
+            'channel' => 'required|in:pos,mobile,debtor,all',
             'from_date' => 'required|date',
             'to_date' => 'required|date|after_or_equal:from_date',
             'q' => 'nullable|string|max:120',
