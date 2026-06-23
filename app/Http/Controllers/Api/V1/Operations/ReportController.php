@@ -361,7 +361,7 @@ class ReportController extends Controller
         return $this->withLegacyArchiveRows(
             $request,
             $paginator,
-            fn ($org, $from, $to) => app(LegacyArchiveReader::class)->salesByChannelRows($org, $from, $to),
+            fn ($org, $from, $to, $page, $perPage) => app(LegacyArchiveReader::class)->paginatedSalesByChannelRows($org, $from, $to, $page, $perPage),
         );
     }
 
@@ -378,7 +378,7 @@ class ReportController extends Controller
         return $this->withLegacyArchiveRows(
             $request,
             $paginator,
-            fn ($org, $from, $to) => app(LegacyArchiveReader::class)->dailySalesRows($org, $from, $to),
+            fn ($org, $from, $to, $page, $perPage) => app(LegacyArchiveReader::class)->paginatedDailySalesRows($org, $from, $to, $page, $perPage),
         );
     }
 
@@ -964,11 +964,11 @@ class ReportController extends Controller
             $q->where($filters['date_column'], '<=', $filters['to_date']);
         }
 
-        return $q->paginate(min((int) ($filters['per_page'] ?? 50), 200));
+        return $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
     }
 
     /**
-     * @param  callable(\App\Models\Organization, ?\Carbon\Carbon, ?\Carbon\Carbon): list<array<string, mixed>>  $legacyRowsProvider
+     * @param  callable(\App\Models\Organization, ?\Carbon\Carbon, ?\Carbon\Carbon, int, int): array{data: list<array<string, mixed>>, meta: array<string, mixed>}  $legacyRowsProvider
      */
     protected function withLegacyArchiveRows(Request $request, $paginator, callable $legacyRowsProvider)
     {
@@ -991,18 +991,54 @@ class ReportController extends Controller
             ? \Carbon\Carbon::parse((string) $request->input('to_date'))->endOfDay()
             : null;
 
-        if (! $archive->shouldMergeForRange($org, $from, $to)) {
-            return response()->json($paginator);
+        $legacyPage = max((int) $request->input('legacy_page', $request->input('page', 1)), 1);
+        $legacyPerPage = min(max((int) $request->input('per_page', 20), 1), 200);
+
+        $payload = $paginator->toArray();
+        $label = app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive';
+
+        if (! $from || ! $to) {
+            $payload['legacy_archive'] = [
+                'available' => true,
+                'label' => $label,
+                'requires_date_range' => true,
+                'message' => 'Provide from_date and to_date to load legacy archive rows.',
+                'data' => [],
+                'meta' => [
+                    'current_page' => 1,
+                    'per_page' => $legacyPerPage,
+                    'total' => 0,
+                    'last_page' => 1,
+                ],
+            ];
+
+            return response()->json($payload);
         }
 
-        $legacyRows = $legacyRowsProvider($org, $from, $to);
-        $payload = $paginator->toArray();
-        $payload['data'] = array_values(array_merge($payload['data'] ?? [], $legacyRows));
+        if (! $archive->shouldMergeForRange($org, $from, $to)) {
+            $payload['legacy_archive'] = [
+                'available' => true,
+                'label' => $label,
+                'cutover_date' => $archive->cutoverDate($org)?->toDateString(),
+                'data' => [],
+                'meta' => [
+                    'current_page' => 1,
+                    'per_page' => $legacyPerPage,
+                    'total' => 0,
+                    'last_page' => 1,
+                ],
+            ];
+
+            return response()->json($payload);
+        }
+
+        $legacyResult = $legacyRowsProvider($org, $from, $to, $legacyPage, $legacyPerPage);
         $payload['legacy_archive'] = [
             'available' => true,
-            'label' => app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive',
+            'label' => $label,
             'cutover_date' => $archive->cutoverDate($org)?->toDateString(),
-            'appended_rows' => count($legacyRows),
+            'data' => $legacyResult['data'],
+            'meta' => $legacyResult['meta'],
         ];
 
         return response()->json($payload);

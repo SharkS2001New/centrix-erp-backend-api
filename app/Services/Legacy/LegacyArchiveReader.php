@@ -147,7 +147,7 @@ class LegacyArchiveReader
         $to = isset($filters['to_date']) ? Carbon::parse($filters['to_date'])->endOfDay() : null;
         $q = trim((string) ($filters['q'] ?? ''));
         $page = max((int) ($filters['page'] ?? 1), 1);
-        $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
+        $perPage = min(max((int) ($filters['per_page'] ?? 20), 1), 200);
 
         if (! in_array($channel, ['pos', 'mobile', 'debtor'], true)) {
             throw new RuntimeException('Specify channel=pos, mobile, or debtor when listing legacy archive sales.');
@@ -562,6 +562,50 @@ class LegacyArchiveReader
         }
 
         return $rows;
+    }
+
+    /**
+     * @return array{data: list<array<string, mixed>>, meta: array<string, mixed>}
+     */
+    public function paginatedDailySalesRows(Organization $org, ?Carbon $from, ?Carbon $to, int $page, int $perPage): array
+    {
+        return $this->paginateRows($this->dailySalesRows($org, $from, $to), $page, $perPage, 'sale_day');
+    }
+
+    /**
+     * @return array{data: list<array<string, mixed>>, meta: array<string, mixed>}
+     */
+    public function paginatedSalesByChannelRows(Organization $org, ?Carbon $from, ?Carbon $to, int $page, int $perPage): array
+    {
+        return $this->paginateRows($this->salesByChannelRows($org, $from, $to), $page, $perPage, 'sale_date');
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $rows
+     * @return array{data: list<array<string, mixed>>, meta: array<string, mixed>}
+     */
+    protected function paginateRows(array $rows, int $page, int $perPage, string $sortKey, bool $sortDesc = true): array
+    {
+        usort($rows, function (array $a, array $b) use ($sortKey, $sortDesc) {
+            $cmp = strcmp((string) ($a[$sortKey] ?? ''), (string) ($b[$sortKey] ?? ''));
+
+            return $sortDesc ? -$cmp : $cmp;
+        });
+
+        $perPage = max(1, $perPage);
+        $page = max(1, $page);
+        $total = count($rows);
+        $offset = ($page - 1) * $perPage;
+
+        return [
+            'data' => array_values(array_slice($rows, $offset, $perPage)),
+            'meta' => [
+                'current_page' => $page,
+                'per_page' => $perPage,
+                'total' => $total,
+                'last_page' => max(1, (int) ceil($total / $perPage)),
+            ],
+        ];
     }
 
     /**

@@ -93,12 +93,20 @@ class LegacyArchiveController extends Controller
 
         $filters = $request->validate([
             'channel' => 'required|in:pos,mobile,debtor',
-            'from_date' => 'nullable|date',
-            'to_date' => 'nullable|date|after_or_equal:from_date',
+            'from_date' => 'required|date',
+            'to_date' => 'required|date|after_or_equal:from_date',
             'q' => 'nullable|string|max:120',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:200',
         ]);
+
+        $from = Carbon::parse($filters['from_date']);
+        $to = Carbon::parse($filters['to_date']);
+        if ($from->diffInDays($to) > 366) {
+            return response()->json([
+                'message' => 'Date range cannot exceed 366 days. Narrow the range and try again.',
+            ], 422);
+        }
 
         return response()->json($this->archive->listSales($org, $filters));
     }
