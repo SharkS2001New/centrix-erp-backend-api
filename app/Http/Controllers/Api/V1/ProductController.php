@@ -93,7 +93,11 @@ class ProductController extends BaseResourceController
                 $subIds = SubCategory::query()
                     ->where('category_id', (int) $val)
                     ->pluck('id');
-                $query->whereIn('subcategory_id', $subIds);
+                if ($subIds->isEmpty()) {
+                    $query->whereRaw('0 = 1');
+                } else {
+                    $query->whereIn('subcategory_id', $subIds);
+                }
                 continue;
             }
             if (in_array($col, $this->filterableColumns(), true)) {

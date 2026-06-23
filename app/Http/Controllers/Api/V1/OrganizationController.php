@@ -20,20 +20,22 @@ class OrganizationController extends BaseResourceController
         return false;
     }
 
-    protected function findScopedModel(Request $request, string $id): Organization
+    protected function findScopedModel(Request $request, string $id, ?string $nestedId = null): Organization
     {
+        $resourceId = $this->resolveResourceId($id, $nestedId);
+
         /** @var User $user */
         $user = $request->user();
 
         if ($user->is_super_admin) {
-            return Organization::query()->findOrFail($id);
+            return Organization::query()->findOrFail($resourceId);
         }
 
-        if ((int) $id !== (int) $user->organization_id) {
+        if ((int) $resourceId !== (int) $user->organization_id) {
             abort(403, 'You can only view your own organization.');
         }
 
-        return Organization::query()->findOrFail($id);
+        return Organization::query()->findOrFail($resourceId);
     }
 
     public function index(Request $request)
