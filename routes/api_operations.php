@@ -247,6 +247,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('legacy-archive')->group(function () {
                 Route::get('status', [LegacyArchiveController::class, 'status']);
                 Route::get('summary', [LegacyArchiveController::class, 'summary']);
+                Route::get('sales/{channel}/{legacyOrderNum}', [LegacyArchiveController::class, 'showSale'])
+                    ->where('channel', 'pos|mobile|debtor');
                 Route::get('sales', [LegacyArchiveController::class, 'sales']);
                 Route::post('sales/materialize', [LegacyArchiveController::class, 'materialize'])
                     ->middleware('erp.permission:sales.manage');

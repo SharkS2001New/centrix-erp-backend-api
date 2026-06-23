@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Services\Auth\UserAccessService;
 use App\Services\Legacy\LegacyArchiveReader;
+use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -24,6 +25,7 @@ class ReportController extends Controller
                 ['key' => 'sales-by-customer', 'path' => '/reports/sales-by-customer', 'label' => 'Sales by customer'],
                 ['key' => 'sales-by-channel', 'path' => '/reports/sales-by-channel', 'label' => 'Sales by channel & payment status'],
                 ['key' => 'daily-sales', 'path' => '/reports/daily-sales', 'label' => 'Daily sales summary'],
+                ['key' => 'legacy-archive', 'path' => '/reports/legacy-archive', 'label' => 'Legacy sales archive (read-only)'],
                 ['key' => 'mobile-route-sales', 'path' => '/reports/mobile-route-sales', 'label' => 'Route order sales'],
                 ['key' => 'sales-pipeline', 'path' => '/reports/sales-pipeline', 'label' => 'Open orders pipeline'],
                 ['key' => 'vat-collected', 'path' => '/reports/vat-collected', 'label' => 'VAT collected'],
@@ -348,16 +350,36 @@ class ReportController extends Controller
 
     public function salesByChannel(Request $request)
     {
-        return response()->json($this->reportFromView('v_sales_by_channel', $this->filters($request), [
+        $paginator = $this->reportFromView('v_sales_by_channel', $this->filters($request), [
             'sale_date', 'branch_id', 'channel', 'payment_status',
-        ]));
+        ]);
+
+        if (! $request->boolean('include_legacy_archive')) {
+            return response()->json($paginator);
+        }
+
+        return $this->withLegacyArchiveRows(
+            $request,
+            $paginator,
+            fn ($org, $from, $to) => app(LegacyArchiveReader::class)->salesByChannelRows($org, $from, $to),
+        );
     }
 
     public function dailySales(Request $request)
     {
-        return response()->json($this->reportFromView('v_daily_sales', $this->filters($request), [
+        $paginator = $this->reportFromView('v_daily_sales', $this->filters($request), [
             'sale_day', 'branch_id', 'channel',
-        ]));
+        ]);
+
+        if (! $request->boolean('include_legacy_archive')) {
+            return response()->json($paginator);
+        }
+
+        return $this->withLegacyArchiveRows(
+            $request,
+            $paginator,
+            fn ($org, $from, $to) => app(LegacyArchiveReader::class)->dailySalesRows($org, $from, $to),
+        );
     }
 
     public function routeSales(Request $request)
@@ -943,6 +965,47 @@ class ReportController extends Controller
         }
 
         return $q->paginate(min((int) ($filters['per_page'] ?? 50), 200));
+    }
+
+    /**
+     * @param  callable(\App\Models\Organization, ?\Carbon\Carbon, ?\Carbon\Carbon): list<array<string, mixed>>  $legacyRowsProvider
+     */
+    protected function withLegacyArchiveRows(Request $request, $paginator, callable $legacyRowsProvider)
+    {
+        $org = $this->erp->resolveOrganization($request);
+        $archive = app(LegacyArchiveReader::class);
+
+        if (! $archive->isAvailable($org)) {
+            return response()->json(array_merge($paginator->toArray(), [
+                'legacy_archive' => [
+                    'available' => false,
+                    'message' => 'Legacy archive is not enabled or not reachable for this organization.',
+                ],
+            ]));
+        }
+
+        $from = $request->filled('from_date')
+            ? \Carbon\Carbon::parse((string) $request->input('from_date'))->startOfDay()
+            : null;
+        $to = $request->filled('to_date')
+            ? \Carbon\Carbon::parse((string) $request->input('to_date'))->endOfDay()
+            : null;
+
+        if (! $archive->shouldMergeForRange($org, $from, $to)) {
+            return response()->json($paginator);
+        }
+
+        $legacyRows = $legacyRowsProvider($org, $from, $to);
+        $payload = $paginator->toArray();
+        $payload['data'] = array_values(array_merge($payload['data'] ?? [], $legacyRows));
+        $payload['legacy_archive'] = [
+            'available' => true,
+            'label' => app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive',
+            'cutover_date' => $archive->cutoverDate($org)?->toDateString(),
+            'appended_rows' => count($legacyRows),
+        ];
+
+        return response()->json($payload);
     }
 
     /** @param list<string> $allowedCols */

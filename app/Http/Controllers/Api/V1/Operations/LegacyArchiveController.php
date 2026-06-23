@@ -58,6 +58,28 @@ class LegacyArchiveController extends Controller
         ]);
     }
 
+    /** GET /reports/legacy-archive/sales/{channel}/{legacyOrderNum} */
+    public function showSale(Request $request, string $channel, int $legacyOrderNum)
+    {
+        $org = $this->tenantOrganization($request);
+
+        if (! $this->archive->isAvailable($org)) {
+            return response()->json([
+                'message' => 'Legacy archive is not enabled or the LightStores database is not reachable for this organization.',
+            ], 503);
+        }
+
+        if (! in_array($channel, ['pos', 'mobile', 'debtor'], true)) {
+            return response()->json(['message' => 'Invalid channel.'], 422);
+        }
+
+        try {
+            return response()->json($this->archive->saleDetail($org, $channel, $legacyOrderNum));
+        } catch (\Throwable $e) {
+            return response()->json(['message' => $e->getMessage()], 404);
+        }
+    }
+
     /** GET /reports/legacy-archive/sales */
     public function sales(Request $request)
     {

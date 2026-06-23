@@ -379,4 +379,231 @@ class LegacyArchiveReader
 
         return $id ? (int) $id : null;
     }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function saleDetail(Organization $org, string $channel, int $legacyOrderNum): array
+    {
+        $this->assertAvailable($org);
+
+        if (! in_array($channel, ['pos', 'mobile', 'debtor'], true)) {
+            throw new RuntimeException('Channel must be pos, mobile, or debtor.');
+        }
+
+        $connection = $this->connection($org);
+        $row = match ($channel) {
+            'pos' => $this->posSalesQuery($connection, null, null, (string) $legacyOrderNum)
+                ->where('sm.order_num', $legacyOrderNum)->first(),
+            'mobile' => $this->mobileSalesQuery($connection, null, null, (string) $legacyOrderNum)
+                ->where('rm.order_num', $legacyOrderNum)->first(),
+            'debtor' => $this->debtorSalesQuery($connection, null, null, (string) $legacyOrderNum)
+                ->where('dm.order_num', $legacyOrderNum)->first(),
+        };
+
+        if (! $row) {
+            throw new RuntimeException("Legacy {$channel} sale #{$legacyOrderNum} was not found.");
+        }
+
+        $header = $this->presentSaleRow($org, $channel, $row);
+        $header['lines'] = $this->saleLines($connection, $channel, $legacyOrderNum);
+
+        return $header;
+    }
+
+    /**
+     * Rows shaped like v_daily_sales for reconciliation reports.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function dailySalesRows(Organization $org, ?Carbon $from, ?Carbon $to): array
+    {
+        $this->assertAvailable($org);
+        $legacy = DB::connection($this->connection($org));
+        $rows = [];
+
+        $pos = $legacy->table('sale_masters');
+        $this->applyDateFilter($pos, 'create_time', $from, $to);
+        foreach ($pos->selectRaw('DATE(create_time) as sale_day, COUNT(*) as orders, COALESCE(SUM(order_total), 0) as gross, COALESCE(SUM(total_vat), 0) as vat')->groupByRaw('DATE(create_time)')->orderBy('sale_day')->get() as $aggregate) {
+            $rows[] = $this->presentDailySalesAggregate($aggregate, 'pos');
+        }
+
+        $debtor = $legacy->table('debtor_masters')->whereNull('dlt_on');
+        $this->applyDateFilter($debtor, 'create_time', $from, $to);
+        foreach ($debtor->selectRaw('DATE(create_time) as sale_day, COUNT(*) as orders, COALESCE(SUM(order_total), 0) as gross, COALESCE(SUM(total_vat), 0) as vat')->groupByRaw('DATE(create_time)')->orderBy('sale_day')->get() as $aggregate) {
+            $rows[] = $this->presentDailySalesAggregate($aggregate, 'credit');
+        }
+
+        $mobile = $legacy->table('route_master as rm')
+            ->join('route_order_details as rod', 'rod.order_no', '=', 'rm.order_num')
+            ->whereNull('rm.DLT_ON');
+        $this->applyDateFilter($mobile, 'rm.create_time', $from, $to);
+        foreach ($mobile->selectRaw('DATE(rm.create_time) as sale_day, COUNT(DISTINCT rm.order_num) as orders, COALESCE(SUM(rod.amount), 0) as gross, COALESCE(SUM(rod.product_vat), 0) as vat')->groupByRaw('DATE(rm.create_time)')->orderBy('sale_day')->get() as $aggregate) {
+            $rows[] = $this->presentDailySalesAggregate($aggregate, 'mobile');
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function presentDailySalesAggregate(object $aggregate, string $channel): array
+    {
+        $gross = round((float) $aggregate->gross, 2);
+        $vat = round((float) $aggregate->vat, 2);
+
+        return [
+            'sale_day' => (string) $aggregate->sale_day,
+            'branch_id' => null,
+            'branch_name' => 'Legacy archive',
+            'channel' => $channel,
+            'orders' => (int) $aggregate->orders,
+            'gross' => $gross,
+            'vat' => $vat,
+            'net' => round($gross - $vat, 2),
+            'legacy_archive' => true,
+            'archive_source' => 'lightstores',
+        ];
+    }
+
+    /**
+     * Rows shaped like v_sales_by_channel for reconciliation reports.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function salesByChannelRows(Organization $org, ?Carbon $from, ?Carbon $to): array
+    {
+        $this->assertAvailable($org);
+        $legacy = DB::connection($this->connection($org));
+        $rows = [];
+
+        $pos = $legacy->table('sale_masters');
+        $this->applyDateFilter($pos, 'create_time', $from, $to);
+        $posAgg = $pos
+            ->selectRaw("DATE(create_time) as sale_date, 'pos' as channel, 'paid' as payment_status, COUNT(*) as order_count, COALESCE(SUM(order_total), 0) as gross_sales, COALESCE(SUM(order_total), 0) as collected, COALESCE(SUM(total_vat), 0) as total_vat")
+            ->groupByRaw('DATE(create_time)')
+            ->get();
+
+        foreach ($posAgg as $aggregate) {
+            $gross = round((float) $aggregate->gross_sales, 2);
+            $vat = round((float) $aggregate->total_vat, 2);
+            $rows[] = [
+                'sale_date' => (string) $aggregate->sale_date,
+                'branch_id' => null,
+                'branch_name' => 'Legacy archive',
+                'channel' => 'pos',
+                'payment_status' => 'paid',
+                'order_count' => (int) $aggregate->order_count,
+                'gross_sales' => $gross,
+                'collected' => round((float) $aggregate->collected, 2),
+                'total_vat' => $vat,
+                'net_sales' => round($gross - $vat, 2),
+                'credit_sales' => 0,
+                'legacy_archive' => true,
+                'archive_source' => 'lightstores',
+            ];
+        }
+
+        $debtor = $legacy->table('debtor_masters')->whereNull('dlt_on');
+        $this->applyDateFilter($debtor, 'create_time', $from, $to);
+        $debtorAgg = $debtor
+            ->selectRaw("DATE(create_time) as sale_date, COUNT(*) as order_count, COALESCE(SUM(order_total), 0) as gross_sales, COALESCE(SUM(total_vat), 0) as total_vat")
+            ->groupByRaw('DATE(create_time)')
+            ->get();
+
+        foreach ($debtorAgg as $aggregate) {
+            $gross = round((float) $aggregate->gross_sales, 2);
+            $vat = round((float) $aggregate->total_vat, 2);
+            $rows[] = [
+                'sale_date' => (string) $aggregate->sale_date,
+                'branch_id' => null,
+                'branch_name' => 'Legacy archive',
+                'channel' => 'credit',
+                'payment_status' => 'unpaid',
+                'order_count' => (int) $aggregate->order_count,
+                'gross_sales' => $gross,
+                'collected' => 0,
+                'total_vat' => $vat,
+                'net_sales' => round($gross - $vat, 2),
+                'credit_sales' => $gross,
+                'legacy_archive' => true,
+                'archive_source' => 'lightstores',
+            ];
+        }
+
+        $mobile = $legacy->table('route_master as rm')
+            ->join('route_order_details as rod', 'rod.order_no', '=', 'rm.order_num')
+            ->whereNull('rm.DLT_ON');
+        $this->applyDateFilter($mobile, 'rm.create_time', $from, $to);
+        $mobileAgg = $mobile
+            ->selectRaw('DATE(rm.create_time) as sale_date, COUNT(DISTINCT rm.order_num) as order_count, COALESCE(SUM(rod.amount), 0) as gross_sales, COALESCE(SUM(rod.product_vat), 0) as total_vat')
+            ->groupByRaw('DATE(rm.create_time)')
+            ->get();
+
+        foreach ($mobileAgg as $aggregate) {
+            $gross = round((float) $aggregate->gross_sales, 2);
+            $vat = round((float) $aggregate->total_vat, 2);
+            $rows[] = [
+                'sale_date' => (string) $aggregate->sale_date,
+                'branch_id' => null,
+                'branch_name' => 'Legacy archive',
+                'channel' => 'mobile',
+                'payment_status' => 'paid',
+                'order_count' => (int) $aggregate->order_count,
+                'gross_sales' => $gross,
+                'collected' => $gross,
+                'total_vat' => $vat,
+                'net_sales' => round($gross - $vat, 2),
+                'credit_sales' => 0,
+                'legacy_archive' => true,
+                'archive_source' => 'lightstores',
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    protected function saleLines(string $connection, string $channel, int $legacyOrderNum): array
+    {
+        $lines = match ($channel) {
+            'pos' => DB::connection($connection)
+                ->table('sale_products')
+                ->where('order_num_ref', $legacyOrderNum)
+                ->orderBy('id')
+                ->get(),
+            'mobile' => DB::connection($connection)
+                ->table('route_order_details')
+                ->where('order_no', $legacyOrderNum)
+                ->orderBy('id')
+                ->get(),
+            'debtor' => DB::connection($connection)
+                ->table('debtor_products')
+                ->where('order_no', $legacyOrderNum)
+                ->orderBy('id')
+                ->get(),
+        };
+
+        return $lines->map(function ($line) use ($channel) {
+            $productCode = (string) ($line->productsales_id ?? $line->product_code ?? '');
+            $productName = $productCode
+                ? (DB::table('products')->where('product_code', $productCode)->value('product_name') ?? $productCode)
+                : null;
+
+            return [
+                'product_code' => $productCode,
+                'product_name' => $productName,
+                'quantity' => (float) ($line->quantity ?? 0),
+                'uom' => $line->uom ?? null,
+                'unit_price' => round((float) ($line->selling_price ?? $line->unit_price ?? 0), 2),
+                'discount' => round((float) ($line->discount_given ?? 0), 2),
+                'vat' => round((float) ($line->product_vat ?? 0), 2),
+                'amount' => round((float) ($line->amount ?? 0), 2),
+                'channel' => $channel,
+            ];
+        })->values()->all();
+    }
 }
