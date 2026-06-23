@@ -154,37 +154,39 @@ class LightStoresLegacyImporter
      * Import one legacy sale into Centrix so it can be returned / credited like any other sale.
      * Safe to call repeatedly — returns the existing Centrix sale when already materialized.
      */
-    public function materializeSale(Organization $org, string $channel, int $legacyOrderNum): Sale
+    public function materializeSale(Organization $org, string $channel, int $legacyOrderNum, string $saleDate): Sale
     {
         if (! in_array($channel, ['pos', 'mobile', 'debtor'], true)) {
             throw new RuntimeException('Channel must be pos, mobile, or debtor.');
         }
 
+        $saleDate = date('Y-m-d', strtotime($saleDate));
+
         $this->useLegacyConnectionForOrganization($org);
         $this->assertLegacyDatabase();
         $this->bootContext($org);
 
-        $existing = $this->findMaterializedSale($channel, $legacyOrderNum);
+        $existing = $this->findMaterializedSale($channel, $legacyOrderNum, $saleDate);
         if ($existing) {
             return $existing->load(['items.product.unit', 'customer']);
         }
 
         $this->bootLegacySequencesFromDatabase();
 
-        $row = $this->fetchLegacySaleRow($channel, $legacyOrderNum);
+        $row = $this->fetchLegacySaleRow($channel, $legacyOrderNum, $saleDate);
         if (! $row) {
-            throw new RuntimeException("Legacy {$channel} sale #{$legacyOrderNum} was not found.");
+            throw new RuntimeException("Legacy {$channel} sale #{$legacyOrderNum} on {$saleDate} was not found.");
         }
 
-        $walkIns = DB::connection($this->legacy)
-            ->table(LightStoresLegacySchema::POS_WALK_IN)
-            ->pluck('customer_name', 'order_no');
+        $walkInName = $channel === 'pos'
+            ? $this->fetchPosWalkInName($legacyOrderNum, $saleDate)
+            : null;
 
-        $sale = DB::transaction(function () use ($channel, $row, $legacyOrderNum, $walkIns) {
+        $sale = DB::transaction(function () use ($channel, $row, $legacyOrderNum, $saleDate, $walkInName) {
             return match ($channel) {
-                'mobile' => $this->createMobileRouteSale($row, $legacyOrderNum),
-                'debtor' => $this->createDebtorSale($row, $legacyOrderNum),
-                'pos' => $this->createPosSale($row, $legacyOrderNum, $walkIns),
+                'mobile' => $this->createMobileRouteSale($row, $legacyOrderNum, $saleDate),
+                'debtor' => $this->createDebtorSale($row, $legacyOrderNum, $saleDate),
+                'pos' => $this->createPosSale($row, $legacyOrderNum, $saleDate, $walkInName),
             };
         });
 
@@ -200,14 +202,19 @@ class LightStoresLegacyImporter
         $this->legacy = app(LegacyArchiveConnectionManager::class)->configureForOrganization($org);
     }
 
-    public function findMaterializedSale(string $channel, int $legacyOrderNum): ?Sale
+    public function findMaterializedSale(string $channel, int $legacyOrderNum, ?string $saleDate = null): ?Sale
     {
-        return Sale::query()
+        $query = Sale::query()
             ->where('organization_id', $this->organization?->id ?? Organization::query()->value('id'))
             ->where('fulfillment_meta->legacy_import', true)
             ->where('fulfillment_meta->legacy_order_num', $legacyOrderNum)
-            ->whereIn('fulfillment_meta->legacy_source', LightStoresLegacySchema::legacySourcesForChannel($channel))
-            ->first();
+            ->whereIn('fulfillment_meta->legacy_source', LightStoresLegacySchema::legacySourcesForChannel($channel));
+
+        if ($saleDate !== null) {
+            $query->where('fulfillment_meta->legacy_sale_date', date('Y-m-d', strtotime($saleDate)));
+        }
+
+        return $query->first();
     }
 
     protected function legacySourceForChannel(string $channel): string
@@ -230,25 +237,41 @@ class LightStoresLegacyImporter
             ->max('order_num') ?? self::LEGACY_ORDER_BASE_DEBTOR) - self::LEGACY_ORDER_BASE_DEBTOR);
     }
 
-    protected function fetchLegacySaleRow(string $channel, int $legacyOrderNum): ?object
+    protected function fetchLegacySaleRow(string $channel, int $legacyOrderNum, string $saleDate): ?object
     {
+        $saleDate = date('Y-m-d', strtotime($saleDate));
+
         return match ($channel) {
             'mobile' => DB::connection($this->legacy)
                 ->table(LightStoresLegacySchema::ROUTE_MASTERS)
                 ->whereNull('DLT_ON')
                 ->where('order_num', $legacyOrderNum)
+                ->where('create_time', $saleDate)
                 ->first(),
             'debtor' => DB::connection($this->legacy)
                 ->table(LightStoresLegacySchema::DEBTOR_MASTERS)
                 ->whereNull('dlt_on')
                 ->where('order_num', $legacyOrderNum)
+                ->whereDate('create_time', $saleDate)
                 ->first(),
             'pos' => DB::connection($this->legacy)
                 ->table(LightStoresLegacySchema::POS_MASTERS)
                 ->where('order_num', $legacyOrderNum)
+                ->where('create_time', $saleDate)
                 ->first(),
             default => null,
         };
+    }
+
+    protected function fetchPosWalkInName(int $legacyOrderNum, string $saleDate): ?string
+    {
+        return DB::connection($this->legacy)
+            ->table(LightStoresLegacySchema::POS_WALK_IN.' as sc')
+            ->join(LightStoresLegacySchema::POS_MASTERS.' as sm', 'sm.order_num', '=', 'sc.order_no')
+            ->where('sc.order_no', $legacyOrderNum)
+            ->where('sm.create_time', date('Y-m-d', strtotime($saleDate)))
+            ->orderByDesc('sc.create_time')
+            ->value('sc.customer_name');
     }
 
     protected function shouldRun(string $phase): bool
@@ -756,10 +779,17 @@ class LightStoresLegacyImporter
      */
     protected function importLegacySaleItem(array $item, Collection $walkIns): void
     {
+        $saleDate = date('Y-m-d', strtotime($item['sale_date']));
+
         match ($item['type']) {
-            'mobile' => $this->createMobileRouteSale($item['row'], $item['legacy_order_num']),
-            'debtor' => $this->createDebtorSale($item['row'], $item['legacy_order_num']),
-            'pos' => $this->createPosSale($item['row'], $item['legacy_order_num'], $walkIns),
+            'mobile' => $this->createMobileRouteSale($item['row'], $item['legacy_order_num'], $saleDate),
+            'debtor' => $this->createDebtorSale($item['row'], $item['legacy_order_num'], $saleDate),
+            'pos' => $this->createPosSale(
+                $item['row'],
+                $item['legacy_order_num'],
+                $saleDate,
+                $this->fetchPosWalkInName($item['legacy_order_num'], $saleDate),
+            ),
             default => null,
         };
     }
@@ -791,14 +821,15 @@ class LightStoresLegacyImporter
     }
 
     /**
-     * @return array{legacy_import: true, legacy_order_label: string, legacy_order_num: int, legacy_source: string}
+     * @return array{legacy_import: true, legacy_order_label: string, legacy_order_num: int, legacy_sale_date: string, legacy_source: string}
      */
-    protected function legacyFulfillmentMeta(string $label, int $legacyOrderNum, string $legacySource): array
+    protected function legacyFulfillmentMeta(string $label, int $legacyOrderNum, string $legacySource, string $saleDate): array
     {
         return [
             'legacy_import' => true,
             'legacy_order_label' => $label,
             'legacy_order_num' => $legacyOrderNum,
+            'legacy_sale_date' => date('Y-m-d', strtotime($saleDate)),
             'legacy_source' => $legacySource,
         ];
     }
@@ -814,8 +845,9 @@ class LightStoresLegacyImporter
         return '1970-01-01 00:00:00';
     }
 
-    protected function createMobileRouteSale(object $row, int $legacyOrderNum): ?Sale
+    protected function createMobileRouteSale(object $row, int $legacyOrderNum, string $saleDate): ?Sale
     {
+        $saleDate = date('Y-m-d', strtotime($saleDate));
         $customerNum = (int) $row->customer_num;
         if (! Customer::query()->where('customer_num', $customerNum)->exists()) {
             return null;
@@ -823,10 +855,16 @@ class LightStoresLegacyImporter
 
         $customer = Customer::query()->where('customer_num', $customerNum)->first();
         $lines = DB::connection($this->legacy)
-            ->table(LightStoresLegacySchema::ROUTE_LINES)
-            ->where('order_no', $legacyOrderNum)
-            ->orderBy('item_code')
-            ->get();
+            ->table(LightStoresLegacySchema::ROUTE_MASTERS.' as rm')
+            ->join(LightStoresLegacySchema::ROUTE_LINES.' as rod', function ($join) {
+                $join->on('rod.order_no', '=', 'rm.order_num')
+                    ->on('rod.create_time', '=', 'rm.create_time');
+            })
+            ->where('rm.order_num', $legacyOrderNum)
+            ->where('rm.create_time', $saleDate)
+            ->whereNull('rm.DLT_ON')
+            ->orderBy('rod.item_code')
+            ->get(['rod.*']);
 
         if ($lines->isEmpty()) {
             return null;
@@ -857,7 +895,7 @@ class LightStoresLegacyImporter
             'stock_balanced' => (int) ($row->stock_balanced ?? 0),
             'receipt_printed' => (int) ($row->receipt_printed ?? 0),
             'comments' => $this->mergeLegacyComment($row->comments ?? null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::ROUTE_MASTERS),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::ROUTE_MASTERS, $saleDate),
             'completed_at' => $row->delivery_date ?: $row->create_time,
         ]);
 
@@ -868,18 +906,22 @@ class LightStoresLegacyImporter
         return $sale;
     }
 
-    protected function createDebtorSale(object $row, int $legacyOrderNum): ?Sale
+    protected function createDebtorSale(object $row, int $legacyOrderNum, string $saleDate): ?Sale
     {
+        $saleDate = date('Y-m-d', strtotime($saleDate));
         $customerNum = (int) $row->customer_num;
         if (! Customer::query()->where('customer_num', $customerNum)->exists()) {
             return null;
         }
 
         $lines = DB::connection($this->legacy)
-            ->table(LightStoresLegacySchema::DEBTOR_LINES)
-            ->where('order_num', $legacyOrderNum)
-            ->orderBy('item_code')
-            ->get();
+            ->table(LightStoresLegacySchema::DEBTOR_MASTERS.' as dm')
+            ->join(LightStoresLegacySchema::DEBTOR_LINES.' as dp', 'dp.order_num', '=', 'dm.order_num')
+            ->where('dm.order_num', $legacyOrderNum)
+            ->whereDate('dm.create_time', $saleDate)
+            ->whereNull('dm.dlt_on')
+            ->orderBy('dp.item_code')
+            ->get(['dp.*']);
 
         if ($lines->isEmpty()) {
             return null;
@@ -906,7 +948,7 @@ class LightStoresLegacyImporter
             'is_credit_sale' => $debtorStatus['is_credit_sale'],
             'stock_balanced' => 1,
             'comments' => $this->mergeLegacyComment(null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::DEBTOR_MASTERS),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::DEBTOR_MASTERS, $saleDate),
             'completed_at' => $row->create_time,
         ]);
 
@@ -917,12 +959,14 @@ class LightStoresLegacyImporter
         return $sale;
     }
 
-    protected function createPosSale(object $row, int $legacyOrderNum, Collection $walkIns): ?Sale
+    protected function createPosSale(object $row, int $legacyOrderNum, string $saleDate, ?string $walkInName): ?Sale
     {
+        $saleDate = date('Y-m-d', strtotime($saleDate));
         $lines = DB::connection($this->legacy)
-            ->table(LightStoresLegacySchema::POS_LINES)
-            ->where('order_num_ref', $legacyOrderNum)
-            ->orderBy('id')
+            ->table(LightStoresLegacySchema::POS_LINES.' as sp')
+            ->where('sp.order_num_ref', $legacyOrderNum)
+            ->whereDate('sp.create_time', $saleDate)
+            ->orderBy('sp.id')
             ->get();
 
         if ($lines->isEmpty()) {
@@ -947,7 +991,7 @@ class LightStoresLegacyImporter
             'payment_status' => $paymentStatus,
             'amount_paid' => min($amountPaid, $orderTotal > 0 ? $orderTotal : $amountPaid),
             'cashier_id' => $cashierId,
-            'customer_name_override' => $walkIns[$legacyOrderNum] ?? null,
+            'customer_name_override' => $walkInName,
             'status' => 'completed',
             'total_vat' => $totalVat,
             'order_total' => $orderTotal,
@@ -960,7 +1004,7 @@ class LightStoresLegacyImporter
             'is_credit_sale' => strtoupper((string) ($row->payment_method ?? '')) === 'CR',
             'stock_balanced' => 1,
             'comments' => $this->mergeLegacyComment(null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::POS_MASTERS),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::POS_MASTERS, $saleDate),
             'completed_at' => $row->create_time,
         ]);
 

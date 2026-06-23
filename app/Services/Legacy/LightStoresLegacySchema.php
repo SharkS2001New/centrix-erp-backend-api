@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
  * Route:   route_master + route_order_details + customer
  * Debtor:  debtor_masters + debtor_products + customer
  *
+ * POS order_num is reused across dates — always scope by (order_num, create_time).
  * Order totals are SUM(amount) and SUM(product_vat) on the line tables.
  */
 class LightStoresLegacySchema
@@ -33,9 +34,10 @@ class LightStoresLegacySchema
     /** Registered customers (route + debtor), not walk-in POS names. */
     public const CUSTOMERS = 'customer';
 
+    /** Legacy catalog — sale line FKs reference product.product_code. */
+    public const PRODUCTS = 'product';
+
     /**
-     * Sales archive tables required in the legacy MySQL database (from LightStoresDBBackup.sql).
-     *
      * @return array<string, array{role: string, channel: string|null, tables: list<string>}>
      */
     public static function salesChannelGroups(): array
@@ -64,7 +66,7 @@ class LightStoresLegacySchema
      */
     public static function requiredArchiveTables(): array
     {
-        $tables = ['org_info', 'product'];
+        $tables = ['org_info', self::PRODUCTS];
         foreach (self::salesChannelGroups() as $group) {
             foreach ($group['tables'] as $table) {
                 $tables[] = $table;
@@ -91,27 +93,100 @@ class LightStoresLegacySchema
         return [self::legacySourceForChannel($channel)];
     }
 
-    public static function posLineTotalsSubquery(string $connection): Builder
+    public static function posListWalkInSubquery(string $connection): Builder
+    {
+        return DB::connection($connection)
+            ->query()
+            ->fromSub(
+                DB::connection($connection)
+                    ->table(self::POS_WALK_IN)
+                    ->selectRaw('order_no, customer_name, ROW_NUMBER() OVER (PARTITION BY order_no ORDER BY create_time DESC) AS rn'),
+                'sc',
+            )
+            ->where('sc.rn', 1)
+            ->select('sc.order_no', 'sc.customer_name');
+    }
+
+    /** Matches verified list SQL — totals grouped by order_num_ref only. */
+    public static function posListLineTotalsSubquery(string $connection): Builder
     {
         return DB::connection($connection)
             ->table(self::POS_LINES)
-            ->selectRaw('order_num_ref as order_num, COALESCE(SUM(amount), 0) as order_total, COALESCE(SUM(product_vat), 0) as total_vat')
+            ->selectRaw('order_num_ref AS order_num, COALESCE(SUM(amount), 0) AS order_total, COALESCE(SUM(product_vat), 0) AS total_vat')
             ->groupBy('order_num_ref');
     }
 
-    public static function debtorLineTotalsSubquery(string $connection): Builder
+    /** Detail header totals for one POS sale (order # + line create date). */
+    public static function posOrderLineTotalsSubquery(string $connection, int $orderNum, string $saleDate): Builder
     {
         return DB::connection($connection)
-            ->table(self::DEBTOR_LINES)
-            ->selectRaw('order_num, COALESCE(SUM(amount), 0) as order_total, COALESCE(SUM(product_vat), 0) as total_vat')
-            ->groupBy('order_num');
+            ->table(self::POS_LINES)
+            ->where('order_num_ref', $orderNum)
+            ->whereDate('create_time', $saleDate)
+            ->selectRaw('order_num_ref AS order_num, COALESCE(SUM(amount), 0) AS order_total, COALESCE(SUM(product_vat), 0) AS total_vat')
+            ->groupBy('order_num_ref');
     }
 
-    public static function routeLineTotalsSubquery(string $connection): Builder
+    public static function debtorLineTotalsSubquery(
+        string $connection,
+        ?string $fromDate = null,
+        ?string $toDate = null,
+        ?int $orderNum = null,
+        ?string $saleDate = null,
+    ): Builder {
+        $query = DB::connection($connection)
+            ->table(self::DEBTOR_LINES.' as dp')
+            ->join(self::DEBTOR_MASTERS.' as dm', 'dm.order_num', '=', 'dp.order_num')
+            ->whereNull('dm.dlt_on');
+
+        if ($orderNum !== null && $saleDate !== null) {
+            $query->where('dm.order_num', $orderNum)->whereDate('dm.create_time', $saleDate);
+        } elseif ($orderNum !== null) {
+            $query->where('dm.order_num', $orderNum);
+        } elseif ($fromDate || $toDate) {
+            self::applyMasterDateFilter($query, 'dm.create_time', $fromDate, $toDate);
+        }
+
+        return $query
+            ->selectRaw('dm.order_num as order_num, DATE(dm.create_time) as sale_date, COALESCE(SUM(dp.amount), 0) as order_total, COALESCE(SUM(dp.product_vat), 0) as total_vat')
+            ->groupBy('dm.order_num', DB::raw('DATE(dm.create_time)'));
+    }
+
+    public static function routeLineTotalsSubquery(
+        string $connection,
+        ?string $fromDate = null,
+        ?string $toDate = null,
+        ?int $orderNum = null,
+        ?string $saleDate = null,
+    ): Builder {
+        $query = DB::connection($connection)
+            ->table(self::ROUTE_LINES.' as rod')
+            ->join(self::ROUTE_MASTERS.' as rm', function ($join) {
+                $join->on('rm.order_num', '=', 'rod.order_no')
+                    ->on('rm.create_time', '=', 'rod.create_time');
+            })
+            ->whereNull('rm.DLT_ON');
+
+        if ($orderNum !== null && $saleDate !== null) {
+            $query->where('rm.order_num', $orderNum)->where('rm.create_time', $saleDate);
+        } elseif ($orderNum !== null) {
+            $query->where('rm.order_num', $orderNum);
+        } elseif ($fromDate || $toDate) {
+            self::applyMasterDateFilter($query, 'rm.create_time', $fromDate, $toDate);
+        }
+
+        return $query
+            ->selectRaw('rm.order_num as order_num, rm.create_time as sale_date, COALESCE(SUM(rod.amount), 0) as order_total, COALESCE(SUM(rod.product_vat), 0) as total_vat')
+            ->groupBy('rm.order_num', 'rm.create_time');
+    }
+
+    protected static function applyMasterDateFilter(Builder $query, string $column, ?string $fromDate, ?string $toDate): void
     {
-        return DB::connection($connection)
-            ->table(self::ROUTE_LINES)
-            ->selectRaw('order_no as order_num, COALESCE(SUM(amount), 0) as order_total, COALESCE(SUM(product_vat), 0) as total_vat')
-            ->groupBy('order_no');
+        if ($fromDate) {
+            $query->whereDate($column, '>=', $fromDate);
+        }
+        if ($toDate) {
+            $query->whereDate($column, '<=', $toDate);
+        }
     }
 }

@@ -74,7 +74,16 @@ class LegacyArchiveController extends Controller
         }
 
         try {
-            return response()->json($this->archive->saleDetail($org, $channel, $legacyOrderNum));
+            $data = $request->validate([
+                'sale_date' => 'required|date',
+            ]);
+
+            return response()->json($this->archive->saleDetail(
+                $org,
+                $channel,
+                $legacyOrderNum,
+                $data['sale_date'],
+            ));
         } catch (\Throwable $e) {
             return response()->json(['message' => $e->getMessage()], 404);
         }
@@ -125,10 +134,16 @@ class LegacyArchiveController extends Controller
         $data = $request->validate([
             'channel' => 'required|in:pos,mobile,debtor',
             'legacy_order_num' => 'required|integer|min:1',
+            'sale_date' => 'required|date',
         ]);
 
         try {
-            $sale = $importer->materializeSale($org, $data['channel'], (int) $data['legacy_order_num']);
+            $sale = $importer->materializeSale(
+                $org,
+                $data['channel'],
+                (int) $data['legacy_order_num'],
+                $data['sale_date'],
+            );
         } catch (\Throwable $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
