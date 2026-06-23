@@ -107,13 +107,13 @@ class LightStoresLegacySchema
             ->select('sc.order_no', 'sc.customer_name');
     }
 
-    /** Matches verified list SQL — totals grouped by order_num_ref only. */
+    /** List totals per POS sale day (order # is reused across dates). */
     public static function posListLineTotalsSubquery(string $connection): Builder
     {
         return DB::connection($connection)
             ->table(self::POS_LINES)
-            ->selectRaw('order_num_ref AS order_num, COALESCE(SUM(amount), 0) AS order_total, COALESCE(SUM(product_vat), 0) AS total_vat')
-            ->groupBy('order_num_ref');
+            ->selectRaw('order_num_ref AS order_num, create_time AS sale_date, COALESCE(SUM(amount), 0) AS order_total, COALESCE(SUM(product_vat), 0) AS total_vat')
+            ->groupBy('order_num_ref', 'create_time');
     }
 
     /** Detail header totals for one POS sale (order # + line create date). */
@@ -125,6 +125,29 @@ class LightStoresLegacySchema
             ->whereDate('create_time', $saleDate)
             ->selectRaw('order_num_ref AS order_num, COALESCE(SUM(amount), 0) AS order_total, COALESCE(SUM(product_vat), 0) AS total_vat')
             ->groupBy('order_num_ref');
+    }
+
+    public static function mobileListLineTotalsSubquery(string $connection): Builder
+    {
+        return DB::connection($connection)
+            ->table(self::ROUTE_LINES)
+            ->selectRaw('order_no AS order_num, create_time AS sale_date, COALESCE(SUM(amount), 0) AS order_total, COALESCE(SUM(product_vat), 0) AS total_vat')
+            ->groupBy('order_no', 'create_time');
+    }
+
+    public static function mobileOrderLineTotalsSubquery(string $connection, int $orderNum, string $saleDate): Builder
+    {
+        return DB::connection($connection)
+            ->table(self::ROUTE_LINES.' as rod')
+            ->join(self::ROUTE_MASTERS.' as rm', function ($join) {
+                $join->on('rm.order_num', '=', 'rod.order_no')
+                    ->on('rm.create_time', '=', 'rod.create_time');
+            })
+            ->whereNull('rm.DLT_ON')
+            ->where('rm.order_num', $orderNum)
+            ->where('rm.create_time', $saleDate)
+            ->selectRaw('rm.order_num AS order_num, COALESCE(SUM(rod.amount), 0) AS order_total, COALESCE(SUM(rod.product_vat), 0) AS total_vat')
+            ->groupBy('rm.order_num');
     }
 
     public static function debtorLineTotalsSubquery(
@@ -150,34 +173,6 @@ class LightStoresLegacySchema
         return $query
             ->selectRaw('dm.order_num as order_num, DATE(dm.create_time) as sale_date, COALESCE(SUM(dp.amount), 0) as order_total, COALESCE(SUM(dp.product_vat), 0) as total_vat')
             ->groupBy('dm.order_num', DB::raw('DATE(dm.create_time)'));
-    }
-
-    public static function routeLineTotalsSubquery(
-        string $connection,
-        ?string $fromDate = null,
-        ?string $toDate = null,
-        ?int $orderNum = null,
-        ?string $saleDate = null,
-    ): Builder {
-        $query = DB::connection($connection)
-            ->table(self::ROUTE_LINES.' as rod')
-            ->join(self::ROUTE_MASTERS.' as rm', function ($join) {
-                $join->on('rm.order_num', '=', 'rod.order_no')
-                    ->on('rm.create_time', '=', 'rod.create_time');
-            })
-            ->whereNull('rm.DLT_ON');
-
-        if ($orderNum !== null && $saleDate !== null) {
-            $query->where('rm.order_num', $orderNum)->where('rm.create_time', $saleDate);
-        } elseif ($orderNum !== null) {
-            $query->where('rm.order_num', $orderNum);
-        } elseif ($fromDate || $toDate) {
-            self::applyMasterDateFilter($query, 'rm.create_time', $fromDate, $toDate);
-        }
-
-        return $query
-            ->selectRaw('rm.order_num as order_num, rm.create_time as sale_date, COALESCE(SUM(rod.amount), 0) as order_total, COALESCE(SUM(rod.product_vat), 0) as total_vat')
-            ->groupBy('rm.order_num', 'rm.create_time');
     }
 
     protected static function applyMasterDateFilter(Builder $query, string $column, ?string $fromDate, ?string $toDate): void

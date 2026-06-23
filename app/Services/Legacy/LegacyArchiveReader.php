@@ -86,7 +86,7 @@ class LegacyArchiveReader
                     ->on('sp.create_time', '=', 'sm.create_time');
             });
         $this->applyDateFilter($pos, 'sm.create_time', $from, $to);
-        $posRow = (clone $pos)->selectRaw('COUNT(DISTINCT sm.order_num) as transactions, COALESCE(SUM(sp.amount), 0) as order_total, COALESCE(SUM(sp.product_vat), 0) as total_vat')->first();
+        $posRow = (clone $pos)->selectRaw('COUNT(DISTINCT CONCAT(sm.order_num, \'|\', sm.create_time)) as transactions, COALESCE(SUM(sp.amount), 0) as order_total, COALESCE(SUM(sp.product_vat), 0) as total_vat')->first();
 
         $debtor = $legacy->table(LightStoresLegacySchema::DEBTOR_MASTERS.' as dm')
             ->whereNull('dm.dlt_on')
@@ -96,7 +96,10 @@ class LegacyArchiveReader
 
         $mobile = $legacy->table(LightStoresLegacySchema::ROUTE_MASTERS.' as rm')
             ->whereNull('rm.DLT_ON')
-            ->join(LightStoresLegacySchema::ROUTE_LINES.' as rod', 'rod.order_no', '=', 'rm.order_num');
+            ->join(LightStoresLegacySchema::ROUTE_LINES.' as rod', function ($join) {
+                $join->on('rod.order_no', '=', 'rm.order_num')
+                    ->on('rod.create_time', '=', 'rm.create_time');
+            });
         $this->applyDateFilter($mobile, 'rm.create_time', $from, $to);
         $mobileRow = (clone $mobile)->selectRaw('COUNT(DISTINCT rm.order_num) as transactions, COALESCE(SUM(rod.amount), 0) as order_total, COALESCE(SUM(rod.product_vat), 0) as total_vat')->first();
 
@@ -243,7 +246,30 @@ class LegacyArchiveReader
             throw new RuntimeException('Legacy sale date is required.');
         }
 
-        return \Illuminate\Support\Carbon::parse($createTime)->toDateString();
+        return Carbon::parse($createTime)->toDateString();
+    }
+
+    protected function channelLabelPrefix(string $channel): string
+    {
+        return match ($channel) {
+            'mobile' => 'M',
+            'debtor' => 'D',
+            default => 'R',
+        };
+    }
+
+    /**
+     * Display prefixes (R/M/D) are cosmetic — API filters always use the numeric legacy order #.
+     */
+    protected function parseLegacyOrderNum(int|string $value): int
+    {
+        if (is_int($value)) {
+            return $value;
+        }
+
+        $normalized = preg_replace('/^[RMD]/i', '', trim($value)) ?? trim($value);
+
+        return (int) $normalized;
     }
 
     protected function posSalesQuery(string $connection, ?Carbon $from, ?Carbon $to, string $q, ?int $orderNum = null, ?string $saleDate = null)
@@ -258,8 +284,11 @@ class LegacyArchiveReader
             ->leftJoinSub($walkIn, 'sc', function ($join) {
                 $join->on('sc.order_no', '=', 'sm.order_num');
             })
-            ->leftJoinSub($lineTotals, 'line_totals', function ($join) {
+            ->leftJoinSub($lineTotals, 'line_totals', function ($join) use ($orderNum, $saleDate) {
                 $join->on('line_totals.order_num', '=', 'sm.order_num');
+                if ($orderNum === null || $saleDate === null) {
+                    $join->on('line_totals.sale_date', '=', 'sm.create_time');
+                }
             })
             ->selectRaw('sm.order_num, sm.create_time, sm.cash, sm.mpesa_amount, sm.userid_sales, sm.payment_method, sc.customer_name as walk_in_name, COALESCE(line_totals.order_total, 0) as order_total, COALESCE(line_totals.total_vat, 0) as total_vat');
 
@@ -293,21 +322,28 @@ class LegacyArchiveReader
 
     protected function mobileSalesQuery(string $connection, ?Carbon $from, ?Carbon $to, string $q, ?int $orderNum = null, ?string $saleDate = null)
     {
-        $fromDate = $from?->toDateString();
-        $toDate = $to?->toDateString();
-        $lineTotals = LightStoresLegacySchema::routeLineTotalsSubquery($connection, $fromDate, $toDate, $orderNum, $saleDate);
+        $lineTotals = ($orderNum !== null && $saleDate !== null)
+            ? LightStoresLegacySchema::mobileOrderLineTotalsSubquery($connection, $orderNum, $saleDate)
+            : LightStoresLegacySchema::mobileListLineTotalsSubquery($connection);
 
         $query = DB::connection($connection)
             ->table(LightStoresLegacySchema::ROUTE_MASTERS.' as rm')
             ->leftJoin(LightStoresLegacySchema::CUSTOMERS.' as c', 'c.customer_num', '=', 'rm.customer_num')
-            ->leftJoinSub($lineTotals, 'line_totals', function ($join) {
-                $join->on('line_totals.order_num', '=', 'rm.order_num')
-                    ->on('line_totals.sale_date', '=', 'rm.create_time');
+            ->leftJoinSub($lineTotals, 'line_totals', function ($join) use ($orderNum, $saleDate) {
+                $join->on('line_totals.order_num', '=', 'rm.order_num');
+                if ($orderNum === null || $saleDate === null) {
+                    $join->on('line_totals.sale_date', '=', 'rm.create_time');
+                }
             })
             ->whereNull('rm.DLT_ON')
             ->selectRaw('rm.order_num, rm.create_time, rm.customer_num, rm.order_status, rm.user_id, rm.required_date, rm.delivery_date, c.customer_name, COALESCE(line_totals.order_total, 0) as order_total, COALESCE(line_totals.total_vat, 0) as total_vat');
 
-        $this->applyDateFilter($query, 'rm.create_time', $from, $to);
+        if ($from) {
+            $query->where('rm.create_time', '>=', $from->toDateString());
+        }
+        if ($to) {
+            $query->where('rm.create_time', '<', $to->copy()->addDay()->toDateString());
+        }
 
         if ($orderNum !== null && $saleDate !== null) {
             $query->where('rm.order_num', $orderNum)->where('rm.create_time', $saleDate);
@@ -366,11 +402,7 @@ class LegacyArchiveReader
     {
         $legacyOrderNum = (int) ($row->order_num ?? 0);
         $saleDate = $this->normalizeSaleDate($row->create_time ?? null);
-        $labelPrefix = match ($channel) {
-            'mobile' => 'M',
-            'debtor' => 'D',
-            default => 'R',
-        };
+        $labelPrefix = $this->channelLabelPrefix($channel);
 
         $materializedSaleId = $this->materializedSaleId($org, $channel, $legacyOrderNum, $saleDate);
         $orderTotal = round((float) ($row->order_total ?? 0), 2);
@@ -381,7 +413,8 @@ class LegacyArchiveReader
             'archive_channel' => $channel,
             'legacy_order_num' => $legacyOrderNum,
             'legacy_sale_date' => $saleDate,
-            'legacy_order_label' => $labelPrefix.$legacyOrderNum.' · '.$saleDate,
+            'legacy_order_label' => $labelPrefix.$legacyOrderNum,
+            'legacy_channel_prefix' => $labelPrefix,
             'sale_date' => $row->create_time ?? null,
             'order_total' => $orderTotal,
             'total_vat' => $totalVat,
@@ -437,7 +470,7 @@ class LegacyArchiveReader
     /**
      * @return array<string, mixed>
      */
-    public function saleDetail(Organization $org, string $channel, int $legacyOrderNum, string $saleDate): array
+    public function saleDetail(Organization $org, string $channel, int|string $legacyOrderNum, string $saleDate): array
     {
         $this->assertAvailable($org);
 
@@ -445,6 +478,7 @@ class LegacyArchiveReader
             throw new RuntimeException('Channel must be pos, mobile, or debtor.');
         }
 
+        $legacyOrderNum = $this->parseLegacyOrderNum($legacyOrderNum);
         $saleDate = $this->normalizeSaleDate($saleDate);
         $connection = $this->connection($org);
         $row = match ($channel) {
@@ -709,12 +743,14 @@ class LegacyArchiveReader
                         ->on('rod.create_time', '=', 'rm.create_time');
                 })
                 ->leftJoin("{$productTable} as p", 'p.product_code', '=', 'rod.product_code')
+                ->whereNull('rm.DLT_ON')
                 ->where('rm.order_num', $legacyOrderNum)
                 ->where('rm.create_time', $saleDate)
-                ->whereNull('rm.DLT_ON')
                 ->orderBy('rod.item_code')
                 ->orderBy('rod.product_code')
                 ->get([
+                    'rod.order_no',
+                    'rod.create_time',
                     'rod.product_code',
                     'rod.qty_ordered',
                     'rod.uom',
@@ -723,6 +759,7 @@ class LegacyArchiveReader
                     'rod.amount',
                     'rod.item_code',
                     'p.product_name',
+                    'p.main_code',
                 ]),
             'debtor' => DB::connection($connection)
                 ->table(LightStoresLegacySchema::DEBTOR_MASTERS.' as dm')
