@@ -4,6 +4,7 @@ namespace App\Services\Ai;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Erp\CapabilityGate;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Http\Client\ConnectionException;
 use Illuminate\Support\Facades\Http;
@@ -258,9 +259,23 @@ class AiAssistantService
             ];
         }
 
-        $runtime = AiSettingsResolver::resolveRuntimeForOrganization($organization);
+        $runtime = $trainingMode
+            ? AiSettingsResolver::resolveRuntimeForPlatformTraining()
+            : AiSettingsResolver::resolveRuntimeForOrganization($organization);
         if (! $runtime) {
-            $gate = (new \App\Services\Erp\CapabilityGate)->forOrganization($organization);
+            if ($trainingMode) {
+                $settings = AiSettingsResolver::forPlatformTraining();
+
+                return [
+                    'reply' => ! ($settings['enabled'] ?? false)
+                        ? 'Platform AI training is disabled. Enable it under Platform → AI training → Platform AI credentials.'
+                        : 'Platform AI training is not configured — add an OpenAI API key under Platform → AI training.',
+                    'tools_used' => [],
+                    'training_mode' => true,
+                ];
+            }
+
+            $gate = (new CapabilityGate)->forOrganization($organization);
             $settings = AiSettingsResolver::forOrganization($organization);
 
             return [
@@ -274,7 +289,7 @@ class AiAssistantService
             ];
         }
 
-        $gate = (new \App\Services\Erp\CapabilityGate)->forOrganization($organization);
+        $gate = (new CapabilityGate)->forOrganization($organization);
         $scope = $this->workspaceScope->resolve($user, $gate, $workspaceId, $pathname);
 
         if (! $this->topicGuard->isErpRelated($message)) {

@@ -1,67 +1,105 @@
 <?php
 
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\Api\V1\AuthController;
-use App\Http\Controllers\Api\V1\ErpSettingsController;
 use App\Http\Controllers\Api\V1\AiSettingsController;
-use App\Http\Controllers\Api\V1\OrganizationController;
-use App\Http\Controllers\Api\V1\OrganizationProvisionController;
-use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
+use App\Http\Controllers\Api\V1\AttendanceClockDeviceController;
+use App\Http\Controllers\Api\V1\AttendanceMobileDeviceController;
+use App\Http\Controllers\Api\V1\AuditLogController;
+use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\BackgroundTaskController;
-use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
-use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
 use App\Http\Controllers\Api\V1\BranchController;
-use App\Http\Controllers\Api\V1\RoleController;
-use App\Http\Controllers\Api\V1\PermissionController;
-use App\Http\Controllers\Api\V1\UserController;
-use App\Http\Controllers\Api\V1\TillController;
-use App\Http\Controllers\Api\V1\EmployeeController;
-use App\Http\Controllers\Api\V1\TillFloatSessionController;
-use App\Http\Controllers\Api\V1\SupplierController;
-use App\Http\Controllers\Api\V1\SupplierPaymentController;
-use App\Http\Controllers\Api\V1\VatController;
-use App\Http\Controllers\Api\V1\UomController;
-use App\Http\Controllers\Api\V1\CategoryController;
-use App\Http\Controllers\Api\V1\SubCategoryController;
-use App\Http\Controllers\Api\V1\ProductController;
-use App\Http\Controllers\Api\V1\RetailPackageSettingController;
-use App\Http\Controllers\Api\V1\PriceHistoryController;
-use App\Http\Controllers\Api\V1\RouteModelController;
-use App\Http\Controllers\Api\V1\CustomerController;
-use App\Http\Controllers\Api\V1\CurrentStockController;
-use App\Http\Controllers\Api\V1\InventoryTransactionController;
-use App\Http\Controllers\Api\V1\DamageController;
-use App\Http\Controllers\Api\V1\StockReceiptController;
-use App\Http\Controllers\Api\V1\SupplierReturnDocumentController;
-use App\Http\Controllers\Api\V1\SupplierReturnController;
-use App\Http\Controllers\Api\V1\PaymentMethodController;
-use App\Http\Controllers\Api\V1\VoucherController;
-use App\Http\Controllers\Api\V1\SaleController;
-use App\Http\Controllers\Api\V1\MobileLoadingSheetController;
-use App\Http\Controllers\Api\V1\MobileFieldAttendanceController;
-use App\Http\Controllers\Api\V1\SaleItemController;
-use App\Http\Controllers\Api\V1\SalePaymentController;
-use App\Http\Controllers\Api\V1\TemporaryCartController;
 use App\Http\Controllers\Api\V1\CartLineController;
+use App\Http\Controllers\Api\V1\CategoryController;
+use App\Http\Controllers\Api\V1\ChartOfAccountController;
+use App\Http\Controllers\Api\V1\CurrentStockController;
+use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\CustomerInvoiceController;
 use App\Http\Controllers\Api\V1\CustomerInvoicePaymentController;
-use App\Http\Controllers\Api\V1\LpoStatusController;
-use App\Http\Controllers\Api\V1\LpoMstController;
-use App\Http\Controllers\Api\V1\LpoTxnController;
-use App\Http\Controllers\Api\V1\LpoAttachmentController;
-use App\Http\Controllers\Api\V1\LpoSupplierInvoiceController;
-use App\Http\Controllers\Api\V1\ReturnRecordController;
 use App\Http\Controllers\Api\V1\CustomerReturnController;
-use App\Http\Controllers\Api\V1\ExpenseGroupController;
-use App\Http\Controllers\Api\V1\ExpenseController;
-use App\Http\Controllers\Api\V1\KraResponseController;
-use App\Http\Controllers\Api\V1\AuditLogController;
-use App\Http\Controllers\Api\V1\SystemSettingController;
+use App\Http\Controllers\Api\V1\DamageController;
+use App\Http\Controllers\Api\V1\DepartmentController;
+use App\Http\Controllers\Api\V1\DispatchTripController;
+use App\Http\Controllers\Api\V1\DriverController;
+use App\Http\Controllers\Api\V1\EmployeeAllowanceController;
+use App\Http\Controllers\Api\V1\EmployeeAttendanceController;
+use App\Http\Controllers\Api\V1\EmployeeBankAccountController;
+use App\Http\Controllers\Api\V1\EmployeeCashAdvanceController;
+use App\Http\Controllers\Api\V1\EmployeeController;
+use App\Http\Controllers\Api\V1\EmployeeDeductionController;
+use App\Http\Controllers\Api\V1\EmployeeDocumentController;
+use App\Http\Controllers\Api\V1\EmployeeEmergencyContactController;
+use App\Http\Controllers\Api\V1\EmployeeKpiController;
+use App\Http\Controllers\Api\V1\EmployeeLeaveBalanceController;
+use App\Http\Controllers\Api\V1\EmployeeLeaveDayController;
+use App\Http\Controllers\Api\V1\EmployeeNextOfKinController;
+use App\Http\Controllers\Api\V1\EmployeeOvertimeController;
 use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
-use App\Http\Controllers\Api\V1\StockReservationController;
+use App\Http\Controllers\Api\V1\ErpSettingsController;
+use App\Http\Controllers\Api\V1\ExpenseController;
+use App\Http\Controllers\Api\V1\ExpenseGroupController;
+use App\Http\Controllers\Api\V1\InventoryTransactionController;
+use App\Http\Controllers\Api\V1\JournalEntryController;
+use App\Http\Controllers\Api\V1\JournalEntryLineController;
+use App\Http\Controllers\Api\V1\KraResponseController;
+use App\Http\Controllers\Api\V1\LoyaltyCardController;
+use App\Http\Controllers\Api\V1\LpoAttachmentController;
+use App\Http\Controllers\Api\V1\LpoMstController;
+use App\Http\Controllers\Api\V1\LpoStatusController;
+use App\Http\Controllers\Api\V1\LpoSupplierInvoiceController;
+use App\Http\Controllers\Api\V1\LpoTxnController;
+use App\Http\Controllers\Api\V1\MobileFieldAttendanceController;
+use App\Http\Controllers\Api\V1\MobileLoadingSheetController;
 use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
-
+use App\Http\Controllers\Api\V1\Operations\ExternalAccountingController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
+use App\Http\Controllers\Api\V1\OrganizationController;
+use App\Http\Controllers\Api\V1\OrganizationHolidayController;
+use App\Http\Controllers\Api\V1\OrganizationKpiController;
+use App\Http\Controllers\Api\V1\OrganizationLeaveSettingsController;
+use App\Http\Controllers\Api\V1\OrganizationProvisionController;
+use App\Http\Controllers\Api\V1\PaymentMethodController;
+use App\Http\Controllers\Api\V1\PayPeriodController;
+use App\Http\Controllers\Api\V1\PayrollDeductionTypeController;
+use App\Http\Controllers\Api\V1\PayrollLineController;
+use App\Http\Controllers\Api\V1\PayrollRunController;
+use App\Http\Controllers\Api\V1\PermissionController;
+use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
+use App\Http\Controllers\Api\V1\PlatformAiTrainingController;
+use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
+use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
+use App\Http\Controllers\Api\V1\PodRecordController;
+use App\Http\Controllers\Api\V1\PositionController;
+use App\Http\Controllers\Api\V1\PriceHistoryController;
+use App\Http\Controllers\Api\V1\ProductController;
+use App\Http\Controllers\Api\V1\ProductImportController;
+use App\Http\Controllers\Api\V1\RetailPackageSettingController;
+use App\Http\Controllers\Api\V1\ReturnRecordController;
+use App\Http\Controllers\Api\V1\RoleController;
+use App\Http\Controllers\Api\V1\RouteModelController;
+use App\Http\Controllers\Api\V1\RouteScheduleController;
+use App\Http\Controllers\Api\V1\SaleController;
+use App\Http\Controllers\Api\V1\SaleItemController;
+use App\Http\Controllers\Api\V1\SalePaymentController;
+use App\Http\Controllers\Api\V1\StockReceiptController;
+use App\Http\Controllers\Api\V1\StockReservationController;
+use App\Http\Controllers\Api\V1\StockTakeLineController;
+use App\Http\Controllers\Api\V1\StockTakeSessionController;
+use App\Http\Controllers\Api\V1\SubCategoryController;
+use App\Http\Controllers\Api\V1\SupplierController;
+use App\Http\Controllers\Api\V1\SupplierPaymentController;
+use App\Http\Controllers\Api\V1\SupplierReturnController;
+use App\Http\Controllers\Api\V1\SupplierReturnDocumentController;
+use App\Http\Controllers\Api\V1\SystemSettingController;
+use App\Http\Controllers\Api\V1\TemporaryCartController;
+use App\Http\Controllers\Api\V1\TillController;
+use App\Http\Controllers\Api\V1\TillFloatSessionController;
+use App\Http\Controllers\Api\V1\UomController;
+use App\Http\Controllers\Api\V1\UserController;
+use App\Http\Controllers\Api\V1\VatController;
+use App\Http\Controllers\Api\V1\VehicleController;
+use App\Http\Controllers\Api\V1\VoucherController;
+use App\Http\Controllers\Api\V1\WorkShiftController;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Route;
 
 Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
@@ -90,7 +128,7 @@ Route::prefix('v1')->group(function () {
         Route::post('payments/c2b/validation', [MpesaPaymentController::class, 'validationRequest']);
         Route::post('payments/c2b/confirmation', [MpesaPaymentController::class, 'c2bConfirmation']);
     });
-    Route::get('accounting/quickbooks/callback', [\App\Http\Controllers\Api\V1\Operations\ExternalAccountingController::class, 'quickBooksCallback'])
+    Route::get('accounting/quickbooks/callback', [ExternalAccountingController::class, 'quickBooksCallback'])
         ->middleware('throttle:auth-org-preview');
 
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'throttle:api'])->group(function () {
@@ -110,45 +148,45 @@ Route::prefix('v1')->group(function () {
         Route::get('erp/profiles', [ErpCapabilitiesController::class, 'profiles'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:sales', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:sales', 'erp.permission:admin.manage']);
         Route::get('erp/settings/distribution', [ErpSettingsController::class, 'distribution'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:distribution', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/distribution', [ErpSettingsController::class, 'updateDistribution'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:distribution', 'erp.permission:admin.manage']);
         Route::get('erp/settings/inventory', [ErpSettingsController::class, 'inventory'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:inventory', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/inventory', [ErpSettingsController::class, 'updateInventory'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:inventory', 'erp.permission:admin.manage']);
         Route::get('erp/settings/finance', [ErpSettingsController::class, 'finance'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
-            ->middleware(['erp.forbid_tenant_settings']);
-        Route::get('erp/settings/ai', [\App\Http\Controllers\Api\V1\AiSettingsController::class, 'show'])
-            ->middleware(['erp.forbid_tenant_settings']);
-        Route::patch('erp/settings/ai', [\App\Http\Controllers\Api\V1\AiSettingsController::class, 'update'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
+        Route::get('erp/settings/ai', [AiSettingsController::class, 'show'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::patch('erp/settings/ai', [AiSettingsController::class, 'update'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/general', [ErpSettingsController::class, 'general'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/general', [ErpSettingsController::class, 'updateGeneral'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/notifications', [ErpSettingsController::class, 'notifications'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/notifications', [ErpSettingsController::class, 'updateNotifications'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/procurement', [ErpSettingsController::class, 'procurement'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:customers_suppliers', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/procurement', [ErpSettingsController::class, 'updateProcurement'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:customers_suppliers', 'erp.permission:admin.manage']);
         Route::get('erp/settings/security', [ErpSettingsController::class, 'security'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/security', [ErpSettingsController::class, 'updateSecurity'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/hr', [ErpSettingsController::class, 'hr'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:hr_payroll', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/hr', [ErpSettingsController::class, 'updateHr'])
-            ->middleware(['erp.forbid_tenant_settings']);
+            ->middleware(['erp.module:admin', 'erp.module:hr_payroll', 'erp.permission:admin.manage']);
 
         Route::get('admin/organizations/provision-options', [OrganizationProvisionController::class, 'options'])
             ->middleware(['erp.super_admin']);
@@ -191,12 +229,14 @@ Route::prefix('v1')->group(function () {
         Route::prefix('admin/ai-training')
             ->middleware(['erp.super_admin'])
             ->group(function () {
-                Route::get('status', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'status']);
-                Route::get('knowledge', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'listKnowledge']);
-                Route::post('knowledge', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'teach']);
-                Route::patch('knowledge/{entry}', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'updateKnowledge']);
-                Route::delete('knowledge/{entry}', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'deleteKnowledge']);
-                Route::post('chat', [\App\Http\Controllers\Api\V1\PlatformAiTrainingController::class, 'chat']);
+                Route::get('status', [PlatformAiTrainingController::class, 'status']);
+                Route::get('settings', [PlatformAiTrainingController::class, 'settings']);
+                Route::patch('settings', [PlatformAiTrainingController::class, 'updateSettings']);
+                Route::get('knowledge', [PlatformAiTrainingController::class, 'listKnowledge']);
+                Route::post('knowledge', [PlatformAiTrainingController::class, 'teach']);
+                Route::patch('knowledge/{entry}', [PlatformAiTrainingController::class, 'updateKnowledge']);
+                Route::delete('knowledge/{entry}', [PlatformAiTrainingController::class, 'deleteKnowledge']);
+                Route::post('chat', [PlatformAiTrainingController::class, 'chat']);
             });
 
         Route::get('admin/organizations/{organization}/cache', [PlatformOrganizationCacheController::class, 'show'])
@@ -234,13 +274,13 @@ Route::prefix('v1')->group(function () {
         Route::prefix('admin/organizations/{organization}')
             ->middleware(['erp.super_admin', 'erp.act_as_organization'])
             ->group(function () {
-                Route::post('logo', function (\Illuminate\Http\Request $request, $organization) {
+                Route::post('logo', function (Request $request, $organization) {
                     return app(OrganizationController::class)->uploadLogo($request, (string) $organization);
                 });
-                Route::get('logo/file', function (\Illuminate\Http\Request $request, $organization) {
+                Route::get('logo/file', function (Request $request, $organization) {
                     return app(OrganizationController::class)->logoFile($request, (string) $organization);
                 });
-                Route::delete('logo', function (\Illuminate\Http\Request $request, $organization) {
+                Route::delete('logo', function (Request $request, $organization) {
                     return app(OrganizationController::class)->deleteLogo($request, (string) $organization);
                 });
                 Route::apiResource('branches', BranchController::class);
@@ -325,7 +365,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::get('products/catalog-summary', [ProductController::class, 'catalogSummary'])
                 ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
-            Route::post('products/import-batch', [\App\Http\Controllers\Api\V1\ProductImportController::class, 'store'])
+            Route::post('products/import-batch', [ProductImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
@@ -366,10 +406,10 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('stock-reservations', StockReservationController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
-            Route::apiResource('stock-take-sessions', \App\Http\Controllers\Api\V1\StockTakeSessionController::class)
+            Route::apiResource('stock-take-sessions', StockTakeSessionController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
-            Route::apiResource('stock-take-lines', \App\Http\Controllers\Api\V1\StockTakeLineController::class)
+            Route::apiResource('stock-take-lines', StockTakeLineController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
             Route::get('lpo-mst/dashboard', [LpoMstController::class, 'dashboard'])
@@ -436,7 +476,7 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('vouchers', VoucherController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);
-            Route::apiResource('loyalty-cards', \App\Http\Controllers\Api\V1\LoyaltyCardController::class)
+            Route::apiResource('loyalty-cards', LoyaltyCardController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);
             Route::get('sales/mobile-loading-sheets', [MobileLoadingSheetController::class, 'index'])
@@ -496,207 +536,207 @@ Route::prefix('v1')->group(function () {
 
         // Accounting — read vs manage
         Route::middleware('erp.module:accounting')->group(function () {
-            Route::apiResource('chart-of-accounts', \App\Http\Controllers\Api\V1\ChartOfAccountController::class)
+            Route::apiResource('chart-of-accounts', ChartOfAccountController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:accounting.manage']);
-            Route::apiResource('journal-entries', \App\Http\Controllers\Api\V1\JournalEntryController::class)
+            Route::apiResource('journal-entries', JournalEntryController::class)
                 ->except(['store'])
                 ->middlewareFor(['index', 'show'], ['erp.permission:accounting.view'])
                 ->middlewareFor(['update', 'destroy'], ['erp.permission:accounting.manage']);
-            Route::apiResource('journal-entry-lines', \App\Http\Controllers\Api\V1\JournalEntryLineController::class)
+            Route::apiResource('journal-entry-lines', JournalEntryLineController::class)
                 ->only(['index', 'show'])
                 ->middleware('erp.permission:accounting.view');
         });
         Route::middleware(['erp.module:hr_payroll'])->group(function () {
-            Route::apiResource('departments', \App\Http\Controllers\Api\V1\DepartmentController::class)
+            Route::apiResource('departments', DepartmentController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::get('employees/{employee}/photo/file', [\App\Http\Controllers\Api\V1\EmployeeController::class, 'photoFile'])
+            Route::get('employees/{employee}/photo/file', [EmployeeController::class, 'photoFile'])
                 ->middleware('erp.permission:hr.view');
-            Route::post('employees/{employee}/photo', [\App\Http\Controllers\Api\V1\EmployeeController::class, 'uploadPhoto'])
+            Route::post('employees/{employee}/photo', [EmployeeController::class, 'uploadPhoto'])
                 ->middleware('erp.permission:hr.manage');
-            Route::delete('employees/{employee}/photo', [\App\Http\Controllers\Api\V1\EmployeeController::class, 'deletePhoto'])
+            Route::delete('employees/{employee}/photo', [EmployeeController::class, 'deletePhoto'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employees/{employee}/payroll-lines', [\App\Http\Controllers\Api\V1\EmployeeController::class, 'payrollLines'])
+            Route::get('employees/{employee}/payroll-lines', [EmployeeController::class, 'payrollLines'])
                 ->middleware('erp.permission:hr.view');
-            Route::get('organization-kpis', [\App\Http\Controllers\Api\V1\OrganizationKpiController::class, 'index'])
+            Route::get('organization-kpis', [OrganizationKpiController::class, 'index'])
                 ->middleware('erp.permission:hr.kpis.view');
-            Route::post('organization-kpis', [\App\Http\Controllers\Api\V1\OrganizationKpiController::class, 'store'])
+            Route::post('organization-kpis', [OrganizationKpiController::class, 'store'])
                 ->middleware('erp.permission:hr.kpis.create');
-            Route::get('organization-kpis/{organizationKpi}', [\App\Http\Controllers\Api\V1\OrganizationKpiController::class, 'show'])
+            Route::get('organization-kpis/{organizationKpi}', [OrganizationKpiController::class, 'show'])
                 ->middleware('erp.permission:hr.kpis.view');
-            Route::put('organization-kpis/{organizationKpi}', [\App\Http\Controllers\Api\V1\OrganizationKpiController::class, 'update'])
+            Route::put('organization-kpis/{organizationKpi}', [OrganizationKpiController::class, 'update'])
                 ->middleware('erp.permission:hr.kpis.edit');
-            Route::delete('organization-kpis/{organizationKpi}', [\App\Http\Controllers\Api\V1\OrganizationKpiController::class, 'destroy'])
+            Route::delete('organization-kpis/{organizationKpi}', [OrganizationKpiController::class, 'destroy'])
                 ->middleware('erp.permission:hr.kpis.delete');
-            Route::get('organization-kpis/{organizationKpi}/achievement', [\App\Http\Controllers\Api\V1\OrganizationKpiController::class, 'achievement'])
+            Route::get('organization-kpis/{organizationKpi}/achievement', [OrganizationKpiController::class, 'achievement'])
                 ->middleware('erp.permission:hr.kpis.view');
-            Route::post('organization-kpis/{organizationKpi}/assign', [\App\Http\Controllers\Api\V1\OrganizationKpiController::class, 'assign'])
+            Route::post('organization-kpis/{organizationKpi}/assign', [OrganizationKpiController::class, 'assign'])
                 ->middleware('erp.permission:hr.kpis.edit');
-            Route::get('employees/{employee}/kpis', [\App\Http\Controllers\Api\V1\EmployeeKpiController::class, 'summary'])
+            Route::get('employees/{employee}/kpis', [EmployeeKpiController::class, 'summary'])
                 ->middleware('erp.permission:hr.view');
-            Route::post('employees/{employee}/kpis', [\App\Http\Controllers\Api\V1\EmployeeKpiController::class, 'store'])
+            Route::post('employees/{employee}/kpis', [EmployeeKpiController::class, 'store'])
                 ->middleware('erp.permission:hr.manage');
-            Route::put('employees/{employee}/kpis/{kpi}', [\App\Http\Controllers\Api\V1\EmployeeKpiController::class, 'update'])
+            Route::put('employees/{employee}/kpis/{kpi}', [EmployeeKpiController::class, 'update'])
                 ->middleware('erp.permission:hr.manage');
-            Route::delete('employees/{employee}/kpis/{kpi}', [\App\Http\Controllers\Api\V1\EmployeeKpiController::class, 'destroy'])
+            Route::delete('employees/{employee}/kpis/{kpi}', [EmployeeKpiController::class, 'destroy'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employees/{employee}/bank-accounts', [\App\Http\Controllers\Api\V1\EmployeeBankAccountController::class, 'index'])
+            Route::get('employees/{employee}/bank-accounts', [EmployeeBankAccountController::class, 'index'])
                 ->middleware('erp.permission:hr.view');
-            Route::post('employees/{employee}/bank-accounts', [\App\Http\Controllers\Api\V1\EmployeeBankAccountController::class, 'store'])
+            Route::post('employees/{employee}/bank-accounts', [EmployeeBankAccountController::class, 'store'])
                 ->middleware('erp.permission:hr.manage');
-            Route::put('employees/{employee}/bank-accounts/{bankAccount}', [\App\Http\Controllers\Api\V1\EmployeeBankAccountController::class, 'update'])
+            Route::put('employees/{employee}/bank-accounts/{bankAccount}', [EmployeeBankAccountController::class, 'update'])
                 ->middleware('erp.permission:hr.manage');
-            Route::delete('employees/{employee}/bank-accounts/{bankAccount}', [\App\Http\Controllers\Api\V1\EmployeeBankAccountController::class, 'destroy'])
+            Route::delete('employees/{employee}/bank-accounts/{bankAccount}', [EmployeeBankAccountController::class, 'destroy'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employees/{employee}/emergency-contacts', [\App\Http\Controllers\Api\V1\EmployeeEmergencyContactController::class, 'index'])
+            Route::get('employees/{employee}/emergency-contacts', [EmployeeEmergencyContactController::class, 'index'])
                 ->middleware('erp.permission:hr.view');
-            Route::post('employees/{employee}/emergency-contacts', [\App\Http\Controllers\Api\V1\EmployeeEmergencyContactController::class, 'store'])
+            Route::post('employees/{employee}/emergency-contacts', [EmployeeEmergencyContactController::class, 'store'])
                 ->middleware('erp.permission:hr.manage');
-            Route::put('employees/{employee}/emergency-contacts/{contact}', [\App\Http\Controllers\Api\V1\EmployeeEmergencyContactController::class, 'update'])
+            Route::put('employees/{employee}/emergency-contacts/{contact}', [EmployeeEmergencyContactController::class, 'update'])
                 ->middleware('erp.permission:hr.manage');
-            Route::delete('employees/{employee}/emergency-contacts/{contact}', [\App\Http\Controllers\Api\V1\EmployeeEmergencyContactController::class, 'destroy'])
+            Route::delete('employees/{employee}/emergency-contacts/{contact}', [EmployeeEmergencyContactController::class, 'destroy'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employees/{employee}/next-of-kin', [\App\Http\Controllers\Api\V1\EmployeeNextOfKinController::class, 'show'])
+            Route::get('employees/{employee}/next-of-kin', [EmployeeNextOfKinController::class, 'show'])
                 ->middleware('erp.permission:hr.view');
-            Route::put('employees/{employee}/next-of-kin', [\App\Http\Controllers\Api\V1\EmployeeNextOfKinController::class, 'upsert'])
+            Route::put('employees/{employee}/next-of-kin', [EmployeeNextOfKinController::class, 'upsert'])
                 ->middleware('erp.permission:hr.manage');
-            Route::delete('employees/{employee}/next-of-kin', [\App\Http\Controllers\Api\V1\EmployeeNextOfKinController::class, 'destroy'])
+            Route::delete('employees/{employee}/next-of-kin', [EmployeeNextOfKinController::class, 'destroy'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employees/{employee}/documents', [\App\Http\Controllers\Api\V1\EmployeeDocumentController::class, 'index'])
+            Route::get('employees/{employee}/documents', [EmployeeDocumentController::class, 'index'])
                 ->middleware('erp.permission:hr.view');
-            Route::post('employees/{employee}/documents', [\App\Http\Controllers\Api\V1\EmployeeDocumentController::class, 'store'])
+            Route::post('employees/{employee}/documents', [EmployeeDocumentController::class, 'store'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employees/{employee}/documents/{document}/file', [\App\Http\Controllers\Api\V1\EmployeeDocumentController::class, 'file'])
+            Route::get('employees/{employee}/documents/{document}/file', [EmployeeDocumentController::class, 'file'])
                 ->middleware('erp.permission:hr.view');
-            Route::get('employees/{employee}/documents/{document}', [\App\Http\Controllers\Api\V1\EmployeeDocumentController::class, 'show'])
+            Route::get('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'show'])
                 ->middleware('erp.permission:hr.view');
-            Route::put('employees/{employee}/documents/{document}', [\App\Http\Controllers\Api\V1\EmployeeDocumentController::class, 'update'])
+            Route::put('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'update'])
                 ->middleware('erp.permission:hr.manage');
-            Route::delete('employees/{employee}/documents/{document}', [\App\Http\Controllers\Api\V1\EmployeeDocumentController::class, 'destroy'])
+            Route::delete('employees/{employee}/documents/{document}', [EmployeeDocumentController::class, 'destroy'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employees/summary', [\App\Http\Controllers\Api\V1\EmployeeController::class, 'summary'])
+            Route::get('employees/summary', [EmployeeController::class, 'summary'])
                 ->middleware(['erp.permission:hr.view']);
-            Route::apiResource('employees', \App\Http\Controllers\Api\V1\EmployeeController::class)
+            Route::apiResource('employees', EmployeeController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('positions', \App\Http\Controllers\Api\V1\PositionController::class)
+            Route::apiResource('positions', PositionController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('work-shifts', \App\Http\Controllers\Api\V1\WorkShiftController::class)
+            Route::apiResource('work-shifts', WorkShiftController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::get('organization-leave-settings', [\App\Http\Controllers\Api\V1\OrganizationLeaveSettingsController::class, 'show'])
+            Route::get('organization-leave-settings', [OrganizationLeaveSettingsController::class, 'show'])
                 ->middleware('erp.permission:hr.view');
-            Route::put('organization-leave-settings', [\App\Http\Controllers\Api\V1\OrganizationLeaveSettingsController::class, 'update'])
+            Route::put('organization-leave-settings', [OrganizationLeaveSettingsController::class, 'update'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employee-leave-balances', [\App\Http\Controllers\Api\V1\EmployeeLeaveBalanceController::class, 'index'])
+            Route::get('employee-leave-balances', [EmployeeLeaveBalanceController::class, 'index'])
                 ->middleware('erp.permission:hr.view');
-            Route::post('employee-leave-balances/allocate-off-days', [\App\Http\Controllers\Api\V1\EmployeeLeaveBalanceController::class, 'allocateOffDays'])
+            Route::post('employee-leave-balances/allocate-off-days', [EmployeeLeaveBalanceController::class, 'allocateOffDays'])
                 ->middleware('erp.permission:hr.manage');
-            Route::put('employees/{employee}/leave-balances', [\App\Http\Controllers\Api\V1\EmployeeLeaveBalanceController::class, 'update'])
+            Route::put('employees/{employee}/leave-balances', [EmployeeLeaveBalanceController::class, 'update'])
                 ->middleware('erp.permission:hr.manage');
-            Route::get('employees/{employee}/leave-balances', [\App\Http\Controllers\Api\V1\EmployeeLeaveDayController::class, 'balances'])
+            Route::get('employees/{employee}/leave-balances', [EmployeeLeaveDayController::class, 'balances'])
                 ->middleware('erp.permission:hr.view');
-            Route::get('employee-leave-days/calculate', [\App\Http\Controllers\Api\V1\EmployeeLeaveDayController::class, 'calculate'])
+            Route::get('employee-leave-days/calculate', [EmployeeLeaveDayController::class, 'calculate'])
                 ->middleware('erp.permission:hr.view');
-            Route::post('employee-leave-days/{id}/approve', [\App\Http\Controllers\Api\V1\EmployeeLeaveDayController::class, 'approve'])
+            Route::post('employee-leave-days/{id}/approve', [EmployeeLeaveDayController::class, 'approve'])
                 ->middleware('erp.permission:hr.leave.approve');
-            Route::post('employee-leave-days/{id}/reject', [\App\Http\Controllers\Api\V1\EmployeeLeaveDayController::class, 'reject'])
+            Route::post('employee-leave-days/{id}/reject', [EmployeeLeaveDayController::class, 'reject'])
                 ->middleware('erp.permission:hr.leave.approve');
-            Route::apiResource('employee-leave-days', \App\Http\Controllers\Api\V1\EmployeeLeaveDayController::class)
+            Route::apiResource('employee-leave-days', EmployeeLeaveDayController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('attendance-clock-devices', \App\Http\Controllers\Api\V1\AttendanceClockDeviceController::class)
+            Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('attendance-mobile-devices', \App\Http\Controllers\Api\V1\AttendanceMobileDeviceController::class)
+            Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('organization-holidays', \App\Http\Controllers\Api\V1\OrganizationHolidayController::class)
+            Route::apiResource('organization-holidays', OrganizationHolidayController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::get('employee-attendance/day-preview', [\App\Http\Controllers\Api\V1\EmployeeAttendanceController::class, 'dayPreview'])
+            Route::get('employee-attendance/day-preview', [EmployeeAttendanceController::class, 'dayPreview'])
                 ->middleware('erp.permission:hr.view');
-            Route::apiResource('payroll-deduction-types', \App\Http\Controllers\Api\V1\PayrollDeductionTypeController::class)
+            Route::apiResource('payroll-deduction-types', PayrollDeductionTypeController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('employee-deductions', \App\Http\Controllers\Api\V1\EmployeeDeductionController::class)
+            Route::apiResource('employee-deductions', EmployeeDeductionController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('employee-allowances', \App\Http\Controllers\Api\V1\EmployeeAllowanceController::class)
+            Route::apiResource('employee-allowances', EmployeeAllowanceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('employee-overtime', \App\Http\Controllers\Api\V1\EmployeeOvertimeController::class)
+            Route::apiResource('employee-overtime', EmployeeOvertimeController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::post('employee-cash-advances/{id}/approve', [\App\Http\Controllers\Api\V1\EmployeeCashAdvanceController::class, 'approve'])
+            Route::post('employee-cash-advances/{id}/approve', [EmployeeCashAdvanceController::class, 'approve'])
                 ->middleware('erp.permission:hr.cash_advances.approve');
-            Route::post('employee-cash-advances/{id}/reject', [\App\Http\Controllers\Api\V1\EmployeeCashAdvanceController::class, 'reject'])
+            Route::post('employee-cash-advances/{id}/reject', [EmployeeCashAdvanceController::class, 'reject'])
                 ->middleware('erp.permission:hr.cash_advances.approve');
-            Route::apiResource('employee-cash-advances', \App\Http\Controllers\Api\V1\EmployeeCashAdvanceController::class)
+            Route::apiResource('employee-cash-advances', EmployeeCashAdvanceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('employee-attendance', \App\Http\Controllers\Api\V1\EmployeeAttendanceController::class)
+            Route::apiResource('employee-attendance', EmployeeAttendanceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::post('pay-periods/ensure-runnable', [\App\Http\Controllers\Api\V1\PayPeriodController::class, 'ensureRunnable'])
+            Route::post('pay-periods/ensure-runnable', [PayPeriodController::class, 'ensureRunnable'])
                 ->middleware('erp.permission:hr.manage');
-            Route::apiResource('pay-periods', \App\Http\Controllers\Api\V1\PayPeriodController::class)
+            Route::apiResource('pay-periods', PayPeriodController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('payroll-runs', \App\Http\Controllers\Api\V1\PayrollRunController::class)
+            Route::apiResource('payroll-runs', PayrollRunController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
-            Route::apiResource('payroll-lines', \App\Http\Controllers\Api\V1\PayrollLineController::class)
+            Route::apiResource('payroll-lines', PayrollLineController::class)
                 ->middleware('erp.permission:hr.view');
         });
 
         Route::middleware(['erp.module:distribution'])->group(function () {
-            Route::get('route-schedules/for-date', [\App\Http\Controllers\Api\V1\RouteScheduleController::class, 'forDate'])
+            Route::get('route-schedules/for-date', [RouteScheduleController::class, 'forDate'])
                 ->middleware('erp.permission:fulfillment.view');
-            Route::apiResource('route-schedules', \App\Http\Controllers\Api\V1\RouteScheduleController::class)
+            Route::apiResource('route-schedules', RouteScheduleController::class)
                 ->middlewareFor(['index', 'show', 'forDate'], ['erp.permission:fulfillment.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
 
-            Route::post('dispatch-trips/{trip}/reorder-stops', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'reorderStops'])
+            Route::post('dispatch-trips/{trip}/reorder-stops', [DispatchTripController::class, 'reorderStops'])
                 ->middleware('erp.permission:fulfillment.manage');
-            Route::post('dispatch-trips/{trip}/assign-orders', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'assignOrders'])
+            Route::post('dispatch-trips/{trip}/assign-orders', [DispatchTripController::class, 'assignOrders'])
                 ->middleware('erp.permission:fulfillment.manage');
-            Route::get('dispatch-trips/{trip}/loading-list', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'loadingList'])
+            Route::get('dispatch-trips/{trip}/loading-list', [DispatchTripController::class, 'loadingList'])
                 ->middleware('erp.permission:fulfillment.view');
-            Route::get('dispatch-trips/{trip}/reconciliation', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'reconciliation'])
+            Route::get('dispatch-trips/{trip}/reconciliation', [DispatchTripController::class, 'reconciliation'])
                 ->middleware('erp.permission:fulfillment.view');
-            Route::post('dispatch-trips/{trip}/loading-list/lock', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'lockLoadingList'])
+            Route::post('dispatch-trips/{trip}/loading-list/lock', [DispatchTripController::class, 'lockLoadingList'])
                 ->middleware('erp.permission:fulfillment.manage');
-            Route::post('dispatch-trips/{trip}/start', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'start'])
+            Route::post('dispatch-trips/{trip}/start', [DispatchTripController::class, 'start'])
                 ->middleware('erp.permission:fulfillment.manage');
-            Route::post('dispatch-trips/{trip}/complete', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'complete'])
+            Route::post('dispatch-trips/{trip}/complete', [DispatchTripController::class, 'complete'])
                 ->middleware('erp.permission:fulfillment.manage');
-            Route::post('dispatch-trips/{trip}/settle', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'settle'])
+            Route::post('dispatch-trips/{trip}/settle', [DispatchTripController::class, 'settle'])
                 ->middleware('erp.permission:fulfillment.manage');
-            Route::post('dispatch-trips/{trip}/cancel', [\App\Http\Controllers\Api\V1\DispatchTripController::class, 'cancel'])
+            Route::post('dispatch-trips/{trip}/cancel', [DispatchTripController::class, 'cancel'])
                 ->middleware('erp.permission:fulfillment.manage');
-            Route::apiResource('dispatch-trips', \App\Http\Controllers\Api\V1\DispatchTripController::class)
+            Route::apiResource('dispatch-trips', DispatchTripController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
 
-            Route::apiResource('pod-records', \App\Http\Controllers\Api\V1\PodRecordController::class)
+            Route::apiResource('pod-records', PodRecordController::class)
                 ->only(['index', 'show'])
                 ->middleware('erp.permission:fulfillment.view');
-            Route::get('pod-records/{podRecord}/photo/file', [\App\Http\Controllers\Api\V1\PodRecordController::class, 'photoFile'])
+            Route::get('pod-records/{podRecord}/photo/file', [PodRecordController::class, 'photoFile'])
                 ->middleware('erp.permission:fulfillment.view');
-            Route::get('pod-records/{podRecord}/signature/file', [\App\Http\Controllers\Api\V1\PodRecordController::class, 'signatureFile'])
+            Route::get('pod-records/{podRecord}/signature/file', [PodRecordController::class, 'signatureFile'])
                 ->middleware('erp.permission:fulfillment.view');
 
-            Route::get('drivers/{driver}/deliveries', [\App\Http\Controllers\Api\V1\DriverController::class, 'deliveries'])
+            Route::get('drivers/{driver}/deliveries', [DriverController::class, 'deliveries'])
                 ->middleware('erp.permission:fulfillment.view');
-            Route::apiResource('drivers', \App\Http\Controllers\Api\V1\DriverController::class)
+            Route::apiResource('drivers', DriverController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
-            Route::get('vehicles/{vehicle}/deliveries', [\App\Http\Controllers\Api\V1\VehicleController::class, 'deliveries'])
+            Route::get('vehicles/{vehicle}/deliveries', [VehicleController::class, 'deliveries'])
                 ->middleware('erp.permission:fulfillment.view');
-            Route::apiResource('vehicles', \App\Http\Controllers\Api\V1\VehicleController::class)
+            Route::apiResource('vehicles', VehicleController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
         });

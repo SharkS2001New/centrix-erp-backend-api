@@ -3,17 +3,20 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Models\Organization;
 use App\Models\SystemSetting;
+use App\Services\Accounting\QuickBooksSettingsResolver;
+use App\Services\Auth\SecuritySettingsResolver;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\GeneralSettingsResolver;
 use App\Services\Erp\OrderWorkflowService;
-use App\Services\OrganizationPlatformConfigService;
-use App\Services\Accounting\QuickBooksSettingsResolver;
-use App\Services\Mpesa\MpesaSettingsResolver;
-use App\Services\Notifications\NotificationSettingsResolver;
+use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
+use App\Services\Mpesa\MpesaSettingsResolver;
+use App\Services\Notifications\NotificationSettingsResolver;
+use App\Services\OrganizationPlatformConfigService;
+use App\Services\Purchasing\ProcurementSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -142,6 +145,7 @@ class ErpSettingsController extends Controller
             }
             if (in_array($key, ['point_cash_value', 'points_earn_per_kes'], true)) {
                 $rules[$key] = 'sometimes|numeric|min:0';
+
                 continue;
             }
             if ($key === 'mobile_checkout_location_radius_metres') {
@@ -495,6 +499,8 @@ class ErpSettingsController extends Controller
         $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
+            'enable_mpesa_stk' => 'sometimes|boolean',
+            'enable_kra_integration' => 'sometimes|boolean',
             'enable_kra_device' => 'sometimes|boolean',
             'kra_device_ip' => 'sometimes|nullable|string|max:250',
             'kra_serial_number' => 'sometimes|nullable|string|max:100',
@@ -523,6 +529,10 @@ class ErpSettingsController extends Controller
             'quickbooks.redirect_uri' => 'sometimes|nullable|string|max:500',
             'quickbooks.environment' => 'sometimes|in:sandbox,production',
         ]);
+
+        if (! $user->is_super_admin) {
+            $data = $this->platformConfig->filterOrgManagerFinancePayload($data);
+        }
 
         if (! empty($data['enable_kra_device'])) {
             if (! $gate->kraIntegrationPlatformEnabled()) {
@@ -607,7 +617,7 @@ class ErpSettingsController extends Controller
         $gate = $this->erp->gateForRequest($request);
 
         return response()->json([
-            'general' => \App\Services\Erp\GeneralSettingsResolver::forGate($gate),
+            'general' => GeneralSettingsResolver::forGate($gate),
         ]);
     }
 
@@ -632,7 +642,7 @@ class ErpSettingsController extends Controller
             'show_organization_on_documents' => 'sometimes|boolean',
         ]);
 
-        $next = \App\Services\Erp\GeneralSettingsResolver::normalize(array_merge(
+        $next = GeneralSettingsResolver::normalize(array_merge(
             $gate->moduleSettings('general'),
             $data,
         ));
@@ -641,7 +651,7 @@ class ErpSettingsController extends Controller
         $org->update(['module_settings' => $moduleSettings]);
 
         return response()->json([
-            'general' => \App\Services\Erp\GeneralSettingsResolver::forGate(
+            'general' => GeneralSettingsResolver::forGate(
                 $this->erp->gateForOrganization($org->fresh()),
             ),
         ]);
@@ -723,7 +733,7 @@ class ErpSettingsController extends Controller
         $gate = $this->erp->gateForRequest($request);
 
         return response()->json([
-            'procurement' => \App\Services\Purchasing\ProcurementSettingsResolver::forGate($gate),
+            'procurement' => ProcurementSettingsResolver::forGate($gate),
         ]);
     }
 
@@ -752,7 +762,7 @@ class ErpSettingsController extends Controller
         }
 
         $data = $request->validate($rules);
-        $next = \App\Services\Purchasing\ProcurementSettingsResolver::normalize(array_merge(
+        $next = ProcurementSettingsResolver::normalize(array_merge(
             $gate->moduleSettings('procurement'),
             array_filter(
                 $data,
@@ -766,7 +776,7 @@ class ErpSettingsController extends Controller
         $org->update(['module_settings' => $moduleSettings]);
 
         return response()->json([
-            'procurement' => \App\Services\Purchasing\ProcurementSettingsResolver::forGate(
+            'procurement' => ProcurementSettingsResolver::forGate(
                 $this->erp->gateForOrganization($org->fresh()),
             ),
         ]);
@@ -776,8 +786,9 @@ class ErpSettingsController extends Controller
     {
         $user = $request->user();
         $gate = $this->erp->gateForRequest($request);
+
         return response()->json([
-            'security' => \App\Services\Auth\SecuritySettingsResolver::forGate($gate),
+            'security' => SecuritySettingsResolver::forGate($gate),
         ]);
     }
 
@@ -803,7 +814,7 @@ class ErpSettingsController extends Controller
             ]);
         }
 
-        $next = \App\Services\Auth\SecuritySettingsResolver::normalize(array_merge(
+        $next = SecuritySettingsResolver::normalize(array_merge(
             $current,
             $data,
         ));
@@ -812,7 +823,7 @@ class ErpSettingsController extends Controller
         $org->update(['module_settings' => $moduleSettings]);
 
         return response()->json([
-            'security' => \App\Services\Auth\SecuritySettingsResolver::forOrganization($org->fresh()),
+            'security' => SecuritySettingsResolver::forOrganization($org->fresh()),
         ]);
     }
 
@@ -858,7 +869,7 @@ class ErpSettingsController extends Controller
         $gate = $this->erp->gateForRequest($request);
 
         return response()->json([
-            'hr_payroll' => \App\Services\Hr\HrPayrollSettingsResolver::forGate($gate),
+            'hr_payroll' => HrPayrollSettingsResolver::forGate($gate),
         ]);
     }
 
@@ -915,7 +926,7 @@ class ErpSettingsController extends Controller
         }
 
         $data = $request->validate($rules);
-        $next = \App\Services\Hr\HrPayrollSettingsResolver::normalize(array_merge(
+        $next = HrPayrollSettingsResolver::normalize(array_merge(
             $gate->moduleSettings('hr_payroll'),
             array_filter(
                 $data,
@@ -929,9 +940,10 @@ class ErpSettingsController extends Controller
         $org->update(['module_settings' => $moduleSettings]);
 
         return response()->json([
-            'hr_payroll' => \App\Services\Hr\HrPayrollSettingsResolver::forOrganization($org->fresh()),
+            'hr_payroll' => HrPayrollSettingsResolver::forOrganization($org->fresh()),
         ]);
     }
+
     /** @param  array<string, mixed>  $finance */
     protected function sanitizeFinanceForClient(array $finance, CapabilityGate $gate): array
     {
@@ -954,5 +966,4 @@ class ErpSettingsController extends Controller
 
         return $finance;
     }
-
 }

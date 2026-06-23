@@ -9,4 +9,14 @@ return [
     ],
 
     'provider' => env('AI_PROVIDER', 'openai'),
+
+    /**
+     * Optional server-side fallback for Platform → AI training (super-admin console).
+     * Prefer credentials saved via /admin/ai-training/settings; env is for bootstrap/CI only.
+     */
+    'platform_training' => [
+        'api_key' => env('PLATFORM_OPENAI_API_KEY', ''),
+        'model' => env('PLATFORM_OPENAI_MODEL', env('OPENAI_MODEL', 'gpt-4o-mini')),
+        'base_url' => rtrim(env('PLATFORM_OPENAI_BASE_URL', env('OPENAI_BASE_URL', 'https://api.openai.com/v1')), '/'),
+    ],
 ];

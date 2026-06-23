@@ -7,8 +7,8 @@ use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
 /**
- * Operational organization settings (sales, finance, security, etc.) are edited
- * from the platform super-admin console, not tenant ERP sessions.
+ * Reserved for platform-only organization settings routes (e.g. legacy archive).
+ * Module settings use tenant admin routes; platform-controlled keys are stripped in controllers.
  */
 class ForbidTenantOrganizationSettings
 {

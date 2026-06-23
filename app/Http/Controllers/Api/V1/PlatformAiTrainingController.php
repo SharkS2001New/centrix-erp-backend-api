@@ -7,7 +7,6 @@ use App\Models\Organization;
 use App\Services\Ai\AiAssistantService;
 use App\Services\Ai\AiKnowledgeService;
 use App\Services\Ai\AiSettingsResolver;
-use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -16,7 +15,6 @@ class PlatformAiTrainingController extends Controller
     public function __construct(
         protected AiKnowledgeService $knowledge,
         protected AiAssistantService $ai,
-        protected ErpContext $erp,
     ) {}
 
     public function status(Request $request)
@@ -26,22 +24,38 @@ class PlatformAiTrainingController extends Controller
         ]);
 
         $preview = $this->resolvePreviewOrganization($data['preview_organization_id'] ?? null);
-        $runtime = $preview ? AiSettingsResolver::resolveRuntimeForOrganization($preview) : null;
-        $gate = $preview ? $this->erp->gateForOrganization($preview) : null;
-        $desc = $preview ? AiSettingsResolver::describeForOrganization($preview) : null;
+        $training = AiSettingsResolver::describePlatformTraining();
 
         return response()->json([
             'scope' => 'platform',
             'knowledge_count' => count($this->knowledge->listGlobal()),
             'preview_organization_id' => $preview?->id,
             'preview_organization_name' => $preview?->org_name,
-            'enabled' => $runtime !== null,
-            'platform_enabled' => $gate?->aiPlatformEnabled() ?? (bool) config('ai.platform_enabled', true),
-            'organization_enabled' => (bool) ($desc['settings']['enabled'] ?? false),
-            'api_key_set' => (bool) ($desc['settings']['api_key_set'] ?? false),
-            'model' => $desc['model'] ?? config('ai.defaults.model'),
+            'enabled' => (bool) $training['available'],
+            'chat_ready' => (bool) $training['available'] && $preview !== null,
+            'platform_training_enabled' => (bool) ($training['settings']['enabled'] ?? false),
+            'api_key_set' => (bool) ($training['settings']['api_key_set'] ?? false),
+            'model' => $training['model'] ?? config('ai.defaults.model'),
             'training_mode' => true,
         ]);
+    }
+
+    public function settings()
+    {
+        return response()->json(AiSettingsResolver::describePlatformTraining());
+    }
+
+    public function updateSettings(Request $request)
+    {
+        $data = $request->validate([
+            'enabled' => 'sometimes|boolean',
+            'provider' => 'sometimes|in:openai',
+            'model' => 'sometimes|nullable|string|max:80',
+            'api_key' => 'sometimes|nullable|string|max:250',
+            'base_url' => 'sometimes|nullable|string|max:500',
+        ]);
+
+        return response()->json(AiSettingsResolver::savePlatformTraining($data));
     }
 
     public function listKnowledge(Request $request)
@@ -124,7 +138,7 @@ class PlatformAiTrainingController extends Controller
 
         $preview = $this->resolvePreviewOrganization((int) $data['preview_organization_id']);
         if (! $preview) {
-            abort(422, 'Choose a tenant organization to preview chat (API key and sample data).');
+            abort(422, 'Choose a tenant organization for sample data context in the training preview.');
         }
 
         if (! empty($data['confirm_action'])) {
@@ -197,6 +211,7 @@ class PlatformAiTrainingController extends Controller
             }
             if (is_string($value) && is_numeric($value) && ! str_contains($key, 'phone') && ! str_contains($key, 'pin')) {
                 $normalized[$key] = str_contains($value, '.') ? (float) $value : (int) $value;
+
                 continue;
             }
             $normalized[$key] = $value;

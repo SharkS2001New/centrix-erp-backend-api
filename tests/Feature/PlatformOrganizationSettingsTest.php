@@ -58,14 +58,13 @@ class PlatformOrganizationSettingsTest extends TestCase
             ->assertForbidden();
     }
 
-    public function test_tenant_org_admin_cannot_use_erp_settings_routes(): void
+    public function test_tenant_org_admin_can_use_erp_module_settings_routes(): void
     {
         $orgAdmin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($orgAdmin);
 
-        $this->getJson('/api/v1/erp/settings/sales')
-            ->assertForbidden()
-            ->assertJsonPath('message', 'Organization settings are managed by the platform administrator.');
+        $this->getJson('/api/v1/erp/settings/sales')->assertOk();
+        $this->getJson('/api/v1/erp/settings/general')->assertOk();
     }
 
     public function test_organization_index_includes_administration_enabled_flag(): void
