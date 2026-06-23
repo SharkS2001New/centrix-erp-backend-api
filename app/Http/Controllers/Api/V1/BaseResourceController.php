@@ -139,14 +139,14 @@ abstract class BaseResourceController extends Controller
         return response()->json($model, 201);
     }
 
-    public function show(Request $request, string $id, ?string $nestedId = null)
+    public function show(Request $request, string $id)
     {
-        return response()->json($this->findScopedModel($request, $id, $nestedId));
+        return response()->json($this->findScopedModel($request, $id));
     }
 
-    public function update(Request $request, string $id, ?string $nestedId = null)
+    public function update(Request $request, string $id)
     {
-        $model = $this->findScopedModel($request, $id, $nestedId);
+        $model = $this->findScopedModel($request, $id);
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $data = $request->validate($rules);
         unset($data['organization_id']);
@@ -171,9 +171,9 @@ abstract class BaseResourceController extends Controller
         return response()->json($model);
     }
 
-    public function destroy(Request $request, string $id, ?string $nestedId = null)
+    public function destroy(Request $request, string $id)
     {
-        $model = $this->findScopedModel($request, $id, $nestedId);
+        $model = $this->findScopedModel($request, $id);
         $user = $request->user();
 
         if ($user && $this->auditable()) {

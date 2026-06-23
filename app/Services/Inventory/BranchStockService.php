@@ -56,8 +56,8 @@ class BranchStockService
             ->where('branch_id', $branchId)
             ->first();
 
-        $shop = (float) ($row->shop_quantity ?? 0);
-        $store = (float) ($row->store_quantity ?? 0);
+        $shop = (float) ($row?->shop_quantity ?? 0);
+        $store = (float) ($row?->store_quantity ?? 0);
 
         $payload['stock_in_shop'] = $shop;
         $payload['stock_in_store'] = $store;
@@ -89,8 +89,8 @@ class BranchStockService
 
         return $items->map(function (array $item) use ($rows, $branchId) {
             $row = $rows->get($item['product_code'] ?? '');
-            $shop = (float) ($row->shop_quantity ?? 0);
-            $store = (float) ($row->store_quantity ?? 0);
+            $shop = (float) ($row?->shop_quantity ?? 0);
+            $store = (float) ($row?->store_quantity ?? 0);
             $item['stock_in_shop'] = $shop;
             $item['stock_in_store'] = $store;
             $item['branch_stock'] = [
