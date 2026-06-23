@@ -55,7 +55,9 @@ class LegacyArchiveConnectionManager
             $name = $this->configureForOrganization($org);
             DB::connection($name)->select('SELECT 1');
 
-            return DB::connection($name)->getSchemaBuilder()->hasTable('org_info');
+            $inspect = app(LightStoresArchiveDatabaseService::class)->inspect($name);
+
+            return $inspect['missing'] === [];
         } catch (\Throwable) {
             return false;
         }

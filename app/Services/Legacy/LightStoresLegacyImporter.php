@@ -177,7 +177,7 @@ class LightStoresLegacyImporter
         }
 
         $walkIns = DB::connection($this->legacy)
-            ->table('sale_customers')
+            ->table(LightStoresLegacySchema::POS_WALK_IN)
             ->pluck('customer_name', 'order_no');
 
         $sale = DB::transaction(function () use ($channel, $row, $legacyOrderNum, $walkIns) {
@@ -206,17 +206,13 @@ class LightStoresLegacyImporter
             ->where('organization_id', $this->organization?->id ?? Organization::query()->value('id'))
             ->where('fulfillment_meta->legacy_import', true)
             ->where('fulfillment_meta->legacy_order_num', $legacyOrderNum)
-            ->where('fulfillment_meta->legacy_source', $this->legacySourceForChannel($channel))
+            ->whereIn('fulfillment_meta->legacy_source', LightStoresLegacySchema::legacySourcesForChannel($channel))
             ->first();
     }
 
     protected function legacySourceForChannel(string $channel): string
     {
-        return match ($channel) {
-            'mobile' => 'route_master',
-            'debtor' => 'debtor_masters',
-            default => 'sale_masters',
-        };
+        return LightStoresLegacySchema::legacySourceForChannel($channel);
     }
 
     protected function bootLegacySequencesFromDatabase(): void
@@ -238,17 +234,17 @@ class LightStoresLegacyImporter
     {
         return match ($channel) {
             'mobile' => DB::connection($this->legacy)
-                ->table('route_master')
+                ->table(LightStoresLegacySchema::ROUTE_MASTERS)
                 ->whereNull('DLT_ON')
                 ->where('order_num', $legacyOrderNum)
                 ->first(),
             'debtor' => DB::connection($this->legacy)
-                ->table('debtor_masters')
+                ->table(LightStoresLegacySchema::DEBTOR_MASTERS)
                 ->whereNull('dlt_on')
                 ->where('order_num', $legacyOrderNum)
                 ->first(),
             'pos' => DB::connection($this->legacy)
-                ->table('sale_masters')
+                ->table(LightStoresLegacySchema::POS_MASTERS)
                 ->where('order_num', $legacyOrderNum)
                 ->first(),
             default => null,
@@ -275,6 +271,15 @@ class LightStoresLegacyImporter
 
         if (! DB::connection($this->legacy)->getSchemaBuilder()->hasTable('org_info')) {
             throw new RuntimeException('Legacy database is missing table org_info — is LightStoresDBBackup.sql loaded?');
+        }
+
+        $inspect = app(LightStoresArchiveDatabaseService::class)->inspect($this->legacy);
+        if ($inspect['missing'] !== []) {
+            throw new RuntimeException(
+                'Legacy database is missing required sales tables: '.implode(', ', $inspect['missing'])
+                .'. Run: php artisan legacy:restore-archive --database='
+                .config('database.connections.'.$this->legacy.'.database', 'lightstores_moonlight'),
+            );
         }
     }
 
@@ -573,9 +578,9 @@ class LightStoresLegacyImporter
     protected function legacyProductQuery()
     {
         $referencedCodes = collect()
-            ->merge(DB::connection($this->legacy)->table('sale_products')->distinct()->pluck('productsales_id'))
+            ->merge(DB::connection($this->legacy)->table(LightStoresLegacySchema::POS_LINES)->distinct()->pluck('productsales_id'))
             ->merge(DB::connection($this->legacy)->table('route_order_details')->distinct()->pluck('product_code'))
-            ->merge(DB::connection($this->legacy)->table('debtor_products')->distinct()->pluck('product_code'))
+            ->merge(DB::connection($this->legacy)->table(LightStoresLegacySchema::DEBTOR_LINES)->distinct()->pluck('product_code'))
             ->unique()
             ->filter()
             ->values();
@@ -669,16 +674,16 @@ class LightStoresLegacyImporter
             }
 
             $this->bump('sale_items',
-                DB::connection($this->legacy)->table('sale_products')->count()
-                + DB::connection($this->legacy)->table('route_order_details')->count()
-                + DB::connection($this->legacy)->table('debtor_products')->count(),
+                DB::connection($this->legacy)->table(LightStoresLegacySchema::POS_LINES)->count()
+                + DB::connection($this->legacy)->table(LightStoresLegacySchema::ROUTE_LINES)->count()
+                + DB::connection($this->legacy)->table(LightStoresLegacySchema::DEBTOR_LINES)->count(),
             );
 
             return;
         }
 
         $walkIns = DB::connection($this->legacy)
-            ->table('sale_customers')
+            ->table(LightStoresLegacySchema::POS_WALK_IN)
             ->pluck('customer_name', 'order_no');
 
         foreach (array_chunk($queue, 250) as $chunk) {
@@ -702,7 +707,7 @@ class LightStoresLegacyImporter
     {
         $queue = [];
 
-        foreach (DB::connection($this->legacy)->table('route_master')->whereNull('DLT_ON')->cursor() as $row) {
+        foreach (DB::connection($this->legacy)->table(LightStoresLegacySchema::ROUTE_MASTERS)->whereNull('DLT_ON')->cursor() as $row) {
             $queue[] = [
                 'type' => 'mobile',
                 'sale_date' => $this->legacySaleDate($row->create_time, $row->delivery_date),
@@ -711,7 +716,7 @@ class LightStoresLegacyImporter
             ];
         }
 
-        foreach (DB::connection($this->legacy)->table('debtor_masters')->whereNull('dlt_on')->cursor() as $row) {
+        foreach (DB::connection($this->legacy)->table(LightStoresLegacySchema::DEBTOR_MASTERS)->whereNull('dlt_on')->cursor() as $row) {
             $queue[] = [
                 'type' => 'debtor',
                 'sale_date' => $this->legacySaleDate($row->create_time),
@@ -720,7 +725,7 @@ class LightStoresLegacyImporter
             ];
         }
 
-        foreach (DB::connection($this->legacy)->table('sale_masters')->cursor() as $row) {
+        foreach (DB::connection($this->legacy)->table(LightStoresLegacySchema::POS_MASTERS)->cursor() as $row) {
             $queue[] = [
                 'type' => 'pos',
                 'sale_date' => $this->legacySaleDate($row->create_time),
@@ -818,7 +823,7 @@ class LightStoresLegacyImporter
 
         $customer = Customer::query()->where('customer_num', $customerNum)->first();
         $lines = DB::connection($this->legacy)
-            ->table('route_order_details')
+            ->table(LightStoresLegacySchema::ROUTE_LINES)
             ->where('order_no', $legacyOrderNum)
             ->orderBy('item_code')
             ->get();
@@ -852,7 +857,7 @@ class LightStoresLegacyImporter
             'stock_balanced' => (int) ($row->stock_balanced ?? 0),
             'receipt_printed' => (int) ($row->receipt_printed ?? 0),
             'comments' => $this->mergeLegacyComment($row->comments ?? null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, 'route_master'),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::ROUTE_MASTERS),
             'completed_at' => $row->delivery_date ?: $row->create_time,
         ]);
 
@@ -871,7 +876,7 @@ class LightStoresLegacyImporter
         }
 
         $lines = DB::connection($this->legacy)
-            ->table('debtor_products')
+            ->table(LightStoresLegacySchema::DEBTOR_LINES)
             ->where('order_num', $legacyOrderNum)
             ->orderBy('item_code')
             ->get();
@@ -881,8 +886,7 @@ class LightStoresLegacyImporter
         }
 
         $debtorStatus = $this->mapLegacyDebtorPaymentStatus((int) ($row->payment_status ?? 1));
-        $orderTotal = (float) $row->order_total;
-        $totalVat = (float) $row->total_vat;
+        [$orderTotal, $totalVat] = $this->sumLegacyLines($lines, 'amount', 'product_vat');
         $amountPaid = $debtorStatus['payment_status'] === 'paid' ? $orderTotal : 0.0;
         $orderRef = $this->allocateLegacyOrderNum('debtor');
 
@@ -902,7 +906,7 @@ class LightStoresLegacyImporter
             'is_credit_sale' => $debtorStatus['is_credit_sale'],
             'stock_balanced' => 1,
             'comments' => $this->mergeLegacyComment(null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, 'debtor_masters'),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::DEBTOR_MASTERS),
             'completed_at' => $row->create_time,
         ]);
 
@@ -915,12 +919,23 @@ class LightStoresLegacyImporter
 
     protected function createPosSale(object $row, int $legacyOrderNum, Collection $walkIns): ?Sale
     {
+        $lines = DB::connection($this->legacy)
+            ->table(LightStoresLegacySchema::POS_LINES)
+            ->where('order_num_ref', $legacyOrderNum)
+            ->orderBy('id')
+            ->get();
+
+        if ($lines->isEmpty()) {
+            return null;
+        }
+
+        [$orderTotal, $totalVat] = $this->sumLegacyLines($lines, 'amount', 'product_vat');
+
         $cashierId = $this->cashierMap[(int) $row->userid_sales] ?? $this->migrationUser->id;
         $amountPaid = (float) $row->cash
             + (float) $row->mpesa_amount
             + (float) $row->equity_amount
             + (float) $row->kcb_amount;
-        $orderTotal = (float) $row->order_total;
         $paymentStatus = $this->resolvePaymentStatus($amountPaid, $orderTotal, (string) ($row->payment_method ?? ''));
         $orderRef = $this->allocateLegacyOrderNum('pos');
 
@@ -934,7 +949,7 @@ class LightStoresLegacyImporter
             'cashier_id' => $cashierId,
             'customer_name_override' => $walkIns[$legacyOrderNum] ?? null,
             'status' => 'completed',
-            'total_vat' => (float) $row->total_vat,
+            'total_vat' => $totalVat,
             'order_total' => $orderTotal,
             'cash' => (int) round((float) $row->cash),
             'mpesa_amount' => (int) round((float) $row->mpesa_amount),
@@ -945,12 +960,12 @@ class LightStoresLegacyImporter
             'is_credit_sale' => strtoupper((string) ($row->payment_method ?? '')) === 'CR',
             'stock_balanced' => 1,
             'comments' => $this->mergeLegacyComment(null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, 'sale_masters'),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::POS_MASTERS),
             'completed_at' => $row->create_time,
         ]);
 
         $this->stampSaleCreatedAt($sale->id, $row->create_time);
-        $this->insertPosOrderLines($sale->id, $legacyOrderNum);
+        $this->insertPosOrderLines($sale->id, $lines);
         $this->bump('sales_pos');
 
         return $sale;
@@ -967,11 +982,12 @@ class LightStoresLegacyImporter
     protected function syncDebtorBalances(): void
     {
         $balances = DB::connection($this->legacy)
-            ->table('debtor_masters')
-            ->whereNull('dlt_on')
-            ->whereIn('payment_status', [1, 3])
-            ->selectRaw('customer_num, ROUND(SUM(order_total), 2) as balance')
-            ->groupBy('customer_num')
+            ->table(LightStoresLegacySchema::DEBTOR_MASTERS.' as dm')
+            ->join(LightStoresLegacySchema::DEBTOR_LINES.' as dp', 'dp.order_num', '=', 'dm.order_num')
+            ->whereNull('dm.dlt_on')
+            ->whereIn('dm.payment_status', [1, 3])
+            ->selectRaw('dm.customer_num, ROUND(SUM(dp.amount), 2) as balance')
+            ->groupBy('dm.customer_num')
             ->get();
 
         foreach ($balances as $row) {
@@ -1093,14 +1109,9 @@ class LightStoresLegacyImporter
         }
     }
 
-    protected function insertPosOrderLines(int $saleId, int $legacyOrderNum): void
+    protected function insertPosOrderLines(int $saleId, Collection $lines): void
     {
         $lineNo = 0;
-        $lines = DB::connection($this->legacy)
-            ->table('sale_products')
-            ->where('order_num_ref', $legacyOrderNum)
-            ->orderBy('id')
-            ->get();
 
         foreach ($lines as $line) {
             $productCode = (string) $line->productsales_id;

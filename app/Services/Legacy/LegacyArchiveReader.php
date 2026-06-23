@@ -58,8 +58,6 @@ class LegacyArchiveReader
     }
 
     /**
-     * Legacy archive exposes historical sales only — catalog and customers live in Centrix.
-     *
      * @return array<string, int>
      */
     protected function salesCounts(Organization $org): array
@@ -67,20 +65,10 @@ class LegacyArchiveReader
         $legacy = DB::connection($this->connection($org));
 
         return [
-            'sales_pos' => (int) $legacy->table('sale_masters')->count(),
-            'sales_mobile' => (int) $legacy->table('route_master')->whereNull('DLT_ON')->count(),
-            'sales_debtor' => (int) $legacy->table('debtor_masters')->whereNull('dlt_on')->count(),
+            'sales_pos' => (int) $legacy->table(LightStoresLegacySchema::POS_MASTERS)->count(),
+            'sales_mobile' => (int) $legacy->table(LightStoresLegacySchema::ROUTE_MASTERS)->whereNull('DLT_ON')->count(),
+            'sales_debtor' => (int) $legacy->table(LightStoresLegacySchema::DEBTOR_MASTERS)->whereNull('dlt_on')->count(),
         ];
-    }
-
-    /**
-     * @deprecated Use salesCounts() — kept for internal report merges.
-     *
-     * @return array<string, int>
-     */
-    protected function tableCounts(Organization $org): array
-    {
-        return $this->salesCounts($org);
     }
 
     /**
@@ -92,17 +80,20 @@ class LegacyArchiveReader
 
         $legacy = DB::connection($this->connection($org));
 
-        $pos = $legacy->table('sale_masters');
-        $this->applyDateFilter($pos, 'create_time', $from, $to);
-        $posRow = (clone $pos)->selectRaw('COUNT(*) as transactions, COALESCE(SUM(order_total), 0) as order_total, COALESCE(SUM(total_vat), 0) as total_vat')->first();
+        $pos = $legacy->table(LightStoresLegacySchema::POS_MASTERS.' as sm')
+            ->join(LightStoresLegacySchema::POS_LINES.' as sp', 'sp.order_num_ref', '=', 'sm.order_num');
+        $this->applyDateFilter($pos, 'sm.create_time', $from, $to);
+        $posRow = (clone $pos)->selectRaw('COUNT(DISTINCT sm.order_num) as transactions, COALESCE(SUM(sp.amount), 0) as order_total, COALESCE(SUM(sp.product_vat), 0) as total_vat')->first();
 
-        $debtor = $legacy->table('debtor_masters')->whereNull('dlt_on');
-        $this->applyDateFilter($debtor, 'create_time', $from, $to);
-        $debtorRow = (clone $debtor)->selectRaw('COUNT(*) as transactions, COALESCE(SUM(order_total), 0) as order_total, COALESCE(SUM(total_vat), 0) as total_vat')->first();
+        $debtor = $legacy->table(LightStoresLegacySchema::DEBTOR_MASTERS.' as dm')
+            ->whereNull('dm.dlt_on')
+            ->join(LightStoresLegacySchema::DEBTOR_LINES.' as dp', 'dp.order_num', '=', 'dm.order_num');
+        $this->applyDateFilter($debtor, 'dm.create_time', $from, $to);
+        $debtorRow = (clone $debtor)->selectRaw('COUNT(DISTINCT dm.order_num) as transactions, COALESCE(SUM(dp.amount), 0) as order_total, COALESCE(SUM(dp.product_vat), 0) as total_vat')->first();
 
-        $mobile = $legacy->table('route_master as rm')
+        $mobile = $legacy->table(LightStoresLegacySchema::ROUTE_MASTERS.' as rm')
             ->whereNull('rm.DLT_ON')
-            ->join('route_order_details as rod', 'rod.order_no', '=', 'rm.order_num');
+            ->join(LightStoresLegacySchema::ROUTE_LINES.' as rod', 'rod.order_no', '=', 'rm.order_num');
         $this->applyDateFilter($mobile, 'rm.create_time', $from, $to);
         $mobileRow = (clone $mobile)->selectRaw('COUNT(DISTINCT rm.order_num) as transactions, COALESCE(SUM(rod.amount), 0) as order_total, COALESCE(SUM(rod.product_vat), 0) as total_vat')->first();
 
@@ -245,10 +236,13 @@ class LegacyArchiveReader
 
     protected function posSalesQuery(string $connection, ?Carbon $from, ?Carbon $to, string $q)
     {
+        $lineTotals = LightStoresLegacySchema::posLineTotalsSubquery($connection);
+
         $query = DB::connection($connection)
-            ->table('sale_masters as sm')
-            ->leftJoin('sale_customers as sc', 'sc.order_no', '=', 'sm.order_num')
-            ->selectRaw('sm.*, sc.customer_name as walk_in_name');
+            ->table(LightStoresLegacySchema::POS_MASTERS.' as sm')
+            ->leftJoin(LightStoresLegacySchema::POS_WALK_IN.' as sc', 'sc.order_no', '=', 'sm.order_num')
+            ->leftJoinSub($lineTotals, 'line_totals', 'line_totals.order_num', '=', 'sm.order_num')
+            ->selectRaw('sm.*, sc.customer_name as walk_in_name, COALESCE(line_totals.order_total, 0) as order_total, COALESCE(line_totals.total_vat, 0) as total_vat');
 
         $this->applyDateFilter($query, 'sm.create_time', $from, $to);
 
@@ -264,11 +258,14 @@ class LegacyArchiveReader
 
     protected function mobileSalesQuery(string $connection, ?Carbon $from, ?Carbon $to, string $q)
     {
+        $lineTotals = LightStoresLegacySchema::routeLineTotalsSubquery($connection);
+
         $query = DB::connection($connection)
-            ->table('route_master as rm')
-            ->leftJoin('customer as c', 'c.customer_num', '=', 'rm.customer_num')
+            ->table(LightStoresLegacySchema::ROUTE_MASTERS.' as rm')
+            ->leftJoin(LightStoresLegacySchema::CUSTOMERS.' as c', 'c.customer_num', '=', 'rm.customer_num')
+            ->leftJoinSub($lineTotals, 'line_totals', 'line_totals.order_num', '=', 'rm.order_num')
             ->whereNull('rm.DLT_ON')
-            ->selectRaw('rm.*, c.customer_name');
+            ->selectRaw('rm.*, c.customer_name, COALESCE(line_totals.order_total, 0) as order_total, COALESCE(line_totals.total_vat, 0) as total_vat');
 
         $this->applyDateFilter($query, 'rm.create_time', $from, $to);
 
@@ -284,11 +281,14 @@ class LegacyArchiveReader
 
     protected function debtorSalesQuery(string $connection, ?Carbon $from, ?Carbon $to, string $q)
     {
+        $lineTotals = LightStoresLegacySchema::debtorLineTotalsSubquery($connection);
+
         $query = DB::connection($connection)
-            ->table('debtor_masters as dm')
-            ->leftJoin('customer as c', 'c.customer_num', '=', 'dm.customer_num')
+            ->table(LightStoresLegacySchema::DEBTOR_MASTERS.' as dm')
+            ->leftJoin(LightStoresLegacySchema::CUSTOMERS.' as c', 'c.customer_num', '=', 'dm.customer_num')
+            ->leftJoinSub($lineTotals, 'line_totals', 'line_totals.order_num', '=', 'dm.order_num')
             ->whereNull('dm.dlt_on')
-            ->selectRaw('dm.*, c.customer_name');
+            ->selectRaw('dm.*, c.customer_name, COALESCE(line_totals.order_total, 0) as order_total, COALESCE(line_totals.total_vat, 0) as total_vat');
 
         $this->applyDateFilter($query, 'dm.create_time', $from, $to);
 
@@ -315,6 +315,8 @@ class LegacyArchiveReader
         };
 
         $materializedSaleId = $this->materializedSaleId($org, $channel, $legacyOrderNum);
+        $orderTotal = round((float) ($row->order_total ?? 0), 2);
+        $totalVat = round((float) ($row->total_vat ?? 0), 2);
 
         $base = [
             'archive_source' => 'lightstores',
@@ -322,6 +324,8 @@ class LegacyArchiveReader
             'legacy_order_num' => $legacyOrderNum,
             'legacy_order_label' => $labelPrefix.$legacyOrderNum,
             'sale_date' => $row->create_time ?? null,
+            'order_total' => $orderTotal,
+            'total_vat' => $totalVat,
             'read_only' => $materializedSaleId === null,
             'materialized_sale_id' => $materializedSaleId,
             'can_materialize' => true,
@@ -332,8 +336,6 @@ class LegacyArchiveReader
             'pos' => array_merge($base, [
                 'channel' => 'pos',
                 'customer_name' => $row->walk_in_name ?? null,
-                'order_total' => round((float) $row->order_total, 2),
-                'total_vat' => round((float) $row->total_vat, 2),
                 'cash' => (int) ($row->cash ?? 0),
                 'mpesa_amount' => (int) ($row->mpesa_amount ?? 0),
                 'cashier_legacy_id' => (int) ($row->userid_sales ?? 0),
@@ -349,11 +351,9 @@ class LegacyArchiveReader
                 'delivery_date' => $row->delivery_date ?? null,
             ]),
             'debtor' => array_merge($base, [
-                'channel' => 'mobile',
+                'channel' => 'debtor',
                 'customer_num' => (int) ($row->customer_num ?? 0),
                 'customer_name' => $row->customer_name ?? null,
-                'order_total' => round((float) $row->order_total, 2),
-                'total_vat' => round((float) $row->total_vat, 2),
                 'payment_status' => (int) ($row->payment_status ?? 1),
                 'cashier_legacy_id' => (int) ($row->user_id ?? 0),
                 'is_credit_sale' => true,
@@ -364,17 +364,11 @@ class LegacyArchiveReader
 
     protected function materializedSaleId(Organization $org, string $channel, int $legacyOrderNum): ?int
     {
-        $legacySource = match ($channel) {
-            'mobile' => 'route_master',
-            'debtor' => 'debtor_masters',
-            default => 'sale_masters',
-        };
-
         $id = DB::table('sales')
             ->where('organization_id', $org->id)
             ->where('fulfillment_meta->legacy_import', true)
             ->where('fulfillment_meta->legacy_order_num', $legacyOrderNum)
-            ->where('fulfillment_meta->legacy_source', $legacySource)
+            ->whereIn('fulfillment_meta->legacy_source', LightStoresLegacySchema::legacySourcesForChannel($channel))
             ->value('id');
 
         return $id ? (int) $id : null;
@@ -412,8 +406,6 @@ class LegacyArchiveReader
     }
 
     /**
-     * Rows shaped like v_daily_sales for reconciliation reports.
-     *
      * @return list<array<string, mixed>>
      */
     public function dailySalesRows(Organization $org, ?Carbon $from, ?Carbon $to): array
@@ -422,20 +414,23 @@ class LegacyArchiveReader
         $legacy = DB::connection($this->connection($org));
         $rows = [];
 
-        $pos = $legacy->table('sale_masters');
-        $this->applyDateFilter($pos, 'create_time', $from, $to);
-        foreach ($pos->selectRaw('DATE(create_time) as sale_day, COUNT(*) as orders, COALESCE(SUM(order_total), 0) as gross, COALESCE(SUM(total_vat), 0) as vat')->groupByRaw('DATE(create_time)')->orderBy('sale_day')->get() as $aggregate) {
+        $pos = $legacy->table(LightStoresLegacySchema::POS_MASTERS.' as sm')
+            ->join(LightStoresLegacySchema::POS_LINES.' as sp', 'sp.order_num_ref', '=', 'sm.order_num');
+        $this->applyDateFilter($pos, 'sm.create_time', $from, $to);
+        foreach ($pos->selectRaw('DATE(sm.create_time) as sale_day, COUNT(DISTINCT sm.order_num) as orders, COALESCE(SUM(sp.amount), 0) as gross, COALESCE(SUM(sp.product_vat), 0) as vat')->groupByRaw('DATE(sm.create_time)')->orderBy('sale_day')->get() as $aggregate) {
             $rows[] = $this->presentDailySalesAggregate($aggregate, 'pos');
         }
 
-        $debtor = $legacy->table('debtor_masters')->whereNull('dlt_on');
-        $this->applyDateFilter($debtor, 'create_time', $from, $to);
-        foreach ($debtor->selectRaw('DATE(create_time) as sale_day, COUNT(*) as orders, COALESCE(SUM(order_total), 0) as gross, COALESCE(SUM(total_vat), 0) as vat')->groupByRaw('DATE(create_time)')->orderBy('sale_day')->get() as $aggregate) {
+        $debtor = $legacy->table(LightStoresLegacySchema::DEBTOR_MASTERS.' as dm')
+            ->whereNull('dm.dlt_on')
+            ->join(LightStoresLegacySchema::DEBTOR_LINES.' as dp', 'dp.order_num', '=', 'dm.order_num');
+        $this->applyDateFilter($debtor, 'dm.create_time', $from, $to);
+        foreach ($debtor->selectRaw('DATE(dm.create_time) as sale_day, COUNT(DISTINCT dm.order_num) as orders, COALESCE(SUM(dp.amount), 0) as gross, COALESCE(SUM(dp.product_vat), 0) as vat')->groupByRaw('DATE(dm.create_time)')->orderBy('sale_day')->get() as $aggregate) {
             $rows[] = $this->presentDailySalesAggregate($aggregate, 'credit');
         }
 
-        $mobile = $legacy->table('route_master as rm')
-            ->join('route_order_details as rod', 'rod.order_no', '=', 'rm.order_num')
+        $mobile = $legacy->table(LightStoresLegacySchema::ROUTE_MASTERS.' as rm')
+            ->join(LightStoresLegacySchema::ROUTE_LINES.' as rod', 'rod.order_no', '=', 'rm.order_num')
             ->whereNull('rm.DLT_ON');
         $this->applyDateFilter($mobile, 'rm.create_time', $from, $to);
         foreach ($mobile->selectRaw('DATE(rm.create_time) as sale_day, COUNT(DISTINCT rm.order_num) as orders, COALESCE(SUM(rod.amount), 0) as gross, COALESCE(SUM(rod.product_vat), 0) as vat')->groupByRaw('DATE(rm.create_time)')->orderBy('sale_day')->get() as $aggregate) {
@@ -468,8 +463,6 @@ class LegacyArchiveReader
     }
 
     /**
-     * Rows shaped like v_sales_by_channel for reconciliation reports.
-     *
      * @return list<array<string, mixed>>
      */
     public function salesByChannelRows(Organization $org, ?Carbon $from, ?Carbon $to): array
@@ -478,11 +471,12 @@ class LegacyArchiveReader
         $legacy = DB::connection($this->connection($org));
         $rows = [];
 
-        $pos = $legacy->table('sale_masters');
-        $this->applyDateFilter($pos, 'create_time', $from, $to);
+        $pos = $legacy->table(LightStoresLegacySchema::POS_MASTERS.' as sm')
+            ->join(LightStoresLegacySchema::POS_LINES.' as sp', 'sp.order_num_ref', '=', 'sm.order_num');
+        $this->applyDateFilter($pos, 'sm.create_time', $from, $to);
         $posAgg = $pos
-            ->selectRaw("DATE(create_time) as sale_date, 'pos' as channel, 'paid' as payment_status, COUNT(*) as order_count, COALESCE(SUM(order_total), 0) as gross_sales, COALESCE(SUM(order_total), 0) as collected, COALESCE(SUM(total_vat), 0) as total_vat")
-            ->groupByRaw('DATE(create_time)')
+            ->selectRaw("DATE(sm.create_time) as sale_date, COUNT(DISTINCT sm.order_num) as order_count, COALESCE(SUM(sp.amount), 0) as gross_sales, COALESCE(SUM(sp.amount), 0) as collected, COALESCE(SUM(sp.product_vat), 0) as total_vat")
+            ->groupByRaw('DATE(sm.create_time)')
             ->get();
 
         foreach ($posAgg as $aggregate) {
@@ -505,11 +499,13 @@ class LegacyArchiveReader
             ];
         }
 
-        $debtor = $legacy->table('debtor_masters')->whereNull('dlt_on');
-        $this->applyDateFilter($debtor, 'create_time', $from, $to);
+        $debtor = $legacy->table(LightStoresLegacySchema::DEBTOR_MASTERS.' as dm')
+            ->whereNull('dm.dlt_on')
+            ->join(LightStoresLegacySchema::DEBTOR_LINES.' as dp', 'dp.order_num', '=', 'dm.order_num');
+        $this->applyDateFilter($debtor, 'dm.create_time', $from, $to);
         $debtorAgg = $debtor
-            ->selectRaw("DATE(create_time) as sale_date, COUNT(*) as order_count, COALESCE(SUM(order_total), 0) as gross_sales, COALESCE(SUM(total_vat), 0) as total_vat")
-            ->groupByRaw('DATE(create_time)')
+            ->selectRaw('DATE(dm.create_time) as sale_date, COUNT(DISTINCT dm.order_num) as order_count, COALESCE(SUM(dp.amount), 0) as gross_sales, COALESCE(SUM(dp.product_vat), 0) as total_vat')
+            ->groupByRaw('DATE(dm.create_time)')
             ->get();
 
         foreach ($debtorAgg as $aggregate) {
@@ -532,8 +528,8 @@ class LegacyArchiveReader
             ];
         }
 
-        $mobile = $legacy->table('route_master as rm')
-            ->join('route_order_details as rod', 'rod.order_no', '=', 'rm.order_num')
+        $mobile = $legacy->table(LightStoresLegacySchema::ROUTE_MASTERS.' as rm')
+            ->join(LightStoresLegacySchema::ROUTE_LINES.' as rod', 'rod.order_no', '=', 'rm.order_num')
             ->whereNull('rm.DLT_ON');
         $this->applyDateFilter($mobile, 'rm.create_time', $from, $to);
         $mobileAgg = $mobile
@@ -615,24 +611,24 @@ class LegacyArchiveReader
     {
         $lines = match ($channel) {
             'pos' => DB::connection($connection)
-                ->table('sale_products')
+                ->table(LightStoresLegacySchema::POS_LINES)
                 ->where('order_num_ref', $legacyOrderNum)
                 ->orderBy('id')
                 ->get(),
             'mobile' => DB::connection($connection)
-                ->table('route_order_details')
+                ->table(LightStoresLegacySchema::ROUTE_LINES)
                 ->where('order_no', $legacyOrderNum)
                 ->orderBy('id')
                 ->get(),
             'debtor' => DB::connection($connection)
-                ->table('debtor_products')
-                ->where('order_no', $legacyOrderNum)
+                ->table(LightStoresLegacySchema::DEBTOR_LINES)
+                ->where('order_num', $legacyOrderNum)
                 ->orderBy('id')
                 ->get(),
         };
 
         return $lines->map(function ($line) use ($channel) {
-            $productCode = (string) ($line->productsales_id ?? $line->product_code ?? '');
+            $productCode = (string) ($line->productsales_id ?? $line->product_code ?? $line->item_code ?? '');
             $productName = $productCode
                 ? (DB::table('products')->where('product_code', $productCode)->value('product_name') ?? $productCode)
                 : null;
@@ -640,7 +636,7 @@ class LegacyArchiveReader
             return [
                 'product_code' => $productCode,
                 'product_name' => $productName,
-                'quantity' => (float) ($line->quantity ?? 0),
+                'quantity' => (float) ($line->quantity ?? $line->qty_ordered ?? 0),
                 'uom' => $line->uom ?? null,
                 'unit_price' => round((float) ($line->selling_price ?? $line->unit_price ?? 0), 2),
                 'discount' => round((float) ($line->discount_given ?? 0), 2),

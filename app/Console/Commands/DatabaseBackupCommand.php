@@ -44,6 +44,10 @@ class DatabaseBackupCommand extends Command
 
         if ($result['google_drive'] !== null) {
             $this->line('Uploaded to Google Drive: '.$result['google_drive']['file_id']);
+        } elseif (! empty($result['google_drive_error'])) {
+            $this->warn('Google Drive upload failed: '.$result['google_drive_error']);
+        } elseif (! empty($result['google_drive_skipped_reason'])) {
+            $this->comment('Google Drive upload skipped: '.$result['google_drive_skipped_reason']);
         }
 
         if ($result['pruned'] > 0) {

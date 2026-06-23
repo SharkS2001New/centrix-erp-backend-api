@@ -209,6 +209,8 @@ class DatabaseBackupService
      * @return array{
      *     backup: array<string, mixed>,
      *     google_drive: array<string, mixed>|null,
+     *     google_drive_error: string|null,
+     *     google_drive_skipped_reason: string|null,
      *     email_sent: bool,
      *     pruned: int,
      * }
@@ -220,18 +222,28 @@ class DatabaseBackupService
     ): array {
         $backup = $this->createBackup();
         $googleDrive = null;
+        $googleDriveError = null;
+        $googleDriveSkippedReason = null;
+        $uploader = app(GoogleDriveBackupUploader::class);
 
-        if ($uploadGoogleDrive && app(GoogleDriveBackupUploader::class)->isEnabled()) {
-            try {
-                $googleDrive = app(GoogleDriveBackupUploader::class)->upload(
-                    $backup['absolute_path'],
-                    $backup['filename'],
-                );
-            } catch (\Throwable $e) {
-                Log::warning('Google Drive backup upload failed', [
-                    'filename' => $backup['filename'],
-                    'error' => $e->getMessage(),
-                ]);
+        if ($uploadGoogleDrive) {
+            if ($uploader->isEnabled()) {
+                try {
+                    $googleDrive = $uploader->upload(
+                        $backup['absolute_path'],
+                        $backup['filename'],
+                    );
+                } catch (\Throwable $e) {
+                    $googleDriveError = $e->getMessage();
+                    Log::warning('Google Drive backup upload failed', [
+                        'filename' => $backup['filename'],
+                        'error' => $googleDriveError,
+                    ]);
+                }
+            } else {
+                $diagnostics = $uploader->diagnostics();
+                $googleDriveSkippedReason = $diagnostics['issues'][0]
+                    ?? 'Google Drive upload is not configured on the API server.';
             }
         }
 
@@ -241,6 +253,8 @@ class DatabaseBackupService
         return [
             'backup' => $backup,
             'google_drive' => $googleDrive,
+            'google_drive_error' => $googleDriveError,
+            'google_drive_skipped_reason' => $googleDriveSkippedReason,
             'email_sent' => $emailSent,
             'pruned' => $pruned,
         ];

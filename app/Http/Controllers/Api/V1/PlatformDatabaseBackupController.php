@@ -25,12 +25,13 @@ class PlatformDatabaseBackupController extends Controller
     public function index()
     {
         try {
-            $drive = GoogleDriveBackupUploader::status();
+            $drive = app(GoogleDriveBackupUploader::class)->diagnostics();
 
             return response()->json([
                 'data' => $this->backups->listBackups(),
-                'google_drive_enabled' => $drive['enabled'],
+                'google_drive_enabled' => $drive['upload_ready'],
                 'google_drive_configured' => $drive['configured'],
+                'google_drive' => $drive,
             ]);
         } catch (\Throwable $e) {
             report($e);
@@ -88,9 +89,13 @@ class PlatformDatabaseBackupController extends Controller
             );
 
             return response()->json([
-                'message' => 'Database backup completed.',
+                'message' => $result['google_drive_error']
+                    ? 'Database backup completed, but Google Drive upload failed.'
+                    : ($result['google_drive'] ? 'Database backup completed and uploaded to Google Drive.' : 'Database backup completed.'),
                 'data' => $result['backup'],
                 'google_drive' => $result['google_drive'],
+                'google_drive_error' => $result['google_drive_error'],
+                'google_drive_skipped_reason' => $result['google_drive_skipped_reason'],
                 'email_sent' => $result['email_sent'],
                 'pruned' => $result['pruned'],
             ], 201);

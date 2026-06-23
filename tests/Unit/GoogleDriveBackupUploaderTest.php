@@ -10,6 +10,7 @@ class GoogleDriveBackupUploaderTest extends TestCase
     public function test_is_configured_with_inline_json_credentials(): void
     {
         config([
+            'backup.google_drive.enabled' => true,
             'backup.google_drive.folder_id' => 'folder-123',
             'backup.google_drive.credentials_json' => json_encode([
                 'type' => 'service_account',
@@ -29,6 +30,28 @@ class GoogleDriveBackupUploaderTest extends TestCase
         }
 
         $this->assertTrue($uploader->isConfigured());
+        $this->assertTrue($uploader->isEnabled());
+        $diagnostics = $uploader->diagnostics();
+        $this->assertSame('backup@test.iam.gserviceaccount.com', $diagnostics['service_account_email']);
+        $this->assertTrue($diagnostics['upload_ready']);
+    }
+
+    public function test_diagnostics_report_missing_enabled_flag(): void
+    {
+        config([
+            'backup.google_drive.enabled' => false,
+            'backup.google_drive.folder_id' => 'folder-123',
+            'backup.google_drive.credentials_json' => json_encode([
+                'type' => 'service_account',
+                'client_email' => 'backup@test.iam.gserviceaccount.com',
+            ]),
+        ]);
+
+        $uploader = app(GoogleDriveBackupUploader::class);
+        $diagnostics = $uploader->diagnostics();
+
+        $this->assertFalse($diagnostics['upload_ready']);
+        $this->assertContains('Set BACKUP_GOOGLE_DRIVE_ENABLED=true on the API server.', $diagnostics['issues']);
     }
 
     public function test_is_not_configured_when_credentials_missing(): void

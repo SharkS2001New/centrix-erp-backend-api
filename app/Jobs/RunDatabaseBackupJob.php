@@ -39,9 +39,13 @@ class RunDatabaseBackupJob implements ShouldQueue
             );
 
             $tasks->markCompleted($task, [
-                'message' => 'Database backup completed.',
+                'message' => $result['google_drive_error']
+                    ? 'Database backup completed, but Google Drive upload failed.'
+                    : ($result['google_drive'] ? 'Database backup completed and uploaded to Google Drive.' : 'Database backup completed.'),
                 'backup' => $result['backup'] ?? null,
                 'google_drive' => $result['google_drive'] ?? null,
+                'google_drive_error' => $result['google_drive_error'] ?? null,
+                'google_drive_skipped_reason' => $result['google_drive_skipped_reason'] ?? null,
                 'email_sent' => $result['email_sent'] ?? false,
                 'pruned' => $result['pruned'] ?? 0,
             ]);
