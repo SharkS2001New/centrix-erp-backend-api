@@ -12,12 +12,12 @@ return new class extends Migration
         if (! Schema::hasTable('attendance_branch_premises')) {
             Schema::create('attendance_branch_premises', function (Blueprint $table) {
                 $table->increments('id');
-                $table->unsignedInteger('organization_id');
-                $table->unsignedInteger('branch_id');
+                $table->integer('organization_id');
+                $table->integer('branch_id');
                 $table->decimal('latitude', 10, 7)->nullable();
                 $table->decimal('longitude', 10, 7)->nullable();
                 $table->decimal('radius_metres', 8, 2)->nullable();
-                $table->unsignedInteger('updated_by')->nullable();
+                $table->integer('updated_by')->nullable();
                 $table->timestamp('updated_at')->nullable();
 
                 $table->foreign('organization_id')->references('id')->on('organizations');
@@ -29,7 +29,7 @@ return new class extends Migration
 
         if (Schema::hasTable('attendance_mobile_devices') && ! Schema::hasColumn('attendance_mobile_devices', 'branch_id')) {
             Schema::table('attendance_mobile_devices', function (Blueprint $table) {
-                $table->unsignedInteger('branch_id')->nullable()->after('organization_id');
+                $table->integer('branch_id')->nullable()->after('organization_id');
                 $table->foreign('branch_id')->references('id')->on('branches')->nullOnDelete();
             });
         }

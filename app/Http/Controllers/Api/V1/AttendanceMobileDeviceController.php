@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\AttendanceMobileDevice;
 use App\Services\Attendance\AttendanceMobileDeviceService;
 use App\Services\Erp\ErpContext;
+use App\Support\AttendanceSchema;
 use Illuminate\Http\Request;
 
 class AttendanceMobileDeviceController extends Controller
@@ -18,6 +19,11 @@ class AttendanceMobileDeviceController extends Controller
     public function index(Request $request)
     {
         $org = $this->erp->resolveOrganization($request);
+        $perPage = min((int) $request->input('per_page', 50), 200);
+
+        if (! AttendanceSchema::hasMobileDevices()) {
+            return response()->json(new \Illuminate\Pagination\LengthAwarePaginator([], 0, $perPage));
+        }
 
         $devices = AttendanceMobileDevice::query()
             ->with([
@@ -26,7 +32,7 @@ class AttendanceMobileDeviceController extends Controller
             ])
             ->where('organization_id', $org->id)
             ->orderByDesc('created_at')
-            ->paginate(min((int) $request->input('per_page', 50), 200));
+            ->paginate($perPage);
 
         return response()->json($devices);
     }

@@ -160,6 +160,7 @@ return [
             'enable_mobile_orders',
             'stock_deduct_on',
             'require_pos_till_float',
+            'enable_pos_order_edit',
         ],
         'distribution' => [],
         'finance' => [
@@ -335,6 +336,7 @@ return [
             'mobile_checkout_location_radius_metres' => 5,
             'mobile_enable_field_attendance' => false,
             'require_pos_till_float' => false,
+            'enable_pos_order_edit' => false,
             'require_backoffice_till_float' => false,
             'blind_till_close' => false,
             'default_submit_kra' => true,

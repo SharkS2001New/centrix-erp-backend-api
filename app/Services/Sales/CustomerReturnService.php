@@ -208,6 +208,82 @@ class CustomerReturnService
         });
     }
 
+    /**
+     * Full-sale fiscal void for POS order re-edit. Stock is restored separately; sale totals are not adjusted
+     * because the sale will be cancelled immediately after.
+     */
+    public function approvePosEditVoid(Sale $sale, User $user, CapabilityGate $gate): CustomerReturn
+    {
+        $sale->loadMissing(['items.product']);
+
+        $existing = CustomerReturn::query()
+            ->where('sale_id', $sale->id)
+            ->where('return_kind', 'pos_edit')
+            ->where('status', 'approved')
+            ->exists();
+
+        if ($existing) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'This order has already been voided for editing.',
+            ]);
+        }
+
+        $lines = $sale->items->map(function ($item) {
+            $qty = (float) $item->quantity;
+            if ($qty <= 0) {
+                return null;
+            }
+
+            return [
+                'sale_item_id' => $item->id,
+                'product_code' => $item->product_code,
+                'product_name' => $item->product?->product_name ?? $item->product_code,
+                'uom' => $item->uom,
+                'quantity_sold' => $qty,
+                'return_qty' => $qty,
+                'unit_price' => (float) $item->selling_price,
+                'amount' => (float) $item->amount,
+                'line_no' => $item->line_no,
+            ];
+        })->filter()->values()->all();
+
+        if ($lines === []) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'This order has no items to void for editing.',
+            ]);
+        }
+
+        return DB::transaction(function () use ($sale, $user, $gate, $lines) {
+            $total = round(array_sum(array_column($lines, 'amount')), 2);
+
+            $return = CustomerReturn::create([
+                'return_no' => $this->nextReturnNo((int) $user->organization_id),
+                'organization_id' => $user->organization_id,
+                'branch_id' => (int) $sale->branch_id,
+                'sale_id' => $sale->id,
+                'customer_num' => $sale->customer_num,
+                'return_date' => now()->toDateString(),
+                'refund_method' => $sale->payment_method_code ?? 'CASH',
+                'reason' => 'POS order edit',
+                'notes' => 'Automatic void before POS order re-edit',
+                'status' => 'approved',
+                'return_kind' => 'pos_edit',
+                'total_amount' => $total,
+                'stock_location' => 'shop',
+                'returned_by' => $user->id,
+                'approved_by' => $user->id,
+                'approved_at' => now(),
+            ]);
+
+            $this->syncLines($return, $lines);
+
+            $finance = $gate->moduleSettings('finance') ?? [];
+            $this->creditNoteService->createForReturn($return->fresh(['lines.product.vat']), $user, $finance);
+
+            return $return->fresh(['lines', 'sale', 'creditNote']);
+        });
+    }
+
     public function reject(CustomerReturn $return, User $user, ?string $reason = null): CustomerReturn
     {
         if ($return->status === 'rejected') {

@@ -6,6 +6,7 @@ use App\Models\AttendanceBranchPremises;
 use App\Models\Branch;
 use App\Models\Organization;
 use App\Models\User;
+use App\Support\AttendanceSchema;
 use InvalidArgumentException;
 
 class AttendanceBranchPremisesService
@@ -14,6 +15,10 @@ class AttendanceBranchPremisesService
     public function forBranch(Organization $organization, int $branchId): ?array
     {
         $this->assertBranchInOrganization($organization, $branchId);
+
+        if (! AttendanceSchema::hasBranchPremises()) {
+            return null;
+        }
 
         $row = AttendanceBranchPremises::query()
             ->where('organization_id', $organization->id)
@@ -52,10 +57,12 @@ class AttendanceBranchPremisesService
             ->orderBy('branch_name')
             ->get(['id', 'branch_code', 'branch_name']);
 
-        $premisesByBranch = AttendanceBranchPremises::query()
-            ->where('organization_id', $organization->id)
-            ->get()
-            ->keyBy('branch_id');
+        $premisesByBranch = AttendanceSchema::hasBranchPremises()
+            ? AttendanceBranchPremises::query()
+                ->where('organization_id', $organization->id)
+                ->get()
+                ->keyBy('branch_id')
+            : collect();
 
         return $branches->map(function (Branch $branch) use ($premisesByBranch, $defaultRadius) {
             $row = $premisesByBranch->get($branch->id);
@@ -103,6 +110,9 @@ class AttendanceBranchPremisesService
         ?float $radiusMetres = null,
     ): AttendanceBranchPremises {
         $this->assertBranchInOrganization($organization, $branchId);
+        if (! AttendanceSchema::hasBranchPremises()) {
+            throw new InvalidArgumentException('Attendance premises storage is not available. Run database migrations first.');
+        }
         $settings = HrAttendanceSettingsResolver::forOrganization($organization);
 
         return AttendanceBranchPremises::query()->updateOrCreate(

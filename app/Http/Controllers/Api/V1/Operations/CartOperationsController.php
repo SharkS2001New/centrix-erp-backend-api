@@ -24,6 +24,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\PosLinePricingService;
+use App\Services\Sales\PosOrderEditService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use Illuminate\Http\Request;
@@ -133,11 +134,11 @@ class CartOperationsController extends Controller
     {
         $user = $request->user();
         $sale = $this->findScopedSale($saleId, $user)->load('items');
+        $gate = $this->erp->gateForUser($user);
 
-        $this->assertSaleRestorableToCart($sale, $user);
+        app(PosOrderEditService::class)->assertSaleEditable($sale, $user, $gate);
 
         $channel = $sale->channel ?: 'pos';
-        $gate = $this->erp->gateForUser($user);
         if (! $gate->channelEnabled($channel)) {
             throw new InvalidArgumentException("Channel [{$channel}] is not enabled for this organization.");
         }
@@ -159,6 +160,8 @@ class CartOperationsController extends Controller
             if ($cart->lines()->exists()) {
                 $this->clearCart($cart);
             }
+
+            app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
 
             $this->reverseSaleStockDeductions($sale, $user);
 
@@ -521,24 +524,8 @@ class CartOperationsController extends Controller
 
     protected function assertSaleRestorableToCart(Sale $sale, User $user): void
     {
-        if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
-            throw new InvalidArgumentException('This order cannot be edited.');
-        }
-
-        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
-            throw new InvalidArgumentException('You can only edit your own orders.');
-        }
-
-        $editable = match ($sale->channel) {
-            'mobile' => ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed'],
-            default => ['held'],
-        };
-
-        if (! in_array((string) $sale->status, $editable, true)) {
-            throw new InvalidArgumentException(
-                'This order cannot be edited in its current status.',
-            );
-        }
+        $gate = $this->erp->gateForUser($user);
+        app(PosOrderEditService::class)->assertSaleEditable($sale, $user, $gate);
     }
 
     protected function getOrCreateCart(User $user, array $input): TemporaryCart

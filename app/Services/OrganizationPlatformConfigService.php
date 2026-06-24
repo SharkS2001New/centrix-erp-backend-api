@@ -103,6 +103,7 @@ class OrganizationPlatformConfigService
             'stock_deduct_on' => 'order_completed',
             'require_pos_till_float' => false,
             'order_workflow' => config('erp.default_order_workflow', []),
+            'enable_pos_order_edit' => false,
         ];
     }
 
@@ -125,6 +126,7 @@ class OrganizationPlatformConfigService
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
             'stock_deduct_on' => (string) ($sales['stock_deduct_on'] ?? 'order_completed'),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
+            'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
             'order_workflow' => $workflow,
         ];
     }

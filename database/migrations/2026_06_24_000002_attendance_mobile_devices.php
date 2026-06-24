@@ -11,12 +11,12 @@ return new class extends Migration
         if (! Schema::hasTable('attendance_mobile_devices')) {
             Schema::create('attendance_mobile_devices', function (Blueprint $table) {
                 $table->increments('id');
-                $table->unsignedInteger('organization_id');
+                $table->integer('organization_id');
                 $table->string('device_identifier', 120);
                 $table->string('device_label', 120)->nullable();
                 $table->string('platform', 32)->nullable();
                 $table->boolean('is_active')->default(true);
-                $table->unsignedInteger('registered_by')->nullable();
+                $table->integer('registered_by')->nullable();
                 $table->timestamp('created_at')->useCurrent();
 
                 $table->foreign('organization_id')->references('id')->on('organizations');

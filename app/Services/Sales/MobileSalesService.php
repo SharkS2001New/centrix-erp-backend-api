@@ -4,10 +4,13 @@ namespace App\Services\Sales;
 
 use App\Models\Customer;
 use App\Models\CustomerReturn;
+use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
+use App\Services\Erp\CapabilityGate;
+use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\CentrixSalesScope;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -252,20 +255,14 @@ class MobileSalesService
 
     public function canRestoreSaleToCart(Sale $sale, User $user): bool
     {
-        if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
+        $organization = Organization::find($user->organization_id);
+        if (! $organization) {
             return false;
         }
 
-        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
-            return false;
-        }
+        $gate = new CapabilityGate($organization);
 
-        $editable = match ($sale->channel) {
-            'mobile' => ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed'],
-            default => ['held'],
-        };
-
-        return in_array((string) $sale->status, $editable, true);
+        return app(PosOrderEditService::class)->canRestoreSaleToCart($sale, $user, $gate);
     }
 
     /** @param  array<string, mixed>  $data */

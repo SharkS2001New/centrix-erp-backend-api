@@ -10,6 +10,7 @@ use App\Models\EmployeeClockSession;
 use App\Models\EmployeeFaceProfile;
 use App\Models\Organization;
 use App\Support\AttendanceHours;
+use App\Support\AttendanceSchema;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -103,12 +104,14 @@ class CompanyMobileAttendanceService
             ->get(['id', 'full_name', 'employee_code', 'branch_id']);
 
         return $employees->map(function (Employee $employee) {
-            $hasFaceProfile = EmployeeFaceProfile::query()
-                ->where('employee_id', $employee->id)
-                ->exists();
-            $hasFingerprintProfile = EmployeeFingerprintProfile::query()
-                ->where('employee_id', $employee->id)
-                ->exists();
+            $hasFaceProfile = AttendanceSchema::hasFaceProfiles()
+                && EmployeeFaceProfile::query()
+                    ->where('employee_id', $employee->id)
+                    ->exists();
+            $hasFingerprintProfile = AttendanceSchema::hasFingerprintProfiles()
+                && EmployeeFingerprintProfile::query()
+                    ->where('employee_id', $employee->id)
+                    ->exists();
             $openSession = $this->openSessionForEmployee($employee->id);
 
             return [
@@ -347,6 +350,12 @@ class CompanyMobileAttendanceService
     /** @param  array<string, mixed>  $filters */
     public function paginateSessions(Organization $organization, array $filters = []): LengthAwarePaginator
     {
+        $perPage = max(1, min(200, (int) ($filters['per_page'] ?? 25)));
+
+        if (! AttendanceSchema::hasCompanyMobileSessions()) {
+            return new \Illuminate\Pagination\LengthAwarePaginator([], 0, $perPage);
+        }
+
         $query = EmployeeClockSession::query()
             ->with('employee:id,full_name,employee_code')
             ->where('organization_id', $organization->id)
@@ -366,7 +375,7 @@ class CompanyMobileAttendanceService
             $query->whereNull('clock_out_at');
         }
 
-        return $query->paginate(max(1, min(200, (int) ($filters['per_page'] ?? 25))));
+        return $query->paginate($perPage);
     }
 
     /** @return array<string, mixed> */

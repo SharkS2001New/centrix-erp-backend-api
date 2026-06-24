@@ -9,21 +9,6 @@ return new class extends Migration
 {
     public function up(): void
     {
-        if (! Schema::hasTable('employee_face_profiles')) {
-            Schema::create('employee_face_profiles', function (Blueprint $table) {
-                $table->increments('id');
-                $table->unsignedInteger('employee_id')->unique();
-                $table->unsignedInteger('organization_id');
-                $table->string('enrollment_photo_path', 500);
-                $table->json('face_embedding');
-                $table->timestamp('enrolled_at');
-                $table->string('enrolled_device_identifier', 100)->nullable();
-
-                $table->foreign('employee_id')->references('id')->on('employees')->cascadeOnDelete();
-                $table->foreign('organization_id')->references('id')->on('organizations');
-            });
-        }
-
         if (Schema::hasTable('employee_attendance') && Schema::hasColumn('employee_attendance', 'source')) {
             DB::statement("ALTER TABLE employee_attendance MODIFY COLUMN source ENUM(
                 'manual','clock_device','company_mobile'
@@ -51,6 +36,24 @@ return new class extends Migration
                     $table->decimal('clock_out_face_match_score', 5, 4)->nullable()->after('clock_out_photo_path');
                     $table->decimal('clock_out_geofence_distance_metres', 8, 2)->nullable()->after('clock_out_face_match_score');
                 }
+            });
+        }
+
+        // A failed prior run may have created this table without foreign keys (unsigned vs signed INT mismatch).
+        Schema::dropIfExists('employee_face_profiles');
+
+        if (! Schema::hasTable('employee_face_profiles')) {
+            Schema::create('employee_face_profiles', function (Blueprint $table) {
+                $table->increments('id');
+                $table->integer('employee_id')->unique();
+                $table->integer('organization_id');
+                $table->string('enrollment_photo_path', 500);
+                $table->json('face_embedding');
+                $table->timestamp('enrolled_at');
+                $table->string('enrolled_device_identifier', 100)->nullable();
+
+                $table->foreign('employee_id')->references('id')->on('employees')->cascadeOnDelete();
+                $table->foreign('organization_id')->references('id')->on('organizations');
             });
         }
     }
