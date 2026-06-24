@@ -8,6 +8,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Erp\ErpContext;
+use App\Services\Sales\CentrixSalesScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -128,12 +129,16 @@ class ReportController extends Controller
         $prevFrom = $prevTo->copy()->subDays($days - 1);
         $branchId = $data['branch_id'] ?? null;
 
-        $salesBase = fn (\Carbon\Carbon $start, \Carbon\Carbon $end) => DB::table('sales')
-            ->where('status', 'completed')
-            ->where('archived', 0)
-            ->whereDate('completed_at', '>=', $start->toDateString())
-            ->whereDate('completed_at', '<=', $end->toDateString())
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+        $salesBase = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($branchId) {
+            $query = DB::table('sales')
+                ->where('status', 'completed')
+                ->where('archived', 0)
+                ->whereDate('completed_at', '>=', $start->toDateString())
+                ->whereDate('completed_at', '<=', $end->toDateString())
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+
+            return CentrixSalesScope::excludeLegacyMaterialized($query);
+        };
 
         $totalSales = (float) $salesBase($from, $to)->sum('order_total');
         $prevTotalSales = (float) $salesBase($prevFrom, $prevTo)->sum('order_total');
@@ -152,14 +157,15 @@ class ReportController extends Controller
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->sum('balance_due');
 
-        $creditIssued = (float) DB::table('sales')
-            ->where('status', 'completed')
-            ->where('archived', 0)
-            ->where('is_credit_sale', 1)
-            ->whereDate('completed_at', '>=', $from->toDateString())
-            ->whereDate('completed_at', '<=', $to->toDateString())
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
-            ->sum('order_total');
+        $creditIssued = (float) CentrixSalesScope::excludeLegacyMaterialized(
+            DB::table('sales')
+                ->where('status', 'completed')
+                ->where('archived', 0)
+                ->where('is_credit_sale', 1)
+                ->whereDate('completed_at', '>=', $from->toDateString())
+                ->whereDate('completed_at', '<=', $to->toDateString())
+                ->when($branchId, fn ($q) => $q->where('branch_id', $branchId)),
+        )->sum('order_total');
 
         $paymentsCollected = (float) DB::table('customer_invoice_payments as p')
             ->when($branchId, function ($q) use ($branchId) {
@@ -583,10 +589,12 @@ class ReportController extends Controller
             $cashierId = null;
         }
 
-        $salesBase = DB::table('sales')
-            ->where('status', 'completed')
-            ->where('archived', 0)
-            ->whereDate('completed_at', $date);
+        $salesBase = CentrixSalesScope::excludeLegacyMaterialized(
+            DB::table('sales')
+                ->where('status', 'completed')
+                ->where('archived', 0)
+                ->whereDate('completed_at', $date),
+        );
         if ($branchId) {
             $salesBase->where('branch_id', $branchId);
         }
@@ -608,23 +616,27 @@ class ReportController extends Controller
             MAX(completed_at) as last_sale_at
         ')->first();
 
-        $lineDiscounts = (float) DB::table('sale_items as si')
-            ->join('sales as s', 'si.sale_id', '=', 's.id')
-            ->where('s.status', 'completed')
-            ->where('s.archived', 0)
-            ->whereDate('s.completed_at', $date)
-            ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
-            ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
-            ->sum('si.discount_given');
+        $lineDiscounts = (float) CentrixSalesScope::excludeLegacyMaterialized(
+            DB::table('sale_items as si')
+                ->join('sales as s', 'si.sale_id', '=', 's.id')
+                ->where('s.status', 'completed')
+                ->where('s.archived', 0)
+                ->whereDate('s.completed_at', $date)
+                ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
+                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
+            's',
+        )->sum('si.discount_given');
 
-        $itemsSold = (float) DB::table('sale_items as si')
-            ->join('sales as s', 'si.sale_id', '=', 's.id')
-            ->where('s.status', 'completed')
-            ->where('s.archived', 0)
-            ->whereDate('s.completed_at', $date)
-            ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
-            ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
-            ->sum('si.quantity');
+        $itemsSold = (float) CentrixSalesScope::excludeLegacyMaterialized(
+            DB::table('sale_items as si')
+                ->join('sales as s', 'si.sale_id', '=', 's.id')
+                ->where('s.status', 'completed')
+                ->where('s.archived', 0)
+                ->whereDate('s.completed_at', $date)
+                ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
+                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
+            's',
+        )->sum('si.quantity');
 
         $saleIds = (clone $salesBase)->pluck('id');
         $refunds = $saleIds->isEmpty()
@@ -661,7 +673,10 @@ class ReportController extends Controller
             ->join('users as u', 'tfs.cashier_id', '=', 'u.id')
             ->leftJoin(DB::raw('(
                 SELECT float_session_id, COUNT(*) AS txn_count, SUM(order_total) AS gross
-                FROM sales WHERE status = \'completed\' GROUP BY float_session_id
+                FROM sales
+                WHERE status = \'completed\'
+                  AND '.CentrixSalesScope::legacyExcludeSql('sales').'
+                GROUP BY float_session_id
             ) s'), 's.float_session_id', '=', 'tfs.id')
             ->whereDate('tfs.session_date', $date)
             ->when($branchId, fn ($q) => $q->where('tfs.branch_id', $branchId))
@@ -681,12 +696,15 @@ class ReportController extends Controller
                 return $row;
             });
 
-        $cashierRows = DB::table('sales as s')
-            ->join('users as u', 's.cashier_id', '=', 'u.id')
-            ->where('s.status', 'completed')
-            ->where('s.archived', 0)
-            ->whereDate('s.completed_at', $date)
-            ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
+        $cashierRows = CentrixSalesScope::excludeLegacyMaterialized(
+            DB::table('sales as s')
+                ->join('users as u', 's.cashier_id', '=', 'u.id')
+                ->where('s.status', 'completed')
+                ->where('s.archived', 0)
+                ->whereDate('s.completed_at', $date)
+                ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId)),
+            's',
+        )
             ->groupBy('s.cashier_id', 'u.username', 'u.full_name')
             ->orderBy('cashier')
             ->select(

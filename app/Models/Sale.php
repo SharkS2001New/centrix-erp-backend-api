@@ -51,4 +51,19 @@ class Sale extends Model
         'cancelled_at' => 'datetime',
         'deleted_at' => 'datetime',
     ];
+
+    public function isLegacyImport(): bool
+    {
+        return (bool) ($this->fulfillment_meta['legacy_import'] ?? false);
+    }
+
+    public function scopeCentrixMetrics($query)
+    {
+        return \App\Services\Sales\CentrixSalesScope::excludeLegacyMaterialized($query);
+    }
+
+    public function scopeLegacyMaterialized($query)
+    {
+        return $query->where('fulfillment_meta->legacy_import', true);
+    }
 }

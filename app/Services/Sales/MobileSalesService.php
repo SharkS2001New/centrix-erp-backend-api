@@ -8,6 +8,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
+use App\Services\Sales\CentrixSalesScope;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
@@ -205,10 +206,12 @@ class MobileSalesService
     /** @return Builder<Sale> */
     protected function mobileSalesQuery(User $user, bool $allChannels = false): Builder
     {
-        $query = Sale::query()
-            ->where('archived', 0)
-            ->whereNull('deleted_at')
-            ->where('cashier_id', $user->id);
+        $query = CentrixSalesScope::excludeLegacyMaterialized(
+            Sale::query()
+                ->where('archived', 0)
+                ->whereNull('deleted_at')
+                ->where('cashier_id', $user->id),
+        );
 
         if (! $allChannels) {
             $query->where('channel', 'mobile');

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Sale;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\RouteOrderScope;
 use Illuminate\Http\Request;
 
@@ -39,6 +40,10 @@ class SaleController extends BaseResourceController
 
         if ($request->boolean('route_orders')) {
             RouteOrderScope::apply($query);
+        }
+
+        if (! $request->boolean('include_legacy')) {
+            CentrixSalesScope::excludeLegacyMaterialized($query);
         }
 
         if ($request->input('order_source') === 'backoffice') {

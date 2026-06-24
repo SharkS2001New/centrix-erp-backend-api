@@ -14,7 +14,8 @@ use App\Http\Controllers\Api\V1\CurrentStockController;
 use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\CustomerInvoiceController;
 use App\Http\Controllers\Api\V1\CustomerInvoicePaymentController;
-use App\Http\Controllers\Api\V1\CustomerReturnController;
+use App\Http\Controllers\Api\V1\LegacyOrdersController;
+use App\Http\Controllers\Api\V1\LegacyReturnsController;
 use App\Http\Controllers\Api\V1\DamageController;
 use App\Http\Controllers\Api\V1\DepartmentController;
 use App\Http\Controllers\Api\V1\DispatchTripController;
@@ -500,6 +501,18 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('returns', ReturnRecordController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);
+            Route::get('legacy-orders', [LegacyOrdersController::class, 'index'])
+                ->middleware('erp.permission:sales.view');
+            Route::get('legacy-orders/{id}', [LegacyOrdersController::class, 'show'])
+                ->middleware('erp.permission:sales.view');
+            Route::get('legacy-orders/{saleId}/return-lines', [LegacyOrdersController::class, 'returnLines'])
+                ->middleware('erp.permission:sales.view');
+            Route::post('legacy-returns/{id}/approve', [LegacyReturnsController::class, 'approve'])
+                ->middleware('erp.permission:sales.manage');
+            Route::apiResource('legacy-returns', LegacyReturnsController::class)
+                ->only(['index', 'show', 'store'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
+                ->middlewareFor(['store'], ['erp.permission:sales.manage']);
             Route::get('sales/{saleId}/return-lines', [CustomerReturnController::class, 'saleLines'])
                 ->middleware('erp.permission:sales.view');
             Route::post('customer-returns/{id}/approve', [CustomerReturnController::class, 'approve'])

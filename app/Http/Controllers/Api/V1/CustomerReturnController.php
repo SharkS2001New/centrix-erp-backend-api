@@ -18,7 +18,10 @@ class CustomerReturnController extends Controller
         $user = $request->user();
         $query = CustomerReturn::query()
             ->with(['lines.product.unit', 'sale', 'customer', 'returnedByUser', 'creditNote'])
-            ->where('organization_id', $user->organization_id);
+            ->where('organization_id', $user->organization_id)
+            ->where(function ($inner) {
+                $inner->where('return_kind', 'standard')->orWhereNull('return_kind');
+            });
 
         app(UserAccessService::class)->scopeBranchIfLimited($query, $user);
 

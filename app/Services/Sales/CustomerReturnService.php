@@ -46,6 +46,14 @@ class CustomerReturnService
     {
         return DB::transaction(function () use ($user, $data) {
             $saleId = isset($data['sale_id']) ? (int) $data['sale_id'] : null;
+            if ($saleId) {
+                $sale = Sale::query()->find($saleId);
+                if ($sale && ($sale->fulfillment_meta['legacy_import'] ?? false)) {
+                    throw ValidationException::withMessages([
+                        'sale_id' => 'Use legacy returns for materialized legacy orders.',
+                    ]);
+                }
+            }
             $lines = $this->normalizeLines($data['lines'] ?? [], $saleId);
             $total = round(array_sum(array_column($lines, 'amount')), 2);
 
@@ -259,19 +267,19 @@ class CustomerReturnService
         $return->delete();
     }
 
-    public function linesFromSale(Sale $sale): array
+    public function linesFromSale(Sale $sale, ?string $returnKind = 'standard'): array
     {
         $sale->loadMissing(['items.product.unit']);
-        $returned = $this->approvedReturnQuantities((int) $sale->id);
+        $returned = $this->approvedReturnQuantities((int) $sale->id, null, $returnKind);
 
-        return $sale->items->map(function ($item) use ($returned, $sale) {
+        return $sale->items->map(function ($item) use ($returned, $sale, $returnKind) {
             $currentQty = (float) ($item->quantity ?? 0);
             $alreadyReturned = $this->returnedQtyForLine($returned, (int) $item->id, (string) $item->product_code);
             $originalQty = $currentQty + $alreadyReturned;
             $unitPrice = $currentQty > 0
                 ? round((float) $item->amount / $currentQty, 2)
                 : round((float) ($item->selling_price ?? 0), 2);
-            $pending = $this->pendingReturnQuantities((int) $sale->id);
+            $pending = $this->pendingReturnQuantities((int) $sale->id, null, $returnKind);
             $pendingQty = $this->returnedQtyForLine($pending, (int) $item->id, (string) $item->product_code);
             $maxReturnQty = max(0, round($currentQty - $pendingQty, 4));
 
@@ -290,6 +298,37 @@ class CustomerReturnService
                 'line_no' => $item->line_no,
             ];
         })->values()->all();
+    }
+
+    public function applyReturnToSalePublic(CustomerReturn $return): void
+    {
+        $this->applyReturnToSale($return);
+    }
+
+    /** @param  array<int, array<string, mixed>>  $lines */
+    public function normalizeLinesForSale(
+        array $lines,
+        ?int $saleId = null,
+        ?int $excludeReturnId = null,
+        ?string $returnKind = 'legacy',
+    ): array {
+        return $this->normalizeLines($lines, $saleId, $excludeReturnId, $returnKind);
+    }
+
+    /** @param  array<int, array<string, mixed>>  $lines */
+    public function syncLinesPublic(CustomerReturn $return, array $lines): void
+    {
+        $this->syncLines($return, $lines);
+    }
+
+    /** @param  array<int, array<string, mixed>>  $lines */
+    public function validateLinesAgainstSalePublic(
+        int $saleId,
+        array $lines,
+        ?int $excludeReturnId = null,
+        ?string $returnKind = 'legacy',
+    ): void {
+        $this->validateLinesAgainstSale($saleId, $lines, $excludeReturnId, $returnKind);
     }
 
     protected function applyReturnToSale(CustomerReturn $return): void
@@ -464,13 +503,17 @@ class CustomerReturnService
     /**
      * @return array{by_sale_item: array<int, float>, by_product: array<string, float>}
      */
-    protected function pendingReturnQuantities(int $saleId, ?int $excludeReturnId = null): array
+    protected function pendingReturnQuantities(int $saleId, ?int $excludeReturnId = null, ?string $returnKind = null): array
     {
         $query = CustomerReturnLine::query()
             ->select(['customer_return_lines.sale_item_id', 'customer_return_lines.product_code', 'customer_return_lines.return_qty'])
             ->join('customer_returns', 'customer_returns.id', '=', 'customer_return_lines.customer_return_id')
             ->where('customer_returns.sale_id', $saleId)
             ->where('customer_returns.status', 'pending');
+
+        if ($returnKind) {
+            $query->where('customer_returns.return_kind', $returnKind);
+        }
 
         if ($excludeReturnId) {
             $query->where('customer_returns.id', '!=', $excludeReturnId);
@@ -491,9 +534,13 @@ class CustomerReturnService
         return ['by_sale_item' => $bySaleItem, 'by_product' => $byProduct];
     }
 
-    protected function maxReturnQtyForSaleItem(SaleItem $saleItem, int $saleId, ?int $excludeReturnId = null): float
-    {
-        $pending = $this->pendingReturnQuantities($saleId, $excludeReturnId);
+    protected function maxReturnQtyForSaleItem(
+        SaleItem $saleItem,
+        int $saleId,
+        ?int $excludeReturnId = null,
+        ?string $returnKind = null,
+    ): float {
+        $pending = $this->pendingReturnQuantities($saleId, $excludeReturnId, $returnKind);
         $pendingQty = $this->returnedQtyForLine(
             $pending,
             (int) $saleItem->id,
@@ -651,13 +698,17 @@ class CustomerReturnService
     /**
      * @return array{by_sale_item: array<int, float>, by_product: array<string, float>}
      */
-    protected function approvedReturnQuantities(int $saleId, ?int $excludeReturnId = null): array
+    protected function approvedReturnQuantities(int $saleId, ?int $excludeReturnId = null, ?string $returnKind = null): array
     {
         $query = CustomerReturnLine::query()
             ->select(['customer_return_lines.sale_item_id', 'customer_return_lines.product_code', 'customer_return_lines.return_qty'])
             ->join('customer_returns', 'customer_returns.id', '=', 'customer_return_lines.customer_return_id')
             ->where('customer_returns.sale_id', $saleId)
             ->where('customer_returns.status', 'approved');
+
+        if ($returnKind) {
+            $query->where('customer_returns.return_kind', $returnKind);
+        }
 
         if ($excludeReturnId) {
             $query->where('customer_returns.id', '!=', $excludeReturnId);
@@ -688,8 +739,12 @@ class CustomerReturnService
     }
 
     /** @param  array<int, array<string, mixed>>  $lines */
-    protected function validateLinesAgainstSale(int $saleId, array $lines, ?int $excludeReturnId = null): void
-    {
+    protected function validateLinesAgainstSale(
+        int $saleId,
+        array $lines,
+        ?int $excludeReturnId = null,
+        ?string $returnKind = null,
+    ): void {
         $sale = Sale::with('items')->findOrFail($saleId);
 
         foreach ($lines as $line) {
@@ -710,7 +765,7 @@ class CustomerReturnService
                 ]);
             }
 
-            $maxReturnQty = $this->maxReturnQtyForSaleItem($saleItem, $saleId, $excludeReturnId);
+            $maxReturnQty = $this->maxReturnQtyForSaleItem($saleItem, $saleId, $excludeReturnId, $returnKind);
 
             if ($returnQty > $maxReturnQty + 0.0001) {
                 throw ValidationException::withMessages([
@@ -721,8 +776,12 @@ class CustomerReturnService
     }
 
     /** @param  array<int, array<string, mixed>>  $lines */
-    protected function normalizeLines(array $lines, ?int $saleId = null, ?int $excludeReturnId = null): array
-    {
+    protected function normalizeLines(
+        array $lines,
+        ?int $saleId = null,
+        ?int $excludeReturnId = null,
+        ?string $returnKind = null,
+    ): array {
         $normalized = [];
 
         foreach ($lines as $line) {
@@ -771,7 +830,7 @@ class CustomerReturnService
         }
 
         if ($saleId) {
-            $this->validateLinesAgainstSale($saleId, $normalized, $excludeReturnId);
+            $this->validateLinesAgainstSale($saleId, $normalized, $excludeReturnId, $returnKind);
         }
 
         return $normalized;

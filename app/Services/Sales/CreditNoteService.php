@@ -57,22 +57,14 @@ class CreditNoteService
 
     public function submitToKra(CreditNote $creditNote, CustomerReturn $return, array $financeSettings): CreditNote
     {
-        $originalKra = KraResponse::query()
-            ->where('sale_id', $return->sale_id)
-            ->where('status', 'success')
-            ->orderByDesc('id')
-            ->first();
-
-        if (! $originalKra) {
-            return $creditNote->fresh();
-        }
-
-        $relevantInvoice = $this->relevantInvoiceNumberFromKraResponse($originalKra);
+        $relevantInvoice = $this->resolveRelevantInvoiceNumber($return);
         if ($relevantInvoice === '') {
-            $creditNote->update([
-                'kra_status' => 'failed',
-                'kra_error_message' => 'Original sale has no KRA invoice number to credit.',
-            ]);
+            if ($return->return_kind === 'legacy') {
+                $creditNote->update([
+                    'kra_status' => 'failed',
+                    'kra_error_message' => 'Original sale has no KRA invoice number to credit.',
+                ]);
+            }
 
             return $creditNote->fresh();
         }
@@ -178,6 +170,44 @@ class CreditNoteService
         }
 
         return $creditNote->fresh();
+    }
+
+    public function relevantInvoiceFromKraResponse(KraResponse $kra): string
+    {
+        return $this->relevantInvoiceNumberFromKraResponse($kra);
+    }
+
+    protected function resolveRelevantInvoiceNumber(CustomerReturn $return): string
+    {
+        $provided = trim((string) ($return->kra_original_invoice_number ?? ''));
+        if ($provided !== '') {
+            return $provided;
+        }
+
+        $return->loadMissing('sale');
+        $sale = $return->sale;
+        if ($sale) {
+            $stored = trim((string) (($sale->fulfillment_meta ?? [])['legacy_kra_invoice_number'] ?? ''));
+            if ($stored !== '') {
+                return $stored;
+            }
+        }
+
+        if (! $return->sale_id) {
+            return '';
+        }
+
+        $originalKra = KraResponse::query()
+            ->where('sale_id', $return->sale_id)
+            ->where('status', 'success')
+            ->orderByDesc('id')
+            ->first();
+
+        if (! $originalKra) {
+            return '';
+        }
+
+        return $this->relevantInvoiceNumberFromKraResponse($originalKra);
     }
 
     protected function relevantInvoiceNumberFromKraResponse(KraResponse $kra): string

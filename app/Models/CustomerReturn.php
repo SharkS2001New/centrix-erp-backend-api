@@ -31,6 +31,8 @@ class CustomerReturn extends Model
         'rejected_by',
         'rejected_at',
         'reject_reason',
+        'return_kind',
+        'kra_original_invoice_number',
     ];
 
     protected $casts = [
