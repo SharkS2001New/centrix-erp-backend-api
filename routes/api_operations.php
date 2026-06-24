@@ -151,7 +151,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ---- HR / Attendance (clock device) ----
     Route::middleware(['erp.module:hr_payroll'])->prefix('attendance')->group(function () {
-        Route::middleware('erp.permission:hr.manage')->group(function () {
+        Route::middleware('erp.permission:hr.manage|admin.manage')->group(function () {
             Route::post('clock-in', [AttendanceClockController::class, 'clockIn']);
             Route::post('clock-out', [AttendanceClockController::class, 'clockOut']);
             Route::get('company-premises', [CompanyPremisesController::class, 'show']);
