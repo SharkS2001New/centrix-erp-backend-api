@@ -4,14 +4,10 @@ namespace App\Services\Sales;
 
 use App\Models\Customer;
 use App\Models\CustomerReturn;
-use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
-use App\Services\Erp\CapabilityGate;
-use App\Services\Sales\PosOrderEditService;
-use App\Services\Sales\CentrixSalesScope;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
@@ -209,12 +205,10 @@ class MobileSalesService
     /** @return Builder<Sale> */
     protected function mobileSalesQuery(User $user, bool $allChannels = false): Builder
     {
-        $query = CentrixSalesScope::excludeLegacyMaterialized(
-            Sale::query()
-                ->where('archived', 0)
-                ->whereNull('deleted_at')
-                ->where('cashier_id', $user->id),
-        );
+        $query = Sale::query()
+            ->where('archived', 0)
+            ->whereNull('deleted_at')
+            ->where('cashier_id', $user->id);
 
         if (! $allChannels) {
             $query->where('channel', 'mobile');
@@ -255,14 +249,20 @@ class MobileSalesService
 
     public function canRestoreSaleToCart(Sale $sale, User $user): bool
     {
-        $organization = Organization::find($user->organization_id);
-        if (! $organization) {
+        if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
             return false;
         }
 
-        $gate = new CapabilityGate($organization);
+        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
+            return false;
+        }
 
-        return app(PosOrderEditService::class)->canRestoreSaleToCart($sale, $user, $gate);
+        $editable = match ($sale->channel) {
+            'mobile' => ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed'],
+            default => ['held'],
+        };
+
+        return in_array((string) $sale->status, $editable, true);
     }
 
     /** @param  array<string, mixed>  $data */

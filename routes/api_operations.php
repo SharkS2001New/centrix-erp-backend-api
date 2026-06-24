@@ -46,6 +46,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('attendance/session', [MobileAttendanceController::class, 'session']);
         Route::get('attendance/summary', [MobileAttendanceController::class, 'summary']);
         Route::post('attendance/sign-in', [MobileAttendanceController::class, 'signIn']);
+        Route::post('attendance/suspend', [MobileAttendanceController::class, 'suspend']);
+        Route::post('attendance/resume', [MobileAttendanceController::class, 'resume']);
         Route::post('attendance/sign-out', [MobileAttendanceController::class, 'signOut']);
     });
 
@@ -115,6 +117,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('transfer', [StockTransferController::class, 'store']);
         Route::post('receive', [LpoReceiveController::class, 'store']);
         Route::post('returns', [ReturnOperationsController::class, 'store']);
+        Route::post('stock-take/{sessionId}/initialize', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'initialize']);
+        Route::post('stock-take/{sessionId}/save-counts', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'saveCounts']);
         Route::post('stock-take/{sessionId}/complete', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'complete']);
     });
 

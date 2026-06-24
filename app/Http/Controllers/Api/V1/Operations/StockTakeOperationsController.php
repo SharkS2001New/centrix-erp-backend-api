@@ -5,10 +5,16 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
+use App\Jobs\InitializeStockTakeSessionJob;
+use App\Jobs\SaveStockTakeCountsJob;
+use App\Models\CurrentStock;
+use App\Models\Product;
 use App\Models\StockTakeLine;
 use App\Models\StockTakeSession;
 use App\Models\User;
 use App\Services\Accounting\StockTakeJournalService;
+use App\Services\Background\BackgroundTaskService;
+use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -19,7 +25,166 @@ class StockTakeOperationsController extends Controller
     use HandlesBranchScope;
     use HandlesInventory;
 
-    public function __construct(protected ErpContext $erp) {}
+    private const SYNC_SAVE_LINE_LIMIT = 25;
+
+    public function __construct(
+        protected ErpContext $erp,
+        protected ProductCatalogScopeService $catalogScope,
+        protected BackgroundTaskService $tasks,
+    ) {}
+
+    public function initialize(Request $request, int $sessionId)
+    {
+        $session = $this->findScopedStockTakeSession($sessionId, $request->user());
+
+        $existing = StockTakeLine::query()->where('session_id', $session->id)->count();
+        if ($existing > 0) {
+            return response()->json(
+                $this->initializeStockTakeLines($session, $request)
+            );
+        }
+
+        $task = $this->tasks->create('stock_take_initialize', $request->user(), [
+            'session_id' => $session->id,
+        ]);
+
+        InitializeStockTakeSessionJob::dispatch($task->id);
+
+        return response()->json([
+            'message' => 'Stock take initialization queued.',
+            'task_id' => $task->id,
+        ], 202);
+    }
+
+    public function saveCounts(Request $request, int $sessionId)
+    {
+        $data = $request->validate([
+            'lines' => ['required', 'array', 'min:1', 'max:5000'],
+            'lines.*.id' => ['required', 'integer'],
+            'lines.*.counted_quantity' => ['required', 'numeric'],
+        ]);
+
+        $session = $this->findScopedStockTakeSession($sessionId, $request->user());
+        if ($session->status === 'completed') {
+            throw new InvalidArgumentException('Session already completed.');
+        }
+
+        $lines = $data['lines'];
+        if (count($lines) <= self::SYNC_SAVE_LINE_LIMIT) {
+            return response()->json(
+                $this->saveCountsSync($session, $lines)
+            );
+        }
+
+        $task = $this->tasks->create('stock_take_save_counts', $request->user(), [
+            'session_id' => $session->id,
+            'lines' => $lines,
+        ]);
+
+        SaveStockTakeCountsJob::dispatch($task->id);
+
+        return response()->json([
+            'message' => 'Stock take counts save queued.',
+            'task_id' => $task->id,
+        ], 202);
+    }
+
+    /** @param  list<array{id: int, counted_quantity: float|int|string}>  $lines */
+    public function saveCountsSync(StockTakeSession $session, array $lines): array
+    {
+        $allowedIds = StockTakeLine::query()
+            ->where('session_id', $session->id)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+        $allowedMap = array_fill_keys($allowedIds, true);
+
+        $updated = 0;
+        foreach ($lines as $line) {
+            $lineId = (int) ($line['id'] ?? 0);
+            if ($lineId <= 0 || ! isset($allowedMap[$lineId])) {
+                continue;
+            }
+
+            StockTakeLine::query()
+                ->where('id', $lineId)
+                ->update([
+                    'counted_quantity' => (float) ($line['counted_quantity'] ?? 0),
+                ]);
+            $updated++;
+        }
+
+        return [
+            'session_id' => $session->id,
+            'updated' => $updated,
+        ];
+    }
+
+    public function initializeStockTakeLines(StockTakeSession $session, Request $request): array
+    {
+        if ($session->status === 'completed') {
+            throw new InvalidArgumentException('Session already completed.');
+        }
+
+        $existing = StockTakeLine::query()->where('session_id', $session->id)->count();
+        if ($existing > 0) {
+            return [
+                'session' => $session,
+                'lines_created' => 0,
+                'already_initialized' => true,
+            ];
+        }
+
+        $branchId = (int) $session->branch_id;
+        $request->merge(['branch_id' => $branchId]);
+
+        $productQuery = Product::query()->whereNull('deleted_at');
+        $this->catalogScope->scopeForUser($productQuery, $request->user(), $request);
+        $productCodes = $productQuery->pluck('product_code');
+
+        $stockByCode = CurrentStock::query()
+            ->where('branch_id', $branchId)
+            ->get()
+            ->keyBy('product_code');
+
+        $loc = (string) $session->stock_location;
+        $rows = [];
+
+        foreach ($productCodes as $code) {
+            $stock = $stockByCode->get($code);
+            $shopQty = (float) ($stock->shop_quantity ?? 0);
+            $storeQty = (float) ($stock->store_quantity ?? 0);
+
+            if ($loc === 'both' || $loc === 'shop') {
+                $rows[] = [
+                    'session_id' => $session->id,
+                    'product_code' => $code,
+                    'stock_location' => 'shop',
+                    'system_quantity' => $shopQty,
+                    'counted_quantity' => $shopQty,
+                ];
+            }
+            if ($loc === 'both' || $loc === 'store') {
+                $rows[] = [
+                    'session_id' => $session->id,
+                    'product_code' => $code,
+                    'stock_location' => 'store',
+                    'system_quantity' => $storeQty,
+                    'counted_quantity' => $storeQty,
+                ];
+            }
+        }
+
+        foreach (array_chunk($rows, 500) as $chunk) {
+            StockTakeLine::insert($chunk);
+        }
+
+        return [
+            'session' => $session->fresh(),
+            'lines_created' => count($rows),
+            'already_initialized' => false,
+        ];
+    }
 
     public function complete(Request $request, int $sessionId)
     {

@@ -11,3 +11,8 @@ Schedule::command('erp:database-backup')
 Schedule::command('erp:release-expired-stock-reservations')
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+Schedule::command('erp:close-idle-mobile-rep-attendance')
+    ->dailyAt('23:55')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/mobile-rep-attendance.log'));

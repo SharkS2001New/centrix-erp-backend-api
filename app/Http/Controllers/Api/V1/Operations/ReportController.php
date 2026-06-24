@@ -128,13 +128,15 @@ class ReportController extends Controller
         $prevTo = $from->copy()->subDay();
         $prevFrom = $prevTo->copy()->subDays($days - 1);
         $branchId = $data['branch_id'] ?? null;
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
 
-        $salesBase = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($branchId) {
+        $salesBase = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($branchId, $orgId) {
             $query = DB::table('sales')
                 ->where('status', 'completed')
                 ->where('archived', 0)
                 ->whereDate('completed_at', '>=', $start->toDateString())
                 ->whereDate('completed_at', '<=', $end->toDateString())
+                ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
                 ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
 
             return CentrixSalesScope::excludeLegacyMaterialized($query);
@@ -146,6 +148,7 @@ class ReportController extends Controller
         $plBase = fn (\Carbon\Carbon $start, \Carbon\Carbon $end) => DB::table('v_profit_loss_summary')
             ->where('period', '>=', $start->toDateString())
             ->where('period', '<=', $end->toDateString())
+            ->when($orgId, fn ($q) => $q->whereIn('branch_id', $this->organizationBranchIds($orgId)))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
 
         $grossProfit = (float) $plBase($from, $to)->sum('gross_profit');
@@ -154,6 +157,7 @@ class ReportController extends Controller
         $receivables = (float) DB::table('customer_invoices')
             ->whereNull('deleted_at')
             ->where('balance_due', '>', 0)
+            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->sum('balance_due');
 
@@ -162,6 +166,7 @@ class ReportController extends Controller
                 ->where('status', 'completed')
                 ->where('archived', 0)
                 ->where('is_credit_sale', 1)
+                ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
                 ->whereDate('completed_at', '>=', $from->toDateString())
                 ->whereDate('completed_at', '<=', $to->toDateString())
                 ->when($branchId, fn ($q) => $q->where('branch_id', $branchId)),
@@ -179,12 +184,14 @@ class ReportController extends Controller
         $prevReceivables = max(0, $receivables - $creditIssued + $paymentsCollected);
 
         $inventoryValue = (float) DB::table('v_stock_valuation')
+            ->when($orgId, fn ($q) => $q->whereIn('branch_id', $this->organizationBranchIds($orgId)))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->sum('retail_value');
 
         $receiptValue = (float) DB::table('stock_receipts')
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
+            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->selectRaw('SUM(units_received * COALESCE(cost_price, 0)) as total')
             ->value('total');
@@ -192,6 +199,7 @@ class ReportController extends Controller
         $prevReceiptValue = (float) DB::table('stock_receipts')
             ->whereDate('created_at', '>=', $prevFrom->toDateString())
             ->whereDate('created_at', '<=', $prevTo->toDateString())
+            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->selectRaw('SUM(units_received * COALESCE(cost_price, 0)) as total')
             ->value('total');
@@ -231,6 +239,7 @@ class ReportController extends Controller
         $topProducts = DB::table('v_sales_by_product')
             ->where('sale_date', '>=', $from->toDateString())
             ->where('sale_date', '<=', $to->toDateString())
+            ->when($orgId, fn ($q) => $q->whereIn('branch_id', $this->organizationBranchIds($orgId)))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->selectRaw('product_code, product_name, SUM(total_revenue) as revenue')
             ->groupBy('product_code', 'product_name')
@@ -467,17 +476,20 @@ class ReportController extends Controller
 
     public function stockOnHand(Request $request)
     {
-        return response()->json($this->paginatedStockReport(
-            $request,
-            'v_stock_on_hand',
-            ['branch_id', 'product_code'],
-        ));
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if (! $orgId) {
+            return response()->json(['data' => [], 'total' => 0]);
+        }
+
+        return response()->json(
+            app(\App\Services\Inventory\StockOnHandReportService::class)->paginate($request, $orgId),
+        );
     }
 
     public function lowStock(Request $request)
     {
-        $orgId = (int) ($request->user()?->organization_id ?? 0);
-        if ($orgId <= 0) {
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if (! $orgId) {
             return response()->json(['data' => [], 'total' => 0]);
         }
 
@@ -489,6 +501,10 @@ class ReportController extends Controller
     public function stockMovement(Request $request)
     {
         $q = \App\Models\InventoryTransaction::query();
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if ($orgId) {
+            $q->whereIn('branch_id', $this->organizationBranchIds($orgId));
+        }
         foreach (['branch_id', 'product_code', 'transaction_type', 'stock_location'] as $col) {
             if ($request->filled($col)) {
                 $q->where($col, $request->input($col));
@@ -969,7 +985,10 @@ class ReportController extends Controller
 
     protected function reportFromView(string $view, array $filters, array $allowedCols)
     {
+        $request = request();
         $q = DB::table($view);
+        $this->scopeReportQueryToOrganization($q, $request, $view, $allowedCols);
+
         foreach ($allowedCols as $col) {
             if (isset($filters[$col]) && $filters[$col] !== '') {
                 $q->where($col, $filters[$col]);
@@ -1067,6 +1086,7 @@ class ReportController extends Controller
     {
         $filters = $this->filters($request);
         $q = DB::table($view);
+        $this->scopeReportQueryToOrganization($q, $request, $view, $allowedCols);
 
         foreach ($allowedCols as $col) {
             if (isset($filters[$col]) && $filters[$col] !== '') {
@@ -1180,5 +1200,64 @@ class ReportController extends Controller
                 'r.max_qty_measure', 'r.markup_price', 'r.wholesale_markup_price', 'r.min_uom_measure',
             ])
             ->get();
+    }
+
+    /** @return list<int> */
+    protected function organizationBranchIds(?int $organizationId): array
+    {
+        if (! $organizationId) {
+            return [];
+        }
+
+        return DB::table('branches')
+            ->where('organization_id', $organizationId)
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    protected function scopeReportQueryToOrganization($query, Request $request, string $view, array $allowedCols): void
+    {
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if (! $orgId) {
+            return;
+        }
+
+        if (in_array('branch_id', $allowedCols, true)) {
+            $query->whereIn('branch_id', $this->organizationBranchIds($orgId));
+
+            return;
+        }
+
+        if ($view === 'v_sales_by_customer') {
+            $query->whereIn('customer_num', function ($sub) use ($orgId) {
+                $sub->select('customer_num')
+                    ->from('customers')
+                    ->where('organization_id', $orgId)
+                    ->whereNull('deleted_at');
+            });
+
+            return;
+        }
+
+        if ($view === 'v_open_lpo_lines') {
+            $query->whereIn('supplier_id', function ($sub) use ($orgId) {
+                $sub->select('id')
+                    ->from('suppliers')
+                    ->where('organization_id', $orgId)
+                    ->whereNull('deleted_at');
+            });
+
+            return;
+        }
+
+        if (in_array('product_code', $allowedCols, true)) {
+            $query->whereIn('product_code', function ($sub) use ($orgId) {
+                $sub->select('product_code')
+                    ->from('products')
+                    ->where('organization_id', $orgId)
+                    ->whereNull('deleted_at');
+            });
+        }
     }
 }

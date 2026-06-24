@@ -75,7 +75,85 @@ class MobileFieldAttendanceTest extends TestCase
         $this->assertDatabaseHas('mobile_rep_attendance_sessions', [
             'id' => $sessionId,
             'sign_out_latitude' => -1.2922,
+            'close_reason' => 'sign_out',
         ]);
+    }
+
+    public function test_suspend_and_resume_same_day_session(): void
+    {
+        Storage::fake('public');
+
+        $user = $this->makeMobileUser();
+        $this->enableFieldAttendance($user);
+        $token = $this->loginMobile($user);
+
+        $signIn = $this->withToken($token)->post('/api/v1/mobile/attendance/sign-in', [
+            'photo' => UploadedFile::fake()->image('sign-in.jpg'),
+            'latitude' => -1.292100,
+            'longitude' => 36.821900,
+        ]);
+
+        $signIn->assertCreated();
+        $sessionId = $signIn->json('session.id');
+
+        $this->withToken($token)
+            ->postJson('/api/v1/mobile/attendance/suspend')
+            ->assertOk()
+            ->assertJsonPath('session.is_suspended', true)
+            ->assertJsonPath('session.is_active', false);
+
+        $this->assertDatabaseHas('mobile_rep_attendance_sessions', [
+            'id' => $sessionId,
+            'sign_out_at' => null,
+        ]);
+        $this->assertNotNull(
+            MobileRepAttendanceSession::findOrFail($sessionId)->suspended_at,
+        );
+
+        $this->withToken($token)
+            ->postJson('/api/v1/mobile/attendance/resume')
+            ->assertOk()
+            ->assertJsonPath('session.is_active', true)
+            ->assertJsonPath('session.is_suspended', false);
+
+        $this->assertNull(
+            MobileRepAttendanceSession::findOrFail($sessionId)->suspended_at,
+        );
+    }
+
+    public function test_idle_scheduler_closes_suspended_session_with_reason(): void
+    {
+        Storage::fake('public');
+
+        $user = $this->makeMobileUser();
+        $this->enableFieldAttendance($user);
+        $token = $this->loginMobile($user);
+
+        $signIn = $this->withToken($token)->post('/api/v1/mobile/attendance/sign-in', [
+            'photo' => UploadedFile::fake()->image('sign-in.jpg'),
+            'latitude' => -1.292100,
+            'longitude' => 36.821900,
+        ]);
+
+        $sessionId = $signIn->json('session.id');
+
+        $this->withToken($token)
+            ->postJson('/api/v1/mobile/attendance/suspend')
+            ->assertOk();
+
+        $session = MobileRepAttendanceSession::findOrFail($sessionId);
+        $workBeforeClose = app(\App\Services\Sales\MobileFieldAttendanceService::class)
+            ->workSeconds($session);
+
+        $closed = app(\App\Services\Sales\MobileFieldAttendanceService::class)
+            ->closeIdleSessions(now());
+
+        $this->assertSame(1, $closed);
+
+        $session->refresh();
+        $this->assertNotNull($session->sign_out_at);
+        $this->assertSame('idle_end_of_day', $session->close_reason);
+        $this->assertSame($workBeforeClose, $session->accumulated_work_seconds);
     }
 
     public function test_sign_in_rejected_when_feature_disabled(): void

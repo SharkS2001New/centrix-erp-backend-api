@@ -5,7 +5,9 @@ use App\Http\Controllers\Api\V1\AttendanceClockDeviceController;
 use App\Http\Controllers\Api\V1\AttendanceMobileDeviceController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
+use App\Http\Controllers\Api\V1\BackgroundJobDispatchController;
 use App\Http\Controllers\Api\V1\BackgroundTaskController;
+use App\Http\Controllers\Api\V1\PaginatedFetchController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\CartLineController;
 use App\Http\Controllers\Api\V1\CategoryController;
@@ -191,6 +193,12 @@ Route::prefix('v1')->group(function () {
 
         Route::get('admin/organizations/provision-options', [OrganizationProvisionController::class, 'options'])
             ->middleware(['erp.super_admin']);
+        Route::post('background-tasks/paginated-fetch', [PaginatedFetchController::class, 'store']);
+        Route::post('background-tasks/report-export', [BackgroundJobDispatchController::class, 'storeReportExport']);
+        Route::post('background-tasks/report-run', [BackgroundJobDispatchController::class, 'storeReportRun']);
+        Route::post('background-tasks/report-builder-preview', [BackgroundJobDispatchController::class, 'storeReportBuilderPreview']);
+        Route::post('background-tasks/{id}/cancel', [BackgroundTaskController::class, 'cancel']);
+        Route::get('background-tasks/{id}/download', [BackgroundTaskController::class, 'download']);
         Route::get('background-tasks/{id}', [BackgroundTaskController::class, 'show']);
 
         Route::get('admin/organizations', [OrganizationProvisionController::class, 'index'])

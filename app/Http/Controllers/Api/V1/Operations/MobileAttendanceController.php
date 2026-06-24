@@ -68,6 +68,42 @@ class MobileAttendanceController extends Controller
         ], 201);
     }
 
+    /** POST /mobile/attendance/suspend — pause session on app logout without signing out. */
+    public function suspend(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        try {
+            $session = $this->attendance->suspend($user, $gate);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Session suspended.',
+            'session' => $this->attendance->serializeSession($session),
+        ]);
+    }
+
+    /** POST /mobile/attendance/resume — continue a same-day suspended session after login. */
+    public function resume(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        try {
+            $session = $this->attendance->resume($user, $gate);
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json([
+            'message' => 'Session resumed.',
+            'session' => $this->attendance->serializeSession($session),
+        ]);
+    }
+
     /** POST /mobile/attendance/sign-out */
     public function signOut(Request $request)
     {

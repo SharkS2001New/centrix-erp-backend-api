@@ -9,7 +9,6 @@ use App\Models\WorkShift;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
-use App\Services\Sales\CentrixSalesScope;
 use App\Services\Reports\ReportBuilderService;
 use Illuminate\Support\Facades\DB;
 
@@ -422,14 +421,13 @@ class AiSystemContextBuilder
 
         return [
             'period' => ['from' => $from, 'to' => $to],
-            'total_sales_kes' => (float) CentrixSalesScope::excludeLegacyMaterialized(
-                DB::table('sales')
-                    ->where('organization_id', $user->organization_id)
-                    ->where('status', 'completed')
-                    ->where('archived', 0)
-                    ->whereDate('completed_at', '>=', $from)
-                    ->whereDate('completed_at', '<=', $to),
-            )->sum('order_total'),
+            'total_sales_kes' => (float) DB::table('sales')
+                ->where('organization_id', $user->organization_id)
+                ->where('status', 'completed')
+                ->where('archived', 0)
+                ->whereDate('completed_at', '>=', $from)
+                ->whereDate('completed_at', '<=', $to)
+                ->sum('order_total'),
         ];
     }
 
