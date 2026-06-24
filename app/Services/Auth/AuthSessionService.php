@@ -112,9 +112,13 @@ class AuthSessionService
             ]);
         }
 
-        $currentUser->currentAccessToken()?->delete();
-
-        return $this->issueSession($account, $clientId, forceLogout: false, loginChannel: $loginChannel);
+        return $this->issueSession(
+            $account,
+            $clientId,
+            forceLogout: false,
+            loginChannel: $loginChannel,
+            skipSingleSessionCheck: true,
+        );
     }
 
     /**
@@ -136,6 +140,33 @@ class AuthSessionService
             ]);
         }
 
+        $loginChannel = $this->loginChannels->normalizeChannel($loginChannel);
+        $this->loginChannels->assertCanLogin($account->effectiveUser(), $loginChannel);
+        $this->assertLoginChannelPermission($account->effectiveUser(), $loginChannel);
+        $this->assertOrganizationAllowsLoginChannel($account->organization, $loginChannel);
+
+        /** @var PersonalAccessToken|null $currentToken */
+        $currentToken = $currentUser->currentAccessToken();
+        $currentChannel = $currentToken?->login_channel ?? UserLoginChannelService::BACKOFFICE;
+
+        // Same API channel (e.g. backoffice → HR): keep the token, only update workspace.
+        if ($currentChannel === $loginChannel && $currentToken instanceof PersonalAccessToken) {
+            if ($activeWorkspaceId !== null) {
+                $currentToken->forceFill(['active_workspace_id' => $activeWorkspaceId])->save();
+            }
+
+            $memberships = $this->resolver->membershipsForCanonicalUser($account->canonicalUserId());
+            $effective = $account->effectiveUser();
+
+            return [
+                'token' => null,
+                'user' => $effective,
+                'organization' => $account->organization,
+                'memberships' => $memberships,
+                'must_change_password' => (bool) $effective->must_change_password,
+            ];
+        }
+
         $currentUser->currentAccessToken()?->delete();
 
         return $this->issueSession(
@@ -144,6 +175,7 @@ class AuthSessionService
             forceLogout: false,
             loginChannel: $loginChannel,
             activeWorkspaceId: $activeWorkspaceId,
+            skipSingleSessionCheck: true,
         );
     }
 
@@ -156,6 +188,7 @@ class AuthSessionService
         bool $forceLogout,
         string $loginChannel,
         ?string $activeWorkspaceId = null,
+        bool $skipSingleSessionCheck = false,
     ): array {
         $authUser = $account->authUser;
         $effective = $account->effectiveUser();
@@ -177,7 +210,9 @@ class AuthSessionService
             $this->pruneStaleTokens($authUser);
             $authUser->tokens()->where('name', $clientId)->delete();
             $this->revokeAbandonedTokensElsewhere($authUser, $clientId);
-            $this->assertNoActiveSessionElsewhere($authUser, $clientId, $loginChannel);
+            if (! $skipSingleSessionCheck) {
+                $this->assertNoActiveSessionElsewhere($authUser, $clientId, $loginChannel);
+            }
         }
 
         $authUser->forceFill(['last_login' => now()])->save();

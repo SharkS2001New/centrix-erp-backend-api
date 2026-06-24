@@ -14,22 +14,56 @@ class AttendanceMobileDeviceService
         protected AttendanceBranchPremisesService $branchPremises,
     ) {}
 
-    public function normalizeIdentifier(string $identifier): string
+    public function normalizeIdentifier(string $identifier, ?string $platform = null): string
     {
-        return mb_strtolower(trim($identifier));
+        $normalized = mb_strtolower(trim($identifier));
+        if ($normalized === '') {
+            return '';
+        }
+
+        if (preg_match('/^(android|ios):(.+)$/', $normalized, $matches) === 1) {
+            return $matches[1].':'.trim($matches[2]);
+        }
+
+        $platform = $platform !== null ? mb_strtolower(trim($platform)) : '';
+        if ($platform === 'android' || $platform === 'ios') {
+            return $platform.':'.$normalized;
+        }
+
+        return $normalized;
+    }
+
+    /** @return list<string> */
+    public function identifierLookupKeys(string $identifier, ?string $platform = null): array
+    {
+        $canonical = $this->normalizeIdentifier($identifier, $platform);
+        if ($canonical === '') {
+            return [];
+        }
+
+        $keys = [$canonical];
+
+        if (preg_match('/^(android|ios):(.+)$/', $canonical, $matches) === 1) {
+            $keys[] = $matches[2];
+        } else {
+            $keys[] = 'android:'.$canonical;
+            $keys[] = 'ios:'.$canonical;
+        }
+
+        return array_values(array_unique($keys));
     }
 
     public function findRegisteredDevice(Organization $organization, string $deviceIdentifier): ?AttendanceMobileDevice
     {
-        $normalized = $this->normalizeIdentifier($deviceIdentifier);
-        if ($normalized === '') {
+        $keys = $this->identifierLookupKeys($deviceIdentifier);
+        if ($keys === []) {
             return null;
         }
 
         return AttendanceMobileDevice::query()
             ->with('branch:id,branch_name,branch_code')
             ->where('organization_id', $organization->id)
-            ->where('device_identifier', $normalized)
+            ->whereIn('device_identifier', $keys)
             ->where('is_active', true)
             ->first();
     }
@@ -94,12 +128,22 @@ class AttendanceMobileDeviceService
         ?string $label = null,
         ?string $platform = null,
     ): AttendanceMobileDevice {
-        $normalized = $this->normalizeIdentifier($deviceIdentifier);
+        $normalized = $this->normalizeIdentifier($deviceIdentifier, $platform);
         if ($normalized === '') {
             throw new InvalidArgumentException('Device identifier is required.');
         }
 
         $this->assertBranchInOrganization($organization, $branchId);
+
+        $lookupKeys = $this->identifierLookupKeys($deviceIdentifier, $platform);
+        $existing = AttendanceMobileDevice::query()
+            ->where('organization_id', $organization->id)
+            ->whereIn('device_identifier', $lookupKeys)
+            ->first();
+
+        if ($existing !== null && $existing->device_identifier !== $normalized) {
+            $existing->update(['device_identifier' => $normalized]);
+        }
 
         return AttendanceMobileDevice::query()->updateOrCreate(
             [

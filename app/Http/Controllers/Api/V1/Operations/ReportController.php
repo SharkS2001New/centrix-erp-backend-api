@@ -931,7 +931,13 @@ class ReportController extends Controller
 
     public function priceList(Request $request)
     {
-        return response()->json($this->buildPriceList($request->input('branch_id')));
+        $filters = $this->filters($request);
+        $perPage = min(max((int) ($filters['per_page'] ?? 50), 1), 200);
+        $page = max((int) $request->input('page', 1), 1);
+
+        return response()->json(
+            $this->buildPriceList($request, $filters, $page, $perPage)
+        );
     }
 
     public function customerStatement(int $customerNum)
@@ -1189,17 +1195,42 @@ class ReportController extends Controller
         ];
     }
 
-    protected function buildPriceList(?int $branchId = null)
+    protected function buildPriceList(Request $request, array $filters, int $page, int $perPage)
     {
-        return DB::table('products as p')
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+
+        $query = DB::table('products as p')
             ->join('uoms as u', 'p.unit_id', '=', 'u.id')
             ->leftJoin('retail_package_settings as r', 'p.product_code', '=', 'r.product_code')
             ->whereNull('p.deleted_at')
             ->select([
-                'p.product_code', 'p.product_name', 'p.unit_price', 'u.uom_type', 'u.conversion_factor',
-                'r.max_qty_measure', 'r.markup_price', 'r.wholesale_markup_price', 'r.min_uom_measure',
+                'p.product_code',
+                'p.product_name',
+                'p.unit_price',
+                'p.sell_on_retail',
+                'u.uom_type',
+                'u.conversion_factor',
+                'u.measure_name',
+                'r.max_qty_measure',
+                'r.markup_price',
+                'r.wholesale_markup_price',
+                'r.min_uom_measure',
+                'r.pricing_tiers',
             ])
-            ->get();
+            ->orderBy('p.product_name');
+
+        if ($orgId) {
+            $query->where('p.organization_id', $orgId);
+        }
+
+        if (! empty($filters['branch_id'])) {
+            $query->where(function ($branchQuery) use ($filters) {
+                $branchQuery->where('p.branch_id', $filters['branch_id'])
+                    ->orWhereNull('p.branch_id');
+            });
+        }
+
+        return $query->paginate($perPage, ['*'], 'page', $page);
     }
 
     /** @return list<int> */

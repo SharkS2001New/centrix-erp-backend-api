@@ -69,4 +69,28 @@ class LowStockReportTest extends TestCase
         $this->assertNotNull($row);
         $this->assertSame(0.0, (float) $row['total_base_units']);
     }
+
+    public function test_price_list_report_returns_paginated_org_scoped_rows(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $product = Product::query()
+            ->where('organization_id', $admin->organization_id)
+            ->whereNull('deleted_at')
+            ->firstOrFail();
+
+        $response = $this->getJson('/api/v1/reports/price-list?per_page=50');
+        $response->assertOk();
+        $response->assertJsonStructure([
+            'data',
+            'current_page',
+            'last_page',
+            'per_page',
+            'total',
+        ]);
+
+        $codes = collect($response->json('data'))->pluck('product_code')->all();
+        $this->assertContains($product->product_code, $codes);
+    }
 }
