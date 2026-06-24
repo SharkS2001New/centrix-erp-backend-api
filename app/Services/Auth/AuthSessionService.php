@@ -136,6 +136,11 @@ class AuthSessionService
             ]);
         }
 
+        $loginChannel = $this->loginChannels->normalizeChannel($loginChannel);
+
+        // Workspace switch is an explicit takeover of the target channel on this account.
+        $account->authUser->tokens()->where('login_channel', $loginChannel)->delete();
+
         $currentUser->currentAccessToken()?->delete();
 
         return $this->issueSession(
@@ -144,6 +149,7 @@ class AuthSessionService
             forceLogout: false,
             loginChannel: $loginChannel,
             activeWorkspaceId: $activeWorkspaceId,
+            skipConcurrencyCheck: true,
         );
     }
 
@@ -156,6 +162,7 @@ class AuthSessionService
         bool $forceLogout,
         string $loginChannel,
         ?string $activeWorkspaceId = null,
+        bool $skipConcurrencyCheck = false,
     ): array {
         $authUser = $account->authUser;
         $effective = $account->effectiveUser();
@@ -177,7 +184,9 @@ class AuthSessionService
             $this->pruneStaleTokens($authUser);
             $authUser->tokens()->where('name', $clientId)->delete();
             $this->revokeAbandonedTokensElsewhere($authUser, $clientId);
-            $this->assertNoActiveSessionElsewhere($authUser, $clientId, $loginChannel);
+            if (! $skipConcurrencyCheck) {
+                $this->assertNoActiveSessionElsewhere($authUser, $clientId, $loginChannel);
+            }
         }
 
         $authUser->forceFill(['last_login' => now()])->save();

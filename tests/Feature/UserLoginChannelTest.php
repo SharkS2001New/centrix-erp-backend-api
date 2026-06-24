@@ -208,6 +208,36 @@ class UserLoginChannelTest extends TestCase
         ])->assertOk();
     }
 
+    public function test_switch_workspace_to_pos_succeeds_when_pos_session_active_elsewhere(): void
+    {
+        $user = $this->makeUser(['login_channels' => ['backoffice', 'pos', 'mobile']]);
+
+        $backoffice = $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'BACKOFFICE_BROWSER',
+            'login_channel' => 'backoffice',
+        ])->assertOk()->json();
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'POS_TERMINAL',
+            'login_channel' => 'pos',
+        ])->assertOk();
+
+        $this->withToken($backoffice['token'])
+            ->postJson('/api/v1/auth/switch-workspace', [
+                'client_id' => 'BACKOFFICE_BROWSER',
+                'login_channel' => 'pos',
+                'workspace_id' => 'pos',
+            ])
+            ->assertOk()
+            ->assertJsonPath('user.id', $user->id);
+    }
+
     protected function makeUser(array $overrides = []): User
     {
         $admin = User::where('username', 'admin')->firstOrFail();
