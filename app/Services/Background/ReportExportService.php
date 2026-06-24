@@ -10,6 +10,9 @@ use RuntimeException;
 
 class ReportExportService
 {
+    private const PDF_MAX_ROWS = 2500;
+
+    private const FILE_PROGRESS_CHUNK = 250;
     /**
      * @param  array<string, mixed>  $meta
      * @param  list<array{key: string, label: string, align?: string}>  $columns
@@ -26,6 +29,7 @@ class ReportExportService
         ?array $footerRow = null,
         int $organizationId = 0,
         string $taskId = '',
+        ?callable $onProgress = null,
     ): array {
         $format = strtolower($format);
         $safeBase = $this->sanitizeFilename($basename ?: 'report');
@@ -36,9 +40,9 @@ class ReportExportService
         }
 
         return match ($format) {
-            'csv' => $this->writeCsv($directory, $safeBase, $taskId, $meta, $columns, $rows),
-            'pdf', 'print' => $this->writePdf($directory, $safeBase, $taskId, $meta, $columns, $rows, $footerRow),
-            default => $this->writeXlsx($directory, $safeBase, $taskId, $meta, $columns, $rows, $footerRow),
+            'csv' => $this->writeCsv($directory, $safeBase, $taskId, $meta, $columns, $rows, $onProgress),
+            'pdf', 'print' => $this->writePdf($directory, $safeBase, $taskId, $meta, $columns, $rows, $footerRow, $onProgress),
+            default => $this->writeXlsx($directory, $safeBase, $taskId, $meta, $columns, $rows, $footerRow, $onProgress),
         };
     }
 
@@ -55,6 +59,7 @@ class ReportExportService
         array $meta,
         array $columns,
         array $rows,
+        ?callable $onProgress = null,
     ): array {
         $filename = $basename.'-'.$taskId.'.csv';
         $diskPath = $directory.'/'.$filename;
@@ -70,8 +75,12 @@ class ReportExportService
         }
         fputcsv($handle, []);
         fputcsv($handle, array_map(fn (array $col) => $col['label'], $columns));
-        foreach ($rows as $row) {
+        $total = count($rows);
+        foreach ($rows as $index => $row) {
             fputcsv($handle, array_map(fn (array $col) => $this->cellValue($row, $col), $columns));
+            if ($onProgress !== null && $total > 0 && ($index + 1) % self::FILE_PROGRESS_CHUNK === 0) {
+                $onProgress(88 + (int) floor((($index + 1) / $total) * 9), 'Writing CSV…');
+            }
         }
         fclose($handle);
 
@@ -98,6 +107,7 @@ class ReportExportService
         array $columns,
         array $rows,
         ?array $footerRow,
+        ?callable $onProgress = null,
     ): array {
         $filename = $basename.'-'.$taskId.'.xlsx';
         $diskPath = $directory.'/'.$filename;
@@ -117,13 +127,17 @@ class ReportExportService
         $sheet->fromArray(array_map(fn (array $col) => $col['label'], $columns), null, 'A'.$rowIndex);
         $rowIndex++;
 
-        foreach ($rows as $row) {
+        $total = count($rows);
+        foreach ($rows as $index => $row) {
             $sheet->fromArray(
                 array_map(fn (array $col) => $this->cellValue($row, $col), $columns),
                 null,
                 'A'.$rowIndex,
             );
             $rowIndex++;
+            if ($onProgress !== null && $total > 0 && ($index + 1) % self::FILE_PROGRESS_CHUNK === 0) {
+                $onProgress(88 + (int) floor((($index + 1) / $total) * 9), 'Writing Excel…');
+            }
         }
 
         if (is_array($footerRow) && $footerRow !== []) {
@@ -159,12 +173,35 @@ class ReportExportService
         array $columns,
         array $rows,
         ?array $footerRow,
+        ?callable $onProgress = null,
     ): array {
         $filename = $basename.'-'.$taskId.'.pdf';
         $diskPath = $directory.'/'.$filename;
         $absolute = storage_path('app/'.$diskPath);
 
-        $html = $this->buildPrintHtml($meta, $columns, $rows, $footerRow);
+        $exportRows = $rows;
+        $pdfTruncated = false;
+        if (count($exportRows) > self::PDF_MAX_ROWS) {
+            $exportRows = array_slice($exportRows, 0, self::PDF_MAX_ROWS);
+            $pdfTruncated = true;
+            $meta = array_merge($meta, [
+                'extra_lines' => array_merge(
+                    $meta['extra_lines'] ?? [],
+                    ['PDF limited to first '.self::PDF_MAX_ROWS.' rows. Use Excel or CSV for the full export.'],
+                ),
+            ]);
+        }
+
+        if ($onProgress !== null) {
+            $onProgress(89, 'Building PDF layout…');
+        }
+        $html = $this->buildPrintHtml($meta, $columns, $exportRows, $footerRow, $onProgress);
+
+        if ($onProgress !== null) {
+            $onProgress(96, 'Rendering PDF…');
+        }
+
+        @ini_set('memory_limit', '512M');
 
         $options = new Options;
         $options->set('isRemoteEnabled', false);
@@ -180,7 +217,8 @@ class ReportExportService
             'disk_path' => $diskPath,
             'filename' => $basename.'.pdf',
             'mime_type' => 'application/pdf',
-            'row_count' => count($rows),
+            'row_count' => count($exportRows),
+            'pdf_truncated' => $pdfTruncated,
         ];
     }
 
@@ -244,8 +282,13 @@ class ReportExportService
      * @param  list<array<string, mixed>>  $rows
      * @param  array<string, mixed>|null  $footerRow
      */
-    protected function buildPrintHtml(array $meta, array $columns, array $rows, ?array $footerRow): string
-    {
+    protected function buildPrintHtml(
+        array $meta,
+        array $columns,
+        array $rows,
+        ?array $footerRow,
+        ?callable $onProgress = null,
+    ): string {
         $escape = static fn ($value) => htmlspecialchars((string) $value, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
         $metaHtml = '';
         foreach ($this->metaLines($meta) as $index => $line) {
@@ -261,13 +304,17 @@ class ReportExportService
         }
 
         $body = '';
-        foreach ($rows as $row) {
+        $total = count($rows);
+        foreach ($rows as $index => $row) {
             $body .= '<tr>';
             foreach ($columns as $column) {
                 $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
                 $body .= '<td'.$class.'>'.$escape($this->cellValue($row, $column)).'</td>';
             }
             $body .= '</tr>';
+            if ($onProgress !== null && $total > 0 && ($index + 1) % self::FILE_PROGRESS_CHUNK === 0) {
+                $onProgress(90 + (int) floor((($index + 1) / $total) * 5), 'Building PDF rows…');
+            }
         }
 
         $foot = '';

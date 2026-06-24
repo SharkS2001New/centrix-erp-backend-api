@@ -70,6 +70,9 @@ class GenerateReportExportJob implements ShouldQueue
                 is_array($footerRow) ? $footerRow : null,
                 (int) $user->organization_id,
                 $task->id,
+                function (int $progress, string $message) use ($tasks, $task): void {
+                    $tasks->updateProgress($task, $progress, $message);
+                },
             );
 
             $tasks->updateProgress($task, 98, 'Almost done…');
