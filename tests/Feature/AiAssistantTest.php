@@ -212,6 +212,27 @@ class AiAssistantTest extends TestCase
         $this->assertNotEmpty($unitField['options'] ?? []);
     }
 
+    public function test_customer_form_spec_matches_manual_customer_fields(): void
+    {
+        $spec = app(\App\Services\Ai\AiFormSpecBuilder::class)->forAction($this->user, [
+            'type' => 'create_customer',
+            'params' => ['customer_name' => 'Test Shop'],
+        ]);
+
+        $this->assertNotNull($spec);
+        $names = collect($spec['fields'])->pluck('name')->all();
+        $this->assertContains('branch_id', $names);
+        $this->assertContains('customer_name', $names);
+        $this->assertContains('customer_type', $names);
+        $this->assertContains('route_id', $names);
+
+        $typeField = collect($spec['fields'])->firstWhere('name', 'customer_type');
+        $typeValues = collect($typeField['options'] ?? [])->pluck('value')->all();
+        $this->assertContains('regular', $typeValues);
+        $this->assertContains('debtor', $typeValues);
+        $this->assertContains('route', $typeValues);
+    }
+
     public function test_regular_user_cannot_teach_via_api(): void
     {
         $this->postJson('/api/v1/ai/teach', [
