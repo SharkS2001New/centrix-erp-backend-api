@@ -112,6 +112,8 @@ class AuthSessionService
             ]);
         }
 
+        $currentUser->currentAccessToken()?->delete();
+
         return $this->issueSession(
             $account,
             $clientId,
