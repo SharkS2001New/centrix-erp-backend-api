@@ -4,8 +4,9 @@ FROM php:8.4-apache
 RUN apt-get update && apt-get install -y \
     git \
     zip \
-    curl \
     unzip \
+    curl \
+    libzip-dev \
     default-mysql-client \
     libicu-dev \
     libbz2-dev \
@@ -25,6 +26,7 @@ RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/i
         calendar \
         pdo_mysql \
         gd \
+        zip \
     && pecl install redis \
     && docker-php-ext-enable redis
 
