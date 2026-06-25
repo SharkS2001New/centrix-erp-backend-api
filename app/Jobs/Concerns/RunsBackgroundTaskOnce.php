@@ -25,7 +25,9 @@ trait RunsBackgroundTaskOnce
             return true;
         }
 
-        return in_array($task->status, ['completed', 'failed', 'cancelled'], true);
+        $status = $task->fresh()?->status ?? $task->status;
+
+        return in_array($status, ['completed', 'failed', 'cancelled'], true);
     }
 
     protected function failBackgroundTask(
@@ -44,5 +46,26 @@ trait RunsBackgroundTaskOnce
         ]);
 
         $tasks->markFailed($task, $e->getMessage());
+    }
+
+    public function failed(?\Throwable $e = null): void
+    {
+        $task = BackgroundTask::query()->find($this->taskId);
+        if ($task === null || in_array($task->status, ['completed', 'failed', 'cancelled'], true)) {
+            return;
+        }
+
+        $message = $e?->getMessage() ?: 'Background task failed before it could finish.';
+        app(BackgroundTaskService::class)->markFailed($task, $message);
+    }
+
+    protected function reportProgress(
+        BackgroundTaskService $tasks,
+        BackgroundTask $task,
+        int $progress,
+        ?string $message = null,
+    ): void {
+        $tasks->assertNotCancelled($task);
+        $tasks->updateProgress($task, $progress, $message);
     }
 }

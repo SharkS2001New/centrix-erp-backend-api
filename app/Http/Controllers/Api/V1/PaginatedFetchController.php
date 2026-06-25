@@ -25,6 +25,8 @@ class PaginatedFetchController extends Controller
 
         $this->paginator->assertAllowedPath($data['path']);
 
+        $this->tasks->assertNoBlockingTask($request->user());
+
         $task = $this->tasks->create('paginated_fetch', $request->user(), [
             'path' => $data['path'],
             'search_params' => $data['search_params'] ?? [],

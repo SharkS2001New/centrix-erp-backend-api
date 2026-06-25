@@ -6,7 +6,6 @@ use App\Http\Controllers\Controller;
 use App\Jobs\GenerateReportExportJob;
 use App\Jobs\ReportBuilderPreviewJob;
 use App\Jobs\ReportRunJob;
-use App\Models\BackgroundTask;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
 use Illuminate\Http\Request;
@@ -48,13 +47,7 @@ class BackgroundJobDispatchController extends Controller
         }
 
         $user = $request->user();
-        $hasActiveTask = BackgroundTask::query()
-            ->where('user_id', $user->id)
-            ->where('organization_id', (int) $user->organization_id)
-            ->whereIn('status', ['pending', 'running'])
-            ->exists();
-
-        abort_if($hasActiveTask, 409, 'Another background task is already running. Wait for it to finish.');
+        $this->tasks->assertNoBlockingTask($user);
 
         $task = $this->tasks->create('report_export', $user, $data);
         GenerateReportExportJob::dispatch($task->id);
@@ -74,6 +67,8 @@ class BackgroundJobDispatchController extends Controller
         ]);
 
         $this->paginator->assertAllowedPath($data['path']);
+
+        $this->tasks->assertNoBlockingTask($request->user());
 
         $task = $this->tasks->create('report_run', $request->user(), [
             'path' => $data['path'],
@@ -96,6 +91,8 @@ class BackgroundJobDispatchController extends Controller
             'filters' => ['sometimes', 'array'],
             'workspace_id' => ['nullable', 'string', 'max:50'],
         ]);
+
+        $this->tasks->assertNoBlockingTask($request->user());
 
         $task = $this->tasks->create('report_builder_preview', $request->user(), [
             'spec' => $data['spec'],

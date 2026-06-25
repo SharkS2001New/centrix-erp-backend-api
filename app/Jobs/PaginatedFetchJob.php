@@ -49,8 +49,9 @@ class PaginatedFetchJob implements ShouldBeUnique, ShouldQueue
 
             $tasks->updateProgress($task, 10, 'Started fetching…');
             $result = $paginator->fetchAll($path, $searchParams, $user, 500, 10000, function (int $progress, string $message) use ($tasks, $task): void {
-                $tasks->updateProgress($task, $progress, $message);
+                $this->reportProgress($tasks, $task, $progress, $message);
             }, $task);
+            $tasks->assertNotCancelled($task);
             $tasks->updateProgress($task, 95, 'Almost done…');
 
             $tasks->markCompleted($task, $result);

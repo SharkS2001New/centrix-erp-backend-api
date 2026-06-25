@@ -7,6 +7,7 @@ use App\Models\BackgroundTask;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
+use App\Services\Background\ProductCatalogExportFetcher;
 use App\Services\Background\ReportExportService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -27,6 +28,7 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
     public function handle(
         BackgroundTaskService $tasks,
         InternalApiPaginator $paginator,
+        ProductCatalogExportFetcher $productCatalog,
         ReportExportService $exporter,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
@@ -56,10 +58,10 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
             }
 
             $onProgress = function (int $progress, string $message) use ($tasks, $task): void {
-                $tasks->updateProgress($task, $progress, $message);
+                $this->reportProgress($tasks, $task, $progress, $message);
             };
 
-            $rows = $this->resolveRows($payload, $source, $paginator, $user, $task, $tasks, $onProgress);
+            $rows = $this->resolveRows($payload, $source, $paginator, $productCatalog, $user, $task, $tasks, $onProgress);
             $tasks->assertNotCancelled($task);
             $tasks->updateProgress($task, 88, 'Generating file…');
 
@@ -73,10 +75,11 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
                 (int) $user->organization_id,
                 $task->id,
                 function (int $progress, string $message) use ($tasks, $task): void {
-                    $tasks->updateProgress($task, $progress, $message);
+                    $this->reportProgress($tasks, $task, $progress, $message);
                 },
             );
 
+            $tasks->assertNotCancelled($task);
             $tasks->updateProgress($task, 98, 'Almost done…');
             $tasks->markCompleted($task, array_merge($file, [
                 'truncated' => (bool) ($payload['truncated'] ?? false),
@@ -95,6 +98,7 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
         array $payload,
         string $source,
         InternalApiPaginator $paginator,
+        ProductCatalogExportFetcher $productCatalog,
         User $user,
         BackgroundTask $task,
         BackgroundTaskService $tasks,
@@ -126,7 +130,7 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
                 $searchParams = [];
             }
             $onProgress(8, 'Fetching products…');
-            $result = $paginator->fetchAll('/products', $searchParams, $user, 500, 10000, $onProgress, $task);
+            $result = $productCatalog->fetchAll($searchParams, $user, 500, 10000, $onProgress, $task);
 
             return $this->mapProductCatalogRows($result['rows']);
         }

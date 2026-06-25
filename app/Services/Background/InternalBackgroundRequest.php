@@ -32,8 +32,12 @@ class InternalBackgroundRequest
 
         try {
             if ($response->getStatusCode() >= 400) {
+                $detail = $this->extractErrorMessage($response->getContent());
+
                 throw new RuntimeException(
-                    'Internal API request failed (HTTP '.$response->getStatusCode().').'
+                    $detail !== null
+                        ? $detail
+                        : 'Internal API request failed (HTTP '.$response->getStatusCode().').'
                 );
             }
 
@@ -43,5 +47,17 @@ class InternalBackgroundRequest
         } finally {
             $kernel->terminate($request, $response);
         }
+    }
+
+    protected function extractErrorMessage(string $content): ?string
+    {
+        $payload = json_decode($content, true);
+        if (! is_array($payload)) {
+            return null;
+        }
+
+        $message = $payload['message'] ?? null;
+
+        return is_string($message) && $message !== '' ? $message : null;
     }
 }

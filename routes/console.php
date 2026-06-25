@@ -11,3 +11,7 @@ Schedule::command('erp:database-backup')
 Schedule::command('erp:release-expired-stock-reservations')
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+Schedule::command('erp:recover-stale-background-tasks')
+    ->everyFiveMinutes()
+    ->withoutOverlapping();

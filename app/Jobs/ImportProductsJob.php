@@ -2,17 +2,18 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
 
 class ImportProductsJob implements ShouldQueue
 {
     use Queueable;
+    use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
 
@@ -23,7 +24,7 @@ class ImportProductsJob implements ShouldQueue
     public function handle(BackgroundTaskService $tasks): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($this->shouldSkipBackgroundTask($task)) {
             return;
         }
 
@@ -45,6 +46,10 @@ class ImportProductsJob implements ShouldQueue
             $total = count($rows);
 
             foreach ($rows as $index => $row) {
+                if (($index + 1) % 5 === 0) {
+                    $tasks->assertNotCancelled($task);
+                }
+
                 if (! is_array($row)) {
                     continue;
                 }
@@ -73,22 +78,22 @@ class ImportProductsJob implements ShouldQueue
                 }
 
                 if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $tasks->updateProgress($task, (int) floor((($index + 1) / $total) * 100));
+                    $this->reportProgress(
+                        $tasks,
+                        $task,
+                        (int) floor((($index + 1) / $total) * 100),
+                    );
                 }
             }
 
+            $tasks->assertNotCancelled($task);
             $tasks->markCompleted($task, [
                 'created' => $created,
                 'failed' => count($failures),
                 'failures' => array_slice($failures, 0, 50),
             ]);
         } catch (\Throwable $e) {
-            Log::warning('ImportProductsJob failed', [
-                'task_id' => $this->taskId,
-                'error' => $e->getMessage(),
-            ]);
-            $tasks->markFailed($task, $e->getMessage());
-            throw $e;
+            $this->failBackgroundTask($tasks, $task, $e, 'ImportProductsJob');
         }
     }
 

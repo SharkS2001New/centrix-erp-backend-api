@@ -3,6 +3,7 @@
 namespace App\Services\Background;
 
 use App\Models\BackgroundTask;
+use App\Models\PersonalAccessToken;
 use App\Models\User;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
@@ -62,7 +63,7 @@ class InternalApiPaginator
         ?BackgroundTask $cancelTask = null,
     ): array {
         $normalizedPath = $this->assertAllowedPath($path);
-        $token = $user->createToken('background-fetch', ['*'], now()->addMinutes(10));
+        $token = $this->createBackgroundToken($user);
 
         try {
             $all = [];
@@ -135,7 +136,7 @@ class InternalApiPaginator
         ?BackgroundTask $cancelTask = null,
     ): array {
         $normalizedPath = $this->assertAllowedPath($path);
-        $token = $user->createToken('background-fetch', ['*'], now()->addMinutes(10));
+        $token = $this->createBackgroundToken($user);
         $legacyAll = [];
         $legacyPage = 1;
         $legacyLastPage = 1;
@@ -197,6 +198,21 @@ class InternalApiPaginator
             $onProgress,
             $cancelTask,
         );
+    }
+
+    protected function createBackgroundToken(User $user): NewAccessToken
+    {
+        $token = $user->createToken('background-fetch', ['*'], now()->addMinutes(10));
+        /** @var PersonalAccessToken|null $accessToken */
+        $accessToken = $token->accessToken;
+
+        if ($accessToken !== null && $user->organization_id) {
+            $accessToken->forceFill([
+                'organization_id' => (int) $user->organization_id,
+            ])->save();
+        }
+
+        return $token;
     }
 
     protected function revokeToken(NewAccessToken $token): void

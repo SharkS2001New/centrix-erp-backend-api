@@ -15,6 +15,8 @@ class BackgroundTaskController extends Controller
     /** GET /background-tasks/{id} */
     public function show(Request $request, string $id)
     {
+        $this->tasks->recoverStaleTasksForUser($request->user());
+
         $task = $this->tasks->findForUser($id, $request->user());
         abort_if($task === null, 404, 'Background task not found.');
 
@@ -45,7 +47,7 @@ class BackgroundTaskController extends Controller
             ], 422);
         }
 
-        $this->tasks->markCancelled($task);
+        $this->tasks->cancelTask($task);
 
         return response()->json([
             'message' => 'Background task cancelled.',

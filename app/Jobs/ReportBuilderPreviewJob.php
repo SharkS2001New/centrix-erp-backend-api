@@ -2,18 +2,19 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Reports\ReportBuilderService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
 class ReportBuilderPreviewJob implements ShouldQueue
 {
     use Queueable;
+    use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
 
@@ -24,7 +25,7 @@ class ReportBuilderPreviewJob implements ShouldQueue
     public function handle(BackgroundTaskService $tasks, ReportBuilderService $builder): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($this->shouldSkipBackgroundTask($task)) {
             return;
         }
 
@@ -46,13 +47,14 @@ class ReportBuilderPreviewJob implements ShouldQueue
             $workspaceId = isset($payload['workspace_id']) ? (string) $payload['workspace_id'] : null;
             $filters = is_array($payload['filters'] ?? null) ? $payload['filters'] : [];
 
-            $tasks->updateProgress($task, 25, 'Loading data…');
+            $this->reportProgress($tasks, $task, 25, 'Loading data…');
             $validatedSpec = $builder->validateSpec($spec, $workspaceId);
             $tasks->assertNotCancelled($task);
 
-            $tasks->updateProgress($task, 55, 'Please wait…');
+            $this->reportProgress($tasks, $task, 55, 'Please wait…');
             $result = $builder->run($user, $validatedSpec, $filters, $workspaceId);
-            $tasks->updateProgress($task, 92, 'Almost done…');
+            $tasks->assertNotCancelled($task);
+            $this->reportProgress($tasks, $task, 92, 'Almost done…');
 
             $rows = $result['data'] ?? [];
             if (! is_array($rows)) {
@@ -65,15 +67,7 @@ class ReportBuilderPreviewJob implements ShouldQueue
                 'meta' => $result['meta'] ?? null,
             ]);
         } catch (\Throwable $e) {
-            if ($task->fresh()?->status === 'cancelled') {
-                return;
-            }
-            Log::warning('ReportBuilderPreviewJob failed', [
-                'task_id' => $this->taskId,
-                'error' => $e->getMessage(),
-            ]);
-            $tasks->markFailed($task, $e->getMessage());
-            throw $e;
+            $this->failBackgroundTask($tasks, $task, $e, 'ReportBuilderPreviewJob');
         }
     }
 }

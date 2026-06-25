@@ -49,11 +49,12 @@ class ReportRunJob implements ShouldBeUnique, ShouldQueue
             }
 
             $onProgress = function (int $progress, string $message) use ($tasks, $task): void {
-                $tasks->updateProgress($task, $progress, $message);
+                $this->reportProgress($tasks, $task, $progress, $message);
             };
 
             $tasks->updateProgress($task, 10, 'Loading data…');
             $result = $paginator->fetchAll($path, $searchParams, $user, 500, 10000, $onProgress, $task);
+            $tasks->assertNotCancelled($task);
             $tasks->updateProgress($task, 95, 'Almost done…');
             $tasks->markCompleted($task, $result);
         } catch (\Throwable $e) {
