@@ -2,9 +2,13 @@
 
 namespace Tests\Feature;
 
+use App\Models\Employee;
+use App\Models\EmployeeAttendance;
 use App\Models\MobileRepAttendanceSession;
 use App\Models\Organization;
 use App\Models\User;
+use App\Models\WorkShift;
+use App\Services\Payroll\PayrollEarningsService;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Http\UploadedFile;
@@ -77,6 +81,93 @@ class MobileFieldAttendanceTest extends TestCase
             'sign_out_latitude' => -1.2922,
             'close_reason' => 'sign_out',
         ]);
+    }
+
+    public function test_sign_out_syncs_hr_attendance_for_linked_employee(): void
+    {
+        Storage::fake('public');
+        $this->travelTo('2026-06-16 09:00:00');
+
+        $user = $this->makeMobileUser();
+        $employee = $this->linkEmployeeToUser($user);
+        $this->enableFieldAttendance($user);
+        $token = $this->loginMobile($user);
+
+        $this->withToken($token)->post('/api/v1/mobile/attendance/sign-in', [
+            'photo' => UploadedFile::fake()->image('sign-in.jpg'),
+            'latitude' => -1.292100,
+            'longitude' => 36.821900,
+        ])->assertCreated();
+
+        $this->withToken($token)->post('/api/v1/mobile/attendance/sign-out', [
+            'photo' => UploadedFile::fake()->image('sign-out.jpg'),
+            'latitude' => -1.292200,
+            'longitude' => 36.822000,
+        ])->assertOk();
+
+        $today = '2026-06-16';
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $employee->id,
+            'attendance_date' => $today,
+            'source' => 'field_rep',
+            'status' => 'present',
+        ]);
+
+        $attendance = EmployeeAttendance::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('attendance_date', $today)
+            ->firstOrFail();
+
+        $this->assertSame('Field rep', $attendance->source_label);
+        $this->assertGreaterThan(0, (float) $attendance->hours_worked);
+
+        $summary = app(PayrollEarningsService::class)->summarizeAttendance(
+            $employee->fresh(),
+            $today,
+            $today,
+        );
+
+        $this->assertSame(1.0, $summary['attended_days']);
+    }
+
+    public function test_hr_linkage_flags_unlinked_rep_with_sessions(): void
+    {
+        Storage::fake('public');
+        $this->travelTo('2026-06-16 09:00:00');
+
+        $user = $this->makeMobileUser();
+        $this->enableFieldAttendance($user);
+        $token = $this->loginMobile($user);
+
+        $this->withToken($token)->post('/api/v1/mobile/attendance/sign-in', [
+            'photo' => UploadedFile::fake()->image('sign-in.jpg'),
+            'latitude' => -1.292100,
+            'longitude' => 36.821900,
+        ])->assertCreated();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $adminToken = $this->postJson('/api/v1/auth/login', [
+            'company_code' => Organization::findOrFail($admin->organization_id)->company_code,
+            'username' => 'admin',
+            'password' => 'password',
+            'client_id' => 'web',
+            'login_channel' => 'web',
+        ])->json('token');
+
+        $this->withToken($adminToken)
+            ->getJson('/api/v1/attendance/field-rep-hr-linkage?days=30')
+            ->assertOk()
+            ->assertJsonPath('attention_needed', true)
+            ->assertJsonPath('unlinked_rep_count', 1)
+            ->assertJsonPath('reps.0.user_id', $user->id)
+            ->assertJsonPath('reps.0.status', 'no_employee');
+
+        $this->withToken($adminToken)
+            ->getJson('/api/v1/attendance/field-sessions?from_date=2026-06-16&to_date=2026-06-16')
+            ->assertOk()
+            ->assertJsonPath('hr_linkage.attention_needed', true)
+            ->assertJsonPath('data.0.hr_link.counts_toward_payroll', false);
     }
 
     public function test_suspend_and_resume_same_day_session(): void
@@ -197,6 +288,45 @@ class MobileFieldAttendanceTest extends TestCase
             'full_name' => 'Mobile Attendance Rep',
             'mobile_order_scope' => 'both',
         ], $overrides));
+    }
+
+    protected function linkEmployeeToUser(User $user): Employee
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $template = Employee::query()->where('organization_id', $user->organization_id)->firstOrFail();
+
+        $shift = WorkShift::query()->create([
+            'organization_id' => $user->organization_id,
+            'shift_code' => 'STD',
+            'shift_name' => 'Standard day',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'works_saturday' => false,
+            'works_sunday' => false,
+            'works_public_holidays' => false,
+            'is_active' => true,
+        ]);
+
+        return Employee::query()->create([
+            'organization_id' => $user->organization_id,
+            'branch_id' => $user->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'user_id' => $user->id,
+            'employee_code' => 'EMP#'.strtoupper(uniqid()),
+            'payroll_number' => 'EMP#'.strtoupper(uniqid()),
+            'first_name' => 'Field',
+            'last_name' => 'Rep',
+            'full_name' => 'Field Rep',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => now()->toDateString(),
+            'base_salary' => 40000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
     }
 
     protected function loginMobile(User $user): string

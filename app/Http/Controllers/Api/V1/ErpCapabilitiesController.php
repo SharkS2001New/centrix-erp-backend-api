@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Auth\PasswordExpiryService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\ErpContext;
@@ -118,6 +119,10 @@ class ErpCapabilitiesController extends Controller
 
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
             $payload['module_settings'] = $gate->maskPlatformDisabledModuleSettings($payload['module_settings']);
+        }
+
+        if ($user) {
+            $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
         }
 
         return $payload;

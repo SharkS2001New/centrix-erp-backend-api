@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Models\User;
 use App\Services\Auth\ApiTokenCookie;
 use App\Services\Auth\AuthSessionService;
+use App\Services\Auth\PasswordExpiryService;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
 use App\Services\Auth\TenantAccountResolver;
@@ -226,10 +227,12 @@ class AuthController extends Controller
         }
 
         $this->passwordResets->setRequiredPassword($user, $data['password']);
+        $user->refresh();
 
         return response()->json([
             'message' => 'Password updated successfully.',
             'must_change_password' => false,
+            'password_expiry' => app(PasswordExpiryService::class)->statusForUser($user),
         ]);
     }
 
@@ -267,9 +270,23 @@ class AuthController extends Controller
             $data['current_password'],
             $data['password'],
         );
+        $user = $request->user()->fresh();
 
         return response()->json([
             'message' => 'Password updated successfully.',
+            'must_change_password' => false,
+            'password_expiry' => app(PasswordExpiryService::class)->statusForUser($user),
+        ]);
+    }
+
+    public function skipPasswordExpiry(Request $request)
+    {
+        $user = $request->user();
+        $status = app(PasswordExpiryService::class)->skipExpiryReminder($user);
+
+        return response()->json([
+            'message' => 'Password update deferred.',
+            'password_expiry' => $status,
         ]);
     }
 

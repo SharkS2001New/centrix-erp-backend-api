@@ -462,6 +462,9 @@ return [
             'session_idle_minutes' => 60,
             'require_strong_passwords' => false,
             'password_min_length' => 8,
+            'password_expiry_enabled' => true,
+            'password_expiry_days' => 90,
+            'password_expiry_max_skips' => 2,
         ],
         'hr_payroll' => [
             'pay_frequency' => 'monthly',

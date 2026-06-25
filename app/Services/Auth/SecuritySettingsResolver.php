@@ -78,6 +78,9 @@ class SecuritySettingsResolver
         }
         $out['require_strong_passwords'] = (bool) ($out['require_strong_passwords'] ?? false);
         $out['password_min_length'] = max(6, min(128, (int) ($out['password_min_length'] ?? 8)));
+        $out['password_expiry_enabled'] = (bool) ($out['password_expiry_enabled'] ?? false);
+        $out['password_expiry_days'] = max(30, min(730, (int) ($out['password_expiry_days'] ?? 90)));
+        $out['password_expiry_max_skips'] = max(0, min(10, (int) ($out['password_expiry_max_skips'] ?? 2)));
 
         return $out;
     }

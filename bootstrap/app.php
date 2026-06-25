@@ -49,6 +49,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.act_as_organization' => \App\Http\Middleware\ActAsOrganization::class,
             'erp.forbid_tenant_settings' => \App\Http\Middleware\ForbidTenantOrganizationSettings::class,
             'erp.session_idle' => \App\Http\Middleware\EnsureSessionNotIdle::class,
+            'erp.password_expiry' => \App\Http\Middleware\EnsurePasswordNotForcedExpired::class,
             'erp.mpesa_callback_ip' => \App\Http\Middleware\EnsureMpesaCallbackIp::class,
         ]);
     })

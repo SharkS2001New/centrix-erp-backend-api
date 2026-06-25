@@ -34,6 +34,7 @@ class MobileRepAttendanceSession extends Model
         'sign_in_photo_path',
         'sign_out_photo_path',
         'device_identifier',
+        'attendance_id',
     ];
 
     protected $casts = [

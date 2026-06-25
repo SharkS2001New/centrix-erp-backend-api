@@ -4,6 +4,7 @@ namespace App\Services\Auth;
 
 use App\Models\PersonalAccessToken;
 use App\Models\User;
+use App\Services\Auth\PasswordExpiryService;
 use App\Services\Auth\OrganizationLoginGuard;
 use App\Services\Auth\SecuritySettingsResolver;
 use App\Services\Erp\CapabilityGate;
@@ -160,13 +161,13 @@ class AuthSessionService
             $memberships = $this->resolver->membershipsForCanonicalUser($account->canonicalUserId());
             $effective = $account->effectiveUser();
 
-            return [
+            return $this->attachPasswordExpiry([
                 'token' => null,
                 'user' => $effective,
                 'organization' => $account->organization,
                 'memberships' => $memberships,
                 'must_change_password' => (bool) $effective->must_change_password,
-            ];
+            ], $effective);
         }
 
         $currentUser->currentAccessToken()?->delete();
@@ -236,13 +237,21 @@ class AuthSessionService
         $authUser->refresh();
         $effective = $account->effectiveUser();
 
-        return [
+        return $this->attachPasswordExpiry([
             'token' => $newToken->plainTextToken,
             'user' => $effective,
             'organization' => $account->organization,
             'memberships' => $memberships,
             'must_change_password' => (bool) $effective->must_change_password,
-        ];
+        ], $effective);
+    }
+
+    /** @param  array<string, mixed>  $payload */
+    protected function attachPasswordExpiry(array $payload, User $user): array
+    {
+        $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
+
+        return $payload;
     }
 
     protected function pruneStaleTokens(User $authUser): void

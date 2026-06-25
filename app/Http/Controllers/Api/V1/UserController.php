@@ -62,6 +62,13 @@ class UserController extends BaseResourceController
             PasswordPolicy::assertValid($orgId ?: null, (string) $data['password']);
             $data['password'] = Hash::make($data['password']);
             $data['must_change_password'] = (bool) ($data['must_change_password'] ?? true);
+            if ($data['must_change_password']) {
+                $data['password_changed_at'] = null;
+                $data['password_expiry_skip_count'] = 0;
+            } else {
+                $data['password_changed_at'] = now();
+                $data['password_expiry_skip_count'] = 0;
+            }
         } else {
             unset($data['must_change_password']);
         }
@@ -111,6 +118,13 @@ class UserController extends BaseResourceController
             $data['must_change_password'] = array_key_exists('must_change_password', $data)
                 ? (bool) $data['must_change_password']
                 : true;
+            if ($data['must_change_password']) {
+                $data['password_changed_at'] = null;
+                $data['password_expiry_skip_count'] = 0;
+            } else {
+                $data['password_changed_at'] = now();
+                $data['password_expiry_skip_count'] = 0;
+            }
             $model->tokens()->delete();
         } else {
             unset($data['must_change_password']);

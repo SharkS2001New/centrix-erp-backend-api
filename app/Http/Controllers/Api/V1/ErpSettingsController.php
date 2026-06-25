@@ -803,6 +803,9 @@ class ErpSettingsController extends Controller
             'session_idle_minutes' => 'sometimes|integer|min:5|max:480',
             'require_strong_passwords' => 'sometimes|boolean',
             'password_min_length' => 'sometimes|integer|min:6|max:128',
+            'password_expiry_enabled' => 'sometimes|boolean',
+            'password_expiry_days' => 'sometimes|integer|min:30|max:730',
+            'password_expiry_max_skips' => 'sometimes|integer|min:0|max:10',
         ]);
 
         $current = $gate->moduleSettings('security');

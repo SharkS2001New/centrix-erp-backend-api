@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\AttendanceSourceLabels;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
@@ -11,6 +12,8 @@ class EmployeeAttendance extends Model
 
     protected $table = 'employee_attendance';
     public $timestamps = false;
+
+    protected $appends = ['source_label'];
 
     protected $fillable = [
         'employee_id',
@@ -40,5 +43,10 @@ class EmployeeAttendance extends Model
     public function branch()
     {
         return $this->belongsTo(Branch::class, 'branch_id');
+    }
+
+    public function getSourceLabelAttribute(): string
+    {
+        return AttendanceSourceLabels::label($this->source);
     }
 }

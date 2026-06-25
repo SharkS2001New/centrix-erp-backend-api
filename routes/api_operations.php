@@ -22,6 +22,8 @@ use App\Http\Controllers\Api\V1\Operations\AccountingReportController;
 use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
 use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\CompanyPremisesController;
+use App\Http\Controllers\Api\V1\FieldRepHrLinkageController;
+use App\Http\Controllers\Api\V1\MobileFieldAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
@@ -161,6 +163,18 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hr.view');
         Route::get('company-mobile-sessions', [CompanyPremisesController::class, 'sessions'])
             ->middleware('erp.permission:hr.view');
+        Route::get('field-sessions', [MobileFieldAttendanceController::class, 'index'])
+            ->middleware('erp.permission:hr.attendance.view|hr.view');
+        Route::get('field-rep-hr-linkage', [FieldRepHrLinkageController::class, 'index'])
+            ->middleware('erp.permission:hr.attendance.view|hr.view');
+        Route::get('field-sessions/{sessionId}/sign-in-photo/file', [MobileFieldAttendanceController::class, 'signInPhotoFile'])
+            ->middleware('erp.permission:hr.attendance.view|hr.view');
+        Route::get('field-sessions/{sessionId}/sign-out-photo/file', [MobileFieldAttendanceController::class, 'signOutPhotoFile'])
+            ->middleware('erp.permission:hr.attendance.view|hr.view');
+        Route::get('field-sessions/{sessionId}', [MobileFieldAttendanceController::class, 'show'])
+            ->middleware('erp.permission:hr.attendance.view|hr.view');
+        Route::patch('field-sessions/{sessionId}', [MobileFieldAttendanceController::class, 'update'])
+            ->middleware('erp.permission:hr.manage');
     });
 
     // ---- HR / Payroll ----

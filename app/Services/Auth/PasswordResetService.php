@@ -104,6 +104,7 @@ class PasswordResetService
         }
 
         $user->forceFill(['password' => Hash::make($password)])->save();
+        app(PasswordExpiryService::class)->markPasswordChanged($user);
         $user->tokens()->delete();
 
         UserPasswordReset::query()
@@ -120,12 +121,14 @@ class PasswordResetService
             ]);
         }
 
-        $user->forceFill(['password' => Hash::make($newPassword), 'must_change_password' => false])->save();
+        $user->forceFill(['password' => Hash::make($newPassword)])->save();
+        app(PasswordExpiryService::class)->markPasswordChanged($user);
     }
 
     public function setRequiredPassword(User $user, string $newPassword): void
     {
-        $user->forceFill(['password' => Hash::make($newPassword), 'must_change_password' => false])->save();
+        $user->forceFill(['password' => Hash::make($newPassword)])->save();
+        app(PasswordExpiryService::class)->markPasswordChanged($user);
     }
 
     protected function dispatchResetNotification(User $user, \App\Models\Organization $org, string $resetUrl): void

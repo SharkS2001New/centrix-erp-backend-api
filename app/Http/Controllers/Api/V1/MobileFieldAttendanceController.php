@@ -3,16 +3,20 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Services\Attendance\FieldRepHrLinkageService;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileFieldAttendanceService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
+use Symfony\Component\HttpFoundation\Response;
 
 class MobileFieldAttendanceController extends Controller
 {
     public function __construct(
         protected ErpContext $erp,
         protected MobileFieldAttendanceService $attendance,
+        protected FieldRepHrLinkageService $linkage,
     ) {}
 
     /** GET /sales/mobile-field-attendance */
@@ -31,10 +35,18 @@ class MobileFieldAttendanceController extends Controller
 
         $gate = $this->erp->gateForUser($request->user());
         $paginator = $this->attendance->paginateForViewer($request->user(), $gate, $filters);
+        $items = collect($paginator->items());
+        $orgId = (int) $request->user()->organization_id;
+        $linksByUser = $this->linkage->linksForSessions($items, $orgId);
+        $lookbackDays = $this->lookbackDaysFromFilters($filters);
 
         return response()->json([
-            'data' => collect($paginator->items())
-                ->map(fn ($session) => $this->attendance->serializeSession($session, true))
+            'data' => $items
+                ->map(function ($session) use ($linksByUser) {
+                    $hrLink = $linksByUser[(int) $session->user_id] ?? null;
+
+                    return $this->attendance->serializeSession($session, true, $hrLink);
+                })
                 ->values()
                 ->all(),
             'meta' => [
@@ -43,6 +55,7 @@ class MobileFieldAttendanceController extends Controller
                 'per_page' => $paginator->perPage(),
                 'total' => $paginator->total(),
             ],
+            'hr_linkage' => $this->linkage->attentionSummary($request->user(), $lookbackDays),
         ]);
     }
 
@@ -58,8 +71,26 @@ class MobileFieldAttendanceController extends Controller
         }
 
         return response()->json(
-            $this->attendance->serializeSession($session, true),
+            $this->attendance->serializeSession(
+                $session,
+                true,
+                $this->linkage->describeUserLink(
+                    $session->user ?? \App\Models\User::findOrFail($session->user_id),
+                ),
+            ),
         );
+    }
+
+    /** GET /sales/mobile-field-attendance/{sessionId}/sign-in-photo/file */
+    public function signInPhotoFile(Request $request, int $sessionId)
+    {
+        return $this->photoFile($request, $sessionId, 'sign_in');
+    }
+
+    /** GET /sales/mobile-field-attendance/{sessionId}/sign-out-photo/file */
+    public function signOutPhotoFile(Request $request, int $sessionId)
+    {
+        return $this->photoFile($request, $sessionId, 'sign_out');
     }
 
     /** PATCH /sales/mobile-field-attendance/{sessionId} */
@@ -86,7 +117,13 @@ class MobileFieldAttendanceController extends Controller
         }
 
         return response()->json(
-            $this->attendance->serializeSession($session, true),
+            $this->attendance->serializeSession(
+                $session,
+                true,
+                $this->linkage->describeUserLink(
+                    $session->user ?? \App\Models\User::findOrFail($session->user_id),
+                ),
+            ),
         );
     }
 
@@ -97,5 +134,47 @@ class MobileFieldAttendanceController extends Controller
         if (! $this->attendance->isEnabled($gate)) {
             abort(403, 'Field attendance is not enabled for this organization.');
         }
+    }
+
+    protected function photoFile(Request $request, int $sessionId, string $kind)
+    {
+        $this->assertFeatureAvailable($request);
+
+        try {
+            $session = $this->attendance->findForViewer($request->user(), $sessionId);
+        } catch (InvalidArgumentException) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $path = $kind === 'sign_in'
+            ? $session->sign_in_photo_path
+            : $session->sign_out_photo_path;
+
+        if (! $path || ! Storage::disk('public')->exists($path)) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        $absolute = Storage::disk('public')->path($path);
+        $mime = Storage::disk('public')->mimeType($path) ?: 'image/jpeg';
+
+        return response()->file($absolute, [
+            'Content-Type' => $mime,
+            'Cache-Control' => 'private, max-age=3600',
+        ]);
+    }
+
+    /** @param  array<string, mixed>  $filters */
+    protected function lookbackDaysFromFilters(array $filters): int
+    {
+        if (! empty($filters['from_date'])) {
+            $from = \Carbon\Carbon::parse($filters['from_date'])->startOfDay();
+            $to = ! empty($filters['to_date'])
+                ? \Carbon\Carbon::parse($filters['to_date'])->endOfDay()
+                : now()->endOfDay();
+
+            return max(1, min(365, $from->diffInDays($to) + 1));
+        }
+
+        return 30;
     }
 }

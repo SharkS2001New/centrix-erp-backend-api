@@ -70,6 +70,7 @@ return [
                 ['label' => 'Employees', 'path' => '/hr/employees', 'module' => 'hr_payroll', 'permission' => 'hr.employees.view'],
                 ['label' => 'Departments', 'path' => '/hr/departments', 'module' => 'hr_payroll', 'permission' => 'hr.departments.view'],
                 ['label' => 'Attendance', 'path' => '/hr/attendance', 'module' => 'hr_payroll', 'permission' => 'hr.attendance.view'],
+                ['label' => 'Field attendance', 'path' => '/hr/field-attendance', 'module' => 'hr_payroll', 'permission' => 'hr.attendance.view'],
                 ['label' => 'Leave', 'path' => '/hr/leave', 'module' => 'hr_payroll', 'permission' => 'hr.leave.view'],
                 ['label' => 'Payroll', 'path' => '/hr/payroll', 'module' => 'hr_payroll', 'permission' => 'hr.payroll.view'],
             ],

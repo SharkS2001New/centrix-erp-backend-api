@@ -138,9 +138,10 @@ Route::prefix('v1')->group(function () {
     Route::get('accounting/quickbooks/callback', [ExternalAccountingController::class, 'quickBooksCallback'])
         ->middleware('throttle:auth-org-preview');
 
-    Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'throttle:api'])->group(function () {
+    Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
+        Route::post('auth/skip-password-expiry', [AuthController::class, 'skipPasswordExpiry']);
         Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);
         Route::post('auth/verify-password', [AuthController::class, 'verifyPassword']);
         Route::get('auth/memberships', [AuthController::class, 'memberships']);
@@ -504,6 +505,10 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:sales.view');
             Route::get('sales/mobile-field-attendance', [MobileFieldAttendanceController::class, 'index'])
                 ->middleware('erp.permission:sales.view');
+            Route::get('sales/mobile-field-attendance/{sessionId}/sign-in-photo/file', [MobileFieldAttendanceController::class, 'signInPhotoFile'])
+                ->middleware('erp.permission:sales.view|hr.attendance.view|hr.view');
+            Route::get('sales/mobile-field-attendance/{sessionId}/sign-out-photo/file', [MobileFieldAttendanceController::class, 'signOutPhotoFile'])
+                ->middleware('erp.permission:sales.view|hr.attendance.view|hr.view');
             Route::get('sales/mobile-field-attendance/{sessionId}', [MobileFieldAttendanceController::class, 'show'])
                 ->middleware('erp.permission:sales.view');
             Route::patch('sales/mobile-field-attendance/{sessionId}', [MobileFieldAttendanceController::class, 'update'])

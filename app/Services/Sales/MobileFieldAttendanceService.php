@@ -4,6 +4,7 @@ namespace App\Services\Sales;
 
 use App\Models\MobileRepAttendanceSession;
 use App\Models\User;
+use App\Services\Attendance\FieldRepAttendanceHrSync;
 use App\Services\Auth\UserAccessService;
 use App\Services\Erp\CapabilityGate;
 use Carbon\Carbon;
@@ -165,6 +166,7 @@ class MobileFieldAttendanceService
                 'close_reason' => MobileRepAttendanceSession::CLOSE_REASON_SIGN_OUT,
             ]);
             $session->save();
+            $this->syncToHr($session);
 
             return $session->fresh();
         });
@@ -184,6 +186,7 @@ class MobileFieldAttendanceService
 
         foreach ($sessions as $session) {
             $this->closeAsIdle($session, $asOf);
+            $this->syncToHr($session);
             $closed++;
         }
 
@@ -361,13 +364,19 @@ class MobileFieldAttendanceService
         }
 
         $session->save();
+        if ($session->sign_out_at) {
+            $this->syncToHr($session);
+        }
 
         return $session->fresh(['user:id,username,full_name,branch_id']);
     }
 
     /** @return array<string, mixed> */
-    public function serializeSession(MobileRepAttendanceSession $session, bool $includePhotos = false): array
-    {
+    public function serializeSession(
+        MobileRepAttendanceSession $session,
+        bool $includePhotos = false,
+        ?array $hrLink = null,
+    ): array {
         $workSeconds = $this->workSeconds($session);
         $user = $session->relationLoaded('user') ? $session->user : null;
 
@@ -396,11 +405,17 @@ class MobileFieldAttendanceService
             'work_seconds' => $workSeconds,
             'work_hours' => round($workSeconds / 3600, 2),
             'work_label' => $this->formatWorkDuration($workSeconds),
+            'source' => 'field_rep',
+            'source_label' => 'Field rep',
         ];
 
+        if ($hrLink !== null) {
+            $payload['hr_link'] = $hrLink;
+        }
+
         if ($includePhotos) {
-            $payload['sign_in_photo_url'] = $this->photoUrl($session->sign_in_photo_path);
-            $payload['sign_out_photo_url'] = $this->photoUrl($session->sign_out_photo_path);
+            $payload['sign_in_photo_url'] = $this->signInPhotoFileUrl($session);
+            $payload['sign_out_photo_url'] = $this->signOutPhotoFileUrl($session);
         }
 
         return $payload;
@@ -448,13 +463,29 @@ class MobileFieldAttendanceService
         $session->save();
     }
 
-    protected function photoUrl(?string $path): ?string
+    protected function syncToHr(MobileRepAttendanceSession $session): void
     {
-        if (! $path) {
+        app(FieldRepAttendanceHrSync::class)->syncSession($session);
+    }
+
+    protected function signInPhotoFileUrl(MobileRepAttendanceSession $session): ?string
+    {
+        if (! $session->sign_in_photo_path) {
             return null;
         }
 
-        return url('storage/'.$path);
+        return rtrim((string) config('app.url'), '/')
+            ."/api/v1/sales/mobile-field-attendance/{$session->id}/sign-in-photo/file";
+    }
+
+    protected function signOutPhotoFileUrl(MobileRepAttendanceSession $session): ?string
+    {
+        if (! $session->sign_out_photo_path) {
+            return null;
+        }
+
+        return rtrim((string) config('app.url'), '/')
+            ."/api/v1/sales/mobile-field-attendance/{$session->id}/sign-out-photo/file";
     }
 
     protected function storePhoto(UploadedFile $photo, User $user, string $kind): string
