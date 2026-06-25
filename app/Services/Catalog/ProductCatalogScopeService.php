@@ -181,9 +181,22 @@ class ProductCatalogScopeService
         int $organizationId,
         int $branchId,
     ): Product {
+        $productCode = trim($productCode);
+        if ($productCode === '') {
+            throw ValidationException::withMessages([
+                'product_code' => ['Product code is required.'],
+            ]);
+        }
+
+        if ($organizationId <= 0) {
+            throw ValidationException::withMessages([
+                'product_code' => ['Product not found or is not available at this branch.'],
+            ]);
+        }
+
         try {
             $product = Product::query()
-                ->where('product_code', $productCode)
+                ->whereRaw('LOWER(product_code) = ?', [strtolower($productCode)])
                 ->where('organization_id', $organizationId)
                 ->whereNull('deleted_at')
                 ->firstOrFail();
@@ -193,7 +206,9 @@ class ProductCatalogScopeService
             ]);
         }
 
-        $this->assertVisibleAtBranch($product, $branchId);
+        if ($branchId > 0) {
+            $this->assertVisibleAtBranch($product, $branchId);
+        }
 
         return $product;
     }

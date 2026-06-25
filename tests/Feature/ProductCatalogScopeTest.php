@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
-use App\Models\Branch;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
@@ -198,5 +197,26 @@ class ProductCatalogScopeTest extends TestCase
         $this->getJson('/api/v1/products/BR-POS-ONLY?branch_id='.$admin->branch_id)
             ->assertStatus(422)
             ->assertJsonValidationErrors(['product_code']);
+    }
+
+    public function test_pos_cart_add_line_resolves_product_from_user_organization_not_cart(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $productCode = (string) Product::query()
+            ->where('organization_id', $admin->organization_id)
+            ->whereNull('deleted_at')
+            ->value('product_code');
+
+        Sanctum::actingAs($admin);
+
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $admin->branch_id,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $productCode,
+            'quantity' => 1,
+        ])->assertCreated();
     }
 }

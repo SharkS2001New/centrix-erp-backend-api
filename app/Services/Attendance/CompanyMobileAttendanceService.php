@@ -92,7 +92,7 @@ class CompanyMobileAttendanceService
             throw new InvalidArgumentException('Enter at least 3 characters to search employees.');
         }
 
-        $builder = $this->attendanceEmployeeQuery($organization, $device);
+        $builder = $this->attendanceEmployeeQuery($organization, $device, $normalizedQuery);
         $columns = [
             'id',
             'full_name',
@@ -125,30 +125,35 @@ class CompanyMobileAttendanceService
             ->all();
     }
 
-    protected function attendanceEmployeeQuery(Organization $organization, AttendanceMobileDevice $device): Builder
-    {
-        return Employee::query()
+    protected function attendanceEmployeeQuery(
+        Organization $organization,
+        AttendanceMobileDevice $device,
+        ?string $searchQuery = null,
+    ): Builder {
+        $builder = Employee::query()
             ->where('organization_id', $organization->id)
-            ->where(function (Builder $query) {
-                $query->where('employment_status', 'active')
-                    ->orWhereNull('employment_status');
-            })
+            ->where('employment_status', 'active')
             ->where(function (Builder $query) {
                 $query->where('is_active', true)
                     ->orWhere('is_active', 1);
-            })
-            ->when($device->branch_id, function (Builder $builder) use ($device) {
-                $builder->where(function (Builder $branchQuery) use ($device) {
-                    $branchQuery->where('branch_id', (int) $device->branch_id)
-                        ->orWhereNull('branch_id');
-                });
             });
+
+        $normalizedSearch = trim((string) ($searchQuery ?? ''));
+        if ($normalizedSearch === '' && $device->branch_id) {
+            $builder->where(function (Builder $branchQuery) use ($device) {
+                $branchQuery->where('branch_id', (int) $device->branch_id)
+                    ->orWhereNull('branch_id');
+            });
+        }
+
+        return $builder;
     }
 
     protected function applyEmployeeSearchTerm(Builder $builder, string $query): Builder
     {
         $needle = mb_strtolower(trim($query));
-        $term = '%'.$needle.'%';
+        $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $needle);
+        $term = '%'.$escaped.'%';
         $searchColumns = [
             'full_name',
             'first_name',
@@ -164,7 +169,7 @@ class CompanyMobileAttendanceService
 
         return $builder->where(function (Builder $inner) use ($searchColumns, $term) {
             foreach ($searchColumns as $column) {
-                $inner->orWhereRaw('LOWER(COALESCE(`'.$column.'`, \'\')) LIKE ?', [$term]);
+                $inner->orWhere($column, 'like', $term);
             }
         });
     }

@@ -26,6 +26,7 @@ use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\PosLinePricingService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
+use App\Services\Inventory\BranchStockService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -597,7 +598,7 @@ class CartOperationsController extends Controller
 
     protected function addCartLine(TemporaryCart $cart, array $line, User $user, CapabilityGate $gate): CartLine
     {
-        $product = $this->findProductForCart($cart, (string) $line['product_code']);
+        $product = $this->findProductForCart($cart, (string) $line['product_code'], $user);
         $qty = (float) ($line['quantity'] ?? 1);
         $onWholesaleRetailFlag = (bool) ($line['on_wholesale_retail'] ?? 0);
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
@@ -684,7 +685,7 @@ class CartOperationsController extends Controller
         }
 
         $row = $this->findCartLineByRef($cart, $lineRef);
-        $product = $this->findProductForCart($cart, (string) $row->product_code);
+        $product = $this->findProductForCart($cart, (string) $row->product_code, $user);
 
         $qty = array_key_exists('quantity', $input) ? (float) $input['quantity'] : (float) $row->quantity;
         $onWholesaleRetailFlag = array_key_exists('on_wholesale_retail', $input)
@@ -806,12 +807,23 @@ class CartOperationsController extends Controller
         return max(0, $amount);
     }
 
-    protected function findProductForCart(TemporaryCart $cart, string $productCode): Product
+    protected function findProductForCart(TemporaryCart $cart, string $productCode, User $user): Product
     {
+        $request = request();
+        $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? 0);
+        $branchId = (int) ($cart->branch_id ?? 0);
+        if ($branchId <= 0) {
+            $branchId = (int) (
+                app(BranchStockService::class)->resolveBranchIdOptional($user, $request)
+                ?? $user->branch_id
+                ?? 0
+            );
+        }
+
         $product = app(ProductCatalogScopeService::class)->findAccessibleProduct(
-            $productCode,
-            (int) $cart->organization_id,
-            (int) $cart->branch_id,
+            trim($productCode),
+            $orgId,
+            $branchId,
         );
 
         return $product->loadMissing('unit');
