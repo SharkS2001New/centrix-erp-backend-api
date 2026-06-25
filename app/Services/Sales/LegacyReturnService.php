@@ -87,10 +87,13 @@ class LegacyReturnService
         );
 
         return DB::transaction(function () use ($user, $data, $sale, $finance, $kraOriginalInvoice) {
-            $lines = $this->customerReturnService->normalizeLinesForSale(
-                $data['lines'] ?? [],
-                (int) $sale->id,
-            );
+            $lines = ! empty($data['full_return'])
+                ? $this->fullReturnLines($sale)
+                : $this->customerReturnService->normalizeLinesForSale(
+                    $data['lines'] ?? [],
+                    (int) $sale->id,
+                    'legacy',
+                );
             $total = round(array_sum(array_column($lines, 'amount')), 2);
 
             $return = CustomerReturn::create([
@@ -285,5 +288,20 @@ class LegacyReturnService
         }
 
         return 'LRET-' . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+    }
+
+    /** @return list<array<string, mixed>> */
+    protected function fullReturnLines(Sale $sale): array
+    {
+        $lines = $this->customerReturnService->linesFromSale($sale, 'legacy');
+
+        return $this->customerReturnService->normalizeLinesForSale(
+            array_values(array_filter(
+                $lines,
+                fn (array $line) => (float) ($line['return_qty'] ?? 0) > 0,
+            )),
+            (int) $sale->id,
+            'legacy',
+        );
     }
 }

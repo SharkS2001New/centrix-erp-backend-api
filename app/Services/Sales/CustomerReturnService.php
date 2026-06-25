@@ -259,21 +259,27 @@ class CustomerReturnService
         $return->delete();
     }
 
-    public function linesFromSale(Sale $sale): array
+    public function linesFromSale(Sale $sale, ?string $mode = null): array
     {
         $sale->loadMissing(['items.product.unit']);
         $returned = $this->approvedReturnQuantities((int) $sale->id);
+        $legacy = $mode === 'legacy';
 
-        return $sale->items->map(function ($item) use ($returned, $sale) {
+        return $sale->items->map(function ($item) use ($returned, $sale, $legacy) {
             $currentQty = (float) ($item->quantity ?? 0);
             $alreadyReturned = $this->returnedQtyForLine($returned, (int) $item->id, (string) $item->product_code);
             $originalQty = $currentQty + $alreadyReturned;
+            $lineAmount = round((float) ($item->amount ?? 0), 2);
             $unitPrice = $currentQty > 0
-                ? round((float) $item->amount / $currentQty, 2)
+                ? round($lineAmount / $currentQty, 2)
                 : round((float) ($item->selling_price ?? 0), 2);
             $pending = $this->pendingReturnQuantities((int) $sale->id);
             $pendingQty = $this->returnedQtyForLine($pending, (int) $item->id, (string) $item->product_code);
             $maxReturnQty = max(0, round($currentQty - $pendingQty, 4));
+            $returnQty = $legacy ? $maxReturnQty : 0;
+            $returnAmount = $legacy
+                ? $this->legacyReturnAmountForSaleItem($lineAmount, $currentQty, $returnQty)
+                : 0.0;
 
             return [
                 'sale_item_id' => $item->id,
@@ -284,12 +290,41 @@ class CustomerReturnService
                 'quantity_sold' => $originalQty,
                 'already_returned' => $alreadyReturned,
                 'max_return_qty' => $maxReturnQty,
-                'return_qty' => 0,
+                'return_qty' => $returnQty,
                 'unit_price' => round($unitPrice, 2),
-                'amount' => 0,
+                'line_total' => $lineAmount,
+                'amount' => $returnAmount,
                 'line_no' => $item->line_no,
+                'full_return' => $legacy,
             ];
         })->values()->all();
+    }
+
+    /** @param  array<int, array<string, mixed>>  $lines */
+    public function normalizeLinesForSale(array $lines, int $saleId, ?string $mode = null): array
+    {
+        return $this->normalizeLines($lines, $saleId, null, $mode);
+    }
+
+    /** @param  array<int, array<string, mixed>>  $lines */
+    public function syncLinesPublic(CustomerReturn $return, array $lines): void
+    {
+        $this->syncLines($return, $lines);
+    }
+
+    public function applyReturnToSalePublic(CustomerReturn $return): void
+    {
+        $this->applyReturnToSale($return);
+    }
+
+    /** @param  array<int, array<string, mixed>>  $lines */
+    public function validateLinesAgainstSalePublic(
+        int $saleId,
+        array $lines,
+        ?int $excludeReturnId = null,
+        ?string $mode = null,
+    ): void {
+        $this->validateLinesAgainstSale($saleId, $lines, $excludeReturnId, $mode);
     }
 
     protected function applyReturnToSale(CustomerReturn $return): void
@@ -688,9 +723,14 @@ class CustomerReturnService
     }
 
     /** @param  array<int, array<string, mixed>>  $lines */
-    protected function validateLinesAgainstSale(int $saleId, array $lines, ?int $excludeReturnId = null): void
-    {
+    protected function validateLinesAgainstSale(
+        int $saleId,
+        array $lines,
+        ?int $excludeReturnId = null,
+        ?string $mode = null,
+    ): void {
         $sale = Sale::with('items')->findOrFail($saleId);
+        $legacy = $mode === 'legacy';
 
         foreach ($lines as $line) {
             $returnQty = (float) ($line['return_qty'] ?? 0);
@@ -698,11 +738,7 @@ class CustomerReturnService
                 continue;
             }
 
-            $saleItem = null;
-            if (! empty($line['sale_item_id'])) {
-                $saleItem = $sale->items->firstWhere('id', (int) $line['sale_item_id']);
-            }
-            $saleItem ??= $sale->items->firstWhere('product_code', (string) $line['product_code']);
+            $saleItem = $this->findSaleItemForNormalizedLine($sale, $line);
 
             if (! $saleItem) {
                 throw ValidationException::withMessages([
@@ -717,17 +753,85 @@ class CustomerReturnService
                     'lines' => "Return quantity for {$line['product_code']} exceeds remaining returnable quantity ({$maxReturnQty}).",
                 ]);
             }
+
+            if ($legacy) {
+                $currentQty = (float) $saleItem->quantity;
+                $maxAmount = round((float) ($saleItem->amount ?? 0), 2);
+                $returnAmount = round((float) ($line['amount'] ?? 0), 2);
+                $expectedAmount = $this->legacyReturnAmountForSaleItem(
+                    $maxAmount,
+                    $currentQty,
+                    $returnQty,
+                );
+
+                if ($returnAmount > $expectedAmount + 0.02) {
+                    throw ValidationException::withMessages([
+                        'lines' => "Return amount for {$line['product_code']} exceeds the remaining line total ({$expectedAmount}).",
+                    ]);
+                }
+            }
         }
     }
 
     /** @param  array<int, array<string, mixed>>  $lines */
-    protected function normalizeLines(array $lines, ?int $saleId = null, ?int $excludeReturnId = null): array
-    {
+    protected function normalizeLines(
+        array $lines,
+        ?int $saleId = null,
+        ?int $excludeReturnId = null,
+        ?string $mode = null,
+    ): array {
+        $legacy = $mode === 'legacy';
+        $sale = $saleId ? Sale::with('items.product')->find($saleId) : null;
         $normalized = [];
 
         foreach ($lines as $line) {
             $returnQty = (float) ($line['return_qty'] ?? 0);
             if ($returnQty <= 0) {
+                continue;
+            }
+
+            $saleItem = $sale ? $this->findSaleItemForNormalizedLine($sale, $line) : null;
+
+            if ($legacy && $saleItem) {
+                $currentQty = (float) $saleItem->quantity;
+                $alreadyReturned = 0.0;
+                if ($saleId) {
+                    $approved = $this->approvedReturnQuantities($saleId, $excludeReturnId);
+                    $alreadyReturned = $this->returnedQtyForLine(
+                        $approved,
+                        (int) $saleItem->id,
+                        (string) $saleItem->product_code,
+                    );
+                }
+
+                $qtySold = $currentQty + $alreadyReturned;
+                $maxReturnQty = $this->maxReturnQtyForSaleItem($saleItem, (int) $saleId, $excludeReturnId);
+
+                if ($returnQty > $maxReturnQty + 0.0001) {
+                    throw ValidationException::withMessages([
+                        'lines' => "Return quantity cannot exceed remaining returnable quantity for {$line['product_code']}.",
+                    ]);
+                }
+
+                $amount = $this->legacyReturnAmountForSaleItem(
+                    (float) ($saleItem->amount ?? 0),
+                    $currentQty,
+                    $returnQty,
+                );
+                $unitPrice = $returnQty > 0 ? round($amount / $returnQty, 2) : 0.0;
+
+                $normalized[] = [
+                    'sale_item_id' => $saleItem->id,
+                    'product_code' => (string) $saleItem->product_code,
+                    'product_name' => $line['product_name'] ?? $saleItem->product?->product_name ?? $saleItem->product_code,
+                    'uom' => $saleItem->uom ?? $line['uom'] ?? null,
+                    'quantity_sold' => $qtySold,
+                    'return_qty' => $returnQty,
+                    'unit_price' => $unitPrice,
+                    'amount' => $amount,
+                    'line_no' => $line['line_no'] ?? $saleItem->line_no,
+                ];
+
                 continue;
             }
 
@@ -771,10 +875,43 @@ class CustomerReturnService
         }
 
         if ($saleId) {
-            $this->validateLinesAgainstSale($saleId, $normalized, $excludeReturnId);
+            $this->validateLinesAgainstSale($saleId, $normalized, $excludeReturnId, $mode);
         }
 
         return $normalized;
+    }
+
+    protected function legacyReturnAmountForSaleItem(
+        float $lineAmount,
+        float $currentQty,
+        float $returnQty,
+    ): float {
+        if ($returnQty <= 0) {
+            return 0.0;
+        }
+
+        if ($currentQty <= 0) {
+            return round($lineAmount, 2);
+        }
+
+        if ($returnQty + 0.0001 >= $currentQty) {
+            return round($lineAmount, 2);
+        }
+
+        return round($lineAmount * ($returnQty / $currentQty), 2);
+    }
+
+    /** @param  array<string, mixed>  $line */
+    protected function findSaleItemForNormalizedLine(Sale $sale, array $line): ?SaleItem
+    {
+        if (! empty($line['sale_item_id'])) {
+            $item = $sale->items->firstWhere('id', (int) $line['sale_item_id']);
+            if ($item) {
+                return $item;
+            }
+        }
+
+        return $sale->items->firstWhere('product_code', (string) ($line['product_code'] ?? ''));
     }
 
     /** @param  array<int, array<string, mixed>>  $lines */

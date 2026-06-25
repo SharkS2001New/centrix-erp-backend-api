@@ -71,18 +71,11 @@ class LegacyReturnTest extends TestCase
             'sale_id' => $sale->id,
             'kra_original_invoice_number' => '00007777',
             'reason' => 'Damaged Product',
-            'lines' => [
-                [
-                    'product_code' => $sale->items->first()->product_code,
-                    'quantity_sold' => 2,
-                    'return_qty' => 1,
-                    'unit_price' => 100,
-                    'amount' => 100,
-                ],
-            ],
+            'full_return' => true,
         ])->assertCreated()
             ->assertJsonPath('return_kind', 'legacy')
-            ->assertJsonPath('return_no', fn ($v) => str_starts_with((string) $v, 'LRET-'));
+            ->assertJsonPath('return_no', fn ($v) => str_starts_with((string) $v, 'LRET-'))
+            ->assertJsonPath('total_amount', 200);
 
         $returnId = $created->json('id');
 
@@ -91,13 +84,27 @@ class LegacyReturnTest extends TestCase
         $this->assertDatabaseHas('credit_notes', [
             'customer_return_id' => $returnId,
             'sale_id' => $sale->id,
-            'total_amount' => 100,
+            'total_amount' => 200,
             'kra_status' => 'success',
             'kra_relevant_invoice_number' => '00007777',
         ]);
 
         $sale->refresh();
-        $this->assertSame(100.0, (float) $sale->order_total);
+        $this->assertSame(0.0, (float) $sale->order_total);
+    }
+
+    public function test_legacy_return_lines_prefill_full_order_amounts(): void
+    {
+        $sale = $this->createLegacySale();
+
+        $res = $this->getJson("/api/v1/legacy-orders/{$sale->id}/return-lines")
+            ->assertOk();
+
+        $line = collect($res->json('lines'))->first();
+        $this->assertSame(2.0, (float) $line['return_qty']);
+        $this->assertSame(200.0, (float) $line['amount']);
+        $this->assertSame(200.0, (float) $line['line_total']);
+        $this->assertTrue($line['full_return']);
     }
 
     public function test_legacy_orders_list_excludes_normal_sales(): void
