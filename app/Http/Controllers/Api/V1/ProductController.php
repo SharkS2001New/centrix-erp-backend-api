@@ -248,7 +248,9 @@ class ProductController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        return response()->json($this->presentProduct($this->findScopedProduct($request, $id), $request));
+        $product = $this->resolveProductForRequest($request, $id);
+
+        return response()->json($this->presentProduct($product->load('branch:id,branch_code,branch_name'), $request));
     }
 
     public function update(Request $request, string $id)
@@ -309,6 +311,20 @@ class ProductController extends BaseResourceController
         }
 
         return $query->firstOrFail();
+    }
+
+    protected function resolveProductForRequest(Request $request, string $id): Product
+    {
+        $user = $request->user();
+        if ($user) {
+            $orgId = (int) ($this->access()->organizationId($user, $request) ?? $user->organization_id ?? 0);
+            $branchId = $this->branchStock->resolveBranchIdOptional($user, $request);
+            if ($orgId > 0 && $branchId !== null) {
+                return $this->catalogScope->findAccessibleProduct($id, $orgId, $branchId);
+            }
+        }
+
+        return $this->findScopedProduct($request, $id);
     }
 
     protected function logPriceChangeIfChanged(

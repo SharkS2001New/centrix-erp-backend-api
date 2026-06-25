@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Branch;
+use App\Models\Branch;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
@@ -165,5 +166,37 @@ class ProductCatalogScopeTest extends TestCase
         $this->getJson('/api/v1/products/catalog-summary?branch_id='.$branchId)
             ->assertOk()
             ->assertJsonStructure(['total', 'active', 'low_stock', 'out_of_stock', 'branch_id']);
+    }
+
+    public function test_product_show_returns_validation_error_when_not_visible_at_branch(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $orgId = (int) $admin->organization_id;
+
+        $branchTwo = Branch::query()->create([
+            'organization_id' => $orgId,
+            'branch_code' => 'BR-POS-1',
+            'branch_name' => 'POS Branch One',
+            'branch_type' => 'retail',
+            'is_active' => true,
+        ]);
+
+        Product::query()->create([
+            'product_code' => 'BR-POS-ONLY',
+            'product_name' => 'Branch only POS item',
+            'subcategory_id' => 1,
+            'unit_id' => 1,
+            'unit_price' => 10,
+            'discount_percentage' => 0,
+            'vat_id' => 1,
+            'organization_id' => $orgId,
+            'branch_id' => $branchTwo->id,
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/products/BR-POS-ONLY?branch_id='.$admin->branch_id)
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['product_code']);
     }
 }

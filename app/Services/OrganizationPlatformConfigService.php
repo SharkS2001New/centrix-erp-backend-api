@@ -60,6 +60,10 @@ class OrganizationPlatformConfigService
             );
         }
 
+        if (array_key_exists('enable_pos_order_edit', $salesPlatform)) {
+            $nextSales['enable_pos_order_edit'] = (bool) $salesPlatform['enable_pos_order_edit'];
+        }
+
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['sales'] = $nextSales;
 

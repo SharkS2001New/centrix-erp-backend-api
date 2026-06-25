@@ -160,6 +160,31 @@ class PosOrderEditTest extends TestCase
             ->assertJsonPath('module_settings.sales.enable_pos_order_edit', true);
     }
 
+    public function test_platform_sales_config_persists_enable_pos_order_edit(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $orgId = (int) Organization::query()->where('company_code', 'DEMO')->value('id');
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'sales_platform' => ['enable_pos_order_edit' => true],
+        ])->assertOk()
+            ->assertJsonPath('sales_platform.enable_pos_order_edit', true);
+
+        $org = Organization::findOrFail($orgId);
+        $this->assertTrue((bool) ($org->module_settings['sales']['enable_pos_order_edit'] ?? false));
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->assertJsonPath('pos_order_edit_enabled', true);
+    }
+
     /** @param array<string, mixed> $checkoutExtra */
     protected function completePosSale(string $productCode, float $quantity, array $checkoutExtra = []): array
     {

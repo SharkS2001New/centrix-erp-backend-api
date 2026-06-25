@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
+use Illuminate\Database\Eloquent\ModelNotFoundException;
 use Illuminate\Validation\ValidationException;
 
 class ProductCatalogScopeService
@@ -180,11 +181,17 @@ class ProductCatalogScopeService
         int $organizationId,
         int $branchId,
     ): Product {
-        $product = Product::query()
-            ->where('product_code', $productCode)
-            ->where('organization_id', $organizationId)
-            ->whereNull('deleted_at')
-            ->firstOrFail();
+        try {
+            $product = Product::query()
+                ->where('product_code', $productCode)
+                ->where('organization_id', $organizationId)
+                ->whereNull('deleted_at')
+                ->firstOrFail();
+        } catch (ModelNotFoundException) {
+            throw ValidationException::withMessages([
+                'product_code' => ['Product not found or is not available at this branch.'],
+            ]);
+        }
 
         $this->assertVisibleAtBranch($product, $branchId);
 
