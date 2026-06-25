@@ -125,4 +125,43 @@ class CompanyMobileAttendanceTest extends TestCase
             ->assertOk()
             ->assertJsonPath('data.0.full_name', 'Stephen Kariuki');
     }
+
+    public function test_employee_search_matches_name_prefix_when_query_is_misspelled(): void
+    {
+        [$org, $admin] = $this->enableCompanyMobileAttendance();
+
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/attendance-mobile-devices', [
+            'device_identifier' => 'search-test-device',
+            'branch_id' => $admin->branch_id,
+            'platform' => 'android',
+        ])->assertCreated();
+
+        $departmentId = Employee::query()->where('organization_id', $org->id)->value('department_id');
+        $positionId = Employee::query()->where('organization_id', $org->id)->value('position_id');
+
+        Employee::query()->create([
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'department_id' => $departmentId,
+            'position_id' => $positionId,
+            'employee_code' => 'EMP#STEPHEN',
+            'payroll_number' => 'EMP#STEPHEN',
+            'first_name' => 'Stephen',
+            'last_name' => 'Kariuki',
+            'full_name' => 'Stephen Kariuki',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => now()->toDateString(),
+            'base_salary' => 45000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+
+        $this->getJson('/api/v1/company-mobile-attendance/employees?company_code=DEMO&device_identifier=search-test-device&q=karuku')
+            ->assertOk()
+            ->assertJsonPath('data.0.full_name', 'Stephen Kariuki');
+    }
 }

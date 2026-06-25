@@ -57,7 +57,9 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 RUN mkdir -p resources/views storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs storage/app/private/backups/database bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache resources \
-    && chmod -R 775 storage bootstrap/cache
+    && chmod -R ug+rwx storage bootstrap/cache
+
+# Runtime: docker-entrypoint.sh runs migrate, storage:link, and chmod before Apache starts.
 
 EXPOSE 8001
 

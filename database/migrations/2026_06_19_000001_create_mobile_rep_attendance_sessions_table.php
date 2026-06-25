@@ -19,6 +19,10 @@ return new class extends Migration
             $table->integer('user_id');
             $table->dateTime('sign_in_at');
             $table->dateTime('sign_out_at')->nullable();
+            $table->dateTime('suspended_at')->nullable();
+            $table->dateTime('last_resumed_at')->nullable();
+            $table->unsignedInteger('accumulated_work_seconds')->default(0);
+            $table->string('close_reason', 50)->nullable();
             $table->decimal('sign_in_latitude', 10, 7);
             $table->decimal('sign_in_longitude', 10, 7);
             $table->decimal('sign_out_latitude', 10, 7)->nullable();

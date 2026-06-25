@@ -11,6 +11,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 
 class MobileFieldAttendanceService
@@ -80,18 +81,9 @@ class MobileFieldAttendanceService
         return DB::transaction(function () use ($user, $data, $photo) {
             $photoPath = $this->storePhoto($photo, $user, 'sign-in');
 
-            return MobileRepAttendanceSession::create([
-                'organization_id' => (int) $user->organization_id,
-                'branch_id' => $user->branch_id ? (int) $user->branch_id : null,
-                'user_id' => (int) $user->id,
-                'sign_in_at' => now(),
-                'last_resumed_at' => now(),
-                'sign_in_latitude' => (float) $data['latitude'],
-                'sign_in_longitude' => (float) $data['longitude'],
-                'sign_in_address' => $this->trimAddress($data['address'] ?? null),
-                'sign_in_photo_path' => $photoPath,
-                'device_identifier' => $this->trimDeviceId($data['device_identifier'] ?? null),
-            ]);
+            return MobileRepAttendanceSession::create(
+                $this->newSessionAttributes($user, $data, $photoPath),
+            );
         });
     }
 
@@ -467,10 +459,51 @@ class MobileFieldAttendanceService
 
     protected function storePhoto(UploadedFile $photo, User $user, string $kind): string
     {
-        return $photo->store(
-            "mobile-attendance/{$user->organization_id}/{$user->id}/{$kind}",
-            'public',
-        );
+        try {
+            $path = $photo->store(
+                "mobile-attendance/{$user->organization_id}/{$user->id}/{$kind}",
+                'public',
+            );
+        } catch (\Throwable $exception) {
+            throw new InvalidArgumentException(
+                'Unable to save the attendance photo. Ensure API storage is writable and linked (php artisan storage:link).',
+                previous: $exception,
+            );
+        }
+
+        if (! is_string($path) || $path === '') {
+            throw new InvalidArgumentException('Unable to save the attendance photo.');
+        }
+
+        return $path;
+    }
+
+    /** @param  array<string, mixed>  $data */
+    protected function newSessionAttributes(User $user, array $data, string $photoPath): array
+    {
+        $attributes = [
+            'organization_id' => (int) $user->organization_id,
+            'branch_id' => $user->branch_id ? (int) $user->branch_id : null,
+            'user_id' => (int) $user->id,
+            'sign_in_at' => now(),
+            'sign_in_latitude' => (float) $data['latitude'],
+            'sign_in_longitude' => (float) $data['longitude'],
+            'sign_in_address' => $this->trimAddress($data['address'] ?? null),
+            'sign_in_photo_path' => $photoPath,
+            'device_identifier' => $this->trimDeviceId($data['device_identifier'] ?? null),
+        ];
+
+        if ($this->supportsWorkSessionColumns()) {
+            $attributes['last_resumed_at'] = now();
+        }
+
+        return $attributes;
+    }
+
+    protected function supportsWorkSessionColumns(): bool
+    {
+        return Schema::hasTable('mobile_rep_attendance_sessions')
+            && Schema::hasColumn('mobile_rep_attendance_sessions', 'last_resumed_at');
     }
 
     protected function trimAddress(mixed $value): ?string

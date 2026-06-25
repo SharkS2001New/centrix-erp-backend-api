@@ -1691,6 +1691,34 @@ CREATE TABLE employee_attendance (
     INDEX idx_att_org_date (organization_id, attendance_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE mobile_rep_attendance_sessions (
+    id                        INT UNSIGNED  PRIMARY KEY AUTO_INCREMENT,
+    organization_id           INT           NOT NULL,
+    branch_id                 INT           NULL,
+    user_id                   INT           NOT NULL,
+    sign_in_at                DATETIME      NOT NULL,
+    sign_out_at               DATETIME      NULL,
+    suspended_at              DATETIME      NULL,
+    last_resumed_at           DATETIME      NULL,
+    accumulated_work_seconds  INT UNSIGNED  NOT NULL DEFAULT 0,
+    close_reason              VARCHAR(50)   NULL,
+    sign_in_latitude          DECIMAL(10,7) NOT NULL,
+    sign_in_longitude         DECIMAL(10,7) NOT NULL,
+    sign_out_latitude         DECIMAL(10,7) NULL,
+    sign_out_longitude        DECIMAL(10,7) NULL,
+    sign_in_address           VARCHAR(500)  NULL,
+    sign_out_address          VARCHAR(500)  NULL,
+    sign_in_photo_path        VARCHAR(255)  NULL,
+    sign_out_photo_path       VARCHAR(255)  NULL,
+    device_identifier         VARCHAR(100)  NULL,
+    created_at                TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    updated_at                TIMESTAMP     NULL,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    FOREIGN KEY (branch_id) REFERENCES branches(id) ON DELETE SET NULL,
+    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    INDEX idx_mobile_rep_attendance_open (user_id, sign_out_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE employee_kpis (
     id               BIGINT        PRIMARY KEY AUTO_INCREMENT,
     organization_id  INT           NOT NULL,

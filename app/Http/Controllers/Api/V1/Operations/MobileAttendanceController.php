@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileFieldAttendanceService;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
 class MobileAttendanceController extends Controller
@@ -60,6 +62,24 @@ class MobileAttendanceController extends Controller
             $session = $this->attendance->signIn($user, $gate, $data);
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
+        } catch (QueryException $exception) {
+            Log::error('mobile attendance sign-in database error', [
+                'user_id' => $user->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => $this->databaseErrorMessage($exception),
+            ], 503);
+        } catch (\Throwable $exception) {
+            Log::error('mobile attendance sign-in failed', [
+                'user_id' => $user->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Unable to record sign-in. Ensure attendance storage is configured on the server.',
+            ], 500);
         }
 
         return response()->json([
@@ -127,5 +147,15 @@ class MobileAttendanceController extends Controller
             'message' => 'Signed out successfully.',
             'session' => $this->attendance->serializeSession($session),
         ]);
+    }
+
+    protected function databaseErrorMessage(QueryException $exception): string
+    {
+        $message = $exception->getMessage();
+        if (str_contains($message, 'mobile_rep_attendance_sessions')) {
+            return 'Attendance database tables are missing or outdated. Run php artisan migrate on the API server.';
+        }
+
+        return 'Database error while saving attendance. Contact your administrator.';
     }
 }

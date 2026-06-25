@@ -132,10 +132,14 @@ class CompanyMobileAttendanceService
     ): Builder {
         $builder = Employee::query()
             ->where('organization_id', $organization->id)
-            ->where('employment_status', 'active')
             ->where(function (Builder $query) {
                 $query->where('is_active', true)
-                    ->orWhere('is_active', 1);
+                    ->orWhere('is_active', 1)
+                    ->orWhereNull('is_active');
+            })
+            ->where(function (Builder $query) {
+                $query->where('employment_status', 'active')
+                    ->orWhereNull('employment_status');
             });
 
         $normalizedSearch = trim((string) ($searchQuery ?? ''));
@@ -154,6 +158,7 @@ class CompanyMobileAttendanceService
         $needle = mb_strtolower(trim($query));
         $escaped = str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $needle);
         $term = '%'.$escaped.'%';
+        $prefix = mb_substr($needle, 0, min(3, mb_strlen($needle)));
         $searchColumns = [
             'full_name',
             'first_name',
@@ -166,10 +171,32 @@ class CompanyMobileAttendanceService
             'job_title',
             'national_id',
         ];
+        $prefixColumns = [
+            'full_name',
+            'first_name',
+            'middle_name',
+            'last_name',
+            'employee_code',
+            'payroll_number',
+        ];
 
-        return $builder->where(function (Builder $inner) use ($searchColumns, $term) {
+        return $builder->where(function (Builder $inner) use ($searchColumns, $prefixColumns, $term, $prefix) {
             foreach ($searchColumns as $column) {
                 $inner->orWhere($column, 'like', $term);
+            }
+
+            if ($prefix !== '') {
+                foreach ($prefixColumns as $column) {
+                    $inner->orWhereRaw(
+                        'LEFT(LOWER('.$column.'), ?) = ?',
+                        [mb_strlen($prefix), $prefix],
+                    );
+                }
+
+                $inner->orWhereRaw(
+                    'LOWER(CONCAT_WS(" ", first_name, middle_name, last_name)) LIKE ?',
+                    ['%'.$prefix.'%'],
+                );
             }
         });
     }
@@ -192,6 +219,7 @@ class CompanyMobileAttendanceService
 
     protected function employeeSearchScore(Employee $employee, string $needle): int
     {
+        $prefix = mb_substr($needle, 0, min(3, mb_strlen($needle)));
         $code = mb_strtolower(trim((string) ($employee->employee_code ?? '')));
         $payroll = mb_strtolower(trim((string) ($employee->payroll_number ?? '')));
         $fullName = mb_strtolower(trim((string) ($employee->full_name ?? '')));
@@ -241,6 +269,15 @@ class CompanyMobileAttendanceService
         }
         if ($lastName !== '' && str_contains($lastName, $needle)) {
             return 250;
+        }
+        if ($prefix !== '' && $lastName !== '' && str_starts_with($lastName, $prefix)) {
+            return 200;
+        }
+        if ($prefix !== '' && $firstName !== '' && str_starts_with($firstName, $prefix)) {
+            return 175;
+        }
+        if ($prefix !== '' && $fullName !== '' && str_contains($fullName, $prefix)) {
+            return 150;
         }
 
         return 0;
