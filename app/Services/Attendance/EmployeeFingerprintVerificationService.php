@@ -36,6 +36,15 @@ class EmployeeFingerprintVerificationService
         ?string $deviceIdentifier = null,
         ?string $scannerModel = null,
     ): array {
+        if ($this->isDeviceBiometricScanner($scannerModel)) {
+            return $this->verifyDeviceBiometricAttestation(
+                $employee,
+                $encodedTemplate,
+                $deviceIdentifier,
+                $scannerModel,
+            );
+        }
+
         $profile = EmployeeFingerprintProfile::query()
             ->where('employee_id', $employee->id)
             ->first();
@@ -136,5 +145,65 @@ class EmployeeFingerprintVerificationService
         $scale = sqrt($norm);
 
         return array_map(static fn (float $value) => $value / $scale, $vector);
+    }
+
+    protected function isDeviceBiometricScanner(?string $scannerModel): bool
+    {
+        $model = strtolower(trim((string) ($scannerModel ?? '')));
+
+        return str_starts_with($model, 'device_biometric:')
+            || str_starts_with($model, 'device:');
+    }
+
+    /** @return array{matched: bool, score: float|null, enrolled: bool, profile: EmployeeFingerprintProfile|null} */
+    protected function verifyDeviceBiometricAttestation(
+        Employee $employee,
+        string $encodedTemplate,
+        ?string $deviceIdentifier,
+        ?string $scannerModel,
+    ): array {
+        $encodedTemplate = trim($encodedTemplate);
+        if ($encodedTemplate === '') {
+            throw new InvalidArgumentException('Device biometric confirmation is required.');
+        }
+
+        $raw = base64_decode($encodedTemplate, true);
+        if ($raw === false || strlen($raw) < 32) {
+            throw new InvalidArgumentException('Device biometric confirmation is invalid.');
+        }
+
+        $profile = EmployeeFingerprintProfile::query()
+            ->where('employee_id', $employee->id)
+            ->first();
+
+        if (! $profile) {
+            $profile = $this->enroll(
+                $employee,
+                $encodedTemplate,
+                strlen($raw),
+                $deviceIdentifier,
+                $scannerModel,
+            );
+
+            return [
+                'matched' => true,
+                'score' => 1.0,
+                'enrolled' => true,
+                'profile' => $profile,
+            ];
+        }
+
+        if (! hash_equals((string) $profile->fingerprint_template, $encodedTemplate)) {
+            throw new InvalidArgumentException(
+                'This employee was not enrolled on this attendance phone. Select your name and scan again to enroll.',
+            );
+        }
+
+        return [
+            'matched' => true,
+            'score' => 1.0,
+            'enrolled' => false,
+            'profile' => $profile,
+        ];
     }
 }
