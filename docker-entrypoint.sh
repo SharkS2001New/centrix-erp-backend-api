@@ -8,6 +8,7 @@ mkdir -p storage/framework/views
 mkdir -p storage/framework/testing
 mkdir -p storage/logs
 mkdir -p storage/app/private/backups/database
+mkdir -p storage/app/private/backups/exports
 mkdir -p bootstrap/cache
 
 chown -R www-data:www-data storage bootstrap/cache resources 2>/dev/null || true

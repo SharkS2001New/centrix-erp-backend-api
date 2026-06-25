@@ -12,4 +12,14 @@ return [
   */
   'stale_pending_minutes' => (int) env('BACKGROUND_STALE_PENDING_MINUTES', 15),
   'stale_running_minutes' => (int) env('BACKGROUND_STALE_RUNNING_MINUTES', 35),
+
+  /*
+  |--------------------------------------------------------------------------
+  | Export file directory (under storage/app)
+  |--------------------------------------------------------------------------
+  |
+  | Must live on storage shared between API and queue-worker pods in Kubernetes.
+  |
+  */
+  'export_directory' => env('BACKGROUND_EXPORT_DIRECTORY', 'private/backups/exports'),
 ];

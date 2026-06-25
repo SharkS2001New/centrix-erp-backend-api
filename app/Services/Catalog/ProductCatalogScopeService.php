@@ -64,9 +64,10 @@ class ProductCatalogScopeService
     public function scopeVisibleToBranch(Builder $query, int $organizationId, int $branchId): Builder
     {
         return $query
-            ->where('organization_id', $organizationId)
+            ->where('products.organization_id', $organizationId)
             ->where(function (Builder $inner) use ($branchId) {
-                $inner->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                $inner->whereNull('products.branch_id')
+                    ->orWhere('products.branch_id', $branchId);
             });
     }
 
@@ -75,7 +76,7 @@ class ProductCatalogScopeService
     {
         $orgId = $this->access->organizationId($user, $request);
         if ($orgId) {
-            $query->where('organization_id', $orgId);
+            $query->where('products.organization_id', $orgId);
         }
 
         $filterBranch = $request?->input('filter.branch_id') ?? $request?->input('branch_id');

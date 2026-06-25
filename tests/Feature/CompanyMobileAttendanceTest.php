@@ -51,4 +51,27 @@ class CompanyMobileAttendanceTest extends TestCase
             ->assertOk()
             ->assertJsonPath('device_registered', true);
     }
+
+    public function test_employee_search_requires_three_characters(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $admin = User::where('organization_id', $org->id)->firstOrFail();
+        $settings = $org->module_settings ?? [];
+        $settings['hr_payroll']['attendance_capture_mode'] = 'company_mobile';
+        $settings['hr_payroll']['company_premises_latitude'] = -1.2921;
+        $settings['hr_payroll']['company_premises_longitude'] = 36.8219;
+        $org->update(['module_settings' => $settings]);
+
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/attendance-mobile-devices', [
+            'device_identifier' => 'search-test-device',
+            'branch_id' => $admin->branch_id,
+            'platform' => 'android',
+        ])->assertCreated();
+
+        $this->getJson('/api/v1/company-mobile-attendance/employees?company_code=DEMO&device_identifier=search-test-device&q=ab')
+            ->assertStatus(422)
+            ->assertJsonPath('message', 'Enter at least 3 characters to search employees.');
+    }
 }

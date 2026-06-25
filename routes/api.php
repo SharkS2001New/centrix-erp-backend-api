@@ -108,14 +108,18 @@ Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
     Route::get('auth/organization-preview', [AuthController::class, 'organizationPreview'])
         ->middleware('throttle:auth-org-preview');
-    Route::prefix('company-mobile-attendance')->middleware('throttle:auth-org-preview')->group(function () {
-        Route::get('device-status', [CompanyMobileAttendanceController::class, 'deviceStatus']);
-        Route::get('branches', [CompanyMobileAttendanceController::class, 'branches']);
-        Route::get('config', [CompanyMobileAttendanceController::class, 'config']);
-        Route::get('employees', [CompanyMobileAttendanceController::class, 'employees']);
-        Route::get('employees/{employeeId}/session', [CompanyMobileAttendanceController::class, 'employeeSession']);
-        Route::post('clock-in', [CompanyMobileAttendanceController::class, 'clockIn']);
-        Route::post('clock-out', [CompanyMobileAttendanceController::class, 'clockOut']);
+    Route::prefix('company-mobile-attendance')->group(function () {
+        Route::middleware('throttle:auth-org-preview')->group(function () {
+            Route::get('device-status', [CompanyMobileAttendanceController::class, 'deviceStatus']);
+            Route::get('branches', [CompanyMobileAttendanceController::class, 'branches']);
+            Route::get('config', [CompanyMobileAttendanceController::class, 'config']);
+        });
+        Route::middleware('throttle:company-mobile-attendance')->group(function () {
+            Route::get('employees', [CompanyMobileAttendanceController::class, 'employees']);
+            Route::get('employees/{employeeId}/session', [CompanyMobileAttendanceController::class, 'employeeSession']);
+            Route::post('clock-in', [CompanyMobileAttendanceController::class, 'clockIn']);
+            Route::post('clock-out', [CompanyMobileAttendanceController::class, 'clockOut']);
+        });
     });
     Route::post('auth/login', [AuthController::class, 'login'])
         ->middleware('throttle:auth-login');

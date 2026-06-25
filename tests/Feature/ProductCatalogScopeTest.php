@@ -154,4 +154,16 @@ class ProductCatalogScopeTest extends TestCase
             ->assertOk()
             ->assertJsonStructure(['data', 'current_page', 'per_page', 'total']);
     }
+
+    public function test_catalog_summary_with_branch_id_does_not_use_ambiguous_branch_column(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $branchId = (int) $admin->branch_id;
+
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/products/catalog-summary?branch_id='.$branchId)
+            ->assertOk()
+            ->assertJsonStructure(['total', 'active', 'low_stock', 'out_of_stock', 'branch_id']);
+    }
 }

@@ -33,7 +33,8 @@ class ReportExportService
     ): array {
         $format = strtolower($format);
         $safeBase = $this->sanitizeFilename($basename ?: 'report');
-        $directory = 'exports/'.$organizationId;
+        $exportRoot = trim((string) config('background.export_directory', 'private/exports'), '/');
+        $directory = $exportRoot.'/'.$organizationId;
         $fullDirectory = storage_path('app/'.$directory);
         if (! is_dir($fullDirectory)) {
             mkdir($fullDirectory, 0755, true);

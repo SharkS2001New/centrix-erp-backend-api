@@ -76,6 +76,24 @@ class AppServiceProvider extends ServiceProvider
             return $limits;
         });
 
+        $companyMobileAttendance = config('security.rate_limits.company_mobile_attendance');
+        RateLimiter::for('company-mobile-attendance', function (Request $request) use ($companyMobileAttendance) {
+            $decay = max(1, (int) ($companyMobileAttendance['decay_minutes'] ?? 1));
+            $max = max(1, (int) ($companyMobileAttendance['max_attempts'] ?? 120));
+            $companyCode = strtoupper(trim((string) $request->input('company_code', '')));
+            $deviceId = trim((string) $request->input('device_identifier', ''));
+
+            $key = $deviceId !== ''
+                ? 'device:'.$deviceId
+                : 'ip:'.$request->ip();
+
+            if ($companyCode !== '') {
+                $key .= ':org:'.$companyCode;
+            }
+
+            return Limit::perMinutes($decay, $max)->by($key);
+        });
+
         $api = config('security.rate_limits.api');
         RateLimiter::for('api', function (Request $request) use ($api) {
             $key = $request->user()?->id

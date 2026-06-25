@@ -76,6 +76,10 @@ return [
             'max_attempts' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW', 20),
             'decay_minutes' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW_DECAY', 1),
         ],
+        'company_mobile_attendance' => [
+            'max_attempts' => (int) env('RATE_LIMIT_COMPANY_MOBILE_ATTENDANCE', 120),
+            'decay_minutes' => (int) env('RATE_LIMIT_COMPANY_MOBILE_ATTENDANCE_DECAY', 1),
+        ],
         'api' => [
             'max_attempts' => (int) env('RATE_LIMIT_API', 120),
             'decay_minutes' => (int) env('RATE_LIMIT_API_DECAY', 1),

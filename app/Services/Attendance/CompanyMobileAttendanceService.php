@@ -86,45 +86,139 @@ class CompanyMobileAttendanceService
     public function searchEmployees(Organization $organization, ?string $query, int $limit, string $deviceIdentifier): array
     {
         $device = $this->assertEnabledWithRegisteredDevice($organization, $deviceIdentifier);
+        $normalizedQuery = trim((string) ($query ?? ''));
 
-        $employees = Employee::query()
+        if ($normalizedQuery !== '' && mb_strlen($normalizedQuery) < 3) {
+            throw new InvalidArgumentException('Enter at least 3 characters to search employees.');
+        }
+
+        $builder = Employee::query()
             ->where('organization_id', $organization->id)
             ->where('employment_status', 'active')
             ->where('is_active', true)
-            ->when($device->branch_id, fn (Builder $builder) => $builder->where('branch_id', $device->branch_id))
-            ->when($query, function (Builder $builder) use ($query) {
-                $term = '%'.trim($query).'%';
-                $builder->where(function (Builder $inner) use ($term) {
+            ->when($device->branch_id, fn (Builder $builder) => $builder->where('branch_id', $device->branch_id));
+
+        if ($normalizedQuery === '') {
+            $employees = $builder
+                ->orderBy('full_name')
+                ->limit(max(1, min(50, $limit)))
+                ->get(['id', 'full_name', 'employee_code', 'first_name', 'last_name', 'payroll_number', 'branch_id']);
+        } else {
+            $term = '%'.$normalizedQuery.'%';
+            $employees = $builder
+                ->where(function (Builder $inner) use ($term) {
                     $inner->where('full_name', 'like', $term)
-                        ->orWhere('employee_code', 'like', $term);
-                });
+                        ->orWhere('employee_code', 'like', $term)
+                        ->orWhere('first_name', 'like', $term)
+                        ->orWhere('last_name', 'like', $term)
+                        ->orWhere('payroll_number', 'like', $term);
+                })
+                ->limit(100)
+                ->get(['id', 'full_name', 'employee_code', 'first_name', 'last_name', 'payroll_number', 'branch_id']);
+
+            $employees = $this->rankEmployeesForSearch($employees, $normalizedQuery)
+                ->take(max(1, min(50, $limit)))
+                ->values();
+        }
+
+        return $employees
+            ->map(fn (Employee $employee) => $this->serializeEmployeeOption($employee))
+            ->values()
+            ->all();
+    }
+
+    /** @param  \Illuminate\Support\Collection<int, Employee>  $employees */
+    protected function rankEmployeesForSearch($employees, string $query)
+    {
+        $needle = mb_strtolower(trim($query));
+
+        return $employees
+            ->map(function (Employee $employee) use ($needle) {
+                return [
+                    'employee' => $employee,
+                    'score' => $this->employeeSearchScore($employee, $needle),
+                ];
             })
-            ->orderBy('full_name')
-            ->limit(max(1, min(50, $limit)))
-            ->get(['id', 'full_name', 'employee_code', 'branch_id']);
+            ->filter(fn (array $row) => $row['score'] > 0)
+            ->sortByDesc('score')
+            ->pluck('employee');
+    }
 
-        return $employees->map(function (Employee $employee) {
-            $hasFaceProfile = AttendanceSchema::hasFaceProfiles()
-                && EmployeeFaceProfile::query()
-                    ->where('employee_id', $employee->id)
-                    ->exists();
-            $hasFingerprintProfile = AttendanceSchema::hasFingerprintProfiles()
-                && EmployeeFingerprintProfile::query()
-                    ->where('employee_id', $employee->id)
-                    ->exists();
-            $openSession = $this->openSessionForEmployee($employee->id);
+    protected function employeeSearchScore(Employee $employee, string $needle): int
+    {
+        $code = mb_strtolower(trim((string) ($employee->employee_code ?? '')));
+        $payroll = mb_strtolower(trim((string) ($employee->payroll_number ?? '')));
+        $fullName = mb_strtolower(trim((string) ($employee->full_name ?? '')));
+        $firstName = mb_strtolower(trim((string) ($employee->first_name ?? '')));
+        $lastName = mb_strtolower(trim((string) ($employee->last_name ?? '')));
+        $combinedName = trim($firstName.' '.$lastName);
 
-            return [
-                'id' => $employee->id,
-                'full_name' => $employee->full_name,
-                'employee_code' => $employee->employee_code,
-                'branch_id' => $employee->branch_id,
-                'face_enrolled' => $hasFaceProfile,
-                'fingerprint_enrolled' => $hasFingerprintProfile,
-                'has_open_session' => $openSession !== null,
-                'open_session_id' => $openSession?->id,
-            ];
-        })->values()->all();
+        if ($code !== '' && $code === $needle) {
+            return 1000;
+        }
+        if ($payroll !== '' && $payroll === $needle) {
+            return 950;
+        }
+        if ($fullName !== '' && str_starts_with($fullName, $needle)) {
+            return 900;
+        }
+        if ($combinedName !== '' && str_starts_with($combinedName, $needle)) {
+            return 850;
+        }
+        if ($code !== '' && str_starts_with($code, $needle)) {
+            return 800;
+        }
+        if ($firstName !== '' && str_starts_with($firstName, $needle)) {
+            return 750;
+        }
+        if ($lastName !== '' && str_starts_with($lastName, $needle)) {
+            return 700;
+        }
+        if ($fullName !== '' && str_contains($fullName, $needle)) {
+            return 500;
+        }
+        if ($combinedName !== '' && str_contains($combinedName, $needle)) {
+            return 450;
+        }
+        if ($code !== '' && str_contains($code, $needle)) {
+            return 400;
+        }
+        if ($payroll !== '' && str_contains($payroll, $needle)) {
+            return 350;
+        }
+        if ($firstName !== '' && str_contains($firstName, $needle)) {
+            return 300;
+        }
+        if ($lastName !== '' && str_contains($lastName, $needle)) {
+            return 250;
+        }
+
+        return 0;
+    }
+
+    /** @return array<string, mixed> */
+    protected function serializeEmployeeOption(Employee $employee): array
+    {
+        $hasFaceProfile = AttendanceSchema::hasFaceProfiles()
+            && EmployeeFaceProfile::query()
+                ->where('employee_id', $employee->id)
+                ->exists();
+        $hasFingerprintProfile = AttendanceSchema::hasFingerprintProfiles()
+            && EmployeeFingerprintProfile::query()
+                ->where('employee_id', $employee->id)
+                ->exists();
+        $openSession = $this->openSessionForEmployee($employee->id);
+
+        return [
+            'id' => $employee->id,
+            'full_name' => $employee->full_name,
+            'employee_code' => $employee->employee_code,
+            'branch_id' => $employee->branch_id,
+            'face_enrolled' => $hasFaceProfile,
+            'fingerprint_enrolled' => $hasFingerprintProfile,
+            'has_open_session' => $openSession !== null,
+            'open_session_id' => $openSession?->id,
+        ];
     }
 
     /** @return array<string, mixed> */
