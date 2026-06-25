@@ -147,7 +147,7 @@ Configure in `.env`:
 | `BACKUP_ENABLED` | Turn scheduled backups on/off |
 | `BACKUP_NOTIFY_EMAIL` | Email recipient for backup notifications |
 | `BACKUP_RETENTION_DAYS` | Delete local backups older than this |
-| `BACKUP_SCHEDULE_TIME` | Daily run time (24h clock, server timezone) |
+| `BACKUP_SCHEDULE_TIME` | Daily run time (24h clock, `APP_TIMEZONE` / Africa-Nairobi) |
 | `MAIL_*` | SMTP used to send backup emails |
 
 Backups are stored under `storage/app/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.

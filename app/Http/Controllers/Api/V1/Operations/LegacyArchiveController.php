@@ -8,7 +8,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\LightStoresLegacyImporter;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
-use Carbon\Carbon;
+use App\Support\AppTimezone;
 use Illuminate\Http\Request;
 
 class LegacyArchiveController extends Controller
@@ -47,8 +47,8 @@ class LegacyArchiveController extends Controller
             'to_date' => 'nullable|date|after_or_equal:from_date',
         ]);
 
-        $from = isset($data['from_date']) ? Carbon::parse($data['from_date'])->startOfDay() : null;
-        $to = isset($data['to_date']) ? Carbon::parse($data['to_date'])->endOfDay() : null;
+        $from = isset($data['from_date']) ? AppTimezone::parseDateStart((string) $data['from_date']) : null;
+        $to = isset($data['to_date']) ? AppTimezone::parseDateEnd((string) $data['to_date']) : null;
 
         return response()->json([
             'archive' => $this->archive->status($org),
@@ -109,8 +109,8 @@ class LegacyArchiveController extends Controller
             'per_page' => 'nullable|integer|min:1|max:200',
         ]);
 
-        $from = Carbon::parse($filters['from_date']);
-        $to = Carbon::parse($filters['to_date']);
+        $from = AppTimezone::parseDateStart((string) $filters['from_date']);
+        $to = AppTimezone::parseDateEnd((string) $filters['to_date']);
         if ($from->diffInDays($to) > 366) {
             return response()->json([
                 'message' => 'Date range cannot exceed 366 days. Narrow the range and try again.',

@@ -9,6 +9,7 @@ use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\CentrixSalesScope;
+use App\Support\AppTimezone;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -114,19 +115,14 @@ class ReportController extends Controller
             'include_legacy_archive' => 'nullable|boolean',
         ]);
 
-        $to = isset($data['to_date'])
-            ? \Carbon\Carbon::parse($data['to_date'])->startOfDay()
-            : now()->startOfDay();
-        $from = isset($data['from_date'])
-            ? \Carbon\Carbon::parse($data['from_date'])->startOfDay()
-            : $to->copy()->subDays(29);
-        if ($from->gt($to)) {
-            [$from, $to] = [$to->copy(), $from->copy()];
-        }
-
-        $days = $from->diffInDays($to) + 1;
-        $prevTo = $from->copy()->subDay();
-        $prevFrom = $prevTo->copy()->subDays($days - 1);
+        $period = AppTimezone::reportPeriod(
+            $data['from_date'] ?? null,
+            $data['to_date'] ?? null,
+        );
+        $from = $period['from'];
+        $to = $period['to'];
+        $prevFrom = $period['prev_from'];
+        $prevTo = $period['prev_to'];
         $branchId = $data['branch_id'] ?? null;
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
 
@@ -1028,10 +1024,10 @@ class ReportController extends Controller
         }
 
         $from = $request->filled('from_date')
-            ? \Carbon\Carbon::parse((string) $request->input('from_date'))->startOfDay()
+            ? AppTimezone::parseDateStart((string) $request->input('from_date'))
             : null;
         $to = $request->filled('to_date')
-            ? \Carbon\Carbon::parse((string) $request->input('to_date'))->endOfDay()
+            ? AppTimezone::parseDateEnd((string) $request->input('to_date'))
             : null;
 
         $legacyPage = max((int) $request->input('legacy_page', $request->input('page', 1)), 1);

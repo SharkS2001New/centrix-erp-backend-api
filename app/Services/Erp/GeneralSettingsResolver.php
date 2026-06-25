@@ -3,6 +3,7 @@
 namespace App\Services\Erp;
 
 use App\Models\Organization;
+use App\Support\AppTimezone;
 
 class GeneralSettingsResolver
 {
@@ -52,7 +53,7 @@ class GeneralSettingsResolver
         $out = array_merge($defaults, $settings);
 
         $out['currency'] = strtoupper(trim((string) ($out['currency'] ?? 'KES'))) ?: 'KES';
-        $out['timezone'] = trim((string) ($out['timezone'] ?? 'Africa/Nairobi')) ?: 'Africa/Nairobi';
+        $out['timezone'] = trim((string) ($out['timezone'] ?? AppTimezone::DEFAULT)) ?: AppTimezone::DEFAULT;
         $out['date_format'] = in_array($out['date_format'] ?? '', ['DD/MM/YYYY', 'MM/DD/YYYY', 'YYYY-MM-DD'], true)
             ? $out['date_format']
             : 'DD/MM/YYYY';

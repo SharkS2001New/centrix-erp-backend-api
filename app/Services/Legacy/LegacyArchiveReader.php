@@ -3,6 +3,7 @@
 namespace App\Services\Legacy;
 
 use App\Models\Organization;
+use App\Support\AppTimezone;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -28,7 +29,7 @@ class LegacyArchiveReader
     {
         $value = $this->settings->forOrganization($org)['cutover_date'] ?? null;
 
-        return $value ? Carbon::parse($value)->startOfDay() : null;
+        return $value ? AppTimezone::parseDateStart((string) $value) : null;
     }
 
     /**
@@ -140,8 +141,8 @@ class LegacyArchiveReader
         $this->assertAvailable($org);
 
         $channel = $filters['channel'] ?? null;
-        $from = isset($filters['from_date']) ? Carbon::parse($filters['from_date'])->startOfDay() : null;
-        $to = isset($filters['to_date']) ? Carbon::parse($filters['to_date'])->endOfDay() : null;
+        $from = isset($filters['from_date']) ? AppTimezone::parseDateStart((string) $filters['from_date']) : null;
+        $to = isset($filters['to_date']) ? AppTimezone::parseDateEnd((string) $filters['to_date']) : null;
         $q = trim((string) ($filters['q'] ?? ''));
         $page = max((int) ($filters['page'] ?? 1), 1);
         $perPage = min(max((int) ($filters['per_page'] ?? 20), 1), 200);
