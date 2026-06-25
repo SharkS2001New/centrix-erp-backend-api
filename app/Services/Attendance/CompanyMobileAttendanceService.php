@@ -92,29 +92,27 @@ class CompanyMobileAttendanceService
             throw new InvalidArgumentException('Enter at least 3 characters to search employees.');
         }
 
-        $builder = Employee::query()
-            ->where('organization_id', $organization->id)
-            ->where('employment_status', 'active')
-            ->where('is_active', true)
-            ->when($device->branch_id, fn (Builder $builder) => $builder->where('branch_id', $device->branch_id));
+        $builder = $this->attendanceEmployeeQuery($organization, $device);
+        $columns = [
+            'id',
+            'full_name',
+            'employee_code',
+            'first_name',
+            'middle_name',
+            'last_name',
+            'payroll_number',
+            'branch_id',
+        ];
 
         if ($normalizedQuery === '') {
             $employees = $builder
                 ->orderBy('full_name')
                 ->limit(max(1, min(50, $limit)))
-                ->get(['id', 'full_name', 'employee_code', 'first_name', 'last_name', 'payroll_number', 'branch_id']);
+                ->get($columns);
         } else {
-            $term = '%'.$normalizedQuery.'%';
-            $employees = $builder
-                ->where(function (Builder $inner) use ($term) {
-                    $inner->where('full_name', 'like', $term)
-                        ->orWhere('employee_code', 'like', $term)
-                        ->orWhere('first_name', 'like', $term)
-                        ->orWhere('last_name', 'like', $term)
-                        ->orWhere('payroll_number', 'like', $term);
-                })
+            $employees = $this->applyEmployeeSearchTerm($builder, $normalizedQuery)
                 ->limit(100)
-                ->get(['id', 'full_name', 'employee_code', 'first_name', 'last_name', 'payroll_number', 'branch_id']);
+                ->get($columns);
 
             $employees = $this->rankEmployeesForSearch($employees, $normalizedQuery)
                 ->take(max(1, min(50, $limit)))
@@ -127,6 +125,50 @@ class CompanyMobileAttendanceService
             ->all();
     }
 
+    protected function attendanceEmployeeQuery(Organization $organization, AttendanceMobileDevice $device): Builder
+    {
+        return Employee::query()
+            ->where('organization_id', $organization->id)
+            ->where(function (Builder $query) {
+                $query->where('employment_status', 'active')
+                    ->orWhereNull('employment_status');
+            })
+            ->where(function (Builder $query) {
+                $query->where('is_active', true)
+                    ->orWhere('is_active', 1);
+            })
+            ->when($device->branch_id, function (Builder $builder) use ($device) {
+                $builder->where(function (Builder $branchQuery) use ($device) {
+                    $branchQuery->where('branch_id', (int) $device->branch_id)
+                        ->orWhereNull('branch_id');
+                });
+            });
+    }
+
+    protected function applyEmployeeSearchTerm(Builder $builder, string $query): Builder
+    {
+        $needle = mb_strtolower(trim($query));
+        $term = '%'.$needle.'%';
+        $searchColumns = [
+            'full_name',
+            'first_name',
+            'middle_name',
+            'last_name',
+            'employee_code',
+            'payroll_number',
+            'email',
+            'personal_email',
+            'job_title',
+            'national_id',
+        ];
+
+        return $builder->where(function (Builder $inner) use ($searchColumns, $term) {
+            foreach ($searchColumns as $column) {
+                $inner->orWhereRaw('LOWER(COALESCE(`'.$column.'`, \'\')) LIKE ?', [$term]);
+            }
+        });
+    }
+
     /** @param  \Illuminate\Support\Collection<int, Employee>  $employees */
     protected function rankEmployeesForSearch($employees, string $query)
     {
@@ -136,10 +178,9 @@ class CompanyMobileAttendanceService
             ->map(function (Employee $employee) use ($needle) {
                 return [
                     'employee' => $employee,
-                    'score' => $this->employeeSearchScore($employee, $needle),
+                    'score' => max(1, $this->employeeSearchScore($employee, $needle)),
                 ];
             })
-            ->filter(fn (array $row) => $row['score'] > 0)
             ->sortByDesc('score')
             ->pluck('employee');
     }
@@ -150,8 +191,9 @@ class CompanyMobileAttendanceService
         $payroll = mb_strtolower(trim((string) ($employee->payroll_number ?? '')));
         $fullName = mb_strtolower(trim((string) ($employee->full_name ?? '')));
         $firstName = mb_strtolower(trim((string) ($employee->first_name ?? '')));
+        $middleName = mb_strtolower(trim((string) ($employee->middle_name ?? '')));
         $lastName = mb_strtolower(trim((string) ($employee->last_name ?? '')));
-        $combinedName = trim($firstName.' '.$lastName);
+        $combinedName = trim($firstName.' '.$middleName.' '.$lastName);
 
         if ($code !== '' && $code === $needle) {
             return 1000;
@@ -188,6 +230,9 @@ class CompanyMobileAttendanceService
         }
         if ($firstName !== '' && str_contains($firstName, $needle)) {
             return 300;
+        }
+        if ($middleName !== '' && str_contains($middleName, $needle)) {
+            return 275;
         }
         if ($lastName !== '' && str_contains($lastName, $needle)) {
             return 250;
@@ -558,7 +603,7 @@ class CompanyMobileAttendanceService
             throw new InvalidArgumentException('Employee not found.');
         }
 
-        if ($device?->branch_id && (int) $employee->branch_id !== (int) $device->branch_id) {
+        if ($device?->branch_id && $employee->branch_id !== null && (int) $employee->branch_id !== (int) $device->branch_id) {
             throw new InvalidArgumentException('Employee does not belong to this attendance phone branch.');
         }
 
