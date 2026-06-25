@@ -4,8 +4,6 @@ namespace App\Services\Background;
 
 use App\Models\BackgroundTask;
 use App\Models\User;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 use Laravel\Sanctum\NewAccessToken;
@@ -13,6 +11,9 @@ use RuntimeException;
 
 class InternalApiPaginator
 {
+    /** Background exports use larger pages to minimize in-process request count. */
+    private const BACKGROUND_PER_PAGE = 500;
+
     /** @var list<string> */
     private const ALLOWED_PREFIXES = [
         '/products',
@@ -29,6 +30,10 @@ class InternalApiPaginator
         '/suppliers',
         '/lpo-mst',
     ];
+
+    public function __construct(
+        protected InternalBackgroundRequest $internalRequest,
+    ) {}
 
     public function assertAllowedPath(string $path): string
     {
@@ -51,17 +56,15 @@ class InternalApiPaginator
         string $path,
         array $searchParams,
         User $user,
-        int $perPage = 200,
+        int $perPage = self::BACKGROUND_PER_PAGE,
         int $maxRows = 10000,
         ?callable $onProgress = null,
         ?BackgroundTask $cancelTask = null,
     ): array {
         $normalizedPath = $this->assertAllowedPath($path);
         $token = $user->createToken('background-fetch', ['*'], now()->addMinutes(10));
-        $plainToken = $token->plainTextToken;
 
         try {
-            $baseUrl = rtrim((string) config('app.url'), '/').'/api/v1';
             $all = [];
             $page = 1;
             $lastPage = 1;
@@ -77,18 +80,7 @@ class InternalApiPaginator
                     'per_page' => $perPage,
                 ]);
 
-                $response = Http::withToken($plainToken)
-                    ->acceptJson()
-                    ->timeout(120)
-                    ->get($baseUrl.$normalizedPath, $query);
-
-                if (! $response->successful()) {
-                    throw new RuntimeException(
-                        'Paginated fetch failed on page '.$page.' (HTTP '.$response->status().').'
-                    );
-                }
-
-                $payload = $response->json();
+                $payload = $this->internalRequest->get($normalizedPath, $query, $user, $token);
                 $rows = $payload['data'] ?? $payload['rows'] ?? [];
                 if (! is_array($rows)) {
                     $rows = [];
@@ -117,13 +109,13 @@ class InternalApiPaginator
                 'row_count' => count($all),
                 'truncated' => $truncated,
             ];
-        } catch (ConnectionException $e) {
-            Log::warning('InternalApiPaginator connection failed', [
+        } catch (\Throwable $e) {
+            Log::warning('InternalApiPaginator fetch failed', [
                 'path' => $normalizedPath,
                 'user_id' => $user->id,
                 'error' => $e->getMessage(),
             ]);
-            throw new RuntimeException('Could not reach the API while fetching paginated data.');
+            throw new RuntimeException('Could not fetch report data: '.$e->getMessage(), 0, $e);
         } finally {
             $this->revokeToken($token);
         }
@@ -144,14 +136,11 @@ class InternalApiPaginator
     ): array {
         $normalizedPath = $this->assertAllowedPath($path);
         $token = $user->createToken('background-fetch', ['*'], now()->addMinutes(10));
-        $plainToken = $token->plainTextToken;
         $legacyAll = [];
         $legacyPage = 1;
         $legacyLastPage = 1;
 
         try {
-            $baseUrl = rtrim((string) config('app.url'), '/').'/api/v1';
-
             do {
                 if ($cancelTask !== null && $cancelTask->fresh()?->status === 'cancelled') {
                     throw new RuntimeException('Background task was cancelled.');
@@ -159,23 +148,12 @@ class InternalApiPaginator
 
                 $query = array_merge($searchParams, [
                     'page' => 1,
-                    'per_page' => 200,
+                    'per_page' => self::BACKGROUND_PER_PAGE,
                     'include_legacy_archive' => 1,
                     'legacy_page' => $legacyPage,
                 ]);
 
-                $response = Http::withToken($plainToken)
-                    ->acceptJson()
-                    ->timeout(120)
-                    ->get($baseUrl.$normalizedPath, $query);
-
-                if (! $response->successful()) {
-                    throw new RuntimeException(
-                        'Legacy archive fetch failed on page '.$legacyPage.' (HTTP '.$response->status().').'
-                    );
-                }
-
-                $payload = $response->json();
+                $payload = $this->internalRequest->get($normalizedPath, $query, $user, $token);
                 $legacyChunk = $payload['legacy_archive']['data'] ?? [];
                 if (! is_array($legacyChunk)) {
                     $legacyChunk = [];
@@ -214,7 +192,7 @@ class InternalApiPaginator
             '/reports/legacy-archive/sales',
             $searchParams,
             $user,
-            200,
+            self::BACKGROUND_PER_PAGE,
             10000,
             $onProgress,
             $cancelTask,

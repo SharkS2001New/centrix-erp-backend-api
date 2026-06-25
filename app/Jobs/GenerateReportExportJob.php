@@ -2,19 +2,21 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
 use App\Services\Background\ReportExportService;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
-class GenerateReportExportJob implements ShouldQueue
+class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
+    use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
 
@@ -28,7 +30,7 @@ class GenerateReportExportJob implements ShouldQueue
         ReportExportService $exporter,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($this->shouldSkipBackgroundTask($task)) {
             return;
         }
 
@@ -80,15 +82,7 @@ class GenerateReportExportJob implements ShouldQueue
                 'truncated' => (bool) ($payload['truncated'] ?? false),
             ]));
         } catch (\Throwable $e) {
-            if ($task->fresh()?->status === 'cancelled') {
-                return;
-            }
-            Log::warning('GenerateReportExportJob failed', [
-                'task_id' => $this->taskId,
-                'error' => $e->getMessage(),
-            ]);
-            $tasks->markFailed($task, $e->getMessage());
-            throw $e;
+            $this->failBackgroundTask($tasks, $task, $e, 'GenerateReportExportJob');
         }
     }
 
@@ -132,7 +126,7 @@ class GenerateReportExportJob implements ShouldQueue
                 $searchParams = [];
             }
             $onProgress(8, 'Fetching products…');
-            $result = $paginator->fetchAll('/products', $searchParams, $user, 200, 10000, $onProgress, $task);
+            $result = $paginator->fetchAll('/products', $searchParams, $user, 500, 10000, $onProgress, $task);
 
             return $this->mapProductCatalogRows($result['rows']);
         }
@@ -148,7 +142,7 @@ class GenerateReportExportJob implements ShouldQueue
         }
 
         $onProgress(8, 'Fetching report data…');
-        $result = $paginator->fetchAll($path, $searchParams, $user, 200, 10000, $onProgress, $task);
+        $result = $paginator->fetchAll($path, $searchParams, $user, 500, 10000, $onProgress, $task);
         $rows = $result['rows'];
 
         if (! empty($payload['legacy_merge']['enabled'])) {

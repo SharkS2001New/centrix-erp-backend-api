@@ -2,18 +2,20 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
-class PaginatedFetchJob implements ShouldQueue
+class PaginatedFetchJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
+    use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
 
@@ -24,7 +26,7 @@ class PaginatedFetchJob implements ShouldQueue
     public function handle(BackgroundTaskService $tasks, InternalApiPaginator $paginator): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($this->shouldSkipBackgroundTask($task)) {
             return;
         }
 
@@ -46,19 +48,14 @@ class PaginatedFetchJob implements ShouldQueue
             }
 
             $tasks->updateProgress($task, 10, 'Started fetching…');
-            $result = $paginator->fetchAll($path, $searchParams, $user, 200, 10000, function (int $progress, string $message) use ($tasks, $task): void {
+            $result = $paginator->fetchAll($path, $searchParams, $user, 500, 10000, function (int $progress, string $message) use ($tasks, $task): void {
                 $tasks->updateProgress($task, $progress, $message);
             }, $task);
             $tasks->updateProgress($task, 95, 'Almost done…');
 
             $tasks->markCompleted($task, $result);
         } catch (\Throwable $e) {
-            Log::warning('PaginatedFetchJob failed', [
-                'task_id' => $this->taskId,
-                'error' => $e->getMessage(),
-            ]);
-            $tasks->markFailed($task, $e->getMessage());
-            throw $e;
+            $this->failBackgroundTask($tasks, $task, $e, 'PaginatedFetchJob');
         }
     }
 }

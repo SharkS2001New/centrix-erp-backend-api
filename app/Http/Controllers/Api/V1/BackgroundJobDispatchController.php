@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\GenerateReportExportJob;
 use App\Jobs\ReportBuilderPreviewJob;
 use App\Jobs\ReportRunJob;
+use App\Models\BackgroundTask;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
 use Illuminate\Http\Request;
@@ -46,7 +47,16 @@ class BackgroundJobDispatchController extends Controller
             abort_if(empty($data['rows']), 422, 'Rows are required for inline export.');
         }
 
-        $task = $this->tasks->create('report_export', $request->user(), $data);
+        $user = $request->user();
+        $hasActiveTask = BackgroundTask::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', (int) $user->organization_id)
+            ->whereIn('status', ['pending', 'running'])
+            ->exists();
+
+        abort_if($hasActiveTask, 409, 'Another background task is already running. Wait for it to finish.');
+
+        $task = $this->tasks->create('report_export', $user, $data);
         GenerateReportExportJob::dispatch($task->id);
 
         return response()->json([

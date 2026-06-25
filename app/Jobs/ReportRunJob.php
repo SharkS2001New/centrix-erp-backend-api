@@ -2,18 +2,20 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
-class ReportRunJob implements ShouldQueue
+class ReportRunJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
+    use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
 
@@ -24,7 +26,7 @@ class ReportRunJob implements ShouldQueue
     public function handle(BackgroundTaskService $tasks, InternalApiPaginator $paginator): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($this->shouldSkipBackgroundTask($task)) {
             return;
         }
 
@@ -51,19 +53,11 @@ class ReportRunJob implements ShouldQueue
             };
 
             $tasks->updateProgress($task, 10, 'Loading data…');
-            $result = $paginator->fetchAll($path, $searchParams, $user, 200, 10000, $onProgress, $task);
+            $result = $paginator->fetchAll($path, $searchParams, $user, 500, 10000, $onProgress, $task);
             $tasks->updateProgress($task, 95, 'Almost done…');
             $tasks->markCompleted($task, $result);
         } catch (\Throwable $e) {
-            if ($task->fresh()?->status === 'cancelled') {
-                return;
-            }
-            Log::warning('ReportRunJob failed', [
-                'task_id' => $this->taskId,
-                'error' => $e->getMessage(),
-            ]);
-            $tasks->markFailed($task, $e->getMessage());
-            throw $e;
+            $this->failBackgroundTask($tasks, $task, $e, 'ReportRunJob');
         }
     }
 }
