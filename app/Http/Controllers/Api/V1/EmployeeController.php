@@ -35,6 +35,11 @@ class EmployeeController extends BaseResourceController
     public function index(Request $request)
     {
         $query = Employee::query()->with($this->employeeRelations());
+        $user = $request->user();
+        if ($user) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
+            $this->access()->scopeBranchIfLimited($query, $user);
+        }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if (in_array($col, $this->filterableColumns(), true)) {
@@ -67,15 +72,25 @@ class EmployeeController extends BaseResourceController
     /** GET /employees/summary */
     public function summary(Request $request)
     {
-        $activeQuery = Employee::query()->where('is_active', '!=', false);
+        $query = Employee::query();
+        $user = $request->user();
+        if ($user) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
+            $this->access()->scopeBranchIfLimited($query, $user);
+        }
+
+        $activeQuery = (clone $query)->where('is_active', '!=', false);
+
+        $departmentQuery = \App\Models\Department::query()->where('is_active', '!=', false);
+        if ($user) {
+            $this->access()->scopeOrganization($departmentQuery, $user, 'organization_id', $request);
+        }
 
         return response()->json([
-            'total' => Employee::query()->count(),
-            'active' => (clone $activeQuery)->count(),
-            'departments' => \App\Models\Department::query()
-                ->where('is_active', '!=', false)
-                ->count(),
-            'payroll_cost' => (float) (clone $activeQuery)->sum('base_salary'),
+            'total' => (clone $query)->count(),
+            'active' => $activeQuery->count(),
+            'departments' => $departmentQuery->count(),
+            'payroll_cost' => (float) $activeQuery->sum('base_salary'),
         ]);
     }
 
