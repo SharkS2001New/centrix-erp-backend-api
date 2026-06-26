@@ -150,7 +150,28 @@ Configure in `.env`:
 | `BACKUP_SCHEDULE_TIME` | Daily run time (24h clock, `APP_TIMEZONE` / Africa-Nairobi) |
 | `MAIL_*` | SMTP used to send backup emails |
 
-Backups are stored under `storage/app/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
+Backups are stored under `storage/app/private/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
+
+## Shared storage (API + queue workers)
+
+Background report exports and large fetch caches write files under `BACKGROUND_EXPORT_DIRECTORY` (default `storage/app/private/backups/exports/`). The API creates export jobs; a **queue worker** (`php artisan queue:work`) generates the files and the API serves them — both processes must see the **same filesystem**.
+
+| Path (under `storage/app/`) | Purpose |
+|-----------------------------|---------|
+| `private/backups/database/` | MySQL backups (`BACKUP_DISK=local`, `BACKUP_PATH=backups/database`) |
+| `private/backups/exports/` | Report exports + task row cache (`BACKGROUND_EXPORT_DIRECTORY`) |
+
+**Single server / same container:** Run `queue:work` on the same host (or in the same container) as the API — no extra setup.
+
+**Kubernetes / multiple pods:** Mount one **shared volume** (PVC) on both the API deployment and the queue-worker deployment at `storage/app/private` (or at least `storage/app/private/backups`). Use the **same `.env`** on both so `BACKGROUND_EXPORT_DIRECTORY` and backup paths match.
+
+**Docker Compose:** If you add a separate `queue` service, mount the same host path or named volume to `storage/app/private` on both `app` and `queue`. Alternatively, run `php artisan queue:work` inside the existing `app` container.
+
+Recommended queue worker flags for large exports:
+
+```bash
+php artisan queue:work --memory=512 --timeout=3600
+```
 
 Enable the scheduler on the server:
 
