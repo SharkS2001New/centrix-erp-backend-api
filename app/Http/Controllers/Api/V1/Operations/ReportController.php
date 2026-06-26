@@ -10,6 +10,7 @@ use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\CentrixSalesScope;
 use App\Support\AppTimezone;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -585,28 +586,46 @@ class ReportController extends Controller
         ]));
     }
 
-    /** Full end-of-day dashboard payload for a branch and date. */
+    /** Full end-of-day dashboard payload for a branch and date or month. */
     public function eodReport(Request $request)
     {
         $data = $request->validate([
-            'sale_date' => 'required|date',
+            'sale_date' => 'required_without:sale_month|date',
+            'sale_month' => 'required_without:sale_date|date_format:Y-m',
             'branch_id' => 'nullable|integer',
             'cashier_id' => 'nullable|integer',
         ]);
 
-        $date = $data['sale_date'];
         $branchId = $data['branch_id'] ?? null;
         $cashierId = isset($data['cashier_id']) ? (int) $data['cashier_id'] : null;
         if ($cashierId <= 0) {
             $cashierId = null;
         }
 
+        $isMonthly = ! empty($data['sale_month']);
+        if ($isMonthly) {
+            $periodStart = Carbon::parse($data['sale_month'].'-01')->startOfDay();
+            $periodEnd = $periodStart->copy()->endOfMonth()->endOfDay();
+            $date = $periodStart->toDateString();
+        } else {
+            $periodStart = Carbon::parse($data['sale_date'])->startOfDay();
+            $periodEnd = $periodStart->copy()->endOfDay();
+            $date = $data['sale_date'];
+        }
+
+        $periodStartDate = $periodStart->toDateString();
+        $periodEndDate = $periodEnd->toDateString();
+
         $salesBase = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales')
                 ->where('status', 'completed')
-                ->where('archived', 0)
-                ->whereDate('completed_at', $date),
+                ->where('archived', 0),
         );
+        if ($isMonthly) {
+            $salesBase->whereBetween('completed_at', [$periodStart, $periodEnd]);
+        } else {
+            $salesBase->whereDate('completed_at', $date);
+        }
         if ($branchId) {
             $salesBase->where('branch_id', $branchId);
         }
@@ -618,6 +637,7 @@ class ReportController extends Controller
             COUNT(*) as transactions,
             COUNT(DISTINCT customer_num) as customers,
             COALESCE(SUM(order_total), 0) as gross_sales,
+            COALESCE(SUM(total_vat), 0) as total_vat,
             COALESCE(SUM(order_discount), 0) as order_discounts,
             COALESCE(SUM(cash), 0) as cash_collected,
             COALESCE(SUM(mpesa_amount), 0) as mpesa_collected,
@@ -628,41 +648,56 @@ class ReportController extends Controller
             MAX(completed_at) as last_sale_at
         ')->first();
 
-        $lineDiscounts = (float) CentrixSalesScope::excludeLegacyMaterialized(
+        $lineDiscountQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sale_items as si')
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
                 ->where('s.status', 'completed')
                 ->where('s.archived', 0)
-                ->whereDate('s.completed_at', $date)
                 ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
                 ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
             's',
-        )->sum('si.discount_given');
+        );
+        if ($isMonthly) {
+            $lineDiscountQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
+        } else {
+            $lineDiscountQuery->whereDate('s.completed_at', $date);
+        }
+        $lineDiscounts = (float) $lineDiscountQuery->sum('si.discount_given');
 
-        $itemsSold = (float) CentrixSalesScope::excludeLegacyMaterialized(
+        $itemsSoldQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sale_items as si')
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
                 ->where('s.status', 'completed')
                 ->where('s.archived', 0)
-                ->whereDate('s.completed_at', $date)
                 ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
                 ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
             's',
-        )->sum('si.quantity');
+        );
+        if ($isMonthly) {
+            $itemsSoldQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
+        } else {
+            $itemsSoldQuery->whereDate('s.completed_at', $date);
+        }
+        $itemsSold = (float) $itemsSoldQuery->sum('si.quantity');
 
         $saleIds = (clone $salesBase)->pluck('id');
         $refunds = $saleIds->isEmpty()
             ? 0
             : (float) DB::table('returns')->whereIn('sale_id', $saleIds)->sum('amount');
 
-        $voided = DB::table('sales')
+        $voidedQuery = DB::table('sales')
             ->where('status', 'cancelled')
-            ->whereDate('cancelled_at', $date)
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
-            ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId))
-            ->count();
+            ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId));
+        if ($isMonthly) {
+            $voidedQuery->whereBetween('cancelled_at', [$periodStart, $periodEnd]);
+        } else {
+            $voidedQuery->whereDate('cancelled_at', $date);
+        }
+        $voided = $voidedQuery->count();
 
         $gross = (float) ($agg->gross_sales ?? 0);
+        $totalVat = round((float) ($agg->total_vat ?? 0), 2);
         $totalDiscounts = (float) ($agg->order_discounts ?? 0) + $lineDiscounts;
         $netSales = max(0, $gross - $totalDiscounts - $refunds);
 
@@ -670,8 +705,12 @@ class ReportController extends Controller
         $mpesa = (float) ($agg->mpesa_collected ?? 0);
         $bank = (float) ($agg->equity_collected ?? 0) + (float) ($agg->kcb_collected ?? 0);
 
-        $sessionQ = DB::table('till_float_sessions as tfs')
-            ->whereDate('tfs.session_date', $date);
+        $sessionQ = DB::table('till_float_sessions as tfs');
+        if ($isMonthly) {
+            $sessionQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
+        } else {
+            $sessionQ->whereDate('tfs.session_date', $date);
+        }
         if ($branchId) {
             $sessionQ->where('tfs.branch_id', $branchId);
         }
@@ -680,7 +719,7 @@ class ReportController extends Controller
         }
         $openingFloat = (float) (clone $sessionQ)->sum('working_amount');
 
-        $tillRows = DB::table('till_float_sessions as tfs')
+        $tillRowsQuery = DB::table('till_float_sessions as tfs')
             ->join('tills as t', 'tfs.till_id', '=', 't.id')
             ->join('users as u', 'tfs.cashier_id', '=', 'u.id')
             ->leftJoin(DB::raw('(
@@ -690,9 +729,14 @@ class ReportController extends Controller
                   AND '.CentrixSalesScope::legacyExcludeSql('sales').'
                 GROUP BY float_session_id
             ) s'), 's.float_session_id', '=', 'tfs.id')
-            ->whereDate('tfs.session_date', $date)
             ->when($branchId, fn ($q) => $q->where('tfs.branch_id', $branchId))
-            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId))
+            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
+        if ($isMonthly) {
+            $tillRowsQuery->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
+        } else {
+            $tillRowsQuery->whereDate('tfs.session_date', $date);
+        }
+        $tillRows = $tillRowsQuery
             ->select(
                 't.till_number',
                 't.till_name',
@@ -708,15 +752,20 @@ class ReportController extends Controller
                 return $row;
             });
 
-        $cashierRows = CentrixSalesScope::excludeLegacyMaterialized(
+        $cashierRowsQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales as s')
                 ->join('users as u', 's.cashier_id', '=', 'u.id')
                 ->where('s.status', 'completed')
                 ->where('s.archived', 0)
-                ->whereDate('s.completed_at', $date)
                 ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId)),
             's',
-        )
+        );
+        if ($isMonthly) {
+            $cashierRowsQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
+        } else {
+            $cashierRowsQuery->whereDate('s.completed_at', $date);
+        }
+        $cashierRows = $cashierRowsQuery
             ->groupBy('s.cashier_id', 'u.username', 'u.full_name')
             ->orderBy('cashier')
             ->select(
@@ -729,10 +778,14 @@ class ReportController extends Controller
                 DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
             )
             ->get()
-            ->map(function ($row) use ($date, $branchId) {
+            ->map(function ($row) use ($date, $branchId, $isMonthly, $periodStartDate, $periodEndDate) {
                 $floatQuery = DB::table('till_float_sessions')
-                    ->where('cashier_id', $row->cashier_id)
-                    ->whereDate('session_date', $date);
+                    ->where('cashier_id', $row->cashier_id);
+                if ($isMonthly) {
+                    $floatQuery->whereBetween('session_date', [$periodStartDate, $periodEndDate]);
+                } else {
+                    $floatQuery->whereDate('session_date', $date);
+                }
                 if ($branchId) {
                     $floatQuery->where('branch_id', $branchId);
                 }
@@ -741,18 +794,40 @@ class ReportController extends Controller
                 return $row;
             });
 
-        $expenseRows = DB::table('v_expenses_summary')
-            ->where('expense_date', $date)
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+        $expenseRowsQuery = DB::table('v_expenses_summary')
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+        if ($isMonthly) {
+            $expenseRowsQuery->whereBetween('expense_date', [$periodStartDate, $periodEndDate]);
+        } else {
+            $expenseRowsQuery->where('expense_date', $date);
+        }
+        $expenseRows = $expenseRowsQuery
             ->select('group_name', DB::raw('SUM(total_amount) as amount'))
             ->groupBy('group_name')
             ->get();
 
         $totalExpenses = $expenseRows->sum(fn ($r) => (float) $r->amount);
 
-        $creditPayments = (float) DB::table('customer_invoice_payments')
-            ->whereDate('date_paid', $date)
-            ->sum('amount_paid');
+        $sessionExpenseQ = DB::table('expenses as e')
+            ->join('till_float_sessions as tfs', 'e.float_session_id', '=', 'tfs.id')
+            ->whereNotNull('e.float_session_id')
+            ->whereNull('e.deleted_at')
+            ->when($branchId, fn ($q) => $q->where('tfs.branch_id', $branchId))
+            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
+        if ($isMonthly) {
+            $sessionExpenseQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
+        } else {
+            $sessionExpenseQ->whereDate('tfs.session_date', $date);
+        }
+        $sessionExpenses = (float) $sessionExpenseQ->sum('e.expense_amount');
+
+        $creditPaymentsQuery = DB::table('customer_invoice_payments');
+        if ($isMonthly) {
+            $creditPaymentsQuery->whereBetween('date_paid', [$periodStartDate, $periodEndDate]);
+        } else {
+            $creditPaymentsQuery->whereDate('date_paid', $date);
+        }
+        $creditPayments = (float) $creditPaymentsQuery->sum('amount_paid');
 
         $closingDebtors = (float) DB::table('customers')
             ->whereNull('deleted_at')
@@ -768,7 +843,39 @@ class ReportController extends Controller
 
         $creditSales = (float) ($agg->credit_sales ?? 0);
         $netCashExpected = $openingFloat + $cash;
+        $netSalesMinusFloat = $openingFloat > 0 ? max(0, round($netSales - $openingFloat, 2)) : null;
         $netPosition = $netCashExpected - $totalExpenses - $closingDebtors;
+
+        $dailyBreakdown = null;
+        if ($isMonthly) {
+            $dailyBreakdown = CentrixSalesScope::excludeLegacyMaterialized(
+                DB::table('sales')
+                    ->where('status', 'completed')
+                    ->where('archived', 0)
+                    ->whereBetween('completed_at', [$periodStart, $periodEnd])
+                    ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+                    ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId)),
+            )
+                ->selectRaw('
+                    DATE(completed_at) as sale_date,
+                    COUNT(*) as transactions,
+                    COALESCE(SUM(order_total), 0) as gross_sales,
+                    COALESCE(SUM(total_vat), 0) as total_vat,
+                    COALESCE(SUM(cash), 0) as cash_collected
+                ')
+                ->groupBy(DB::raw('DATE(completed_at)'))
+                ->orderBy('sale_date')
+                ->get()
+                ->map(fn ($row) => [
+                    'sale_date' => (string) $row->sale_date,
+                    'transactions' => (int) $row->transactions,
+                    'gross_sales' => round((float) $row->gross_sales, 2),
+                    'total_vat' => round((float) $row->total_vat, 2),
+                    'cash_collected' => round((float) $row->cash_collected, 2),
+                ])
+                ->values()
+                ->all();
+        }
 
         $branchName = null;
         if ($branchId) {
@@ -784,7 +891,11 @@ class ReportController extends Controller
         }
 
         return response()->json([
+            'report_mode' => $isMonthly ? 'monthly' : 'daily',
             'sale_date' => $date,
+            'sale_month' => $isMonthly ? $data['sale_month'] : null,
+            'period_start' => $periodStartDate,
+            'period_end' => $periodEndDate,
             'branch_id' => $branchId,
             'branch_name' => $branchName,
             'cashier_id' => $cashierId,
@@ -795,8 +906,11 @@ class ReportController extends Controller
                 'total_discounts' => $totalDiscounts,
                 'total_refunds' => $refunds,
                 'net_sales' => $netSales,
+                'total_vat' => $totalVat,
                 'opening_float' => $openingFloat,
+                'net_sales_minus_float' => $netSalesMinusFloat,
                 'net_cash_expected' => $netCashExpected,
+                'session_expenses' => $sessionExpenses,
                 'items_sold' => (int) round($itemsSold),
                 'customers' => (int) ($agg->customers ?? 0),
                 'voided_transactions' => (int) $voided,
@@ -816,6 +930,7 @@ class ReportController extends Controller
             'cashiers' => $cashierRows,
             'expenses' => $expenseRows,
             'total_expenses' => $totalExpenses,
+            'session_expenses' => $sessionExpenses,
             'debtors' => [
                 'opening' => null,
                 'new_credit_sales' => $creditSales,
@@ -823,6 +938,7 @@ class ReportController extends Controller
                 'closing' => $closingDebtors,
             ],
             'net_position' => $netPosition,
+            'daily_breakdown' => $dailyBreakdown,
         ]);
     }
 

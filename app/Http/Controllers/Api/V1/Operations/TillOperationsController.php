@@ -505,6 +505,7 @@ class TillOperationsController extends Controller
                 COUNT(*) as transactions,
                 COALESCE(SUM(order_total), 0) as gross,
                 COALESCE(SUM(order_discount), 0) as discounts,
+                COALESCE(SUM(total_vat), 0) as total_vat,
                 COALESCE(SUM(cash), 0) as cash,
                 COALESCE(SUM(mpesa_amount), 0) as mpesa,
                 COALESCE(SUM(equity_amount), 0) as equity,
@@ -531,7 +532,9 @@ class TillOperationsController extends Controller
         $kcb = (float) ($salesAgg->kcb ?? 0);
         $bank = $equity + $kcb;
         $netSales = max(0, $gross - $refunds);
+        $totalVat = round((float) ($salesAgg->total_vat ?? 0), 2);
         $openingFloat = (float) ($session->working_amount ?? 0);
+        $netSalesMinusFloat = $openingFloat > 0 ? max(0, round($netSales - $openingFloat, 2)) : null;
         $grossTillTotal = $openingFloat + $cash;
         $cashMovements = $this->normalizeCashMovements(
             is_string($session->cash_movements ?? null)
@@ -560,6 +563,8 @@ class TillOperationsController extends Controller
                 'transactions' => (int) ($salesAgg->transactions ?? 0),
                 'net_sales' => $netSales,
                 'net' => $netSales,
+                'net_sales_minus_float' => $netSalesMinusFloat,
+                'total_vat' => $totalVat,
                 'order_discounts' => $discounts,
                 'refunds' => $refunds,
                 'cash' => $cash,

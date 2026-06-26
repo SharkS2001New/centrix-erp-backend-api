@@ -24,6 +24,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\PosLinePricingService;
+use App\Services\Sales\PosOrderEditService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
@@ -156,11 +157,12 @@ class CartOperationsController extends Controller
             );
         }
 
-        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate, $request) {
+        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate) {
             if ($cart->lines()->exists()) {
                 $this->clearCart($cart);
             }
 
+            app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
             $this->reverseSaleStockDeductions($sale, $user);
 
             $cart->update([
@@ -522,24 +524,11 @@ class CartOperationsController extends Controller
 
     protected function assertSaleRestorableToCart(Sale $sale, User $user): void
     {
-        if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
-            throw new InvalidArgumentException('This order cannot be edited.');
-        }
-
-        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
-            throw new InvalidArgumentException('You can only edit your own orders.');
-        }
-
-        $editable = match ($sale->channel) {
-            'mobile' => ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed'],
-            default => ['held'],
-        };
-
-        if (! in_array((string) $sale->status, $editable, true)) {
-            throw new InvalidArgumentException(
-                'This order cannot be edited in its current status.',
-            );
-        }
+        app(PosOrderEditService::class)->assertSaleEditable(
+            $sale,
+            $user,
+            $this->erp->gateForUser($user),
+        );
     }
 
     protected function getOrCreateCart(User $user, array $input): TemporaryCart
