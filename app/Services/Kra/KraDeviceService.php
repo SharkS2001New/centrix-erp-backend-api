@@ -127,30 +127,49 @@ class KraDeviceService
         }
 
         $registered = 0;
-        $chunks = array_chunk($items, 200);
 
-        foreach ($chunks as $index => $chunk) {
-            $pluData = array_map(
-                fn ($product) => $this->usesUploadPluDataPayload($path)
-                    ? self::buildComstorePluItemFromProduct($product)
-                    : self::buildPluLineFromProduct($product),
-                $chunk,
-            );
-            $payload = $this->buildProductRegisterPayload($pluData, $index + 1, $path);
-            $result = $this->postToDevice($path, $payload, [
-                'batch' => $index + 1,
-                'plu_count' => count($pluData),
-            ]);
-
-            if (! $result['success']) {
-                return array_merge($result, [
-                    'registered_count' => $registered,
-                    'product_count' => count($items),
+        if ($this->usesUploadPluDataPayload($path)) {
+            foreach ($items as $index => $product) {
+                $pluItem = self::buildComstorePluItemFromProduct($product);
+                $payload = $this->buildComstoreUploadPayload($pluItem);
+                $result = $this->postToDevice($path, $payload, [
                     'batch' => $index + 1,
+                    'product_code' => (string) ($product->product_code ?? ''),
+                    'plu_count' => 1,
                 ]);
-            }
 
-            $registered += count($chunk);
+                if (! $result['success']) {
+                    return array_merge($result, [
+                        'registered_count' => $registered,
+                        'product_count' => count($items),
+                        'batch' => $index + 1,
+                        'product_code' => (string) ($product->product_code ?? ''),
+                    ]);
+                }
+
+                $registered++;
+            }
+        } else {
+            $chunks = array_chunk($items, 200);
+
+            foreach ($chunks as $index => $chunk) {
+                $pluData = array_map(fn ($product) => self::buildPluLineFromProduct($product), $chunk);
+                $payload = $this->buildProductRegisterPayload($pluData, $index + 1, $path);
+                $result = $this->postToDevice($path, $payload, [
+                    'batch' => $index + 1,
+                    'plu_count' => count($pluData),
+                ]);
+
+                if (! $result['success']) {
+                    return array_merge($result, [
+                        'registered_count' => $registered,
+                        'product_count' => count($items),
+                        'batch' => $index + 1,
+                    ]);
+                }
+
+                $registered += count($chunk);
+            }
         }
 
         return [
@@ -187,88 +206,88 @@ class KraDeviceService
         $defaults = config('erp.module_settings_defaults.finance.kra_plu_defaults', []);
         $price = (float) ($product->unit_price ?? $product->last_selling_price ?? 0);
         $productCode = trim((string) ($product->product_code ?? ''));
+        $barcodePrefix = (string) ($defaults['barcode_prefix'] ?? '000000');
         $pluNo = (string) ($product->id ?? $productCode);
-        $barcode = $productCode !== '' ? $productCode : $pluNo;
+        $barcode = $barcodePrefix.$productCode;
+        $pluName = trim((string) ($product->product_name ?? 'Product'));
+
+        if ($pluName === '') {
+            $pluName = 'Product';
+        }
 
         return [
             'plu_no' => $pluNo,
             'barcode' => $barcode,
-            'plu_name' => self::sanitizeComstorePluName((string) ($product->product_name ?? 'Product')),
-            'unit_price' => number_format($price, 2, '.', ''),
+            'plu_name' => mb_substr($pluName, 0, 50),
+            'unit_price' => self::formatComstoreUnitPrice($price),
             'item_cls_code' => (string) ($defaults['item_cls_code'] ?? '99010000'),
             'pkg_unit_cd' => (string) ($defaults['pkg_unit_cd'] ?? 'BG-Bag'),
-            'qty_unit_cd' => self::resolveComstoreQtyUnitCode($product, $defaults),
+            'qty_unit_cd' => (string) ($defaults['qty_unit_cd'] ?? 'U-Pieces/item [Number]'),
             'orgn_nat_cd' => (string) ($defaults['orgn_nat_cd'] ?? 'KE-KENYA'),
-            'btch_no' => '',
+            'btch_no' => '0',
             'add_info' => '',
             'tax_type' => self::resolveComstoreTaxType($product),
-            'sfty_qty' => '',
+            'sfty_qty' => '0',
             'type_code' => (string) ($defaults['type_code'] ?? '02Finished Product'),
             'isrc_aplcb_yn' => '0',
-            'change_qty' => (string) ($defaults['change_qty'] ?? '99999'),
-            'stocks' => number_format(
-                (float) ($product->stock_in_shop ?? 0) + (float) ($product->stock_in_store ?? 0),
-                0,
-                '.',
-                '',
-            ),
+            'change_qty' => (string) ($defaults['change_qty'] ?? '100000'),
+            'stocks' => '0',
             'use_yor_n' => '1',
         ];
     }
 
-    /** @param  array<string, mixed>  $defaults */
-    protected static function resolveComstoreQtyUnitCode(object $product, array $defaults): string
+    protected static function formatComstoreUnitPrice(float $price): string
     {
-        $unit = $product->unit ?? null;
-        if ($unit !== null) {
-            $label = trim((string) ($unit->measure_name ?? $unit->full_name ?? ''));
-            if ($label !== '') {
-                return $label;
-            }
+        if ($price == floor($price)) {
+            return (string) (int) $price;
         }
 
-        return (string) ($defaults['qty_unit_cd'] ?? 'U-Pieces/item [Number]');
+        return number_format($price, 2, '.', '');
     }
 
     protected static function resolveComstoreTaxType(object $product): string
     {
         $vat = $product->vat ?? null;
         if ($vat === null) {
-            return 'B';
+            return 'B-16.00%';
         }
 
         $pct = (float) ($vat->vat_percentage ?? 16);
         $name = strtolower((string) ($vat->vat_name ?? ''));
 
-        if (str_contains($name, 'exempt')) {
-            return 'A';
+        if (str_contains($name, 'exempt') || $pct <= 0 && str_contains($name, 'exempt')) {
+            return 'A-Exempt';
         }
 
         if ($pct <= 0) {
-            return 'C';
+            return 'C-0%';
         }
 
         if ($pct >= 15.5 && $pct <= 16.5) {
-            return 'B';
+            return 'B-16.00%';
         }
 
         if ($pct >= 7.5 && $pct <= 8.5) {
-            return 'E';
+            return 'E-8%';
         }
 
-        return 'B';
+        return 'B-16.00%';
     }
 
-    protected static function sanitizeComstorePluName(string $name): string
+    /** @return array<string, mixed> */
+    protected function buildComstoreUploadPayload(array $pluItem): array
     {
-        $clean = preg_replace('/[^\p{L}\p{N}\s\-]/u', '', $name) ?? $name;
-        $clean = trim(preg_replace('/\s+/', ' ', $clean) ?? $clean);
+        /** @var array<string, mixed> $defaults */
+        $defaults = config('erp.module_settings_defaults.finance.kra_plu_defaults', []);
 
-        if ($clean === '') {
-            return 'Product';
-        }
-
-        return mb_substr($clean, 0, 50);
+        return [
+            'sn' => $this->serialNumber,
+            'plu_items' => [$pluItem],
+            'from_no' => (int) ($defaults['from_no'] ?? 1),
+            'end_no' => (int) ($defaults['end_no'] ?? 100000),
+            'update_flag' => (int) ($defaults['update_flag'] ?? 0),
+            'file_signal' => '',
+        ];
     }
 
     /** @return array<string, string> */
@@ -309,20 +328,6 @@ class KraDeviceService
     /** @param  array<int, array<string, mixed>>  $pluData */
     protected function buildProductRegisterPayload(array $pluData, int $batch = 1, string $path = ''): array
     {
-        if ($this->usesUploadPluDataPayload($path)) {
-            /** @var array<string, mixed> $defaults */
-            $defaults = config('erp.module_settings_defaults.finance.kra_plu_defaults', []);
-
-            return [
-                'Sn' => $this->serialNumber,
-                'PluItems' => $pluData,
-                'FromNo' => (int) ($defaults['from_no'] ?? 1),
-                'EndNo' => (int) ($defaults['end_no'] ?? 10000000),
-                'UpdateFlag' => (int) ($defaults['update_flag'] ?? 0),
-                'FileSignal' => '',
-            ];
-        }
-
         return [
             'sn' => $this->serialNumber,
             'is_test' => $this->isTest,
@@ -347,16 +352,10 @@ class KraDeviceService
 
         if ($this->usesUploadPluDataPayload($path)) {
             if (! is_array($responseData)) {
-                return true;
+                return false;
             }
 
-            foreach (['success', 'Success'] as $key) {
-                if (array_key_exists($key, $responseData) && $responseData[$key] === false) {
-                    return false;
-                }
-            }
-
-            return true;
+            return (bool) ($responseData['success'] ?? false);
         }
 
         return (bool) ($responseData['success'] ?? false);

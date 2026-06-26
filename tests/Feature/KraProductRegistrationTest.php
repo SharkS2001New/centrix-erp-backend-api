@@ -103,22 +103,26 @@ class KraProductRegistrationTest extends TestCase
             }
 
             $body = $request->data();
-            $plu = $body['PluItems'][0] ?? [];
+            $plu = $body['plu_items'][0] ?? [];
 
-            return ($body['Sn'] ?? '') === 'DEJA02220240050'
-                && is_array($body['PluItems'])
-                && ($body['FromNo'] ?? null) === 1
-                && ($body['EndNo'] ?? null) === 10000000
-                && ($body['UpdateFlag'] ?? null) === 0
-                && ($body['FileSignal'] ?? null) === ''
+            return ($body['sn'] ?? '') === 'DEJA02220240050'
+                && is_array($body['plu_items'])
+                && count($body['plu_items']) === 1
+                && ($body['from_no'] ?? null) === 1
+                && ($body['end_no'] ?? null) === 100000
+                && ($body['update_flag'] ?? null) === 0
+                && ($body['file_signal'] ?? null) === ''
                 && ! array_key_exists('sign_structure', $body)
                 && ! array_key_exists('plu_data', $body)
-                && ($plu['barcode'] ?? '') === $product->product_code
-                && ($plu['plu_name'] ?? '') !== ''
-                && ($plu['tax_type'] ?? '') === 'B'
+                && ! array_key_exists('PluItems', $body)
+                && ($plu['barcode'] ?? '') === '000000'.$product->product_code
+                && ($plu['plu_name'] ?? '') === $product->product_name
+                && ($plu['tax_type'] ?? '') === 'B-16.00%'
                 && ($plu['type_code'] ?? '') === '02Finished Product'
                 && ($plu['use_yor_n'] ?? '') === '1';
         });
+
+        Http::assertSentCount(1);
     }
 
     public function test_register_products_requires_kra_device_enabled(): void
