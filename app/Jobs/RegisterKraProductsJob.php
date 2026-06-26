@@ -58,7 +58,7 @@ class RegisterKraProductsJob implements ShouldQueue
                 $query->whereIn('product_code', $productCodes);
             }
 
-            $products = $query->orderBy('product_name')->get();
+            $products = $query->with(['vat', 'unit'])->orderBy('product_name')->get();
             if ($products->isEmpty()) {
                 throw new \RuntimeException('No matching active products found.');
             }

@@ -82,11 +82,13 @@ class KraProductRegistrationTest extends TestCase
 
         Http::fake([
             '192.168.1.50:8010/*' => Http::response([
-                'Message' => 'PLU uploaded',
+                'success' => true,
+                'message' => 'Successfully uploaded 1 PLU items to device',
+                'items_processed' => 1,
             ], 200),
         ]);
 
-        $product = Product::firstOrFail();
+        $product = Product::with(['vat', 'unit'])->firstOrFail();
 
         $response = $this->postJson('/api/v1/kra/register-products', [
             'product_codes' => [$product->product_code],
@@ -102,17 +104,20 @@ class KraProductRegistrationTest extends TestCase
 
             $body = $request->data();
             $plu = $body['PluItems'][0] ?? [];
-            $sign = $body['SignStructure'] ?? null;
 
             return ($body['Sn'] ?? '') === 'DEJA02220240050'
-                && ($body['IsTest'] ?? null) !== null
                 && is_array($body['PluItems'])
-                && ($plu['Barcode'] ?? '') === $product->product_code
-                && ($plu['item_Name'] ?? '') === $product->product_name
-                && ($plu['ItemDisCount(%)'] ?? '') === '0'
-                && array_is_list($sign) === false
-                && ($sign['pinOfshop'] ?? '') === 'P052177271G'
-                && ($sign['SignType'] ?? '') === '2';
+                && ($body['FromNo'] ?? null) === 1
+                && ($body['EndNo'] ?? null) === 10000000
+                && ($body['UpdateFlag'] ?? null) === 0
+                && ($body['FileSignal'] ?? null) === ''
+                && ! array_key_exists('sign_structure', $body)
+                && ! array_key_exists('plu_data', $body)
+                && ($plu['barcode'] ?? '') === $product->product_code
+                && ($plu['plu_name'] ?? '') !== ''
+                && ($plu['tax_type'] ?? '') === 'B'
+                && ($plu['type_code'] ?? '') === '02Finished Product'
+                && ($plu['use_yor_n'] ?? '') === '1';
         });
     }
 

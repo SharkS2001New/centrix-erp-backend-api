@@ -93,6 +93,33 @@ class LegacyReturnTest extends TestCase
         $this->assertSame(0.0, (float) $sale->order_total);
     }
 
+    public function test_legacy_return_rejects_when_kra_device_fails(): void
+    {
+        $this->enableKraDevice();
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => false,
+                'message' => 'Invalid relevant invoice number',
+            ], 200),
+        ]);
+
+        $sale = $this->createLegacySale();
+        $beforeReturns = \App\Models\CustomerReturn::query()->count();
+
+        $this->postJson('/api/v1/legacy-returns', [
+            'sale_id' => $sale->id,
+            'kra_original_invoice_number' => '00007777',
+            'reason' => 'Damaged Product',
+            'full_return' => true,
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['kra']);
+
+        $this->assertSame($beforeReturns, \App\Models\CustomerReturn::query()->count());
+        $this->assertDatabaseMissing('credit_notes', [
+            'sale_id' => $sale->id,
+        ]);
+    }
+
     public function test_legacy_return_lines_prefill_full_order_amounts(): void
     {
         $sale = $this->createLegacySale();
