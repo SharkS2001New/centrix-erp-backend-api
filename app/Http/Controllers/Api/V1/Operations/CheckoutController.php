@@ -165,6 +165,10 @@ class CheckoutController extends Controller
                 throw new InvalidArgumentException("Status [{$orderStatus}] is not allowed for this channel.");
             }
 
+            if ($orderStatus === 'cancelled') {
+                throw new InvalidArgumentException('Checkout cannot create a cancelled order.');
+            }
+
             $floatSessionId = FloatSessionValidator::forUser($user)->resolveForCheckout($cart, $user, $input);
 
             $creditBalance = $isCredit ? max(0, $total - $amountPaid) : 0;

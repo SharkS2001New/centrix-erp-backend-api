@@ -182,11 +182,18 @@ class CartOperationsController extends Controller
                 ], $user, $gate);
             }
 
+            $meta = array_merge($sale->fulfillment_meta ?? [], [
+                'superseded_by_edit' => true,
+                'superseded_at' => now()->toIso8601String(),
+            ]);
+
             $sale->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancelled_by' => $user->id,
                 'stock_balanced' => 0,
+                'archived' => 1,
+                'fulfillment_meta' => $meta,
             ]);
 
             $this->reverseSaleJournalIfPosted($sale, $user);

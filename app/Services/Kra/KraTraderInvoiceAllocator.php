@@ -5,52 +5,48 @@ namespace App\Services\Kra;
 use App\Models\CreditNote;
 use App\Models\KraResponse;
 use App\Models\Sale;
-use Illuminate\Support\Facades\DB;
 
 /**
- * Assigns monotonic numeric TraderSystemInvoiceNumber values for Comstore / complete-workflow.
+ * Assigns numeric TraderSystemInvoiceNumber values for Comstore / complete-workflow.
  *
- * KRA error 314 ("receiptNo is error") is usually caused by duplicate, non-numeric,
- * or out-of-sequence trader invoice numbers relative to prior submissions on the device.
+ * Uses the same algorithm as LightStores KRAService::generateKRAInvoiceNumber()
+ * (unix timestamp + random, 10 digits) so receipts look like legacy Comstore sales.
+ * When time() already fills 10 digits, the last 3 are randomized to reduce same-second
+ * collisions when several POS terminals share one on-prem device.
+ * Failed submissions reuse the same trader number on retry.
  */
 class KraTraderInvoiceAllocator
 {
     public function forSale(Sale $sale, array $financeSettings = []): string
     {
-        $orgId = (int) $sale->organization_id;
-        $start = max(0, (int) ($financeSettings['kra_trader_invoice_start'] ?? 0));
-        $orderNum = max(0, (int) $sale->order_num);
-        $maxUsed = $this->maxUsedTraderInvoice($orgId);
+        if ($sale->exists) {
+            $existing = $this->extractFromLatestSaleAttempt($sale);
+            if ($existing !== null) {
+                return $existing;
+            }
+        }
 
-        $next = max($start, $orderNum, $maxUsed + 1);
-
-        return $this->format($next);
+        return $this->generateUniqueForOrganization((int) $sale->organization_id);
     }
 
     public function forCreditNote(CreditNote $creditNote, array $financeSettings = []): string
     {
-        $orgId = (int) $creditNote->organization_id;
-        $start = max(0, (int) ($financeSettings['kra_trader_invoice_start'] ?? 0));
-        $maxUsed = $this->maxUsedTraderInvoice($orgId);
+        $existing = $this->extractFromCreditNote($creditNote);
+        if ($existing !== null) {
+            return $existing;
+        }
 
-        $next = max($start, $maxUsed + 1, (int) $creditNote->id);
-
-        return $this->format($next);
+        return $this->generateUniqueForOrganization((int) $creditNote->organization_id);
     }
 
     public function extractFromKraResponse(KraResponse $row): ?string
     {
-        $payload = $row->request_payload;
-        if (! is_array($payload)) {
-            return null;
-        }
+        return $this->extractFromPayload($row->request_payload);
+    }
 
-        $fromStructure = $payload['sign_structure']['TraderSystemInvoiceNumber'] ?? null;
-        if (is_string($fromStructure) && $this->isValidFormat($fromStructure)) {
-            return $fromStructure;
-        }
-
-        return null;
+    public function extractFromCreditNote(CreditNote $creditNote): ?string
+    {
+        return $this->extractFromPayload($creditNote->kra_request_payload);
     }
 
     public function isValidFormat(string $value): bool
@@ -63,67 +59,105 @@ class KraTraderInvoiceAllocator
             && (int) $trimmed > 0;
     }
 
-    protected function maxUsedTraderInvoice(int $organizationId): int
+    protected function extractFromLatestSaleAttempt(Sale $sale): ?string
     {
-        $max = 0;
+        $row = KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->whereNotNull('request_payload')
+            ->orderByDesc('id')
+            ->first();
 
+        if (! $row) {
+            return null;
+        }
+
+        return $this->extractFromKraResponse($row);
+    }
+
+    /** @param  mixed  $payload */
+    protected function extractFromPayload(mixed $payload): ?string
+    {
+        if (! is_array($payload)) {
+            return null;
+        }
+
+        $fromStructure = $payload['sign_structure']['TraderSystemInvoiceNumber'] ?? null;
+        if (is_string($fromStructure) && $this->isValidFormat($fromStructure)) {
+            return $fromStructure;
+        }
+
+        return null;
+    }
+
+    protected function generateUniqueForOrganization(int $organizationId): string
+    {
+        for ($attempt = 0; $attempt < 12; $attempt++) {
+            $candidate = $this->generateCandidate();
+            if (! $this->traderNumberAlreadyUsed($organizationId, $candidate)) {
+                return $candidate;
+            }
+
+            usleep(random_int(1500, 6000));
+        }
+
+        return $this->generateCandidate(extraEntropy: true);
+    }
+
+    protected function generateCandidate(bool $extraEntropy = false): string
+    {
+        $ts = (string) time();
+        $rand = random_int($extraEntropy ? 1000 : 100, 999);
+
+        // LightStores: substr(time() . rand(100, 999), 0, 10)
+        if (strlen($ts) < 10) {
+            $value = substr($ts . $rand, 0, 10);
+        } else {
+            $value = substr($ts, 0, 7) . str_pad((string) ($rand % 1000), 3, '0', STR_PAD_LEFT);
+        }
+
+        $value = ltrim($value, '0');
+
+        return $value !== '' ? $value : '1';
+    }
+
+    protected function traderNumberAlreadyUsed(int $organizationId, string $traderNumber): bool
+    {
         $kraRows = KraResponse::query()
             ->whereHas('sale', fn ($q) => $q->where('organization_id', $organizationId))
             ->whereNotNull('request_payload')
             ->orderByDesc('id')
-            ->limit(500)
+            ->limit(300)
             ->pluck('request_payload');
 
         foreach ($kraRows as $payload) {
             if (! is_array($payload)) {
                 continue;
             }
+
             $candidate = $payload['sign_structure']['TraderSystemInvoiceNumber'] ?? null;
-            $max = max($max, $this->parseNumeric($candidate));
+            if (is_string($candidate) && $candidate === $traderNumber) {
+                return true;
+            }
         }
 
         $creditPayloads = CreditNote::query()
             ->where('organization_id', $organizationId)
             ->whereNotNull('kra_request_payload')
             ->orderByDesc('id')
-            ->limit(200)
+            ->limit(100)
             ->pluck('kra_request_payload');
 
         foreach ($creditPayloads as $payload) {
             if (! is_array($payload)) {
                 continue;
             }
+
             $candidate = $payload['sign_structure']['TraderSystemInvoiceNumber'] ?? null;
-            $max = max($max, $this->parseNumeric($candidate));
+            if (is_string($candidate) && $candidate === $traderNumber) {
+                return true;
+            }
         }
 
-        $legacyMax = (int) DB::table('sales')
-            ->where('organization_id', $organizationId)
-            ->where('order_num', '<', 1_000_000)
-            ->max('order_num');
-
-        return max($max, $legacyMax);
-    }
-
-    protected function parseNumeric(mixed $value): int
-    {
-        if (! is_string($value) && ! is_int($value) && ! is_float($value)) {
-            return 0;
-        }
-
-        $digits = preg_replace('/\D+/', '', (string) $value) ?? '';
-
-        return $digits !== '' ? (int) $digits : 0;
-    }
-
-    protected function format(int $number): string
-    {
-        $value = max(1, $number);
-
-        if ($value > 9_999_999_999) {
-            $value = (int) substr((string) $value, -10);
-        }
-
-        return (string) $value;
+        return false;
     }
 }

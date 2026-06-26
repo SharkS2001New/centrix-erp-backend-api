@@ -519,7 +519,7 @@ class KraDeviceService
                 'reachable' => false,
                 'http_status' => null,
                 'url' => $url,
-                'message' => 'Could not reach KRA device: '.$e->getMessage(),
+                'message' => KraDeviceErrorTranslator::userMessage('Could not reach KRA device: '.$e->getMessage()),
                 'response' => null,
             ];
         }
@@ -547,19 +547,24 @@ class KraDeviceService
             );
 
             if (! $response->successful() && is_array($responseData) && ! empty($responseData['message'])) {
-                return [
-                    'success' => false,
-                    'message' => (string) $responseData['message'],
-                    'payload' => $payload,
-                    'response' => $this->mapResponse($responseData),
-                ];
+                return $this->deviceFailureResult(
+                    (string) $responseData['message'],
+                    $payload,
+                    $this->mapResponse($responseData),
+                );
+            }
+
+            $rawMessage = is_array($responseData)
+                ? ($responseData['message'] ?? $responseData['Message'] ?? $response->body())
+                : $response->body();
+
+            if (! $successful) {
+                return $this->deviceFailureResult((string) $rawMessage, $payload, $this->mapResponse(is_array($responseData) ? $responseData : null));
             }
 
             return [
-                'success' => $successful,
-                'message' => is_array($responseData)
-                    ? ($responseData['message'] ?? $responseData['Message'] ?? $response->body())
-                    : $response->body(),
+                'success' => true,
+                'message' => $rawMessage,
                 'payload' => $payload,
                 'response' => $this->mapResponse(is_array($responseData) ? $responseData : null),
             ];
@@ -568,13 +573,23 @@ class KraDeviceService
                 'url' => $url,
             ], $context));
 
-            return [
-                'success' => false,
-                'message' => 'Exception: ' . $e->getMessage(),
-                'payload' => $payload,
-                'response' => null,
-            ];
+            return $this->deviceFailureResult('Exception: ' . $e->getMessage(), $payload);
         }
+    }
+
+    /** @return array<string, mixed> */
+    protected function deviceFailureResult(string $rawMessage, array $payload, ?array $response = null): array
+    {
+        $translated = KraDeviceErrorTranslator::translate($rawMessage);
+
+        return [
+            'success' => false,
+            'message' => $translated['message'],
+            'technical_message' => $translated['technical_message'],
+            'error_code' => $translated['code'],
+            'payload' => $payload,
+            'response' => $response,
+        ];
     }
 
     protected function mapResponse(?array $responseData): ?array

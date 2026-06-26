@@ -14,7 +14,7 @@ class PlatformSystemIssueReportController extends Controller
         $query = SystemIssueReport::query()
             ->with([
                 'organization:id,org_name,company_code',
-                'user:id,username,first_name,last_name',
+                'user:id,username,full_name',
             ])
             ->orderByDesc('created_at');
 
@@ -58,8 +58,8 @@ class PlatformSystemIssueReportController extends Controller
         $report = SystemIssueReport::query()
             ->with([
                 'organization:id,org_name,company_code',
-                'user:id,username,first_name,last_name',
-                'resolvedBy:id,username,first_name,last_name',
+                'user:id,username,full_name',
+                'resolvedBy:id,username,full_name',
             ])
             ->findOrFail($id);
 
@@ -95,8 +95,8 @@ class PlatformSystemIssueReportController extends Controller
 
         return response()->json($report->fresh([
             'organization:id,org_name,company_code',
-            'user:id,username,first_name,last_name',
-            'resolvedBy:id,username,first_name,last_name',
+            'user:id,username,full_name',
+            'resolvedBy:id,username,full_name',
         ]));
     }
 

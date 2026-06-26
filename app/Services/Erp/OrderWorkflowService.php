@@ -203,6 +203,46 @@ class OrderWorkflowService
         return $last !== '' ? $last : null;
     }
 
+    /**
+     * Map stored statuses outside the org pipeline (e.g. completed) to the nearest enabled step.
+     */
+    public function alignStatusToPipeline(string $status, ?string $channel = null): string
+    {
+        if (in_array($status, ['cancelled', 'held', 'draft'], true)) {
+            return $status;
+        }
+
+        $workflow = $channel ? $this->forChannel($channel) : $this->config();
+        $pipelineKeys = array_column($workflow['pipeline'] ?? [], 'key');
+
+        if (in_array($status, $pipelineKeys, true)) {
+            return $status;
+        }
+
+        return $this->pickEnabledStatus($status, $workflow);
+    }
+
+    /** @return list<string> */
+    public function statusesForQueueFilter(string $queueStatus, ?string $channel = null): array
+    {
+        if ($queueStatus === '' || $queueStatus === 'all') {
+            return [];
+        }
+
+        if ($queueStatus === 'cancelled') {
+            return ['cancelled'];
+        }
+
+        $matches = [$queueStatus];
+        foreach (['completed', 'delivered', 'processed', 'booked', 'pending', 'draft', 'held'] as $alias) {
+            if ($this->alignStatusToPipeline($alias, $channel) === $queueStatus) {
+                $matches[] = $alias;
+            }
+        }
+
+        return array_values(array_unique($matches));
+    }
+
     public function isTerminalStatus(string $status, ?string $channel = null): bool
     {
         if (in_array($status, ['cancelled', 'held', 'draft'], true)) {
@@ -210,8 +250,11 @@ class OrderWorkflowService
         }
 
         $last = $this->lastPipelineStatus($channel);
+        if ($last === null) {
+            return false;
+        }
 
-        return $last !== null && $status === $last;
+        return $this->alignStatusToPipeline($status, $channel) === $last;
     }
 
     public function resolveCheckoutStatus(

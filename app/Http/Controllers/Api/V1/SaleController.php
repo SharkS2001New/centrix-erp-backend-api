@@ -30,6 +30,9 @@ class SaleController extends BaseResourceController
         $query->with(['cashier:id,username,full_name']);
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'status') {
+                continue;
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
             }
@@ -45,6 +48,21 @@ class SaleController extends BaseResourceController
 
         if (! $request->boolean('include_legacy')) {
             CentrixSalesScope::excludeLegacyMaterialized($query);
+        }
+
+        if (! $request->boolean('include_archived')) {
+            $query->where('archived', 0);
+        }
+
+        $gate = $this->erp->gateForUser($request->user());
+        $workflow = OrderWorkflowService::forGate($gate);
+        $statusFilter = data_get($request->input('filter', []), 'status');
+        if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {
+            $channel = (string) ($request->input('channel') ?: 'backend');
+            $statuses = $workflow->statusesForQueueFilter((string) $statusFilter, $channel);
+            if ($statuses !== []) {
+                $query->whereIn('status', $statuses);
+            }
         }
 
         if ($request->input('order_source') === 'backoffice') {
@@ -117,7 +135,18 @@ class SaleController extends BaseResourceController
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        return response()->json($query->orderByDesc('id')->paginate($perPage));
+        $paginator = $query->orderByDesc('id')->paginate($perPage);
+        $paginator->getCollection()->transform(function (Sale $sale) use ($workflow) {
+            $channel = $sale->channel ?: 'backend';
+            $sale->setAttribute(
+                'workflow_status',
+                $workflow->alignStatusToPipeline((string) $sale->status, $channel),
+            );
+
+            return $sale;
+        });
+
+        return response()->json($paginator);
     }
 
     public function show(Request $request, string $id)
@@ -129,6 +158,10 @@ class SaleController extends BaseResourceController
 
         return response()->json(array_merge($sale->toArray(), [
             'workflow' => $workflow,
+            'workflow_status' => OrderWorkflowService::forGate($gate)->alignStatusToPipeline(
+                (string) $sale->status,
+                $channel,
+            ),
         ]));
     }
 }
