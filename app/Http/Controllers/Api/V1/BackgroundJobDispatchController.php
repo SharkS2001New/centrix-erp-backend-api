@@ -22,9 +22,9 @@ class BackgroundJobDispatchController extends Controller
     public function storeReportExport(Request $request)
     {
         $data = $request->validate([
-            'format' => ['required', 'string', 'in:xlsx,csv,pdf,print'],
+            'format' => ['required', 'string', 'in:csv,pdf,print'],
             'filename' => ['sometimes', 'string', 'max:120'],
-            'source' => ['sometimes', 'string', 'in:api,inline_rows,legacy_archive_sales,product_catalog'],
+            'source' => ['sometimes', 'string', 'in:api,inline_rows,legacy_archive_sales,product_catalog,customer_catalog,supplier_catalog'],
             'path' => ['nullable', 'string', 'max:200'],
             'search_params' => ['sometimes', 'array'],
             'estimated_row_count' => ['sometimes', 'integer', 'min:0'],
@@ -45,7 +45,7 @@ class BackgroundJobDispatchController extends Controller
         $estimated = (int) ($data['estimated_row_count'] ?? 0);
 
         if (in_array($format, ['pdf', 'print'], true) && $estimated > $pdfMax) {
-            abort(422, "PDF export supports up to {$pdfMax} rows. Use Excel or CSV for larger reports.");
+            abort(422, "PDF export supports up to {$pdfMax} rows. Use CSV for larger reports.");
         }
 
         if (isset($data['rows']) && count($data['rows']) > $inlineMax) {

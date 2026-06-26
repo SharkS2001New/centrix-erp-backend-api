@@ -76,6 +76,8 @@ use App\Http\Controllers\Api\V1\PositionController;
 use App\Http\Controllers\Api\V1\PriceHistoryController;
 use App\Http\Controllers\Api\V1\ProductController;
 use App\Http\Controllers\Api\V1\ProductImportController;
+use App\Http\Controllers\Api\V1\EmployeeImportController;
+use App\Http\Controllers\Api\V1\SupplierImportController;
 use App\Http\Controllers\Api\V1\RetailPackageSettingController;
 use App\Http\Controllers\Api\V1\ReturnRecordController;
 use App\Http\Controllers\Api\V1\RoleController;
@@ -485,6 +487,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:purchasing.view');
             Route::post('suppliers/{supplier}/payments', [SupplierController::class, 'storePayment'])
                 ->middleware('erp.permission:purchasing.manage');
+            Route::post('suppliers/import-batch', [SupplierImportController::class, 'store'])
+                ->middleware(['erp.permission:purchasing.manage']);
             Route::apiResource('suppliers', SupplierController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:purchasing.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:purchasing.manage']);
@@ -498,6 +502,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:customers.manage');
             Route::get('customers/summary', [CustomerController::class, 'summary'])
                 ->middleware(['erp.permission:customers.view']);
+            Route::post('customers/import-batch', [CustomerImportController::class, 'store'])
+                ->middleware(['erp.permission:customers.manage']);
             Route::apiResource('customers', CustomerController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:customers.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:customers.manage']);
@@ -667,6 +673,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.manage');
             Route::get('employees/summary', [EmployeeController::class, 'summary'])
                 ->middleware(['erp.permission:hr.view']);
+            Route::post('employees/import-batch', [EmployeeImportController::class, 'store'])
+                ->middleware(['erp.permission:hr.manage']);
             Route::apiResource('employees', EmployeeController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);

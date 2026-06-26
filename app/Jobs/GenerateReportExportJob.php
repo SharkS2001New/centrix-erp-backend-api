@@ -7,8 +7,14 @@ use App\Models\BackgroundTask;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
+use App\Services\Background\CustomerCatalogExportFetcher;
+use App\Services\Background\CustomerCatalogExportMapper;
 use App\Services\Background\ProductCatalogExportFetcher;
+use App\Services\Background\ProductCatalogExportMapper;
 use App\Services\Background\ReportExportSearchParams;
+use App\Services\Background\SupplierCatalogExportFetcher;
+use App\Services\Background\SupplierCatalogExportMapper;
+use App\Services\Background\ListExportMapperResolver;
 use App\Services\Background\ReportExportService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -30,6 +36,12 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
         BackgroundTaskService $tasks,
         InternalApiPaginator $paginator,
         ProductCatalogExportFetcher $productCatalog,
+        ProductCatalogExportMapper $productCatalogMapper,
+        CustomerCatalogExportFetcher $customerCatalog,
+        CustomerCatalogExportMapper $customerCatalogMapper,
+        SupplierCatalogExportFetcher $supplierCatalog,
+        SupplierCatalogExportMapper $supplierCatalogMapper,
+        ListExportMapperResolver $listExportMappers,
         ReportExportService $exporter,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
@@ -47,7 +59,7 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
             }
 
             $payload = is_array($task->payload) ? $task->payload : [];
-            $format = (string) ($payload['format'] ?? 'xlsx');
+            $format = (string) ($payload['format'] ?? 'csv');
             $columns = $payload['columns'] ?? [];
             $meta = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
             $footerRow = $payload['footer_row'] ?? null;
@@ -68,6 +80,12 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
                 $source,
                 $paginator,
                 $productCatalog,
+                $productCatalogMapper,
+                $customerCatalog,
+                $customerCatalogMapper,
+                $supplierCatalog,
+                $supplierCatalogMapper,
+                $listExportMappers,
                 $user,
                 $task,
                 $tasks,
@@ -111,6 +129,12 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
         string $source,
         InternalApiPaginator $paginator,
         ProductCatalogExportFetcher $productCatalog,
+        ProductCatalogExportMapper $productCatalogMapper,
+        CustomerCatalogExportFetcher $customerCatalog,
+        CustomerCatalogExportMapper $customerCatalogMapper,
+        SupplierCatalogExportFetcher $supplierCatalog,
+        SupplierCatalogExportMapper $supplierCatalogMapper,
+        ListExportMapperResolver $listExportMappers,
         User $user,
         BackgroundTask $task,
         BackgroundTaskService $tasks,
@@ -122,6 +146,12 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
             $source,
             $paginator,
             $productCatalog,
+            $productCatalogMapper,
+            $customerCatalog,
+            $customerCatalogMapper,
+            $supplierCatalog,
+            $supplierCatalogMapper,
+            $listExportMappers,
             $user,
             $task,
             $tasks,
@@ -163,8 +193,46 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
                 $result = $productCatalog->eachPage(
                     $searchParams,
                     $user,
-                    function (array $batch) use ($onBatch): void {
-                        $onBatch($this->mapProductCatalogRows($batch));
+                    function (array $batch) use ($onBatch, $productCatalogMapper): void {
+                        $onBatch($productCatalogMapper->mapBatch($batch));
+                    },
+                    null,
+                    null,
+                    $onProgress,
+                    $task,
+                );
+                $truncated = $truncated || $result['truncated'];
+
+                return;
+            }
+
+            if ($source === 'customer_catalog') {
+                $searchParams = ReportExportSearchParams::sanitize($payload['search_params'] ?? []);
+                $onProgress(8, 'Fetching customers…');
+                $result = $customerCatalog->eachPage(
+                    $searchParams,
+                    $user,
+                    function (array $batch) use ($onBatch, $customerCatalogMapper): void {
+                        $onBatch($customerCatalogMapper->mapBatch($batch));
+                    },
+                    null,
+                    null,
+                    $onProgress,
+                    $task,
+                );
+                $truncated = $truncated || $result['truncated'];
+
+                return;
+            }
+
+            if ($source === 'supplier_catalog') {
+                $searchParams = ReportExportSearchParams::sanitize($payload['search_params'] ?? []);
+                $onProgress(8, 'Fetching suppliers…');
+                $result = $supplierCatalog->eachPage(
+                    $searchParams,
+                    $user,
+                    function (array $batch) use ($onBatch, $supplierCatalogMapper): void {
+                        $onBatch($supplierCatalogMapper->mapBatch($batch));
                     },
                     null,
                     null,
@@ -183,11 +251,14 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
 
             $searchParams = ReportExportSearchParams::sanitize($payload['search_params'] ?? []);
             $onProgress(8, 'Fetching report data…');
+            $mapper = $listExportMappers->resolve($path);
             $result = $paginator->eachPage(
                 $path,
                 $searchParams,
                 $user,
-                $onBatch,
+                function (array $batch) use ($onBatch, $mapper): void {
+                    $onBatch($mapper !== null ? $mapper->mapBatch($batch) : $batch);
+                },
                 null,
                 null,
                 $onProgress,
@@ -207,36 +278,6 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
                 );
             }
         };
-    }
-
-    /**
-     * @param  list<array<string, mixed>>  $products
-     * @return list<array<string, mixed>>
-     */
-    protected function mapProductCatalogRows(array $products): array
-    {
-        return array_map(static function (array $product): array {
-            $discount = ($product['discount_type'] ?? '') === 'fixed'
-                ? ($product['discount_value'] ?? '')
-                : ($product['discount_percentage'] ?? '');
-
-            return [
-                'product_code' => $product['product_code'] ?? '',
-                'product_name' => $product['product_name'] ?? '',
-                'category_name' => $product['category_name'] ?? '',
-                'subcategory_name' => $product['subcategory_name'] ?? '',
-                'unit_price' => $product['unit_price'] ?? '',
-                'last_cost_price' => $product['last_cost_price'] ?? '',
-                'discount' => $discount,
-                'shop_qty' => $product['shop_qty'] ?? '',
-                'store_qty' => $product['store_qty'] ?? '',
-                'uom_label' => $product['uom_label'] ?? '',
-                'supplier_name' => $product['supplier_name'] ?? '',
-                'vat_treatment' => $product['vat_treatment'] ?? '',
-                'pricing' => $product['pricing'] ?? '',
-                'is_active' => ! empty($product['is_active']) ? 'Yes' : 'No',
-            ];
-        }, $products);
     }
 
     /**

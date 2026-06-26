@@ -36,7 +36,7 @@ class BackgroundTaskRecoveryTest extends TestCase
         Sanctum::actingAs($admin);
 
         $this->postJson('/api/v1/background-tasks/report-export', [
-            'format' => 'xlsx',
+            'format' => 'csv',
             'source' => 'product_catalog',
             'filename' => 'products-test',
             'columns' => [
@@ -74,7 +74,7 @@ class BackgroundTaskRecoveryTest extends TestCase
         Sanctum::actingAs($admin);
 
         $this->postJson('/api/v1/background-tasks/report-export', [
-            'format' => 'xlsx',
+            'format' => 'csv',
             'source' => 'product_catalog',
             'filename' => 'products-test',
             'columns' => [
@@ -93,7 +93,7 @@ class BackgroundTaskRecoveryTest extends TestCase
             (int) $admin->organization_id,
             (int) $admin->id,
             [
-                'format' => 'xlsx',
+                'format' => 'csv',
                 'filename' => 'products-test',
                 'source' => 'product_catalog',
                 'search_params' => ['page' => 1, 'per_page' => 25],
@@ -110,6 +110,7 @@ class BackgroundTaskRecoveryTest extends TestCase
             app(BackgroundTaskService::class),
             app(\App\Services\Background\InternalApiPaginator::class),
             app(\App\Services\Background\ProductCatalogExportFetcher::class),
+            app(\App\Services\Background\ProductCatalogExportMapper::class),
             app(\App\Services\Background\ReportExportService::class),
         );
 

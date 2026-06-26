@@ -50,7 +50,7 @@ class ReportExportService
         return match ($format) {
             'csv' => $this->streamCsv($directory, $safeBase, $taskId, $meta, $columns, $streamSource, $onProgress),
             'pdf', 'print' => $this->streamPdf($directory, $safeBase, $taskId, $meta, $columns, $footerRow, $streamSource, $onProgress),
-            default => $this->streamXlsx($directory, $safeBase, $taskId, $meta, $columns, $footerRow, $streamSource, $onProgress),
+            default => throw new RuntimeException("Unsupported export format [{$format}]."),
         };
     }
 
@@ -254,7 +254,7 @@ class ReportExportService
             $meta = array_merge($meta, [
                 'extra_lines' => array_merge(
                     $meta['extra_lines'] ?? [],
-                    ['PDF limited to first '.$pdfMaxRows.' rows. Use Excel or CSV for the full export.'],
+                    ['PDF limited to first '.$pdfMaxRows.' rows. Use CSV for the full export.'],
                 ),
             ]);
         }
