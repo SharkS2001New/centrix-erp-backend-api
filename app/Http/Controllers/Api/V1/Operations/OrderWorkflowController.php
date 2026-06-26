@@ -194,8 +194,8 @@ class OrderWorkflowController extends Controller
             $updates['delivery_date'] = now();
         }
 
-        if ($toStatus === 'completed') {
-            $updates['completed_at'] = now();
+        if ($workflow->isTerminalStatus($toStatus, (string) $sale->channel)) {
+            $updates['completed_at'] = $sale->completed_at ?? now();
         }
 
         $deductStatus = (string) ($workflow->config()['deduct_stock_on'] ?? 'completed');

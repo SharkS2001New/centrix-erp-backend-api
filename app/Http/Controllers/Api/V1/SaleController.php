@@ -8,6 +8,7 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\RouteOrderScope;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SaleController extends BaseResourceController
 {
@@ -60,11 +61,11 @@ class SaleController extends BaseResourceController
         }
 
         if ($request->filled('from_date')) {
-            $query->whereDate('completed_at', '>=', $request->input('from_date'));
+            $query->whereDate(DB::raw('COALESCE(completed_at, created_at)'), '>=', $request->input('from_date'));
         }
 
         if ($request->filled('to_date')) {
-            $query->whereDate('completed_at', '<=', $request->input('to_date'));
+            $query->whereDate(DB::raw('COALESCE(completed_at, created_at)'), '<=', $request->input('to_date'));
         }
 
         if ($request->filled('min_order_total')) {

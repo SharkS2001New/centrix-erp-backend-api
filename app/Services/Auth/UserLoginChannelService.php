@@ -201,7 +201,8 @@ class UserLoginChannelService
     protected function isSharedAuthPath(string $path): bool
     {
         return str_starts_with($path, 'auth/')
-            || $path === 'erp/capabilities';
+            || $path === 'erp/capabilities'
+            || $path === 'health';
     }
 
     /** @param  list<string>  $prefixes */

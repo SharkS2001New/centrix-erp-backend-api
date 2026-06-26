@@ -6,6 +6,7 @@ use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\OrderWorkflowService;
 use InvalidArgumentException;
 
 class PosOrderEditService
@@ -22,13 +23,23 @@ class PosOrderEditService
     /** @return list<string> */
     public function editableStatusesForChannel(string $channel, CapabilityGate $gate): array
     {
-        return match ($channel) {
-            'mobile' => ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed'],
-            'pos' => $this->posOrderEditEnabled($gate)
-                ? ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed', 'delivered']
-                : ['held'],
-            default => ['held'],
-        };
+        if (in_array($channel, ['backend', 'backoffice'], true)) {
+            return ['held'];
+        }
+
+        if ($channel === 'pos' && ! $this->posOrderEditEnabled($gate)) {
+            return ['held'];
+        }
+
+        $workflowService = OrderWorkflowService::forGate($gate);
+        $workflow = $workflowService->forChannel($channel);
+        $terminal = $workflowService->lastPipelineStatus($channel);
+        $editable = array_values(array_filter(
+            $workflow['statuses'] ?? [],
+            fn (string $status) => $status !== $terminal && $status !== 'cancelled',
+        ));
+
+        return array_values(array_unique(array_merge(['held', 'draft'], $editable)));
     }
 
     public function assertSaleEditable(Sale $sale, User $user, CapabilityGate $gate): void

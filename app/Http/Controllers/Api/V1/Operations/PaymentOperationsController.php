@@ -98,7 +98,7 @@ class PaymentOperationsController extends Controller
 
             if ($sale->status !== 'cancelled' && $sale->status !== 'held') {
                 $updates['status'] = $orderStatus;
-                if ($orderStatus === 'completed') {
+                if ($workflow->isTerminalStatus($orderStatus, (string) $sale->channel)) {
                     $updates['completed_at'] = $sale->completed_at ?? now();
                 }
             }

@@ -8,6 +8,7 @@ use App\Models\Sale;
 use App\Services\Auth\UserAccessService;
 use App\Services\Sales\CustomerReturnService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class CustomerReturnController extends Controller
 {
@@ -16,12 +17,20 @@ class CustomerReturnController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
+        $relations = ['lines.product.unit', 'sale', 'customer', 'returnedByUser'];
+        if (Schema::hasTable('credit_notes')) {
+            $relations[] = 'creditNote';
+        }
+
         $query = CustomerReturn::query()
-            ->with(['lines.product.unit', 'sale', 'customer', 'returnedByUser', 'creditNote'])
-            ->where('organization_id', $user->organization_id)
-            ->where(function ($inner) {
+            ->with($relations)
+            ->where('organization_id', $user->organization_id);
+
+        if (Schema::hasColumn('customer_returns', 'return_kind')) {
+            $query->where(function ($inner) {
                 $inner->where('return_kind', 'standard')->orWhereNull('return_kind');
             });
+        }
 
         app(UserAccessService::class)->scopeBranchIfLimited($query, $user);
 
@@ -104,17 +113,19 @@ class CustomerReturnController extends Controller
     {
         $return = $this->findForUser($id);
 
-        return response()->json(
-            $return->load([
-                'lines.product.unit',
-                'sale.items.product.unit',
-                'customer',
-                'returnedByUser',
-                'approvedByUser',
-                'rejectedByUser',
-                'creditNote',
-            ]),
-        );
+        $relations = [
+            'lines.product.unit',
+            'sale.items.product.unit',
+            'customer',
+            'returnedByUser',
+            'approvedByUser',
+            'rejectedByUser',
+        ];
+        if (Schema::hasTable('credit_notes')) {
+            $relations[] = 'creditNote';
+        }
+
+        return response()->json($return->load($relations));
     }
 
     public function update(Request $request, string $id)

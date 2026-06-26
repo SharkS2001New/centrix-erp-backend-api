@@ -216,7 +216,7 @@ class CheckoutController extends Controller
                     : null,
             ]);
 
-            if ($orderStatus === 'completed') {
+            if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel)) {
                 $sale->update(['completed_at' => now()]);
             }
 
@@ -336,7 +336,7 @@ class CheckoutController extends Controller
                 SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
             }
 
-            if ($sale->status === 'completed') {
+            if ($workflow->isTerminalStatus((string) $sale->status, (string) $cart->channel)) {
                 $this->awardLoyaltyPointsForCompletedSale(
                     (int) $sale->organization_id,
                     $customerNum ? (int) $customerNum : null,

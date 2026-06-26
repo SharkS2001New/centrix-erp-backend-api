@@ -130,7 +130,7 @@ class OrderWorkflowService
     public function canTransition(string $from, string $to, ?string $channel = null): bool
     {
         if ($to === 'cancelled') {
-            return $from !== 'cancelled' && $from !== 'completed';
+            return $from !== 'cancelled' && ! $this->isTerminalStatus($from, $channel);
         }
 
         return in_array($to, $this->allowedTransitions($from, $channel), true);
@@ -185,6 +185,35 @@ class OrderWorkflowService
         return $preferred;
     }
 
+    public function lastPipelineStatus(?string $channel = null): ?string
+    {
+        if ($channel) {
+            $pipeline = $this->forChannel($channel)['pipeline'] ?? [];
+        } else {
+            $config = $this->config();
+            $pipeline = $this->pipelineSteps($config, $this->enabledStatuses($config));
+        }
+
+        if ($pipeline === []) {
+            return null;
+        }
+
+        $last = (string) ($pipeline[array_key_last($pipeline)]['key'] ?? '');
+
+        return $last !== '' ? $last : null;
+    }
+
+    public function isTerminalStatus(string $status, ?string $channel = null): bool
+    {
+        if (in_array($status, ['cancelled', 'held', 'draft'], true)) {
+            return false;
+        }
+
+        $last = $this->lastPipelineStatus($channel);
+
+        return $last !== null && $status === $last;
+    }
+
     public function resolveCheckoutStatus(
         string $channel,
         bool $isCredit,
@@ -199,13 +228,6 @@ class OrderWorkflowService
         $partialPay = $payNow > 0.01 && ! $fullyPaid;
 
         if ($fullyPaid) {
-            if ($isCredit) {
-                return $this->pickEnabledStatus((string) ($checkout['full_paid'] ?? 'paid'), $workflow);
-            }
-            if ($this->isImmediatePaymentMethod($paymentMethodCode, $isCredit) && $channel === 'pos') {
-                return $this->pickEnabledStatus('completed', $workflow);
-            }
-
             return $this->pickEnabledStatus((string) ($checkout['full_paid'] ?? 'paid'), $workflow);
         }
 
@@ -289,6 +311,56 @@ class OrderWorkflowService
             ? $config['checkout']
             : ($defaults['checkout'] ?? []);
         $config['deduct_stock_on'] = (string) ($config['deduct_stock_on'] ?? $defaults['deduct_stock_on'] ?? 'completed');
+
+        return $this->sanitizeWorkflowReferences($config);
+    }
+
+    /** @param array<string, mixed> $config */
+    protected function sanitizeWorkflowReferences(array $config): array
+    {
+        $enabled = $this->enabledStatuses($config);
+        $first = $enabled[0] ?? 'unpaid';
+        $last = $enabled[array_key_last($enabled)] ?? 'paid';
+
+        $pick = function (string $status) use ($enabled, $first, $last): string {
+            if (in_array($status, $enabled, true)) {
+                return $status;
+            }
+
+            foreach (['completed', 'delivered', 'paid', 'processed', 'pending_payment', 'unpaid'] as $fallback) {
+                if (in_array($fallback, $enabled, true)) {
+                    return $fallback;
+                }
+            }
+
+            return $first;
+        };
+
+        if (is_array($config['save_status'] ?? null)) {
+            foreach ($config['save_status'] as $channel => $status) {
+                if (is_string($status)) {
+                    $config['save_status'][$channel] = $pick($status);
+                }
+            }
+        }
+
+        if (is_array($config['checkout'] ?? null)) {
+            if (is_string($config['checkout']['partial'] ?? null)) {
+                $config['checkout']['partial'] = $pick($config['checkout']['partial']);
+            }
+            foreach (['full_paid', 'unpaid'] as $key) {
+                if (! is_array($config['checkout'][$key] ?? null)) {
+                    continue;
+                }
+                foreach ($config['checkout'][$key] as $channel => $status) {
+                    if (is_string($status)) {
+                        $config['checkout'][$key][$channel] = $pick($status);
+                    }
+                }
+            }
+        }
+
+        $config['deduct_stock_on'] = $pick((string) ($config['deduct_stock_on'] ?? $last));
 
         return $config;
     }

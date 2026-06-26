@@ -13,6 +13,10 @@ class EnsureUserIsActive
 {
     public function handle(Request $request, Closure $next): Response
     {
+        if (ltrim($request->path(), '/') === 'api/v1/health') {
+            return $next($request);
+        }
+
         $plainTextToken = $request->bearerToken();
         if (! $plainTextToken) {
             return $next($request);

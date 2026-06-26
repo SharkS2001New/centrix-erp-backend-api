@@ -16,6 +16,10 @@ class EnsureLoginChannel
 
     public function handle(Request $request, Closure $next): Response
     {
+        if ($this->isPublicConnectivityPath($request)) {
+            return $next($request);
+        }
+
         $plainTextToken = $request->bearerToken();
         if (! $plainTextToken) {
             return $next($request);
@@ -49,5 +53,12 @@ class EnsureLoginChannel
             ),
             'code' => 'login_channel_forbidden',
         ], 403);
+    }
+
+    protected function isPublicConnectivityPath(Request $request): bool
+    {
+        $path = ltrim($request->path(), '/');
+
+        return $path === 'api/v1/health';
     }
 }
