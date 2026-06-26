@@ -141,6 +141,24 @@ class MobileAttendanceController extends Controller
             $session = $this->attendance->signOut($user, $gate, $data);
         } catch (InvalidArgumentException $exception) {
             return response()->json(['message' => $exception->getMessage()], 422);
+        } catch (QueryException $exception) {
+            Log::error('mobile attendance sign-out database error', [
+                'user_id' => $user->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => $this->databaseErrorMessage($exception),
+            ], 503);
+        } catch (\Throwable $exception) {
+            Log::error('mobile attendance sign-out failed', [
+                'user_id' => $user->id,
+                'error' => $exception->getMessage(),
+            ]);
+
+            return response()->json([
+                'message' => 'Unable to record sign-out. Ensure attendance storage is configured on the server.',
+            ], 500);
         }
 
         return response()->json([

@@ -12,6 +12,7 @@ use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 
@@ -155,16 +156,7 @@ class MobileFieldAttendanceService
             $photoPath = $this->storePhoto($photo, $user, 'sign-out');
             $workSeconds = $this->workSeconds($session);
 
-            $session->fill([
-                'accumulated_work_seconds' => $workSeconds,
-                'suspended_at' => null,
-                'sign_out_at' => now(),
-                'sign_out_latitude' => (float) $data['latitude'],
-                'sign_out_longitude' => (float) $data['longitude'],
-                'sign_out_address' => $this->trimAddress($data['address'] ?? null),
-                'sign_out_photo_path' => $photoPath,
-                'close_reason' => MobileRepAttendanceSession::CLOSE_REASON_SIGN_OUT,
-            ]);
+            $session->fill($this->signOutSessionAttributes($data, $photoPath, $workSeconds));
             $session->save();
             $this->syncToHr($session);
 
@@ -465,7 +457,35 @@ class MobileFieldAttendanceService
 
     protected function syncToHr(MobileRepAttendanceSession $session): void
     {
-        app(FieldRepAttendanceHrSync::class)->syncSession($session);
+        try {
+            app(FieldRepAttendanceHrSync::class)->syncSession($session);
+        } catch (\Throwable $exception) {
+            Log::warning('field rep HR attendance sync failed after session update', [
+                'session_id' => $session->id,
+                'user_id' => $session->user_id,
+                'error' => $exception->getMessage(),
+            ]);
+        }
+    }
+
+    /** @return array<string, mixed> */
+    protected function signOutSessionAttributes(array $data, string $photoPath, int $workSeconds): array
+    {
+        $attributes = [
+            'sign_out_at' => now(),
+            'sign_out_latitude' => (float) $data['latitude'],
+            'sign_out_longitude' => (float) $data['longitude'],
+            'sign_out_address' => $this->trimAddress($data['address'] ?? null),
+            'sign_out_photo_path' => $photoPath,
+        ];
+
+        if ($this->supportsWorkSessionColumns()) {
+            $attributes['accumulated_work_seconds'] = $workSeconds;
+            $attributes['suspended_at'] = null;
+            $attributes['close_reason'] = MobileRepAttendanceSession::CLOSE_REASON_SIGN_OUT;
+        }
+
+        return $attributes;
     }
 
     protected function signInPhotoFileUrl(MobileRepAttendanceSession $session): ?string

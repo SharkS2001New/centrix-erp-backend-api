@@ -15,6 +15,9 @@ class InternalApiPaginator
     /** Background exports use larger pages to minimize in-process request count. */
     private const BACKGROUND_PER_PAGE = 500;
 
+    /** Endpoints that validate per_page with max:200 (e.g. legacy archive sales). */
+    private const API_VALIDATED_MAX_PER_PAGE = 200;
+
     /** @var list<string> */
     private const ALLOWED_PREFIXES = [
         '/products',
@@ -193,7 +196,7 @@ class InternalApiPaginator
             '/reports/legacy-archive/sales',
             $searchParams,
             $user,
-            self::BACKGROUND_PER_PAGE,
+            self::API_VALIDATED_MAX_PER_PAGE,
             10000,
             $onProgress,
             $cancelTask,

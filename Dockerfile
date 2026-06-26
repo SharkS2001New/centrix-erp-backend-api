@@ -52,14 +52,15 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction \
     && composer show predis/predis >/dev/null
 
 COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+COPY docker-bootstrap.sh /usr/local/bin/docker-bootstrap.sh
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-bootstrap.sh /usr/local/bin/docker-entrypoint.sh
 
-RUN mkdir -p resources/views storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs storage/app/private/backups/database bootstrap/cache \
+RUN mkdir -p resources/views storage/framework/cache/data storage/framework/sessions storage/framework/views storage/framework/testing storage/logs storage/app/public storage/app/private/backups/database bootstrap/cache \
     && chown -R www-data:www-data storage bootstrap/cache resources \
     && chmod -R ug+rwx storage bootstrap/cache
 
-# Runtime: docker-entrypoint.sh runs migrate, storage:link, and chmod before Apache starts.
+# Runtime: docker-entrypoint.sh runs docker-bootstrap.sh (migrate + storage:link) before Apache.
 
 EXPOSE 8001
 

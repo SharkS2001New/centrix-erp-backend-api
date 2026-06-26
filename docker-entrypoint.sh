@@ -1,22 +1,7 @@
 #!/bin/sh
 set -e
 
-mkdir -p resources/views
-mkdir -p storage/framework/cache/data
-mkdir -p storage/framework/sessions
-mkdir -p storage/framework/views
-mkdir -p storage/framework/testing
-mkdir -p storage/logs
-mkdir -p storage/app/private/backups/database
-mkdir -p storage/app/private/backups/exports
-mkdir -p bootstrap/cache
-
-chown -R www-data:www-data storage bootstrap/cache resources 2>/dev/null || true
-chmod -R ug+rwx storage bootstrap/cache 2>/dev/null || true
-chmod -R ug+rwx storage/app/private/backups 2>/dev/null || true
-
-php artisan migrate --force
-php artisan storage:link --force
+/usr/local/bin/docker-bootstrap.sh
 
 if [ "${APP_ENV:-local}" = "production" ] && [ "${APP_DEBUG:-false}" = "true" ]; then
   echo "WARNING: APP_DEBUG=true in production — disable before serving traffic." >&2
