@@ -131,7 +131,7 @@ class KraDeviceService
 
         foreach ($chunks as $index => $chunk) {
             $pluData = array_map(fn ($product) => self::buildPluLineFromProduct($product), $chunk);
-            $payload = $this->buildProductRegisterPayload($pluData, $index + 1);
+            $payload = $this->buildProductRegisterPayload($pluData, $index + 1, $path);
             $result = $this->postToDevice($path, $payload, [
                 'batch' => $index + 1,
                 'plu_count' => count($pluData),
@@ -211,14 +211,56 @@ class KraDeviceService
     }
 
     /** @param  array<int, array<string, string>>  $pluData */
-    protected function buildProductRegisterPayload(array $pluData, int $batch = 1): array
+    protected function buildProductRegisterPayload(array $pluData, int $batch = 1, string $path = ''): array
     {
+        $signStructure = $this->buildProductRegisterSignStructure($batch);
+
+        if ($this->usesUploadPluDataPayload($path)) {
+            return [
+                'Sn' => $this->serialNumber,
+                'IsTest' => $this->isTest,
+                'PluItems' => $pluData,
+                'SignStructure' => $signStructure,
+            ];
+        }
+
         return [
             'sn' => $this->serialNumber,
             'is_test' => $this->isTest,
             'plu_data' => $pluData,
-            'sign_structure' => $this->buildProductRegisterSignStructure($batch),
+            'sign_structure' => $signStructure,
         ];
+    }
+
+    protected function usesUploadPluDataPayload(string $path): bool
+    {
+        $normalized = strtolower($path);
+
+        return str_contains($normalized, 'upload-plu');
+    }
+
+    /** @param  array<string, mixed>|null  $responseData */
+    protected function deviceResponseSuccessful(\Illuminate\Http\Client\Response $response, ?array $responseData, string $path): bool
+    {
+        if (! $response->successful()) {
+            return false;
+        }
+
+        if ($this->usesUploadPluDataPayload($path)) {
+            if (! is_array($responseData)) {
+                return true;
+            }
+
+            foreach (['success', 'Success'] as $key) {
+                if (array_key_exists($key, $responseData) && $responseData[$key] === false) {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        return (bool) ($responseData['success'] ?? false);
     }
 
     /** @return array<string, string> */
@@ -348,6 +390,43 @@ class KraDeviceService
         );
     }
 
+    /** Probe the on-prem device health endpoint (GET /api/health). */
+    public function checkHealth(): array
+    {
+        $url = $this->deviceBaseUrl.'/api/health';
+
+        try {
+            $response = Http::timeout(8)
+                ->acceptJson()
+                ->get($url);
+
+            $body = $response->json();
+            $successful = $response->successful();
+
+            return [
+                'success' => $successful,
+                'reachable' => true,
+                'http_status' => $response->status(),
+                'url' => $url,
+                'message' => $successful
+                    ? (is_array($body) ? (string) ($body['message'] ?? 'KRA device health check passed.') : 'KRA device health check passed.')
+                    : 'KRA device health check failed (HTTP '.$response->status().').',
+                'response' => is_array($body) ? $body : ['body' => $response->body()],
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('KRA device health check failed: '.$e->getMessage(), ['url' => $url]);
+
+            return [
+                'success' => false,
+                'reachable' => false,
+                'http_status' => null,
+                'url' => $url,
+                'message' => 'Could not reach KRA device: '.$e->getMessage(),
+                'response' => null,
+            ];
+        }
+    }
+
     /** @param  array<string, mixed>  $context */
     protected function postToDevice(string $path, array $payload, array $context = []): array
     {
@@ -365,8 +444,10 @@ class KraDeviceService
             $responseData = $response->json();
 
             return [
-                'success' => $response->successful() && ($responseData['success'] ?? false),
-                'message' => $responseData['message'] ?? $response->body(),
+                'success' => $this->deviceResponseSuccessful($response, is_array($responseData) ? $responseData : null, $path),
+                'message' => is_array($responseData)
+                    ? ($responseData['message'] ?? $responseData['Message'] ?? $response->body())
+                    : $response->body(),
                 'payload' => $payload,
                 'response' => $this->mapResponse($responseData),
             ];

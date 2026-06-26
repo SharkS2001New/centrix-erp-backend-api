@@ -198,8 +198,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('register-products', [KraProductRegistrationController::class, 'register']);
     });
 
-    Route::middleware('erp.permission:admin.view')->group(function () {
+    Route::middleware('erp.permission:admin.manage')->group(function () {
         Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);
+        Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
         Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
     });
 

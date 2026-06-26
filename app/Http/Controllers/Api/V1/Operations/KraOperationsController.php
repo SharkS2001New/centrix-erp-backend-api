@@ -9,7 +9,6 @@ use App\Services\Erp\ErpContext;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Http;
 
 class KraOperationsController extends Controller
 {
@@ -55,16 +54,67 @@ class KraOperationsController extends Controller
         $base = rtrim($base, '/');
 
         try {
-            $response = Http::timeout(8)->get($base);
-            $status['reachable'] = $response->successful() || $response->status() < 500;
-            $status['message'] = $status['reachable']
-                ? 'Device responded (HTTP '.$response->status().').'
-                : 'Device unreachable (HTTP '.$response->status().').';
+            $testFinance = array_merge($finance, ['enable_kra_device' => true]);
+            $result = KraDeviceService::fromSettings($testFinance)->checkHealth();
+            $status['reachable'] = (bool) ($result['reachable'] ?? false);
+            $status['health_url'] = $result['url'] ?? ($base.'/api/health');
+            $status['http_status'] = $result['http_status'] ?? null;
+            $status['message'] = (string) ($result['message'] ?? 'Health check completed.');
+            if (! empty($result['response']) && is_array($result['response'])) {
+                $status['device_response'] = $result['response'];
+            }
         } catch (\Throwable $e) {
             $status['message'] = 'Could not reach device: '.$e->getMessage();
         }
 
         return response()->json($status);
+    }
+
+    public function deviceHealth(Request $request)
+    {
+        $user = $request->user();
+        $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
+
+        $draft = $request->validate([
+            'kra_device_ip' => 'sometimes|nullable|string|max:250',
+            'kra_serial_number' => 'sometimes|nullable|string|max:100',
+            'kra_pin_number' => 'sometimes|nullable|string|max:45',
+            'kra_device_test_mode' => 'sometimes|boolean',
+        ]);
+
+        $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true]);
+
+        $ip = trim((string) ($testFinance['kra_device_ip'] ?? ''));
+        if ($ip === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Enter the device IP / URL before testing the connection.',
+            ], 422);
+        }
+
+        $pin = trim((string) ($testFinance['kra_pin_number'] ?? ''));
+        if ($pin === '' || $pin === '********') {
+            $pin = trim((string) ($finance['kra_pin_number'] ?? ''));
+            $testFinance['kra_pin_number'] = $pin;
+        }
+
+        if ($pin === '') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Enter the shop KRA PIN before testing the connection.',
+            ], 422);
+        }
+
+        try {
+            $result = KraDeviceService::fromSettings($testFinance)->checkHealth();
+        } catch (\InvalidArgumentException $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 422);
+        }
+
+        return response()->json($result, ($result['success'] ?? false) ? 200 : 502);
     }
 
     public function retry(Request $request, int $kraResponse)

@@ -73,6 +73,49 @@ class KraProductRegistrationTest extends TestCase
         });
     }
 
+    public function test_register_products_posts_upload_plu_data_payload(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance']['kra_plu_register_path'] = '/api/upload-plu-data';
+        $org->update(['module_settings' => $settings]);
+
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'Message' => 'PLU uploaded',
+            ], 200),
+        ]);
+
+        $product = Product::firstOrFail();
+
+        $response = $this->postJson('/api/v1/kra/register-products', [
+            'product_codes' => [$product->product_code],
+        ])->assertOk();
+
+        $this->assertTrue($response->json('success'));
+        $this->assertSame(1, $response->json('registered_count'));
+
+        Http::assertSent(function ($request) use ($product) {
+            if (! str_contains($request->url(), '/api/upload-plu-data')) {
+                return false;
+            }
+
+            $body = $request->data();
+            $plu = $body['PluItems'][0] ?? [];
+            $sign = $body['SignStructure'] ?? null;
+
+            return ($body['Sn'] ?? '') === 'DEJA02220240050'
+                && ($body['IsTest'] ?? null) !== null
+                && is_array($body['PluItems'])
+                && ($plu['Barcode'] ?? '') === $product->product_code
+                && ($plu['item_Name'] ?? '') === $product->product_name
+                && ($plu['ItemDisCount(%)'] ?? '') === '0'
+                && array_is_list($sign) === false
+                && ($sign['pinOfshop'] ?? '') === 'P052177271G'
+                && ($sign['SignType'] ?? '') === '2';
+        });
+    }
+
     public function test_register_products_requires_kra_device_enabled(): void
     {
         $org = Organization::findOrFail($this->user->organization_id);
