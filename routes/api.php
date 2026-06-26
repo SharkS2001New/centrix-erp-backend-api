@@ -68,6 +68,8 @@ use App\Http\Controllers\Api\V1\PermissionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
 use App\Http\Controllers\Api\V1\PlatformAiTrainingController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
+use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
+use App\Http\Controllers\Api\V1\SystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
 use App\Http\Controllers\Api\V1\PodRecordController;
 use App\Http\Controllers\Api\V1\PositionController;
@@ -204,6 +206,7 @@ Route::prefix('v1')->group(function () {
         Route::post('background-tasks/report-builder-preview', [BackgroundJobDispatchController::class, 'storeReportBuilderPreview']);
         Route::post('background-tasks/{id}/cancel', [BackgroundTaskController::class, 'cancel']);
         Route::get('background-tasks/{id}/download', [BackgroundTaskController::class, 'download']);
+        Route::get('background-tasks/{id}/data', [BackgroundTaskController::class, 'data']);
         Route::get('background-tasks/{id}', [BackgroundTaskController::class, 'show']);
 
         Route::get('admin/organizations', [OrganizationProvisionController::class, 'index'])
@@ -239,6 +242,17 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
             ->middleware(['erp.super_admin']);
+
+        Route::get('admin/system-issue-reports/summary', [PlatformSystemIssueReportController::class, 'summary'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/system-issue-reports', [PlatformSystemIssueReportController::class, 'index'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/system-issue-reports/{id}', [PlatformSystemIssueReportController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::patch('admin/system-issue-reports/{id}', [PlatformSystemIssueReportController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+
+        Route::post('system-issue-reports', [SystemIssueReportController::class, 'store']);
 
         Route::prefix('admin/ai-training')
             ->middleware(['erp.super_admin'])

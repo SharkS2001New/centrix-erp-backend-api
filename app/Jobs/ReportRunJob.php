@@ -7,6 +7,8 @@ use App\Models\BackgroundTask;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
+use App\Services\Background\ReportExportSearchParams;
+use App\Services\Background\ReportFetchResultBuilder;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -17,7 +19,7 @@ class ReportRunJob implements ShouldBeUnique, ShouldQueue
     use Queueable;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 1800;
+    public int $timeout = 3600;
 
     public function __construct(
         public string $taskId,
@@ -47,16 +49,31 @@ class ReportRunJob implements ShouldBeUnique, ShouldQueue
             if (! is_array($searchParams)) {
                 $searchParams = [];
             }
+            $searchParams = ReportExportSearchParams::sanitize($searchParams);
+
+            $builder = ReportFetchResultBuilder::forTask($task);
 
             $onProgress = function (int $progress, string $message) use ($tasks, $task): void {
                 $this->reportProgress($tasks, $task, $progress, $message);
             };
 
             $tasks->updateProgress($task, 10, 'Loading data…');
-            $result = $paginator->fetchAll($path, $searchParams, $user, 500, 10000, $onProgress, $task);
+            $result = $paginator->eachPage(
+                $path,
+                $searchParams,
+                $user,
+                static function (array $batch) use ($builder): void {
+                    $builder->appendRows($batch);
+                },
+                null,
+                null,
+                $onProgress,
+                $task,
+            );
+
             $tasks->assertNotCancelled($task);
             $tasks->updateProgress($task, 95, 'Almost done…');
-            $tasks->markCompleted($task, $result);
+            $tasks->markCompleted($task, $builder->finalize($result['truncated']));
         } catch (\Throwable $e) {
             $this->failBackgroundTask($tasks, $task, $e, 'ReportRunJob');
         }

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Jobs\PaginatedFetchJob;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
+use App\Services\Background\ReportExportSearchParams;
 use Illuminate\Http\Request;
 
 class PaginatedFetchController extends Controller
@@ -24,6 +25,10 @@ class PaginatedFetchController extends Controller
         ]);
 
         $this->paginator->assertAllowedPath($data['path']);
+
+        if (isset($data['search_params']) && is_array($data['search_params'])) {
+            $data['search_params'] = ReportExportSearchParams::sanitize($data['search_params']);
+        }
 
         $this->tasks->assertNoBlockingTask($request->user());
 

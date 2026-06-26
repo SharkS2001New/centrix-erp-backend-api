@@ -421,6 +421,7 @@ return [
             'default_country_code' => 'KE',
             'document_footer_text' => '',
             'show_organization_on_documents' => true,
+            'document_header_display' => 'auto',
         ],
         'notifications' => [
             'sms_enabled' => false,

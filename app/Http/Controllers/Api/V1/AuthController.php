@@ -31,8 +31,13 @@ class AuthController extends Controller
         protected PasswordResetService $passwordResets,
     ) {}
 
-    public function health()
+    public function health(Request $request)
     {
+        // Browser connectivity probes — no DB/Redis work (avoids load from many open tabs).
+        if ($request->boolean('connectivity')) {
+            return response()->json(['ok' => true, 'checks' => ['app' => true]]);
+        }
+
         $checks = ['app' => true];
 
         try {

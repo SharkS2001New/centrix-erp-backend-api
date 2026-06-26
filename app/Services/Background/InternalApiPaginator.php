@@ -16,7 +16,7 @@ class InternalApiPaginator
     private const BACKGROUND_PER_PAGE = 500;
 
     /** Endpoints that validate per_page with max:200 (e.g. legacy archive sales). */
-    private const API_VALIDATED_MAX_PER_PAGE = 200;
+    public const API_VALIDATED_MAX_PER_PAGE = 200;
 
     /** @var list<string> */
     private const ALLOWED_PREFIXES = [
@@ -60,12 +60,15 @@ class InternalApiPaginator
         string $path,
         array $searchParams,
         User $user,
-        int $perPage = self::BACKGROUND_PER_PAGE,
-        int $maxRows = 10000,
+        ?int $perPage = null,
+        ?int $maxRows = null,
         ?callable $onProgress = null,
         ?BackgroundTask $cancelTask = null,
     ): array {
         $normalizedPath = $this->assertAllowedPath($path);
+        $searchParams = ReportExportSearchParams::sanitize($searchParams);
+        $perPage = $perPage ?? (int) config('background.fetch_per_page', self::BACKGROUND_PER_PAGE);
+        $maxRows = $maxRows ?? (int) config('background.max_fetch_rows', 50_000);
         $token = $this->createBackgroundToken($user);
 
         try {
@@ -126,21 +129,110 @@ class InternalApiPaginator
     }
 
     /**
-     * Fetch legacy archive rows merged into a Centrix report export.
+     * Stream API pages to a callback without holding all rows in memory.
      *
      * @param  array<string, mixed>  $searchParams
-     * @return list<array<string, mixed>>
+     * @param  callable(list<array<string, mixed>>, int, int): void  $onPage
+     * @return array{row_count: int, truncated: bool}
      */
-    public function fetchLegacyArchiveMerge(
+    public function eachPage(
         string $path,
         array $searchParams,
         User $user,
+        callable $onPage,
+        ?int $perPage = null,
+        ?int $maxRows = null,
         ?callable $onProgress = null,
         ?BackgroundTask $cancelTask = null,
     ): array {
         $normalizedPath = $this->assertAllowedPath($path);
+        $searchParams = ReportExportSearchParams::sanitize($searchParams);
+        $perPage = $perPage ?? (int) config('background.fetch_per_page', self::BACKGROUND_PER_PAGE);
+        $maxRows = $maxRows ?? (int) config('background.max_export_rows', 100_000);
         $token = $this->createBackgroundToken($user);
-        $legacyAll = [];
+
+        try {
+            $rowCount = 0;
+            $truncated = false;
+            $page = 1;
+            $lastPage = 1;
+
+            do {
+                if ($cancelTask !== null && $cancelTask->fresh()?->status === 'cancelled') {
+                    throw new RuntimeException('Background task was cancelled.');
+                }
+
+                $query = array_merge($searchParams, [
+                    'page' => $page,
+                    'per_page' => $perPage,
+                ]);
+
+                $payload = $this->internalRequest->get($normalizedPath, $query, $user, $token);
+                $rows = $payload['data'] ?? $payload['rows'] ?? [];
+                if (! is_array($rows)) {
+                    $rows = [];
+                }
+
+                $batch = [];
+                foreach ($rows as $row) {
+                    if ($rowCount >= $maxRows) {
+                        $truncated = true;
+                        break 2;
+                    }
+                    if (is_array($row)) {
+                        $batch[] = $row;
+                        $rowCount++;
+                    }
+                }
+
+                if ($batch !== []) {
+                    $lastPage = (int) ($payload['last_page'] ?? $payload['meta']['last_page'] ?? 1);
+                    $onPage($batch, $page, $lastPage);
+                }
+
+                $lastPage = (int) ($payload['last_page'] ?? $payload['meta']['last_page'] ?? 1);
+                if ($onProgress !== null && $lastPage > 0) {
+                    $progress = (int) floor(min(85, 10 + (($page / max(1, $lastPage)) * 70)));
+                    $onProgress($progress, 'Loading data…');
+                }
+                $page++;
+            } while ($page <= $lastPage);
+
+            return [
+                'row_count' => $rowCount,
+                'truncated' => $truncated,
+            ];
+        } catch (\Throwable $e) {
+            Log::warning('InternalApiPaginator stream failed', [
+                'path' => $normalizedPath,
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+            ]);
+            throw new RuntimeException('Could not fetch report data: '.$e->getMessage(), 0, $e);
+        } finally {
+            $this->revokeToken($token);
+        }
+    }
+
+    /**
+     * Stream legacy archive pages merged into a Centrix report export.
+     *
+     * @param  array<string, mixed>  $searchParams
+     * @param  callable(list<array<string, mixed>>, int, int): void  $onPage
+     * @return array{row_count: int}
+     */
+    public function eachLegacyArchiveMerge(
+        string $path,
+        array $searchParams,
+        User $user,
+        callable $onPage,
+        ?callable $onProgress = null,
+        ?BackgroundTask $cancelTask = null,
+    ): array {
+        $normalizedPath = $this->assertAllowedPath($path);
+        $searchParams = ReportExportSearchParams::sanitize($searchParams);
+        $token = $this->createBackgroundToken($user);
+        $rowCount = 0;
         $legacyPage = 1;
         $legacyLastPage = 1;
 
@@ -162,10 +254,18 @@ class InternalApiPaginator
                 if (! is_array($legacyChunk)) {
                     $legacyChunk = [];
                 }
+
+                $batch = [];
                 foreach ($legacyChunk as $row) {
                     if (is_array($row)) {
-                        $legacyAll[] = $row;
+                        $batch[] = $row;
+                        $rowCount++;
                     }
+                }
+
+                if ($batch !== []) {
+                    $legacyLastPage = (int) ($payload['legacy_archive']['meta']['last_page'] ?? 1);
+                    $onPage($batch, $legacyPage, $legacyLastPage);
                 }
 
                 $legacyLastPage = (int) ($payload['legacy_archive']['meta']['last_page'] ?? 1);
@@ -176,10 +276,38 @@ class InternalApiPaginator
                 $legacyPage++;
             } while ($legacyPage <= $legacyLastPage);
 
-            return $legacyAll;
+            return ['row_count' => $rowCount];
         } finally {
             $this->revokeToken($token);
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $searchParams
+     * @return list<array<string, mixed>>
+     */
+    public function fetchLegacyArchiveMerge(
+        string $path,
+        array $searchParams,
+        User $user,
+        ?callable $onProgress = null,
+        ?BackgroundTask $cancelTask = null,
+    ): array {
+        $legacyAll = [];
+        $this->eachLegacyArchiveMerge(
+            $path,
+            $searchParams,
+            $user,
+            static function (array $batch) use (&$legacyAll): void {
+                foreach ($batch as $row) {
+                    $legacyAll[] = $row;
+                }
+            },
+            $onProgress,
+            $cancelTask,
+        );
+
+        return $legacyAll;
     }
 
     /**
@@ -197,7 +325,7 @@ class InternalApiPaginator
             $searchParams,
             $user,
             self::API_VALIDATED_MAX_PER_PAGE,
-            10000,
+            (int) config('background.max_export_rows', 100_000),
             $onProgress,
             $cancelTask,
         );

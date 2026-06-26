@@ -8,6 +8,7 @@ use App\Jobs\ReportBuilderPreviewJob;
 use App\Jobs\ReportRunJob;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
+use App\Services\Background\ReportExportSearchParams;
 use Illuminate\Http\Request;
 
 class BackgroundJobDispatchController extends Controller
@@ -26,18 +27,35 @@ class BackgroundJobDispatchController extends Controller
             'source' => ['sometimes', 'string', 'in:api,inline_rows,legacy_archive_sales,product_catalog'],
             'path' => ['nullable', 'string', 'max:200'],
             'search_params' => ['sometimes', 'array'],
+            'estimated_row_count' => ['sometimes', 'integer', 'min:0'],
             'columns' => ['required', 'array', 'min:1'],
             'columns.*.key' => ['required', 'string', 'max:120'],
             'columns.*.label' => ['required', 'string', 'max:200'],
             'columns.*.align' => ['nullable', 'string', 'max:20'],
             'meta' => ['sometimes', 'array'],
             'footer_row' => ['nullable', 'array'],
-            'rows' => ['sometimes', 'array', 'max:5000'],
+            'rows' => ['sometimes', 'array'],
             'legacy_merge' => ['sometimes', 'array'],
             'legacy_merge.enabled' => ['sometimes', 'boolean'],
         ]);
 
+        $inlineMax = (int) config('background.inline_rows_max', 5000);
+        $pdfMax = (int) config('background.pdf_max_rows', 2500);
+        $format = strtolower((string) $data['format']);
+        $estimated = (int) ($data['estimated_row_count'] ?? 0);
+
+        if (in_array($format, ['pdf', 'print'], true) && $estimated > $pdfMax) {
+            abort(422, "PDF export supports up to {$pdfMax} rows. Use Excel or CSV for larger reports.");
+        }
+
+        if (isset($data['rows']) && count($data['rows']) > $inlineMax) {
+            abort(422, "Inline export supports up to {$inlineMax} rows. Use a server-side export source.");
+        }
+
         $source = $data['source'] ?? 'api';
+        if (isset($data['search_params']) && is_array($data['search_params'])) {
+            $data['search_params'] = ReportExportSearchParams::sanitize($data['search_params']);
+        }
         if ($source === 'api') {
             $path = (string) ($data['path'] ?? '');
             abort_if($path === '', 422, 'API path is required for report export.');
@@ -67,6 +85,9 @@ class BackgroundJobDispatchController extends Controller
         ]);
 
         $this->paginator->assertAllowedPath($data['path']);
+        if (isset($data['search_params']) && is_array($data['search_params'])) {
+            $data['search_params'] = ReportExportSearchParams::sanitize($data['search_params']);
+        }
 
         $this->tasks->assertNoBlockingTask($request->user());
 

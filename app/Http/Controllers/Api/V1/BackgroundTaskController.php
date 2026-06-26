@@ -75,4 +75,32 @@ class BackgroundTaskController extends Controller
             'Content-Type' => $mime,
         ]);
     }
+
+    /** GET /background-tasks/{id}/data — load row cache for large fetch/report-run tasks. */
+    public function data(Request $request, string $id)
+    {
+        $task = $this->tasks->findForUser($id, $request->user());
+        abort_if($task === null, 404, 'Background task not found.');
+        abort_if($task->status !== 'completed', 422, 'Task data is not ready yet.');
+
+        $result = is_array($task->result) ? $task->result : [];
+        $dataPath = $result['data_path'] ?? null;
+
+        if (! is_string($dataPath) || $dataPath === '') {
+            return response()->json([
+                'rows' => $result['rows'] ?? [],
+                'row_count' => $result['row_count'] ?? count($result['rows'] ?? []),
+                'truncated' => (bool) ($result['truncated'] ?? false),
+            ]);
+        }
+
+        $cache = new ReportRowCache($dataPath);
+        $rows = $cache->readAll();
+
+        return response()->json([
+            'rows' => $rows,
+            'row_count' => count($rows),
+            'truncated' => (bool) ($result['truncated'] ?? false),
+        ]);
+    }
 }

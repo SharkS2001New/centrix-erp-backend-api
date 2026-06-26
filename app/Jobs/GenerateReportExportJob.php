@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
 use App\Services\Background\ProductCatalogExportFetcher;
+use App\Services\Background\ReportExportSearchParams;
 use App\Services\Background\ReportExportService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -19,7 +20,7 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
     use Queueable;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 1800;
+    public int $timeout = 3600;
 
     public function __construct(
         public string $taskId,
@@ -48,7 +49,7 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
             $payload = is_array($task->payload) ? $task->payload : [];
             $format = (string) ($payload['format'] ?? 'xlsx');
             $columns = $payload['columns'] ?? [];
-            $meta = $payload['meta'] ?? [];
+            $meta = is_array($payload['meta'] ?? null) ? $payload['meta'] : [];
             $footerRow = $payload['footer_row'] ?? null;
             $filename = (string) ($payload['filename'] ?? 'report');
             $source = (string) ($payload['source'] ?? 'api');
@@ -57,23 +58,35 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
                 throw new InvalidArgumentException('Export columns are required.');
             }
 
+            $truncated = false;
             $onProgress = function (int $progress, string $message) use ($tasks, $task): void {
                 $this->reportProgress($tasks, $task, $progress, $message);
             };
 
-            $rows = $this->resolveRows($payload, $source, $paginator, $productCatalog, $user, $task, $tasks, $onProgress);
+            $streamSource = $this->buildStreamSource(
+                $payload,
+                $source,
+                $paginator,
+                $productCatalog,
+                $user,
+                $task,
+                $tasks,
+                $onProgress,
+                $truncated,
+            );
+
             $tasks->assertNotCancelled($task);
             $tasks->updateProgress($task, 88, 'Generating file…');
 
-            $file = $exporter->generate(
+            $file = $exporter->generateStreaming(
                 $format,
                 $filename,
-                is_array($meta) ? $meta : [],
+                $meta,
                 $columns,
-                $rows,
                 is_array($footerRow) ? $footerRow : null,
                 (int) $user->organization_id,
                 $task->id,
+                $streamSource,
                 function (int $progress, string $message) use ($tasks, $task): void {
                     $this->reportProgress($tasks, $task, $progress, $message);
                 },
@@ -82,7 +95,7 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
             $tasks->assertNotCancelled($task);
             $tasks->updateProgress($task, 98, 'Almost done…');
             $tasks->markCompleted($task, array_merge($file, [
-                'truncated' => (bool) ($payload['truncated'] ?? false),
+                'truncated' => $truncated || (bool) ($file['truncated'] ?? false) || (bool) ($file['pdf_truncated'] ?? false),
             ]));
         } catch (\Throwable $e) {
             $this->failBackgroundTask($tasks, $task, $e, 'GenerateReportExportJob');
@@ -91,10 +104,9 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
 
     /**
      * @param  array<string, mixed>  $payload
-     * @param  callable(int, string): void  $onProgress
-     * @return list<array<string, mixed>>
+     * @return callable(callable(list<array<string, mixed>>): void): void
      */
-    protected function resolveRows(
+    protected function buildStreamSource(
         array $payload,
         string $source,
         InternalApiPaginator $paginator,
@@ -103,65 +115,98 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
         BackgroundTask $task,
         BackgroundTaskService $tasks,
         callable $onProgress,
-    ): array {
-        if ($source === 'inline_rows') {
-            $rows = $payload['rows'] ?? [];
-            if (! is_array($rows)) {
-                return [];
+        bool &$truncated,
+    ): callable {
+        return function (callable $onBatch) use (
+            $payload,
+            $source,
+            $paginator,
+            $productCatalog,
+            $user,
+            $task,
+            $tasks,
+            $onProgress,
+            &$truncated,
+        ): void {
+            if ($source === 'inline_rows') {
+                $rows = $payload['rows'] ?? [];
+                if (is_array($rows) && $rows !== []) {
+                    $onBatch(array_values(array_filter($rows, 'is_array')));
+                }
+
+                return;
             }
 
-            return array_values(array_filter($rows, 'is_array'));
-        }
+            if ($source === 'legacy_archive_sales') {
+                $searchParams = ReportExportSearchParams::sanitize($payload['search_params'] ?? []);
+                $onProgress(8, 'Fetching legacy archive sales…');
+                $result = $paginator->eachPage(
+                    '/reports/legacy-archive/sales',
+                    $searchParams,
+                    $user,
+                    function (array $batch) use ($onBatch): void {
+                        $onBatch($this->mapLegacyArchiveSalesRows($batch));
+                    },
+                    InternalApiPaginator::API_VALIDATED_MAX_PER_PAGE,
+                    null,
+                    $onProgress,
+                    $task,
+                );
+                $truncated = $truncated || $result['truncated'];
 
-        if ($source === 'legacy_archive_sales') {
-            $searchParams = $payload['search_params'] ?? [];
-            if (! is_array($searchParams)) {
-                $searchParams = [];
+                return;
             }
-            $onProgress(8, 'Fetching legacy archive sales…');
-            $result = $paginator->fetchLegacyArchiveSales($searchParams, $user, $onProgress, $task);
 
-            return $this->mapLegacyArchiveSalesRows($result['rows']);
-        }
+            if ($source === 'product_catalog') {
+                $searchParams = ReportExportSearchParams::sanitize($payload['search_params'] ?? []);
+                $onProgress(8, 'Fetching products…');
+                $result = $productCatalog->eachPage(
+                    $searchParams,
+                    $user,
+                    function (array $batch) use ($onBatch): void {
+                        $onBatch($this->mapProductCatalogRows($batch));
+                    },
+                    null,
+                    null,
+                    $onProgress,
+                    $task,
+                );
+                $truncated = $truncated || $result['truncated'];
 
-        if ($source === 'product_catalog') {
-            $searchParams = $payload['search_params'] ?? [];
-            if (! is_array($searchParams)) {
-                $searchParams = [];
+                return;
             }
-            $onProgress(8, 'Fetching products…');
-            $result = $productCatalog->fetchAll($searchParams, $user, 500, 10000, $onProgress, $task);
 
-            return $this->mapProductCatalogRows($result['rows']);
-        }
+            $path = (string) ($payload['path'] ?? '');
+            if ($path === '') {
+                throw new InvalidArgumentException('API path is required for report export.');
+            }
 
-        $path = (string) ($payload['path'] ?? '');
-        if ($path === '') {
-            throw new InvalidArgumentException('API path is required for report export.');
-        }
-
-        $searchParams = $payload['search_params'] ?? [];
-        if (! is_array($searchParams)) {
-            $searchParams = [];
-        }
-
-        $onProgress(8, 'Fetching report data…');
-        $result = $paginator->fetchAll($path, $searchParams, $user, 500, 10000, $onProgress, $task);
-        $rows = $result['rows'];
-
-        if (! empty($payload['legacy_merge']['enabled'])) {
-            $tasks->updateProgress($task, 72, 'Loading legacy archive data…');
-            $legacyRows = $paginator->fetchLegacyArchiveMerge(
+            $searchParams = ReportExportSearchParams::sanitize($payload['search_params'] ?? []);
+            $onProgress(8, 'Fetching report data…');
+            $result = $paginator->eachPage(
                 $path,
                 $searchParams,
                 $user,
+                $onBatch,
+                null,
+                null,
                 $onProgress,
                 $task,
             );
-            $rows = array_merge($rows, $legacyRows);
-        }
+            $truncated = $truncated || $result['truncated'];
 
-        return $rows;
+            if (! empty($payload['legacy_merge']['enabled'])) {
+                $tasks->updateProgress($task, 72, 'Loading legacy archive data…');
+                $paginator->eachLegacyArchiveMerge(
+                    $path,
+                    $searchParams,
+                    $user,
+                    $onBatch,
+                    $onProgress,
+                    $task,
+                );
+            }
+        };
     }
 
     /**

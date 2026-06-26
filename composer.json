@@ -4,14 +4,15 @@
     "description": "Centrix ERP API v1 backend (Laravel 12).",
     "require": {
         "php": "^8.2",
+        "dompdf/dompdf": "^3.1",
+        "google/apiclient": "^2.18",
         "guzzlehttp/guzzle": "^7.12.1",
         "guzzlehttp/psr7": "^2.12.1",
-        "google/apiclient": "^2.18",
         "laravel/framework": "^12.61.1",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
+        "openspout/openspout": "^4.28",
         "phpoffice/phpspreadsheet": "^2.3",
-        "dompdf/dompdf": "^3.1",
         "predis/predis": "^2.3"
     },
     "require-dev": {

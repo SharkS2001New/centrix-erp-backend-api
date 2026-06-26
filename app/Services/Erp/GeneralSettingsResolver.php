@@ -72,6 +72,9 @@ class GeneralSettingsResolver
             : 'comma';
         $out['document_footer_text'] = trim((string) ($out['document_footer_text'] ?? ''));
         $out['show_organization_on_documents'] = (bool) ($out['show_organization_on_documents'] ?? true);
+        $out['document_header_display'] = in_array($out['document_header_display'] ?? '', ['auto', 'logo', 'name', 'logo_and_name'], true)
+            ? $out['document_header_display']
+            : 'auto';
 
         return $out;
     }

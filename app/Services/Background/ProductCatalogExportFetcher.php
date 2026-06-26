@@ -10,7 +10,6 @@ use RuntimeException;
 
 /**
  * Fetch product catalogue rows for background export without routing through HTTP.
- * Avoids internal sub-requests accidentally hitting products/{product_code} show routes.
  */
 class ProductCatalogExportFetcher
 {
@@ -20,22 +19,26 @@ class ProductCatalogExportFetcher
 
     /**
      * @param  array<string, mixed>  $searchParams
-     * @param  callable(int, string): void|null  $onProgress
-     * @return array{rows: list<array<string, mixed>>, row_count: int, truncated: bool}
+     * @param  callable(list<array<string, mixed>>, int, int): void  $onPage
+     * @return array{row_count: int, truncated: bool}
      */
-    public function fetchAll(
+    public function eachPage(
         array $searchParams,
         User $user,
-        int $perPage = 500,
-        int $maxRows = 10000,
+        callable $onPage,
+        ?int $perPage = null,
+        ?int $maxRows = null,
         ?callable $onProgress = null,
         ?BackgroundTask $cancelTask = null,
     ): array {
-        $perPage = min($perPage, 200);
-        $all = [];
+        $searchParams = ReportExportSearchParams::sanitize($searchParams);
+        $perPage = min($perPage ?? (int) config('background.fetch_per_page', 500), 200);
+        $maxRows = $maxRows ?? (int) config('background.max_export_rows', 100_000);
+
+        $rowCount = 0;
+        $truncated = false;
         $page = 1;
         $lastPage = 1;
-        $truncated = false;
 
         do {
             if ($cancelTask !== null && $cancelTask->fresh()?->status === 'cancelled') {
@@ -65,14 +68,21 @@ class ProductCatalogExportFetcher
                 $rows = [];
             }
 
+            $batch = [];
             foreach ($rows as $row) {
-                if (count($all) >= $maxRows) {
+                if ($rowCount >= $maxRows) {
                     $truncated = true;
                     break 2;
                 }
                 if (is_array($row)) {
-                    $all[] = $row;
+                    $batch[] = $row;
+                    $rowCount++;
                 }
+            }
+
+            if ($batch !== []) {
+                $lastPage = (int) ($payload['last_page'] ?? 1);
+                $onPage($batch, $page, $lastPage);
             }
 
             $lastPage = (int) ($payload['last_page'] ?? 1);
@@ -84,9 +94,42 @@ class ProductCatalogExportFetcher
         } while ($page <= $lastPage);
 
         return [
-            'rows' => $all,
-            'row_count' => count($all),
+            'row_count' => $rowCount,
             'truncated' => $truncated,
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $searchParams
+     * @return array{rows: list<array<string, mixed>>, row_count: int, truncated: bool}
+     */
+    public function fetchAll(
+        array $searchParams,
+        User $user,
+        ?int $perPage = null,
+        ?int $maxRows = null,
+        ?callable $onProgress = null,
+        ?BackgroundTask $cancelTask = null,
+    ): array {
+        $all = [];
+        $result = $this->eachPage(
+            $searchParams,
+            $user,
+            static function (array $batch) use (&$all): void {
+                foreach ($batch as $row) {
+                    $all[] = $row;
+                }
+            },
+            $perPage,
+            $maxRows,
+            $onProgress,
+            $cancelTask,
+        );
+
+        return [
+            'rows' => $all,
+            'row_count' => $result['row_count'],
+            'truncated' => $result['truncated'],
         ];
     }
 }

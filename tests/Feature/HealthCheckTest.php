@@ -14,4 +14,13 @@ class HealthCheckTest extends TestCase
             ->assertJsonPath('checks.app', true)
             ->assertJsonPath('checks.database', true);
     }
+
+    public function test_connectivity_health_probe_skips_database(): void
+    {
+        $this->getJson('/api/v1/health?connectivity=1')
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('checks.app', true)
+            ->assertJsonMissingPath('checks.database');
+    }
 }

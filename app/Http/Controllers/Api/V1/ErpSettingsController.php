@@ -650,6 +650,7 @@ class ErpSettingsController extends Controller
             'default_country_code' => 'sometimes|string|max:4',
             'document_footer_text' => 'sometimes|nullable|string|max:500',
             'show_organization_on_documents' => 'sometimes|boolean',
+            'document_header_display' => 'sometimes|in:auto,logo,name,logo_and_name',
         ]);
 
         $next = GeneralSettingsResolver::normalize(array_merge(
