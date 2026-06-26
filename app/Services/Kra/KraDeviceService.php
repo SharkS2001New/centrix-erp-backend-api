@@ -2,6 +2,8 @@
 
 namespace App\Services\Kra;
 
+use App\Models\CreditNote;
+use App\Models\Sale;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
@@ -171,7 +173,17 @@ class KraDeviceService
 
     public function generateInvoiceNumber(): string
     {
-        return substr(time() . rand(100, 999), 0, 10);
+        return (string) max(1, (int) substr((string) time(), -9) + random_int(1, 99));
+    }
+
+    public function traderInvoiceForSale(Sale $sale, array $financeSettings = []): string
+    {
+        return app(KraTraderInvoiceAllocator::class)->forSale($sale, $financeSettings);
+    }
+
+    public function traderInvoiceForCreditNote(CreditNote $creditNote, array $financeSettings = []): string
+    {
+        return app(KraTraderInvoiceAllocator::class)->forCreditNote($creditNote, $financeSettings);
     }
 
     /** @return array<string, string> */
@@ -520,7 +532,7 @@ class KraDeviceService
 
         try {
             $response = Http::timeout(60)
-                ->retry(2, 200)
+                ->retry(2, 200, throw: false)
                 ->withHeaders([
                     'Content-Type' => 'application/json',
                     'Accept' => 'application/json',
@@ -528,14 +540,28 @@ class KraDeviceService
                 ->post($url, $payload);
 
             $responseData = $response->json();
+            $successful = $this->deviceResponseSuccessful(
+                $response,
+                is_array($responseData) ? $responseData : null,
+                $path,
+            );
+
+            if (! $response->successful() && is_array($responseData) && ! empty($responseData['message'])) {
+                return [
+                    'success' => false,
+                    'message' => (string) $responseData['message'],
+                    'payload' => $payload,
+                    'response' => $this->mapResponse($responseData),
+                ];
+            }
 
             return [
-                'success' => $this->deviceResponseSuccessful($response, is_array($responseData) ? $responseData : null, $path),
+                'success' => $successful,
                 'message' => is_array($responseData)
                     ? ($responseData['message'] ?? $responseData['Message'] ?? $response->body())
                     : $response->body(),
                 'payload' => $payload,
-                'response' => $this->mapResponse($responseData),
+                'response' => $this->mapResponse(is_array($responseData) ? $responseData : null),
             ];
         } catch (\Throwable $e) {
             Log::error('KRA device API error: ' . $e->getMessage(), array_merge([

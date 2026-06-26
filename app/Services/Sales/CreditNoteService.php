@@ -99,7 +99,7 @@ class CreditNoteService
                 ->values()
                 ->all();
 
-            $invoiceNumber = $service->generateInvoiceNumber();
+            $invoiceNumber = $service->traderInvoiceForCreditNote($creditNote, $financeSettings);
             $buyerPin = $return->customer?->kra_pin ?? $return->sale?->customer?->kra_pin ?? null;
 
             $result = $service->sendCreditNote(

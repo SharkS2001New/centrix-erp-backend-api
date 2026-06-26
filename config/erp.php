@@ -391,6 +391,8 @@ return [
             ],
             'default_submit_kra' => true,
             'kra_bypass_above_amount' => null,
+            /** Continue trader receipt numbering after a legacy TIMS/Comstore sequence (KRA error 314). */
+            'kra_trader_invoice_start' => null,
             'accounting_mode' => 'native',
             'accounting_provider' => null,
             'accounting_sync_direction' => 'export',

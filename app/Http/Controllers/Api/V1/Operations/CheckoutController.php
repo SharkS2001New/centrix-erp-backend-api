@@ -442,7 +442,7 @@ class CheckoutController extends Controller
         }
 
         $service = KraDeviceService::fromSettings($finance);
-        $invoiceNumber = $service->generateInvoiceNumber();
+        $invoiceNumber = $service->traderInvoiceForSale($sale, $finance);
         $orderItems = $lines->map(fn ($line) => [
             'product_name' => $line->product_name ?? $line->product_code,
             'product_code' => $line->product_code,

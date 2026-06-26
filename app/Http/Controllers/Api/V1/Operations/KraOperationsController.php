@@ -141,7 +141,9 @@ class KraOperationsController extends Controller
         }
 
         $service = KraDeviceService::fromSettings($finance);
-        $invoiceNumber = $row->invoice_number ?: $service->generateInvoiceNumber();
+        $allocator = app(\App\Services\Kra\KraTraderInvoiceAllocator::class);
+        $invoiceNumber = $allocator->extractFromKraResponse($row)
+            ?: $service->traderInvoiceForSale($sale, $finance);
         $orderItems = $sale->items->map(fn ($line) => [
             'product_name' => $line->product_name ?? $line->product_code,
             'product_code' => $line->product_code,
