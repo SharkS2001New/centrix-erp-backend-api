@@ -28,6 +28,7 @@ use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
+use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
 use App\Services\Notifications\CustomerNotificationService;
@@ -457,11 +458,10 @@ class CheckoutController extends Controller
             $buyerPin,
         );
 
-        if (! ($result['success'] ?? false)) {
-            throw new InvalidArgumentException(
-                'KRA device submission failed: ' . ($result['message'] ?? 'Unknown error'),
-            );
-        }
+        KraDeviceFailure::abortUnlessSuccess(
+            $result,
+            'KRA device submission failed.',
+        );
 
         $mapped = $result['response'] ?? [];
 

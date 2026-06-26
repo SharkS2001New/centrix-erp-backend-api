@@ -172,4 +172,42 @@ class KraDeviceCheckoutTest extends TestCase
 
         Http::assertNothingSent();
     }
+
+    public function test_checkout_rolls_back_sale_when_kra_device_fails(): void
+    {
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => false,
+                'message' => 'Device rejected sale',
+            ], 200),
+        ]);
+
+        $product = Product::with('vat')->first();
+        if (! $product->vat_id) {
+            $product->update(['vat_id' => Vat::first()->id]);
+        }
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $beforeSales = \App\Models\Sale::query()->count();
+        $beforeKra = \App\Models\KraResponse::query()->count();
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['kra']);
+
+        $this->assertSame($beforeSales, \App\Models\Sale::query()->count());
+        $this->assertSame($beforeKra, \App\Models\KraResponse::query()->count());
+        $this->assertDatabaseHas('temporary_carts', ['id' => $cartId]);
+    }
 }

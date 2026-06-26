@@ -200,6 +200,80 @@ class CustomerReturnService
         });
     }
 
+    /**
+     * Fiscal void for POS order edit: issue a KRA credit note without restocking inventory.
+     * Stock is restored separately when the sale is cancelled for cart restore.
+     */
+    public function approvePosEditVoid(Sale $sale, User $user, CapabilityGate $gate): void
+    {
+        if (CustomerReturn::query()
+            ->where('sale_id', $sale->id)
+            ->where('return_kind', 'pos_edit')
+            ->where('status', 'approved')
+            ->exists()) {
+            return;
+        }
+
+        $finance = $gate->moduleSettings('finance') ?? [];
+        if (empty($finance['enable_kra_device'])) {
+            return;
+        }
+
+        $sale->loadMissing(['items.product', 'customer']);
+        $linePayloads = collect($this->linesFromSale($sale))
+            ->filter(fn ($line) => (float) ($line['max_return_qty'] ?? 0) > 0)
+            ->map(function ($line) {
+                $returnQty = (float) $line['max_return_qty'];
+                $lineTotal = (float) ($line['line_total'] ?? 0);
+                $amount = $returnQty + 0.0001 >= (float) ($line['quantity_sold'] ?? $returnQty) - (float) ($line['already_returned'] ?? 0)
+                    ? $lineTotal
+                    : round($returnQty * (float) $line['unit_price'], 2);
+
+                return [
+                    'sale_item_id' => $line['sale_item_id'],
+                    'product_code' => $line['product_code'],
+                    'product_name' => $line['product_name'],
+                    'uom' => $line['uom'],
+                    'quantity_sold' => $line['quantity_sold'],
+                    'return_qty' => $returnQty,
+                    'unit_price' => $line['unit_price'],
+                    'amount' => $amount,
+                    'line_no' => $line['line_no'],
+                ];
+            })
+            ->values()
+            ->all();
+
+        if ($linePayloads === []) {
+            return;
+        }
+
+        $total = round(array_sum(array_column($linePayloads, 'amount')), 2);
+
+        $return = CustomerReturn::create([
+            'return_no' => $this->nextReturnNo((int) $user->organization_id),
+            'organization_id' => $user->organization_id,
+            'branch_id' => $sale->branch_id ?? $user->branch_id,
+            'sale_id' => $sale->id,
+            'customer_num' => $sale->customer_num,
+            'return_date' => now()->toDateString(),
+            'refund_method' => $sale->payment_method_code ?: 'CASH',
+            'reason' => 'POS order edit void',
+            'notes' => 'Automatic fiscal void before POS order edit.',
+            'status' => 'approved',
+            'total_amount' => $total,
+            'stock_location' => $this->inferDefaultReturnStockLocation((int) $sale->id, $user, $linePayloads),
+            'returned_by' => $user->id,
+            'approved_by' => $user->id,
+            'approved_at' => now(),
+            'return_kind' => 'pos_edit',
+        ]);
+
+        $this->syncLines($return, $linePayloads);
+        $return = $return->fresh(['lines', 'sale', 'customer']);
+        $this->creditNoteService->createForReturn($return, $user, $finance);
+    }
+
     public function reject(CustomerReturn $return, User $user, ?string $reason = null): CustomerReturn
     {
         if ($return->status === 'rejected') {

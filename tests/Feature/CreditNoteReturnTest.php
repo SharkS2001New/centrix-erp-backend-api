@@ -165,4 +165,79 @@ class CreditNoteReturnTest extends TestCase
                 && ($sign['rfdRsnCd'] ?? '') === '03';
         });
     }
+
+    public function test_approve_return_rolls_back_when_kra_device_fails(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'kra_device_ip' => 'http://192.168.1.50:8010',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => false,
+                'message' => 'Credit note rejected by device',
+            ], 200),
+        ]);
+
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed', 'order_total' => 200, 'amount_paid' => 200, 'payment_status' => 'paid']);
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 2,
+                'selling_price' => 100,
+                'amount' => 200,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+
+        KraResponse::create([
+            'sale_id' => $sale->id,
+            'order_no' => $sale->order_num ?? 90001,
+            'invoice_number' => 'CU-ORIG-2',
+            'status' => 'success',
+            'response_payload' => [
+                'cu_inv_no' => '00009999',
+                'invoice_number' => 'CU-ORIG-2',
+            ],
+        ]);
+
+        $created = $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale->id,
+            'reason' => 'Damaged Product',
+            'lines' => [
+                [
+                    'product_code' => $product->product_code,
+                    'quantity_sold' => 2,
+                    'return_qty' => 1,
+                    'unit_price' => 100,
+                    'amount' => 100,
+                ],
+            ],
+        ])->assertCreated();
+
+        $returnId = $created->json('id');
+
+        $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['kra']);
+
+        $this->assertDatabaseHas('customer_returns', [
+            'id' => $returnId,
+            'status' => 'pending',
+        ]);
+        $this->assertDatabaseMissing('credit_notes', [
+            'customer_return_id' => $returnId,
+        ]);
+    }
 }

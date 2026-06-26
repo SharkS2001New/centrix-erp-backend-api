@@ -6,10 +6,10 @@ use App\Models\CreditNote;
 use App\Models\CustomerReturn;
 use App\Models\KraResponse;
 use App\Models\User;
+use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraRefundReasonMapper;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 class CreditNoteService
@@ -56,9 +56,7 @@ class CreditNoteService
         $creditNote = $this->submitToKra($creditNote, $return, $financeSettings);
 
         if ($creditNote->kra_status === 'failed') {
-            throw ValidationException::withMessages([
-                'kra' => $creditNote->kra_error_message ?: 'KRA device rejected the credit note.',
-            ]);
+            KraDeviceFailure::abort((string) ($creditNote->kra_error_message ?: 'KRA device rejected the credit note.'));
         }
 
         return $creditNote;

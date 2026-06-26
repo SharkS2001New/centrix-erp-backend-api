@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\ErpContext;
+use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -95,6 +96,8 @@ class KraProductRegistrationController extends Controller
         $service = KraDeviceService::fromSettings($finance);
         $result = $service->registerProducts($products->all(), $path);
 
-        return response()->json($result, $result['success'] ? 200 : 422);
+        KraDeviceFailure::abortUnlessSuccess($result, 'KRA product registration failed.');
+
+        return response()->json($result);
     }
 }
