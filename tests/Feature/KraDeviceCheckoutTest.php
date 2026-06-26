@@ -105,4 +105,71 @@ class KraDeviceCheckoutTest extends TestCase
             'sale_id' => $sale['id'],
         ]);
     }
+
+    public function test_checkout_skips_kra_when_fiscalization_turned_off(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance']['default_submit_kra'] = false;
+        $org->update(['module_settings' => $settings]);
+
+        $productCode = Product::first()->product_code;
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $productCode,
+            'quantity' => 1,
+        ]);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseMissing('kra_responses', [
+            'sale_id' => $sale['id'],
+        ]);
+
+        Http::assertNothingSent();
+    }
+
+    public function test_checkout_skips_kra_when_order_total_meets_bypass_threshold(): void
+    {
+        Http::fake();
+
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance']['kra_bypass_above_amount'] = 100;
+        $org->update(['module_settings' => $settings]);
+
+        $product = Product::with('vat')->first();
+        if (! $product->vat_id) {
+            $product->update(['vat_id' => Vat::first()->id]);
+        }
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 5,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+        ])->assertCreated()->json();
+
+        $this->assertGreaterThanOrEqual(100, (float) $sale['order_total']);
+        $this->assertDatabaseMissing('kra_responses', [
+            'sale_id' => $sale['id'],
+        ]);
+
+        Http::assertNothingSent();
+    }
 }

@@ -376,6 +376,7 @@ return [
             'kra_device_test_mode' => false,
             'kra_plu_register_path' => '/api/upload-plu-data',
             'default_submit_kra' => true,
+            'kra_bypass_above_amount' => null,
             'accounting_mode' => 'native',
             'accounting_provider' => null,
             'accounting_sync_direction' => 'export',

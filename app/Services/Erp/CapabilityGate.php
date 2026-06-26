@@ -401,7 +401,7 @@ class CapabilityGate
             if (! $this->kraIntegrationPlatformEnabled()) {
                 foreach ([
                     'enable_kra_device', 'kra_device_ip', 'kra_serial_number', 'kra_pin_number',
-                    'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra',
+                    'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_bypass_above_amount',
                 ] as $key) {
                     unset($moduleSettings['finance'][$key]);
                 }

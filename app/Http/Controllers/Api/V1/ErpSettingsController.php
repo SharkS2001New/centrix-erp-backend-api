@@ -508,6 +508,7 @@ class ErpSettingsController extends Controller
             'kra_device_test_mode' => 'sometimes|boolean',
             'kra_plu_register_path' => 'sometimes|nullable|string|max:250',
             'default_submit_kra' => 'sometimes|boolean',
+            'kra_bypass_above_amount' => 'sometimes|nullable|numeric|min:0',
             'mpesa' => 'sometimes|array',
             'mpesa.env' => 'sometimes|in:sandbox,live',
             'mpesa.enable_stk_push' => 'sometimes|boolean',
@@ -571,6 +572,15 @@ class ErpSettingsController extends Controller
         if (array_key_exists('quickbooks', $data) && is_array($data['quickbooks'])) {
             $mergedQuickBooks = QuickBooksSettingsResolver::mergeFinanceQuickBooks($current, $data['quickbooks']);
             $nextFinance['quickbooks'] = $mergedQuickBooks['quickbooks'];
+        }
+
+        if (array_key_exists('kra_bypass_above_amount', $nextFinance)) {
+            $raw = $nextFinance['kra_bypass_above_amount'];
+            if ($raw === null || $raw === '' || (float) $raw <= 0) {
+                $nextFinance['kra_bypass_above_amount'] = null;
+            } else {
+                $nextFinance['kra_bypass_above_amount'] = (float) $raw;
+            }
         }
 
         $moduleSettings = $org->module_settings ?? [];
@@ -954,7 +964,7 @@ class ErpSettingsController extends Controller
         if (! $gate->kraIntegrationPlatformEnabled()) {
             foreach ([
                 'enable_kra_device', 'kra_device_ip', 'kra_serial_number', 'kra_pin_number',
-                'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra',
+                'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_bypass_above_amount',
             ] as $key) {
                 unset($finance[$key]);
             }

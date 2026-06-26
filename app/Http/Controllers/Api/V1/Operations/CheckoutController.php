@@ -29,6 +29,7 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Kra\KraDeviceService;
+use App\Services\Kra\KraFiscalPolicy;
 use App\Services\Notifications\CustomerNotificationService;
 use App\Services\Sales\MobileCheckoutLocationService;
 use App\Services\Sales\OrderNumberAllocator;
@@ -366,9 +367,16 @@ class CheckoutController extends Controller
 
             $sale = $sale->fresh(['items', 'payments.paymentMethod']);
 
-            $submitKra = array_key_exists('submit_kra', $input)
+            $finance = $gate->moduleSettings('finance');
+            $explicitSubmit = array_key_exists('submit_kra', $input)
                 ? (bool) $input['submit_kra']
-                : (bool) ($gate->moduleSettings('finance')['default_submit_kra'] ?? true);
+                : null;
+
+            $submitKra = KraFiscalPolicy::shouldFiscalizeSale(
+                $finance,
+                (float) $sale->order_total,
+                $explicitSubmit,
+            );
 
             $kraResponse = $this->submitKraForSale(
                 $sale,

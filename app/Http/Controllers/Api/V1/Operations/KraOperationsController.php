@@ -7,6 +7,7 @@ use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Services\Erp\ErpContext;
 use App\Services\Kra\KraDeviceService;
+use App\Services\Kra\KraFiscalPolicy;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 
@@ -20,19 +21,25 @@ class KraOperationsController extends Controller
     {
         $user = $request->user();
         $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
-        $enabled = ! empty($finance['enable_kra_device']);
+        $configured = KraFiscalPolicy::isDeviceConfigured($finance);
 
         $status = [
-            'enabled' => $enabled,
+            'enabled' => $configured,
+            'fiscalization_active' => KraFiscalPolicy::isFiscalizationActive($finance),
+            'bypass_above_amount' => KraFiscalPolicy::bypassAboveAmount($finance),
             'device_ip' => trim((string) ($finance['kra_device_ip'] ?? '')),
             'serial_number' => trim((string) ($finance['kra_serial_number'] ?? '')),
             'test_mode' => (bool) ($finance['kra_device_test_mode'] ?? false),
             'reachable' => false,
-            'message' => $enabled ? 'Device not probed yet.' : 'KRA device integration is disabled.',
+            'message' => $configured ? 'Device not probed yet.' : 'KRA device is not configured.',
         ];
 
-        if (! $enabled) {
+        if (! $configured) {
             return response()->json($status);
+        }
+
+        if (! KraFiscalPolicy::isFiscalizationActive($finance)) {
+            $status['message'] = 'Device is configured but sales fiscalization is turned off in Finance settings.';
         }
 
         $base = trim((string) ($finance['kra_device_ip'] ?? ''));
