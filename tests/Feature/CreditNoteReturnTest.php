@@ -162,7 +162,10 @@ class CreditNoteReturnTest extends TestCase
 
             return ($sign['InvoiceType'] ?? '') === 'credit'
                 && ($sign['relevantInvoiceNumber'] ?? '') === '5678'
-                && ($sign['rfdRsnCd'] ?? '') === '03';
+                && ($sign['rfdRsnCd'] ?? '') === '03'
+                && ($sign['CashAmt'] ?? '') === '100.00'
+                && ($sign['CardAmt'] ?? '') === '0.00'
+                && (($body['plu_data'][0]['Barcode'] ?? null) === '');
         });
     }
 

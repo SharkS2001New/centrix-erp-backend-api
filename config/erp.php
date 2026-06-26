@@ -376,7 +376,9 @@ return [
             'kra_device_test_mode' => false,
             'kra_plu_register_path' => '/api/upload-plu-data',
             'kra_plu_defaults' => [
+                'plu_no' => '301',
                 'barcode_prefix' => '000000',
+                'unit_price' => '1',
                 'item_cls_code' => '99010000',
                 'pkg_unit_cd' => 'BG-Bag',
                 'qty_unit_cd' => 'U-Pieces/item [Number]',

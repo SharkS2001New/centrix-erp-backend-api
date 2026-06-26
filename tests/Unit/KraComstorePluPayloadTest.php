@@ -13,7 +13,7 @@ class KraComstorePluPayloadTest extends TestCase
             'id' => 301,
             'product_code' => 'PRD#0001',
             'product_name' => 'Test Item',
-            'unit_price' => 1.0,
+            'unit_price' => 99.0,
             'vat' => (object) ['vat_percentage' => 16, 'vat_name' => 'Standard Rated'],
         ];
 
@@ -50,6 +50,6 @@ class KraComstorePluPayloadTest extends TestCase
 
         $this->assertSame('orange', $item['plu_name']);
         $this->assertSame('A-Exempt', $item['tax_type']);
-        $this->assertSame('44', $item['unit_price']);
+        $this->assertSame('1', $item['unit_price']);
     }
 }

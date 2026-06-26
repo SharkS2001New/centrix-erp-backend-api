@@ -96,4 +96,40 @@ class SalesVatCalculator
             'exempt_net' => round($vatExemptNet, 2),
         ];
     }
+
+    /**
+     * VAT split aligned with LightStores SendToKraAsync (product_vat > 0 => 16% bucket).
+     *
+     * @param  iterable<int, array{amount: float, product_vat?: float, quantity?: float, product_name?: string}>  $items
+     * @return array{vat16_net: float, vat16_value: float, exempt_net: float}
+     */
+    public static function summarizeForLightStoresWorkflow(iterable $items): array
+    {
+        $vat16Net = 0.0;
+        $vat16Value = 0.0;
+        $vatExemptNet = 0.0;
+
+        foreach ($items as $item) {
+            $amount = (float) ($item['amount'] ?? 0);
+            if ($amount <= 0) {
+                continue;
+            }
+
+            $productVat = (float) ($item['product_vat'] ?? 0);
+
+            if ($productVat > 0) {
+                $net = $amount / 1.16;
+                $vat16Net += $net;
+                $vat16Value += $amount - $net;
+            } else {
+                $vatExemptNet += $amount;
+            }
+        }
+
+        return [
+            'vat16_net' => round($vat16Net, 2),
+            'vat16_value' => round($vat16Value, 2),
+            'exempt_net' => round($vatExemptNet, 2),
+        ];
+    }
 }

@@ -46,7 +46,6 @@ class KraDeviceService
             '',
             '',
             $buyerPin,
-            $this->paymentAmountsForMethod($totalAmount, 'CASH'),
         );
 
         return $this->postToDevice('/api/complete-workflow', $payload, [
@@ -56,7 +55,10 @@ class KraDeviceService
     }
 
     /**
-     * Submit a credit note (Comstore complete-workflow with InvoiceType = credit).
+     * Submit a credit note via the same complete-workflow payload as a sale.
+     *
+     * Identical to sendSale except sign_structure uses InvoiceType "credit",
+     * plus relevantInvoiceNumber and rfdRsnCd required by Comstore.
      *
      * @param  array<int, array<string, mixed>>  $orderItems
      */
@@ -79,7 +81,6 @@ class KraDeviceService
             $relevantInvoiceNumber,
             $refundReasonCode,
             $buyerPin,
-            $this->paymentAmountsForMethod($totalAmount, $refundMethod),
         );
 
         return $this->postToDevice('/api/complete-workflow', $payload, [
@@ -87,19 +88,6 @@ class KraDeviceService
             'document_type' => 'credit_note',
             'relevant_invoice' => $relevantInvoiceNumber,
         ]);
-    }
-
-    /** @return array{cash: float, card: float, check: float} */
-    protected function paymentAmountsForMethod(float $totalAmount, ?string $refundMethod): array
-    {
-        $method = strtoupper(trim((string) $refundMethod));
-        $formatted = round($totalAmount, 2);
-
-        if ($method === 'CASH') {
-            return ['cash' => $formatted, 'card' => 0.0, 'check' => 0.0];
-        }
-
-        return ['cash' => 0.0, 'card' => $formatted, 'check' => 0.0];
     }
 
     /**
@@ -207,9 +195,10 @@ class KraDeviceService
         $price = (float) ($product->unit_price ?? $product->last_selling_price ?? 0);
         $productCode = trim((string) ($product->product_code ?? ''));
         $barcodePrefix = (string) ($defaults['barcode_prefix'] ?? '000000');
-        $pluNo = (string) ($product->id ?? $productCode);
+        $pluNo = (string) ($defaults['plu_no'] ?? $product->id ?? $productCode);
         $barcode = $barcodePrefix.$productCode;
         $pluName = trim((string) ($product->product_name ?? 'Product'));
+        $uploadUnitPrice = (string) ($defaults['unit_price'] ?? '1');
 
         if ($pluName === '') {
             $pluName = 'Product';
@@ -219,7 +208,7 @@ class KraDeviceService
             'plu_no' => $pluNo,
             'barcode' => $barcode,
             'plu_name' => mb_substr($pluName, 0, 50),
-            'unit_price' => self::formatComstoreUnitPrice($price),
+            'unit_price' => $uploadUnitPrice !== '' ? $uploadUnitPrice : self::formatComstoreUnitPrice($price),
             'item_cls_code' => (string) ($defaults['item_cls_code'] ?? '99010000'),
             'pkg_unit_cd' => (string) ($defaults['pkg_unit_cd'] ?? 'BG-Bag'),
             'qty_unit_cd' => (string) ($defaults['qty_unit_cd'] ?? 'U-Pieces/item [Number]'),
@@ -253,22 +242,9 @@ class KraDeviceService
         }
 
         $pct = (float) ($vat->vat_percentage ?? 16);
-        $name = strtolower((string) ($vat->vat_name ?? ''));
-
-        if (str_contains($name, 'exempt') || $pct <= 0 && str_contains($name, 'exempt')) {
-            return 'A-Exempt';
-        }
 
         if ($pct <= 0) {
-            return 'C-0%';
-        }
-
-        if ($pct >= 15.5 && $pct <= 16.5) {
-            return 'B-16.00%';
-        }
-
-        if ($pct >= 7.5 && $pct <= 8.5) {
-            return 'E-8%';
+            return 'A-Exempt';
         }
 
         return 'B-16.00%';
@@ -288,6 +264,36 @@ class KraDeviceService
             'update_flag' => (int) ($defaults['update_flag'] ?? 0),
             'file_signal' => '',
         ];
+    }
+
+    /** @return array<string, string> */
+    public static function buildWorkflowPluLine(array $item): array
+    {
+        $amount = (float) ($item['amount'] ?? 0);
+        $quantity = max(0.001, (float) ($item['quantity'] ?? 1));
+        $unitPrice = $quantity > 0 ? $amount / $quantity : $amount;
+        $itemName = trim((string) ($item['product_name'] ?? 'Product'));
+
+        return [
+            'item_Name' => $itemName !== '' ? $itemName : 'Product',
+            'Barcode' => '',
+            'SalePrice' => number_format($unitPrice, 2, '.', ''),
+            'SaleQty' => self::formatWorkflowSaleQty($quantity),
+            'SaleAmount' => number_format($amount, 2, '.', ''),
+            'ItemDisCount(%)' => '0',
+            'ItemDisCount' => '0',
+            'Schg' => '0',
+            'Levy' => '0',
+        ];
+    }
+
+    protected static function formatWorkflowSaleQty(float $quantity): string
+    {
+        if (abs($quantity - round($quantity)) < 0.00001) {
+            return (string) (int) round($quantity);
+        }
+
+        return rtrim(rtrim(number_format($quantity, 2, '.', ''), '0'), '.');
     }
 
     /** @return array<string, string> */
@@ -404,65 +410,48 @@ class KraDeviceService
         string $relevantInvoiceNumber,
         string $refundReasonCode,
         ?string $buyerPin,
-        array $paymentAmounts,
     ): array {
-        $summary = SalesVatCalculator::summarizeForKra($orderItems);
+        $summary = SalesVatCalculator::summarizeForLightStoresWorkflow($orderItems);
         $vat16NetTotal = $summary['vat16_net'];
         $vat16ValueTotal = $summary['vat16_value'];
         $vatExemptNetTotal = $summary['exempt_net'];
 
-        $pluData = [];
-        foreach ($orderItems as $item) {
-            $amount = (float) ($item['amount'] ?? 0);
-            $quantity = max(0.001, (float) ($item['quantity'] ?? 1));
-            $unitPrice = $quantity > 0 ? $amount / $quantity : $amount;
+        $pluData = array_map(
+            fn (array $item) => self::buildWorkflowPluLine($item),
+            $orderItems,
+        );
 
-            $pluData[] = self::buildPluLine(
-                (string) ($item['product_name'] ?? 'Product'),
-                (string) ($item['product_code'] ?? ''),
-                $unitPrice,
-                $quantity,
-                $amount,
-            );
-        }
-
-        $netTotal = $vatExemptNetTotal + $vat16NetTotal;
-        $calculatedTotal = $netTotal + $vat16ValueTotal;
-        if (abs($totalAmount - $calculatedTotal) > 0.01) {
-            $vat16ValueTotal = round($totalAmount - $netTotal, 2);
-        }
+        $isCreditNote = $invoiceType === 'credit';
 
         $signStructure = [
             'SignType' => $this->isTest ? '0' : '1',
             'DiscAmt' => '0',
-            'CashAmt' => number_format($paymentAmounts['cash'], 2, '.', ''),
-            'CheckAmt' => number_format($paymentAmounts['check'], 2, '.', ''),
-            'CardAmt' => number_format($paymentAmounts['card'], 2, '.', ''),
+            'CashAmt' => number_format($totalAmount, 2, '.', ''),
+            'CheckAmt' => '0',
+            'CardAmt' => '0',
             'InvoiceType' => $invoiceType,
-            'relevantInvoiceNumber' => $relevantInvoiceNumber,
+            'relevantInvoiceNumber' => $isCreditNote ? $relevantInvoiceNumber : '',
             'pinOfBuyer' => $buyerPin ?? '',
             'exemptionNumber' => '',
             'pinOfshop' => $this->pinNumber,
             'TraderSystemInvoiceNumber' => $invoiceNumber,
             'Vat A(Exempt) net' => number_format($vatExemptNetTotal, 2, '.', ''),
-            'Vat A(Exempt) value' => '0.00',
+            'Vat A(Exempt) value' => '0',
             'Vat B(16.00%) net' => number_format($vat16NetTotal, 2, '.', ''),
             'Vat B(16.00%) value' => number_format($vat16ValueTotal, 2, '.', ''),
-            'Vat C(0%) net' => '0.00',
-            'Vat C(0%) value' => '0.00',
-            'Vat D(Non-VAT) net' => '0.00',
-            'Vat D(Non-VAT) value' => '0.00',
+            'Vat C(0%) net' => '0',
+            'Vat C(0%) value' => '0',
+            'Vat D(Non-VAT) net' => '0',
+            'Vat D(Non-VAT) value' => '0',
             'Vat E(8%) net' => '',
             'Vat E(8%) value' => '',
             'Schg F(10.00%) net' => '',
             'Schg F(10.00%) value' => '',
             'Levy G(2.00%) net' => '',
             'Levy G(2.00%) value' => '',
-            'rfdRsnCd' => $refundReasonCode,
-            'NetTotal' => number_format($netTotal, 2, '.', ''),
+            'rfdRsnCd' => $isCreditNote ? $refundReasonCode : '',
+            'NetTotal' => '',
             'EXCHANGERate' => '',
-            'Schg' => '0',
-            'Levy' => '0',
         ];
 
         return [
@@ -484,7 +473,6 @@ class KraDeviceService
             '',
             '',
             $buyerPin,
-            $this->paymentAmountsForMethod($totalAmount, 'CASH'),
         );
     }
 

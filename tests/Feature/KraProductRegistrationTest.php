@@ -117,6 +117,8 @@ class KraProductRegistrationTest extends TestCase
                 && ! array_key_exists('PluItems', $body)
                 && ($plu['barcode'] ?? '') === '000000'.$product->product_code
                 && ($plu['plu_name'] ?? '') === $product->product_name
+                && ($plu['plu_no'] ?? '') === '301'
+                && ($plu['unit_price'] ?? '') === '1'
                 && ($plu['tax_type'] ?? '') === 'B-16.00%'
                 && ($plu['type_code'] ?? '') === '02Finished Product'
                 && ($plu['use_yor_n'] ?? '') === '1';
