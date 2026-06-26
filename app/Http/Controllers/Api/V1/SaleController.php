@@ -67,6 +67,14 @@ class SaleController extends BaseResourceController
             $query->whereDate('completed_at', '<=', $request->input('to_date'));
         }
 
+        if ($request->filled('min_order_total')) {
+            $query->where('order_total', '>=', (float) $request->input('min_order_total'));
+        }
+
+        if ($request->filled('max_order_total')) {
+            $query->where('order_total', '<=', (float) $request->input('max_order_total'));
+        }
+
         if ($request->filled('required_date')) {
             $query->whereDate('required_date', $request->input('required_date'));
         }

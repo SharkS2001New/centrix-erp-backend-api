@@ -821,17 +821,41 @@ class LightStoresLegacyImporter
     }
 
     /**
-     * @return array{legacy_import: true, legacy_order_label: string, legacy_order_num: int, legacy_sale_date: string, legacy_source: string}
+     * @return array{
+     *   legacy_import: true,
+     *   legacy_order_label: string,
+     *   legacy_order_num: int,
+     *   legacy_sale_date: string,
+     *   legacy_source: string,
+     *   legacy_order_total?: float,
+     *   legacy_total_vat?: float,
+     * }
      */
-    protected function legacyFulfillmentMeta(string $label, int $legacyOrderNum, string $legacySource, string $saleDate): array
-    {
-        return [
+    protected function legacyFulfillmentMeta(
+        string $label,
+        int $legacyOrderNum,
+        string $legacySource,
+        string $saleDate,
+        ?float $legacyOrderTotal = null,
+        ?float $legacyTotalVat = null,
+    ): array {
+        $meta = [
             'legacy_import' => true,
             'legacy_order_label' => $label,
             'legacy_order_num' => $legacyOrderNum,
             'legacy_sale_date' => date('Y-m-d', strtotime($saleDate)),
             'legacy_source' => $legacySource,
+            'legacy_preserve_amounts' => true,
         ];
+
+        if ($legacyOrderTotal !== null) {
+            $meta['legacy_order_total'] = round($legacyOrderTotal, 2);
+        }
+        if ($legacyTotalVat !== null) {
+            $meta['legacy_total_vat'] = round($legacyTotalVat, 2);
+        }
+
+        return $meta;
     }
 
     protected function legacySaleDate(mixed ...$candidates): string
@@ -870,6 +894,7 @@ class LightStoresLegacyImporter
             return null;
         }
 
+        $this->assertLegacyProductsExist($lines, 'product_code');
         [$orderTotal, $totalVat] = $this->sumLegacyLines($lines, 'amount', 'product_vat');
         $routeStatus = $this->mapLegacyRouteOrderStatus((int) $row->order_status);
         $amountPaid = $routeStatus['payment_status'] === 'paid' ? $orderTotal : 0.0;
@@ -892,10 +917,17 @@ class LightStoresLegacyImporter
             'order_total' => $orderTotal,
             'payment_method_code' => $routeStatus['is_credit_sale'] ? 'CREDIT' : 'CASH',
             'is_credit_sale' => $routeStatus['is_credit_sale'],
-            'stock_balanced' => (int) ($row->stock_balanced ?? 0),
+            'stock_balanced' => 1,
             'receipt_printed' => (int) ($row->receipt_printed ?? 0),
             'comments' => $this->mergeLegacyComment($row->comments ?? null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::ROUTE_MASTERS, $saleDate),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta(
+                $orderRef['label'],
+                $legacyOrderNum,
+                LightStoresLegacySchema::ROUTE_MASTERS,
+                $saleDate,
+                $orderTotal,
+                $totalVat,
+            ),
             'completed_at' => $row->delivery_date ?: $row->create_time,
         ]);
 
@@ -948,7 +980,14 @@ class LightStoresLegacyImporter
             'is_credit_sale' => $debtorStatus['is_credit_sale'],
             'stock_balanced' => 1,
             'comments' => $this->mergeLegacyComment(null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::DEBTOR_MASTERS, $saleDate),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta(
+                $orderRef['label'],
+                $legacyOrderNum,
+                LightStoresLegacySchema::DEBTOR_MASTERS,
+                $saleDate,
+                $orderTotal,
+                $totalVat,
+            ),
             'completed_at' => $row->create_time,
         ]);
 
@@ -973,6 +1012,7 @@ class LightStoresLegacyImporter
             return null;
         }
 
+        $this->assertLegacyProductsExist($lines, 'productsales_id');
         [$orderTotal, $totalVat] = $this->sumLegacyLines($lines, 'amount', 'product_vat');
 
         $cashierId = $this->cashierMap[(int) $row->userid_sales] ?? $this->migrationUser->id;
@@ -1004,7 +1044,14 @@ class LightStoresLegacyImporter
             'is_credit_sale' => strtoupper((string) ($row->payment_method ?? '')) === 'CR',
             'stock_balanced' => 1,
             'comments' => $this->mergeLegacyComment(null, $orderRef['label'], $legacyOrderNum),
-            'fulfillment_meta' => $this->legacyFulfillmentMeta($orderRef['label'], $legacyOrderNum, LightStoresLegacySchema::POS_MASTERS, $saleDate),
+            'fulfillment_meta' => $this->legacyFulfillmentMeta(
+                $orderRef['label'],
+                $legacyOrderNum,
+                LightStoresLegacySchema::POS_MASTERS,
+                $saleDate,
+                $orderTotal,
+                $totalVat,
+            ),
             'completed_at' => $row->create_time,
         ]);
 
@@ -1056,6 +1103,35 @@ class LightStoresLegacyImporter
         }
 
         return [round($orderTotal, 2), round($totalVat, 2)];
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, object>  $lines
+     */
+    protected function assertLegacyProductsExist(Collection $lines, string $productField): void
+    {
+        $missing = [];
+
+        foreach ($lines as $line) {
+            $productCode = trim((string) ($line->{$productField} ?? ''));
+            if ($productCode === '') {
+                $missing[] = '(empty product code)';
+
+                continue;
+            }
+
+            if (! Product::query()->where('product_code', $productCode)->exists()) {
+                $missing[] = $productCode;
+            }
+        }
+
+        if ($missing !== []) {
+            throw new RuntimeException(
+                'Cannot materialize this legacy sale: product(s) not found in Centrix catalog: '
+                .implode(', ', array_values(array_unique($missing)))
+                .'. Import the products first — quantities and amounts must match the legacy order exactly.',
+            );
+        }
     }
 
     /**

@@ -22,6 +22,8 @@ class LegacyOrdersController extends Controller
             'customer_name',
             'q',
             'has_returns',
+            'min_order_total',
+            'max_order_total',
             'per_page',
         ]));
 

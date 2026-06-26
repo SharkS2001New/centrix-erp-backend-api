@@ -35,6 +35,14 @@ class LegacyOrderService
             $query->whereDate('completed_at', '<=', $filters['to_date']);
         }
 
+        if (isset($filters['min_order_total']) && $filters['min_order_total'] !== '') {
+            $query->where('order_total', '>=', (float) $filters['min_order_total']);
+        }
+
+        if (isset($filters['max_order_total']) && $filters['max_order_total'] !== '') {
+            $query->where('order_total', '<=', (float) $filters['max_order_total']);
+        }
+
         if (! empty($filters['customer_name'])) {
             $name = trim((string) $filters['customer_name']);
             $query->where(function (Builder $inner) use ($name) {
