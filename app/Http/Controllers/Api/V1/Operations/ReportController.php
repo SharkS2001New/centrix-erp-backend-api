@@ -843,7 +843,7 @@ class ReportController extends Controller
 
         $creditSales = (float) ($agg->credit_sales ?? 0);
         $netCashExpected = $openingFloat + $cash;
-        $netSalesMinusFloat = $openingFloat > 0 ? max(0, round($netSales - $openingFloat, 2)) : null;
+        $netSalesMinusFloat = max(0, round($netSales - $openingFloat, 2));
         $netPosition = $netCashExpected - $totalExpenses - $closingDebtors;
 
         $dailyBreakdown = null;

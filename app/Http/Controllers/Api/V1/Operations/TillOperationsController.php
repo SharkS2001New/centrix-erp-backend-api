@@ -534,7 +534,7 @@ class TillOperationsController extends Controller
         $netSales = max(0, $gross - $refunds);
         $totalVat = round((float) ($salesAgg->total_vat ?? 0), 2);
         $openingFloat = (float) ($session->working_amount ?? 0);
-        $netSalesMinusFloat = $openingFloat > 0 ? max(0, round($netSales - $openingFloat, 2)) : null;
+        $netSalesMinusFloat = max(0, round($netSales - $openingFloat, 2));
         $grossTillTotal = $openingFloat + $cash;
         $cashMovements = $this->normalizeCashMovements(
             is_string($session->cash_movements ?? null)
