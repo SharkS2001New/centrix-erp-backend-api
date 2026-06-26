@@ -15,7 +15,10 @@ return new class extends Migration
                     $table->timestamp('password_changed_at')->nullable()->after('password');
                 }
                 if (! Schema::hasColumn('users', 'password_expiry_skip_count')) {
-                    $table->unsignedTinyInteger('password_expiry_skip_count')->default(0)->after('must_change_password');
+                    $after = Schema::hasColumn('users', 'must_change_password')
+                        ? 'must_change_password'
+                        : (Schema::hasColumn('users', 'password_changed_at') ? 'password_changed_at' : 'password');
+                    $table->unsignedTinyInteger('password_expiry_skip_count')->default(0)->after($after);
                 }
             });
 
