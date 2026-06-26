@@ -42,12 +42,3 @@ class ListExportMapperResolver
         return $normalized;
     }
 }
-
-interface ListExportRowMapper
-{
-    /**
-     * @param  list<array<string, mixed>>  $rows
-     * @return list<array<string, mixed>>
-     */
-    public function mapBatch(array $rows): array;
-}
