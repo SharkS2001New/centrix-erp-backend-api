@@ -65,6 +65,10 @@ class HrAttendanceSettingsResolver
             0.5,
             min(0.99, (float) ($out['company_fingerprint_match_threshold'] ?? 0.85)),
         );
+        $out['company_fingerprint_auto_enroll_on_clock'] = filter_var(
+            $out['company_fingerprint_auto_enroll_on_clock'] ?? true,
+            FILTER_VALIDATE_BOOLEAN,
+        );
 
         $out['company_premises_latitude'] = self::nullableCoordinate($out['company_premises_latitude'] ?? null);
         $out['company_premises_longitude'] = self::nullableCoordinate($out['company_premises_longitude'] ?? null);
@@ -139,6 +143,7 @@ class HrAttendanceSettingsResolver
             'allows_face_verification' => self::allowsFaceVerification($normalized),
             'allows_fingerprint_verification' => self::allowsFingerprintVerification($normalized),
             'fingerprint_match_threshold' => $normalized['company_fingerprint_match_threshold'],
+            'fingerprint_auto_enroll_on_clock' => (bool) $normalized['company_fingerprint_auto_enroll_on_clock'],
             'allows_device_biometric_verification' => self::allowsFingerprintVerification($normalized),
         ];
     }

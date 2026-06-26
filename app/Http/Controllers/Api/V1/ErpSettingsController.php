@@ -903,6 +903,7 @@ class ErpSettingsController extends Controller
             'company_premises_radius_metres',
             'company_face_match_threshold',
             'company_fingerprint_match_threshold',
+            'company_fingerprint_auto_enroll_on_clock',
             'company_mobile_verification_method',
         ];
 

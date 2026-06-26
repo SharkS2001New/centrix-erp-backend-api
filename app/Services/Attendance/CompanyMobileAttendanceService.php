@@ -489,6 +489,7 @@ class CompanyMobileAttendanceService
                 (float) $settings['company_fingerprint_match_threshold'],
                 $this->trimDeviceId($data['device_identifier'] ?? null),
                 isset($data['scanner_model']) ? (string) $data['scanner_model'] : null,
+                (bool) ($settings['company_fingerprint_auto_enroll_on_clock'] ?? true),
             );
 
             return [

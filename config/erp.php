@@ -487,6 +487,7 @@ return [
             'company_premises_radius_metres' => 5,
             'company_face_match_threshold' => 0.72,
             'company_fingerprint_match_threshold' => 0.85,
+            'company_fingerprint_auto_enroll_on_clock' => true,
             'company_mobile_verification_method' => 'face_or_fingerprint',
         ],
         'legacy_archive' => [

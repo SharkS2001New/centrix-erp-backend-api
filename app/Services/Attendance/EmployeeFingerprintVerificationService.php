@@ -35,6 +35,7 @@ class EmployeeFingerprintVerificationService
         float $threshold,
         ?string $deviceIdentifier = null,
         ?string $scannerModel = null,
+        bool $allowAutoEnroll = true,
     ): array {
         if ($this->isDeviceBiometricScanner($scannerModel)) {
             return $this->verifyDeviceBiometricAttestation(
@@ -42,6 +43,7 @@ class EmployeeFingerprintVerificationService
                 $encodedTemplate,
                 $deviceIdentifier,
                 $scannerModel,
+                $allowAutoEnroll,
             );
         }
 
@@ -49,35 +51,43 @@ class EmployeeFingerprintVerificationService
             ->where('employee_id', $employee->id)
             ->first();
 
-        if (! $profile) {
-            $profile = $this->enroll(
-                $employee,
-                $encodedTemplate,
-                strlen(base64_decode($encodedTemplate, true) ?: ''),
-                $deviceIdentifier,
-                $scannerModel,
+        if ($profile) {
+            $this->assertScannerCompatible($profile, $scannerModel, $deviceIdentifier);
+
+            $stored = $this->normalizeTemplateVector(
+                base64_decode($profile->fingerprint_template, true) ?: '',
             );
+            $score = $this->matchScore($templateVector, $stored);
+            if ($score < $threshold) {
+                throw new InvalidArgumentException('Fingerprint did not match the enrolled employee profile.');
+            }
 
             return [
                 'matched' => true,
-                'score' => 1.0,
-                'enrolled' => true,
+                'score' => round($score, 4),
+                'enrolled' => false,
                 'profile' => $profile,
             ];
         }
 
-        $stored = $this->normalizeTemplateVector(
-            base64_decode($profile->fingerprint_template, true) ?: '',
-        );
-        $score = $this->matchScore($templateVector, $stored);
-        if ($score < $threshold) {
-            throw new InvalidArgumentException('Fingerprint did not match the enrolled employee profile.');
+        if (! $allowAutoEnroll) {
+            throw new InvalidArgumentException(
+                'This employee has no enrolled fingerprint. Complete fingerprint enrollment before marking attendance.',
+            );
         }
+
+        $profile = $this->enroll(
+            $employee,
+            $encodedTemplate,
+            strlen(base64_decode($encodedTemplate, true) ?: ''),
+            $deviceIdentifier,
+            $scannerModel,
+        );
 
         return [
             'matched' => true,
-            'score' => round($score, 4),
-            'enrolled' => false,
+            'score' => 1.0,
+            'enrolled' => true,
             'profile' => $profile,
         ];
     }
@@ -155,12 +165,44 @@ class EmployeeFingerprintVerificationService
             || str_starts_with($model, 'device:');
     }
 
+    protected function assertScannerCompatible(
+        EmployeeFingerprintProfile $profile,
+        ?string $scannerModel,
+        ?string $deviceIdentifier,
+    ): void {
+        $enrolledDevice = trim((string) ($profile->enrolled_device_identifier ?? ''));
+        $currentDevice = trim((string) ($deviceIdentifier ?? ''));
+
+        if ($enrolledDevice !== '' && $currentDevice !== '' && ! hash_equals($enrolledDevice, $currentDevice)) {
+            throw new InvalidArgumentException(
+                'Fingerprint was enrolled on a different attendance phone. Use the same phone or re-enroll with HR.',
+            );
+        }
+
+        $enrolledScanner = strtolower(trim((string) ($profile->scanner_model ?? '')));
+        $currentScanner = strtolower(trim((string) ($scannerModel ?? '')));
+
+        if ($enrolledScanner === '' || $currentScanner === '') {
+            return;
+        }
+
+        $enrolledIsDevice = $this->isDeviceBiometricScanner($enrolledScanner);
+        $currentIsDevice = $this->isDeviceBiometricScanner($currentScanner);
+
+        if ($enrolledIsDevice !== $currentIsDevice) {
+            throw new InvalidArgumentException(
+                'Fingerprint was enrolled with a different scanner type. Re-enroll using the same method.',
+            );
+        }
+    }
+
     /** @return array{matched: bool, score: float|null, enrolled: bool, profile: EmployeeFingerprintProfile|null} */
     protected function verifyDeviceBiometricAttestation(
         Employee $employee,
         string $encodedTemplate,
         ?string $deviceIdentifier,
         ?string $scannerModel,
+        bool $allowAutoEnroll,
     ): array {
         $encodedTemplate = trim($encodedTemplate);
         if ($encodedTemplate === '') {
@@ -176,33 +218,41 @@ class EmployeeFingerprintVerificationService
             ->where('employee_id', $employee->id)
             ->first();
 
-        if (! $profile) {
-            $profile = $this->enroll(
-                $employee,
-                $encodedTemplate,
-                strlen($raw),
-                $deviceIdentifier,
-                $scannerModel,
-            );
+        if ($profile) {
+            $this->assertScannerCompatible($profile, $scannerModel, $deviceIdentifier);
+
+            if (! hash_equals((string) $profile->fingerprint_template, $encodedTemplate)) {
+                throw new InvalidArgumentException(
+                    'Fingerprint did not match the enrolled employee profile.',
+                );
+            }
 
             return [
                 'matched' => true,
                 'score' => 1.0,
-                'enrolled' => true,
+                'enrolled' => false,
                 'profile' => $profile,
             ];
         }
 
-        if (! hash_equals((string) $profile->fingerprint_template, $encodedTemplate)) {
+        if (! $allowAutoEnroll) {
             throw new InvalidArgumentException(
-                'This employee was not enrolled on this attendance phone. Select your name and scan again to enroll.',
+                'This employee has no enrolled fingerprint. Complete fingerprint enrollment before marking attendance.',
             );
         }
+
+        $profile = $this->enroll(
+            $employee,
+            $encodedTemplate,
+            strlen($raw),
+            $deviceIdentifier,
+            $scannerModel,
+        );
 
         return [
             'matched' => true,
             'score' => 1.0,
-            'enrolled' => false,
+            'enrolled' => true,
             'profile' => $profile,
         ];
     }
