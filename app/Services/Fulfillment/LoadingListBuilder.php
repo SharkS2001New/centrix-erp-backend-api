@@ -62,7 +62,9 @@ class LoadingListBuilder
             ->get();
 
         /** @var Collection<string, Collection<int, SaleItem>> $grouped */
-        $grouped = $items->groupBy('product_code');
+        $grouped = $items->groupBy(
+            fn (SaleItem $item) => $item->product_code.'|'.(int) ($item->on_wholesale_retail ?? 0),
+        );
         $products = Product::query()
             ->with('unit')
             ->whereIn('product_code', $grouped->keys()->all())
@@ -72,7 +74,8 @@ class LoadingListBuilder
         $lines = [];
         $lineNo = 1;
 
-        foreach ($grouped as $productCode => $productItems) {
+        foreach ($grouped as $groupKey => $productItems) {
+            [$productCode] = array_pad(explode('|', (string) $groupKey, 2), 2, '0');
             $product = $products->get($productCode);
             $qty = (float) $productItems->sum('quantity');
             $unitPrice = $this->resolveUnitPrice($productItems, $product);
@@ -88,6 +91,8 @@ class LoadingListBuilder
                 'pack_breakdown' => $packaging['pack_breakdown'],
                 'unit_price' => $unitPrice,
                 'line_total' => round($qty * $unitPrice, 2),
+                'on_wholesale_retail' => (int) ($productItems->first()->on_wholesale_retail ?? 0),
+                'price_tier' => ($productItems->first()->on_wholesale_retail ?? 0) ? 'retail' : 'wholesale',
             ];
         }
 
@@ -118,6 +123,28 @@ class LoadingListBuilder
         }
 
         return round($total, 3);
+    }
+
+    public function computeTripVolumeM3(DispatchTrip $trip): float
+    {
+        $saleIds = $this->eligibleSaleIdsForTrip($trip);
+        if ($saleIds === []) {
+            return 0.0;
+        }
+
+        $items = SaleItem::query()->whereIn('sale_id', $saleIds)->get();
+        $codes = $items->pluck('product_code')->unique()->values()->all();
+        $volumes = Product::query()
+            ->whereIn('product_code', $codes)
+            ->pluck('product_volume_m3', 'product_code');
+
+        $total = 0.0;
+        foreach ($items as $item) {
+            $volume = (float) ($volumes[$item->product_code] ?? 0);
+            $total += $volume * (float) $item->quantity;
+        }
+
+        return round($total, 6);
     }
 
     public function syncLoadingList(DispatchTrip $trip): LoadingList

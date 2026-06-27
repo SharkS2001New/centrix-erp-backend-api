@@ -140,7 +140,7 @@ class ErpSettingsController extends Controller
             'order_workflow.checkout.unpaid.backend' => ['sometimes', 'string', $statusRule],
             'order_workflow.deduct_stock_on' => ['sometimes', 'string', $statusRule],
             'receipt_copies' => 'sometimes|integer|min:1|max:10',
-            'stock_deduct_on' => 'sometimes|in:order_completed,trip_load,trip_depart',
+            'stock_deduct_on' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
             'show_receipt_payment_details' => 'sometimes|boolean',
             'show_invoice_payment_details' => 'sometimes|boolean',
@@ -278,6 +278,7 @@ class ErpSettingsController extends Controller
             'assign_on_status',
             'auto_assign_truck',
             'auto_assign_driver',
+            'auto_create_trips',
             'require_weight_on_load',
             'set_delivery_date_on',
             'require_pod_on_delivered',
@@ -285,6 +286,9 @@ class ErpSettingsController extends Controller
             'enable_cod_reconciliation',
             'require_trip_cash_settlement',
             'include_normal_orders_in_loading_list',
+            'loading_sheet_footer_lines',
+            'loading_sheet_show_signatures',
+            'loading_sheet_default_checked_by',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -292,6 +296,8 @@ class ErpSettingsController extends Controller
         $rules = [
             'assign_on_status' => ['sometimes', 'string', $statusRule],
             'set_delivery_date_on' => ['sometimes', 'string', $statusRule],
+            'loading_sheet_footer_lines' => 'sometimes|nullable|string|max:2000',
+            'loading_sheet_default_checked_by' => 'sometimes|nullable|string|max:120',
         ];
         foreach ($distributionKeys as $key) {
             if (array_key_exists($key, $rules)) {
@@ -675,6 +681,10 @@ class ErpSettingsController extends Controller
             'phone_country_code' => 'sometimes|string|max:8',
             'default_country_code' => 'sometimes|string|max:4',
             'document_footer_text' => 'sometimes|nullable|string|max:500',
+            'print_footer_receipt' => 'sometimes|nullable|string|max:500',
+            'print_footer_a4_invoice' => 'sometimes|nullable|string|max:500',
+            'print_footer_lpo' => 'sometimes|nullable|string|max:500',
+            'print_footer_loading_sheet' => 'sometimes|nullable|string|max:500',
             'show_organization_on_documents' => 'sometimes|boolean',
             'document_header_display' => 'sometimes|in:auto,logo,name,logo_and_name',
         ]);
@@ -788,6 +798,10 @@ class ErpSettingsController extends Controller
             'lpo_print_delivery_notes',
             'lpo_print_kebs_warning',
             'lpo_print_vat_note',
+            'lpo_print_footer_lines',
+            'lpo_print_validity_days',
+            'lpo_print_checked_by',
+            'lpo_print_authorised_by',
         ];
 
         $rules = [
@@ -796,6 +810,10 @@ class ErpSettingsController extends Controller
             'lpo_print_delivery_notes' => 'sometimes|nullable|string|max:4000',
             'lpo_print_kebs_warning' => 'sometimes|nullable|string|max:300',
             'lpo_print_vat_note' => 'sometimes|nullable|string|max:300',
+            'lpo_print_footer_lines' => 'sometimes|nullable|string|max:4000',
+            'lpo_print_validity_days' => 'sometimes|integer|min:1|max:365',
+            'lpo_print_checked_by' => 'sometimes|nullable|string|max:120',
+            'lpo_print_authorised_by' => 'sometimes|nullable|string|max:120',
         ];
         foreach ($procurementKeys as $key) {
             if (array_key_exists($key, $rules)) {

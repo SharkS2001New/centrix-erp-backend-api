@@ -28,6 +28,7 @@ use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
+use App\Services\Fulfillment\AutoTripAssignmentService;
 use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
@@ -52,7 +53,9 @@ class CheckoutController extends Controller
         $gate = $this->erp->gateForUser($request->user());
         $sale = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
 
-        return response()->json($sale, 201);
+        app(AutoTripAssignmentService::class)->tryAssignSale($sale, $request->user());
+
+        return response()->json($sale->fresh(['items', 'payments.paymentMethod']), 201);
     }
 
     protected function checkoutFromCart(TemporaryCart $cart, User $user, CapabilityGate $gate, array $input): Sale
@@ -232,11 +235,9 @@ class CheckoutController extends Controller
             }
 
             $stockDeducted = false;
-            $deferStockToTrip = $gate->shouldDeferStockToTrip();
             $deductStockRequested = (bool) ($input['deduct_stock'] ?? true);
-            $shouldDeductNow = ! $deferStockToTrip
-                && $deductStockRequested
-                && $workflow->shouldDeductStockOn($orderStatus, $cart->channel);
+            $shouldDeductNow = $deductStockRequested
+                && $gate->shouldDeductStockAtCheckout($workflow, $orderStatus, (string) $cart->channel);
 
             foreach ($lines as $i => $line) {
                 $isRetailLine = (bool) $line->on_wholesale_retail;

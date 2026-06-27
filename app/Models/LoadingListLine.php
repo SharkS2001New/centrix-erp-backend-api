@@ -19,12 +19,14 @@ class LoadingListLine extends Model
         'pack_breakdown',
         'unit_price',
         'line_total',
+        'on_wholesale_retail',
     ];
 
     protected $casts = [
         'quantity' => 'float',
         'unit_price' => 'float',
         'line_total' => 'float',
+        'on_wholesale_retail' => 'integer',
     ];
 
     public function loadingList(): BelongsTo

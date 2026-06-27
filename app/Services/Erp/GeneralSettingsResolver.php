@@ -71,6 +71,10 @@ class GeneralSettingsResolver
             ? $out['number_thousands_separator']
             : 'comma';
         $out['document_footer_text'] = trim((string) ($out['document_footer_text'] ?? ''));
+        $out['print_footer_receipt'] = trim((string) ($out['print_footer_receipt'] ?? ''));
+        $out['print_footer_a4_invoice'] = trim((string) ($out['print_footer_a4_invoice'] ?? ''));
+        $out['print_footer_lpo'] = trim((string) ($out['print_footer_lpo'] ?? ''));
+        $out['print_footer_loading_sheet'] = trim((string) ($out['print_footer_loading_sheet'] ?? ''));
         $out['show_organization_on_documents'] = (bool) ($out['show_organization_on_documents'] ?? true);
         $out['document_header_display'] = in_array($out['document_header_display'] ?? '', ['auto', 'logo', 'name', 'logo_and_name'], true)
             ? $out['document_header_display']

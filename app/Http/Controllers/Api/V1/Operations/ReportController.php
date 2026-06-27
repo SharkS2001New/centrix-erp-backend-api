@@ -19,8 +19,36 @@ class ReportController extends Controller
     public function __construct(protected ErpContext $erp) {}
 
     /** Report catalog for ERP clients (bootstrap UI). */
-    public function catalog()
+    public function catalog(Request $request)
     {
+        $inventory = [
+            ['key' => 'stock-on-hand', 'path' => '/reports/stock-on-hand', 'label' => 'Stock on hand'],
+            ['key' => 'low-stock', 'path' => '/reports/low-stock', 'label' => 'Low stock / reorder'],
+            ['key' => 'stock-movement', 'path' => '/reports/stock-movement', 'label' => 'Stock ledger (transactions)'],
+            ['key' => 'stock-chain', 'path' => '/reports/stock-chain', 'label' => 'Stock chain (receive → sell)'],
+            ['key' => 'stock-valuation', 'path' => '/reports/stock-valuation', 'label' => 'Stock valuation'],
+            ['key' => 'stock-reservations', 'path' => '/reports/stock-reservations', 'label' => 'Active cart reservations'],
+            ['key' => 'stock-receipts', 'path' => '/reports/stock-receipts', 'label' => 'Purchase receipts'],
+            ['key' => 'stock-transfers', 'path' => '/reports/stock-transfers', 'label' => 'Shop ↔ store transfers'],
+        ];
+
+        if ($this->organizationHasMultipleBranches($request)) {
+            $inventory[] = [
+                'key' => 'branch-stock-transfers',
+                'path' => '/reports/branch-stock-transfers',
+                'label' => 'Inter-branch transfers',
+            ];
+        }
+
+        $inventory = array_merge($inventory, [
+            ['key' => 'open-lpo', 'path' => '/reports/open-lpo', 'label' => 'Open LPO lines (pending receive)'],
+            ['key' => 'purchases-by-supplier', 'path' => '/reports/purchases-by-supplier', 'label' => 'Purchases by supplier'],
+            ['key' => 'damages', 'path' => '/reports/damages', 'label' => 'Damages & write-offs'],
+            ['key' => 'supplier-returns', 'path' => '/reports/supplier-returns', 'label' => 'Supplier returns'],
+            ['key' => 'returns', 'path' => '/reports/returns', 'label' => 'Customer returns'],
+            ['key' => 'price-list', 'path' => '/reports/price-list', 'label' => 'Price list'],
+        ]);
+
         return response()->json([
             'sales' => [
                 ['key' => 'sales-by-product', 'path' => '/reports/sales-by-product', 'label' => 'Sales by product'],
@@ -39,22 +67,7 @@ class ReportController extends Controller
                 ['key' => 'eod-cashier', 'path' => '/reports/eod-cashier', 'label' => 'End of day (cashier)'],
                 ['key' => 'eod-report', 'path' => '/reports/eod-report', 'label' => 'End of day report'],
             ],
-            'inventory' => [
-                ['key' => 'stock-on-hand', 'path' => '/reports/stock-on-hand', 'label' => 'Stock on hand'],
-                ['key' => 'low-stock', 'path' => '/reports/low-stock', 'label' => 'Low stock / reorder'],
-                ['key' => 'stock-movement', 'path' => '/reports/stock-movement', 'label' => 'Stock ledger (transactions)'],
-                ['key' => 'stock-chain', 'path' => '/reports/stock-chain', 'label' => 'Stock chain (receive → sell)'],
-                ['key' => 'stock-valuation', 'path' => '/reports/stock-valuation', 'label' => 'Stock valuation'],
-                ['key' => 'stock-reservations', 'path' => '/reports/stock-reservations', 'label' => 'Active cart reservations'],
-                ['key' => 'stock-receipts', 'path' => '/reports/stock-receipts', 'label' => 'Purchase receipts'],
-                ['key' => 'stock-transfers', 'path' => '/reports/stock-transfers', 'label' => 'Shop ↔ store transfers'],
-                ['key' => 'open-lpo', 'path' => '/reports/open-lpo', 'label' => 'Open LPO lines (pending receive)'],
-                ['key' => 'purchases-by-supplier', 'path' => '/reports/purchases-by-supplier', 'label' => 'Purchases by supplier'],
-                ['key' => 'damages', 'path' => '/reports/damages', 'label' => 'Damages & write-offs'],
-                ['key' => 'supplier-returns', 'path' => '/reports/supplier-returns', 'label' => 'Supplier returns'],
-                ['key' => 'returns', 'path' => '/reports/returns', 'label' => 'Customer returns'],
-                ['key' => 'price-list', 'path' => '/reports/price-list', 'label' => 'Price list'],
-            ],
+            'inventory' => $inventory,
             'finance' => [
                 ['key' => 'profit-loss', 'path' => '/reports/profit-loss', 'label' => 'Profit & loss (operational)'],
                 ['key' => 'profit-loss-gl', 'path' => '/reports/profit-loss-gl', 'label' => 'Profit & loss (GL)'],
@@ -562,6 +575,24 @@ class ReportController extends Controller
     {
         return response()->json($this->reportFromView('v_stock_transfers', $this->filters($request), [
             'transfer_date', 'branch_id', 'product_code', 'from_location', 'to_location',
+        ]));
+    }
+
+    public function branchStockTransfers(Request $request)
+    {
+        if (! $this->organizationHasMultipleBranches($request)) {
+            return response()->json([
+                'data' => [],
+                'current_page' => 1,
+                'last_page' => 1,
+                'per_page' => (int) ($request->input('per_page', 20)),
+                'total' => 0,
+                'message' => 'Inter-branch transfer reports are available when the organization has more than one branch.',
+            ]);
+        }
+
+        return response()->json($this->reportFromView('v_branch_stock_transfers', $this->filters($request), [
+            'transfer_date', 'from_branch_id', 'to_branch_id', 'product_code', 'from_location', 'to_location',
         ]));
     }
 
@@ -1085,7 +1116,7 @@ class ReportController extends Controller
             'order_date', 'loading_date', 'receipt_date', 'return_date', 'damage_date',
             'scheduled_date', 'capture_date', 'delivery_date',
             'transfer_date', 'payment_date', 'entry_date', 'session_date', 'method_code',
-            'stock_location', 'from_location', 'to_location', 'lpo_status_code',
+            'stock_location', 'from_location', 'to_location', 'from_branch_id', 'to_branch_id', 'lpo_status_code',
             'category_id', 'sub_category_id', 'till_id', 'reference_type', 'user_id',
             'table_name', 'action',
         ]);
@@ -1359,10 +1390,26 @@ class ReportController extends Controller
             ->all();
     }
 
+    protected function organizationHasMultipleBranches(Request $request): bool
+    {
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if (! $orgId) {
+            return false;
+        }
+
+        return count($this->organizationBranchIds($orgId)) > 1;
+    }
+
     protected function scopeReportQueryToOrganization($query, Request $request, string $view, array $allowedCols): void
     {
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
         if (! $orgId) {
+            return;
+        }
+
+        if ($view === 'v_branch_stock_transfers') {
+            $query->where('organization_id', $orgId);
+
             return;
         }
 

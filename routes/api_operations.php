@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Operations\CheckoutController;
 use App\Http\Controllers\Api\V1\Operations\OrderWorkflowController;
 use App\Http\Controllers\Api\V1\Operations\StockOperationsController;
 use App\Http\Controllers\Api\V1\Operations\StockTransferController;
+use App\Http\Controllers\Api\V1\Operations\BranchStockTransferController;
 use App\Http\Controllers\Api\V1\Operations\LpoReceiveController;
 use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
@@ -117,6 +118,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware(['erp.module:inventory', 'erp.permission:inventory.manage'])->prefix('inventory')->group(function () {
         Route::post('transfer', [StockTransferController::class, 'store']);
+        Route::get('branch-transfers', [BranchStockTransferController::class, 'index']);
+        Route::post('branch-transfer', [BranchStockTransferController::class, 'store']);
         Route::post('receive', [LpoReceiveController::class, 'store']);
         Route::post('returns', [ReturnOperationsController::class, 'store']);
         Route::post('stock-take/{sessionId}/initialize', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'initialize']);
@@ -248,6 +251,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('stock-reservations', [ReportController::class, 'stockReservations']);
             Route::get('stock-receipts', [ReportController::class, 'stockReceipts']);
             Route::get('stock-transfers', [ReportController::class, 'stockTransfers']);
+            Route::get('branch-stock-transfers', [ReportController::class, 'branchStockTransfers']);
             Route::get('open-lpo', [ReportController::class, 'openLpo']);
             Route::get('profit-loss', [ReportController::class, 'profitLoss']);
             Route::get('eod-cashier', [ReportController::class, 'eodCashier']);

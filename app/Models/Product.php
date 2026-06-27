@@ -20,7 +20,7 @@ class Product extends Model
     protected $fillable = [
         'product_code', 'product_name', 'subcategory_id', 'unit_id', 'unit_price',
         'last_selling_price', 'last_cost_price', 'discount_type', 'discount_percentage',
-        'discount_value', 'product_weight', 'stock_in_shop', 'stock_in_store',
+        'discount_value', 'product_weight', 'product_volume_m3', 'stock_in_shop', 'stock_in_store',
         'supplier_id', 'sell_on_retail', 'vat_id', 'organization_id', 'branch_id',
         'reorder_point', 'low_stock_alert_enabled', 'created_by', 'updated_by',
         'deleted_at', 'deleted_by',

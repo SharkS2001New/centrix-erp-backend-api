@@ -61,6 +61,10 @@ class ProcurementSettingsResolver
         $out['lpo_print_delivery_notes'] = trim((string) ($out['lpo_print_delivery_notes'] ?? ''));
         $out['lpo_print_kebs_warning'] = trim((string) ($out['lpo_print_kebs_warning'] ?? ''));
         $out['lpo_print_vat_note'] = trim((string) ($out['lpo_print_vat_note'] ?? ''));
+        $out['lpo_print_footer_lines'] = trim((string) ($out['lpo_print_footer_lines'] ?? ''));
+        $out['lpo_print_validity_days'] = max(1, (int) ($out['lpo_print_validity_days'] ?? 7));
+        $out['lpo_print_checked_by'] = trim((string) ($out['lpo_print_checked_by'] ?? ''));
+        $out['lpo_print_authorised_by'] = trim((string) ($out['lpo_print_authorised_by'] ?? ''));
 
         return $out;
     }

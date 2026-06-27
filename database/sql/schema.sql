@@ -312,6 +312,7 @@ CREATE TABLE products (
     discount_percentage     FLOAT         NOT NULL DEFAULT 0,
     discount_value          FLOAT         DEFAULT 0,
     product_weight          DOUBLE,
+    product_volume_m3       DECIMAL(12,6) NULL,
     stock_in_shop           FLOAT         NOT NULL DEFAULT 0,
     stock_in_store          FLOAT         DEFAULT 0,
     supplier_id             INT,
@@ -488,6 +489,23 @@ BEGIN
         last_updated   = CURRENT_TIMESTAMP;
 END$$
 DELIMITER ;
+
+DROP TABLE IF EXISTS branch_stock_transfers;
+CREATE TABLE branch_stock_transfers (
+    id               BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    organization_id  INT           NOT NULL,
+    from_branch_id   INT           NOT NULL,
+    to_branch_id     INT           NOT NULL,
+    product_code     VARCHAR(200)  NOT NULL,
+    quantity         DOUBLE        NOT NULL,
+    from_location    ENUM('shop','store') NOT NULL DEFAULT 'store',
+    to_location      ENUM('shop','store') NOT NULL DEFAULT 'store',
+    notes            TEXT          NULL,
+    created_by       INT           NOT NULL,
+    created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_org_created (organization_id, created_at),
+    INDEX idx_branch_pair (from_branch_id, to_branch_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DROP TABLE IF EXISTS stock_movement_history;
 CREATE TABLE stock_movement_history (
@@ -2540,6 +2558,33 @@ FROM sale_items si
 JOIN sales s ON si.sale_id = s.id
 WHERE s.status = 'completed' AND si.discount_given > 0
 GROUP BY DATE(s.completed_at), s.branch_id, s.channel;
+
+DROP VIEW IF EXISTS v_branch_stock_transfers;
+CREATE VIEW v_branch_stock_transfers AS
+SELECT
+    DATE(bst.created_at) AS transfer_date,
+    bst.id AS transfer_id,
+    bst.organization_id,
+    bst.from_branch_id,
+    fb.branch_name AS from_branch_name,
+    fb.branch_code AS from_branch_code,
+    bst.to_branch_id,
+    tb.branch_name AS to_branch_name,
+    tb.branch_code AS to_branch_code,
+    bst.product_code,
+    p.product_name,
+    bst.quantity,
+    bst.from_location,
+    bst.to_location,
+    bst.notes,
+    bst.created_by,
+    u.username AS created_by_username,
+    bst.created_at
+FROM branch_stock_transfers bst
+JOIN products p ON bst.product_code COLLATE utf8mb4_unicode_ci = p.product_code
+JOIN branches fb ON bst.from_branch_id = fb.id
+JOIN branches tb ON bst.to_branch_id = tb.id
+JOIN users u ON bst.created_by = u.id;
 
 DROP VIEW IF EXISTS v_stock_transfers;
 CREATE VIEW v_stock_transfers AS

@@ -305,6 +305,29 @@ class OrderWorkflowService
         return $status === $target;
     }
 
+    /** Whether $current has reached or passed $target in the channel workflow pipeline. */
+    public function isAtOrPastStatus(string $current, string $target, string $channel): bool
+    {
+        if ($current === $target) {
+            return true;
+        }
+
+        if ($current === 'cancelled') {
+            return false;
+        }
+
+        $workflow = $this->forChannel($channel);
+        $enabled = $this->enabledStatuses($workflow);
+        $currentIdx = array_search($current, $enabled, true);
+        $targetIdx = array_search($target, $enabled, true);
+
+        if ($currentIdx === false || $targetIdx === false) {
+            return false;
+        }
+
+        return $currentIdx >= $targetIdx;
+    }
+
     public function isAllowedStatus(string $status, string $channel): bool
     {
         return in_array($status, $this->forChannel($channel)['statuses'] ?? [], true);

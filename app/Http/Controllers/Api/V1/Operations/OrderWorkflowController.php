@@ -15,6 +15,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Models\RouteSchedule;
+use App\Services\Fulfillment\AutoTripAssignmentService;
 use App\Services\Fulfillment\PodService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
@@ -198,16 +199,19 @@ class OrderWorkflowController extends Controller
             $updates['completed_at'] = $sale->completed_at ?? now();
         }
 
-        $deductStatus = (string) ($workflow->config()['deduct_stock_on'] ?? 'completed');
-        if ($toStatus === $deductStatus) {
-            if (! $gate->shouldDeferStockToTrip() && ! $sale->stock_balanced) {
-                $this->deductSaleStockIfNeeded($sale, $user);
-            }
+        if ($gate->shouldDeductStockOnWorkflowTransition($workflow, $toStatus) && ! $sale->stock_balanced) {
+            $this->deductSaleStockIfNeeded($sale, $user);
         }
 
         $sale->update($updates);
+        $sale = $sale->fresh();
 
-        return $sale->fresh();
+        if ($distributionEnabled && $toStatus === $assignOnStatus) {
+            app(AutoTripAssignmentService::class)->tryAssignSale($sale, $user);
+            $sale = $sale->fresh();
+        }
+
+        return $sale;
     }
 
     protected function resolveAutoDriver(Sale $sale): ?Driver

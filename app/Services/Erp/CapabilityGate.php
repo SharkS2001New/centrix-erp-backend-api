@@ -273,13 +273,13 @@ class CapabilityGate
         return $merged;
     }
 
-    /** When inventory is reduced: order_completed (workflow status), trip_load, or trip_depart. */
+    /** When inventory is reduced: order_created, order_completed (workflow status), trip_load, or trip_depart. */
     public function stockDeductTiming(): string
     {
         $sales = $this->moduleSettings('sales');
         if (array_key_exists('stock_deduct_on', $sales)) {
             $timing = (string) $sales['stock_deduct_on'];
-            if (in_array($timing, ['order_completed', 'trip_load', 'trip_depart'], true)) {
+            if (in_array($timing, ['order_created', 'order_completed', 'trip_load', 'trip_depart'], true)) {
                 return $timing;
             }
         }
@@ -289,7 +289,7 @@ class CapabilityGate
             : [];
         $legacy = (string) ($dist['deduct_stock_on'] ?? 'order_completed');
 
-        return in_array($legacy, ['order_completed', 'trip_load', 'trip_depart'], true)
+        return in_array($legacy, ['order_created', 'order_completed', 'trip_load', 'trip_depart'], true)
             ? $legacy
             : 'order_completed';
     }
@@ -298,6 +298,35 @@ class CapabilityGate
     {
         return $this->distributionOpsEnabled()
             && in_array($this->stockDeductTiming(), ['trip_load', 'trip_depart'], true);
+    }
+
+    public function shouldDeductStockAtCheckout(
+        OrderWorkflowService $workflow,
+        string $orderStatus,
+        string $channel,
+    ): bool {
+        if ($this->shouldDeferStockToTrip()) {
+            return false;
+        }
+
+        return match ($this->stockDeductTiming()) {
+            'order_created' => true,
+            'order_completed' => $workflow->shouldDeductStockOn($orderStatus, $channel),
+            default => false,
+        };
+    }
+
+    public function shouldDeductStockOnWorkflowTransition(
+        OrderWorkflowService $workflow,
+        string $toStatus,
+    ): bool {
+        if ($this->shouldDeferStockToTrip() || $this->stockDeductTiming() !== 'order_completed') {
+            return false;
+        }
+
+        $deductStatus = (string) ($workflow->config()['deduct_stock_on'] ?? 'completed');
+
+        return $toStatus === $deductStatus;
     }
 
     /** @return array<string, mixed> */
