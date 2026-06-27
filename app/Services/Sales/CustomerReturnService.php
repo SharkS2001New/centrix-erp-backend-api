@@ -355,12 +355,15 @@ class CustomerReturnService
                 ? $this->legacyReturnAmountForSaleItem($lineAmount, $currentQty, $returnQty)
                 : 0.0;
 
+            $soldUom = trim((string) ($item->uom ?? ''));
+
             return [
                 'sale_item_id' => $item->id,
                 'product_code' => $item->product_code,
                 'product_name' => $item->product?->product_name ?? $item->product_code,
-                'uom' => $item->uom ?? $item->product?->unit?->uom_type ?? null,
-                'product' => $item->product,
+                'uom' => $soldUom !== '' ? $soldUom : ($item->product?->unit?->uom_type ?? null),
+                'sold_uom' => $soldUom !== '' ? $soldUom : null,
+                'product' => $legacy ? null : $item->product,
                 'quantity_sold' => $originalQty,
                 'already_returned' => $alreadyReturned,
                 'max_return_qty' => $maxReturnQty,
@@ -369,6 +372,8 @@ class CustomerReturnService
                 'line_total' => $lineAmount,
                 'amount' => $returnAmount,
                 'line_no' => $item->line_no,
+                'on_wholesale_retail' => (int) ($item->on_wholesale_retail ?? 0),
+                'display_uom_mode' => $legacy ? 'legacy' : 'centrix',
                 'full_return' => $legacy,
             ];
         })->values()->all();
