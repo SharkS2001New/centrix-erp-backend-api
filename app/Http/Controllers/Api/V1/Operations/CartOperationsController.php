@@ -23,6 +23,7 @@ use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\OrderSourceResolver;
+use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Auth\UserMobileOrderScopeService;
@@ -165,9 +166,13 @@ class CartOperationsController extends Controller
             app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
             $this->reverseSaleStockDeductions($sale, $user);
 
+            $heldOrderNum = (int) $sale->order_num;
+
             $cart->update([
                 'route_id' => $sale->route_id,
                 'order_discount' => (float) ($sale->order_discount ?? 0),
+                'held_order_num' => $heldOrderNum,
+                'superseded_sale_id' => (int) $sale->id,
             ]);
 
             foreach ($sale->items as $item) {
@@ -185,9 +190,11 @@ class CartOperationsController extends Controller
             $meta = array_merge($sale->fulfillment_meta ?? [], [
                 'superseded_by_edit' => true,
                 'superseded_at' => now()->toIso8601String(),
+                'original_order_num' => $heldOrderNum,
             ]);
 
             $sale->update([
+                'order_num' => app(OrderNumberAllocator::class)->tombstoneForSupersededSale((int) $sale->id),
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancelled_by' => $user->id,
@@ -201,9 +208,7 @@ class CartOperationsController extends Controller
             return $cart->fresh('lines');
         });
 
-        return $this->cartResponse($cart, $user, 200, [
-            'held_order_num' => (int) $sale->order_num,
-        ]);
+        return $this->cartResponse($cart, $user);
     }
 
     /** GET /sales/customers/lookup — search registered customers for POS credit checkout */
@@ -763,7 +768,12 @@ class CartOperationsController extends Controller
     {
         $this->releaseCartReservations($cart->id);
         CartLine::where('cart_id', $cart->id)->delete();
-        $cart->update(['order_discount' => 0, 'discount_voucher_id' => null]);
+        $cart->update([
+            'order_discount' => 0,
+            'discount_voucher_id' => null,
+            'held_order_num' => null,
+            'superseded_sale_id' => null,
+        ]);
         $this->clearCartPaymentOptions($cart);
         $cart->increment('update_no');
     }

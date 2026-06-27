@@ -70,8 +70,11 @@ class CheckoutController extends Controller
 
         return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $inventorySettings, $salesSettings, $txnType, $allowBelowStock) {
             $stockDeducted = false;
-            $orderNum = (int) ($input['order_num'] ?? app(OrderNumberAllocator::class)
-                ->nextForOrganization((int) $user->organization_id));
+            $orderNum = isset($input['order_num'])
+                ? (int) $input['order_num']
+                : ($cart->held_order_num
+                    ? (int) $cart->held_order_num
+                    : app(OrderNumberAllocator::class)->nextForOrganization((int) $user->organization_id));
             $lineNet = (float) $lines->sum('amount');
             $orderDiscount = 0.0;
             if (! empty($salesSettings['enable_vouchers']) && $cart->discount_voucher_id) {
@@ -191,6 +194,12 @@ class CheckoutController extends Controller
                 $input,
             );
 
+            $fulfillmentMeta = $locationMeta !== [] ? ['location_check' => $locationMeta] : [];
+            if ($cart->superseded_sale_id) {
+                $fulfillmentMeta['supersedes_sale_id'] = (int) $cart->superseded_sale_id;
+                $fulfillmentMeta['pos_edit'] = true;
+            }
+
             $sale = Sale::create([
                 'order_num' => $orderNum,
                 'branch_id' => $cart->branch_id ?? $user->branch_id,
@@ -215,9 +224,7 @@ class CheckoutController extends Controller
                 'payment_status' => $this->derivePaymentStatus($total, $amountPaid),
                 'amount_paid' => $amountPaid,
                 'completed_at' => null,
-                'fulfillment_meta' => $locationMeta !== []
-                    ? ['location_check' => $locationMeta]
-                    : null,
+                'fulfillment_meta' => $fulfillmentMeta !== [] ? $fulfillmentMeta : null,
             ]);
 
             if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel)) {

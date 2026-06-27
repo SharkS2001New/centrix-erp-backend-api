@@ -37,4 +37,14 @@ class OrderNumberAllocatorTest extends TestCase
 
         $this->assertSame(1, $allocator->nextForOrganization(99));
     }
+
+    public function test_tombstone_for_superseded_sale_uses_reserved_range(): void
+    {
+        $allocator = app(OrderNumberAllocator::class);
+
+        $this->assertSame(
+            OrderNumberAllocator::SUPERSEDED_ORDER_NUM_BASE + 42,
+            $allocator->tombstoneForSupersededSale(42),
+        );
+    }
 }

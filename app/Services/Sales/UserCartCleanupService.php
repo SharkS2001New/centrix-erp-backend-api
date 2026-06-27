@@ -35,6 +35,8 @@ class UserCartCleanupService
             'order_discount' => 0,
             'discount_voucher_id' => null,
             'route_id' => null,
+            'held_order_num' => null,
+            'superseded_sale_id' => null,
         ]);
         $this->clearCartPaymentOptions($cart);
         if (method_exists($this, 'releaseCartMpesaPayments')) {

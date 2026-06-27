@@ -95,6 +95,7 @@ class PosOrderEditTest extends TestCase
         ])->assertCreated()->json();
 
         $this->assertEquals('completed', $newSale['status']);
+        $this->assertEquals((int) $sale['order_num'], (int) $newSale['order_num']);
         $this->assertEquals($beforeA, $this->onHandShop($this->productCodeA));
         $this->assertEquals($beforeB - 2, $this->onHandShop($this->productCodeB));
     }

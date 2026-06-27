@@ -788,6 +788,8 @@ CREATE TABLE temporary_carts (
     till_id         INT           NULL,
     route_id        INT           NULL,
     order_discount  DOUBLE        NOT NULL DEFAULT 0,
+    held_order_num  INT UNSIGNED  NULL,
+    superseded_sale_id BIGINT     NULL,
     payment_voucher_id BIGINT     NULL,
     voucher_payment_amount DOUBLE  NOT NULL DEFAULT 0,
     loyalty_card_id BIGINT        NULL,
