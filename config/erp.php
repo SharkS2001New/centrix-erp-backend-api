@@ -340,6 +340,8 @@ return [
             'default_submit_kra' => true,
             'order_document_type' => 'receipt',
             'invoice_valid_days' => 7,
+            'invoice_print_delivery_terms' => "Order valid for the period shown above.\nNo goods shall be received without an invoice or delivery note.\nPlease quote invoice number on all delivery notes.\nKindly attach a copy of this invoice to delivery notes.\nNo oversupply will be accepted.\nEnsure KRA PIN is captured on all supplier invoices.\nGoods must comply with applicable KEBS standards.\nVAT amount will not be paid on invoices without ETR receipt.\nPayment terms as agreed with the customer.",
+            'invoice_print_footer_lines' => "No Oversupply will be accepted.\nThis invoice is not valid unless sent directly or signed by an authorised signatory of {organization}.\nOrder only valid for {days} days from above date.\nWe will only receive products with K.E.B.S mark / certificate\nTake note: VAT amount will not be paid on invoices without ETR receipt",
             'receipt_copies' => 1,
             'show_branch_on_receipt' => true,
             'order_workflow' => null,
@@ -477,6 +479,9 @@ return [
             'require_lpo_approval' => true,
             'default_receive_location' => 'store',
             'auto_email_supplier_on_lpo' => false,
+            'lpo_print_delivery_notes' => "Order valid until the date shown above.\nNo goods shall be received without an invoice or delivery note.\nPlease quote LPO number on all delivery notes and invoices.\nKindly attach a copy of this LPO to invoices and delivery notes.\nNo oversupply will be accepted.\nEnsure KRA PIN is captured on all supplier invoices.\nGoods must comply with applicable KEBS standards.",
+            'lpo_print_kebs_warning' => 'We will only receive products with K.E.B.S mark / certificate',
+            'lpo_print_vat_note' => 'VAT amount will not be paid on invoices without ETR receipt',
         ],
         'security' => [
             'screen_lock_minutes' => 5,

@@ -58,6 +58,9 @@ class ProcurementSettingsResolver
             ? $out['default_receive_location']
             : 'store';
         $out['auto_email_supplier_on_lpo'] = (bool) ($out['auto_email_supplier_on_lpo'] ?? false);
+        $out['lpo_print_delivery_notes'] = trim((string) ($out['lpo_print_delivery_notes'] ?? ''));
+        $out['lpo_print_kebs_warning'] = trim((string) ($out['lpo_print_kebs_warning'] ?? ''));
+        $out['lpo_print_vat_note'] = trim((string) ($out['lpo_print_vat_note'] ?? ''));
 
         return $out;
     }

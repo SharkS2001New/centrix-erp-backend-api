@@ -14,8 +14,10 @@ class RouteModel extends Model
         'route_markup_price',
         'direction',
         'is_active',
+        'receipt_payment_details',
     ];
     protected $casts = [
         'is_active' => 'boolean',
+        'receipt_payment_details' => 'array',
     ];
 }

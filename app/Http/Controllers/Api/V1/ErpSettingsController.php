@@ -17,6 +17,7 @@ use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\Notifications\NotificationSettingsResolver;
 use App\Services\OrganizationPlatformConfigService;
 use App\Services\Purchasing\ProcurementSettingsResolver;
+use App\Services\Sales\ReceiptPaymentDetailsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -100,6 +101,13 @@ class ErpSettingsController extends Controller
             'receipt_copies',
             'show_branch_on_receipt',
             'stock_deduct_on',
+            'show_receipt_payment_details',
+            'show_invoice_payment_details',
+            'use_same_payment_details_for_routes',
+            'pos_receipt_payment_details',
+            'route_receipt_payment_details',
+            'invoice_print_delivery_terms',
+            'invoice_print_footer_lines',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -134,6 +142,13 @@ class ErpSettingsController extends Controller
             'receipt_copies' => 'sometimes|integer|min:1|max:10',
             'stock_deduct_on' => 'sometimes|in:order_completed,trip_load,trip_depart',
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
+            'show_receipt_payment_details' => 'sometimes|boolean',
+            'show_invoice_payment_details' => 'sometimes|boolean',
+            'use_same_payment_details_for_routes' => 'sometimes|boolean',
+            'invoice_print_delivery_terms' => 'sometimes|nullable|string|max:4000',
+            'invoice_print_footer_lines' => 'sometimes|nullable|string|max:4000',
+            ...ReceiptPaymentDetailsResolver::validationRules('pos_receipt_payment_details'),
+            ...ReceiptPaymentDetailsResolver::validationRules('route_receipt_payment_details'),
         ];
         foreach ($salesKeys as $key) {
             // Do not overwrite any rules that were explicitly defined above
@@ -206,6 +221,16 @@ class ErpSettingsController extends Controller
         if (array_key_exists('other_bank_name', $data)) {
             $name = trim((string) $data['other_bank_name']);
             $nextSales['other_bank_name'] = $name !== '' ? $name : 'Other bank';
+        }
+
+        foreach (['pos_receipt_payment_details', 'route_receipt_payment_details'] as $detailsKey) {
+            if (! array_key_exists($detailsKey, $data)) {
+                continue;
+            }
+            $raw = $data[$detailsKey];
+            $nextSales[$detailsKey] = ReceiptPaymentDetailsResolver::normalize(
+                is_array($raw) ? $raw : null,
+            ) ?? ReceiptPaymentDetailsResolver::defaults();
         }
 
         $moduleSettings = $org->module_settings ?? [];
@@ -760,11 +785,17 @@ class ErpSettingsController extends Controller
             'require_lpo_approval',
             'default_receive_location',
             'auto_email_supplier_on_lpo',
+            'lpo_print_delivery_notes',
+            'lpo_print_kebs_warning',
+            'lpo_print_vat_note',
         ];
 
         $rules = [
             'default_payment_terms_days' => 'sometimes|integer|min:0|max:365',
             'default_receive_location' => 'sometimes|in:shop,store',
+            'lpo_print_delivery_notes' => 'sometimes|nullable|string|max:4000',
+            'lpo_print_kebs_warning' => 'sometimes|nullable|string|max:300',
+            'lpo_print_vat_note' => 'sometimes|nullable|string|max:300',
         ];
         foreach ($procurementKeys as $key) {
             if (array_key_exists($key, $rules)) {
