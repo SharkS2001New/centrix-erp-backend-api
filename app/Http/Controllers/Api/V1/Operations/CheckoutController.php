@@ -197,6 +197,11 @@ class CheckoutController extends Controller
                 $input,
             );
 
+            $customerNameOverride = trim((string) ($input['customer_name_override'] ?? ''));
+            if ($customerNameOverride === '' && $customer) {
+                $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
+            }
+
             $fulfillmentMeta = $locationMeta !== [] ? ['location_check' => $locationMeta] : [];
             if ($cart->superseded_sale_id) {
                 $fulfillmentMeta['supersedes_sale_id'] = (int) $cart->superseded_sale_id;
@@ -213,7 +218,7 @@ class CheckoutController extends Controller
                 'float_session_id' => $floatSessionId,
                 'cashier_id' => $user->id,
                 'customer_num' => $customerNum,
-                'customer_name_override' => $input['customer_name_override'] ?? null,
+                'customer_name_override' => $customerNameOverride !== '' ? $customerNameOverride : null,
                 'route_id' => $routeId,
                 'status' => $orderStatus,
                 'total_vat' => $vat,

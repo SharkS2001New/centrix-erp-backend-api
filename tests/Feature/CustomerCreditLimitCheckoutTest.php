@@ -117,6 +117,35 @@ class CustomerCreditLimitCheckoutTest extends TestCase
         ])
             ->assertCreated()
             ->assertJsonPath('customer_num', $customer->customer_num)
+            ->assertJsonPath('customer_name_override', $customer->customer_name)
             ->assertJsonPath('is_credit_sale', 1);
+    }
+
+    public function test_mobile_checkout_stores_customer_name_from_registered_customer(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        $customer = Customer::firstOrFail();
+        $productCode = Product::first()->product_code;
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $user->branch_id,
+        ])->json('id');
+
+        $line = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $productCode,
+            'quantity' => 1,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'customer_num' => $customer->customer_num,
+            'payment_method_code' => 'CASH',
+            'pay_now' => (float) ($line['amount'] ?? 100),
+        ])
+            ->assertCreated()
+            ->assertJsonPath('customer_num', $customer->customer_num)
+            ->assertJsonPath('customer_name_override', $customer->customer_name);
     }
 }

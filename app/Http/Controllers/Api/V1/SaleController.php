@@ -27,7 +27,7 @@ class SaleController extends BaseResourceController
             $query->with(['items.product.unit']);
         }
 
-        $query->with(['cashier:id,username,full_name']);
+        $query->with(['cashier:id,username,full_name', 'customer:customer_num,customer_name']);
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if ($col === 'status') {
@@ -151,7 +151,7 @@ class SaleController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        $sale = $this->baseQuery($request)->with(['items.product.unit'])->findOrFail($id);
+        $sale = $this->baseQuery($request)->with(['items.product.unit', 'customer:customer_num,customer_name'])->findOrFail($id);
         $gate = $this->erp->gateForUser($request->user());
         $channel = $sale->channel ?: 'backend';
         $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
