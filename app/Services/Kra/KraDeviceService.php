@@ -97,7 +97,7 @@ class KraDeviceService
      *
      * @param  iterable<int, object>  $products
      */
-    public function registerProducts(iterable $products, string $path = '/api/register-plu'): array
+    public function registerProducts(iterable $products, string $path = '/api/register-plu', array $financeSettings = []): array
     {
         $this->assertDeviceConfigured();
 
@@ -119,13 +119,21 @@ class KraDeviceService
         $registered = 0;
 
         if ($this->usesUploadPluDataPayload($path)) {
-            foreach ($items as $index => $product) {
-                $pluItem = self::buildComstorePluItemFromProduct($product);
-                $payload = $this->buildComstoreUploadPayload($pluItem);
+            $batchSize = max(1, (int) (
+                $financeSettings['kra_plu_upload_batch_size']
+                ?? config('erp.module_settings_defaults.finance.kra_plu_upload_batch_size', 50)
+            ));
+            $chunks = array_chunk($items, $batchSize);
+
+            foreach ($chunks as $index => $chunk) {
+                $pluItems = array_map(
+                    fn ($product) => self::buildComstorePluItemFromProduct($product),
+                    $chunk,
+                );
+                $payload = $this->buildComstoreUploadPayload($pluItems);
                 $result = $this->postToDevice($path, $payload, [
                     'batch' => $index + 1,
-                    'product_code' => (string) ($product->product_code ?? ''),
-                    'plu_count' => 1,
+                    'plu_count' => count($pluItems),
                 ]);
 
                 if (! $result['success']) {
@@ -133,11 +141,11 @@ class KraDeviceService
                         'registered_count' => $registered,
                         'product_count' => count($items),
                         'batch' => $index + 1,
-                        'product_code' => (string) ($product->product_code ?? ''),
+                        'product_code' => (string) ($chunk[0]->product_code ?? ''),
                     ]);
                 }
 
-                $registered++;
+                $registered += count($chunk);
             }
         } else {
             $chunks = array_chunk($items, 200);
@@ -262,20 +270,46 @@ class KraDeviceService
         return 'B-16.00%';
     }
 
-    /** @return array<string, mixed> */
-    protected function buildComstoreUploadPayload(array $pluItem): array
+    /** @param  array<int, array<string, mixed>>  $pluItems */
+    protected function buildComstoreUploadPayload(array $pluItems): array
     {
         /** @var array<string, mixed> $defaults */
         $defaults = config('erp.module_settings_defaults.finance.kra_plu_defaults', []);
 
         return [
             'sn' => $this->serialNumber,
-            'plu_items' => [$pluItem],
+            'plu_items' => array_values($pluItems),
             'from_no' => (int) ($defaults['from_no'] ?? 1),
             'end_no' => (int) ($defaults['end_no'] ?? 100000),
             'update_flag' => (int) ($defaults['update_flag'] ?? 0),
             'file_signal' => '',
         ];
+    }
+
+    /**
+     * Resolve Smart VSCU hardware IP for /api/init and /api/restart-device.
+     *
+     * @param  array<string, mixed>  $financeSettings
+     */
+    public static function resolveHardwareIp(array $financeSettings): string
+    {
+        $explicit = trim((string) ($financeSettings['kra_device_hardware_ip'] ?? ''));
+        if ($explicit !== '') {
+            return $explicit;
+        }
+
+        $apiUrl = trim((string) ($financeSettings['kra_device_ip'] ?? ''));
+        if ($apiUrl === '') {
+            return '';
+        }
+
+        if (! str_starts_with($apiUrl, 'http://') && ! str_starts_with($apiUrl, 'https://')) {
+            $apiUrl = 'http://'.$apiUrl;
+        }
+
+        $host = parse_url($apiUrl, PHP_URL_HOST);
+
+        return is_string($host) && filter_var($host, FILTER_VALIDATE_IP) ? $host : '';
     }
 
     /** @return array<string, string> */
@@ -374,6 +408,19 @@ class KraDeviceService
             }
 
             return (bool) ($responseData['success'] ?? false);
+        }
+
+        $normalizedPath = strtolower($path);
+        if (str_contains($normalizedPath, '/api/init') || str_contains($normalizedPath, 'restart-device')) {
+            if (! is_array($responseData)) {
+                return false;
+            }
+
+            if (array_key_exists('success', $responseData)) {
+                return (bool) $responseData['success'];
+            }
+
+            return strtoupper((string) ($responseData['status'] ?? '')) === 'OK';
         }
 
         return (bool) ($responseData['success'] ?? false);
@@ -488,7 +535,7 @@ class KraDeviceService
         );
     }
 
-    /** Probe the on-prem device health endpoint (GET /api/health). */
+    /** Probe the on-prem Comstore device health endpoint (GET /api/health). */
     public function checkHealth(): array
     {
         $url = $this->deviceBaseUrl.'/api/health';
@@ -499,17 +546,26 @@ class KraDeviceService
                 ->get($url);
 
             $body = $response->json();
-            $successful = $response->successful();
+            $isArray = is_array($body);
+            $httpOk = $response->successful();
+            $statusOk = ! $isArray || ! isset($body['status'])
+                || strtoupper((string) $body['status']) === 'OK';
+            $deviceConnected = ! $isArray || ! isset($body['deviceConnection'])
+                || strcasecmp((string) $body['deviceConnection'], 'Connected') === 0;
+            $successful = $httpOk && $statusOk && $deviceConnected;
+
+            $message = $this->healthMessage($body, $httpOk, $statusOk, $deviceConnected);
 
             return [
                 'success' => $successful,
                 'reachable' => true,
                 'http_status' => $response->status(),
                 'url' => $url,
-                'message' => $successful
-                    ? (is_array($body) ? (string) ($body['message'] ?? 'KRA device health check passed.') : 'KRA device health check passed.')
-                    : 'KRA device health check failed (HTTP '.$response->status().').',
-                'response' => is_array($body) ? $body : ['body' => $response->body()],
+                'message' => $message,
+                'device_connection' => $isArray ? ($body['deviceConnection'] ?? null) : null,
+                'api_service' => $isArray ? ($body['apiService'] ?? null) : null,
+                'device_version' => $isArray ? ($body['version'] ?? null) : null,
+                'response' => $isArray ? $body : ['body' => $response->body()],
             ];
         } catch (\Throwable $e) {
             Log::warning('KRA device health check failed: '.$e->getMessage(), ['url' => $url]);
@@ -520,9 +576,82 @@ class KraDeviceService
                 'http_status' => null,
                 'url' => $url,
                 'message' => KraDeviceErrorTranslator::userMessage('Could not reach KRA device: '.$e->getMessage()),
+                'device_connection' => null,
+                'api_service' => null,
+                'device_version' => null,
                 'response' => null,
             ];
         }
+    }
+
+    /** Initialize Smart VSCU connection (POST /api/init). */
+    public function initializeDevice(string $hardwareIp): array
+    {
+        if ($this->serialNumber === '') {
+            throw new InvalidArgumentException('KRA device serial number is not configured.');
+        }
+
+        $hardwareIp = trim($hardwareIp);
+        if ($hardwareIp === '') {
+            throw new InvalidArgumentException('Fiscal device hardware IP is required for initialization.');
+        }
+
+        return $this->postToDevice('/api/init', [
+            'sn' => $this->serialNumber,
+            'ip' => $hardwareIp,
+        ], [
+            'operation' => 'init',
+            'hardware_ip' => $hardwareIp,
+        ]);
+    }
+
+    /** Restart Smart VSCU hardware (POST /api/restart-device). */
+    public function restartDevice(string $hardwareIp): array
+    {
+        $hardwareIp = trim($hardwareIp);
+        if ($hardwareIp === '') {
+            throw new InvalidArgumentException('Fiscal device hardware IP is required to restart the device.');
+        }
+
+        return $this->postToDevice('/api/restart-device', [
+            'ip_address' => $hardwareIp,
+        ], [
+            'operation' => 'restart',
+            'hardware_ip' => $hardwareIp,
+        ]);
+    }
+
+    /** @param  array<string, mixed>|null  $body */
+    protected function healthMessage(mixed $body, bool $httpOk, bool $statusOk, bool $deviceConnected): string
+    {
+        if (! $httpOk) {
+            return 'KRA device health check failed (HTTP error).';
+        }
+
+        if (! is_array($body)) {
+            return 'KRA device health check passed.';
+        }
+
+        if (! $statusOk) {
+            return 'Comstore API reported a problem: '.((string) ($body['status'] ?? 'Unknown status'));
+        }
+
+        if (! $deviceConnected) {
+            return 'Comstore API is running but the fiscal device is disconnected. Check power and network to the Smart VSCU.';
+        }
+
+        $version = trim((string) ($body['version'] ?? ''));
+        $apiService = trim((string) ($body['apiService'] ?? ''));
+
+        $parts = ['KRA device health check passed'];
+        if ($version !== '') {
+            $parts[] = "v{$version}";
+        }
+        if ($apiService !== '') {
+            $parts[] = strtolower($apiService);
+        }
+
+        return implode(' · ', $parts).'.';
     }
 
     /** @param  array<string, mixed>  $context */

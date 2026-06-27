@@ -65,7 +65,7 @@ class RegisterKraProductsJob implements ShouldQueue
 
             $path = trim((string) ($finance['kra_plu_register_path'] ?? '/api/register-plu'));
             $service = KraDeviceService::fromSettings($finance);
-            $result = $service->registerProducts($products->all(), $path);
+            $result = $service->registerProducts($products->all(), $path, $finance);
 
             if (empty($result['success'])) {
                 throw new \RuntimeException((string) ($result['message'] ?? 'KRA registration failed.'));

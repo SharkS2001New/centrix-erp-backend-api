@@ -371,8 +371,11 @@ return [
             'enable_kra_integration' => true,
             'enable_kra_device' => false,
             'kra_device_ip' => '',
+            /** Smart VSCU hardware IP for POST /api/init and /api/restart-device (when API URL is a hostname). */
+            'kra_device_hardware_ip' => '',
             'kra_serial_number' => '',
             'kra_pin_number' => '',
+            'kra_plu_upload_batch_size' => 50,
             'kra_device_test_mode' => false,
             'kra_plu_register_path' => '/api/upload-plu-data',
             'kra_plu_defaults' => [

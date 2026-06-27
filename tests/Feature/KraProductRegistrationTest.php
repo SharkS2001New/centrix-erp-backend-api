@@ -47,6 +47,7 @@ class KraProductRegistrationTest extends TestCase
 
         $response = $this->postJson('/api/v1/kra/register-products', [
             'product_codes' => [$product->product_code],
+            'sync' => true,
         ])->assertOk();
 
         $this->assertTrue($response->json('success'));
@@ -92,6 +93,7 @@ class KraProductRegistrationTest extends TestCase
 
         $response = $this->postJson('/api/v1/kra/register-products', [
             'product_codes' => [$product->product_code],
+            'sync' => true,
         ])->assertOk();
 
         $this->assertTrue($response->json('success'));
@@ -125,6 +127,45 @@ class KraProductRegistrationTest extends TestCase
         });
 
         Http::assertSentCount(1);
+    }
+
+    public function test_register_products_batches_comstore_plu_uploads(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance']['kra_plu_register_path'] = '/api/upload-plu-data';
+        $settings['finance']['kra_plu_upload_batch_size'] = 2;
+        $org->update(['module_settings' => $settings]);
+
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => true,
+                'message' => 'Successfully uploaded PLU items to device',
+            ], 200),
+        ]);
+
+        $products = Product::query()->limit(3)->get();
+        $this->assertGreaterThanOrEqual(3, $products->count());
+
+        $response = $this->postJson('/api/v1/kra/register-products', [
+            'product_codes' => $products->pluck('product_code')->all(),
+            'sync' => true,
+        ])->assertOk();
+
+        $this->assertTrue($response->json('success'));
+        $this->assertSame(3, $response->json('registered_count'));
+
+        Http::assertSentCount(2);
+
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), '/api/upload-plu-data')) {
+                return false;
+            }
+
+            $count = count($request->data()['plu_items'] ?? []);
+
+            return $count === 2 || $count === 1;
+        });
     }
 
     public function test_register_products_requires_kra_device_enabled(): void

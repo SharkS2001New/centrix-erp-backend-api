@@ -14,7 +14,7 @@ class KraDeviceErrorTranslatorTest extends TestCase
         $result = KraDeviceErrorTranslator::translate($raw);
 
         $this->assertSame('314', $result['code']);
-        $this->assertStringContainsString('receipt reference number', strtolower($result['message']));
+        $this->assertStringContainsString('receipt or invoice reference', strtolower($result['message']));
         $this->assertSame($raw, $result['technical_message']);
     }
 
@@ -37,12 +37,23 @@ class KraDeviceErrorTranslatorTest extends TestCase
         $this->assertStringNotContainsString('HTTP request returned', $result['message']);
     }
 
-    public function test_translates_device_unreachable_pattern(): void
+    public function test_translates_credit_note_relevant_invoice_error(): void
     {
-        $raw = 'Could not reach KRA device: cURL error 7: Connection refused';
+        $raw = 'relevantInvoiceNumber is error (Code 313)';
 
         $result = KraDeviceErrorTranslator::translate($raw);
 
-        $this->assertStringContainsString('Could not reach the KRA device', $result['message']);
+        $this->assertSame('313', $result['code']);
+        $this->assertStringContainsString('original invoice reference', strtolower($result['message']));
+    }
+
+    public function test_translates_plu_same_name_error(): void
+    {
+        $raw = 'E353: THE SAME NAME';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertSame('353', $result['code']);
+        $this->assertStringContainsString('already', strtolower($result['message']));
     }
 }

@@ -503,6 +503,7 @@ class ErpSettingsController extends Controller
             'enable_kra_integration' => 'sometimes|boolean',
             'enable_kra_device' => 'sometimes|boolean',
             'kra_device_ip' => 'sometimes|nullable|string|max:250',
+            'kra_device_hardware_ip' => 'sometimes|nullable|string|max:100',
             'kra_serial_number' => 'sometimes|nullable|string|max:100',
             'kra_pin_number' => 'sometimes|nullable|string|max:45',
             'kra_device_test_mode' => 'sometimes|boolean',
@@ -964,7 +965,7 @@ class ErpSettingsController extends Controller
     {
         if (! $gate->kraIntegrationPlatformEnabled()) {
             foreach ([
-                'enable_kra_device', 'kra_device_ip', 'kra_serial_number', 'kra_pin_number',
+                'enable_kra_device', 'kra_device_ip', 'kra_device_hardware_ip', 'kra_serial_number', 'kra_pin_number',
                 'kra_device_test_mode', 'kra_plu_register_path', 'default_submit_kra', 'kra_bypass_above_amount',
             ] as $key) {
                 unset($finance[$key]);
