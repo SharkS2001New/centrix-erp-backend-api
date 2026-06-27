@@ -108,7 +108,7 @@ class ErpSettingsController extends Controller
             'allow_negative_stock' => 'sometimes|boolean',
             'other_bank_name' => 'sometimes|string|max:100',
             'pos_order_type_mode' => 'sometimes|in:normal,route,toggle',
-            'order_document_type' => 'sometimes|in:receipt,invoice',
+            'order_document_type' => 'sometimes|in:receipt,invoice,both',
             'invoice_valid_days' => 'sometimes|integer|min:0|max:365',
             'order_workflow' => 'sometimes|array',
             'order_workflow.steps' => 'sometimes|array',
