@@ -94,4 +94,14 @@ jobs:
             exit 0
           fi
           git commit -m "chore(centrix-erp-backend-api): bump image tag to ${{ steps.image_tag.outputs.value }}"
-          git push
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin master
+            if git push origin HEAD:master; then
+              echo "Push succeeded on attempt ${attempt}."
+              exit 0
+            fi
+            echo "Push rejected (attempt ${attempt}); retrying after rebase…"
+            sleep $((attempt * 2))
+          done
+          echo "Failed to push pitchpredk3ssetup after 5 attempts."
+          exit 1
