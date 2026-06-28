@@ -60,7 +60,7 @@ class LpoModuleService
             'can_delete' => $canEdit,
             'amount_paid' => round($paymentsTotal, 2),
             'balance_due' => round(max(0, $netAmount - $paymentsTotal), 2),
-            'workflow_actions' => app(\App\Services\Purchasing\LpoWorkflowService::class)->workflowActions($lpo, $organizationId),
+            'workflow_actions' => app(LpoWorkflowService::class)->workflowActions($lpo, $organizationId),
         ];
     }
 
@@ -213,7 +213,7 @@ class LpoModuleService
         }
 
         if (Schema::hasTable('supplier_return_documents')) {
-            return app(\App\Services\Purchasing\SupplierReturnDocumentService::class)->returnedQtyByProductForLpo($lpoNo);
+            return app(SupplierReturnDocumentService::class)->returnedQtyByProductForLpo($lpoNo);
         }
 
         $productCodes = $lines->pluck('product_code')->filter()->unique()->values();

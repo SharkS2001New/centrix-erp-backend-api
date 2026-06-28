@@ -77,12 +77,13 @@ class SupplierReturnDocumentService
         $lines = $this->normalizeLines($data, $user);
 
         return DB::transaction(function () use ($user, $data, $lines) {
+            $lpoNo = ! empty($data['lpo_no']) ? (int) $data['lpo_no'] : null;
             $doc = SupplierReturnDocument::create([
                 'organization_id' => $user->organization_id,
                 'supplier_id' => (int) $data['supplier_id'],
                 'branch_id' => (int) $data['branch_id'],
-                'source_type' => $data['source_type'] === 'lpo' ? 'lpo' : 'manual',
-                'lpo_no' => ! empty($data['lpo_no']) ? (int) $data['lpo_no'] : null,
+                'source_type' => $lpoNo ? 'lpo' : 'manual',
+                'lpo_no' => $lpoNo,
                 'supplier_invoice_no' => $data['supplier_invoice_no'] ?? null,
                 'reason_scope' => ($data['reason_scope'] ?? 'order') === 'per_product' ? 'per_product' : 'order',
                 'return_reason' => $data['return_reason'] ?? null,
@@ -118,15 +119,17 @@ class SupplierReturnDocumentService
 
             $lines = isset($data['lines']) ? $this->normalizeLines($data, $user, $doc) : null;
 
+            $lpoNo = array_key_exists('lpo_no', $data)
+                ? ($data['lpo_no'] ? (int) $data['lpo_no'] : null)
+                : $doc->lpo_no;
+
             $doc->update(array_filter([
                 'supplier_id' => $data['supplier_id'] ?? null,
                 'branch_id' => $data['branch_id'] ?? null,
-                'source_type' => isset($data['source_type'])
-                    ? ($data['source_type'] === 'lpo' ? 'lpo' : 'manual')
+                'source_type' => array_key_exists('lpo_no', $data)
+                    ? ($lpoNo ? 'lpo' : 'manual')
                     : null,
-                'lpo_no' => array_key_exists('lpo_no', $data)
-                    ? ($data['lpo_no'] ? (int) $data['lpo_no'] : null)
-                    : null,
+                'lpo_no' => array_key_exists('lpo_no', $data) ? $lpoNo : null,
                 'supplier_invoice_no' => $data['supplier_invoice_no'] ?? null,
                 'reason_scope' => isset($data['reason_scope'])
                     ? (($data['reason_scope'] === 'per_product') ? 'per_product' : 'order')
@@ -273,14 +276,22 @@ class SupplierReturnDocumentService
     {
         $doc->loadMissing(['lines', 'supplier', 'returnedByUser']);
 
+        $lpoOrderDate = null;
+        if ($doc->lpo_no) {
+            $lpoOrderDate = LpoMst::query()
+                ->where('lpo_no', $doc->lpo_no)
+                ->value('order_date');
+        }
+
         return [
             'id' => (int) $doc->id,
             'organization_id' => (int) $doc->organization_id,
             'supplier_id' => (int) $doc->supplier_id,
             'supplier_name' => $doc->supplier?->supplier_name,
             'branch_id' => (int) $doc->branch_id,
-            'source_type' => $doc->source_type,
+            'source_type' => $doc->lpo_no ? 'lpo' : ($doc->source_type === 'lpo' ? 'lpo' : 'manual'),
             'lpo_no' => $doc->lpo_no ? (int) $doc->lpo_no : null,
+            'lpo_order_date' => $lpoOrderDate,
             'supplier_invoice_no' => $doc->supplier_invoice_no,
             'reason_scope' => $doc->reason_scope,
             'return_reason' => $doc->return_reason,
@@ -293,9 +304,7 @@ class SupplierReturnDocumentService
             'approved_at' => $doc->approved_at?->toDateTimeString(),
             'rejected_at' => $doc->rejected_at?->toDateTimeString(),
             'rejection_reason' => $doc->rejection_reason,
-            'reference' => $doc->source_type === 'lpo' && $doc->lpo_no
-                ? 'LPO '.$doc->lpo_no
-                : 'Manual',
+            'reference' => $doc->lpo_no ? 'LPO '.$doc->lpo_no : 'Manual',
             'can_edit' => $doc->status === 'pending_approval' && $this->canMutate($doc, $user),
             'can_delete' => ($doc->status === 'pending_approval' && $this->canMutate($doc, $user))
                 || ($doc->status === 'approved' && $this->canApprove($user)),

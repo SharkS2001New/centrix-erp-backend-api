@@ -130,10 +130,14 @@ class DispatchTripController extends BaseResourceController
     public function loadingList(Request $request, int $trip)
     {
         $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
-        $loadingList = app(\App\Services\Fulfillment\LoadingListBuilder::class)->syncLoadingList($model);
+        $builder = app(\App\Services\Fulfillment\LoadingListBuilder::class);
+        $loadingList = $builder->syncLoadingList($model);
+        $loadingList->load(['route', 'trip.route', 'trip.driver', 'trip.vehicle']);
+        $payload = $loadingList->toArray();
+        $payload['lines'] = $builder->linesForTrip($model);
 
         return response()->json([
-            'loading_list' => $loadingList->load(['lines', 'route', 'trip.route', 'trip.driver', 'trip.vehicle']),
+            'loading_list' => $payload,
         ]);
     }
 

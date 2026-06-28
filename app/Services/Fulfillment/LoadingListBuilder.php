@@ -47,6 +47,16 @@ class LoadingListBuilder
         return $this->aggregateLinesFromSaleIds($this->eligibleSaleIdsForTrip($trip));
     }
 
+    /**
+     * Always compute display lines from current trip orders (ignores stale DB rows).
+     *
+     * @return array<int, array<string, mixed>>
+     */
+    public function linesForTrip(DispatchTrip $trip): array
+    {
+        return $this->aggregateLines($trip);
+    }
+
     /** @param  array<int, int|string>  $saleIds
      * @return array<int, array<string, mixed>>
      */
@@ -65,9 +75,14 @@ class LoadingListBuilder
         $grouped = $items->groupBy(
             fn (SaleItem $item) => $item->product_code.'|'.(int) ($item->on_wholesale_retail ?? 0),
         );
+        $productCodes = $grouped->keys()
+            ->map(fn (string $groupKey) => explode('|', $groupKey, 2)[0])
+            ->unique()
+            ->values()
+            ->all();
         $products = Product::query()
             ->with('unit')
-            ->whereIn('product_code', $grouped->keys()->all())
+            ->whereIn('product_code', $productCodes)
             ->get()
             ->keyBy('product_code');
 
@@ -189,35 +204,56 @@ class LoadingListBuilder
     /** @return array{quantity_label: string, pack_breakdown: string} */
     protected function buildPackaging(float $qty, ?Uom $uom): array
     {
-        $smallLabel = $uom?->small_packaging_label ?: ($uom?->measure_name ?: 'units');
-        $smallLabel = ucfirst(strtolower(trim($smallLabel)));
-        $qtyFormatted = number_format($qty, 0, '.', ',');
+        $smallLabel = strtolower(trim($uom?->small_packaging_label ?: ($uom?->measure_name ?: 'units')));
+        $qtyFormatted = $this->formatPackQuantity($qty);
 
-        if (! $uom || $uom->conversion_factor <= 1) {
+        if (! $uom || (float) $uom->conversion_factor <= 1) {
+            $withUnit = trim("{$qtyFormatted} {$smallLabel}");
+
             return [
-                'quantity_label' => "{$qtyFormatted} {$smallLabel}",
-                'pack_breakdown' => '',
+                'quantity_label' => $qtyFormatted,
+                'pack_breakdown' => $withUnit,
             ];
         }
 
         $unitsPerPack = (float) $uom->conversion_factor;
-        $numPacks = (int) round($qty / $unitsPerPack);
-        if ($numPacks <= 0) {
-            $numPacks = 1;
+        $numPacksExact = $qty / $unitsPerPack;
+        $middleLabel = strtolower(trim($uom->middle_packaging_label ?: 'packs'));
+
+        if (abs($numPacksExact - round($numPacksExact)) < 0.00001) {
+            $numPacks = (int) round($numPacksExact);
+            if ($numPacks <= 0 && $qty > 0) {
+                $numPacks = 1;
+            }
+            $packLabel = trim("{$numPacks} {$middleLabel}");
+
+            return [
+                'quantity_label' => $packLabel,
+                'pack_breakdown' => $packLabel,
+            ];
         }
 
-        $middleLabel = $uom->middle_packaging_label ?: 'Packs';
+        $withUnit = trim("{$qtyFormatted} {$smallLabel}");
         $packBreakdown = sprintf(
-            '%s %s x %d %s',
-            number_format($unitsPerPack, 0, '.', ''),
+            '%s %s x %s %s',
+            $this->formatPackQuantity($unitsPerPack),
             $smallLabel,
-            $numPacks,
-            ucfirst(strtolower($middleLabel)),
+            $this->formatPackQuantity($numPacksExact),
+            $middleLabel,
         );
 
         return [
-            'quantity_label' => "{$qtyFormatted} {$smallLabel}",
+            'quantity_label' => $withUnit,
             'pack_breakdown' => $packBreakdown,
         ];
+    }
+
+    protected function formatPackQuantity(float $qty): string
+    {
+        if (abs($qty - round($qty)) < 0.00001) {
+            return number_format($qty, 0, '.', ',');
+        }
+
+        return rtrim(rtrim(number_format($qty, 2, '.', ','), '0'), '.');
     }
 }

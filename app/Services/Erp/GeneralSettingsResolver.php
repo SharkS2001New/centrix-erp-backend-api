@@ -71,9 +71,7 @@ class GeneralSettingsResolver
             ? $out['number_thousands_separator']
             : 'comma';
         $out['document_footer_text'] = trim((string) ($out['document_footer_text'] ?? ''));
-        $out['print_footer_receipt'] = self::stripPoweredByFromReceiptFooter(
-            trim((string) ($out['print_footer_receipt'] ?? '')),
-        );
+        $out['print_footer_receipt'] = trim((string) ($out['print_footer_receipt'] ?? ''));
         $out['print_footer_a4_invoice'] = trim((string) ($out['print_footer_a4_invoice'] ?? ''));
         $out['print_footer_lpo'] = trim((string) ($out['print_footer_lpo'] ?? ''));
         $out['print_footer_loading_sheet'] = trim((string) ($out['print_footer_loading_sheet'] ?? ''));
@@ -83,19 +81,5 @@ class GeneralSettingsResolver
             : 'auto';
 
         return $out;
-    }
-
-    private static function stripPoweredByFromReceiptFooter(string $text): string
-    {
-        if ($text === '') {
-            return '';
-        }
-
-        $lines = preg_split('/\R/', $text) ?: [];
-        $filtered = array_values(array_filter(array_map('trim', $lines), static function (string $line): bool {
-            return $line !== '' && ! preg_match('/^Powered\s+By\s*:/i', $line);
-        }));
-
-        return implode("\n", $filtered);
     }
 }

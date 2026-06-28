@@ -186,4 +186,58 @@ class CustomerReturnTest extends TestCase
             'reason' => 'Not eligible',
         ])->assertOk()->assertJsonPath('status', 'rejected');
     }
+
+    public function test_returns_report_uses_friendly_detail_columns(): void
+    {
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->where('status', 'completed')->first() ?? Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed']);
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 2,
+                'selling_price' => 100,
+                'amount' => 200,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+        $sale->update(['order_total' => 200, 'amount_paid' => 200, 'payment_status' => 'paid']);
+
+        $created = $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale->id,
+            'return_date' => '2026-06-28',
+            'reason' => 'Damaged Product',
+            'lines' => [
+                [
+                    'product_code' => $product->product_code,
+                    'product_name' => $product->product_name,
+                    'quantity_sold' => 2,
+                    'return_qty' => 1,
+                    'unit_price' => 100,
+                    'amount' => 100,
+                ],
+            ],
+        ])->assertCreated();
+
+        $this->postJson("/api/v1/customer-returns/{$created->json('id')}/approve")->assertOk();
+
+        $response = $this->getJson('/api/v1/reports/returns?from_date=2026-06-28&to_date=2026-06-28&date_column=return_date&per_page=10')
+            ->assertOk();
+
+        $row = collect($response->json('data'))
+            ->first(fn ($item) => ($item['product_code'] ?? null) === $product->product_code);
+
+        $this->assertNotNull($row, 'Expected approved return line in report');
+        $this->assertArrayHasKey('return_date', $row);
+        $this->assertArrayHasKey('customer_name', $row);
+        $this->assertArrayHasKey('product_name', $row);
+        $this->assertArrayHasKey('quantity', $row);
+        $this->assertArrayHasKey('returned_by', $row);
+        $this->assertArrayNotHasKey('sale_id', $row);
+        $this->assertArrayNotHasKey('return_type', $row);
+        $this->assertSame($this->user->username, $row['returned_by']);
+    }
 }

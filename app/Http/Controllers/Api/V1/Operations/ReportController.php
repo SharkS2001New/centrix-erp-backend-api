@@ -1090,20 +1090,9 @@ class ReportController extends Controller
 
     public function returns(Request $request)
     {
-        $q = \App\Models\ReturnRecord::query();
-        foreach (['branch_id', 'product_code', 'return_type'] as $col) {
-            if ($request->filled($col)) {
-                $q->where($col, $request->input($col));
-            }
-        }
-        if ($request->filled('from_date')) {
-            $q->where('created_at', '>=', $request->input('from_date'));
-        }
-        if ($request->filled('to_date')) {
-            $q->where('created_at', '<=', $request->input('to_date'));
-        }
-
-        return response()->json($q->orderByDesc('id')->paginate(min((int) $request->input('per_page', 50), 200)));
+        return response()->json($this->reportFromView('v_customer_returns_detail', $this->filters($request), [
+            'return_date', 'branch_id', 'customer_num', 'product_code',
+        ]));
     }
 
     protected function filters(Request $request): array
