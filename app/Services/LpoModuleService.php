@@ -11,6 +11,7 @@ use App\Models\SupplierReturn;
 use App\Models\SupplierReturnDocument;
 use App\Models\Uom;
 use App\Models\User;
+use App\Services\Purchasing\LpoWorkflowService;
 use App\Services\Purchasing\SupplierReturnDocumentService;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -20,9 +21,47 @@ class LpoModuleService
 {
     public const STATUS_AWAITING_RECEIVE = 3;
 
-    public function formatPoNumber(int $lpoNo): string
+    public function formatPoNumber(int $lpoNo, $orderDate = null): string
     {
-        return 'PO-' . $lpoNo;
+        $year = $orderDate
+            ? (int) date('Y', strtotime((string) $orderDate))
+            : (int) date('Y');
+
+        return sprintf('LPO-%d-%04d', $year, $lpoNo);
+    }
+
+    public function mapListRow(LpoMst $lpo, ?int $organizationId = null): array
+    {
+        $status = LpoStatus::query()->find($lpo->lpo_status_code);
+        $creator = $lpo->created_by ? User::query()->find($lpo->created_by) : null;
+        $statusCode = (int) ($lpo->lpo_status_code ?? 0);
+        $orderDate = $lpo->created_at ?? $lpo->sent_at;
+        $canEdit = $statusCode < self::STATUS_AWAITING_RECEIVE;
+        $paymentsTotal = $this->paymentsTotal((int) $lpo->lpo_no);
+        $netAmount = (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0);
+
+        return [
+            'lpo_no' => (int) $lpo->lpo_no,
+            'po_number' => $this->formatPoNumber((int) $lpo->lpo_no, $orderDate),
+            'supplier_id' => (int) $lpo->supplier_id,
+            'supplier_name' => $lpo->supplier?->supplier_name,
+            'reference_number' => $lpo->reference_number,
+            'order_date' => $orderDate,
+            'created_at' => $lpo->created_at,
+            'due_date' => $lpo->due_date,
+            'lpo_status_code' => $statusCode,
+            'status_name' => $status?->status_name,
+            'cleared_flag' => (int) ($lpo->cleared_flag ?? 0),
+            'total_amount' => (float) ($lpo->total_amount ?? 0),
+            'vat_amount' => (float) ($lpo->vat_amount ?? 0),
+            'net_amount' => (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0),
+            'created_by_name' => $creator?->full_name ?? $creator?->username,
+            'can_edit' => $canEdit,
+            'can_delete' => $canEdit,
+            'amount_paid' => round($paymentsTotal, 2),
+            'balance_due' => round(max(0, $netAmount - $paymentsTotal), 2),
+            'workflow_actions' => app(\App\Services\Purchasing\LpoWorkflowService::class)->workflowActions($lpo, $organizationId),
+        ];
     }
 
     public function summary(int $lpoNo, ?int $organizationId = null): array
@@ -60,7 +99,7 @@ class LpoModuleService
 
         $lpoPayload = [
             'lpo_no' => (int) $lpo->lpo_no,
-            'po_number' => $this->formatPoNumber((int) $lpo->lpo_no),
+            'po_number' => $this->formatPoNumber((int) $lpo->lpo_no, $lpo->created_at ?? $lpo->sent_at),
             'supplier_id' => (int) $lpo->supplier_id,
             'supplier_name' => $lpo->supplier?->supplier_name,
             'reference_number' => $lpo->reference_number,
@@ -82,6 +121,8 @@ class LpoModuleService
             'created_by_name' => $creator?->full_name ?? $creator?->username,
             'supplier_invoice_no' => $lpo->supplier_invoice_no,
             'can_edit' => (int) ($lpo->lpo_status_code ?? 0) < self::STATUS_AWAITING_RECEIVE,
+            'can_delete' => (int) ($lpo->lpo_status_code ?? 0) < self::STATUS_AWAITING_RECEIVE,
+            'can_pay' => $receivedPayable > 0,
             'can_receive' => ! $itemsFullyReturned
                 && (int) ($lpo->lpo_status_code ?? 0) >= 2
                 && (int) ($lpo->lpo_status_code ?? 0) < 5,
@@ -172,7 +213,7 @@ class LpoModuleService
         }
 
         if (Schema::hasTable('supplier_return_documents')) {
-            return app(SupplierReturnDocumentService::class)->returnedQtyByProductForLpo($lpoNo);
+            return app(\App\Services\Purchasing\SupplierReturnDocumentService::class)->returnedQtyByProductForLpo($lpoNo);
         }
 
         $productCodes = $lines->pluck('product_code')->filter()->unique()->values();

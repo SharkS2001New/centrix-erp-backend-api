@@ -67,8 +67,14 @@ class LpoMstController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
 
-        return response()->json($query->orderByDesc('lpo_no')->paginate($perPage));
+        $paginator = $query->with('supplier')->orderByDesc('lpo_no')->paginate($perPage);
+        $paginator->getCollection()->transform(
+            fn (LpoMst $lpo) => $this->lpoModule->mapListRow($lpo, $orgId),
+        );
+
+        return response()->json($paginator);
     }
 
     public function dashboard(Request $request)
