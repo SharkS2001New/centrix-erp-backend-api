@@ -392,7 +392,8 @@ CREATE TABLE routes (
 
 DROP TABLE IF EXISTS customers;
 CREATE TABLE customers (
-    customer_num      INT           PRIMARY KEY,
+    id                BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    customer_num      INT           NOT NULL,
     branch_id         INT           NOT NULL,
     organization_id   INT           NOT NULL,
     customer_name     VARCHAR(200)  NOT NULL,
@@ -420,6 +421,7 @@ CREATE TABLE customers (
     FOREIGN KEY (route_id)        REFERENCES routes(id) ON DELETE SET NULL,
     FOREIGN KEY (created_by)      REFERENCES users(id),
     FOREIGN KEY (deleted_by)      REFERENCES users(id),
+    UNIQUE KEY uq_org_customer_num (organization_id, customer_num),
     INDEX idx_phone         (phone_number),
     INDEX idx_branch_id     (branch_id),
     INDEX idx_route_id      (route_id),
@@ -684,7 +686,7 @@ CREATE TABLE loyalty_cards (
     created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
-    FOREIGN KEY (customer_num)    REFERENCES customers(customer_num),
+    FOREIGN KEY (organization_id, customer_num) REFERENCES customers(organization_id, customer_num),
     FOREIGN KEY (created_by)      REFERENCES users(id),
     UNIQUE KEY uq_org_loyalty_card (organization_id, card_number),
     INDEX idx_loyalty_phone (organization_id, phone_number),
@@ -698,7 +700,7 @@ CREATE TABLE loyalty_cards (
 DROP TABLE IF EXISTS sales;
 CREATE TABLE sales (
     id                     BIGINT        PRIMARY KEY AUTO_INCREMENT,
-    order_num              INT           UNIQUE NOT NULL,
+    order_num              INT           NOT NULL,
     branch_id              INT           NOT NULL,
     organization_id        INT           NOT NULL,
     channel                ENUM('pos','mobile','backend') NOT NULL DEFAULT 'pos',
@@ -745,10 +747,11 @@ CREATE TABLE sales (
     FOREIGN KEY (till_id)          REFERENCES tills(id),
     FOREIGN KEY (float_session_id) REFERENCES till_float_sessions(id),
     FOREIGN KEY (cashier_id)       REFERENCES users(id),
-    FOREIGN KEY (customer_num)     REFERENCES customers(customer_num),
+    FOREIGN KEY (organization_id, customer_num)     REFERENCES customers(organization_id, customer_num),
     FOREIGN KEY (route_id)         REFERENCES routes(id) ON DELETE SET NULL,
     FOREIGN KEY (cancelled_by)     REFERENCES users(id),
     FOREIGN KEY (deleted_by)       REFERENCES users(id),
+    UNIQUE KEY uq_org_order_num (organization_id, order_num),
     INDEX idx_order_num     (order_num),
     INDEX idx_branch_id     (branch_id),
     INDEX idx_channel       (channel),
@@ -878,7 +881,7 @@ DROP TABLE IF EXISTS customer_invoice_payments;
 DROP TABLE IF EXISTS customer_invoices;
 CREATE TABLE customer_invoices (
     id               BIGINT        PRIMARY KEY AUTO_INCREMENT,
-    invoice_number   VARCHAR(50)   UNIQUE NOT NULL,
+    invoice_number   VARCHAR(50)   NOT NULL,
     sale_id          BIGINT        NOT NULL,
     customer_num     INT           NOT NULL,
     branch_id        INT           NOT NULL,
@@ -897,11 +900,12 @@ CREATE TABLE customer_invoices (
     created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (sale_id)         REFERENCES sales(id),
-    FOREIGN KEY (customer_num)    REFERENCES customers(customer_num),
     FOREIGN KEY (branch_id)       REFERENCES branches(id),
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    FOREIGN KEY (organization_id, customer_num)    REFERENCES customers(organization_id, customer_num),
     FOREIGN KEY (created_by)      REFERENCES users(id),
     FOREIGN KEY (deleted_by)      REFERENCES users(id),
+    UNIQUE KEY uq_org_customer_invoice_number (organization_id, invoice_number),
     INDEX idx_customer_num   (customer_num),
     INDEX idx_payment_status (payment_status),
     INDEX idx_invoice_date   (invoice_date)
@@ -922,7 +926,7 @@ CREATE TABLE customer_invoice_payments (
     notes               TEXT,
     created_at          TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (customer_invoice_id) REFERENCES customer_invoices(id),
-    FOREIGN KEY (customer_num)        REFERENCES customers(customer_num),
+    FOREIGN KEY (organization_id, customer_num)        REFERENCES customers(organization_id, customer_num),
     FOREIGN KEY (payment_method_id)  REFERENCES payment_methods(id),
     FOREIGN KEY (received_by)         REFERENCES users(id),
     FOREIGN KEY (organization_id)   REFERENCES organizations(id),
@@ -957,11 +961,13 @@ BEGIN
     SET current_balance = (
         SELECT COALESCE(SUM(balance_due), 0)
         FROM customer_invoices
-        WHERE customer_num = NEW.customer_num
+        WHERE organization_id = NEW.organization_id
+          AND customer_num = NEW.customer_num
           AND payment_status IN (0,1)
           AND deleted_at IS NULL
     )
-    WHERE customer_num = NEW.customer_num;
+    WHERE organization_id = NEW.organization_id
+      AND customer_num = NEW.customer_num;
 END$$
 DELIMITER ;
 
@@ -979,6 +985,8 @@ CREATE TABLE lpo_statuses (
 DROP TABLE IF EXISTS lpo_mst;
 CREATE TABLE lpo_mst (
     lpo_no              INT           PRIMARY KEY AUTO_INCREMENT,
+    organization_id     INT           NOT NULL,
+    lpo_seq             INT UNSIGNED  NOT NULL,
     supplier_id         INT           NOT NULL,
     reference_number    VARCHAR(45),
     total_amount        DECIMAL(10,2),
@@ -1001,8 +1009,10 @@ CREATE TABLE lpo_mst (
     terms               VARCHAR(200),
     instructions        VARCHAR(200),
     FOREIGN KEY (supplier_id)     REFERENCES suppliers(id),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
     FOREIGN KEY (lpo_status_code) REFERENCES lpo_statuses(status_code),
     FOREIGN KEY (created_by)      REFERENCES users(id),
+    UNIQUE KEY uq_org_lpo_seq (organization_id, lpo_seq),
     INDEX idx_supplier_id (supplier_id),
     INDEX idx_lpo_status  (lpo_status_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

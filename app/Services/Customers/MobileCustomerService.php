@@ -86,8 +86,8 @@ class MobileCustomerService
         );
 
         $customer = DB::transaction(function () use ($user, $payload) {
-            $max = Customer::query()->lockForUpdate()->max('customer_num');
-            $payload['customer_num'] = ((int) $max) + 1;
+            $payload['customer_num'] = app(CustomerNumberAllocator::class)
+                ->nextForOrganization((int) $user->organization_id);
             $payload['organization_id'] = (int) $user->organization_id;
             $payload['created_by'] = (int) $user->id;
 

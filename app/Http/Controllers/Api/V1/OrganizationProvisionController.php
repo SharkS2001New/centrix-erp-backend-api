@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
+use App\Models\ProvisioningTemplate;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use App\Services\Erp\WorkspaceSessionLabel;
@@ -24,6 +25,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Auth\RoleTemplateService;
 
 class OrganizationProvisionController extends Controller
 {
@@ -33,6 +35,7 @@ class OrganizationProvisionController extends Controller
         protected ApplicationProvisioner $applications,
         protected OrganizationDeprovisioningService $deprovisioning,
         protected OrganizationCompanyCodeService $companyCodes,
+        protected RoleTemplateService $roleTemplates,
     ) {}
 
     /** GET /api/v1/admin/organizations — list tenants (super admin only) */
@@ -78,10 +81,95 @@ class OrganizationProvisionController extends Controller
             'profiles' => $tenantProfiles,
             'modules' => collect(ModuleRegistry::optionsPayload())->values(),
             'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig('wholesale_retail'),
+            'provisioning_templates' => ProvisioningTemplate::query()
+                ->orderBy('name')
+                ->get(['id', 'name', 'description', 'deployment_profile', 'enabled_modules', 'sales_platform']),
             'notes' => [
                 'applications' => 'Enable or disable the six tenant applications (External ERP, Backoffice, Accounting, Human Resources, Distribution, Administration). The API stores the underlying module keys automatically.',
+                'custom_profile' => 'Choose Custom setup to start from a blank module map and enable only the applications you need.',
                 'sales_platform' => 'Checkout vs save order, order workflow, and stock timing are configured by the platform super admin — not the organization manager.',
                 'org_settings' => 'Organization managers configure day-to-day preferences (payment fields, receipts, SMTP, M-Pesa, etc.) under Administration → Organization settings when Administration is enabled.',
+                'role_templates' => 'Recommended staff roles are seeded globally and suggested per profile when an organization is registered.',
+            ],
+        ]);
+    }
+
+    /** POST /api/v1/admin/organizations/provision-preview — live setup preview without creating a tenant */
+    public function preview(Request $request)
+    {
+        $data = $request->validate(array_merge(
+            [
+                'deployment_profile' => ['required', Rule::in($this->tenantDeploymentProfileKeys())],
+            ],
+            $this->salesPlatformRules(),
+            $this->applicationRules(),
+            [
+                'enabled_modules' => 'sometimes|array',
+                'enabled_modules.*' => 'boolean',
+            ],
+        ));
+
+        $profile = (string) $data['deployment_profile'];
+        $modules = $this->resolvePreviewModules($data, $profile);
+
+        return response()->json($this->buildProvisionPreviewPayload($profile, $modules, $data['sales_platform'] ?? null));
+    }
+
+    /** GET /api/v1/admin/organizations/provisioning-templates */
+    public function listTemplates()
+    {
+        return response()->json([
+            'data' => ProvisioningTemplate::query()->orderBy('name')->get(),
+        ]);
+    }
+
+    /** POST /api/v1/admin/organizations/provisioning-templates */
+    public function storeTemplate(Request $request)
+    {
+        $data = $request->validate([
+            'name' => 'required|string|max:120|unique:provisioning_templates,name',
+            'description' => 'nullable|string|max:400',
+            'deployment_profile' => ['required', Rule::in($this->tenantDeploymentProfileKeys())],
+            'enabled_modules' => 'nullable|array',
+            'enabled_modules.*' => 'boolean',
+            'sales_platform' => 'nullable|array',
+        ]);
+
+        $template = ProvisioningTemplate::create([
+            'name' => $data['name'],
+            'description' => $data['description'] ?? null,
+            'deployment_profile' => $data['deployment_profile'],
+            'enabled_modules' => $data['enabled_modules'] ?? null,
+            'sales_platform' => $data['sales_platform'] ?? null,
+            'created_by' => $request->user()?->id,
+        ]);
+
+        return response()->json($template, 201);
+    }
+
+    /** DELETE /api/v1/admin/organizations/provisioning-templates/{template} */
+    public function destroyTemplate(int $template)
+    {
+        ProvisioningTemplate::query()->whereKey($template)->delete();
+
+        return response()->json(['message' => 'Template deleted.']);
+    }
+
+    /** GET /api/v1/admin/organizations/{organization}/provision-snapshot — clone settings into register form */
+    public function provisionSnapshot(int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+        $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
+
+        return response()->json([
+            'deployment_profile' => $org->deployment_profile,
+            'applications' => $this->applications->applicationsFromEnabledModules($gate->allModules()),
+            'enabled_modules' => $org->enabled_modules,
+            'sales_platform' => $this->platformConfig->salesPlatformConfigForOrganization($org),
+            'source_organization' => [
+                'id' => $org->id,
+                'company_code' => $org->company_code,
+                'org_name' => $org->org_name,
             ],
         ]);
     }
@@ -460,11 +548,21 @@ class OrganizationProvisionController extends Controller
         }
 
         $result = $this->provisioning->provision($data);
+        $org = $result['organization']->fresh();
+        $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
+        $modules = $gate->allModules();
 
         return response()->json([
-            'organization' => $result['organization'],
+            'organization' => $org,
             'manager' => $result['manager'],
             'branch' => $result['branch'],
+            'recommended_roles' => $this->roleTemplates->recommendedForOrganization($org),
+            'onboarding_steps' => $this->roleTemplates->onboardingSteps((string) $org->deployment_profile, $modules),
+            'setup_preview' => $this->buildProvisionPreviewPayload(
+                (string) $org->deployment_profile,
+                $modules,
+                $this->platformConfig->salesPlatformConfigForOrganization($org),
+            ),
             'message' => 'Organization registered. The manager can sign in with their username and password.',
         ], 201);
     }
@@ -566,5 +664,58 @@ class OrganizationProvisionController extends Controller
         }
 
         return $enabledModules;
+    }
+
+    /** @param  array<string, mixed>  $data */
+    protected function resolvePreviewModules(array $data, string $profile): array
+    {
+        if ($resolved = $this->resolveEnabledModulesInput($data)) {
+            return ModuleRegistry::cascade(ModuleRegistry::sanitizeModuleMap($resolved));
+        }
+
+        if (isset($data['enabled_modules']) && is_array($data['enabled_modules'])) {
+            $validated = $this->validateEnabledModulesMap($data['enabled_modules']);
+
+            return ModuleRegistry::cascade($validated);
+        }
+
+        return $this->roleTemplates->expandEnabledModules(null, $profile);
+    }
+
+    /**
+     * @param  array<string, bool>  $modules
+     * @param  array<string, mixed>|null  $salesPlatform
+     * @return array<string, mixed>
+     */
+    protected function buildProvisionPreviewPayload(string $profile, array $modules, ?array $salesPlatform): array
+    {
+        $applications = $this->applications->applicationsFromEnabledModules($modules);
+        $profileConfig = config("erp.profiles.{$profile}", []);
+        $channels = $profileConfig['default_channels'] ?? ['backend'];
+
+        if ($profile === 'custom') {
+            $channels = [];
+            if ($modules['sales.pos'] ?? false) {
+                $channels[] = 'pos';
+            }
+            if ($modules['sales.mobile'] ?? false) {
+                $channels[] = 'mobile';
+            }
+            if ($modules['sales.backend'] ?? false) {
+                $channels[] = 'backend';
+            }
+            $channels = $channels === [] ? ['backend'] : array_values(array_unique($channels));
+        }
+
+        return [
+            'deployment_profile' => $profile,
+            'profile_label' => $profileConfig['label'] ?? $profile,
+            'applications' => $applications,
+            'enabled_modules' => $modules,
+            'login_channels' => $channels,
+            'recommended_roles' => $this->roleTemplates->recommendedForProfile($profile, $modules),
+            'onboarding_steps' => $this->roleTemplates->onboardingSteps($profile, $modules),
+            'sales_platform' => $salesPlatform,
+        ];
     }
 }

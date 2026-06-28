@@ -3,6 +3,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Customer;
 use App\Models\Sale;
+use App\Services\Customers\CustomerNumberAllocator;
 use App\Services\Customers\CustomerUniquenessValidator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -117,12 +118,10 @@ class CustomerController extends BaseResourceController
 
         $customer = DB::transaction(function () use ($data, $organizationId) {
             if (empty($data['customer_num'])) {
-                $max = Customer::query()
-                    ->where('organization_id', $organizationId)
-                    ->lockForUpdate()
-                    ->max('customer_num');
-                $data['customer_num'] = ((int) $max) + 1;
+                $data['customer_num'] = app(CustomerNumberAllocator::class)->nextForOrganization($organizationId);
             }
+
+            $data['organization_id'] = $organizationId;
 
             return Customer::create($data);
         });

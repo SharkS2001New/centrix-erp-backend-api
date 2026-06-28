@@ -15,6 +15,7 @@ use App\Services\Accounting\StandardChartOfAccounts;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\OrganizationPlatformConfigService;
+use App\Services\Auth\RoleTemplateService;
 use App\Services\Auth\UserLoginChannelPolicy;
 use App\Services\Auth\UserLoginChannelService;
 use Illuminate\Support\Facades\DB;
@@ -48,6 +49,7 @@ class OrganizationProvisioningService
                 'small_shop' => 'small_shop',
                 'distribution' => 'distribution',
                 'supermarket', 'wholesale_retail' => 'supermarket',
+                'custom' => 'retail',
                 default => 'retail',
             };
 
@@ -131,6 +133,8 @@ class OrganizationProvisioningService
             ]);
 
             $this->seedAccountingFoundation($org);
+
+            app(RoleTemplateService::class)->ensureAllRoles();
 
             if (! empty($data['sales_platform']) && is_array($data['sales_platform'])) {
                 $org = app(OrganizationPlatformConfigService::class)->applySalesPlatformConfig($org, $data['sales_platform']);

@@ -9,6 +9,7 @@ use App\Models\Product;
 use App\Models\Supplier;
 use App\Services\Erp\ErpContext;
 use App\Services\LpoModuleService;
+use App\Services\Purchasing\LpoNumberAllocator;
 use App\Services\Purchasing\LpoWorkflowService;
 use App\Services\Purchasing\ProcurementSettingsResolver;
 use Illuminate\Http\Request;
@@ -59,6 +60,7 @@ class LpoMstController extends BaseResourceController
         if ($q = $request->input('q')) {
             $query->where(function ($inner) use ($q) {
                 $inner->where('lpo_no', 'like', "%{$q}%")
+                    ->orWhere('lpo_seq', 'like', "%{$q}%")
                     ->orWhere('reference_number', 'like', "%{$q}%")
                     ->orWhereHas('supplier', function ($supplier) use ($q) {
                         $supplier->where('supplier_name', 'like', "%{$q}%");
@@ -126,7 +128,19 @@ class LpoMstController extends BaseResourceController
             $dueDate = $payload['due_date']
                 ?? now()->addDays($settings['default_payment_terms_days'])->toDateString();
 
+            $supplier = Supplier::query()->findOrFail($payload['supplier_id']);
+            if ((int) $supplier->organization_id !== (int) $user->organization_id) {
+                throw ValidationException::withMessages([
+                    'supplier_id' => ['Supplier does not belong to your organization.'],
+                ]);
+            }
+
+            $orgId = (int) $user->organization_id;
+            $lpoSeq = app(LpoNumberAllocator::class)->nextForOrganization($orgId);
+
             $lpo = LpoMst::create([
+                'organization_id' => $orgId,
+                'lpo_seq' => $lpoSeq,
                 'supplier_id' => $payload['supplier_id'],
                 'reference_number' => $payload['reference_number'] ?? null,
                 'due_date' => $dueDate,
@@ -158,6 +172,8 @@ class LpoMstController extends BaseResourceController
         return response()->json([
             'lpo' => $lpo,
             'lpo_no' => $lpo->lpo_no,
+            'lpo_seq' => $lpo->lpo_seq,
+            'po_number' => app(LpoModuleService::class)->formatPoNumber((int) $lpo->lpo_seq, $lpo->created_at),
         ], 201);
     }
 

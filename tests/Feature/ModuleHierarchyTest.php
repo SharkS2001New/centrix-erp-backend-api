@@ -149,4 +149,16 @@ class ModuleHierarchyTest extends TestCase
         $this->assertFalse($modules['distribution']);
         $this->assertSame(['pos', 'backend'], $profile['default_channels']);
     }
+
+    public function test_custom_profile_starts_with_all_modules_disabled(): void
+    {
+        $profile = config('erp.profiles.custom');
+        $this->assertNotNull($profile);
+
+        $modules = ModuleRegistry::cascade($profile['modules']);
+        $enabled = array_filter($modules);
+
+        $this->assertSame([], $enabled);
+        $this->assertContains('custom', array_keys(config('erp.profiles')));
+    }
 }

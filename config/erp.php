@@ -107,6 +107,11 @@ return [
             ]),
             'default_channels' => ['pos', 'backend'],
         ],
+        'custom' => [
+            'label' => 'Custom setup',
+            'modules' => $allModulesFalse,
+            'default_channels' => ['backend'],
+        ],
         'distribution' => [
             'label' => 'Distribution / warehouse',
             'modules' => array_merge($allModulesFalse, [

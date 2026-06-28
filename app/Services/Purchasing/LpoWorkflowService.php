@@ -136,7 +136,7 @@ class LpoWorkflowService
             return;
         }
 
-        $poNumber = $this->lpoModule->formatPoNumber((int) $lpo->lpo_no);
+        $poNumber = $this->lpoModule->formatPoNumber((int) $lpo->lpo_seq);
         $body = implode("\n", array_filter([
             "Purchase order {$poNumber}",
             $supplier?->supplier_name ? "Supplier: {$supplier->supplier_name}" : null,

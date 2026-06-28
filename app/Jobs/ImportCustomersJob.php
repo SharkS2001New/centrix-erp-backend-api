@@ -7,6 +7,7 @@ use App\Models\BackgroundTask;
 use App\Models\Customer;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
+use App\Services\Customers\CustomerNumberAllocator;
 use App\Services\Customers\CustomerUniquenessValidator;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -74,11 +75,8 @@ class ImportCustomersJob implements ShouldQueue
 
                     DB::transaction(function () use ($body, $organizationId, $user): void {
                         if (empty($body['customer_num'])) {
-                            $max = Customer::query()
-                                ->where('organization_id', $organizationId)
-                                ->lockForUpdate()
-                                ->max('customer_num');
-                            $body['customer_num'] = ((int) $max) + 1;
+                            $body['customer_num'] = app(CustomerNumberAllocator::class)
+                                ->nextForOrganization($organizationId);
                         }
 
                         $body['organization_id'] = $organizationId;

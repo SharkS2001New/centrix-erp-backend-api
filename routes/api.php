@@ -204,6 +204,14 @@ Route::prefix('v1')->group(function () {
 
         Route::get('admin/organizations/provision-options', [OrganizationProvisionController::class, 'options'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/organizations/provision-preview', [OrganizationProvisionController::class, 'preview'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/organizations/provisioning-templates', [OrganizationProvisionController::class, 'listTemplates'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/organizations/provisioning-templates', [OrganizationProvisionController::class, 'storeTemplate'])
+            ->middleware(['erp.super_admin']);
+        Route::delete('admin/organizations/provisioning-templates/{template}', [OrganizationProvisionController::class, 'destroyTemplate'])
+            ->middleware(['erp.super_admin']);
         Route::post('background-tasks/paginated-fetch', [PaginatedFetchController::class, 'store']);
         Route::post('background-tasks/report-export', [BackgroundJobDispatchController::class, 'storeReportExport']);
         Route::post('background-tasks/report-run', [BackgroundJobDispatchController::class, 'storeReportRun']);
@@ -218,6 +226,8 @@ Route::prefix('v1')->group(function () {
         Route::post('admin/organizations/provision', [OrganizationProvisionController::class, 'store'])
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
         Route::get('admin/organizations/{organization}', [OrganizationProvisionController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/organizations/{organization}/provision-snapshot', [OrganizationProvisionController::class, 'provisionSnapshot'])
             ->middleware(['erp.super_admin']);
         Route::patch('admin/organizations/{organization}', [OrganizationProvisionController::class, 'update'])
             ->middleware(['erp.super_admin']);
