@@ -73,6 +73,58 @@ class PasswordExpiryTest extends TestCase
         $user->forceFill(['password' => Hash::make('password')])->save();
     }
 
+    public function test_set_required_password_clears_force_lock_and_allows_api_access(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $this->enablePasswordExpiry($org);
+
+        $admin = User::where('username', 'admin')->where('organization_id', $org->id)->firstOrFail();
+
+        $user = User::create([
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'firstlogin',
+            'email' => 'firstlogin@example.test',
+            'password' => Hash::make('temppass1'),
+            'full_name' => 'First Login User',
+            'must_change_password' => true,
+            'password_changed_at' => null,
+            'password_expiry_skip_count' => 0,
+            'is_active' => true,
+            'access_scope' => 'org',
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $status = app(PasswordExpiryService::class)->statusForUser($user->fresh());
+        $this->assertTrue($status['forced']);
+        $this->assertSame('must_change_password', $status['reason']);
+
+        $this->getJson('/api/v1/products?per_page=1')
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'password_expired_forced');
+
+        $this->postJson('/api/v1/auth/set-required-password', [
+            'password' => 'newsecurepass1',
+            'password_confirmation' => 'newsecurepass1',
+        ])->assertOk()
+            ->assertJsonPath('must_change_password', false)
+            ->assertJsonPath('password_expiry.forced', false)
+            ->assertJsonPath('user.must_change_password', false)
+            ->assertJsonStructure(['capabilities' => ['workspaces', 'password_expiry']]);
+
+        $user->refresh();
+        $this->assertFalse((bool) $user->must_change_password);
+        $this->assertNotNull($user->password_changed_at);
+
+        $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->assertJsonPath('password_expiry.forced', false);
+
+        $this->getJson('/api/v1/products?per_page=1')->assertOk();
+    }
+
     public function test_change_password_requires_current_password(): void
     {
         $user = User::where('username', 'admin')->firstOrFail();

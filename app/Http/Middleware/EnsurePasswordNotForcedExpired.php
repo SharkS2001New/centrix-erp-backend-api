@@ -27,6 +27,8 @@ class EnsurePasswordNotForcedExpired
             return $next($request);
         }
 
+        $user->refresh();
+
         $status = app(PasswordExpiryService::class)->statusForUser($user);
         if (! ($status['forced'] ?? false)) {
             return $next($request);

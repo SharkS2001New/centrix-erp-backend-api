@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Concerns\RespondsAfterPasswordChange;
 use App\Http\Controllers\Concerns\RespondsWithAuthSession;
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
@@ -23,6 +24,7 @@ use Illuminate\Validation\ValidationException;
 
 class AuthController extends Controller
 {
+    use RespondsAfterPasswordChange;
     use RespondsWithAuthSession;
 
     public function __construct(
@@ -232,13 +234,8 @@ class AuthController extends Controller
         }
 
         $this->passwordResets->setRequiredPassword($user, $data['password']);
-        $user->refresh();
 
-        return response()->json([
-            'message' => 'Password updated successfully.',
-            'must_change_password' => false,
-            'password_expiry' => app(PasswordExpiryService::class)->statusForUser($user),
-        ]);
+        return $this->respondAfterPasswordChange($user);
     }
 
     public function resetPassword(Request $request)
@@ -275,13 +272,8 @@ class AuthController extends Controller
             $data['current_password'],
             $data['password'],
         );
-        $user = $request->user()->fresh();
 
-        return response()->json([
-            'message' => 'Password updated successfully.',
-            'must_change_password' => false,
-            'password_expiry' => app(PasswordExpiryService::class)->statusForUser($user),
-        ]);
+        return $this->respondAfterPasswordChange($request->user()->fresh());
     }
 
     public function skipPasswordExpiry(Request $request)

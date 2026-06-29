@@ -89,6 +89,9 @@ class ErpCapabilitiesController extends Controller
     protected function applyRuntimeCapabilityFlags(Request $request, array $payload): array
     {
         $user = $request->user();
+        if ($user) {
+            $user->refresh();
+        }
         $gate = $this->erp->gateForUser($user);
 
         $payload['is_super_admin'] = (bool) $user?->is_super_admin;
