@@ -557,6 +557,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware(['erp.legacy_archive', 'erp.permission:sales.view']);
             Route::get('legacy-orders/{saleId}/return-lines', [LegacyOrdersController::class, 'returnLines'])
                 ->middleware(['erp.legacy_archive', 'erp.permission:sales.view']);
+            Route::delete('legacy-orders/{id}', [LegacyOrdersController::class, 'destroy'])
+                ->middleware(['erp.legacy_archive', 'erp.permission:sales.manage']);
             Route::post('legacy-returns/{id}/approve', [LegacyReturnsController::class, 'approve'])
                 ->middleware(['erp.legacy_archive', 'erp.permission:sales.manage']);
             Route::apiResource('legacy-returns', LegacyReturnsController::class)

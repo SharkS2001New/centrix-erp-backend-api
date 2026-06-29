@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\CreditNote;
+use App\Models\CustomerReturn;
 use App\Models\InventoryTransaction;
 use App\Models\Organization;
 use App\Models\Product;
@@ -154,6 +155,97 @@ class LegacyReturnTest extends TestCase
 
         $this->assertContains($legacy->id, $ids);
         $this->assertNotContains($normal->id, $ids);
+    }
+
+    public function test_legacy_order_can_be_deleted_when_it_has_no_returns(): void
+    {
+        $sale = $this->createLegacySale();
+
+        $this->deleteJson("/api/v1/legacy-orders/{$sale->id}")
+            ->assertOk();
+
+        $this->assertDatabaseMissing('sales', ['id' => $sale->id]);
+        $this->assertDatabaseMissing('sale_items', ['sale_id' => $sale->id]);
+    }
+
+    public function test_non_admin_cannot_delete_legacy_order_when_returns_exist(): void
+    {
+        $sale = $this->createLegacySale();
+        $manager = User::where('username', 'admin')->firstOrFail();
+        $manager->update(['is_admin' => false]);
+
+        CustomerReturn::query()->create([
+            'return_no' => 'LRET-DEL-BLOCK',
+            'organization_id' => $sale->organization_id,
+            'branch_id' => $sale->branch_id,
+            'sale_id' => $sale->id,
+            'return_date' => '2026-06-01',
+            'status' => 'pending',
+            'return_kind' => 'legacy',
+            'total_amount' => 0,
+            'returned_by' => $manager->id,
+        ]);
+
+        Sanctum::actingAs($manager);
+
+        $this->deleteJson("/api/v1/legacy-orders/{$sale->id}")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['sale']);
+
+        $this->assertDatabaseHas('sales', ['id' => $sale->id]);
+
+        $manager->update(['is_admin' => true]);
+    }
+
+    public function test_admin_can_delete_legacy_order_with_pending_or_approved_returns(): void
+    {
+        $sale = $this->createLegacySale();
+
+        $pending = CustomerReturn::query()->create([
+            'return_no' => 'LRET-DEL-PEND',
+            'organization_id' => $sale->organization_id,
+            'branch_id' => $sale->branch_id,
+            'sale_id' => $sale->id,
+            'return_date' => '2026-06-01',
+            'status' => 'pending',
+            'return_kind' => 'legacy',
+            'total_amount' => 50,
+            'returned_by' => $this->user->id,
+        ]);
+
+        $approved = CustomerReturn::query()->create([
+            'return_no' => 'LRET-DEL-APPR',
+            'organization_id' => $sale->organization_id,
+            'branch_id' => $sale->branch_id,
+            'sale_id' => $sale->id,
+            'return_date' => '2026-06-02',
+            'status' => 'approved',
+            'return_kind' => 'legacy',
+            'total_amount' => 100,
+            'returned_by' => $this->user->id,
+            'approved_by' => $this->user->id,
+            'approved_at' => now(),
+        ]);
+
+        CreditNote::query()->create([
+            'credit_note_no' => 'CN-DEL-LEG',
+            'customer_return_id' => $approved->id,
+            'organization_id' => $sale->organization_id,
+            'branch_id' => $sale->branch_id,
+            'sale_id' => $sale->id,
+            'credit_date' => '2026-06-02',
+            'total_amount' => 100,
+            'refund_method' => 'cash',
+            'reason' => 'Legacy return',
+        ]);
+
+        $this->deleteJson("/api/v1/legacy-orders/{$sale->id}")
+            ->assertOk();
+
+        $this->assertDatabaseMissing('sales', ['id' => $sale->id]);
+        $this->assertDatabaseMissing('customer_returns', ['id' => $pending->id]);
+        $this->assertDatabaseMissing('customer_returns', ['id' => $approved->id]);
+        $this->assertDatabaseMissing('credit_notes', ['customer_return_id' => $approved->id]);
     }
 
     public function test_normal_sales_list_excludes_legacy_materialized_orders(): void

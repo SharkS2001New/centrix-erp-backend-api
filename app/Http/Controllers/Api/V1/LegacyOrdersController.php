@@ -49,4 +49,13 @@ class LegacyOrdersController extends Controller
             ),
         ]);
     }
+
+    public function destroy(Request $request, string $id)
+    {
+        $this->orders->deleteForUser($request->user(), (int) $id);
+
+        return response()->json([
+            'message' => 'Legacy order deleted. You can materialize it again from the legacy archive if needed.',
+        ]);
+    }
 }

@@ -3,15 +3,21 @@
 namespace App\Services\Sales;
 
 use App\Models\CustomerReturn;
+use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class LegacyOrderService
 {
+    public function __construct(
+        protected CustomerReturnService $customerReturns,
+    ) {}
+
     public function baseQuery(User $user): Builder
     {
         $query = Sale::query()
@@ -81,7 +87,7 @@ class LegacyOrderService
         $perPage = min((int) ($filters['per_page'] ?? 25), 200);
 
         $paginator = $query->orderByDesc('completed_at')->orderByDesc('id')->paginate($perPage);
-        $this->attachReturnSummaries($paginator->getCollection(), (int) $user->organization_id);
+        $this->attachReturnSummaries($paginator->getCollection(), $user);
 
         return $paginator;
     }
@@ -89,23 +95,70 @@ class LegacyOrderService
     public function findForUser(User $user, int $saleId): Sale
     {
         $sale = $this->baseQuery($user)->findOrFail($saleId);
-        $this->attachReturnSummaries(collect([$sale]), (int) $user->organization_id);
+        $this->attachReturnSummaries(collect([$sale]), $user);
 
         return $sale;
     }
 
-    protected function attachReturnSummaries($sales, int $organizationId): void
+    public function deleteForUser(User $user, int $saleId): void
     {
+        $sale = $this->baseQuery($user)->findOrFail($saleId);
+
+        if (! $sale->isLegacyImport()) {
+            throw ValidationException::withMessages([
+                'sale' => ['Only materialized legacy orders can be deleted.'],
+            ]);
+        }
+
+        $legacyReturns = CustomerReturn::query()
+            ->where('organization_id', $user->organization_id)
+            ->where('sale_id', $sale->id)
+            ->where('return_kind', 'legacy')
+            ->with('lines')
+            ->get();
+
+        if ($legacyReturns->isNotEmpty() && ! $user->is_admin) {
+            throw ValidationException::withMessages([
+                'sale' => ['Only an organization admin can delete a legacy order that has returns linked to it.'],
+            ]);
+        }
+
+        if (DB::table('customer_invoices')->where('sale_id', $sale->id)->exists()) {
+            throw ValidationException::withMessages([
+                'sale' => ['Cannot delete a legacy order that has customer invoices.'],
+            ]);
+        }
+
+        if (DB::table('dispatch_trip_sales')->where('sale_id', $sale->id)->exists()) {
+            throw ValidationException::withMessages([
+                'sale' => ['Cannot delete a legacy order assigned to a dispatch trip.'],
+            ]);
+        }
+
+        DB::transaction(function () use ($sale, $legacyReturns, $user) {
+            foreach ($legacyReturns as $return) {
+                $this->customerReturns->deleteReturn($return, $user);
+            }
+
+            KraResponse::query()->where('sale_id', $sale->id)->delete();
+            $sale->payments()->delete();
+            $sale->items()->delete();
+            $sale->delete();
+        });
+    }
+
+    protected function attachReturnSummaries($sales, User $user): void
+    {
+        $organizationId = (int) $user->organization_id;
         $saleIds = $sales->pluck('id')->filter()->all();
         if ($saleIds === []) {
             return;
         }
 
         $summaries = CustomerReturn::query()
-            ->selectRaw('sale_id, COUNT(*) as return_count, COALESCE(SUM(total_amount), 0) as returned_total')
+            ->selectRaw("sale_id, COUNT(*) as return_count_all, SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as return_count, COALESCE(SUM(CASE WHEN status = 'approved' THEN total_amount ELSE 0 END), 0) as returned_total")
             ->where('organization_id', $organizationId)
             ->where('return_kind', 'legacy')
-            ->where('status', 'approved')
             ->whereIn('sale_id', $saleIds)
             ->groupBy('sale_id')
             ->get()
@@ -116,12 +169,16 @@ class LegacyOrderService
             $returnedTotal = round((float) ($summary->returned_total ?? 0), 2);
             $orderTotal = round((float) ($sale->order_total ?? 0), 2);
             $returnCount = (int) ($summary->return_count ?? 0);
+            $returnCountAll = (int) ($summary->return_count_all ?? 0);
 
             $sale->setAttribute('legacy_return_summary', [
                 'return_count' => $returnCount,
+                'return_count_all' => $returnCountAll,
                 'returned_total' => $returnedTotal,
                 'has_returns' => $returnCount > 0,
                 'fully_returned' => $returnCount > 0 && $orderTotal > 0 && $returnedTotal >= $orderTotal,
+                'can_delete' => $returnCountAll === 0,
+                'can_admin_delete' => (bool) $user->is_admin,
             ]);
         }
     }
