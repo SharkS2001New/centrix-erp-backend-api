@@ -187,6 +187,86 @@ class UserLoginChannelTest extends TestCase
             ->assertJsonPath('login_channels', ['mobile'])
             ->assertJsonPath('is_mobile_user', true);
     }
+
+    public function test_pos_channel_rejected_when_external_pos_disabled_for_organization(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'deployment_profile' => 'distribution',
+            'enabled_modules' => array_merge(
+                is_array($org->enabled_modules) ? $org->enabled_modules : [],
+                ['sales.pos' => false],
+            ),
+        ])->save();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/users', [
+            'full_name' => 'Distribution Rep',
+            'username' => 'dist_rep',
+            'email' => 'dist_rep@example.test',
+            'password' => 'password',
+            'access_scope' => 'branch',
+            'role_id' => $admin->role_id,
+            'branch_id' => $admin->branch_id,
+            'login_channels' => ['backoffice', 'pos', 'mobile'],
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['login_channels']);
+    }
+
+    public function test_user_defaults_to_org_allowed_login_channels_without_pos(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'deployment_profile' => 'distribution',
+            'enabled_modules' => array_merge(
+                is_array($org->enabled_modules) ? $org->enabled_modules : [],
+                ['sales.pos' => false, 'sales.mobile' => true, 'sales.backend' => true],
+            ),
+        ])->save();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/users', [
+            'full_name' => 'Distribution Driver',
+            'username' => 'dist_driver',
+            'email' => 'dist_driver@example.test',
+            'password' => 'password',
+            'access_scope' => 'branch',
+            'role_id' => $admin->role_id,
+            'branch_id' => $admin->branch_id,
+        ])
+            ->assertCreated()
+            ->assertJson(fn ($json) => $json->where('login_channels', fn ($channels) => is_array($channels)
+                && ! in_array('pos', $channels, true)
+                && in_array('backoffice', $channels, true)));
+    }
+
+    public function test_pos_login_blocked_when_external_pos_disabled_for_organization(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->forceFill([
+            'enabled_modules' => array_merge(
+                is_array($org->enabled_modules) ? $org->enabled_modules : [],
+                ['sales.pos' => false],
+            ),
+        ])->save();
+
+        $user = $this->makeUser(['login_channels' => ['pos']]);
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'POS_DISABLED_ORG',
+            'login_channel' => 'pos',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['login_channel']);
+    }
     public function test_mobile_and_backoffice_sessions_can_coexist(): void
     {
         $user = $this->makeUser(['login_channels' => ['backoffice', 'pos', 'mobile']]);

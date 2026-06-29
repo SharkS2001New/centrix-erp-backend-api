@@ -34,7 +34,6 @@ class UserLoginChannelPolicy
      */
     public function assertAllowedForOrganization(Organization $organization, array $channels): void
     {
-        $gate = app(CapabilityGate::class)->forOrganization($organization);
         $allowed = array_flip($this->defaultChannelsForOrganization($organization));
         $normalized = app(UserLoginChannelService::class)->normalize($channels);
         $service = app(UserLoginChannelService::class);
