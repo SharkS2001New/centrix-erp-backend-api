@@ -353,9 +353,14 @@ class CustomerReturnService
 
     public function linesFromSale(Sale $sale, ?string $mode = null): array
     {
-        $sale->loadMissing(['items.product.unit']);
-        $returned = $this->approvedReturnQuantities((int) $sale->id);
         $legacy = $mode === 'legacy';
+        $sale->loadMissing($legacy
+            ? array_merge(LegacySalePresentation::saleItemEagerLoad(), ['customer'])
+            : ['items.product.unit', 'customer']);
+        if ($legacy) {
+            LegacySalePresentation::stripCentrixUnitData($sale);
+        }
+        $returned = $this->approvedReturnQuantities((int) $sale->id);
 
         return $sale->items->map(function ($item) use ($returned, $sale, $legacy) {
             $currentQty = (float) ($item->quantity ?? 0);
@@ -379,7 +384,9 @@ class CustomerReturnService
                 'sale_item_id' => $item->id,
                 'product_code' => $item->product_code,
                 'product_name' => $item->product?->product_name ?? $item->product_code,
-                'uom' => $soldUom !== '' ? $soldUom : ($item->product?->unit?->uom_type ?? null),
+                'uom' => $legacy
+                    ? ($soldUom !== '' ? $soldUom : null)
+                    : ($soldUom !== '' ? $soldUom : ($item->product?->unit?->uom_type ?? null)),
                 'sold_uom' => $soldUom !== '' ? $soldUom : null,
                 'product' => $legacy ? null : $item->product,
                 'quantity_sold' => $originalQty,

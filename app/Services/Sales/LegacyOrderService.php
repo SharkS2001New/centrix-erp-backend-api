@@ -22,7 +22,10 @@ class LegacyOrderService
     public function baseQuery(User $user): Builder
     {
         $query = Sale::query()
-            ->with(['customer', 'cashier:id,username,full_name', 'items.product.unit'])
+            ->with(array_merge(
+                ['customer', 'cashier:id,username,full_name'],
+                LegacySalePresentation::saleItemEagerLoad(),
+            ))
             ->where('organization_id', $user->organization_id)
             ->where('fulfillment_meta->legacy_import', true);
 
@@ -98,6 +101,7 @@ class LegacyOrderService
 
         $paginator = $query->orderByDesc('completed_at')->orderByDesc('id')->paginate($perPage);
         $this->attachReturnSummaries($paginator->getCollection(), $user);
+        $paginator->getCollection()->each(fn (Sale $sale) => LegacySalePresentation::stripCentrixUnitData($sale));
 
         return $paginator;
     }
@@ -106,6 +110,7 @@ class LegacyOrderService
     {
         $sale = $this->baseQuery($user)->findOrFail($saleId);
         $this->attachReturnSummaries(collect([$sale]), $user);
+        LegacySalePresentation::stripCentrixUnitData($sale);
 
         return $sale;
     }
@@ -116,7 +121,11 @@ class LegacyOrderService
             return $sale;
         }
 
-        $sale->loadMissing(['items.product.unit', 'customer']);
+        $sale->loadMissing(array_merge(
+            LegacySalePresentation::saleItemEagerLoad(),
+            ['customer'],
+        ));
+        LegacySalePresentation::stripCentrixUnitData($sale);
 
         $returnLines = CustomerReturnLine::query()
             ->whereHas('customerReturn', function (Builder $query) use ($sale) {

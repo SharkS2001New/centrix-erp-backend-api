@@ -168,7 +168,10 @@ class LightStoresLegacyImporter
 
         $existing = $this->findMaterializedSale($channel, $legacyOrderNum, $saleDate);
         if ($existing) {
-            return $existing->load(['items.product.unit', 'customer']);
+            $existing->load(array_merge(['customer'], \App\Services\Sales\LegacySalePresentation::saleItemEagerLoad()));
+            \App\Services\Sales\LegacySalePresentation::stripCentrixUnitData($existing);
+
+            return $existing;
         }
 
         $this->bootLegacySequencesFromDatabase();
@@ -194,8 +197,10 @@ class LightStoresLegacyImporter
             throw new RuntimeException("Legacy {$channel} sale #{$legacyOrderNum} could not be materialized (missing customer, products, or lines).");
         }
 
-        return $sale->load(['items.product.unit', 'customer']);
-    }
+        $sale->load(array_merge(['customer'], \App\Services\Sales\LegacySalePresentation::saleItemEagerLoad()));
+        \App\Services\Sales\LegacySalePresentation::stripCentrixUnitData($sale);
+
+        return $sale;
 
     protected function useLegacyConnectionForOrganization(Organization $org): void
     {

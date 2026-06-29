@@ -6,6 +6,7 @@ use App\Models\Sale;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Sales\CentrixSalesScope;
+use App\Services\Sales\LegacySalePresentation;
 use App\Services\Sales\RouteOrderScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -152,6 +153,9 @@ class SaleController extends BaseResourceController
     public function show(Request $request, string $id)
     {
         $sale = $this->baseQuery($request)->with(['items.product.unit', 'customer:customer_num,customer_name'])->findOrFail($id);
+        if ($sale->isLegacyImport()) {
+            LegacySalePresentation::stripCentrixUnitData($sale);
+        }
         $gate = $this->erp->gateForUser($request->user());
         $channel = $sale->channel ?: 'backend';
         $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
