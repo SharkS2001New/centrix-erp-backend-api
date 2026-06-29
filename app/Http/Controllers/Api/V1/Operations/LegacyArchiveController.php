@@ -105,6 +105,9 @@ class LegacyArchiveController extends Controller
             'from_date' => 'required|date',
             'to_date' => 'required|date|after_or_equal:from_date',
             'q' => 'nullable|string|max:120',
+            'min_order_total' => 'nullable|numeric|min:0',
+            'max_order_total' => 'nullable|numeric|min:0',
+            'order_total' => 'nullable|numeric|min:0',
             'page' => 'nullable|integer|min:1',
             'per_page' => 'nullable|integer|min:1|max:200',
         ]);
