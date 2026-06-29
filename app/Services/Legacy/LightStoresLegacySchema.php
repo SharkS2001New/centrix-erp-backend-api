@@ -111,10 +111,18 @@ class LightStoresLegacySchema
     }
 
     /** List totals per POS sale day (order # is reused across dates). */
-    public static function posListLineTotalsSubquery(string $connection): Builder
-    {
-        return DB::connection($connection)
-            ->table(self::POS_LINES)
+    public static function posListLineTotalsSubquery(
+        string $connection,
+        ?string $fromDate = null,
+        ?string $toDate = null,
+    ): Builder {
+        $query = DB::connection($connection)->table(self::POS_LINES);
+
+        if ($fromDate || $toDate) {
+            self::applyMasterDateFilter($query, 'create_time', $fromDate, $toDate);
+        }
+
+        return $query
             ->selectRaw('order_num_ref AS order_num, create_time AS sale_date, COALESCE(SUM(amount), 0) AS order_total, COALESCE(SUM(product_vat), 0) AS total_vat')
             ->groupBy('order_num_ref', 'create_time');
     }
@@ -130,10 +138,18 @@ class LightStoresLegacySchema
             ->groupBy('order_num_ref');
     }
 
-    public static function mobileListLineTotalsSubquery(string $connection): Builder
-    {
-        return DB::connection($connection)
-            ->table(self::ROUTE_LINES)
+    public static function mobileListLineTotalsSubquery(
+        string $connection,
+        ?string $fromDate = null,
+        ?string $toDate = null,
+    ): Builder {
+        $query = DB::connection($connection)->table(self::ROUTE_LINES);
+
+        if ($fromDate || $toDate) {
+            self::applyMasterDateFilter($query, 'create_time', $fromDate, $toDate);
+        }
+
+        return $query
             ->selectRaw('order_no AS order_num, create_time AS sale_date, COALESCE(SUM(amount), 0) AS order_total, COALESCE(SUM(product_vat), 0) AS total_vat')
             ->groupBy('order_no', 'create_time');
     }

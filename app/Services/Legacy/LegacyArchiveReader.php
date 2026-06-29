@@ -260,10 +260,10 @@ class LegacyArchiveReader
     protected function applyLegacyDateRangeOnDateColumn($query, string $column, ?Carbon $from, ?Carbon $to): void
     {
         if ($from) {
-            $query->where($column, '>=', $from->toDateString());
+            $query->whereDate($column, '>=', $from->toDateString());
         }
         if ($to) {
-            $query->where($column, '<', $to->copy()->addDay()->toDateString());
+            $query->whereDate($column, '<=', $to->toDateString());
         }
     }
 
@@ -323,14 +323,14 @@ class LegacyArchiveReader
             ->unionAll($this->mobileSalesQuery($connection, $from, $to, $q, null, null, true, $totalFilters))
             ->unionAll($this->debtorSalesQuery($connection, $from, $to, $q, null, null, true, $totalFilters));
 
-        $total = (int) DB::connection($connection)
+        $scoped = DB::connection($connection)
             ->query()
-            ->fromSub($union, 'legacy_sales')
-            ->count();
+            ->fromSub($union, 'legacy_sales');
+        $this->applyLegacyDateRangeOnDateColumn($scoped, 'legacy_sales.create_time', $from, $to);
 
-        $rows = DB::connection($connection)
-            ->query()
-            ->fromSub($union, 'legacy_sales')
+        $total = (int) (clone $scoped)->count();
+
+        $rows = (clone $scoped)
             ->orderByDesc('create_time')
             ->orderByDesc('order_num')
             ->forPage($page, $perPage)
@@ -425,9 +425,11 @@ class LegacyArchiveReader
         bool $forUnion = false,
         array $totalFilters = [],
     ) {
+        $fromDate = $from?->toDateString();
+        $toDate = $to?->toDateString();
         $lineTotals = ($orderNum !== null && $saleDate !== null)
             ? LightStoresLegacySchema::posOrderLineTotalsSubquery($connection, $orderNum, $saleDate)
-            : LightStoresLegacySchema::posListLineTotalsSubquery($connection);
+            : LightStoresLegacySchema::posListLineTotalsSubquery($connection, $fromDate, $toDate);
         $walkIn = LightStoresLegacySchema::posListWalkInSubquery($connection);
         $users = LightStoresLegacySchema::USERS;
 
@@ -459,11 +461,11 @@ class LegacyArchiveReader
                 $sub->where('sm.order_num', 'like', "%{$orderQ}%")
                     ->orWhere('sc_ranked.customer_name', 'like', "%{$q}%")
                     ->orWhere('u.username', 'like', "%{$q}%");
-                $this->applyNumericOrderTotalSearch($sub, $q);
+                $this->applyNumericOrderTotalSearch($sub, $q, 'pos');
             });
         }
 
-        $this->applyOrderTotalFilters($query, $totalFilters);
+        $this->applyOrderTotalFilters($query, $totalFilters, 'pos');
 
         return $forUnion ? $query : $query->orderByDesc('sm.create_time')->orderByDesc('sm.order_num');
     }
@@ -478,9 +480,11 @@ class LegacyArchiveReader
         bool $forUnion = false,
         array $totalFilters = [],
     ) {
+        $fromDate = $from?->toDateString();
+        $toDate = $to?->toDateString();
         $lineTotals = ($orderNum !== null && $saleDate !== null)
             ? LightStoresLegacySchema::mobileOrderLineTotalsSubquery($connection, $orderNum, $saleDate)
-            : LightStoresLegacySchema::mobileListLineTotalsSubquery($connection);
+            : LightStoresLegacySchema::mobileListLineTotalsSubquery($connection, $fromDate, $toDate);
         $users = LightStoresLegacySchema::USERS;
 
         $query = DB::connection($connection)
@@ -512,11 +516,11 @@ class LegacyArchiveReader
                 $sub->where('rm.order_num', 'like', "%{$orderQ}%")
                     ->orWhere('c.customer_name', 'like', "%{$q}%")
                     ->orWhere('u.username', 'like', "%{$q}%");
-                $this->applyNumericOrderTotalSearch($sub, $q);
+                $this->applyNumericOrderTotalSearch($sub, $q, 'mobile');
             });
         }
 
-        $this->applyOrderTotalFilters($query, $totalFilters);
+        $this->applyOrderTotalFilters($query, $totalFilters, 'mobile');
 
         return $forUnion ? $query : $query->orderByDesc('rm.create_time')->orderByDesc('rm.order_num');
     }
@@ -563,11 +567,11 @@ class LegacyArchiveReader
                 $sub->where('dm.order_num', 'like', "%{$orderQ}%")
                     ->orWhere('c.customer_name', 'like', "%{$q}%")
                     ->orWhere('u.username', 'like', "%{$q}%");
-                $this->applyNumericOrderTotalSearch($sub, $q);
+                $this->applyNumericOrderTotalSearch($sub, $q, 'debtor');
             });
         }
 
-        $this->applyOrderTotalFilters($query, $totalFilters);
+        $this->applyOrderTotalFilters($query, $totalFilters, 'debtor');
 
         return $forUnion ? $query : $query->orderByDesc('dm.create_time')->orderByDesc('dm.order_num');
     }
@@ -594,29 +598,52 @@ class LegacyArchiveReader
     /**
      * @param  array{min: ?float, max: ?float, exact: ?float}  $totalFilters
      */
-    protected function applyOrderTotalFilters($query, array $totalFilters): void
+    protected function applyOrderTotalFilters($query, array $totalFilters, string $channel): void
     {
         $exact = $totalFilters['exact'] ?? null;
         $min = $totalFilters['min'] ?? null;
         $max = $totalFilters['max'] ?? null;
 
+        if ($exact === null && $min === null && $max === null) {
+            return;
+        }
+
+        $totalSql = $this->orderTotalSqlForChannel($channel);
         if ($exact !== null) {
-            $query->whereRaw('COALESCE(line_totals.order_total, 0) = ?', [$exact]);
+            $query->whereRaw("{$totalSql} = ?", [$exact]);
         }
         if ($min !== null) {
-            $query->whereRaw('COALESCE(line_totals.order_total, 0) >= ?', [$min]);
+            $query->whereRaw("{$totalSql} >= ?", [$min]);
         }
         if ($max !== null) {
-            $query->whereRaw('COALESCE(line_totals.order_total, 0) <= ?', [$max]);
+            $query->whereRaw("{$totalSql} <= ?", [$max]);
         }
     }
 
-    protected function applyNumericOrderTotalSearch($query, string $q): void
+    protected function applyNumericOrderTotalSearch($query, string $q, string $channel): void
     {
         $numericQ = str_replace([',', ' '], '', $q);
-        if ($numericQ !== '' && is_numeric($numericQ)) {
-            $query->orWhereRaw('COALESCE(line_totals.order_total, 0) = ?', [(float) $numericQ]);
+        if ($numericQ === '' || ! is_numeric($numericQ)) {
+            return;
         }
+
+        $totalSql = $this->orderTotalSqlForChannel($channel);
+        $query->orWhereRaw("{$totalSql} = ?", [(float) $numericQ]);
+    }
+
+    protected function orderTotalSqlForChannel(string $channel): string
+    {
+        $posLines = LightStoresLegacySchema::POS_LINES;
+        $routeLines = LightStoresLegacySchema::ROUTE_LINES;
+        $debtorLines = LightStoresLegacySchema::DEBTOR_LINES;
+        $debtorMasters = LightStoresLegacySchema::DEBTOR_MASTERS;
+
+        return match ($channel) {
+            'pos' => "(SELECT COALESCE(SUM(sp.amount), 0) FROM {$posLines} sp WHERE sp.order_num_ref = sm.order_num AND sp.create_time = sm.create_time)",
+            'mobile' => "(SELECT COALESCE(SUM(rod.amount), 0) FROM {$routeLines} rod WHERE rod.order_no = rm.order_num AND rod.create_time = rm.create_time)",
+            'debtor' => "(SELECT COALESCE(SUM(dp.amount), 0) FROM {$debtorLines} dp INNER JOIN {$debtorMasters} dm2 ON dm2.order_num = dp.order_num WHERE dm2.order_num = dm.order_num AND DATE(dm2.create_time) = DATE(dm.create_time))",
+            default => '0',
+        };
     }
 
     /**

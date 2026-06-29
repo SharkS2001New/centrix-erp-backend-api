@@ -103,6 +103,39 @@ class LegacyReturnTest extends TestCase
         $this->assertSame(0.0, (float) $sale->order_total);
     }
 
+    public function test_legacy_orders_list_marks_fully_returned_after_full_return(): void
+    {
+        $this->enableKraDevice();
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => true,
+                'message' => 'OK',
+                'invoice_number' => 'CN-LEG-FULL',
+                'cu-inv-no' => '00008889',
+                'Receipt Signature' => 'SIG-LEGACY-FULL',
+                'signature_link' => 'https://example.test/legacy-credit-full',
+                'serial_number' => 'DEJA02220240050',
+                'timestamp' => '2026-06-20T10:00:00',
+            ], 200),
+        ]);
+
+        $sale = $this->createLegacySale();
+
+        $this->postJson('/api/v1/legacy-returns', [
+            'sale_id' => $sale->id,
+            'kra_original_invoice_number' => '00007778',
+            'reason' => 'Full refund',
+            'full_return' => true,
+        ])->assertCreated();
+
+        $item = collect($this->getJson('/api/v1/legacy-orders')->assertOk()->json('data'))
+            ->firstWhere('id', $sale->id);
+
+        $this->assertNotNull($item);
+        $this->assertTrue($item['legacy_return_summary']['fully_returned']);
+        $this->assertTrue($item['legacy_return_summary']['has_returns']);
+    }
+
     public function test_legacy_return_rejects_when_kra_device_fails(): void
     {
         $this->enableKraDevice();
@@ -347,6 +380,8 @@ class LegacyReturnTest extends TestCase
                 'legacy_order_label' => 'POS-1000042',
                 'legacy_sale_date' => '2026-06-01',
                 'legacy_source' => 'pos_masters',
+                'legacy_order_total' => 200,
+                'legacy_preserve_amounts' => true,
             ],
         ]);
 

@@ -34,6 +34,9 @@ class LegacyOrdersController extends Controller
     public function show(Request $request, string $id)
     {
         $sale = $this->orders->findForUser($request->user(), (int) $id);
+        if ($request->boolean('for_print')) {
+            $sale = $this->orders->prepareSaleForPrint($sale);
+        }
         $kraHint = $this->returns->kraInvoiceHintForSale($sale);
 
         return response()->json(array_merge($sale->toArray(), [

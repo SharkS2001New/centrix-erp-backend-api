@@ -3,6 +3,7 @@
 namespace App\Services\Sales;
 
 use App\Models\CustomerReturn;
+use App\Models\CustomerReturnLine;
 use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Models\User;
@@ -109,6 +110,48 @@ class LegacyOrderService
         return $sale;
     }
 
+    public function prepareSaleForPrint(Sale $sale): Sale
+    {
+        if (! $sale->isLegacyImport()) {
+            return $sale;
+        }
+
+        $sale->loadMissing(['items.product.unit', 'customer']);
+
+        $returnLines = CustomerReturnLine::query()
+            ->whereHas('customerReturn', function (Builder $query) use ($sale) {
+                $query->where('sale_id', $sale->id)
+                    ->where('return_kind', 'legacy')
+                    ->where('status', 'approved');
+            })
+            ->get();
+
+        $bySaleItemId = $returnLines->groupBy('sale_item_id');
+        $returnedTotal = 0.0;
+
+        foreach ($sale->items as $item) {
+            $lines = $bySaleItemId->get($item->id, collect());
+            $returnedQty = (float) $lines->sum(fn (CustomerReturnLine $line) => (float) $line->return_qty);
+            $returnedAmount = (float) $lines->sum(fn (CustomerReturnLine $line) => (float) $line->amount);
+            if ($returnedQty <= 0 && $returnedAmount <= 0) {
+                continue;
+            }
+
+            $item->quantity = round((float) $item->quantity + $returnedQty, 4);
+            $item->amount = round((float) $item->amount + $returnedAmount, 2);
+            $returnedTotal += $returnedAmount;
+        }
+
+        $returnedTotal = round($returnedTotal, 2);
+        $remainingTotal = round((float) ($sale->order_total ?? 0), 2);
+        $originalTotal = $this->legacyOriginalOrderTotal($sale, $returnedTotal);
+        $sale->order_total = $originalTotal > 0 ? $originalTotal : round($remainingTotal + $returnedTotal, 2);
+        $sale->amount_paid = $sale->order_total;
+        $sale->payment_status = 'paid';
+
+        return $sale;
+    }
+
     public function deleteForUser(User $user, int $saleId): void
     {
         $sale = $this->baseQuery($user)->findOrFail($saleId);
@@ -176,7 +219,8 @@ class LegacyOrderService
         foreach ($sales as $sale) {
             $summary = $summaries->get($sale->id);
             $returnedTotal = round((float) ($summary->returned_total ?? 0), 2);
-            $orderTotal = round((float) ($sale->order_total ?? 0), 2);
+            $remainingTotal = round((float) ($sale->order_total ?? 0), 2);
+            $originalTotal = $this->legacyOriginalOrderTotal($sale, $returnedTotal);
             $returnCount = (int) ($summary->return_count ?? 0);
             $returnCountAll = (int) ($summary->return_count_all ?? 0);
 
@@ -184,11 +228,54 @@ class LegacyOrderService
                 'return_count' => $returnCount,
                 'return_count_all' => $returnCountAll,
                 'returned_total' => $returnedTotal,
+                'original_order_total' => $originalTotal,
                 'has_returns' => $returnCount > 0,
-                'fully_returned' => $returnCount > 0 && $orderTotal > 0 && $returnedTotal >= $orderTotal,
+                'fully_returned' => $this->isLegacyFullyReturned(
+                    $returnCount,
+                    $returnedTotal,
+                    $remainingTotal,
+                    $originalTotal,
+                ),
                 'can_delete' => $returnCountAll === 0,
                 'can_admin_delete' => (bool) $user->is_admin,
             ]);
         }
+    }
+
+    protected function legacyOriginalOrderTotal(Sale $sale, float $returnedTotal): float
+    {
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+
+        if (isset($meta['legacy_order_total']) && is_numeric($meta['legacy_order_total'])) {
+            return round((float) $meta['legacy_order_total'], 2);
+        }
+
+        $current = round((float) ($sale->order_total ?? 0), 2);
+        if ($returnedTotal > 0) {
+            return round($returnedTotal + $current, 2);
+        }
+
+        return $current;
+    }
+
+    protected function isLegacyFullyReturned(
+        int $returnCount,
+        float $returnedTotal,
+        float $remainingTotal,
+        float $originalTotal,
+    ): bool {
+        if ($returnCount <= 0) {
+            return false;
+        }
+
+        if ($remainingTotal <= 0.01) {
+            return true;
+        }
+
+        if ($originalTotal <= 0) {
+            return false;
+        }
+
+        return $returnedTotal >= ($originalTotal - 0.02);
     }
 }

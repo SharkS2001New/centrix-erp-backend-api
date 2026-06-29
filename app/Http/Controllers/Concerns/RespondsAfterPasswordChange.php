@@ -16,7 +16,7 @@ trait RespondsAfterPasswordChange
 
         $orgId = (int) ($user->organization_id ?? 0);
         if ($orgId > 0) {
-            OrganizationCache::forget($orgId, 'capabilities:user:'.(int) $user->id);
+            OrganizationCache::forget($orgId, 'capabilities:user:v2:'.(int) $user->id);
         }
 
         $passwordExpiry = app(PasswordExpiryService::class)->statusForUser($user);

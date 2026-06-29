@@ -37,7 +37,7 @@ class ErpCapabilitiesController extends Controller
 
         $payload = OrganizationCache::remember(
             $orgId,
-            'capabilities:user:'.(int) $user->id,
+            'capabilities:user:v2:'.(int) $user->id,
             (int) config('cache.organization_ttl', 3600),
             fn () => $this->buildCapabilitiesPayload($request),
         );
