@@ -40,7 +40,10 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
             'product_code' => $this->productCode,
             'quantity' => 5,
-        ])->assertCreated();
+        ])
+            ->assertCreated()
+            ->assertJsonStructure(['id', 'lines'])
+            ->assertJsonCount(1, 'lines');
 
         $this->assertDatabaseHas('stock_reservations', [
             'cart_id' => $cart['id'],
@@ -127,12 +130,13 @@ class SalesCartCheckoutStockTest extends TestCase
             'on_wholesale_retail' => 0,
         ])->assertCreated();
 
-        $retail = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+        $retailCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $this->productCode,
             'quantity' => 1,
             'on_wholesale_retail' => 1,
         ])->assertCreated()->json();
 
+        $retail = collect($retailCart['lines'] ?? [])->firstWhere('on_wholesale_retail', 1);
         $this->assertNotEmpty($retail['update_code'] ?? null);
 
         $res = $this->patchJson("/api/v1/sales/carts/{$cartId}/lines/{$retail['update_code']}", [
@@ -191,12 +195,12 @@ class SalesCartCheckoutStockTest extends TestCase
             'branch_id' => $this->user->branch_id,
         ])->json('id');
 
-        $line = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+        $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $this->productCode,
             'quantity' => 2,
         ])->assertCreated()->json();
 
-        $lineTotal = (float) ($line['amount'] ?? 0);
+        $lineTotal = (float) (($lineCart['lines'][0]['amount'] ?? 0));
 
         $this->patchJson("/api/v1/sales/carts/{$cartId}", [
             'order_discount' => 50,

@@ -17,6 +17,9 @@ use InvalidArgumentException;
  */
 trait HandlesInventory
 {
+    /** @var array<int, bool> */
+    protected array $allowBelowStockCache = [];
+
     protected function stockOnHand(string $productCode, int $branchId, string $location = 'shop'): float
     {
         $row = CurrentStock::where('product_code', $productCode)
@@ -53,12 +56,16 @@ trait HandlesInventory
             return false;
         }
 
+        if (array_key_exists($organizationId, $this->allowBelowStockCache)) {
+            return $this->allowBelowStockCache[$organizationId];
+        }
+
         $system = SystemSetting::query()
             ->where('organization_id', $organizationId)
             ->orderBy('id')
             ->first();
 
-        return (bool) ($system?->allow_below_stock ?? false);
+        return $this->allowBelowStockCache[$organizationId] = (bool) ($system?->allow_below_stock ?? false);
     }
 
     protected function postStockLedger(array $data, bool $allowBelowStock = false): InventoryTransaction
@@ -210,6 +217,7 @@ trait HandlesInventory
         ?int $cartId = null,
         bool $allowBelowStock = false,
         ?int $cartLineId = null,
+        ?\Illuminate\Support\Carbon $expiresAt = null,
     ): StockReservation {
         if (! $allowBelowStock) {
             $available = $this->stockNetAvailable($productCode, $branchId, $location);
@@ -228,8 +236,15 @@ trait HandlesInventory
             'cart_id' => $cartId,
             'cart_line_id' => $cartLineId,
             'reserved_by' => $userId,
-            'expires_at' => $this->reservationExpiresAt($userId),
+            'expires_at' => $expiresAt ?? $this->reservationExpiresAt($userId),
         ]);
+    }
+
+    protected function reservationExpiresAtForUser(User $user, array $inventorySettings): ?\Illuminate\Support\Carbon
+    {
+        $ttl = $this->cartReservationTtlMinutes($inventorySettings);
+
+        return $ttl > 0 ? now()->addMinutes($ttl) : null;
     }
 
     protected function reservationExpiresAt(int $userId): ?\Illuminate\Support\Carbon

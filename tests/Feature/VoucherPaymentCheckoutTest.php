@@ -52,12 +52,12 @@ class VoucherPaymentCheckoutTest extends TestCase
             'branch_id' => $this->user->branch_id,
         ])->json('id');
 
-        $line = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+        $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $productCode,
             'quantity' => 2,
         ])->assertCreated()->json();
 
-        $lineTotal = (float) ($line['amount'] ?? 0);
+        $lineTotal = (float) (($lineCart['lines'][0]['amount'] ?? 0));
         $this->assertGreaterThan(30, $lineTotal);
 
         $this->postJson("/api/v1/sales/carts/{$cartId}/payment/voucher", [
@@ -94,12 +94,12 @@ class VoucherPaymentCheckoutTest extends TestCase
             'branch_id' => $this->user->branch_id,
         ])->json('id');
 
-        $line = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+        $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $productCode,
             'quantity' => 1,
         ])->assertCreated()->json();
 
-        $lineTotal = (float) ($line['amount'] ?? 0);
+        $lineTotal = (float) (($lineCart['lines'][0]['amount'] ?? 0));
         $this->assertGreaterThan(10, $lineTotal);
 
         $this->postJson("/api/v1/sales/carts/{$cartId}/payment/voucher", [

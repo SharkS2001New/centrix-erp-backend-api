@@ -9,7 +9,7 @@ Schedule::command('erp:database-backup')
     ->appendOutputTo(storage_path('logs/backup.log'));
 
 Schedule::command('erp:release-expired-stock-reservations')
-    ->everyFiveMinutes()
+    ->everyMinute()
     ->withoutOverlapping();
 
 Schedule::command('erp:recover-stale-background-tasks')

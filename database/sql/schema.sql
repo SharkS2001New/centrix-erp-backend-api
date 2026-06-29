@@ -875,7 +875,8 @@ CREATE TABLE stock_reservations (
     INDEX idx_cart_id (cart_id),
     INDEX idx_cart_line_id (cart_line_id),
     INDEX idx_sale_id (sale_id),
-    INDEX idx_expires_at (expires_at)
+    INDEX idx_expires_at (expires_at),
+    INDEX idx_stock_reservations_availability (branch_id, product_code, stock_location, released_at, expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ================================================================

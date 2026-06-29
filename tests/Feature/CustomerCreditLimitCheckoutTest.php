@@ -73,12 +73,12 @@ class CustomerCreditLimitCheckoutTest extends TestCase
             'branch_id' => $this->user->branch_id,
         ])->json('id');
 
-        $line = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+        $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $productCode,
             'quantity' => 3,
         ])->assertCreated()->json();
 
-        $lineTotal = (float) ($line['amount'] ?? 0);
+        $lineTotal = (float) (($lineCart['lines'][0]['amount'] ?? 0));
         $this->assertGreaterThan(200, $lineTotal);
 
         $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
@@ -134,7 +134,7 @@ class CustomerCreditLimitCheckoutTest extends TestCase
             'branch_id' => $user->branch_id,
         ])->json('id');
 
-        $line = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+        $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
             'product_code' => $productCode,
             'quantity' => 1,
         ])->assertCreated()->json();
@@ -142,7 +142,7 @@ class CustomerCreditLimitCheckoutTest extends TestCase
         $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
             'customer_num' => $customer->customer_num,
             'payment_method_code' => 'CASH',
-            'pay_now' => (float) ($line['amount'] ?? 100),
+            'pay_now' => (float) (($lineCart['lines'][0]['amount'] ?? 100)),
         ])
             ->assertCreated()
             ->assertJsonPath('customer_num', $customer->customer_num)

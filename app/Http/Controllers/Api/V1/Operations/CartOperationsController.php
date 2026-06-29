@@ -44,9 +44,17 @@ class CartOperationsController extends Controller
 
     public function __construct(protected ErpContext $erp) {}
 
-    protected function cartResponse(TemporaryCart $cart, User $user, int $status = 200, array $extra = [])
-    {
-        return response()->json($this->presentCart($cart, $user, $extra), $status);
+    protected function cartResponse(
+        TemporaryCart $cart,
+        User $user,
+        int $status = 200,
+        array $extra = [],
+        bool $includeNextOrderNum = true,
+    ) {
+        return response()->json(
+            $this->presentCart($cart, $user, $extra, $includeNextOrderNum),
+            $status,
+        );
     }
 
     public function store(StoreCartRequest $request)
@@ -60,7 +68,6 @@ class CartOperationsController extends Controller
     public function show(int $cartId)
     {
         $user = request()->user();
-        $this->releaseExpiredReservations($cartId);
 
         return $this->cartResponse($this->findOwnedCart($cartId, $user), $user);
     }
@@ -95,34 +102,36 @@ class CartOperationsController extends Controller
             $cart->increment('update_no');
         }
 
-        return $this->cartResponse($cart->fresh('lines'), $request->user());
+        return $this->cartResponse($cart->fresh('lines'), $request->user(), includeNextOrderNum: false);
     }
 
     public function addLine(AddCartLineRequest $request, int $cartId)
     {
-        $cart = $this->findOwnedCart($cartId, $request->user());
-        $this->releaseExpiredReservations($cartId);
-        $gate = $this->erp->gateForUser($request->user());
-        $line = $this->addCartLine($cart, $request->validated(), $request->user(), $gate);
+        $user = $request->user();
+        $cart = $this->findOwnedCart($cartId, $user, withLines: false);
+        $gate = $this->erp->gateForUser($user);
+        $this->addCartLine($cart, $request->validated(), $user, $gate);
 
-        return response()->json($line, 201);
+        return $this->cartResponse($cart->fresh('lines'), $user, 201, includeNextOrderNum: false);
     }
 
     public function updateLine(UpdateCartLineRequest $request, int $cartId, string $lineRef)
     {
-        $cart = $this->findOwnedCart($cartId, $request->user());
-        $gate = $this->erp->gateForUser($request->user());
-        $line = $this->updateCartLine($cart, $lineRef, $request->validated(), $request->user(), $gate);
+        $user = $request->user();
+        $cart = $this->findOwnedCart($cartId, $user);
+        $gate = $this->erp->gateForUser($user);
+        $this->updateCartLine($cart, $lineRef, $request->validated(), $user, $gate);
 
-        return $this->cartResponse($cart->fresh('lines'), $request->user());
+        return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
     }
 
     public function deleteLine(int $cartId, string $lineRef)
     {
-        $cart = $this->findOwnedCart($cartId, request()->user());
+        $user = request()->user();
+        $cart = $this->findOwnedCart($cartId, $user);
         $this->removeCartLine($cart, $lineRef);
 
-        return $this->cartResponse($cart->fresh('lines'), request()->user());
+        return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
     }
 
     public function clear(int $cartId)
@@ -663,6 +672,7 @@ class CartOperationsController extends Controller
                 $cart->id,
                 $allowBelowStock,
                 $row->id,
+                $this->reservationExpiresAtForUser($user, $settings),
             );
         }
 
@@ -729,6 +739,7 @@ class CartOperationsController extends Controller
                 $cart->id,
                 $allowBelowStock,
                 $row->id,
+                $this->reservationExpiresAtForUser($user, $settings),
             );
         }
 
