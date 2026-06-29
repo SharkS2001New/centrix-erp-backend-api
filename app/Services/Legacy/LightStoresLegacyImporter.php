@@ -201,6 +201,7 @@ class LightStoresLegacyImporter
         \App\Services\Sales\LegacySalePresentation::stripCentrixUnitData($sale);
 
         return $sale;
+    }
 
     protected function useLegacyConnectionForOrganization(Organization $org): void
     {
@@ -878,11 +879,20 @@ class LightStoresLegacyImporter
     {
         $saleDate = date('Y-m-d', strtotime($saleDate));
         $customerNum = (int) $row->customer_num;
-        if (! Customer::query()->where('customer_num', $customerNum)->exists()) {
-            return null;
+        if (! Customer::query()
+            ->where('organization_id', $this->organization->id)
+            ->where('customer_num', $customerNum)
+            ->exists()) {
+            throw new RuntimeException(
+                "Cannot materialize this legacy sale: customer #{$customerNum} is not in Centrix. "
+                .'Import customers from the legacy database first (legacy:import-lightstores --master-data --only=customers).',
+            );
         }
 
-        $customer = Customer::query()->where('customer_num', $customerNum)->first();
+        $customer = Customer::query()
+            ->where('organization_id', $this->organization->id)
+            ->where('customer_num', $customerNum)
+            ->first();
         $lines = DB::connection($this->legacy)
             ->table(LightStoresLegacySchema::ROUTE_MASTERS.' as rm')
             ->join(LightStoresLegacySchema::ROUTE_LINES.' as rod', function ($join) {
@@ -896,7 +906,9 @@ class LightStoresLegacyImporter
             ->get(['rod.*']);
 
         if ($lines->isEmpty()) {
-            return null;
+            throw new RuntimeException(
+                "Legacy mobile sale #{$legacyOrderNum} on {$saleDate} has no line items in route_order_details.",
+            );
         }
 
         $this->assertLegacyProductsExist($lines, 'product_code');
@@ -947,8 +959,14 @@ class LightStoresLegacyImporter
     {
         $saleDate = date('Y-m-d', strtotime($saleDate));
         $customerNum = (int) $row->customer_num;
-        if (! Customer::query()->where('customer_num', $customerNum)->exists()) {
-            return null;
+        if (! Customer::query()
+            ->where('organization_id', $this->organization->id)
+            ->where('customer_num', $customerNum)
+            ->exists()) {
+            throw new RuntimeException(
+                "Cannot materialize this legacy sale: customer #{$customerNum} is not in Centrix. "
+                .'Import customers from the legacy database first (legacy:import-lightstores --master-data --only=customers).',
+            );
         }
 
         $lines = DB::connection($this->legacy)
@@ -961,7 +979,9 @@ class LightStoresLegacyImporter
             ->get(['dp.*']);
 
         if ($lines->isEmpty()) {
-            return null;
+            throw new RuntimeException(
+                "Legacy debtor sale #{$legacyOrderNum} on {$saleDate} has no line items in debtor_products.",
+            );
         }
 
         $debtorStatus = $this->mapLegacyDebtorPaymentStatus((int) ($row->payment_status ?? 1));
@@ -1014,7 +1034,9 @@ class LightStoresLegacyImporter
             ->get();
 
         if ($lines->isEmpty()) {
-            return null;
+            throw new RuntimeException(
+                "Legacy POS sale #{$legacyOrderNum} on {$saleDate} has no line items in sale_products.",
+            );
         }
 
         $this->assertLegacyProductsExist($lines, 'productsales_id');
@@ -1125,7 +1147,10 @@ class LightStoresLegacyImporter
                 continue;
             }
 
-            if (! Product::query()->where('product_code', $productCode)->exists()) {
+            if (! Product::query()
+                ->where('organization_id', $this->organization->id)
+                ->where('product_code', $productCode)
+                ->exists()) {
                 $missing[] = $productCode;
             }
         }
@@ -1310,11 +1335,49 @@ class LightStoresLegacyImporter
         $this->branch = Branch::query()
             ->where('organization_id', $this->organization->id)
             ->where('branch_code', 'HQ')
-            ->firstOrFail();
+            ->first();
+
+        if (! $this->branch) {
+            $this->branch = Branch::query()
+                ->where('organization_id', $this->organization->id)
+                ->where('is_active', true)
+                ->orderBy('id')
+                ->first();
+        }
+
+        if (! $this->branch) {
+            throw new RuntimeException(
+                'Cannot materialize legacy sale: no active branch found for this organization.',
+            );
+        }
+
         $this->migrationUser = User::query()
             ->where('organization_id', $this->organization->id)
             ->where('username', 'legacy.import')
-            ->firstOrFail();
+            ->first();
+
+        if (! $this->migrationUser) {
+            $this->migrationUser = User::query()
+                ->where('organization_id', $this->organization->id)
+                ->where('is_active', true)
+                ->where('is_admin', true)
+                ->orderBy('id')
+                ->first();
+        }
+
+        if (! $this->migrationUser) {
+            $this->migrationUser = User::query()
+                ->where('organization_id', $this->organization->id)
+                ->where('is_active', true)
+                ->orderBy('id')
+                ->first();
+        }
+
+        if (! $this->migrationUser) {
+            throw new RuntimeException(
+                'Cannot materialize legacy sale: no active user found for this organization.',
+            );
+        }
 
         $legacyUsers = DB::connection($this->legacy)->table('user')->whereNull('dlt_on')->get();
         foreach ($legacyUsers as $legacyUser) {
