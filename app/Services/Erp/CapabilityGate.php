@@ -174,7 +174,40 @@ class CapabilityGate
             }
         }
 
+        if (! $this->isPlatformShellOrganization() && $this->tradingTenantHasOperationalModule($cascaded)) {
+            $cascaded['admin'] = true;
+        }
+
         return $cascaded;
+    }
+
+    protected function isPlatformShellOrganization(): bool
+    {
+        if (! $this->organization) {
+            return false;
+        }
+
+        if (strtoupper((string) $this->organization->company_code) === 'PLATFORM') {
+            return true;
+        }
+
+        $settings = is_array($this->organization->module_settings)
+            ? $this->organization->module_settings
+            : [];
+
+        return (bool) ($settings['platform'] ?? false);
+    }
+
+    /** @param  array<string, bool>  $modules */
+    protected function tradingTenantHasOperationalModule(array $modules): bool
+    {
+        foreach (['sales', 'inventory', 'customers_suppliers', 'accounting', 'payments', 'hr_payroll', 'distribution'] as $key) {
+            if ($modules[$key] ?? false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @return array<string, bool> */
