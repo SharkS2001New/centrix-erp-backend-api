@@ -64,7 +64,16 @@ class LegacyOrderService
                     ->orWhere('customer_name_override', 'like', "%{$q}%")
                     ->orWhere('fulfillment_meta->legacy_order_label', 'like', "%{$q}%")
                     ->orWhere('fulfillment_meta->legacy_order_num', 'like', "%{$q}%");
+
+                $numericQ = str_replace([',', ' '], '', $q);
+                if ($numericQ !== '' && is_numeric($numericQ)) {
+                    $inner->orWhere('order_total', (float) $numericQ);
+                }
             });
+        }
+
+        if (isset($filters['order_total']) && $filters['order_total'] !== '') {
+            $query->where('order_total', (float) $filters['order_total']);
         }
 
         if (! empty($filters['has_returns'])) {

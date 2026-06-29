@@ -248,6 +248,41 @@ class LegacyReturnTest extends TestCase
         $this->assertDatabaseMissing('credit_notes', ['customer_return_id' => $approved->id]);
     }
 
+    public function test_legacy_orders_can_filter_by_order_total(): void
+    {
+        $sale = $this->createLegacySale();
+        $sale->update(['order_total' => 12500]);
+
+        $other = Sale::query()
+            ->where('organization_id', $sale->organization_id)
+            ->where('id', '!=', $sale->id)
+            ->firstOrFail();
+        $other->update([
+            'fulfillment_meta' => [
+                'legacy_import' => true,
+                'legacy_order_num' => 1000099,
+                'legacy_order_label' => 'POS-1000099',
+                'legacy_sale_date' => '2026-06-01',
+                'legacy_source' => 'pos_masters',
+            ],
+            'order_total' => 45000,
+        ]);
+
+        $ids = fn (array $query) => collect(
+            $this->getJson('/api/v1/legacy-orders?' . http_build_query($query))
+                ->assertOk()
+                ->json('data')
+        )->pluck('id')->all();
+
+        $this->assertContains($sale->id, $ids(['min_order_total' => 10000]));
+        $this->assertNotContains($other->id, $ids(['min_order_total' => 20000]));
+        $this->assertContains($sale->id, $ids(['max_order_total' => 20000]));
+        $this->assertNotContains($other->id, $ids(['max_order_total' => 20000]));
+        $this->assertContains($sale->id, $ids(['min_order_total' => 10000, 'max_order_total' => 20000]));
+        $this->assertSame([$sale->id], $ids(['order_total' => 12500]));
+        $this->assertContains($sale->id, $ids(['q' => '12500']));
+    }
+
     public function test_normal_sales_list_excludes_legacy_materialized_orders(): void
     {
         $legacy = $this->createLegacySale();

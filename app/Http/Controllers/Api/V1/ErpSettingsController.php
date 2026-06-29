@@ -564,7 +564,11 @@ class ErpSettingsController extends Controller
         ]);
 
         if (! $user->is_super_admin) {
-            $data = $this->platformConfig->filterOrgManagerFinancePayload($data);
+            $data = $this->platformConfig->filterOrgManagerFinancePayload($data, $gate);
+        }
+
+        if (array_key_exists('kra_pin_number', $data) && trim((string) $data['kra_pin_number']) === '********') {
+            unset($data['kra_pin_number']);
         }
 
         if (! empty($data['enable_kra_device'])) {
@@ -583,10 +587,8 @@ class ErpSettingsController extends Controller
             }
         }
 
-        if (array_key_exists('mpesa', $data) && is_array($data['mpesa']) && ! $gate->mpesaStkPlatformEnabled()) {
-            throw ValidationException::withMessages([
-                'mpesa' => ['M-Pesa STK Push is not enabled for this organization by the platform administrator.'],
-            ]);
+        if (! $user->is_super_admin && array_key_exists('mpesa', $data) && is_array($data['mpesa']) && ! $gate->mpesaStkPlatformEnabled()) {
+            unset($data['mpesa']);
         }
 
         $current = $gate->moduleSettings('finance');
@@ -1023,10 +1025,6 @@ class ErpSettingsController extends Controller
 
         if (! $gate->mpesaStkPlatformEnabled()) {
             unset($finance['mpesa'], $finance['mpesa_status']);
-        }
-
-        if (! empty($finance['kra_pin_number'])) {
-            $finance['kra_pin_number'] = '********';
         }
 
         return $finance;

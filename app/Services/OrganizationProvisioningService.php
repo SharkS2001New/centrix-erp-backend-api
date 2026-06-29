@@ -220,6 +220,10 @@ class OrganizationProvisioningService
             }
         }
 
+        if ($this->tradingTenantHasOperationalModule($cascaded)) {
+            $sparse['admin'] = true;
+        }
+
         // Full module maps (legacy provisioning) can persist false report bundles even when
         // the parent domain is on. Only honor explicit report disables from sparse maps.
         $isSparseMap = count($input) < (int) (count($moduleKeys) / 2);
@@ -237,6 +241,18 @@ class OrganizationProvisioningService
         }
 
         return $sparse === [] ? null : $sparse;
+    }
+
+    /** @param  array<string, bool>  $modules */
+    protected function tradingTenantHasOperationalModule(array $modules): bool
+    {
+        foreach (['sales', 'inventory', 'customers_suppliers', 'accounting', 'payments', 'hr_payroll', 'distribution'] as $key) {
+            if ($modules[$key] ?? false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public function syncModuleSettingsFromEnabledModules(Organization $org): Organization

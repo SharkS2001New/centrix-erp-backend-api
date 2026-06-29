@@ -87,6 +87,70 @@ class TenantOrganizationSettingsTest extends TestCase
         $this->assertSame((bool) ($before['enable_kra_integration'] ?? true), (bool) ($after['enable_kra_integration'] ?? true));
     }
 
+    public function test_finance_settings_expose_shop_kra_pin_to_org_admin(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $org = \App\Models\Organization::findOrFail($orgAdmin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_integration' => true,
+            'enable_kra_device' => true,
+            'kra_pin_number' => 'P052177271G',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $this->getJson('/api/v1/erp/settings/finance')
+            ->assertOk()
+            ->assertJsonPath('finance.kra_pin_number', 'P052177271G');
+
+        $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->assertJsonPath('module_settings.finance.kra_pin_number', '********');
+    }
+
+    public function test_org_admin_can_save_finance_settings_when_platform_mpesa_stk_disabled(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $org = \App\Models\Organization::findOrFail($orgAdmin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_mpesa_stk' => false,
+            'enable_kra_integration' => true,
+            'enable_kra_device' => true,
+            'kra_device_ip' => '192.168.1.50:8010',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+            'default_submit_kra' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $this->patchJson('/api/v1/erp/settings/finance', [
+            'enable_kra_device' => true,
+            'kra_device_ip' => '192.168.1.50:8010',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+            'default_submit_kra' => true,
+            'mpesa' => [
+                'enable_stk_push' => true,
+                'env' => 'sandbox',
+                'consumer_key' => 'ignored-key',
+                'shortcode' => '600000',
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('finance.default_submit_kra', true)
+            ->assertJsonPath('finance.kra_pin_number', 'P052177271G');
+
+        $org->refresh();
+        $this->assertTrue((bool) ($org->module_settings['finance']['default_submit_kra'] ?? false));
+        $this->assertSame('P052177271G', $org->module_settings['finance']['kra_pin_number'] ?? null);
+        $this->assertNotSame('ignored-key', $org->module_settings['finance']['mpesa']['consumer_key'] ?? null);
+    }
+
     public function test_cashier_cannot_access_organization_settings(): void
     {
         $cashier = User::where('username', 'cashier')->firstOrFail();

@@ -162,45 +162,45 @@ Route::prefix('v1')->group(function () {
         Route::get('erp/profiles', [ErpCapabilitiesController::class, 'profiles'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])
-            ->middleware(['erp.module:admin', 'erp.module:sales', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
-            ->middleware(['erp.module:admin', 'erp.module:sales', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
         Route::get('erp/settings/distribution', [ErpSettingsController::class, 'distribution'])
-            ->middleware(['erp.module:admin', 'erp.module:distribution', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:distribution', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/distribution', [ErpSettingsController::class, 'updateDistribution'])
-            ->middleware(['erp.module:admin', 'erp.module:distribution', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:distribution', 'erp.permission:admin.manage']);
         Route::get('erp/settings/inventory', [ErpSettingsController::class, 'inventory'])
-            ->middleware(['erp.module:admin', 'erp.module:inventory', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:inventory', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/inventory', [ErpSettingsController::class, 'updateInventory'])
-            ->middleware(['erp.module:admin', 'erp.module:inventory', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:inventory', 'erp.permission:admin.manage']);
         Route::get('erp/settings/finance', [ErpSettingsController::class, 'finance'])
-            ->middleware(['erp.module:admin', 'erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
-            ->middleware(['erp.module:admin', 'erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
         Route::get('erp/settings/ai', [AiSettingsController::class, 'show'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/ai', [AiSettingsController::class, 'update'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.permission:admin.manage']);
         Route::get('erp/settings/general', [ErpSettingsController::class, 'general'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/general', [ErpSettingsController::class, 'updateGeneral'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.permission:admin.manage']);
         Route::get('erp/settings/notifications', [ErpSettingsController::class, 'notifications'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/notifications', [ErpSettingsController::class, 'updateNotifications'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.permission:admin.manage']);
         Route::get('erp/settings/procurement', [ErpSettingsController::class, 'procurement'])
-            ->middleware(['erp.module:admin', 'erp.module:customers_suppliers', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:customers_suppliers', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/procurement', [ErpSettingsController::class, 'updateProcurement'])
-            ->middleware(['erp.module:admin', 'erp.module:customers_suppliers', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:customers_suppliers', 'erp.permission:admin.manage']);
         Route::get('erp/settings/security', [ErpSettingsController::class, 'security'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/security', [ErpSettingsController::class, 'updateSecurity'])
-            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+            ->middleware(['erp.permission:admin.manage']);
         Route::get('erp/settings/hr', [ErpSettingsController::class, 'hr'])
-            ->middleware(['erp.module:admin', 'erp.module:hr_payroll', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:hr_payroll', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/hr', [ErpSettingsController::class, 'updateHr'])
-            ->middleware(['erp.module:admin', 'erp.module:hr_payroll', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:hr_payroll', 'erp.permission:admin.manage']);
 
         Route::get('admin/organizations/provision-options', [OrganizationProvisionController::class, 'options'])
             ->middleware(['erp.super_admin']);

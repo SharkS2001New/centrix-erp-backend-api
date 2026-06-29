@@ -227,7 +227,7 @@ class OrganizationPlatformConfigService
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
-    public function filterOrgManagerFinancePayload(array $data): array
+    public function filterOrgManagerFinancePayload(array $data, ?CapabilityGate $gate = null): array
     {
         foreach ($this->platformControlledFinanceKeys() as $key) {
             unset($data[$key]);
@@ -237,8 +237,12 @@ class OrganizationPlatformConfigService
             unset($data['enable_kra_device'], $data['kra_device_ip'], $data['kra_serial_number'], $data['kra_pin_number']);
         }
 
-        if (isset($data['mpesa']) && is_array($data['mpesa']) && ! $this->mpesaStkAllowedForPayload($data)) {
-            unset($data['mpesa']);
+        if (isset($data['mpesa']) && is_array($data['mpesa'])) {
+            if ($gate && ! $gate->mpesaStkPlatformEnabled()) {
+                unset($data['mpesa']);
+            } elseif (! $this->mpesaStkAllowedForPayload($data)) {
+                unset($data['mpesa']);
+            }
         }
 
         return $data;
