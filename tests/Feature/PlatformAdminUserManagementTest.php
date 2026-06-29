@@ -37,4 +37,36 @@ class PlatformAdminUserManagementTest extends TestCase
             'client_id' => 'WEB_TEST',
         ])->assertOk();
     }
+
+    public function test_super_admin_can_create_tenant_user_via_nested_admin_route(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $tenantUser = User::where('username', 'admin')->firstOrFail();
+        $orgId = (int) $tenantUser->organization_id;
+
+        $response = $this->postJson("/api/v1/admin/organizations/{$orgId}/users", [
+            'full_name' => 'Platform Created User',
+            'username' => 'platformcreated',
+            'email' => null,
+            'password' => 'Password123',
+            'access_scope' => 'org',
+            'branch_id' => $tenantUser->branch_id,
+            'role_id' => $tenantUser->role_id,
+            'must_change_password' => true,
+        ]);
+
+        $response->assertCreated();
+        $response->assertJsonPath('username', 'platformcreated');
+
+        $created = User::query()
+            ->where('organization_id', $orgId)
+            ->where('username', 'platformcreated')
+            ->first();
+
+        $this->assertNotNull($created);
+        $this->assertSame('Platform Created User', $created->full_name);
+        $this->assertTrue($created->must_change_password);
+    }
 }
