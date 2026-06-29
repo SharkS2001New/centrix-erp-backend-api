@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\PermissionMatrixService;
 use Illuminate\Http\Request;
@@ -100,6 +101,8 @@ class RoleController extends BaseResourceController
                 ]);
             }
         });
+
+        CapabilitiesCacheInvalidator::forRole($role->fresh());
 
         return $this->permissions($resourceId);
     }

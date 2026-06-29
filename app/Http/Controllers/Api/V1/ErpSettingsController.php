@@ -67,6 +67,7 @@ class ErpSettingsController extends Controller
             'point_cash_value',
             'points_earn_per_kes',
             'allow_edit_unit_price',
+            'allow_pos_edit_unit_price',
             'enable_barcode_scanner',
             'default_tax_rate',
             'enable_mpesa_amount',
@@ -86,6 +87,7 @@ class ErpSettingsController extends Controller
             'enable_checkout_customer_name',
             'retail_shop_wholesale_store_stock',
             'add_route_markup_prices',
+            'backoffice_order_type_mode',
             'pos_order_type_mode',
             'enable_mobile_orders',
             'mobile_enable_checkout_location_verification',
@@ -116,6 +118,7 @@ class ErpSettingsController extends Controller
             'allow_negative_stock' => 'sometimes|boolean',
             'other_bank_name' => 'sometimes|string|max:100',
             'pos_order_type_mode' => 'sometimes|in:normal,route,toggle',
+            'backoffice_order_type_mode' => 'sometimes|in:normal,route,toggle',
             'order_document_type' => 'sometimes|in:receipt,invoice,both',
             'invoice_valid_days' => 'sometimes|integer|min:0|max:365',
             'order_workflow' => 'sometimes|array',
@@ -155,7 +158,7 @@ class ErpSettingsController extends Controller
             if (array_key_exists($key, $rules)) {
                 continue;
             }
-            if (in_array($key, ['other_bank_name', 'pos_order_type_mode', 'order_document_type'], true)) {
+            if (in_array($key, ['other_bank_name', 'pos_order_type_mode', 'backoffice_order_type_mode', 'order_document_type'], true)) {
                 continue;
             }
             if (in_array($key, ['point_cash_value', 'points_earn_per_kes'], true)) {
@@ -197,6 +200,16 @@ class ErpSettingsController extends Controller
 
         if (empty($nextSales['add_route_markup_prices'])) {
             $nextSales['pos_order_type_mode'] = 'normal';
+            $nextSales['backoffice_order_type_mode'] = 'normal';
+        } elseif (
+            empty($nextSales['backoffice_order_type_mode'])
+            || ! in_array($nextSales['backoffice_order_type_mode'], ['normal', 'route', 'toggle'], true)
+        ) {
+            $nextSales['backoffice_order_type_mode'] = 'toggle';
+        }
+
+        if (empty($nextSales['allow_edit_unit_price'])) {
+            $nextSales['allow_pos_edit_unit_price'] = false;
         }
 
         if (empty($nextSales['mobile_enable_checkout_location_verification'])) {

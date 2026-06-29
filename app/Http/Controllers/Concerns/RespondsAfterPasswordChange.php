@@ -6,7 +6,6 @@ use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
 use App\Models\User;
 use App\Services\Auth\PasswordExpiryService;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
-use App\Services\Cache\OrganizationCache;
 use Illuminate\Http\JsonResponse;
 
 trait RespondsAfterPasswordChange
@@ -17,7 +16,7 @@ trait RespondsAfterPasswordChange
 
         $orgId = (int) ($user->organization_id ?? 0);
         if ($orgId > 0) {
-            OrganizationCache::forget($orgId, 'capabilities:user:v2:'.(int) $user->id);
+            CapabilitiesCacheInvalidator::forOrganization($orgId);
         }
 
         $passwordExpiry = app(PasswordExpiryService::class)->statusForUser($user);

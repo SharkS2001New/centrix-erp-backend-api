@@ -16,6 +16,7 @@ use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Auth\UserLoginService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Auth\UsernameValidator;
+use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\PermissionMatrixService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -143,6 +144,8 @@ class UserController extends BaseResourceController
             $model = app(UserLoginService::class)->disableLogin($model);
         }
 
+        CapabilitiesCacheInvalidator::forUser($model->fresh());
+
         return response()->json($model);
     }
 
@@ -195,6 +198,8 @@ class UserController extends BaseResourceController
             $data['granted_permission_ids'] ?? [],
             $data['denied_permission_ids'] ?? [],
         );
+
+        CapabilitiesCacheInvalidator::forUser($user);
 
         return $this->permissions($resourceId);
     }

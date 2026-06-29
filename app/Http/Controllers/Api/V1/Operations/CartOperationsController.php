@@ -24,7 +24,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\OrderNumberAllocator;
-use App\Services\Sales\PosLinePricingService;
+use App\Support\SalesCheckoutSettings;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
@@ -628,7 +628,7 @@ class CartOperationsController extends Controller
             $discountGiven,
             $cart->route_id ? (int) $cart->route_id : null,
             array_key_exists('unit_price', $line) ? (float) $line['unit_price'] : null,
-            ! empty($salesSettings['allow_edit_unit_price']),
+            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
 
         $product->loadMissing('vat');
@@ -720,7 +720,7 @@ class CartOperationsController extends Controller
             $discountGiven,
             $cart->route_id ? (int) $cart->route_id : null,
             array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : null,
-            ! empty($salesSettings['allow_edit_unit_price']),
+            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
 
         $settings = $gate->moduleSettings('inventory');

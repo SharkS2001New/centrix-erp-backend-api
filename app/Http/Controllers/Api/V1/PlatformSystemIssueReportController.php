@@ -4,19 +4,35 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\SystemIssueReport;
+use App\Services\SystemIssues\SystemIssueDigestService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
 class PlatformSystemIssueReportController extends Controller
 {
+    public function __construct(protected SystemIssueDigestService $digest) {}
+
     public function index(Request $request)
     {
+        $threshold = $this->digest->repeatThreshold();
+        $windowDays = $this->digest->repeatWindowDays();
+        $since = now()->subDays($windowDays);
+        $highPriority = $this->digest->highPriorityFingerprints();
+
+        $occurrenceSub = SystemIssueReport::query()
+            ->from('system_issue_reports as sis_counts')
+            ->selectRaw('count(*)')
+            ->whereColumn('sis_counts.fingerprint', 'system_issue_reports.fingerprint')
+            ->where('sis_counts.status', '!=', 'resolved')
+            ->where('sis_counts.created_at', '>=', $since);
+
         $query = SystemIssueReport::query()
             ->with([
                 'organization:id,org_name,company_code',
                 'user:id,username,full_name',
             ])
-            ->orderByDesc('created_at');
+            ->select('system_issue_reports.*')
+            ->selectSub($occurrenceSub, 'occurrence_count');
 
         if ($request->filled('status') && $request->input('status') !== 'all') {
             $query->where('status', $request->input('status'));
@@ -24,6 +40,14 @@ class PlatformSystemIssueReportController extends Controller
 
         if ($request->filled('kind') && $request->input('kind') !== 'all') {
             $query->where('kind', $request->input('kind'));
+        }
+
+        if ($request->input('priority') === 'high') {
+            if ($highPriority === []) {
+                $query->whereRaw('0 = 1');
+            } else {
+                $query->whereIn('fingerprint', $highPriority);
+            }
         }
 
         if ($request->filled('organization_id')) {
@@ -48,9 +72,34 @@ class PlatformSystemIssueReportController extends Controller
             });
         }
 
+        if ($highPriority !== []) {
+            $placeholders = implode(',', array_fill(0, count($highPriority), '?'));
+            $query->orderByRaw(
+                "CASE WHEN fingerprint IN ({$placeholders}) THEN 0 ELSE 1 END",
+                $highPriority,
+            );
+        }
+
+        $query->orderByDesc('occurrence_count')
+            ->orderByDesc('created_at');
+
         $perPage = min((int) $request->input('per_page', 25), 100);
 
-        return response()->json($query->paginate($perPage));
+        $paginator = $query->paginate($perPage);
+        $paginator->getCollection()->transform(function (SystemIssueReport $report) use ($highPriority, $threshold) {
+            $count = (int) ($report->occurrence_count ?? 1);
+            $report->setAttribute('occurrence_count', $count);
+            $report->setAttribute(
+                'is_high_priority',
+                $report->fingerprint
+                    && in_array($report->fingerprint, $highPriority, true)
+                    && $count >= $threshold,
+            );
+
+            return $report;
+        });
+
+        return response()->json($paginator);
     }
 
     public function show(string $id)
@@ -62,6 +111,15 @@ class PlatformSystemIssueReportController extends Controller
                 'resolvedBy:id,username,full_name',
             ])
             ->findOrFail($id);
+
+        $count = $report->fingerprint
+            ? $this->digest->occurrenceCountForFingerprint($report->fingerprint)
+            : 1;
+        $report->setAttribute('occurrence_count', $count);
+        $report->setAttribute(
+            'is_high_priority',
+            $count >= $this->digest->repeatThreshold(),
+        );
 
         return response()->json($report);
     }
@@ -102,14 +160,6 @@ class PlatformSystemIssueReportController extends Controller
 
     public function summary()
     {
-        $open = SystemIssueReport::query()->where('status', 'open')->count();
-        $acknowledged = SystemIssueReport::query()->where('status', 'acknowledged')->count();
-        $today = SystemIssueReport::query()->whereDate('created_at', today())->count();
-
-        return response()->json([
-            'open' => $open,
-            'acknowledged' => $acknowledged,
-            'today' => $today,
-        ]);
+        return response()->json($this->digest->summaryCounts());
     }
 }

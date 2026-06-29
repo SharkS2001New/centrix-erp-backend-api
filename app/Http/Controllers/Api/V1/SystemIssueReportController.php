@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\SystemIssueReport;
+use App\Services\SystemIssues\SystemIssueDigestService;
+use App\Services\SystemIssues\SystemIssueFingerprint;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -43,6 +45,11 @@ class SystemIssueReportController extends Controller
             'organization_id' => $user->organization_id,
             'user_id' => $user->id,
             'kind' => $data['kind'],
+            'fingerprint' => SystemIssueFingerprint::forReport(
+                $data['kind'],
+                $data['message'],
+                $data['api_path'] ?? null,
+            ),
             'status' => 'open',
             'message' => $data['message'],
             'user_notes' => $data['user_notes'] ?? null,

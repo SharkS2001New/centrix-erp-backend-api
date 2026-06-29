@@ -5,7 +5,7 @@ namespace App\Services;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Auth\UserLoginService;
-use App\Services\Cache\OrganizationCache;
+use App\Services\Cache\CapabilitiesCacheInvalidator;
 use Illuminate\Support\Facades\DB;
 
 class OrganizationDeprovisioningService
@@ -23,7 +23,7 @@ class OrganizationDeprovisioningService
             $org->delete();
         });
 
-        OrganizationCache::flush((int) $org->id);
+        CapabilitiesCacheInvalidator::forOrganization((int) $org->id);
     }
 
     protected function retireCompanyCode(Organization $org): string

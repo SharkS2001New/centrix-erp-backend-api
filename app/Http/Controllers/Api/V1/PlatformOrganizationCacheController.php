@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
+use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Cache\OrganizationCache;
 use Illuminate\Http\Request;
 
@@ -28,23 +29,15 @@ class PlatformOrganizationCacheController extends Controller
     {
         $org = $this->findTenantOrganization($organization);
 
-        if (! OrganizationCache::supportsTags()) {
-            return response()->json([
-                'message' => 'Organization cache flush requires Redis (CACHE_STORE=redis).',
-                'organization_id' => $org->id,
-                'cleared' => false,
-            ], 422);
-        }
-
-        $cleared = OrganizationCache::flush((int) $org->id);
+        CapabilitiesCacheInvalidator::forOrganization((int) $org->id);
 
         return response()->json([
-            'message' => $cleared
-                ? 'Organization cache cleared.'
-                : 'No tagged cache entries were found for this organization.',
+            'message' => 'Organization capabilities cache cleared.',
             'organization_id' => $org->id,
             'company_code' => $org->company_code,
-            'cleared' => $cleared,
+            'cleared' => true,
+            'capabilities_version' => OrganizationCache::capabilitiesVersion((int) $org->id),
+            'redis_tags_supported' => OrganizationCache::supportsTags(),
         ]);
     }
 

@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Models\User;
-use App\Services\Cache\OrganizationCache;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -24,11 +23,9 @@ class PlatformOrganizationCacheTest extends TestCase
 
         $response = $this->postJson("/api/v1/admin/organizations/{$orgId}/cache/clear");
 
-        if (OrganizationCache::supportsTags()) {
-            $response->assertOk()->assertJsonPath('cleared', true);
-        } else {
-            $response->assertStatus(422);
-        }
+        $response->assertOk()
+            ->assertJsonPath('cleared', true)
+            ->assertJsonPath('organization_id', $orgId);
     }
 
     public function test_non_super_admin_cannot_clear_organization_cache(): void

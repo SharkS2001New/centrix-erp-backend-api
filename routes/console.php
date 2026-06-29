@@ -15,3 +15,8 @@ Schedule::command('erp:release-expired-stock-reservations')
 Schedule::command('erp:recover-stale-background-tasks')
     ->everyFiveMinutes()
     ->withoutOverlapping();
+
+Schedule::command('erp:send-system-issue-digest')
+    ->dailyAt(config('system_issues.digest_time', '18:00'))
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/system-issue-digest.log'));

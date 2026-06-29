@@ -18,6 +18,7 @@ class SystemIssueReport extends Model
         'organization_id',
         'user_id',
         'kind',
+        'fingerprint',
         'status',
         'message',
         'user_notes',
