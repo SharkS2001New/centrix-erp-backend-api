@@ -8,6 +8,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
+use App\Services\Erp\ErpContext;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
@@ -17,6 +18,8 @@ class MobileSalesService
     public function __construct(
         protected UserAccessService $access,
         protected UserMobileOrderScopeService $mobileScope,
+        protected ErpContext $erp,
+        protected PosOrderEditService $posOrderEdit,
     ) {}
 
     /**
@@ -249,20 +252,11 @@ class MobileSalesService
 
     public function canRestoreSaleToCart(Sale $sale, User $user): bool
     {
-        if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
-            return false;
-        }
-
-        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
-            return false;
-        }
-
-        $editable = match ($sale->channel) {
-            'mobile' => ['held', 'draft', 'booked', 'unpaid', 'pending', 'paid', 'pending_payment', 'completed'],
-            default => ['held'],
-        };
-
-        return in_array((string) $sale->status, $editable, true);
+        return $this->posOrderEdit->canRestoreSaleToCart(
+            $sale,
+            $user,
+            $this->erp->gateForUser($user),
+        );
     }
 
     /** @param  array<string, mixed>  $data */

@@ -103,4 +103,34 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertSame('cancelled', $service->alignStatusToPipeline('cancelled', 'backend'));
         $this->assertContains('completed', $service->statusesForQueueFilter('paid', 'backend'));
     }
+
+    public function test_restorable_to_cart_statuses_follow_org_terminal_and_checkout_re_edit(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'order_workflow' => [
+                        'steps' => [
+                            ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+                            ['status' => 'paid', 'label' => 'Paid', 'enabled' => true],
+                        ],
+                        'checkout' => [
+                            'full_paid' => ['pos' => 'paid', 'mobile' => 'paid', 'backend' => 'paid'],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $service = OrderWorkflowService::forGate((new \App\Services\Erp\CapabilityGate($org))->forOrganization($org));
+
+        $withoutReEdit = $service->restorableToCartStatuses('pos', false);
+        $withReEdit = $service->restorableToCartStatuses('pos', true);
+
+        $this->assertContains('unpaid', $withoutReEdit);
+        $this->assertNotContains('paid', $withoutReEdit);
+        $this->assertContains('paid', $withReEdit);
+        $this->assertTrue($service->isRestorableToCartStatus('paid', 'pos', true));
+        $this->assertFalse($service->isRestorableToCartStatus('paid', 'pos', false));
+    }
 }

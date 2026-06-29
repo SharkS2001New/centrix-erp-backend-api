@@ -750,6 +750,71 @@ class LegacyArchiveReader
     }
 
     /**
+     * Print-ready sale payload from archive data (no Centrix materialization).
+     *
+     * @return array<string, mixed>
+     */
+    public function saleForPrint(Organization $org, string $channel, int|string $legacyOrderNum, string $saleDate): array
+    {
+        $detail = $this->saleDetail($org, $channel, $legacyOrderNum, $saleDate);
+        $channel = (string) ($detail['archive_channel'] ?? $detail['channel'] ?? $channel);
+        $completedAt = $detail['sale_date'] ?? $detail['legacy_sale_date'] ?? null;
+
+        $items = [];
+        foreach ($detail['lines'] ?? [] as $index => $line) {
+            $items[] = [
+                'line_no' => $index + 1,
+                'product_code' => $line['product_code'] ?? null,
+                'quantity' => $line['quantity'] ?? 0,
+                'uom' => $line['uom'] ?? null,
+                'selling_price' => $line['unit_price'] ?? 0,
+                'unit_price' => $line['unit_price'] ?? 0,
+                'discount_given' => $line['discount'] ?? 0,
+                'product_vat' => $line['vat'] ?? 0,
+                'amount' => $line['amount'] ?? 0,
+                'product' => [
+                    'product_name' => $line['product_name'] ?? null,
+                ],
+            ];
+        }
+
+        $isCredit = (bool) ($detail['is_credit_sale'] ?? ($channel === 'debtor'));
+        $orderTotal = round((float) ($detail['order_total'] ?? 0), 2);
+
+        return [
+            'channel' => $channel,
+            'completed_at' => $completedAt,
+            'created_at' => $completedAt,
+            'order_total' => $orderTotal,
+            'total_vat' => round((float) ($detail['total_vat'] ?? 0), 2),
+            'amount_paid' => $isCredit ? 0.0 : $orderTotal,
+            'payment_status' => $isCredit ? 'unpaid' : 'paid',
+            'customer_num' => $detail['customer_num'] ?? null,
+            'customer_name_override' => $detail['customer_name'] ?? null,
+            'cash' => (int) ($detail['cash'] ?? 0),
+            'mpesa_amount' => (int) ($detail['mpesa_amount'] ?? 0),
+            'payment_method_code' => match ($channel) {
+                'debtor' => 'CREDIT',
+                'pos' => strtoupper((string) ($detail['payment_method'] ?? 'CASH')),
+                default => 'CASH',
+            },
+            'is_credit_sale' => $isCredit,
+            'cashier_name' => $detail['created_by'] ?? null,
+            'items' => $items,
+            'fulfillment_meta' => [
+                'legacy_import' => true,
+                'legacy_archive_print' => true,
+                'legacy_order_label' => $detail['legacy_order_label'] ?? null,
+                'legacy_order_num' => $detail['legacy_order_num'] ?? null,
+                'legacy_sale_date' => $detail['legacy_sale_date'] ?? null,
+                'legacy_source' => LightStoresLegacySchema::legacySourceForChannel($channel),
+                'legacy_preserve_amounts' => true,
+                'legacy_order_total' => $orderTotal,
+            ],
+        ];
+    }
+
+    /**
      * @return list<array<string, mixed>>
      */
     public function dailySalesRows(Organization $org, ?Carbon $from, ?Carbon $to): array

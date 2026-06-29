@@ -20,26 +20,27 @@ class PosOrderEditService
         return (bool) ($gate->moduleSettings('sales')['enable_pos_order_edit'] ?? false);
     }
 
+    public function allowsCheckoutReEdit(string $channel, CapabilityGate $gate): bool
+    {
+        $channel = OrderWorkflowService::forGate($gate)->normalizeSalesChannel($channel);
+
+        return match ($channel) {
+            'pos' => $this->posOrderEditEnabled($gate),
+            'mobile' => true,
+            default => false,
+        };
+    }
+
     /** @return list<string> */
     public function editableStatusesForChannel(string $channel, CapabilityGate $gate): array
     {
-        if (in_array($channel, ['backend', 'backoffice'], true)) {
-            return ['held'];
-        }
-
-        if ($channel === 'pos' && ! $this->posOrderEditEnabled($gate)) {
-            return ['held'];
-        }
-
         $workflowService = OrderWorkflowService::forGate($gate);
-        $workflow = $workflowService->forChannel($channel);
-        $terminal = $workflowService->lastPipelineStatus($channel);
-        $editable = array_values(array_filter(
-            $workflow['statuses'] ?? [],
-            fn (string $status) => $status !== $terminal && $status !== 'cancelled',
-        ));
+        $normalized = $workflowService->normalizeSalesChannel($channel);
 
-        return array_values(array_unique(array_merge(['held', 'draft'], $editable)));
+        return $workflowService->restorableToCartStatuses(
+            $normalized,
+            $this->allowsCheckoutReEdit($normalized, $gate),
+        );
     }
 
     public function assertSaleEditable(Sale $sale, User $user, CapabilityGate $gate): void
@@ -53,13 +54,18 @@ class PosOrderEditService
         }
 
         if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
-            throw new InvalidArgumentException('You can only edit your own orders.');
+            throw new InvalidArgumentException('You can only re-edit your own orders.');
         }
 
         $channel = $sale->channel ?: 'pos';
-        $editable = $this->editableStatusesForChannel($channel, $gate);
+        $workflowService = OrderWorkflowService::forGate($gate);
+        $normalized = $workflowService->normalizeSalesChannel($channel);
 
-        if (! in_array((string) $sale->status, $editable, true)) {
+        if (! $workflowService->isRestorableToCartStatus(
+            (string) $sale->status,
+            $normalized,
+            $this->allowsCheckoutReEdit($normalized, $gate),
+        )) {
             throw new InvalidArgumentException('This order cannot be edited in its current status.');
         }
     }
@@ -85,7 +91,7 @@ class PosOrderEditService
             return;
         }
 
-        if (($sale->channel ?: 'pos') !== 'pos') {
+        if (OrderWorkflowService::forGate($gate)->normalizeSalesChannel($sale->channel ?: 'pos') !== 'pos') {
             return;
         }
 

@@ -257,6 +257,78 @@ class OrderWorkflowService
         return $this->alignStatusToPipeline($status, $channel) === $last;
     }
 
+    public function normalizeSalesChannel(string $channel): string
+    {
+        return match (strtolower($channel)) {
+            'backoffice' => 'backend',
+            default => strtolower($channel),
+        };
+    }
+
+    /**
+     * Statuses stored on sales after a fully-paid checkout for this channel (org workflow).
+     *
+     * @return list<string>
+     */
+    public function checkoutCompleteStatuses(?string $channel = null): array
+    {
+        $channel = $this->normalizeSalesChannel($channel ?? 'backend');
+        $workflow = $this->forChannel($channel);
+        $fullPaid = (string) ($workflow['checkout']['full_paid'] ?? 'paid');
+        $terminal = $this->lastPipelineStatus($channel);
+        $statuses = [$fullPaid];
+
+        if ($terminal) {
+            $statuses = array_merge($statuses, $this->statusesForQueueFilter($terminal, $channel));
+        }
+
+        return array_values(array_unique($statuses));
+    }
+
+    /**
+     * Statuses an order may have to be restored back into a cart for editing.
+     *
+     * @return list<string>
+     */
+    public function restorableToCartStatuses(string $channel, bool $allowCheckoutReEdit = false): array
+    {
+        $channel = $this->normalizeSalesChannel($channel);
+        $workflow = $this->forChannel($channel);
+        $allowed = $workflow['statuses'] ?? [];
+        $terminal = $this->lastPipelineStatus($channel);
+        $restorable = ['held', 'draft'];
+
+        foreach ($allowed as $status) {
+            if ($status === 'cancelled') {
+                continue;
+            }
+            if ($terminal !== null && $status === $terminal && ! $allowCheckoutReEdit) {
+                continue;
+            }
+            $restorable[] = $status;
+        }
+
+        return array_values(array_unique($restorable));
+    }
+
+    public function isRestorableToCartStatus(
+        string $status,
+        string $channel,
+        bool $allowCheckoutReEdit = false,
+    ): bool {
+        $channel = $this->normalizeSalesChannel($channel);
+        $restorable = $this->restorableToCartStatuses($channel, $allowCheckoutReEdit);
+        $normalized = (string) $status;
+
+        if (in_array($normalized, $restorable, true)) {
+            return true;
+        }
+
+        $aligned = $this->alignStatusToPipeline($normalized, $channel);
+
+        return in_array($aligned, $restorable, true);
+    }
+
     public function resolveCheckoutStatus(
         string $channel,
         bool $isCredit,

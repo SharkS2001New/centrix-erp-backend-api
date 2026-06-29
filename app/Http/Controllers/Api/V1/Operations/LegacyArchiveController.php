@@ -78,6 +78,15 @@ class LegacyArchiveController extends Controller
                 'sale_date' => 'required|date',
             ]);
 
+            if ($request->boolean('for_print')) {
+                return response()->json($this->archive->saleForPrint(
+                    $org,
+                    $channel,
+                    $legacyOrderNum,
+                    $data['sale_date'],
+                ));
+            }
+
             return response()->json($this->archive->saleDetail(
                 $org,
                 $channel,
