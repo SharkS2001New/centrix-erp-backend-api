@@ -83,6 +83,121 @@ class MobileFieldAttendanceTest extends TestCase
         ]);
     }
 
+    public function test_second_sign_in_same_day_after_sign_out_is_rejected(): void
+    {
+        Storage::fake('public');
+
+        $user = $this->makeMobileUser();
+        $this->enableFieldAttendance($user);
+        $token = $this->loginMobile($user);
+
+        $this->withToken($token)->post('/api/v1/mobile/attendance/sign-in', [
+            'photo' => UploadedFile::fake()->image('sign-in.jpg'),
+            'latitude' => -1.292100,
+            'longitude' => 36.821900,
+        ])->assertCreated();
+
+        $this->withToken($token)->post('/api/v1/mobile/attendance/sign-out', [
+            'photo' => UploadedFile::fake()->image('sign-out.jpg'),
+            'latitude' => -1.292200,
+            'longitude' => 36.822000,
+        ])->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/attendance/summary')
+            ->assertOk()
+            ->assertJsonPath('requires_admin_reopen', true)
+            ->assertJsonPath('sign_in_allowed', false);
+
+        $this->withToken($token)->post('/api/v1/mobile/attendance/sign-in', [
+            'photo' => UploadedFile::fake()->image('sign-in-again.jpg'),
+            'latitude' => -1.292100,
+            'longitude' => 36.821900,
+        ])->assertStatus(422);
+
+        $this->assertSame(1, MobileRepAttendanceSession::query()->where('user_id', $user->id)->count());
+    }
+
+    public function test_admin_can_reopen_closed_session_same_day(): void
+    {
+        Storage::fake('public');
+        $this->travelTo('2026-06-16 09:00:00');
+
+        $user = $this->makeMobileUser();
+        $this->enableFieldAttendance($user);
+        $token = $this->loginMobile($user);
+
+        $signIn = $this->withToken($token)->post('/api/v1/mobile/attendance/sign-in', [
+            'photo' => UploadedFile::fake()->image('sign-in.jpg'),
+            'latitude' => -1.292100,
+            'longitude' => 36.821900,
+        ])->assertCreated();
+
+        $sessionId = $signIn->json('session.id');
+
+        $this->travelTo('2026-06-16 12:00:00');
+
+        $this->withToken($token)->post('/api/v1/mobile/attendance/sign-out', [
+            'photo' => UploadedFile::fake()->image('sign-out.jpg'),
+            'latitude' => -1.292200,
+            'longitude' => 36.822000,
+        ])->assertOk();
+
+        $this->travelTo('2026-06-16 13:00:00');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $adminToken = $this->postJson('/api/v1/auth/login', [
+            'company_code' => Organization::findOrFail($admin->organization_id)->company_code,
+            'username' => 'admin',
+            'password' => 'password',
+            'client_id' => 'web',
+            'login_channel' => 'web',
+        ])->json('token');
+
+        $this->withToken($adminToken)
+            ->postJson("/api/v1/sales/mobile-field-attendance/{$sessionId}/reopen")
+            ->assertOk()
+            ->assertJsonPath('is_open', true)
+            ->assertJsonPath('is_active', true)
+            ->assertJsonPath('suspended_seconds', 3600);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/attendance/summary')
+            ->assertOk()
+            ->assertJsonPath('requires_admin_reopen', false)
+            ->assertJsonPath('session.is_active', true);
+    }
+
+    public function test_suspend_time_is_tracked_separately_from_work(): void
+    {
+        Storage::fake('public');
+        $this->travelTo('2026-06-16 09:00:00');
+
+        $user = $this->makeMobileUser();
+        $this->enableFieldAttendance($user);
+        $token = $this->loginMobile($user);
+
+        $this->withToken($token)->post('/api/v1/mobile/attendance/sign-in', [
+            'photo' => UploadedFile::fake()->image('sign-in.jpg'),
+            'latitude' => -1.292100,
+            'longitude' => 36.821900,
+        ])->assertCreated();
+
+        $this->travelTo('2026-06-16 10:00:00');
+
+        $this->withToken($token)
+            ->postJson('/api/v1/mobile/attendance/suspend')
+            ->assertOk()
+            ->assertJsonPath('session.suspended_seconds', 0);
+
+        $this->travelTo('2026-06-16 10:30:00');
+
+        $this->withToken($token)
+            ->postJson('/api/v1/mobile/attendance/resume')
+            ->assertOk()
+            ->assertJsonPath('session.suspended_seconds', 1800);
+    }
+
     public function test_sign_out_syncs_hr_attendance_for_linked_employee(): void
     {
         Storage::fake('public');
@@ -119,7 +234,7 @@ class MobileFieldAttendanceTest extends TestCase
             ->whereDate('attendance_date', $today)
             ->firstOrFail();
 
-        $this->assertSame('Field rep', $attendance->source_label);
+        $this->assertSame('Mobile sales app', $attendance->source_label);
         $this->assertGreaterThan(0, (float) $attendance->hours_worked);
 
         $summary = app(PayrollEarningsService::class)->summarizeAttendance(

@@ -45,7 +45,8 @@ class LegacyArchiveConnectionManager
         return $name;
     }
 
-    public function isReachable(Organization $org): bool
+    /** Fast connectivity check — used on login/capabilities (no table scans). */
+    public function canConnect(Organization $org): bool
     {
         if (! $this->settings->isConfigured($org)) {
             return false;
@@ -55,6 +56,21 @@ class LegacyArchiveConnectionManager
             $name = $this->configureForOrganization($org);
             DB::connection($name)->select('SELECT 1');
 
+            return true;
+        } catch (\Throwable) {
+            return false;
+        }
+    }
+
+    /** Full schema validation — used by legacy archive status/admin tooling. */
+    public function isReachable(Organization $org): bool
+    {
+        if (! $this->canConnect($org)) {
+            return false;
+        }
+
+        try {
+            $name = $this->configureForOrganization($org);
             $inspect = app(LightStoresArchiveDatabaseService::class)->inspect($name);
 
             return $inspect['missing'] === [];

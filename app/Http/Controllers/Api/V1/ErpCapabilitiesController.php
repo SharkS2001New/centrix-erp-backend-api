@@ -37,7 +37,7 @@ class ErpCapabilitiesController extends Controller
 
         $payload = OrganizationCache::remember(
             $orgId,
-            'capabilities:user:v2:'.(int) $user->id,
+            OrganizationCache::capabilitiesUserKey($orgId, (int) $user->id),
             (int) config('cache.organization_ttl', 3600),
             fn () => $this->buildCapabilitiesPayload($request),
         );
@@ -89,28 +89,30 @@ class ErpCapabilitiesController extends Controller
     protected function applyRuntimeCapabilityFlags(Request $request, array $payload): array
     {
         $user = $request->user();
-        if ($user) {
-            $user->refresh();
+        if (! $user) {
+            return $payload;
         }
-        $gate = $this->erp->gateForUser($user);
 
-        $payload['is_super_admin'] = (bool) $user?->is_super_admin;
-        $payload['is_admin'] = (bool) $user?->is_admin;
-        $payload['access_scope'] = $user?->access_scope ?? 'org';
-        $payload['branch_id'] = $user?->branch_id;
-        $payload['allow_org_provisioning'] = (bool) $user?->is_super_admin
+        $gate = $this->erp->gateForUser($user);
+        $org = $gate->organization();
+
+        // Lightweight fields that may change without busting the org capabilities cache.
+        $payload['is_super_admin'] = (bool) $user->is_super_admin;
+        $payload['is_admin'] = (bool) $user->is_admin;
+        $payload['access_scope'] = $user->access_scope ?? 'org';
+        $payload['branch_id'] = $user->branch_id;
+        $payload['allow_org_provisioning'] = (bool) $user->is_super_admin
             && config('erp.allow_org_provisioning');
-        $payload['workspaces'] = app(WorkspaceResolver::class)->availableForUser($user, $gate);
+        $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
 
         $payload['platform_mpesa_stk_enabled'] = $gate->mpesaStkPlatformEnabled();
         $payload['platform_kra_integration_enabled'] = $gate->kraIntegrationPlatformEnabled();
         $payload['platform_ai_enabled'] = $gate->aiPlatformEnabled();
 
         $archive = app(LegacyArchiveReader::class);
-        $org = $user?->organization_id ? Organization::query()->find($user->organization_id) : null;
         if ($org) {
             $payload['legacy_archive_enabled'] = $archive->isEnabled($org);
-            $payload['legacy_archive_available'] = $this->legacyArchiveReachable($org, $archive);
+            $payload['legacy_archive_available'] = $this->legacyArchiveConnectable($org, $archive);
             $payload['legacy_archive_cutover_date'] = $archive->cutoverDate($org)?->toDateString();
             $payload['legacy_archive_label'] = app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive';
         } else {
@@ -124,20 +126,17 @@ class ErpCapabilitiesController extends Controller
             $payload['module_settings'] = $gate->maskPlatformDisabledModuleSettings($payload['module_settings']);
         }
 
-        if ($user) {
-            $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
-        }
-
         return $payload;
     }
 
-    protected function legacyArchiveReachable(Organization $org, LegacyArchiveReader $archive): bool
+    /** Ping only — avoid counting legacy archive tables on login/capabilities. */
+    protected function legacyArchiveConnectable(Organization $org, LegacyArchiveReader $archive): bool
     {
         if (! app(OrganizationLegacyArchiveService::class)->isConfigured($org)) {
             return false;
         }
 
-        $cacheKey = 'org:'.$org->id.':legacy_archive:reachable';
+        $cacheKey = OrganizationCache::tag($org->id).':legacy_archive:connectable';
 
         return Cache::remember($cacheKey, 300, fn () => $archive->isAvailable($org));
     }

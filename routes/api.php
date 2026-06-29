@@ -540,6 +540,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:sales.view');
             Route::patch('sales/mobile-field-attendance/{sessionId}', [MobileFieldAttendanceController::class, 'update'])
                 ->middleware('erp.permission:sales.manage');
+            Route::post('sales/mobile-field-attendance/{sessionId}/reopen', [MobileFieldAttendanceController::class, 'reopen'])
+                ->middleware('erp.permission:sales.manage');
             Route::apiResource('sales', SaleController::class)
                 ->middleware('erp.permission:sales.view');
             Route::apiResource('sale-items', SaleItemController::class)

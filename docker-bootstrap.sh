@@ -25,13 +25,6 @@ else
   echo "[bootstrap] Skipping migrations (RUN_MIGRATIONS_ON_START=false)."
 fi
 
-if [ "${RUN_ROLE_TEMPLATES_ON_START:-true}" != "false" ]; then
-  echo "[bootstrap] Syncing production role templates..."
-  php artisan erp:sync-role-templates
-else
-  echo "[bootstrap] Skipping role templates (RUN_ROLE_TEMPLATES_ON_START=false)."
-fi
-
 if [ "${RUN_STORAGE_LINK_ON_START:-true}" != "false" ]; then
   echo "[bootstrap] Linking public storage..."
   php artisan storage:link --force

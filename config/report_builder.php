@@ -1411,6 +1411,28 @@ return [
                     'type' => 'string',
                     'groupable' => true,
                 ],
+                'login_channel' => [
+                    'label' => 'Login channel',
+                    'expr' => "CASE ea.source WHEN 'field_rep' THEN 'Mobile sales app' WHEN 'clock_device' THEN 'Premises' WHEN 'company_mobile' THEN 'Premises' ELSE 'Manual entry' END",
+                    'type' => 'string',
+                    'groupable' => true,
+                ],
+                'capture_method' => [
+                    'label' => 'Capture method',
+                    'expr' => "CASE ea.source WHEN 'field_rep' THEN 'Mobile sales app' WHEN 'company_mobile' THEN 'Premises (company phone)' WHEN 'clock_device' THEN 'Premises (clock)' ELSE 'Manual entry' END",
+                    'type' => 'string',
+                    'groupable' => true,
+                ],
+                'check_in' => [
+                    'label' => 'Check in',
+                    'expr' => 'ea.check_in',
+                    'type' => 'string',
+                ],
+                'check_out' => [
+                    'label' => 'Check out',
+                    'expr' => 'ea.check_out',
+                    'type' => 'string',
+                ],
                 'hours_worked' => [
                     'label' => 'Hours worked',
                     'expr' => 'ea.hours_worked',

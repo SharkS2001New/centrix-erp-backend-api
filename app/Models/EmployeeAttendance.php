@@ -13,7 +13,7 @@ class EmployeeAttendance extends Model
     protected $table = 'employee_attendance';
     public $timestamps = false;
 
-    protected $appends = ['source_label'];
+    protected $appends = ['source_label', 'login_channel', 'login_channel_label'];
 
     protected $fillable = [
         'employee_id',
@@ -48,5 +48,15 @@ class EmployeeAttendance extends Model
     public function getSourceLabelAttribute(): string
     {
         return AttendanceSourceLabels::label($this->source);
+    }
+
+    public function getLoginChannelAttribute(): string
+    {
+        return AttendanceSourceLabels::channel($this->source);
+    }
+
+    public function getLoginChannelLabelAttribute(): string
+    {
+        return AttendanceSourceLabels::channelLabel($this->source);
     }
 }

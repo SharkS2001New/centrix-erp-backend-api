@@ -3,12 +3,13 @@
 namespace App\Observers;
 
 use App\Models\Organization;
+use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Cache\OrganizationCache;
 
 class OrganizationObserver
 {
     public function updated(Organization $organization): void
     {
-        OrganizationCache::flush((int) $organization->id);
+        CapabilitiesCacheInvalidator::forOrganization((int) $organization->id);
     }
 }

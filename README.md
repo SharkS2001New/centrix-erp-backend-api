@@ -115,7 +115,7 @@ php artisan erp:permissions-sync --grant-admin   # optional: grant all permissio
 
 Then re-save custom roles in **Admin → Roles & permissions** so new feature codes appear in the matrix.
 
-Production role templates are synced via `php artisan erp:sync-role-templates` (runs automatically after `migrate` in Docker/Helm bootstrap). Recommended roles per profile are returned when registering an organization.
+Production role templates (Branch Manager, Stock Clerk, Accountant, Payroll Clerk, Viewer) are seeded via `ProductionRoleSeeder` on `migrate:fresh --seed`.
 
 ## Production safety
 

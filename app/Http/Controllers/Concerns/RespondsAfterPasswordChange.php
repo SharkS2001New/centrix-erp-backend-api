@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Concerns;
 use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
 use App\Models\User;
 use App\Services\Auth\PasswordExpiryService;
+use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Cache\OrganizationCache;
 use Illuminate\Http\JsonResponse;
 

@@ -2,6 +2,8 @@
 
 namespace App\Services\Background;
 
+use App\Support\AttendanceSourceLabels;
+
 class EmployeeAttendanceListExportMapper implements ListExportRowMapper
 {
     /**
@@ -23,7 +25,8 @@ class EmployeeAttendanceListExportMapper implements ListExportRowMapper
                 'check_out' => $row['check_out'] ?? '',
                 'hours_worked' => $row['hours_worked'] ?? '',
                 'status' => $row['status'] ?? '',
-                'source' => $row['source'] ?? '',
+                'login_channel' => $row['login_channel_label'] ?? AttendanceSourceLabels::channelLabel($row['source'] ?? null),
+                'source' => $row['source_label'] ?? AttendanceSourceLabels::label($row['source'] ?? null),
                 'notes' => $row['notes'] ?? '',
             ];
         }, $rows);

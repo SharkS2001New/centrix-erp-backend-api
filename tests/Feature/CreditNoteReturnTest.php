@@ -117,7 +117,6 @@ class CreditNoteReturnTest extends TestCase
 
         KraResponse::create([
             'sale_id' => $sale->id,
-            'organization_id' => (int) $sale->organization_id,
             'order_no' => $sale->order_num ?? 90001,
             'invoice_number' => 'CU-ORIG-1',
             'receipt_signature' => 'SIG-ORIG',
@@ -207,7 +206,6 @@ class CreditNoteReturnTest extends TestCase
 
         KraResponse::create([
             'sale_id' => $sale->id,
-            'organization_id' => (int) $sale->organization_id,
             'order_no' => $sale->order_num ?? 90001,
             'invoice_number' => 'CU-ORIG-2',
             'status' => 'success',

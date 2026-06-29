@@ -127,6 +127,34 @@ class MobileFieldAttendanceController extends Controller
         );
     }
 
+    /** POST /sales/mobile-field-attendance/{sessionId}/reopen */
+    public function reopen(Request $request, int $sessionId)
+    {
+        $this->assertFeatureAvailable($request);
+
+        $gate = $this->erp->gateForUser($request->user());
+
+        try {
+            $session = $this->attendance->reopenSession(
+                $request->user(),
+                $gate,
+                $sessionId,
+            );
+        } catch (InvalidArgumentException $exception) {
+            return response()->json(['message' => $exception->getMessage()], 422);
+        }
+
+        return response()->json(
+            $this->attendance->serializeSession(
+                $session,
+                true,
+                $this->linkage->describeUserLink(
+                    $session->user ?? \App\Models\User::findOrFail($session->user_id),
+                ),
+            ),
+        );
+    }
+
     protected function assertFeatureAvailable(Request $request): void
     {
         $gate = $this->erp->gateForUser($request->user());

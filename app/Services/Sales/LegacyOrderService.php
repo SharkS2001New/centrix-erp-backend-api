@@ -22,10 +22,7 @@ class LegacyOrderService
     public function baseQuery(User $user): Builder
     {
         $query = Sale::query()
-            ->with(array_merge(
-                ['customer', 'cashier:id,username,full_name'],
-                LegacySalePresentation::saleItemEagerLoad(),
-            ))
+            ->with(['customer', 'cashier:id,username,full_name', 'items.product.unit'])
             ->where('organization_id', $user->organization_id)
             ->where('fulfillment_meta->legacy_import', true);
 
@@ -39,14 +36,20 @@ class LegacyOrderService
         $query = $this->baseQuery($user);
 
         if (! empty($filters['from_date'])) {
-            $query->whereDate($this->legacySaleDateExpression(), '>=', $filters['from_date']);
+            $query->whereDate(DB::raw('COALESCE(completed_at, created_at)'), '>=', $filters['from_date']);
         }
 
         if (! empty($filters['to_date'])) {
-            $query->whereDate($this->legacySaleDateExpression(), '<=', $filters['to_date']);
+            $query->whereDate(DB::raw('COALESCE(completed_at, created_at)'), '<=', $filters['to_date']);
         }
 
-        $this->applyLegacyOrderTotalFilters($query, $filters, (int) $user->organization_id);
+        if (isset($filters['min_order_total']) && $filters['min_order_total'] !== '') {
+            $query->where('order_total', '>=', (float) $filters['min_order_total']);
+        }
+
+        if (isset($filters['max_order_total']) && $filters['max_order_total'] !== '') {
+            $query->where('order_total', '<=', (float) $filters['max_order_total']);
+        }
 
         if (! empty($filters['customer_name'])) {
             $name = trim((string) $filters['customer_name']);
@@ -65,19 +68,13 @@ class LegacyOrderService
 
                 $numericQ = str_replace([',', ' '], '', $q);
                 if ($numericQ !== '' && is_numeric($numericQ)) {
-                    $inner->orWhereRaw(
-                        $this->legacyDisplayOrderTotalSql((int) $user->organization_id).' = ?',
-                        [(float) $numericQ],
-                    );
+                    $inner->orWhere('order_total', (float) $numericQ);
                 }
             });
         }
 
         if (isset($filters['order_total']) && $filters['order_total'] !== '') {
-            $query->whereRaw(
-                $this->legacyDisplayOrderTotalSql((int) $user->organization_id).' = ?',
-                [(float) $filters['order_total']],
-            );
+            $query->where('order_total', (float) $filters['order_total']);
         }
 
         if (! empty($filters['has_returns'])) {
@@ -101,7 +98,6 @@ class LegacyOrderService
 
         $paginator = $query->orderByDesc('completed_at')->orderByDesc('id')->paginate($perPage);
         $this->attachReturnSummaries($paginator->getCollection(), $user);
-        $paginator->getCollection()->each(fn (Sale $sale) => LegacySalePresentation::stripCentrixUnitData($sale));
 
         return $paginator;
     }
@@ -110,7 +106,6 @@ class LegacyOrderService
     {
         $sale = $this->baseQuery($user)->findOrFail($saleId);
         $this->attachReturnSummaries(collect([$sale]), $user);
-        LegacySalePresentation::stripCentrixUnitData($sale);
 
         return $sale;
     }
@@ -121,11 +116,7 @@ class LegacyOrderService
             return $sale;
         }
 
-        $sale->loadMissing(array_merge(
-            LegacySalePresentation::saleItemEagerLoad(),
-            ['customer'],
-        ));
-        LegacySalePresentation::stripCentrixUnitData($sale);
+        $sale->loadMissing(['items.product.unit', 'customer']);
 
         $returnLines = CustomerReturnLine::query()
             ->whereHas('customerReturn', function (Builder $query) use ($sale) {
@@ -286,51 +277,5 @@ class LegacyOrderService
         }
 
         return $returnedTotal >= ($originalTotal - 0.02);
-    }
-
-    protected function legacySaleDateExpression(): \Illuminate\Contracts\Database\Query\Expression
-    {
-        return DB::raw("COALESCE(
-            NULLIF(JSON_UNQUOTE(JSON_EXTRACT(fulfillment_meta, '$.legacy_sale_date')), ''),
-            completed_at,
-            created_at
-        )");
-    }
-
-    /**
-     * @param  array<string, mixed>  $filters
-     */
-    protected function applyLegacyOrderTotalFilters(Builder $query, array $filters, int $organizationId): void
-    {
-        $min = isset($filters['min_order_total']) && $filters['min_order_total'] !== ''
-            ? (float) $filters['min_order_total']
-            : null;
-        $max = isset($filters['max_order_total']) && $filters['max_order_total'] !== ''
-            ? (float) $filters['max_order_total']
-            : null;
-
-        $totalSql = $this->legacyDisplayOrderTotalSql($organizationId);
-
-        if ($min !== null) {
-            $query->whereRaw("{$totalSql} >= ?", [$min]);
-        }
-        if ($max !== null) {
-            $query->whereRaw("{$totalSql} <= ?", [$max]);
-        }
-    }
-
-    protected function legacyDisplayOrderTotalSql(int $organizationId): string
-    {
-        return "COALESCE(
-            NULLIF(CAST(JSON_UNQUOTE(JSON_EXTRACT(sales.fulfillment_meta, '$.legacy_order_total')) AS DECIMAL(12,2)), 0),
-            sales.order_total + COALESCE((
-                SELECT SUM(cr.total_amount)
-                FROM customer_returns cr
-                WHERE cr.sale_id = sales.id
-                  AND cr.organization_id = {$organizationId}
-                  AND cr.return_kind = 'legacy'
-                  AND cr.status = 'approved'
-            ), 0)
-        )";
     }
 }

@@ -18,6 +18,8 @@ use InvalidArgumentException;
 
 class MobileFieldAttendanceService
 {
+    public const SIGN_IN_BLOCKED_MESSAGE = 'You have already ended your work session today. Contact your organization manager to reopen your session before you can continue working.';
+
     public function __construct(protected UserAccessService $access) {}
 
     public function isEnabled(CapabilityGate $gate): bool
@@ -59,6 +61,23 @@ class MobileFieldAttendanceService
             ->first();
     }
 
+    public function closedSessionForUserToday(User $user, ?Carbon $day = null): ?MobileRepAttendanceSession
+    {
+        $day ??= now();
+
+        return MobileRepAttendanceSession::query()
+            ->where('user_id', $user->id)
+            ->whereNotNull('sign_out_at')
+            ->whereDate('sign_in_at', $day->toDateString())
+            ->orderByDesc('sign_in_at')
+            ->first();
+    }
+
+    public function hasClosedSessionToday(User $user, ?Carbon $day = null): bool
+    {
+        return $this->closedSessionForUserToday($user, $day) !== null;
+    }
+
     /** @param  array<string, mixed>  $data */
     public function signIn(User $user, CapabilityGate $gate, array $data): MobileRepAttendanceSession
     {
@@ -73,6 +92,10 @@ class MobileFieldAttendanceService
             }
 
             throw new InvalidArgumentException('You already have an active sign-in session.');
+        }
+
+        if ($this->hasClosedSessionToday($user)) {
+            throw new InvalidArgumentException(self::SIGN_IN_BLOCKED_MESSAGE);
         }
 
         $photo = $data['photo'] ?? null;
@@ -125,6 +148,8 @@ class MobileFieldAttendanceService
         }
 
         return DB::transaction(function () use ($session) {
+            $this->accumulateSuspendedSegment($session);
+
             $session->fill([
                 'suspended_at' => null,
                 'last_resumed_at' => now(),
@@ -153,6 +178,10 @@ class MobileFieldAttendanceService
         }
 
         return DB::transaction(function () use ($session, $user, $data, $photo) {
+            if ($session->isSuspended()) {
+                $this->accumulateSuspendedSegment($session);
+            }
+
             $photoPath = $this->storePhoto($photo, $user, 'sign-out');
             $workSeconds = $this->workSeconds($session);
 
@@ -210,6 +239,18 @@ class MobileFieldAttendanceService
             + max(0, $anchor->diffInSeconds($until));
     }
 
+    public function suspendedSeconds(MobileRepAttendanceSession $session, ?Carbon $until = null): int
+    {
+        $total = max(0, (int) $session->accumulated_suspended_seconds);
+
+        if ($session->isSuspended() && $session->suspended_at) {
+            $until ??= now();
+            $total += max(0, $session->suspended_at->diffInSeconds($until));
+        }
+
+        return $total;
+    }
+
     public function formatWorkDuration(int $seconds): string
     {
         $hours = intdiv($seconds, 3600);
@@ -233,6 +274,12 @@ class MobileFieldAttendanceService
                 'total_work_seconds' => 0,
                 'total_work_hours' => 0,
                 'total_work_label' => '0:00',
+                'total_suspended_seconds' => 0,
+                'total_suspended_hours' => 0,
+                'total_suspended_label' => '0:00',
+                'sign_in_allowed' => false,
+                'requires_admin_reopen' => false,
+                'blocked_message' => null,
             ];
         }
 
@@ -243,15 +290,19 @@ class MobileFieldAttendanceService
             ->get();
 
         $totalSeconds = 0;
+        $totalSuspendedSeconds = 0;
         $completed = 0;
         foreach ($sessions as $session) {
             $totalSeconds += $this->workSeconds($session);
+            $totalSuspendedSeconds += $this->suspendedSeconds($session);
             if ($session->isClosed()) {
                 $completed++;
             }
         }
 
         $openSession = $this->openSessionForUser($user);
+        $requiresAdminReopen = $openSession === null && $completed > 0;
+        $signInAllowed = $openSession === null && $completed === 0;
 
         return [
             'feature_enabled' => true,
@@ -263,6 +314,12 @@ class MobileFieldAttendanceService
             'total_work_seconds' => $totalSeconds,
             'total_work_hours' => round($totalSeconds / 3600, 2),
             'total_work_label' => $this->formatWorkDuration($totalSeconds),
+            'total_suspended_seconds' => $totalSuspendedSeconds,
+            'total_suspended_hours' => round($totalSuspendedSeconds / 3600, 2),
+            'total_suspended_label' => $this->formatWorkDuration($totalSuspendedSeconds),
+            'sign_in_allowed' => $signInAllowed,
+            'requires_admin_reopen' => $requiresAdminReopen,
+            'blocked_message' => $requiresAdminReopen ? self::SIGN_IN_BLOCKED_MESSAGE : null,
         ];
     }
 
@@ -363,6 +420,52 @@ class MobileFieldAttendanceService
         return $session->fresh(['user:id,username,full_name,branch_id']);
     }
 
+    public function reopenSession(
+        User $editor,
+        CapabilityGate $gate,
+        int $sessionId,
+    ): MobileRepAttendanceSession {
+        if (! $this->isEnabled($gate)) {
+            throw new InvalidArgumentException('Field attendance is not enabled for this organization.');
+        }
+
+        $session = $this->findForViewer($editor, $sessionId);
+
+        if (! $session->isClosed()) {
+            throw new InvalidArgumentException('Only closed sessions can be reopened.');
+        }
+
+        if (! $session->sign_in_at?->isSameDay(now())) {
+            throw new InvalidArgumentException('Sessions can only be reopened on the same calendar day as sign-in.');
+        }
+
+        if ($this->openSessionForUser($session->user)) {
+            throw new InvalidArgumentException('This rep already has an open session today.');
+        }
+
+        return DB::transaction(function () use ($session, $editor) {
+            $closedAt = $session->sign_out_at;
+            $gapSeconds = $closedAt ? max(0, $closedAt->diffInSeconds(now())) : 0;
+
+            $session->fill([
+                'sign_out_at' => null,
+                'sign_out_latitude' => null,
+                'sign_out_longitude' => null,
+                'sign_out_address' => null,
+                'sign_out_photo_path' => null,
+                'close_reason' => null,
+                'suspended_at' => null,
+                'last_resumed_at' => now(),
+                'reopened_at' => now(),
+                'reopened_by_user_id' => (int) $editor->id,
+                'accumulated_suspended_seconds' => max(0, (int) $session->accumulated_suspended_seconds) + $gapSeconds,
+            ]);
+            $session->save();
+
+            return $session->fresh(['user:id,username,full_name,branch_id']);
+        });
+    }
+
     /** @return array<string, mixed> */
     public function serializeSession(
         MobileRepAttendanceSession $session,
@@ -370,6 +473,7 @@ class MobileFieldAttendanceService
         ?array $hrLink = null,
     ): array {
         $workSeconds = $this->workSeconds($session);
+        $suspendedSeconds = $this->suspendedSeconds($session);
         $user = $session->relationLoaded('user') ? $session->user : null;
 
         $payload = [
@@ -397,6 +501,11 @@ class MobileFieldAttendanceService
             'work_seconds' => $workSeconds,
             'work_hours' => round($workSeconds / 3600, 2),
             'work_label' => $this->formatWorkDuration($workSeconds),
+            'suspended_seconds' => $suspendedSeconds,
+            'suspended_hours' => round($suspendedSeconds / 3600, 2),
+            'suspended_label' => $this->formatWorkDuration($suspendedSeconds),
+            'reopened_at' => $session->reopened_at?->toIso8601String(),
+            'can_reopen' => $this->canReopenSession($session),
             'source' => 'field_rep',
             'source_label' => 'Field rep',
         ];
@@ -442,6 +551,10 @@ class MobileFieldAttendanceService
             ? $asOf->copy()->endOfDay()
             : $session->sign_in_at->copy()->endOfDay();
 
+        if ($session->isSuspended()) {
+            $this->accumulateSuspendedSegment($session, $closeAt);
+        }
+
         $workSeconds = $session->isSuspended()
             ? max(0, (int) $session->accumulated_work_seconds)
             : $this->workSeconds($session, $closeAt);
@@ -453,6 +566,37 @@ class MobileFieldAttendanceService
             'close_reason' => MobileRepAttendanceSession::CLOSE_REASON_IDLE_END_OF_DAY,
         ]);
         $session->save();
+    }
+
+    protected function canReopenSession(MobileRepAttendanceSession $session): bool
+    {
+        if (! $session->isClosed() || ! $session->sign_in_at?->isSameDay(now())) {
+            return false;
+        }
+
+        return ! MobileRepAttendanceSession::query()
+            ->where('user_id', $session->user_id)
+            ->whereNull('sign_out_at')
+            ->exists();
+    }
+
+    protected function accumulateSuspendedSegment(
+        MobileRepAttendanceSession $session,
+        ?Carbon $until = null,
+    ): void {
+        if (! $session->isSuspended() || ! $session->suspended_at) {
+            return;
+        }
+
+        $until ??= now();
+        $segment = max(0, $session->suspended_at->diffInSeconds($until));
+
+        if ($segment <= 0) {
+            return;
+        }
+
+        $session->accumulated_suspended_seconds = max(0, (int) $session->accumulated_suspended_seconds) + $segment;
+        $session->suspended_at = null;
     }
 
     protected function syncToHr(MobileRepAttendanceSession $session): void

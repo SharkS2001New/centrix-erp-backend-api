@@ -22,6 +22,11 @@ class LegacyArchiveReader
 
     public function isAvailable(Organization $org): bool
     {
+        return $this->connections->canConnect($org);
+    }
+
+    public function isSchemaValid(Organization $org): bool
+    {
         return $this->connections->isReachable($org);
     }
 
@@ -38,7 +43,7 @@ class LegacyArchiveReader
     public function status(Organization $org): array
     {
         $configured = $this->settings->isConfigured($org);
-        $available = $configured && $this->isAvailable($org);
+        $available = $configured && $this->isSchemaValid($org);
         $config = $this->settings->maskForClient($this->settings->forOrganization($org));
 
         return [

@@ -178,6 +178,8 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hr.attendance.view|hr.view');
         Route::patch('field-sessions/{sessionId}', [MobileFieldAttendanceController::class, 'update'])
             ->middleware('erp.permission:hr.manage');
+        Route::post('field-sessions/{sessionId}/reopen', [MobileFieldAttendanceController::class, 'reopen'])
+            ->middleware('erp.permission:hr.manage');
     });
 
     // ---- HR / Payroll ----

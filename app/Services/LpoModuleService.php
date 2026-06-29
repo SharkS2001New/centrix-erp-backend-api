@@ -21,13 +21,13 @@ class LpoModuleService
 {
     public const STATUS_AWAITING_RECEIVE = 3;
 
-    public function formatPoNumber(int $lpoSeq, $orderDate = null): string
+    public function formatPoNumber(int $lpoNo, $orderDate = null): string
     {
         $year = $orderDate
             ? (int) date('Y', strtotime((string) $orderDate))
             : (int) date('Y');
 
-        return sprintf('LPO-%d-%04d', $year, $lpoSeq);
+        return sprintf('LPO-%d-%04d', $year, $lpoNo);
     }
 
     public function mapListRow(LpoMst $lpo, ?int $organizationId = null): array
@@ -42,8 +42,7 @@ class LpoModuleService
 
         return [
             'lpo_no' => (int) $lpo->lpo_no,
-            'lpo_seq' => (int) $lpo->lpo_seq,
-            'po_number' => $this->formatPoNumber((int) $lpo->lpo_seq, $orderDate),
+            'po_number' => $this->formatPoNumber((int) $lpo->lpo_no, $orderDate),
             'supplier_id' => (int) $lpo->supplier_id,
             'supplier_name' => $lpo->supplier?->supplier_name,
             'reference_number' => $lpo->reference_number,
@@ -100,8 +99,7 @@ class LpoModuleService
 
         $lpoPayload = [
             'lpo_no' => (int) $lpo->lpo_no,
-            'lpo_seq' => (int) $lpo->lpo_seq,
-            'po_number' => $this->formatPoNumber((int) $lpo->lpo_seq, $lpo->created_at ?? $lpo->sent_at),
+            'po_number' => $this->formatPoNumber((int) $lpo->lpo_no, $lpo->created_at ?? $lpo->sent_at),
             'supplier_id' => (int) $lpo->supplier_id,
             'supplier_name' => $lpo->supplier?->supplier_name,
             'reference_number' => $lpo->reference_number,
