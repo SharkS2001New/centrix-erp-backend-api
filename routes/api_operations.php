@@ -271,6 +271,9 @@ Route::middleware('auth:sanctum')->group(function () {
 
             Route::prefix('legacy-archive')->group(function () {
                 Route::get('status', [LegacyArchiveController::class, 'status']);
+            });
+
+            Route::middleware('erp.legacy_archive')->prefix('legacy-archive')->group(function () {
                 Route::get('summary', [LegacyArchiveController::class, 'summary']);
                 Route::get('sales/{channel}/{legacyOrderNum}', [LegacyArchiveController::class, 'showSale'])
                     ->where('channel', 'pos|mobile|debtor');

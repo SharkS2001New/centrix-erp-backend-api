@@ -68,7 +68,10 @@ class CustomerReturnController extends Controller
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        return response()->json($query->orderByDesc('id')->paginate($perPage));
+        $paginator = $query->orderByDesc('id')->paginate($perPage);
+        $paginator->through(fn (CustomerReturn $return) => $this->service->withActionFlags($return, $user));
+
+        return response()->json($paginator);
     }
 
     public function store(Request $request)
@@ -106,7 +109,7 @@ class CustomerReturnController extends Controller
 
         $return = $this->service->create($request->user(), $data);
 
-        return response()->json($return, 201);
+        return response()->json($this->service->withActionFlags($return, $request->user()), 201);
     }
 
     public function show(string $id)
@@ -125,7 +128,9 @@ class CustomerReturnController extends Controller
             $relations[] = 'creditNote';
         }
 
-        return response()->json($return->load($relations));
+        return response()->json(
+            $this->service->withActionFlags($return->load($relations), request()->user()),
+        );
     }
 
     public function update(Request $request, string $id)
@@ -154,7 +159,7 @@ class CustomerReturnController extends Controller
 
         $updated = $this->service->update($return, $data);
 
-        return response()->json($updated);
+        return response()->json($this->service->withActionFlags($updated, $request->user()));
     }
 
     public function destroy(Request $request, string $id)
@@ -170,7 +175,7 @@ class CustomerReturnController extends Controller
         $return = $this->findForUser($id);
         $approved = $this->service->approve($return, $request->user());
 
-        return response()->json($approved);
+        return response()->json($this->service->withActionFlags($approved, $request->user()));
     }
 
     public function reject(Request $request, string $id)
@@ -182,7 +187,7 @@ class CustomerReturnController extends Controller
         $return = $this->findForUser($id);
         $rejected = $this->service->reject($return, $request->user(), $data['reason'] ?? null);
 
-        return response()->json($rejected);
+        return response()->json($this->service->withActionFlags($rejected, $request->user()));
     }
 
     public function saleLines(Request $request, string $saleId)

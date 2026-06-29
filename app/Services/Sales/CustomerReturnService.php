@@ -13,6 +13,7 @@ use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
 use App\Services\Accounting\ReturnJournalService;
+use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -24,7 +25,24 @@ class CustomerReturnService
     public function __construct(
         protected CreditNoteService $creditNoteService,
         protected ReturnJournalService $returnJournal,
+        protected UserPermissionService $permissions,
     ) {}
+
+    public function withActionFlags(CustomerReturn $return, User $user): CustomerReturn
+    {
+        $canManage = (bool) $user->is_admin
+            || $this->permissions->hasPermission($user, 'sales.manage');
+        $pending = $return->status === 'pending';
+        $approved = $return->status === 'approved';
+
+        $return->setAttribute('can_edit', $pending && $canManage);
+        $return->setAttribute('can_delete', $canManage);
+        $return->setAttribute('can_approve', $pending && $canManage);
+        $return->setAttribute('can_reject', ($pending || $approved) && $canManage);
+        $return->setAttribute('can_print', true);
+
+        return $return;
+    }
 
     public function nextReturnNo(int $organizationId): string
     {

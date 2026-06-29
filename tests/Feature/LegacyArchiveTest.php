@@ -67,4 +67,27 @@ class LegacyArchiveTest extends TestCase
             ->assertJsonPath('legacy_archive_enabled', true)
             ->assertJsonPath('legacy_archive_label', 'Demo archive');
     }
+
+    public function test_legacy_orders_api_blocked_when_legacy_archive_disabled(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/legacy-orders')
+            ->assertStatus(403)
+            ->assertJsonPath('code', 'legacy_archive_disabled');
+    }
+
+    public function test_legacy_orders_api_available_when_legacy_archive_enabled(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['legacy_archive'] = array_merge($settings['legacy_archive'] ?? [], ['enabled' => true]);
+        $org->update(['module_settings' => $settings]);
+
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/legacy-orders')->assertOk();
+    }
 }

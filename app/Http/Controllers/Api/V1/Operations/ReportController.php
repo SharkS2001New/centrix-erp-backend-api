@@ -49,24 +49,34 @@ class ReportController extends Controller
             ['key' => 'price-list', 'path' => '/reports/price-list', 'label' => 'Price list'],
         ]);
 
+        $salesReports = [
+            ['key' => 'sales-by-product', 'path' => '/reports/sales-by-product', 'label' => 'Sales by product'],
+            ['key' => 'sales-by-user', 'path' => '/reports/sales-by-user', 'label' => 'Sales by cashier / user'],
+            ['key' => 'sales-by-customer', 'path' => '/reports/sales-by-customer', 'label' => 'Sales by customer'],
+            ['key' => 'sales-by-channel', 'path' => '/reports/sales-by-channel', 'label' => 'Sales by channel & payment status'],
+            ['key' => 'daily-sales', 'path' => '/reports/daily-sales', 'label' => 'Daily sales summary'],
+            ['key' => 'legacy-archive', 'path' => '/reports/legacy-archive', 'label' => 'Legacy sales archive (read-only)'],
+            ['key' => 'mobile-route-sales', 'path' => '/reports/mobile-route-sales', 'label' => 'Route order sales'],
+            ['key' => 'sales-pipeline', 'path' => '/reports/sales-pipeline', 'label' => 'Open orders pipeline'],
+            ['key' => 'vat-collected', 'path' => '/reports/vat-collected', 'label' => 'VAT collected'],
+            ['key' => 'category-sales', 'path' => '/reports/category-sales', 'label' => 'Sales by category'],
+            ['key' => 'discount-summary', 'path' => '/reports/discount-summary', 'label' => 'Discounts given'],
+            ['key' => 'payment-collection', 'path' => '/reports/payment-collection', 'label' => 'Payments by method'],
+            ['key' => 'credit-outstanding', 'path' => '/reports/credit-outstanding', 'label' => 'Outstanding credit sales'],
+            ['key' => 'eod-cashier', 'path' => '/reports/eod-cashier', 'label' => 'End of day (cashier)'],
+            ['key' => 'eod-report', 'path' => '/reports/eod-report', 'label' => 'End of day report'],
+        ];
+
+        $org = $this->erp->resolveOrganization($request);
+        if (! app(OrganizationLegacyArchiveService::class)->isEnabled($org)) {
+            $salesReports = array_values(array_filter(
+                $salesReports,
+                fn (array $report) => $report['key'] !== 'legacy-archive',
+            ));
+        }
+
         return response()->json([
-            'sales' => [
-                ['key' => 'sales-by-product', 'path' => '/reports/sales-by-product', 'label' => 'Sales by product'],
-                ['key' => 'sales-by-user', 'path' => '/reports/sales-by-user', 'label' => 'Sales by cashier / user'],
-                ['key' => 'sales-by-customer', 'path' => '/reports/sales-by-customer', 'label' => 'Sales by customer'],
-                ['key' => 'sales-by-channel', 'path' => '/reports/sales-by-channel', 'label' => 'Sales by channel & payment status'],
-                ['key' => 'daily-sales', 'path' => '/reports/daily-sales', 'label' => 'Daily sales summary'],
-                ['key' => 'legacy-archive', 'path' => '/reports/legacy-archive', 'label' => 'Legacy sales archive (read-only)'],
-                ['key' => 'mobile-route-sales', 'path' => '/reports/mobile-route-sales', 'label' => 'Route order sales'],
-                ['key' => 'sales-pipeline', 'path' => '/reports/sales-pipeline', 'label' => 'Open orders pipeline'],
-                ['key' => 'vat-collected', 'path' => '/reports/vat-collected', 'label' => 'VAT collected'],
-                ['key' => 'category-sales', 'path' => '/reports/category-sales', 'label' => 'Sales by category'],
-                ['key' => 'discount-summary', 'path' => '/reports/discount-summary', 'label' => 'Discounts given'],
-                ['key' => 'payment-collection', 'path' => '/reports/payment-collection', 'label' => 'Payments by method'],
-                ['key' => 'credit-outstanding', 'path' => '/reports/credit-outstanding', 'label' => 'Outstanding credit sales'],
-                ['key' => 'eod-cashier', 'path' => '/reports/eod-cashier', 'label' => 'End of day (cashier)'],
-                ['key' => 'eod-report', 'path' => '/reports/eod-report', 'label' => 'End of day report'],
-            ],
+            'sales' => $salesReports,
             'inventory' => $inventory,
             'finance' => [
                 ['key' => 'profit-loss', 'path' => '/reports/profit-loss', 'label' => 'Profit & loss (operational)'],

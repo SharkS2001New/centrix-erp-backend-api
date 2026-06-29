@@ -6,6 +6,7 @@ use App\Models\User;
 use App\Models\UserMembership;
 use App\Models\Organization;
 use App\Services\Auth\PasswordPolicy;
+use App\Services\Auth\PasswordExpiryService;
 use App\Services\Auth\UserAccountGuard;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserDeletionService;
@@ -267,8 +268,30 @@ class UserController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $paginator = $query->orderBy('full_name')->paginate($perPage);
+        $expiryService = app(PasswordExpiryService::class);
+        $paginator->through(fn (User $user) => $this->withPasswordLockFlag($user, $expiryService));
 
-        return response()->json($query->orderBy('full_name')->paginate($perPage));
+        return response()->json($paginator);
+    }
+
+    public function clearPasswordLock(Request $request, string $id, ?string $nestedId = null)
+    {
+        $model = $this->findOrgUser($this->resolveResourceId($id, $nestedId));
+        $status = app(PasswordExpiryService::class)->clearAdministrativeLock($model);
+
+        return response()->json([
+            'message' => 'Password lock cleared. The user can continue without changing their password.',
+            'user' => $this->withPasswordLockFlag($model->fresh(), app(PasswordExpiryService::class)),
+            'password_expiry' => $status,
+        ]);
+    }
+
+    protected function withPasswordLockFlag(User $user, PasswordExpiryService $expiryService): User
+    {
+        $user->setAttribute('password_locked', $expiryService->isAdministrativelyLocked($user));
+
+        return $user;
     }
 
     /** @param  array<string, mixed>  $data

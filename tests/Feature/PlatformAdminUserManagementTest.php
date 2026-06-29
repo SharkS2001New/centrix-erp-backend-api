@@ -69,4 +69,29 @@ class PlatformAdminUserManagementTest extends TestCase
         $this->assertSame('Platform Created User', $created->full_name);
         $this->assertTrue($created->must_change_password);
     }
+
+    public function test_super_admin_can_clear_tenant_user_password_lock(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $tenantUser = User::where('username', 'admin')->firstOrFail();
+        $orgId = (int) $tenantUser->organization_id;
+
+        $tenantUser->forceFill([
+            'must_change_password' => true,
+            'password_changed_at' => null,
+            'password_expiry_skip_count' => 0,
+        ])->save();
+
+        $this->postJson("/api/v1/admin/organizations/{$orgId}/users/{$tenantUser->id}/clear-password-lock")
+            ->assertOk()
+            ->assertJsonPath('user.must_change_password', false)
+            ->assertJsonPath('user.password_locked', false)
+            ->assertJsonPath('password_expiry.forced', false);
+
+        $tenantUser->refresh();
+        $this->assertFalse((bool) $tenantUser->must_change_password);
+        $this->assertNotNull($tenantUser->password_changed_at);
+    }
 }

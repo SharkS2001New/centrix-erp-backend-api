@@ -112,6 +112,25 @@ class PasswordExpiryService
         ])->save();
     }
 
+    public function isAdministrativelyLocked(User $user): bool
+    {
+        $status = $this->statusForUser($user);
+
+        return (bool) $user->must_change_password || ($status['forced'] ?? false);
+    }
+
+    /** Clear required-change and forced expiry locks without changing the password. */
+    public function clearAdministrativeLock(User $user): array
+    {
+        $user->forceFill([
+            'must_change_password' => false,
+            'password_changed_at' => now(),
+            'password_expiry_skip_count' => 0,
+        ])->save();
+
+        return $this->statusForUser($user->fresh());
+    }
+
     /** @return array<string, mixed> */
     protected function payload(
         bool $enabled,

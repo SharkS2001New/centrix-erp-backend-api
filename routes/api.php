@@ -325,6 +325,7 @@ Route::prefix('v1')->group(function () {
                 Route::apiResource('payment-methods', PaymentMethodController::class);
                 Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show']);
                 Route::apiResource('users', UserController::class);
+                Route::post('users/{user}/clear-password-lock', [UserController::class, 'clearPasswordLock']);
                 Route::get('users/{user}/permissions', [UserController::class, 'permissions']);
                 Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions']);
                 Route::apiResource('routes', RouteModelController::class)->only(['index', 'show']);
@@ -376,6 +377,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:admin'])
             ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
             ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
+        Route::post('users/{user}/clear-password-lock', [UserController::class, 'clearPasswordLock'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('users/{user}/permissions', [UserController::class, 'permissions'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.view']);
         Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions'])
@@ -549,15 +552,16 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);
             Route::get('legacy-orders', [LegacyOrdersController::class, 'index'])
-                ->middleware('erp.permission:sales.view');
+                ->middleware(['erp.legacy_archive', 'erp.permission:sales.view']);
             Route::get('legacy-orders/{id}', [LegacyOrdersController::class, 'show'])
-                ->middleware('erp.permission:sales.view');
+                ->middleware(['erp.legacy_archive', 'erp.permission:sales.view']);
             Route::get('legacy-orders/{saleId}/return-lines', [LegacyOrdersController::class, 'returnLines'])
-                ->middleware('erp.permission:sales.view');
+                ->middleware(['erp.legacy_archive', 'erp.permission:sales.view']);
             Route::post('legacy-returns/{id}/approve', [LegacyReturnsController::class, 'approve'])
-                ->middleware('erp.permission:sales.manage');
+                ->middleware(['erp.legacy_archive', 'erp.permission:sales.manage']);
             Route::apiResource('legacy-returns', LegacyReturnsController::class)
                 ->only(['index', 'show', 'store'])
+                ->middleware('erp.legacy_archive')
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store'], ['erp.permission:sales.manage']);
             Route::get('sales/{saleId}/return-lines', [CustomerReturnController::class, 'saleLines'])

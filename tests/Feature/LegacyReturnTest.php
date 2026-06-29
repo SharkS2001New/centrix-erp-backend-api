@@ -24,7 +24,16 @@ class LegacyReturnTest extends TestCase
     {
         parent::setUp();
         $this->user = User::where('username', 'admin')->firstOrFail();
+        $this->enableLegacyArchive();
         Sanctum::actingAs($this->user);
+    }
+
+    protected function enableLegacyArchive(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['legacy_archive'] = array_merge($settings['legacy_archive'] ?? [], ['enabled' => true]);
+        $org->update(['module_settings' => $settings]);
     }
 
     public function test_legacy_return_requires_kra_device(): void
