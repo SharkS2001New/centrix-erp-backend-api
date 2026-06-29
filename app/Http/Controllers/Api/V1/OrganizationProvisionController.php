@@ -470,7 +470,7 @@ class OrganizationProvisionController extends Controller
 
         app(UserLoginChannelPolicy::class)->assertAllowedForOrganization(
             $org,
-            $data['login_channels'] ?? ['backoffice', 'pos'],
+            $data['login_channels'] ?? app(UserLoginChannelPolicy::class)->defaultChannelsForOrganization($org),
         );
 
         $user = $this->provisioning->createOrganizationUser($org, $data);

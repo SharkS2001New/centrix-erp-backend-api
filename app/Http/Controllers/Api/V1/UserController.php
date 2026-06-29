@@ -44,11 +44,12 @@ class UserController extends BaseResourceController
         $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         $data = $this->access()->validateAccessScope($data, (bool) ($data['is_admin'] ?? false));
+        $organization = Organization::findOrFail($orgId);
         if (! array_key_exists('login_channels', $data)) {
-            $data['login_channels'] = app(UserLoginChannelService::class)->defaultChannels();
+            $data['login_channels'] = app(UserLoginChannelPolicy::class)->defaultChannelsForOrganization($organization);
         }
         app(UserLoginChannelPolicy::class)->assertAllowedForOrganization(
-            Organization::findOrFail($orgId),
+            $organization,
             $data['login_channels'],
         );
         $data = $this->normalizeLoginChannels($data);

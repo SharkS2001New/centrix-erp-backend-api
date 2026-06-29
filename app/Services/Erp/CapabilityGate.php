@@ -201,7 +201,27 @@ class CapabilityGate
         if ($this->enabled('sales.backend')) {
             $channels[] = 'backend';
         }
+
         return $channels;
+    }
+
+    /** @return list<string> User login_channel values allowed for this organization. */
+    public function allowedLoginChannels(): array
+    {
+        $channels = [];
+        if ($this->enabled('sales.backend')) {
+            $channels[] = \App\Services\Auth\UserLoginChannelService::BACKOFFICE;
+        }
+        if ($this->enabled('sales.pos')) {
+            $channels[] = \App\Services\Auth\UserLoginChannelService::POS;
+        }
+        if ($this->mobileSalesEnabled()) {
+            $channels[] = \App\Services\Auth\UserLoginChannelService::MOBILE;
+        }
+
+        return $channels !== []
+            ? $channels
+            : [\App\Services\Auth\UserLoginChannelService::BACKOFFICE];
     }
 
     public function channelEnabled(string $channel): bool
@@ -383,6 +403,7 @@ class CapabilityGate
             'platform_ai_enabled' => $this->aiPlatformEnabled(),
             'modules' => $this->allModules(),
             'channels' => $this->allowedChannels(),
+            'allowed_login_channels' => $this->allowedLoginChannels(),
             'workflows' => $this->workflowForOrg(),
             'module_settings' => $moduleSettings,
             'ai_assistant' => $this->organization

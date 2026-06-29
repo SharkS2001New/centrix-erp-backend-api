@@ -292,7 +292,7 @@ class OrganizationProvisioningService
 
             $channels = app(UserLoginChannelPolicy::class)->sanitizeForOrganization(
                 $org,
-                $data['login_channels'] ?? ['backoffice', 'pos'],
+                $data['login_channels'] ?? app(UserLoginChannelPolicy::class)->defaultChannelsForOrganization($org),
             );
 
             return User::create([

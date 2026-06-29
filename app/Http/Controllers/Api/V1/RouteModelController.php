@@ -10,6 +10,7 @@ use App\Models\TemporaryCart;
 use App\Services\Sales\ReceiptPaymentDetailsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
 
 class RouteModelController extends BaseResourceController
@@ -19,11 +20,21 @@ class RouteModelController extends BaseResourceController
         return RouteModel::class;
     }
 
+    protected function scopesByOrganization(): bool
+    {
+        return Schema::hasColumn('routes', 'organization_id');
+    }
+
+    protected function routesScopedByOrganization(): bool
+    {
+        return $this->scopesByOrganization();
+    }
+
     public function store(Request $request)
     {
         $data = $this->validateRoutePayload($request);
         $user = $request->user();
-        if ($user) {
+        if ($user && $this->routesScopedByOrganization()) {
             $data['organization_id'] = (int) $user->organization_id;
         }
         $model = RouteModel::create($data);
@@ -64,10 +75,12 @@ class RouteModelController extends BaseResourceController
         $orgId = (int) ($request->user()?->organization_id ?? $existing?->organization_id ?? 0);
 
         $routeNameRules = ["{$prefix}", 'string', 'max:255'];
-        if ($orgId > 0) {
+        if ($orgId > 0 && $this->routesScopedByOrganization()) {
             $routeNameRules[] = Rule::unique('routes', 'route_name')
                 ->where(fn ($q) => $q->where('organization_id', $orgId))
                 ->ignore($existing?->id);
+        } else {
+            $routeNameRules[] = Rule::unique('routes', 'route_name')->ignore($existing?->id);
         }
 
         $rules = array_merge([

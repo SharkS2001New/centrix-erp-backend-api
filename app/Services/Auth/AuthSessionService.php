@@ -337,17 +337,26 @@ class AuthSessionService
 
     protected function assertOrganizationAllowsLoginChannel(?\App\Models\Organization $organization, string $loginChannel): void
     {
-        if ($loginChannel !== UserLoginChannelService::MOBILE || ! $organization) {
+        if (! $organization) {
             return;
         }
 
         $gate = (new CapabilityGate)->forOrganization($organization);
-        if ($gate->mobileSalesEnabled()) {
+        $allowed = array_flip($gate->allowedLoginChannels());
+        if (isset($allowed[$loginChannel])) {
             return;
         }
 
+        $label = app(UserLoginChannelService::class)->label($loginChannel);
+        $message = match ($loginChannel) {
+            UserLoginChannelService::POS => 'External POS is not enabled for this organization.',
+            UserLoginChannelService::MOBILE => 'Mobile sales is not enabled for this organization.',
+            UserLoginChannelService::BACKOFFICE => 'Backoffice sales is not enabled for this organization.',
+            default => sprintf('%s is not enabled for this organization.', $label),
+        };
+
         throw ValidationException::withMessages([
-            'login_channel' => ['Mobile sales is not enabled for this organization.'],
+            'login_channel' => [$message],
         ]);
     }
 
