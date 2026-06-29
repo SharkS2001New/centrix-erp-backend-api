@@ -10,6 +10,7 @@ use App\Models\TemporaryCart;
 use App\Services\Sales\ReceiptPaymentDetailsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 
 class RouteModelController extends BaseResourceController
 {
@@ -21,6 +22,10 @@ class RouteModelController extends BaseResourceController
     public function store(Request $request)
     {
         $data = $this->validateRoutePayload($request);
+        $user = $request->user();
+        if ($user) {
+            $data['organization_id'] = (int) $user->organization_id;
+        }
         $model = RouteModel::create($data);
 
         if ($request->user() && $this->auditable()) {
@@ -33,7 +38,7 @@ class RouteModelController extends BaseResourceController
     public function update(Request $request, string $id)
     {
         $model = $this->findScopedModel($request, $id);
-        $data = $this->validateRoutePayload($request, partial: true);
+        $data = $this->validateRoutePayload($request, existing: $model);
         $oldValues = $model->getAttributes();
         $model->update($data);
         $model->refresh();
@@ -53,12 +58,20 @@ class RouteModelController extends BaseResourceController
     }
 
     /** @return array<string, mixed> */
-    protected function validateRoutePayload(Request $request, bool $partial = false): array
+    protected function validateRoutePayload(Request $request, bool $partial = false, ?RouteModel $existing = null): array
     {
         $prefix = $partial ? 'sometimes' : 'required';
+        $orgId = (int) ($request->user()?->organization_id ?? $existing?->organization_id ?? 0);
+
+        $routeNameRules = ["{$prefix}", 'string', 'max:255'];
+        if ($orgId > 0) {
+            $routeNameRules[] = Rule::unique('routes', 'route_name')
+                ->where(fn ($q) => $q->where('organization_id', $orgId))
+                ->ignore($existing?->id);
+        }
 
         $rules = array_merge([
-            'route_name' => "{$prefix}|string|max:255",
+            'route_name' => $routeNameRules,
             'direction' => 'nullable|string|max:45',
             'route_markup_price' => 'sometimes|integer|min:0',
             'is_active' => 'sometimes|boolean',

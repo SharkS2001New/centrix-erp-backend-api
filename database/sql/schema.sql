@@ -220,7 +220,7 @@ CREATE TABLE till_float_sessions (
 DROP TABLE IF EXISTS suppliers;
 CREATE TABLE suppliers (
     id              INT           PRIMARY KEY AUTO_INCREMENT,
-    supplier_code   VARCHAR(50)   UNIQUE NOT NULL,
+    supplier_code   VARCHAR(50)   NOT NULL,
     supplier_name   VARCHAR(200)  NOT NULL,
     contact_person  VARCHAR(200),
     email           VARCHAR(100),
@@ -240,6 +240,7 @@ CREATE TABLE suppliers (
     deleted_at      TIMESTAMP     NULL,
     FOREIGN KEY (created_by)      REFERENCES users(id),
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    UNIQUE KEY uq_org_supplier_code (organization_id, supplier_code),
     INDEX idx_is_active (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -301,7 +302,7 @@ CREATE TABLE sub_categories (
 DROP TABLE IF EXISTS products;
 CREATE TABLE products (
     id                      INT           PRIMARY KEY AUTO_INCREMENT,
-    product_code            VARCHAR(200)  UNIQUE NOT NULL,
+    product_code            VARCHAR(200)  NOT NULL,
     product_name            VARCHAR(200)  NOT NULL,
     subcategory_id          INT           NOT NULL,
     unit_id                 INT           NOT NULL,
@@ -336,6 +337,7 @@ CREATE TABLE products (
     FOREIGN KEY (branch_id)         REFERENCES branches(id),
     FOREIGN KEY (created_by)      REFERENCES users(id),
     FOREIGN KEY (updated_by)      REFERENCES users(id),
+    UNIQUE KEY uq_org_product_code (organization_id, product_code),
     INDEX idx_product_code (product_code),
     INDEX idx_subcategory_id (subcategory_id),
     INDEX idx_deleted_at   (deleted_at),
@@ -382,11 +384,14 @@ CREATE TABLE price_history (
 DROP TABLE IF EXISTS routes;
 CREATE TABLE routes (
     id                 INT           PRIMARY KEY AUTO_INCREMENT,
-    route_name         VARCHAR(255)  UNIQUE NOT NULL,
+    organization_id    INT           NOT NULL,
+    route_name         VARCHAR(255)  NOT NULL,
     route_markup_price INT           DEFAULT 0,
     direction          VARCHAR(45),
     is_active          BOOLEAN       DEFAULT TRUE,
     created_at         TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    UNIQUE KEY uq_org_route_name (organization_id, route_name),
     INDEX idx_is_active (is_active)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -1157,8 +1162,9 @@ DROP TABLE IF EXISTS kra_responses;
 CREATE TABLE kra_responses (
     id                BIGINT        PRIMARY KEY AUTO_INCREMENT,
     sale_id           BIGINT        NOT NULL,
+    organization_id   INT           NOT NULL,
     order_no          INT           NOT NULL,
-    invoice_number    VARCHAR(255)  UNIQUE,
+    invoice_number    VARCHAR(255),
     receipt_signature TEXT,
     signature_link    TEXT,
     serial_number     VARCHAR(255),
@@ -1170,6 +1176,8 @@ CREATE TABLE kra_responses (
     created_at        TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (sale_id) REFERENCES sales(id),
+    FOREIGN KEY (organization_id) REFERENCES organizations(id),
+    UNIQUE KEY uq_org_kra_invoice_number (organization_id, invoice_number),
     INDEX idx_order_no (order_no),
     INDEX idx_status   (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -1858,6 +1866,7 @@ GROUP BY DATE(s.created_at), s.branch_id, s.cashier_id, tfs.id;
 DROP VIEW IF EXISTS v_sales_by_product;
 CREATE VIEW v_sales_by_product AS
 SELECT
+    s.organization_id,
     si.product_code,
     p.product_name,
     DATE(s.created_at) AS sale_date,
@@ -1870,13 +1879,14 @@ SELECT
     SUM(si.discount_given) AS total_discount
 FROM sale_items si
 JOIN sales s ON si.sale_id = s.id
-JOIN products p ON si.product_code = p.product_code
+JOIN products p ON si.product_code = p.product_code AND p.organization_id = s.organization_id
 WHERE s.status = 'completed'
-GROUP BY si.product_code, DATE(s.created_at), s.branch_id, s.channel, si.uom;
+GROUP BY s.organization_id, si.product_code, p.product_name, DATE(s.created_at), s.branch_id, s.channel, si.uom;
 
 DROP VIEW IF EXISTS v_sales_by_customer;
 CREATE VIEW v_sales_by_customer AS
 SELECT
+    c.organization_id,
     c.customer_num,
     c.customer_name,
     c.phone_number,
@@ -1888,15 +1898,16 @@ SELECT
     COALESCE(SUM(ci.balance_due),0) AS total_outstanding,
     c.current_balance AS ar_balance
 FROM customers c
-LEFT JOIN sales s ON s.customer_num = c.customer_num AND s.status='completed'
+LEFT JOIN sales s ON s.customer_num = c.customer_num AND s.organization_id = c.organization_id AND s.status='completed'
 LEFT JOIN routes r ON c.route_id = r.id
-LEFT JOIN customer_invoices ci ON ci.customer_num = c.customer_num AND ci.deleted_at IS NULL
+LEFT JOIN customer_invoices ci ON ci.customer_num = c.customer_num AND ci.organization_id = c.organization_id AND ci.deleted_at IS NULL
 WHERE c.deleted_at IS NULL
-GROUP BY c.customer_num;
+GROUP BY c.organization_id, c.customer_num, c.customer_name, c.phone_number, r.route_name, c.current_balance;
 
 DROP VIEW IF EXISTS v_ar_aging;
 CREATE VIEW v_ar_aging AS
 SELECT
+    ci.organization_id,
     ci.customer_num,
     c.customer_name,
     c.phone_number,
@@ -1915,12 +1926,13 @@ SELECT
         ELSE 'Over 90 days'
     END AS aging_bucket
 FROM customer_invoices ci
-JOIN customers c ON ci.customer_num = c.customer_num
+JOIN customers c ON ci.customer_num = c.customer_num AND ci.organization_id = c.organization_id
 WHERE ci.payment_status IN (0,1) AND ci.deleted_at IS NULL;
 
 DROP VIEW IF EXISTS v_stock_on_hand;
 CREATE VIEW v_stock_on_hand AS
 SELECT
+    b.organization_id,
     cs.branch_id,
     p.product_code,
     p.product_name,
@@ -1940,7 +1952,8 @@ SELECT
     rps.markup_price,
     rps.wholesale_markup_price
 FROM current_stock cs
-JOIN products p ON cs.product_code = p.product_code
+JOIN branches b ON b.id = cs.branch_id
+JOIN products p ON cs.product_code = p.product_code AND p.organization_id = b.organization_id
 JOIN uoms u ON p.unit_id = u.id
 LEFT JOIN retail_package_settings rps ON p.product_code = rps.product_code
 WHERE p.deleted_at IS NULL;
@@ -2218,6 +2231,7 @@ DROP VIEW IF EXISTS v_customer_returns_detail;
 CREATE VIEW v_customer_returns_detail AS
 SELECT
     cr.return_date AS return_date,
+    cr.organization_id,
     cr.branch_id,
     cr.customer_num,
     COALESCE(c.customer_name, s.customer_name_override, 'Walk-in') AS customer_name,
@@ -2230,8 +2244,9 @@ SELECT
 FROM customer_return_lines crl
 JOIN customer_returns cr ON crl.customer_return_id = cr.id
 JOIN users u ON cr.returned_by = u.id
-LEFT JOIN customers c ON cr.customer_num = c.customer_num
+LEFT JOIN customers c ON cr.customer_num = c.customer_num AND cr.organization_id = c.organization_id
 LEFT JOIN products p ON crl.product_code COLLATE utf8mb4_0900_ai_ci = p.product_code
+    AND p.organization_id = cr.organization_id
 LEFT JOIN sales s ON cr.sale_id = s.id
 WHERE cr.status = 'approved'
 
@@ -2239,6 +2254,7 @@ UNION ALL
 
 SELECT
     COALESCE(DATE(r.created_at), CURRENT_DATE) AS return_date,
+    s.organization_id,
     r.branch_id,
     s.customer_num,
     COALESCE(c.customer_name, s.customer_name_override, 'Walk-in') AS customer_name,
@@ -2250,9 +2266,9 @@ SELECT
     u.username AS returned_by
 FROM returns r
 JOIN users u ON r.returned_by = u.id
-JOIN products p ON r.product_code = p.product_code
-LEFT JOIN sales s ON r.sale_id = s.id
-LEFT JOIN customers c ON s.customer_num = c.customer_num
+JOIN sales s ON r.sale_id = s.id
+JOIN products p ON r.product_code = p.product_code AND p.organization_id = s.organization_id
+LEFT JOIN customers c ON s.customer_num = c.customer_num AND s.organization_id = c.organization_id
 WHERE NOT EXISTS (
     SELECT 1 FROM customer_return_lines crl WHERE crl.legacy_return_id = r.id
 );
@@ -2580,9 +2596,56 @@ JOIN journal_entry_lines jel ON jel.journal_entry_id = je.id
 JOIN users u ON je.created_by = u.id
 GROUP BY je.id;
 
+DROP VIEW IF EXISTS v_accounts_receivable_summary;
+CREATE VIEW v_accounts_receivable_summary AS
+SELECT
+    c.organization_id,
+    c.customer_num,
+    c.customer_name,
+    c.phone_number,
+    r.route_name,
+    COALESCE(c.current_balance, 0) AS customer_balance,
+    COALESCE(inv.open_invoice_total, 0) AS invoice_balance_due,
+    COALESCE(inv.open_invoice_count, 0) AS open_invoices,
+    COALESCE(credit.credit_sales_outstanding, 0) AS credit_sales_outstanding,
+    COALESCE(c.current_balance, 0)
+        + COALESCE(inv.open_invoice_total, 0)
+        + COALESCE(credit.credit_sales_outstanding, 0) AS total_outstanding
+FROM customers c
+LEFT JOIN routes r ON c.route_id = r.id
+LEFT JOIN (
+    SELECT
+        ci.organization_id,
+        ci.customer_num,
+        SUM(ci.balance_due) AS open_invoice_total,
+        COUNT(*) AS open_invoice_count
+    FROM customer_invoices ci
+    WHERE ci.payment_status IN (0, 1) AND ci.deleted_at IS NULL
+    GROUP BY ci.organization_id, ci.customer_num
+) inv ON inv.customer_num = c.customer_num AND inv.organization_id = c.organization_id
+LEFT JOIN (
+    SELECT
+        s.organization_id,
+        s.customer_num,
+        SUM(s.order_total - s.amount_paid) AS credit_sales_outstanding
+    FROM sales s
+    WHERE s.status = 'completed'
+        AND s.is_credit_sale = 1
+        AND s.payment_status IN ('unpaid', 'partial')
+        AND s.customer_num IS NOT NULL
+    GROUP BY s.organization_id, s.customer_num
+) credit ON credit.customer_num = c.customer_num AND credit.organization_id = c.organization_id
+WHERE c.deleted_at IS NULL
+    AND (
+        COALESCE(c.current_balance, 0) > 0
+        OR COALESCE(inv.open_invoice_total, 0) > 0
+        OR COALESCE(credit.credit_sales_outstanding, 0) > 0
+    );
+
 DROP VIEW IF EXISTS v_top_debtors;
 CREATE VIEW v_top_debtors AS
 SELECT
+    c.organization_id,
     c.customer_num,
     c.customer_name,
     c.phone_number,
@@ -2593,9 +2656,10 @@ SELECT
 FROM customers c
 LEFT JOIN routes r ON c.route_id = r.id
 LEFT JOIN customer_invoices ci ON ci.customer_num = c.customer_num
+    AND ci.organization_id = c.organization_id
     AND ci.payment_status IN (0, 1) AND ci.deleted_at IS NULL
 WHERE c.deleted_at IS NULL AND (c.current_balance > 0 OR ci.id IS NOT NULL)
-GROUP BY c.customer_num
+GROUP BY c.organization_id, c.customer_num, c.customer_name, c.phone_number, r.route_name, c.current_balance
 HAVING c.current_balance > 0 OR COALESCE(SUM(ci.balance_due), 0) > 0;
 
 DROP VIEW IF EXISTS v_discount_summary;

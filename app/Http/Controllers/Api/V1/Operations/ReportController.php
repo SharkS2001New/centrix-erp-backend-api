@@ -1413,19 +1413,21 @@ class ReportController extends Controller
             return;
         }
 
-        if (in_array('branch_id', $allowedCols, true)) {
-            $query->whereIn('branch_id', $this->organizationBranchIds($orgId));
+        if (in_array($view, [
+            'v_sales_by_customer',
+            'v_ar_aging',
+            'v_top_debtors',
+            'v_sales_by_product',
+            'v_stock_on_hand',
+            'v_customer_returns_detail',
+        ], true)) {
+            $query->where('organization_id', $orgId);
 
             return;
         }
 
-        if ($view === 'v_sales_by_customer') {
-            $query->whereIn('customer_num', function ($sub) use ($orgId) {
-                $sub->select('customer_num')
-                    ->from('customers')
-                    ->where('organization_id', $orgId)
-                    ->whereNull('deleted_at');
-            });
+        if (in_array('branch_id', $allowedCols, true)) {
+            $query->whereIn('branch_id', $this->organizationBranchIds($orgId));
 
             return;
         }

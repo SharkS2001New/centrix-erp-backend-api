@@ -78,7 +78,9 @@ class AccountingReportController extends Controller
 
     public function accountsReceivable(Request $request)
     {
-        $q = DB::table('v_accounts_receivable_summary');
+        $orgId = (int) $request->user()->organization_id;
+        $q = DB::table('v_accounts_receivable_summary')
+            ->where('organization_id', $orgId);
         foreach (['customer_num'] as $col) {
             if ($request->filled($col)) {
                 $q->where($col, $request->input($col));

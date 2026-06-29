@@ -147,6 +147,7 @@ class CreditNoteService
 
             KraResponse::create([
                 'sale_id' => $return->sale_id,
+                'organization_id' => (int) $creditNote->organization_id,
                 'order_no' => $return->sale?->order_num ?? 0,
                 'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
                 'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,

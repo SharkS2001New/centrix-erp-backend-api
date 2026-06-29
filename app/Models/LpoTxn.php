@@ -14,4 +14,9 @@ class LpoTxn extends Model
         'lpo_no', 'product_code', 'ordered_qty', 'uom', 'cost_price',
         'received_qty', 'markup_amount', 'markup_percent',
     ];
+
+    public function lpo()
+    {
+        return $this->belongsTo(LpoMst::class, 'lpo_no', 'lpo_no');
+    }
 }

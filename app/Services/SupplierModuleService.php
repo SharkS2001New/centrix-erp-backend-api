@@ -118,10 +118,13 @@ class SupplierModuleService
                 $documents[] = [
                     'id' => 'inv-' . $inv['id'],
                     'lpo_no' => (int) $lpo->lpo_no,
+                    'lpo_seq' => $purchase['lpo_seq'] ?? null,
+                    'po_number' => $purchase['po_number'] ?? null,
+                    'reference_number' => $purchase['reference_number'] ?? null,
+                    'order_date' => $purchase['order_date'],
                     'file_name' => $inv['supplier_invoice_number'] ?? $inv['number'] ?? 'Supplier invoice',
                     'status_name' => $purchase['status_name'],
                     'supplier_invoice_no' => $inv['supplier_invoice_number'] ?? $inv['number'],
-                    'order_date' => $purchase['order_date'],
                     'total_amount' => (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
                     'balance_due' => (float) ($purchase['balance_due'] ?? 0),
                 ];
@@ -138,10 +141,13 @@ class SupplierModuleService
             $documents[] = [
                 'id' => 'att-' . $attachment->id,
                 'lpo_no' => (int) $attachment->lpo_no,
+                'lpo_seq' => $purchase['lpo_seq'] ?? null,
+                'po_number' => $purchase['po_number'] ?? null,
+                'reference_number' => $purchase['reference_number'] ?? null,
+                'order_date' => $purchase['order_date'] ?? null,
                 'file_name' => $attachment->file_name,
                 'status_name' => $purchase['status_name'] ?? null,
                 'supplier_invoice_no' => $purchase['supplier_invoice_no'] ?? null,
-                'order_date' => $purchase['order_date'] ?? null,
                 'total_amount' => (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
                 'balance_due' => (float) ($purchase['balance_due'] ?? 0),
             ];
@@ -321,6 +327,8 @@ class SupplierModuleService
 
         return [
             'lpo_no' => (int) $lpo['lpo_no'],
+            'lpo_seq' => (int) ($lpo['lpo_seq'] ?? 0),
+            'po_number' => $lpo['po_number'] ?? null,
             'status_name' => $lpo['status_name'] ?? null,
             'supplier_invoice_no' => $lpo['supplier_invoice_no'] ?? null,
             'reference_number' => $lpo['reference_number'] ?? null,
@@ -354,12 +362,15 @@ class SupplierModuleService
     {
         $dueSnapshot = (float) ($payment->amount_due_snapshot ?? 0);
         $amountPaid = (float) $payment->amount_paid;
+        $lpoDisplay = $this->lpoDisplayFields($payment->lpo_no ? (int) $payment->lpo_no : null);
 
         return [
             'id' => (int) $payment->id,
             'supplier_id' => (int) $payment->supplier_id,
             'supplier_name' => $payment->supplier?->supplier_name,
             'lpo_no' => $payment->lpo_no ? (int) $payment->lpo_no : null,
+            'lpo_seq' => $lpoDisplay['lpo_seq'],
+            'po_number' => $lpoDisplay['po_number'],
             'amount_paid' => $amountPaid,
             'amount_due_snapshot' => $dueSnapshot > 0 ? $dueSnapshot : null,
             'is_partial' => $dueSnapshot > 0 && $amountPaid + 0.01 < $dueSnapshot,
@@ -373,5 +384,33 @@ class SupplierModuleService
             'paid_by_name' => $payment->paidByUser?->full_name ?? $payment->paidByUser?->username,
             'notes' => $payment->notes,
         ];
+    }
+
+    /** @return array{lpo_seq: ?int, po_number: ?string} */
+    protected function lpoDisplayFields(?int $lpoNo): array
+    {
+        if (! $lpoNo) {
+            return ['lpo_seq' => null, 'po_number' => null];
+        }
+
+        static $cache = [];
+        if (! array_key_exists($lpoNo, $cache)) {
+            $lpo = LpoMst::query()
+                ->select('lpo_no', 'lpo_seq', 'created_at', 'sent_at', 'reference_number')
+                ->where('lpo_no', $lpoNo)
+                ->first();
+
+            if (! $lpo) {
+                $cache[$lpoNo] = ['lpo_seq' => null, 'po_number' => null];
+            } else {
+                $orderDate = $lpo->created_at ?? $lpo->sent_at;
+                $cache[$lpoNo] = [
+                    'lpo_seq' => (int) $lpo->lpo_seq,
+                    'po_number' => $this->lpoModule->formatPoNumber((int) $lpo->lpo_seq, $orderDate),
+                ];
+            }
+        }
+
+        return $cache[$lpoNo];
     }
 }

@@ -484,6 +484,7 @@ class CheckoutController extends Controller
 
         return KraResponse::create([
             'sale_id' => $sale->id,
+            'organization_id' => (int) $sale->organization_id,
             'order_no' => $sale->order_num,
             'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
             'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
@@ -505,6 +506,7 @@ class CheckoutController extends Controller
 
         return KraResponse::create([
             'sale_id' => $sale->id,
+            'organization_id' => (int) $sale->organization_id,
             'order_no' => $sale->order_num,
             'invoice_number' => 'PENDING-' . $sale->order_num,
             'status' => 'pending',

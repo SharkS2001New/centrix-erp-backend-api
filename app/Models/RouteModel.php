@@ -10,6 +10,7 @@ class RouteModel extends Model
     protected $table = 'routes';
     public $timestamps = false;
     protected $fillable = [
+        'organization_id',
         'route_name',
         'route_markup_price',
         'direction',

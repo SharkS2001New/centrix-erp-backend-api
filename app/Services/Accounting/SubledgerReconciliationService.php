@@ -27,6 +27,7 @@ class SubledgerReconciliationService
     {
         $glBalance = $this->glBalanceForAccountCode($orgId, $accountCode, $asOf);
         $subledgerTotal = (float) DB::table('v_accounts_receivable_summary')
+            ->where('organization_id', $orgId)
             ->sum('total_outstanding');
 
         return $this->buildRow('Accounts Receivable', $accountCode, $glBalance, $subledgerTotal);

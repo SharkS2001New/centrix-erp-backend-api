@@ -19,7 +19,7 @@ class KraResponseController extends BaseResourceController
         $orgId = $this->access()->organizationId($user, $request);
 
         if ($orgId) {
-            $query->whereHas('sale', fn ($saleQuery) => $saleQuery->where('organization_id', $orgId));
+            $query->where('organization_id', $orgId);
         }
 
         if ($user) {

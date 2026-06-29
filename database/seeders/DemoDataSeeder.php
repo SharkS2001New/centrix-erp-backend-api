@@ -292,7 +292,12 @@ class DemoDataSeeder extends Seeder
             'store_quantity' => 5000,
         ]);
 
-        $route = RouteModel::create(['route_name' => 'Nairobi East', 'route_markup_price' => 10, 'direction' => 'East']);
+        $route = RouteModel::create([
+            'organization_id' => $org->id,
+            'route_name' => 'Nairobi East',
+            'route_markup_price' => 10,
+            'direction' => 'East',
+        ]);
 
         $vehicle = Vehicle::create([
             'branch_id' => $hq->id,

@@ -11,6 +11,7 @@ class KraResponse extends Model
     protected $table = 'kra_responses';
     protected $fillable = [
         'sale_id',
+        'organization_id',
         'order_no',
         'invoice_number',
         'receipt_signature',

@@ -67,6 +67,7 @@ class TenantIsolationSecurityTest extends TestCase
 
         $foreignResponse = KraResponse::create([
             'sale_id' => $foreignSale->id,
+            'organization_id' => (int) $foreignSale->organization_id,
             'order_no' => 'FOREIGN-ORDER',
             'status' => 'failed',
         ]);

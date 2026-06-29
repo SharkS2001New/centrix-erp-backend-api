@@ -276,11 +276,16 @@ class SupplierReturnDocumentService
     {
         $doc->loadMissing(['lines', 'supplier', 'returnedByUser']);
 
+        $lpoModel = null;
         $lpoOrderDate = null;
+        $poNumber = null;
         if ($doc->lpo_no) {
-            $lpoOrderDate = LpoMst::query()
-                ->where('lpo_no', $doc->lpo_no)
-                ->value('order_date');
+            $lpoModel = LpoMst::query()->where('lpo_no', $doc->lpo_no)->first();
+            if ($lpoModel) {
+                $lpoOrderDate = $lpoModel->created_at ?? $lpoModel->sent_at;
+                $poNumber = app(\App\Services\LpoModuleService::class)
+                    ->formatPoNumber((int) $lpoModel->lpo_seq, $lpoOrderDate);
+            }
         }
 
         return [
@@ -291,6 +296,8 @@ class SupplierReturnDocumentService
             'branch_id' => (int) $doc->branch_id,
             'source_type' => $doc->lpo_no ? 'lpo' : ($doc->source_type === 'lpo' ? 'lpo' : 'manual'),
             'lpo_no' => $doc->lpo_no ? (int) $doc->lpo_no : null,
+            'lpo_seq' => $lpoModel ? (int) $lpoModel->lpo_seq : null,
+            'po_number' => $poNumber,
             'lpo_order_date' => $lpoOrderDate,
             'supplier_invoice_no' => $doc->supplier_invoice_no,
             'reason_scope' => $doc->reason_scope,
@@ -304,7 +311,7 @@ class SupplierReturnDocumentService
             'approved_at' => $doc->approved_at?->toDateTimeString(),
             'rejected_at' => $doc->rejected_at?->toDateTimeString(),
             'rejection_reason' => $doc->rejection_reason,
-            'reference' => $doc->lpo_no ? 'LPO '.$doc->lpo_no : 'Manual',
+            'reference' => $poNumber ? 'LPO '.$poNumber : 'Manual',
             'can_edit' => $doc->status === 'pending_approval' && $this->canMutate($doc, $user),
             'can_delete' => ($doc->status === 'pending_approval' && $this->canMutate($doc, $user))
                 || ($doc->status === 'approved' && $this->canApprove($user)),
