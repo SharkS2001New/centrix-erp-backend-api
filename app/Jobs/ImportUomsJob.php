@@ -2,6 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\ProcessesImportRowOutcomes;
+use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Uom;
@@ -13,6 +15,8 @@ use Illuminate\Foundation\Queue\Queueable;
 class ImportUomsJob implements ShouldQueue
 {
     use Queueable;
+    use ProcessesImportRowOutcomes;
+    use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
@@ -36,16 +40,18 @@ class ImportUomsJob implements ShouldQueue
                 throw new \RuntimeException('User not found for UOM import task.');
             }
 
-            $rows = $task->payload['rows'] ?? [];
-            if (! is_array($rows) || count($rows) === 0) {
+            $rows = $this->importRowsFromTask($task);
+            if ($rows === []) {
                 throw new \RuntimeException('No UOM rows supplied for import.');
             }
 
             $organizationId = $this->importOrganizationId($task, $user);
 
             $created = 0;
+            $skipped = 0;
             $failures = [];
             $total = count($rows);
+            $seenMeasures = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -62,11 +68,35 @@ class ImportUomsJob implements ShouldQueue
                         throw new \InvalidArgumentException('measure_name is required.');
                     }
 
+                    $measureKey = strtolower($body['measure_name']);
+                    if (isset($seenMeasures[$measureKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if (Uom::query()
+                        ->where('organization_id', $organizationId)
+                        ->whereRaw('LOWER(TRIM(measure_name)) = ?', [$measureKey])
+                        ->exists()) {
+                        $seenMeasures[$measureKey] = true;
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $body['created_by'] = (int) $user->id;
                     $body['organization_id'] = $organizationId;
                     Uom::create($body);
+                    $seenMeasures[$measureKey] = true;
                     $created++;
                 } catch (\Throwable $e) {
+                    if ($this->shouldSkipDuplicateImport($e)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => $row['measure_name'] ?? $row['full_name'] ?? null,
@@ -74,19 +104,12 @@ class ImportUomsJob implements ShouldQueue
                     ];
                 }
 
-                if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $this->reportProgress($tasks, $task, (int) floor((($index + 1) / $total) * 100));
-                }
+                $this->reportImportLoopProgress($tasks, $task, $index, $total);
             }
 
-            $tasks->assertNotCancelled($task);
-            $tasks->markCompleted($task, [
-                'created' => $created,
-                'failed' => count($failures),
-                'failures' => array_slice($failures, 0, 50),
-            ]);
+            $this->completeImportTask($tasks, $task, $this->buildImportResult($created, $skipped, $failures));
         } catch (\Throwable $e) {
-            $this->failBackgroundTask($tasks, $task, $e, 'ImportUomsJob');
+            $this->failImportTask($tasks, $task, $e, 'ImportUomsJob');
         }
     }
 

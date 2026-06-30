@@ -85,6 +85,28 @@ return Application::configure(basePath: dirname(__DIR__))
                 return null;
             }
 
+            if (! str_contains($request->path(), 'import-batch')) {
+                return null;
+            }
+
+            report($e);
+
+            return response()->json([
+                'message' => 'Import failed.',
+                'detail' => $e->getMessage() !== '' ? $e->getMessage() : class_basename($e),
+            ], 500);
+        });
+        $exceptions->renderable(function (\Throwable $e, Request $request) {
+            if (! $request->is('api/*') || ! $request->expectsJson()) {
+                return null;
+            }
+
+            if ($e instanceof AuthenticationException
+                || $e instanceof \Illuminate\Validation\ValidationException
+                || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                return null;
+            }
+
             if (! $request->is('api/v1/admin/database-backups*')) {
                 return null;
             }

@@ -2,6 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\ProcessesImportRowOutcomes;
+use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Supplier;
@@ -13,6 +15,8 @@ use Illuminate\Foundation\Queue\Queueable;
 class ImportSuppliersJob implements ShouldQueue
 {
     use Queueable;
+    use ProcessesImportRowOutcomes;
+    use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
@@ -36,15 +40,17 @@ class ImportSuppliersJob implements ShouldQueue
                 throw new \RuntimeException('User not found for supplier import task.');
             }
 
-            $rows = $task->payload['rows'] ?? [];
-            if (! is_array($rows) || count($rows) === 0) {
+            $rows = $this->importRowsFromTask($task);
+            if ($rows === []) {
                 throw new \RuntimeException('No supplier rows supplied for import.');
             }
 
             $organizationId = $this->importOrganizationId($task, $user);
             $created = 0;
+            $skipped = 0;
             $failures = [];
             $total = count($rows);
+            $seenCodes = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -56,6 +62,26 @@ class ImportSuppliersJob implements ShouldQueue
                 }
 
                 try {
+                    $providedCode = trim((string) ($row['supplier_code'] ?? ''));
+                    if ($providedCode !== '') {
+                        $codeKey = strtolower($providedCode);
+                        if (isset($seenCodes[$codeKey])) {
+                            $skipped++;
+
+                            continue;
+                        }
+
+                        if (Supplier::query()
+                            ->where('organization_id', $organizationId)
+                            ->whereRaw('LOWER(TRIM(supplier_code)) = ?', [$codeKey])
+                            ->exists()) {
+                            $seenCodes[$codeKey] = true;
+                            $skipped++;
+
+                            continue;
+                        }
+                    }
+
                     $body = $this->normalizeRow($row, $organizationId);
                     if ($body['supplier_name'] === '') {
                         throw new \InvalidArgumentException('Missing supplier name.');
@@ -65,8 +91,17 @@ class ImportSuppliersJob implements ShouldQueue
                     $body['created_by'] = (int) $user->id;
 
                     Supplier::create($body);
+                    if ($providedCode !== '') {
+                        $seenCodes[strtolower($providedCode)] = true;
+                    }
                     $created++;
                 } catch (\Throwable $e) {
+                    if ($this->shouldSkipDuplicateImport($e)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => $row['supplier_name'] ?? null,
@@ -74,23 +109,12 @@ class ImportSuppliersJob implements ShouldQueue
                     ];
                 }
 
-                if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $this->reportProgress(
-                        $tasks,
-                        $task,
-                        (int) floor((($index + 1) / $total) * 100),
-                    );
-                }
+                $this->reportImportLoopProgress($tasks, $task, $index, $total);
             }
 
-            $tasks->assertNotCancelled($task);
-            $tasks->markCompleted($task, [
-                'created' => $created,
-                'failed' => count($failures),
-                'failures' => array_slice($failures, 0, 50),
-            ]);
+            $this->completeImportTask($tasks, $task, $this->buildImportResult($created, $skipped, $failures));
         } catch (\Throwable $e) {
-            $this->failBackgroundTask($tasks, $task, $e, 'ImportSuppliersJob');
+            $this->failImportTask($tasks, $task, $e, 'ImportSuppliersJob');
         }
     }
 

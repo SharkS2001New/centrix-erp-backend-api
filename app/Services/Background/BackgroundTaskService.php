@@ -165,6 +165,7 @@ class BackgroundTaskService
     {
         return BackgroundTask::query()
             ->where('id', $id)
+            ->where('user_id', (int) $user->id)
             ->where('organization_id', (int) $user->organization_id)
             ->first();
     }

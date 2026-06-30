@@ -2,6 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\ProcessesImportRowOutcomes;
+use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Category;
@@ -14,6 +16,8 @@ use Illuminate\Foundation\Queue\Queueable;
 class ImportSubCategoriesJob implements ShouldQueue
 {
     use Queueable;
+    use ProcessesImportRowOutcomes;
+    use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
@@ -37,8 +41,8 @@ class ImportSubCategoriesJob implements ShouldQueue
                 throw new \RuntimeException('User not found for sub-category import task.');
             }
 
-            $rows = $task->payload['rows'] ?? [];
-            if (! is_array($rows) || count($rows) === 0) {
+            $rows = $this->importRowsFromTask($task);
+            if ($rows === []) {
                 throw new \RuntimeException('No sub-category rows supplied for import.');
             }
 
@@ -50,8 +54,10 @@ class ImportSubCategoriesJob implements ShouldQueue
                 ->mapWithKeys(fn (Category $category) => [strtolower(trim($category->category_name)) => (int) $category->id]);
 
             $created = 0;
+            $skipped = 0;
             $failures = [];
             $total = count($rows);
+            $seenKeys = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -85,14 +91,39 @@ class ImportSubCategoriesJob implements ShouldQueue
                         throw new \InvalidArgumentException('Category does not belong to this organization.');
                     }
 
+                    $dupKey = $categoryId.'|'.strtolower($name);
+                    if (isset($seenKeys[$dupKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if (SubCategory::query()
+                        ->where('organization_id', $organizationId)
+                        ->where('category_id', $categoryId)
+                        ->whereRaw('LOWER(TRIM(subcategory_name)) = ?', [strtolower($name)])
+                        ->exists()) {
+                        $seenKeys[$dupKey] = true;
+                        $skipped++;
+
+                        continue;
+                    }
+
                     SubCategory::create([
                         'category_id' => $categoryId,
                         'subcategory_name' => $name,
                         'organization_id' => $organizationId,
                         'created_by' => (int) $user->id,
                     ]);
+                    $seenKeys[$dupKey] = true;
                     $created++;
                 } catch (\Throwable $e) {
+                    if ($this->shouldSkipDuplicateImport($e)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => $row['subcategory_name'] ?? null,
@@ -100,19 +131,12 @@ class ImportSubCategoriesJob implements ShouldQueue
                     ];
                 }
 
-                if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $this->reportProgress($tasks, $task, (int) floor((($index + 1) / $total) * 100));
-                }
+                $this->reportImportLoopProgress($tasks, $task, $index, $total);
             }
 
-            $tasks->assertNotCancelled($task);
-            $tasks->markCompleted($task, [
-                'created' => $created,
-                'failed' => count($failures),
-                'failures' => array_slice($failures, 0, 50),
-            ]);
+            $this->completeImportTask($tasks, $task, $this->buildImportResult($created, $skipped, $failures));
         } catch (\Throwable $e) {
-            $this->failBackgroundTask($tasks, $task, $e, 'ImportSubCategoriesJob');
+            $this->failImportTask($tasks, $task, $e, 'ImportSubCategoriesJob');
         }
     }
 }

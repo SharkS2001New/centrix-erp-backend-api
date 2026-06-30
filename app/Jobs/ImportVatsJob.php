@@ -2,6 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\ProcessesImportRowOutcomes;
+use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\User;
@@ -13,6 +15,8 @@ use Illuminate\Foundation\Queue\Queueable;
 class ImportVatsJob implements ShouldQueue
 {
     use Queueable;
+    use ProcessesImportRowOutcomes;
+    use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
@@ -36,16 +40,18 @@ class ImportVatsJob implements ShouldQueue
                 throw new \RuntimeException('User not found for VAT import task.');
             }
 
-            $rows = $task->payload['rows'] ?? [];
-            if (! is_array($rows) || count($rows) === 0) {
+            $rows = $this->importRowsFromTask($task);
+            if ($rows === []) {
                 throw new \RuntimeException('No VAT rows supplied for import.');
             }
 
             $organizationId = $this->importOrganizationId($task, $user);
 
             $created = 0;
+            $skipped = 0;
             $failures = [];
             $total = count($rows);
+            $seenCodes = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -63,6 +69,23 @@ class ImportVatsJob implements ShouldQueue
                         throw new \InvalidArgumentException('vat_code and vat_name are required.');
                     }
 
+                    $codeKey = strtolower($code);
+                    if (isset($seenCodes[$codeKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if (Vat::query()
+                        ->where('organization_id', $organizationId)
+                        ->whereRaw('LOWER(TRIM(vat_code)) = ?', [$codeKey])
+                        ->exists()) {
+                        $seenCodes[$codeKey] = true;
+                        $skipped++;
+
+                        continue;
+                    }
+
                     Vat::create([
                         'vat_code' => $code,
                         'vat_name' => $name,
@@ -71,8 +94,15 @@ class ImportVatsJob implements ShouldQueue
                         'organization_id' => $organizationId,
                         'created_by' => (int) $user->id,
                     ]);
+                    $seenCodes[$codeKey] = true;
                     $created++;
                 } catch (\Throwable $e) {
+                    if ($this->shouldSkipDuplicateImport($e)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => $row['vat_code'] ?? $row['vat_name'] ?? null,
@@ -80,19 +110,12 @@ class ImportVatsJob implements ShouldQueue
                     ];
                 }
 
-                if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $this->reportProgress($tasks, $task, (int) floor((($index + 1) / $total) * 100));
-                }
+                $this->reportImportLoopProgress($tasks, $task, $index, $total);
             }
 
-            $tasks->assertNotCancelled($task);
-            $tasks->markCompleted($task, [
-                'created' => $created,
-                'failed' => count($failures),
-                'failures' => array_slice($failures, 0, 50),
-            ]);
+            $this->completeImportTask($tasks, $task, $this->buildImportResult($created, $skipped, $failures));
         } catch (\Throwable $e) {
-            $this->failBackgroundTask($tasks, $task, $e, 'ImportVatsJob');
+            $this->failImportTask($tasks, $task, $e, 'ImportVatsJob');
         }
     }
 

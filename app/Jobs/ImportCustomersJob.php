@@ -2,6 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\ProcessesImportRowOutcomes;
+use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Branch;
@@ -20,6 +22,8 @@ use Illuminate\Validation\ValidationException;
 class ImportCustomersJob implements ShouldQueue
 {
     use Queueable;
+    use ProcessesImportRowOutcomes;
+    use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
@@ -46,8 +50,8 @@ class ImportCustomersJob implements ShouldQueue
                 throw new \RuntimeException('User not found for customer import task.');
             }
 
-            $rows = $task->payload['rows'] ?? [];
-            if (! is_array($rows) || count($rows) === 0) {
+            $rows = $this->importRowsFromTask($task);
+            if ($rows === []) {
                 throw new \RuntimeException('No customer rows supplied for import.');
             }
 
@@ -65,6 +69,7 @@ class ImportCustomersJob implements ShouldQueue
             $validRouteSet = array_fill_keys($validRouteIds, true);
 
             $created = 0;
+            $skipped = 0;
             $failures = [];
             $total = count($rows);
 
@@ -111,30 +116,26 @@ class ImportCustomersJob implements ShouldQueue
 
                     $created++;
                 } catch (\Throwable $e) {
+                    $message = $this->formatImportFailureMessage($e);
+                    if ($this->shouldSkipDuplicateImport($e) || $this->isDuplicateImportMessage($message)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => $row['customer_name'] ?? null,
-                        'message' => $this->formatImportFailureMessage($e),
+                        'message' => $message,
                     ];
                 }
 
-                if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $this->reportProgress(
-                        $tasks,
-                        $task,
-                        (int) floor((($index + 1) / $total) * 100),
-                    );
-                }
+                $this->reportImportLoopProgress($tasks, $task, $index, $total);
             }
 
-            $tasks->assertNotCancelled($task);
-            $tasks->markCompleted($task, [
-                'created' => $created,
-                'failed' => count($failures),
-                'failures' => array_slice($failures, 0, 50),
-            ]);
+            $this->completeImportTask($tasks, $task, $this->buildImportResult($created, $skipped, $failures));
         } catch (\Throwable $e) {
-            $this->failBackgroundTask($tasks, $task, $e, 'ImportCustomersJob');
+            $this->failImportTask($tasks, $task, $e, 'ImportCustomersJob');
         }
     }
 

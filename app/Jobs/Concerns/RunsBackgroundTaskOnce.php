@@ -41,12 +41,15 @@ trait RunsBackgroundTaskOnce
             return;
         }
 
+        $message = $this->formatBackgroundTaskErrorMessage($e);
+
         Log::warning($logContext.' failed', [
             'task_id' => $this->taskId,
-            'error' => $e->getMessage(),
+            'error' => $message,
+            'exception' => $e::class,
         ]);
 
-        $tasks->markFailed($task, $e->getMessage());
+        $tasks->markFailed($task, $message);
     }
 
     public function failed(?\Throwable $e = null): void
@@ -56,8 +59,33 @@ trait RunsBackgroundTaskOnce
             return;
         }
 
-        $message = $e?->getMessage() ?: 'Background task failed before it could finish.';
+        $message = $e !== null
+            ? $this->formatBackgroundTaskErrorMessage($e)
+            : 'Background task failed before it could finish.';
+
         app(BackgroundTaskService::class)->markFailed($task, $message);
+    }
+
+    protected function formatBackgroundTaskErrorMessage(\Throwable $e): string
+    {
+        $parts = [];
+        $current = $e;
+        $depth = 0;
+
+        while ($current !== null && $depth < 4) {
+            $message = trim($current->getMessage());
+            if ($message !== '' && ! in_array($message, $parts, true)) {
+                $parts[] = $message;
+            }
+            $current = $current->getPrevious();
+            $depth++;
+        }
+
+        if ($parts === []) {
+            return class_basename($e).': background task failed.';
+        }
+
+        return implode(' — ', $parts);
     }
 
     protected function reportProgress(

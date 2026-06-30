@@ -2,6 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\ProcessesImportRowOutcomes;
+use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Product;
@@ -17,6 +19,8 @@ use Illuminate\Foundation\Queue\Queueable;
 class ImportProductsJob implements ShouldQueue
 {
     use Queueable;
+    use ProcessesImportRowOutcomes;
+    use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
@@ -40,15 +44,17 @@ class ImportProductsJob implements ShouldQueue
                 throw new \RuntimeException('User not found for product import task.');
             }
 
-            $rows = $task->payload['rows'] ?? [];
-            if (! is_array($rows) || count($rows) === 0) {
+            $rows = $this->importRowsFromTask($task);
+            if ($rows === []) {
                 throw new \RuntimeException('No product rows supplied for import.');
             }
 
             $organizationId = $this->importOrganizationId($task, $user);
             $created = 0;
+            $skipped = 0;
             $failures = [];
             $total = count($rows);
+            $seenCodes = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -71,12 +77,40 @@ class ImportProductsJob implements ShouldQueue
                         $body['product_code'] = Product::generateNextProductCode($organizationId);
                     }
 
+                    $codeKey = strtolower(trim((string) $body['product_code']));
+                    if ($codeKey !== '') {
+                        if (isset($seenCodes[$codeKey])) {
+                            $skipped++;
+
+                            continue;
+                        }
+
+                        if (Product::query()
+                            ->where('organization_id', $organizationId)
+                            ->whereRaw('LOWER(TRIM(product_code)) = ?', [$codeKey])
+                            ->exists()) {
+                            $seenCodes[$codeKey] = true;
+                            $skipped++;
+
+                            continue;
+                        }
+                    }
+
                     $body['organization_id'] = $organizationId;
                     $body['created_by'] = (int) $user->id;
 
                     Product::create($body);
+                    if ($codeKey !== '') {
+                        $seenCodes[$codeKey] = true;
+                    }
                     $created++;
                 } catch (\Throwable $e) {
+                    if ($this->shouldSkipDuplicateImport($e)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => $row['product_code'] ?? $row['product_name'] ?? null,
@@ -84,23 +118,12 @@ class ImportProductsJob implements ShouldQueue
                     ];
                 }
 
-                if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $this->reportProgress(
-                        $tasks,
-                        $task,
-                        (int) floor((($index + 1) / $total) * 100),
-                    );
-                }
+                $this->reportImportLoopProgress($tasks, $task, $index, $total);
             }
 
-            $tasks->assertNotCancelled($task);
-            $tasks->markCompleted($task, [
-                'created' => $created,
-                'failed' => count($failures),
-                'failures' => array_slice($failures, 0, 50),
-            ]);
+            $this->completeImportTask($tasks, $task, $this->buildImportResult($created, $skipped, $failures));
         } catch (\Throwable $e) {
-            $this->failBackgroundTask($tasks, $task, $e, 'ImportProductsJob');
+            $this->failImportTask($tasks, $task, $e, 'ImportProductsJob');
         }
     }
 

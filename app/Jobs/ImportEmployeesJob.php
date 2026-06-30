@@ -2,6 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\ProcessesImportRowOutcomes;
+use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Employee;
@@ -15,6 +17,8 @@ use Illuminate\Support\Facades\DB;
 class ImportEmployeesJob implements ShouldQueue
 {
     use Queueable;
+    use ProcessesImportRowOutcomes;
+    use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
@@ -38,15 +42,17 @@ class ImportEmployeesJob implements ShouldQueue
                 throw new \RuntimeException('User not found for employee import task.');
             }
 
-            $rows = $task->payload['rows'] ?? [];
-            if (! is_array($rows) || count($rows) === 0) {
+            $rows = $this->importRowsFromTask($task);
+            if ($rows === []) {
                 throw new \RuntimeException('No employee rows supplied for import.');
             }
 
             $organizationId = $this->importOrganizationId($task, $user);
             $created = 0;
+            $skipped = 0;
             $failures = [];
             $total = count($rows);
+            $seenCodes = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -61,6 +67,26 @@ class ImportEmployeesJob implements ShouldQueue
                     $body = $this->normalizeRow($row, $organizationId);
                     if ($body['first_name'] === '' || $body['last_name'] === '') {
                         throw new \InvalidArgumentException('First name and last name are required.');
+                    }
+
+                    $providedCode = trim((string) ($row['employee_code'] ?? ''));
+                    if ($providedCode !== '') {
+                        $codeKey = strtolower($providedCode);
+                        if (isset($seenCodes[$codeKey])) {
+                            $skipped++;
+
+                            continue;
+                        }
+
+                        if (Employee::query()
+                            ->where('organization_id', $organizationId)
+                            ->whereRaw('LOWER(TRIM(employee_code)) = ?', [$codeKey])
+                            ->exists()) {
+                            $seenCodes[$codeKey] = true;
+                            $skipped++;
+
+                            continue;
+                        }
                     }
 
                     $body['organization_id'] = $organizationId;
@@ -81,8 +107,17 @@ class ImportEmployeesJob implements ShouldQueue
                         Employee::create($body);
                     });
 
+                    if ($providedCode !== '') {
+                        $seenCodes[strtolower($providedCode)] = true;
+                    }
                     $created++;
                 } catch (\Throwable $e) {
+                    if ($this->shouldSkipDuplicateImport($e)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => trim(($row['first_name'] ?? '').' '.($row['last_name'] ?? '')) ?: null,
@@ -90,23 +125,12 @@ class ImportEmployeesJob implements ShouldQueue
                     ];
                 }
 
-                if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $this->reportProgress(
-                        $tasks,
-                        $task,
-                        (int) floor((($index + 1) / $total) * 100),
-                    );
-                }
+                $this->reportImportLoopProgress($tasks, $task, $index, $total);
             }
 
-            $tasks->assertNotCancelled($task);
-            $tasks->markCompleted($task, [
-                'created' => $created,
-                'failed' => count($failures),
-                'failures' => array_slice($failures, 0, 50),
-            ]);
+            $this->completeImportTask($tasks, $task, $this->buildImportResult($created, $skipped, $failures));
         } catch (\Throwable $e) {
-            $this->failBackgroundTask($tasks, $task, $e, 'ImportEmployeesJob');
+            $this->failImportTask($tasks, $task, $e, 'ImportEmployeesJob');
         }
     }
 

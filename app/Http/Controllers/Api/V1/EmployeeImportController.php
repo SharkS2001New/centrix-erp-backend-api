@@ -3,39 +3,26 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Concerns\EnsuresAdvancedDataImport;
+use App\Http\Controllers\Concerns\QueuesImportBackgroundTask;
 use App\Http\Controllers\Controller;
 use App\Jobs\ImportEmployeesJob;
-use App\Services\Background\BackgroundTaskService;
 use Illuminate\Http\Request;
 
 class EmployeeImportController extends Controller
 {
     use EnsuresAdvancedDataImport;
-
-    public function __construct(
-        protected BackgroundTaskService $tasks,
-    ) {}
+    use QueuesImportBackgroundTask;
 
     /** POST /employees/import-batch */
     public function store(Request $request)
     {
         $this->ensureAdvancedDataImport($request);
 
-        $data = $request->validate([
-            'rows' => ['required', 'array', 'min:1', 'max:5000'],
-            'rows.*.first_name' => ['nullable', 'string', 'max:100'],
-            'rows.*.last_name' => ['nullable', 'string', 'max:100'],
-        ]);
-
-        $task = $this->tasks->createFromRequest('employee_import', $request, [
-            'rows' => $data['rows'],
-        ]);
-
-        ImportEmployeesJob::dispatch($task->id);
-
-        return response()->json([
-            'message' => 'Employee import queued.',
-            'task_id' => $task->id,
-        ], 202);
+        return $this->queueImportBackgroundTask(
+            $request,
+            'employee_import',
+            ImportEmployeesJob::class,
+            'Employee import queued.',
+        );
     }
 }

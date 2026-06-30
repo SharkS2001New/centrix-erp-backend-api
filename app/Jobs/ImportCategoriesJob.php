@@ -2,6 +2,8 @@
 
 namespace App\Jobs;
 
+use App\Jobs\Concerns\ProcessesImportRowOutcomes;
+use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Category;
@@ -13,6 +15,8 @@ use Illuminate\Foundation\Queue\Queueable;
 class ImportCategoriesJob implements ShouldQueue
 {
     use Queueable;
+    use ProcessesImportRowOutcomes;
+    use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
     public int $timeout = 1800;
@@ -36,16 +40,18 @@ class ImportCategoriesJob implements ShouldQueue
                 throw new \RuntimeException('User not found for category import task.');
             }
 
-            $rows = $task->payload['rows'] ?? [];
-            if (! is_array($rows) || count($rows) === 0) {
+            $rows = $this->importRowsFromTask($task);
+            if ($rows === []) {
                 throw new \RuntimeException('No category rows supplied for import.');
             }
 
             $organizationId = $this->importOrganizationId($task, $user);
 
             $created = 0;
+            $skipped = 0;
             $failures = [];
             $total = count($rows);
+            $seenNames = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -62,13 +68,37 @@ class ImportCategoriesJob implements ShouldQueue
                         throw new \InvalidArgumentException('category_name is required.');
                     }
 
+                    $nameKey = strtolower($name);
+                    if (isset($seenNames[$nameKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if (Category::query()
+                        ->where('organization_id', $organizationId)
+                        ->whereRaw('LOWER(TRIM(category_name)) = ?', [$nameKey])
+                        ->exists()) {
+                        $seenNames[$nameKey] = true;
+                        $skipped++;
+
+                        continue;
+                    }
+
                     Category::create([
                         'category_name' => $name,
                         'organization_id' => $organizationId,
                         'created_by' => (int) $user->id,
                     ]);
+                    $seenNames[$nameKey] = true;
                     $created++;
                 } catch (\Throwable $e) {
+                    if ($this->shouldSkipDuplicateImport($e)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => $row['category_name'] ?? null,
@@ -76,19 +106,12 @@ class ImportCategoriesJob implements ShouldQueue
                     ];
                 }
 
-                if ($total > 0 && ($index + 1) % max(1, (int) floor($total / 20)) === 0) {
-                    $this->reportProgress($tasks, $task, (int) floor((($index + 1) / $total) * 100));
-                }
+                $this->reportImportLoopProgress($tasks, $task, $index, $total);
             }
 
-            $tasks->assertNotCancelled($task);
-            $tasks->markCompleted($task, [
-                'created' => $created,
-                'failed' => count($failures),
-                'failures' => array_slice($failures, 0, 50),
-            ]);
+            $this->completeImportTask($tasks, $task, $this->buildImportResult($created, $skipped, $failures));
         } catch (\Throwable $e) {
-            $this->failBackgroundTask($tasks, $task, $e, 'ImportCategoriesJob');
+            $this->failImportTask($tasks, $task, $e, 'ImportCategoriesJob');
         }
     }
 }
