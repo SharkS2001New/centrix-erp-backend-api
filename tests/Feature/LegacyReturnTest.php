@@ -183,6 +183,91 @@ class LegacyReturnTest extends TestCase
         $this->assertTrue($line['full_return']);
     }
 
+    public function test_legacy_return_blocks_second_return_for_same_order(): void
+    {
+        $this->enableKraDevice();
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => true,
+                'message' => 'OK',
+                'invoice_number' => 'CN-LEG-DUP',
+                'cu-inv-no' => '00009901',
+                'Receipt Signature' => 'SIG-DUP',
+                'signature_link' => 'https://example.test/legacy-credit-dup',
+                'serial_number' => 'DEJA02220240050',
+                'timestamp' => '2026-06-20T10:00:00',
+            ], 200),
+        ]);
+
+        $sale = $this->createLegacySale();
+
+        $this->postJson('/api/v1/legacy-returns', [
+            'sale_id' => $sale->id,
+            'kra_original_invoice_number' => '00009900',
+            'reason' => 'Damaged Product',
+            'full_return' => true,
+        ])->assertCreated();
+
+        $this->postJson('/api/v1/legacy-returns', [
+            'sale_id' => $sale->id,
+            'kra_original_invoice_number' => '00009900',
+            'reason' => 'Damaged Product',
+            'full_return' => true,
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['sale_id']);
+    }
+
+    public function test_legacy_return_lines_report_blocked_reason_when_return_exists(): void
+    {
+        $sale = $this->createLegacySale();
+
+        CustomerReturn::query()->create([
+            'return_no' => 'LRET-BLOCKED',
+            'organization_id' => $sale->organization_id,
+            'branch_id' => $sale->branch_id,
+            'sale_id' => $sale->id,
+            'return_date' => '2026-06-01',
+            'status' => 'approved',
+            'return_kind' => 'legacy',
+            'total_amount' => 200,
+            'returned_by' => $this->user->id,
+            'approved_by' => $this->user->id,
+            'approved_at' => now(),
+        ]);
+
+        $blocked = $this->getJson("/api/v1/legacy-orders/{$sale->id}/return-lines")
+            ->assertOk()
+            ->assertJsonPath('can_create_return', false)
+            ->assertJsonPath('lines', []);
+
+        $this->assertStringContainsString(
+            'LRET-BLOCKED',
+            (string) $blocked->json('return_blocked_reason'),
+        );
+    }
+
+    public function test_materialize_rejects_already_materialized_legacy_order(): void
+    {
+        $sale = $this->createLegacySale();
+        $meta = $sale->fulfillment_meta;
+
+        $response = $this->postJson('/api/v1/reports/legacy-archive/sales/materialize', [
+            'channel' => 'pos',
+            'legacy_order_num' => (int) $meta['legacy_order_num'],
+            'sale_date' => (string) $meta['legacy_sale_date'],
+        ]);
+
+        if ($response->status() === 503) {
+            $this->markTestSkipped('Legacy archive database is not available in this environment.');
+        }
+
+        $response->assertStatus(422)
+            ->assertJsonPath('materialized_sale_id', $sale->id)
+            ->assertJsonFragment([
+                'message' => 'This legacy order has already been materialized into Centrix.',
+            ]);
+    }
+
     public function test_legacy_orders_list_excludes_normal_sales(): void
     {
         $legacy = $this->createLegacySale();

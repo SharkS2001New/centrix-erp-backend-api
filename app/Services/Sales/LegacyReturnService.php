@@ -19,6 +19,7 @@ class LegacyReturnService
     public function __construct(
         protected CustomerReturnService $customerReturnService,
         protected CreditNoteService $creditNoteService,
+        protected LegacyOrderService $legacyOrders,
     ) {}
 
     public function baseQuery(User $user): Builder
@@ -81,6 +82,7 @@ class LegacyReturnService
         $this->assertKraDeviceEnabled($finance);
 
         $sale = $this->resolveLegacySale($user, (int) $data['sale_id']);
+        $this->assertLegacyReturnAllowed($sale);
         $kraOriginalInvoice = $this->resolveKraOriginalInvoiceNumber(
             $sale,
             $data['kra_original_invoice_number'] ?? null,
@@ -192,6 +194,7 @@ class LegacyReturnService
     public function linesFromSale(User $user, int $saleId): array
     {
         $sale = $this->resolveLegacySale($user, $saleId);
+        $this->assertLegacyReturnAllowed($sale);
 
         return $this->customerReturnService->linesFromSale($sale, 'legacy');
     }
@@ -231,6 +234,26 @@ class LegacyReturnService
         app(UserAccessService::class)->assertBranchAccess($user, (int) $sale->branch_id);
 
         return $sale;
+    }
+
+    protected function assertLegacyReturnAllowed(Sale $sale): void
+    {
+        $summary = $this->legacyOrders->legacyReturnSummaryForSale($sale);
+        $returnNo = $summary['legacy_return_no'] ?? null;
+
+        if (($summary['return_count_all'] ?? 0) > 0) {
+            $message = $summary['fully_returned'] ?? false
+                ? 'A legacy return has already been completed for this order.'
+                : 'A legacy return is already in progress for this order.';
+
+            if (is_string($returnNo) && $returnNo !== '') {
+                $message .= " See {$returnNo} in Legacy returns.";
+            }
+
+            throw ValidationException::withMessages([
+                'sale_id' => $message,
+            ]);
+        }
     }
 
     protected function resolveKraOriginalInvoiceNumber(Sale $sale, ?string $provided): string

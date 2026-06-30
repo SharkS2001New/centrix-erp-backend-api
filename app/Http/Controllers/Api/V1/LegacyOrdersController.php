@@ -46,11 +46,26 @@ class LegacyOrdersController extends Controller
 
     public function returnLines(Request $request, string $saleId)
     {
+        $sale = $this->orders->findForUser($request->user(), (int) $saleId);
+        $summary = $sale->legacy_return_summary ?? $this->orders->legacyReturnSummaryForSale($sale);
+
+        try {
+            $lines = $this->returns->linesFromSale($request->user(), (int) $saleId);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'lines' => [],
+                'kra_invoice_hint' => $this->returns->kraInvoiceHintForSale($sale),
+                'legacy_return_summary' => $summary,
+                'can_create_return' => false,
+                'return_blocked_reason' => collect($e->errors())->flatten()->first(),
+            ]);
+        }
+
         return response()->json([
-            'lines' => $this->returns->linesFromSale($request->user(), (int) $saleId),
-            'kra_invoice_hint' => $this->returns->kraInvoiceHintForSale(
-                $this->orders->findForUser($request->user(), (int) $saleId),
-            ),
+            'lines' => $lines,
+            'kra_invoice_hint' => $this->returns->kraInvoiceHintForSale($sale),
+            'legacy_return_summary' => $summary,
+            'can_create_return' => (bool) ($summary['can_create_return'] ?? true),
         ]);
     }
 

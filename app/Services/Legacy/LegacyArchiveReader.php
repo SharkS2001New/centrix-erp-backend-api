@@ -3,6 +3,8 @@
 namespace App\Services\Legacy;
 
 use App\Models\Organization;
+use App\Models\Sale;
+use App\Services\Sales\LegacyOrderService;
 use App\Support\AppTimezone;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -13,6 +15,7 @@ class LegacyArchiveReader
     public function __construct(
         protected OrganizationLegacyArchiveService $settings,
         protected LegacyArchiveConnectionManager $connections,
+        protected LegacyOrderService $legacyOrders,
     ) {}
 
     public function isEnabled(Organization $org): bool
@@ -663,6 +666,9 @@ class LegacyArchiveReader
         $materializedSaleId = $this->materializedSaleId($org, $channel, $legacyOrderNum, $saleDate);
         $orderTotal = round((float) ($row->order_total ?? 0), 2);
         $totalVat = round((float) ($row->total_vat ?? 0), 2);
+        $returnSummary = $materializedSaleId
+            ? $this->legacyReturnSummaryForMaterializedSale($org, $materializedSaleId)
+            : null;
 
         $base = [
             'archive_source' => 'lightstores',
@@ -677,8 +683,11 @@ class LegacyArchiveReader
             'total_vat' => $totalVat,
             'read_only' => $materializedSaleId === null,
             'materialized_sale_id' => $materializedSaleId,
-            'can_materialize' => true,
-            'can_create_return' => $materializedSaleId !== null,
+            'can_materialize' => $materializedSaleId === null,
+            'can_create_return' => $materializedSaleId !== null
+                && ! ($returnSummary['fully_returned'] ?? false)
+                && ((int) ($returnSummary['return_count_all'] ?? 0)) === 0,
+            'legacy_return_summary' => $returnSummary,
         ];
 
         return match ($channel) {
@@ -722,6 +731,35 @@ class LegacyArchiveReader
             ->value('id');
 
         return $id ? (int) $id : null;
+    }
+
+    /** @return array<string, mixed>|null */
+    protected function legacyReturnSummaryForMaterializedSale(Organization $org, int $saleId): ?array
+    {
+        $sale = Sale::query()
+            ->where('organization_id', $org->id)
+            ->where('id', $saleId)
+            ->first(['id', 'organization_id', 'order_total', 'fulfillment_meta']);
+
+        if (! $sale) {
+            return null;
+        }
+
+        return $this->legacyOrders->legacyReturnSummaryForSale($sale);
+    }
+
+    public function findMaterializedSaleId(
+        Organization $org,
+        string $channel,
+        int $legacyOrderNum,
+        string $saleDate,
+    ): ?int {
+        return $this->materializedSaleId(
+            $org,
+            $channel,
+            $legacyOrderNum,
+            $this->normalizeSaleDate($saleDate),
+        );
     }
 
     /**

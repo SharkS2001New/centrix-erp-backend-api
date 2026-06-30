@@ -149,6 +149,20 @@ class LegacyArchiveController extends Controller
             'sale_date' => 'required|date',
         ]);
 
+        $existingId = $this->archive->findMaterializedSaleId(
+            $org,
+            $data['channel'],
+            (int) $data['legacy_order_num'],
+            $data['sale_date'],
+        );
+
+        if ($existingId) {
+            return response()->json([
+                'message' => 'This legacy order has already been materialized into Centrix.',
+                'materialized_sale_id' => $existingId,
+            ], 422);
+        }
+
         try {
             $sale = $importer->materializeSale(
                 $org,

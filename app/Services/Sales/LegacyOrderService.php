@@ -207,8 +207,37 @@ class LegacyOrderService
             return;
         }
 
-        $summaries = CustomerReturn::query()
-            ->selectRaw("sale_id, COUNT(*) as return_count_all, SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as return_count, COALESCE(SUM(CASE WHEN status = 'approved' THEN total_amount ELSE 0 END), 0) as returned_total")
+        $summaries = $this->legacyReturnSummariesForSaleIds($organizationId, $saleIds);
+
+        foreach ($sales as $sale) {
+            $summary = $summaries->get($sale->id, $this->emptyLegacyReturnSummary());
+            $summary['can_delete'] = ((int) ($summary['return_count_all'] ?? 0)) === 0;
+            $summary['can_admin_delete'] = (bool) $user->is_admin;
+            $summary['can_create_return'] = ! ($summary['fully_returned'] ?? false)
+                && ((int) ($summary['return_count_all'] ?? 0)) === 0;
+
+            $sale->setAttribute('legacy_return_summary', $summary);
+        }
+    }
+
+    /**
+     * @param  list<int>  $saleIds
+     * @return \Illuminate\Support\Collection<int, array<string, mixed>>
+     */
+    public function legacyReturnSummariesForSaleIds(int $organizationId, array $saleIds): \Illuminate\Support\Collection
+    {
+        if ($saleIds === []) {
+            return collect();
+        }
+
+        $sales = Sale::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('id', $saleIds)
+            ->get(['id', 'order_total', 'fulfillment_meta'])
+            ->keyBy('id');
+
+        $returnRows = CustomerReturn::query()
+            ->selectRaw("sale_id, COUNT(*) as return_count_all, SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END) as return_count, COALESCE(SUM(CASE WHEN status = 'approved' THEN total_amount ELSE 0 END), 0) as returned_total, MAX(CASE WHEN status = 'approved' THEN id END) as latest_approved_return_id, MAX(CASE WHEN status = 'approved' THEN return_no END) as latest_approved_return_no")
             ->where('organization_id', $organizationId)
             ->where('return_kind', 'legacy')
             ->whereIn('sale_id', $saleIds)
@@ -216,30 +245,60 @@ class LegacyOrderService
             ->get()
             ->keyBy('sale_id');
 
-        foreach ($sales as $sale) {
-            $summary = $summaries->get($sale->id);
-            $returnedTotal = round((float) ($summary->returned_total ?? 0), 2);
+        return collect($saleIds)->mapWithKeys(function (int $saleId) use ($sales, $returnRows) {
+            $sale = $sales->get($saleId);
+            if (! $sale) {
+                return [$saleId => $this->emptyLegacyReturnSummary()];
+            }
+
+            $row = $returnRows->get($saleId);
+            $returnedTotal = round((float) ($row->returned_total ?? 0), 2);
             $remainingTotal = round((float) ($sale->order_total ?? 0), 2);
             $originalTotal = $this->legacyOriginalOrderTotal($sale, $returnedTotal);
-            $returnCount = (int) ($summary->return_count ?? 0);
-            $returnCountAll = (int) ($summary->return_count_all ?? 0);
+            $returnCount = (int) ($row->return_count ?? 0);
+            $returnCountAll = (int) ($row->return_count_all ?? 0);
+            $fullyReturned = $this->isLegacyFullyReturned(
+                $returnCount,
+                $returnedTotal,
+                $remainingTotal,
+                $originalTotal,
+            );
 
-            $sale->setAttribute('legacy_return_summary', [
+            return [$saleId => [
                 'return_count' => $returnCount,
                 'return_count_all' => $returnCountAll,
                 'returned_total' => $returnedTotal,
                 'original_order_total' => $originalTotal,
                 'has_returns' => $returnCount > 0,
-                'fully_returned' => $this->isLegacyFullyReturned(
-                    $returnCount,
-                    $returnedTotal,
-                    $remainingTotal,
-                    $originalTotal,
-                ),
-                'can_delete' => $returnCountAll === 0,
-                'can_admin_delete' => (bool) $user->is_admin,
-            ]);
-        }
+                'fully_returned' => $fullyReturned,
+                'legacy_return_id' => $row->latest_approved_return_id ? (int) $row->latest_approved_return_id : null,
+                'legacy_return_no' => $row->latest_approved_return_no ?? null,
+            ]];
+        });
+    }
+
+    /** @return array<string, mixed> */
+    public function legacyReturnSummaryForSale(Sale $sale): array
+    {
+        return $this->legacyReturnSummariesForSaleIds(
+            (int) $sale->organization_id,
+            [(int) $sale->id],
+        )->get((int) $sale->id, $this->emptyLegacyReturnSummary());
+    }
+
+    /** @return array<string, mixed> */
+    protected function emptyLegacyReturnSummary(): array
+    {
+        return [
+            'return_count' => 0,
+            'return_count_all' => 0,
+            'returned_total' => 0.0,
+            'original_order_total' => 0.0,
+            'has_returns' => false,
+            'fully_returned' => false,
+            'legacy_return_id' => null,
+            'legacy_return_no' => null,
+        ];
     }
 
     protected function legacyOriginalOrderTotal(Sale $sale, float $returnedTotal): float
