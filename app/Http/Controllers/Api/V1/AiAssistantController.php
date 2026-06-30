@@ -20,6 +20,7 @@ class AiAssistantController extends Controller
         protected AiPageExplorer $explorer,
     ) {}
 
+    /**Test API endpoint */
     public function status(Request $request)
     {
         $user = $request->user();
