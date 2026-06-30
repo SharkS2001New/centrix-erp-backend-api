@@ -44,6 +44,10 @@ class MobileFieldAttendanceTest extends TestCase
             'sign_out_at' => null,
         ]);
 
+        $session = MobileRepAttendanceSession::findOrFail($sessionId);
+        $this->assertNotNull($session->sign_in_photo_path);
+        Storage::disk('public')->assertExists($session->sign_in_photo_path);
+
         $signOut = $this->withToken($token)->post('/api/v1/mobile/attendance/sign-out', [
             'photo' => UploadedFile::fake()->image('sign-out.jpg'),
             'latitude' => -1.292200,
@@ -74,7 +78,12 @@ class MobileFieldAttendanceTest extends TestCase
             ->getJson('/api/v1/sales/mobile-field-attendance')
             ->assertOk()
             ->assertJsonPath('meta.total', 1)
-            ->assertJsonPath('data.0.work_hours', fn ($value) => $value > 0);
+            ->assertJsonPath('data.0.sign_in_photo_url', fn ($value) => is_string($value) && $value !== '');
+
+        $this->withToken($adminToken)
+            ->get('/api/v1/sales/mobile-field-attendance/'.$sessionId.'/sign-in-photo/file')
+            ->assertOk()
+            ->assertHeader('Content-Type', fn ($value) => str_starts_with($value, 'image/'));
 
         $this->assertDatabaseHas('mobile_rep_attendance_sessions', [
             'id' => $sessionId,

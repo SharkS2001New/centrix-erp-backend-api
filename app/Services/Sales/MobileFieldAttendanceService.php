@@ -14,6 +14,7 @@ use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use InvalidArgumentException;
 
 class MobileFieldAttendanceService
@@ -634,7 +635,7 @@ class MobileFieldAttendanceService
 
     protected function signInPhotoFileUrl(MobileRepAttendanceSession $session): ?string
     {
-        if (! $session->sign_in_photo_path) {
+        if (! $this->photoPathExists($session->sign_in_photo_path)) {
             return null;
         }
 
@@ -644,12 +645,19 @@ class MobileFieldAttendanceService
 
     protected function signOutPhotoFileUrl(MobileRepAttendanceSession $session): ?string
     {
-        if (! $session->sign_out_photo_path) {
+        if (! $this->photoPathExists($session->sign_out_photo_path)) {
             return null;
         }
 
         return rtrim((string) config('app.url'), '/')
             ."/api/v1/sales/mobile-field-attendance/{$session->id}/sign-out-photo/file";
+    }
+
+    protected function photoPathExists(?string $path): bool
+    {
+        return is_string($path)
+            && $path !== ''
+            && Storage::disk('public')->exists($path);
     }
 
     protected function storePhoto(UploadedFile $photo, User $user, string $kind): string
@@ -668,6 +676,12 @@ class MobileFieldAttendanceService
 
         if (! is_string($path) || $path === '') {
             throw new InvalidArgumentException('Unable to save the attendance photo.');
+        }
+
+        if (! Storage::disk('public')->exists($path)) {
+            throw new InvalidArgumentException(
+                'Attendance photo was not saved on the server. Ensure storage/app/public is writable and persisted.',
+            );
         }
 
         return $path;

@@ -166,8 +166,6 @@ class MobileFieldAttendanceController extends Controller
 
     protected function photoFile(Request $request, int $sessionId, string $kind)
     {
-        $this->assertFeatureAvailable($request);
-
         try {
             $session = $this->attendance->findForViewer($request->user(), $sessionId);
         } catch (InvalidArgumentException) {
@@ -184,6 +182,9 @@ class MobileFieldAttendanceController extends Controller
 
         $absolute = Storage::disk('public')->path($path);
         $mime = Storage::disk('public')->mimeType($path) ?: 'image/jpeg';
+        if (! str_starts_with($mime, 'image/')) {
+            $mime = 'image/jpeg';
+        }
 
         return response()->file($absolute, [
             'Content-Type' => $mime,
