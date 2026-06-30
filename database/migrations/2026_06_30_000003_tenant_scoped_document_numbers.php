@@ -27,9 +27,7 @@ return new class extends Migration
             return;
         }
 
-        if ($this->indexExists('customer_invoices', 'invoice_number')) {
-            DB::statement('ALTER TABLE customer_invoices DROP INDEX invoice_number');
-        }
+        $this->dropLegacySingleColumnUnique('customer_invoices', 'invoice_number');
 
         if (! $this->indexExists('customer_invoices', 'uq_org_customer_invoice_number')) {
             Schema::table('customer_invoices', function (Blueprint $table) {
@@ -44,9 +42,7 @@ return new class extends Migration
             return;
         }
 
-        if ($this->indexExists('customer_returns', 'return_no')) {
-            DB::statement('ALTER TABLE customer_returns DROP INDEX return_no');
-        }
+        $this->dropLegacySingleColumnUnique('customer_returns', 'return_no');
 
         if (! $this->indexExists('customer_returns', 'uq_org_customer_return_no')) {
             Schema::table('customer_returns', function (Blueprint $table) {
@@ -61,9 +57,7 @@ return new class extends Migration
             return;
         }
 
-        if ($this->indexExists('credit_notes', 'credit_note_no')) {
-            DB::statement('ALTER TABLE credit_notes DROP INDEX credit_note_no');
-        }
+        $this->dropLegacySingleColumnUnique('credit_notes', 'credit_note_no');
 
         if (! $this->indexExists('credit_notes', 'uq_org_credit_note_no')) {
             Schema::table('credit_notes', function (Blueprint $table) {
@@ -84,11 +78,40 @@ return new class extends Migration
             });
         }
 
-        if (! $this->indexExists($table, $column)) {
+        if (! $this->hasLegacySingleColumnUnique($table, $column)) {
             Schema::table($table, function (Blueprint $blueprint) use ($column) {
                 $blueprint->unique($column);
             });
         }
+    }
+
+    protected function dropLegacySingleColumnUnique(string $table, string $column): void
+    {
+        foreach ($this->legacySingleColumnUniqueIndexNames($table, $column) as $index) {
+            if ($this->indexExists($table, $index)) {
+                DB::statement("ALTER TABLE {$table} DROP INDEX {$index}");
+            }
+        }
+    }
+
+    protected function hasLegacySingleColumnUnique(string $table, string $column): bool
+    {
+        foreach ($this->legacySingleColumnUniqueIndexNames($table, $column) as $index) {
+            if ($this->indexExists($table, $index)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return list<string> */
+    protected function legacySingleColumnUniqueIndexNames(string $table, string $column): array
+    {
+        return array_values(array_unique([
+            $column,
+            "{$table}_{$column}_unique",
+        ]));
     }
 
     protected function indexExists(string $table, string $index): bool
