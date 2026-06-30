@@ -28,6 +28,9 @@ return new class extends Migration
             });
         }
 
+        $this->dropLegacyPaymentMethodUniqueIndexes();
+        $this->dropLegacyExpenseGroupUniqueIndexes();
+
         app(TenantScopedAdminReferenceMigrator::class)->run();
 
         if (Schema::hasTable('audit_logs') && Schema::hasColumn('audit_logs', 'organization_id')) {
@@ -43,17 +46,6 @@ return new class extends Migration
         if (Schema::hasTable('payment_methods') && Schema::hasColumn('payment_methods', 'organization_id')) {
             DB::statement('ALTER TABLE payment_methods MODIFY organization_id INT NOT NULL');
 
-            if ($this->indexExists('payment_methods', 'method_code')) {
-                DB::statement('ALTER TABLE payment_methods DROP INDEX method_code');
-            }
-            if ($this->indexExists('payment_methods', 'method_name')) {
-                DB::statement('ALTER TABLE payment_methods DROP INDEX method_name');
-            }
-            if ($this->indexExists('payment_methods', 'payment_methods_method_code_unique')) {
-                Schema::table('payment_methods', function (Blueprint $table) {
-                    $table->dropUnique('payment_methods_method_code_unique');
-                });
-            }
             if (! $this->indexExists('payment_methods', 'uq_org_payment_method_code')) {
                 Schema::table('payment_methods', function (Blueprint $table) {
                     $table->unique(['organization_id', 'method_code'], 'uq_org_payment_method_code');
@@ -100,6 +92,46 @@ return new class extends Migration
                 $table->dropForeign(['organization_id']);
                 $table->dropIndex('idx_audit_logs_organization_id');
                 $table->dropColumn('organization_id');
+            });
+        }
+    }
+
+    protected function dropLegacyPaymentMethodUniqueIndexes(): void
+    {
+        if (! Schema::hasTable('payment_methods')) {
+            return;
+        }
+
+        if ($this->indexExists('payment_methods', 'method_code')) {
+            DB::statement('ALTER TABLE payment_methods DROP INDEX method_code');
+        }
+        if ($this->indexExists('payment_methods', 'method_name')) {
+            DB::statement('ALTER TABLE payment_methods DROP INDEX method_name');
+        }
+        if ($this->indexExists('payment_methods', 'payment_methods_method_code_unique')) {
+            Schema::table('payment_methods', function (Blueprint $table) {
+                $table->dropUnique('payment_methods_method_code_unique');
+            });
+        }
+        if ($this->indexExists('payment_methods', 'payment_methods_method_name_unique')) {
+            Schema::table('payment_methods', function (Blueprint $table) {
+                $table->dropUnique('payment_methods_method_name_unique');
+            });
+        }
+    }
+
+    protected function dropLegacyExpenseGroupUniqueIndexes(): void
+    {
+        if (! Schema::hasTable('expense_groups')) {
+            return;
+        }
+
+        if ($this->indexExists('expense_groups', 'group_name')) {
+            DB::statement('ALTER TABLE expense_groups DROP INDEX group_name');
+        }
+        if ($this->indexExists('expense_groups', 'expense_groups_group_name_unique')) {
+            Schema::table('expense_groups', function (Blueprint $table) {
+                $table->dropUnique('expense_groups_group_name_unique');
             });
         }
     }

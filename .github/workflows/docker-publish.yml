@@ -77,7 +77,8 @@ jobs:
             pitchpredk3ssetup/centrix-erp-scheduler/values.yaml \
             pitchpredk3ssetup/centrix-erp-queue-worker/values.yaml
           do
-            sed -i "s|^\([[:space:]]*tag:\).*|\1 ${TAG}|" "$file"
+            sed -i '/^[[:space:]]*tag:/d' "$file"
+            sed -i "/pullPolicy:/a\\  tag: ${TAG}" "$file"
             echo "Updated ${file} -> ${TAG}"
           done
 

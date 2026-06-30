@@ -33,7 +33,10 @@ class TenantScopedAdminReferenceMigrator
             foreach ($globalMethods as $method) {
                 $existingId = DB::table('payment_methods')
                     ->where('organization_id', $orgId)
-                    ->where('method_code', $method->method_code)
+                    ->where(function ($query) use ($method) {
+                        $query->where('method_code', $method->method_code)
+                            ->orWhere('method_name', $method->method_name);
+                    })
                     ->value('id');
 
                 if ($existingId) {
@@ -63,7 +66,7 @@ class TenantScopedAdminReferenceMigrator
 
         $this->rewritePaymentMethodColumn('sale_payments', 'sales', 'sale_id', $organizationId, $idMap);
         $this->rewritePaymentMethodColumn('customer_invoice_payments', 'customer_invoices', 'customer_invoice_id', $organizationId, $idMap);
-        $this->rewritePaymentMethodColumn('supplier_payments', 'suppliers', 'supplier_id', $organizationId, $idMap, 'suppliers.organization_id');
+        $this->rewriteSupplierPaymentMethods($organizationId, $idMap);
         $this->rewriteExpensePaymentMethods($organizationId, $idMap);
     }
 
@@ -82,7 +85,7 @@ class TenantScopedAdminReferenceMigrator
             return;
         }
 
-        $orgColumn ??= "{$parentTable}.organization_id";
+        $orgColumn ??= 'parent.organization_id';
 
         foreach ($idMap as $oldId => $newId) {
             if ($oldId === $newId) {
@@ -94,6 +97,27 @@ class TenantScopedAdminReferenceMigrator
                  INNER JOIN {$parentTable} parent ON parent.id = p.{$parentKey}
                  SET p.payment_method_id = ?
                  WHERE p.payment_method_id = ? AND {$orgColumn} = ?",
+                [$newId, $oldId, $organizationId],
+            );
+        }
+    }
+
+    /** @param  array<int, int>  $idMap */
+    protected function rewriteSupplierPaymentMethods(int $organizationId, array $idMap): void
+    {
+        if (! DB::getSchemaBuilder()->hasTable('supplier_payments')) {
+            return;
+        }
+
+        foreach ($idMap as $oldId => $newId) {
+            if ($oldId === $newId) {
+                continue;
+            }
+
+            DB::statement(
+                'UPDATE supplier_payments
+                 SET payment_method_id = ?
+                 WHERE payment_method_id = ? AND organization_id = ?',
                 [$newId, $oldId, $organizationId],
             );
         }
