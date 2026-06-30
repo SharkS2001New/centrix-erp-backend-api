@@ -2,6 +2,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Category;
+use App\Models\SubCategory;
 use Illuminate\Http\Request;
 
 class SubCategoryController extends BaseResourceController
