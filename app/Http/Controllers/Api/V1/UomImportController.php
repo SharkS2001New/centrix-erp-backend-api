@@ -26,8 +26,7 @@ class UomImportController extends Controller
             'rows.*.measure_name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('uom_import', $user, [
+        $task = $this->tasks->createFromRequest('uom_import', $request, [
             'rows' => $data['rows'],
         ]);
 

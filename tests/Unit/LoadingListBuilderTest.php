@@ -68,6 +68,7 @@ class LoadingListBuilderTest extends TestCase
             'uom_type' => 'pack',
             'is_base_unit' => false,
             'is_active' => true,
+            'organization_id' => $template->organization_id,
         ]);
         $product->update(['unit_id' => $uom->id]);
 

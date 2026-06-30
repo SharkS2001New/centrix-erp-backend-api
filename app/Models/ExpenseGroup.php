@@ -11,5 +11,6 @@ class ExpenseGroup extends Model
     public $timestamps = false;
     protected $fillable = [
         'group_name',
+        'organization_id',
     ];
 }

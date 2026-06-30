@@ -19,4 +19,9 @@ class RetailPackageSetting extends Model
     protected $casts = [
         'pricing_tiers' => 'array',
     ];
+
+    public function product()
+    {
+        return $this->belongsTo(Product::class, 'product_code', 'product_code');
+    }
 }

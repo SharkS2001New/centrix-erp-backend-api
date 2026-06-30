@@ -13,34 +13,14 @@ class DriverController extends BaseResourceController
         return Driver::class;
     }
 
-    public function index(Request $request)
+    protected function baseQuery(Request $request)
     {
-        $query = Driver::query()->with(['defaultVehicle', 'defaultRoute', 'branch']);
-
-        foreach ((array) $request->input('filter', []) as $col => $val) {
-            if (in_array($col, $this->filterableColumns(), true)) {
-                $query->where($col, $val);
-            }
-        }
-
-        if ($q = $request->input('q')) {
-            $query->where(function ($sub) use ($q) {
-                $sub->where('full_name', 'like', "%{$q}%")
-                    ->orWhere('driver_code', 'like', "%{$q}%")
-                    ->orWhere('phone', 'like', "%{$q}%");
-            });
-        }
-
-        $perPage = min((int) $request->input('per_page', 25), 200);
-
-        return response()->json($query->orderBy('full_name')->paginate($perPage));
+        return parent::baseQuery($request)->with(['defaultVehicle', 'defaultRoute', 'branch']);
     }
 
     public function show(Request $request, string $id)
     {
-        $driver = Driver::with(['defaultVehicle', 'defaultRoute', 'branch'])->findOrFail($id);
-
-        return response()->json($driver);
+        return response()->json($this->findScopedModel($request, $id)->load(['defaultVehicle', 'defaultRoute', 'branch']));
     }
 
     public function store(Request $request)
@@ -53,7 +33,7 @@ class DriverController extends BaseResourceController
 
     public function update(Request $request, string $id)
     {
-        $driver = Driver::findOrFail($id);
+        $driver = $this->findScopedModel($request, $id);
         $driver->update($this->validatedDriver($request, $driver));
 
         return response()->json($driver->fresh(['defaultVehicle', 'defaultRoute', 'branch']));
@@ -62,11 +42,14 @@ class DriverController extends BaseResourceController
     /** GET /drivers/{id}/deliveries — sales linked to this driver */
     public function deliveries(Request $request, int $driver)
     {
-        Driver::findOrFail($driver);
+        $this->findScopedModel($request, (string) $driver);
 
         $query = Sale::query()
+            ->where('organization_id', $this->access()->organizationId($request->user(), $request))
             ->where('fulfillment_meta->driver_id', $driver)
             ->orderByDesc('id');
+
+        $this->access()->scopeBranchIfLimited($query, $request->user());
 
         if ($status = $request->input('status')) {
             $query->where('status', $status);
@@ -90,8 +73,8 @@ class DriverController extends BaseResourceController
             'user_id' => 'nullable|integer|exists:users,id',
             'default_vehicle_id' => 'nullable|integer|exists:vehicles,id',
             'default_route_id' => 'nullable|integer|exists:routes,id',
-            'driver_code' => ($existing ? 'sometimes|' : '') . 'required|string|max:45',
-            'full_name' => ($existing ? 'sometimes|' : '') . 'required|string|max:200',
+            'driver_code' => ($existing ? 'sometimes|' : '').'required|string|max:45',
+            'full_name' => ($existing ? 'sometimes|' : '').'required|string|max:200',
             'phone' => 'nullable|string|max:45',
             'is_active' => 'nullable|boolean',
         ]);

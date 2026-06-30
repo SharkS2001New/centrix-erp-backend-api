@@ -3,6 +3,7 @@
 namespace App\Jobs\Concerns;
 
 use App\Models\BackgroundTask;
+use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use Illuminate\Support\Facades\Log;
 
@@ -67,5 +68,15 @@ trait RunsBackgroundTaskOnce
     ): void {
         $tasks->assertNotCancelled($task);
         $tasks->updateProgress($task, $progress, $message);
+    }
+
+    protected function importOrganizationId(BackgroundTask $task, User $user): int
+    {
+        $organizationId = (int) ($task->organization_id ?? 0);
+        if ($organizationId > 0) {
+            return $organizationId;
+        }
+
+        return (int) $user->organization_id;
     }
 }

@@ -3,10 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
-use App\Models\Branch;
 use App\Models\Damage;
 use App\Models\User;
-use App\Services\Auth\UserAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -20,43 +18,13 @@ class DamageController extends BaseResourceController
         return Damage::class;
     }
 
-    protected function scopesByOrganization(): bool
-    {
-        return false;
-    }
-
-    protected function access(): UserAccessService
-    {
-        return app(UserAccessService::class);
-    }
-
-    protected function baseQuery(Request $request)
-    {
-        $query = Damage::query();
-        $user = $request->user();
-
-        if ($user) {
-            $orgId = $this->access()->organizationId($user, $request);
-            if ($orgId) {
-                $query->whereIn('branch_id', function ($sub) use ($orgId) {
-                    $sub->select('id')
-                        ->from('branches')
-                        ->where('organization_id', $orgId);
-                });
-            }
-            $this->access()->scopeBranchIfLimited($query, $user);
-        }
-
-        return $query;
-    }
-
     public function store(Request $request)
     {
         $data = $this->validateDamagePayload($request);
         $user = $request->user();
         abort_unless($user, 401);
 
-        $this->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
+        $this->access()->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
         $this->access()->assertBranchAccess($user, (int) $data['branch_id']);
 
         return DB::transaction(function () use ($data, $user, $request) {
@@ -161,23 +129,6 @@ class DamageController extends BaseResourceController
             'pieces' => 'pieces',
             default => 'partial',
         };
-    }
-
-    protected function assertBranchInOrganization(User $user, int $branchId, Request $request): void
-    {
-        $orgId = $this->access()->organizationId($user, $request);
-        if (! $orgId) {
-            return;
-        }
-
-        $exists = Branch::query()
-            ->where('id', $branchId)
-            ->where('organization_id', $orgId)
-            ->exists();
-
-        if (! $exists) {
-            abort(403, 'You do not have access to this branch.');
-        }
     }
 
     protected function postDamageDeduction(Damage $damage, User $user): void

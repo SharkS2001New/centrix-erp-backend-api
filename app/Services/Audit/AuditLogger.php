@@ -24,6 +24,7 @@ class AuditLogger
 
         AuditLog::create([
             'user_id' => $user->id,
+            'organization_id' => $user->organization_id,
             'branch_id' => $user->branch_id,
             'action' => $action,
             'table_name' => $tableName,

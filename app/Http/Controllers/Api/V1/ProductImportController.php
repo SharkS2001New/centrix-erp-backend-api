@@ -30,8 +30,7 @@ class ProductImportController extends Controller
             'rows.*.unit_price' => ['nullable'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('product_import', $user, [
+        $task = $this->tasks->createFromRequest('product_import', $request, [
             'rows' => $data['rows'],
         ]);
 

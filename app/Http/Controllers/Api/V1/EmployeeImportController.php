@@ -27,8 +27,7 @@ class EmployeeImportController extends Controller
             'rows.*.last_name' => ['nullable', 'string', 'max:100'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('employee_import', $user, [
+        $task = $this->tasks->createFromRequest('employee_import', $request, [
             'rows' => $data['rows'],
         ]);
 

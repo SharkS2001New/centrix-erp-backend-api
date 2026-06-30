@@ -5,7 +5,11 @@ namespace App\Jobs;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Product;
+use App\Models\SubCategory;
+use App\Models\Supplier;
+use App\Models\Uom;
 use App\Models\User;
+use App\Models\Vat;
 use App\Services\Background\BackgroundTaskService;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -41,6 +45,7 @@ class ImportProductsJob implements ShouldQueue
                 throw new \RuntimeException('No product rows supplied for import.');
             }
 
+            $organizationId = $this->importOrganizationId($task, $user);
             $created = 0;
             $failures = [];
             $total = count($rows);
@@ -55,16 +60,18 @@ class ImportProductsJob implements ShouldQueue
                 }
 
                 try {
-                    $body = $this->normalizeRow($row);
+                    $body = $this->normalizeRow($row, $organizationId);
                     if (! $body['product_name'] || ! $body['subcategory_id'] || ! $body['unit_id']) {
-                        throw new \InvalidArgumentException('Missing required fields.');
+                        throw new \InvalidArgumentException(
+                            'Missing required fields: product_name, subcategory (id or name), and unit (id or measure_name).',
+                        );
                     }
 
                     if (empty($body['product_code'])) {
-                        $body['product_code'] = Product::generateNextProductCode((int) $user->organization_id);
+                        $body['product_code'] = Product::generateNextProductCode($organizationId);
                     }
 
-                    $body['organization_id'] = (int) $user->organization_id;
+                    $body['organization_id'] = $organizationId;
                     $body['created_by'] = (int) $user->id;
 
                     Product::create($body);
@@ -100,7 +107,7 @@ class ImportProductsJob implements ShouldQueue
     /** @param array<string, mixed> $row
      * @return array<string, mixed>
      */
-    protected function normalizeRow(array $row): array
+    protected function normalizeRow(array $row, int $organizationId): array
     {
         $body = [
             'product_code' => trim((string) ($row['product_code'] ?? '')),
@@ -109,6 +116,8 @@ class ImportProductsJob implements ShouldQueue
             'unit_id' => (int) ($row['unit_id'] ?? 0),
             'unit_price' => (float) ($row['unit_price'] ?? 0),
         ];
+
+        $this->resolveForeignKeys($body, $row, $organizationId);
 
         foreach ([
             'last_cost_price',
@@ -135,5 +144,74 @@ class ImportProductsJob implements ShouldQueue
         }
 
         return $body;
+    }
+
+    /** @param  array<string, mixed>  $body
+     * @param  array<string, mixed>  $row
+     */
+    protected function resolveForeignKeys(array &$body, array $row, int $organizationId): void
+    {
+        if ((int) ($body['subcategory_id'] ?? 0) <= 0) {
+            $subcategoryName = trim((string) ($row['subcategory_name'] ?? ''));
+            if ($subcategoryName !== '') {
+                $query = SubCategory::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('subcategory_name', $subcategoryName);
+
+                $categoryName = trim((string) ($row['category_name'] ?? ''));
+                if ($categoryName !== '') {
+                    $query->whereHas('category', fn ($q) => $q
+                        ->where('organization_id', $organizationId)
+                        ->where('category_name', $categoryName));
+                }
+
+                $subcategory = $query->first();
+                if ($subcategory !== null) {
+                    $body['subcategory_id'] = (int) $subcategory->id;
+                }
+            }
+        }
+
+        if ((int) ($body['unit_id'] ?? 0) <= 0) {
+            $measureName = trim((string) ($row['measure_name'] ?? ''));
+            if ($measureName !== '') {
+                $uom = Uom::query()
+                    ->where('organization_id', $organizationId)
+                    ->where(function ($q) use ($measureName) {
+                        $q->where('measure_name', $measureName)
+                            ->orWhere('full_name', $measureName);
+                    })
+                    ->first();
+                if ($uom !== null) {
+                    $body['unit_id'] = (int) $uom->id;
+                }
+            }
+        }
+
+        if (empty($body['vat_id'])) {
+            $vatCode = trim((string) ($row['vat_code'] ?? ''));
+            if ($vatCode !== '') {
+                $vat = Vat::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('vat_code', $vatCode)
+                    ->first();
+                if ($vat !== null) {
+                    $body['vat_id'] = (int) $vat->id;
+                }
+            }
+        }
+
+        if (empty($body['supplier_id'])) {
+            $supplierName = trim((string) ($row['supplier_name'] ?? ''));
+            if ($supplierName !== '') {
+                $supplier = Supplier::query()
+                    ->where('organization_id', $organizationId)
+                    ->where('supplier_name', $supplierName)
+                    ->first();
+                if ($supplier !== null) {
+                    $body['supplier_id'] = (int) $supplier->id;
+                }
+            }
+        }
     }
 }

@@ -43,7 +43,7 @@ class ImportEmployeesJob implements ShouldQueue
                 throw new \RuntimeException('No employee rows supplied for import.');
             }
 
-            $organizationId = (int) $user->organization_id;
+            $organizationId = $this->importOrganizationId($task, $user);
             $created = 0;
             $failures = [];
             $total = count($rows);

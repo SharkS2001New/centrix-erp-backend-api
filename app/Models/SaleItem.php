@@ -19,4 +19,9 @@ class SaleItem extends Model
     {
         return $this->belongsTo(Product::class, 'product_code', 'product_code');
     }
+
+    public function sale()
+    {
+        return $this->belongsTo(Sale::class, 'sale_id');
+    }
 }

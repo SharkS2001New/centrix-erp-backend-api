@@ -51,7 +51,7 @@ class ImportCustomersJob implements ShouldQueue
                 throw new \RuntimeException('No customer rows supplied for import.');
             }
 
-            $organizationId = (int) $user->organization_id;
+            $organizationId = $this->importOrganizationId($task, $user);
             if ($organizationId <= 0) {
                 throw new \RuntimeException('Customer import requires an organization context.');
             }
@@ -81,6 +81,7 @@ class ImportCustomersJob implements ShouldQueue
                     $body = $this->normalizeRow(
                         $row,
                         $user,
+                        $organizationId,
                         $defaultBranchId,
                         $validRouteSet,
                         $access,
@@ -168,6 +169,7 @@ class ImportCustomersJob implements ShouldQueue
     protected function normalizeRow(
         array $row,
         User $user,
+        int $organizationId,
         int $defaultBranchId,
         array $validRouteSet,
         UserAccessService $access,
@@ -198,10 +200,26 @@ class ImportCustomersJob implements ShouldQueue
             $body['route_id'] = (int) $row['route_id'];
         }
 
+        $routeName = trim((string) ($row['route_name'] ?? ''));
+        if ($routeName !== '' && empty($body['route_id'])) {
+            $route = RouteModel::query()
+                ->where('organization_id', $organizationId)
+                ->where('route_name', $routeName)
+                ->first();
+            if ($route !== null) {
+                $body['route_id'] = (int) $route->id;
+            }
+        }
+
         if ($body['customer_type'] !== 'route') {
             $body['route_id'] = null;
         } elseif (empty($body['route_id'])) {
-            throw new \InvalidArgumentException('Route is required for route customers.');
+            if ($routeName !== '') {
+                throw new \InvalidArgumentException(
+                    'Route "'.$routeName.'" was not found. Import routes before importing route customers.',
+                );
+            }
+            throw new \InvalidArgumentException('Route is required for route customers (route_name or route_id).');
         } elseif (! isset($validRouteSet[(int) $body['route_id']])) {
             throw new \InvalidArgumentException(
                 'Route ID '.(int) $body['route_id'].' does not exist. Create routes before importing route customers.',

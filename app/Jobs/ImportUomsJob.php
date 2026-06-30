@@ -41,6 +41,8 @@ class ImportUomsJob implements ShouldQueue
                 throw new \RuntimeException('No UOM rows supplied for import.');
             }
 
+            $organizationId = $this->importOrganizationId($task, $user);
+
             $created = 0;
             $failures = [];
             $total = count($rows);
@@ -61,6 +63,7 @@ class ImportUomsJob implements ShouldQueue
                     }
 
                     $body['created_by'] = (int) $user->id;
+                    $body['organization_id'] = $organizationId;
                     Uom::create($body);
                     $created++;
                 } catch (\Throwable $e) {

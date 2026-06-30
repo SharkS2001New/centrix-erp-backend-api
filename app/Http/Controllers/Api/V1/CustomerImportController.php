@@ -26,8 +26,7 @@ class CustomerImportController extends Controller
             'rows.*.customer_name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('customer_import', $user, [
+        $task = $this->tasks->createFromRequest('customer_import', $request, [
             'rows' => $data['rows'],
         ]);
 

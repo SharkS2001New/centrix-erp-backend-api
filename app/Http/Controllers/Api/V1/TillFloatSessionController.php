@@ -68,7 +68,7 @@ class TillFloatSessionController extends BaseResourceController
 
     public function update(\Illuminate\Http\Request $request, string $id)
     {
-        $session = TillFloatSession::findOrFail($id);
+        $session = $this->findScopedModel($request, $id);
         $data = $request->validate([
             'notes' => 'nullable|string',
             'float_breakdown' => 'nullable|array',

@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Category;
 use App\Models\Branch;
 use App\Models\Organization;
 use App\Models\Product;
@@ -29,7 +30,7 @@ class TenantCatalogCodesPerOrganizationTest extends TestCase
         ]));
 
         $orgB = $this->createOrganization('CATORG2', 'Catalog Org Two');
-        Product::create(array_merge($template, [
+        Product::create(array_merge($this->productTemplate($orgB->id), [
             'product_code' => 'PRD#0099',
             'organization_id' => $orgB->id,
         ]));
@@ -126,11 +127,41 @@ class TenantCatalogCodesPerOrganizationTest extends TestCase
     }
 
     /** @return array<string, mixed> */
-    protected function productTemplate(): array
+    protected function productTemplate(?int $organizationId = null): array
     {
-        $sub = SubCategory::firstOrFail();
-        $uom = Uom::firstOrFail();
-        $vat = Vat::firstOrFail();
+        $orgId = $organizationId ?? Organization::where('company_code', 'DEMO')->value('id');
+        $adminId = User::where('username', 'admin')->value('id');
+
+        $sub = SubCategory::query()->where('organization_id', $orgId)->first()
+            ?? SubCategory::create([
+                'category_id' => Category::create([
+                    'category_name' => 'Test Category '.$orgId,
+                    'organization_id' => $orgId,
+                    'created_by' => $adminId,
+                ])->id,
+                'subcategory_name' => 'Test Subcategory',
+                'organization_id' => $orgId,
+                'created_by' => $adminId,
+            ]);
+
+        $uom = Uom::query()->where('organization_id', $orgId)->first()
+            ?? Uom::create([
+                'conversion_factor' => 1,
+                'full_name' => 'Piece',
+                'measure_name' => 'pc',
+                'uom_type' => 'piece',
+                'organization_id' => $orgId,
+                'created_by' => $adminId,
+            ]);
+
+        $vat = Vat::query()->where('organization_id', $orgId)->first()
+            ?? Vat::create([
+                'vat_code' => 'T'.$orgId,
+                'vat_name' => 'Test VAT',
+                'vat_percentage' => 16,
+                'organization_id' => $orgId,
+                'created_by' => $adminId,
+            ]);
 
         return [
             'product_name' => 'Shared Code Product',

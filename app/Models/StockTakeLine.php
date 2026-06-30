@@ -16,4 +16,9 @@ class StockTakeLine extends Model
   3 => 'system_quantity',
   4 => 'counted_quantity',
 );
+
+    public function session()
+    {
+        return $this->belongsTo(StockTakeSession::class, 'session_id');
+    }
 }

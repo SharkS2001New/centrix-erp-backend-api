@@ -10,6 +10,6 @@ class Vat extends Model
 
     protected $table = 'vats';
     public $timestamps = false;
-    protected $fillable = ['vat_code', 'vat_name', 'vat_percentage', 'is_active', 'created_by'];
+    protected $fillable = ['vat_code', 'vat_name', 'vat_percentage', 'is_active', 'organization_id', 'created_by'];
     protected $casts = ['is_active' => 'boolean', 'vat_percentage' => 'decimal:2'];
 }

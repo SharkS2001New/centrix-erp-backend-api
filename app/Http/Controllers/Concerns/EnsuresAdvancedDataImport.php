@@ -2,22 +2,17 @@
 
 namespace App\Http\Controllers\Concerns;
 
-use App\Models\Organization;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 
 trait EnsuresAdvancedDataImport
 {
     protected function ensureAdvancedDataImport(Request $request): void
     {
-        $user = $request->user();
-        abort_unless($user, 403);
+        abort_unless($request->user(), 403);
 
-        $orgId = (int) $user->organization_id;
-        abort_unless($orgId > 0, 403);
-
-        $org = $user->organization ?? Organization::query()->find($orgId);
-        abort_unless($org, 403);
+        $org = app(ErpContext::class)->resolveOrganization($request);
 
         $gate = app(CapabilityGate::class)->forOrganization($org);
         abort_unless(

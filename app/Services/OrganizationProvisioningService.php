@@ -14,6 +14,7 @@ use App\Services\Accounting\FiscalPeriodService;
 use App\Services\Accounting\StandardChartOfAccounts;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ModuleRegistry;
+use App\Services\Organization\OrganizationReferenceDataService;
 use App\Services\OrganizationPlatformConfigService;
 use App\Services\Auth\RoleTemplateService;
 use App\Services\Auth\UserLoginChannelPolicy;
@@ -133,6 +134,7 @@ class OrganizationProvisioningService
             ]);
 
             $this->seedAccountingFoundation($org);
+            app(OrganizationReferenceDataService::class)->seedForOrganization((int) $org->id);
 
             app(RoleTemplateService::class)->ensureAllRoles();
 

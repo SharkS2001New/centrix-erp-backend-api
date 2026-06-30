@@ -27,8 +27,7 @@ class VatImportController extends Controller
             'rows.*.vat_name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('vat_import', $user, [
+        $task = $this->tasks->createFromRequest('vat_import', $request, [
             'rows' => $data['rows'],
         ]);
 

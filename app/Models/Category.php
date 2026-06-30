@@ -10,6 +10,7 @@ class Category extends Model
     protected $table = 'categories';
     protected $fillable = [
         'category_name',
+        'organization_id',
         'created_by',
     ];
 }

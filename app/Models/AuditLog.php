@@ -11,6 +11,7 @@ class AuditLog extends Model
     public $timestamps = false;
     protected $fillable = [
         'user_id',
+        'organization_id',
         'branch_id',
         'action',
         'table_name',

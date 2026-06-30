@@ -26,8 +26,7 @@ class SubCategoryImportController extends Controller
             'rows.*.subcategory_name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('subcategory_import', $user, [
+        $task = $this->tasks->createFromRequest('subcategory_import', $request, [
             'rows' => $data['rows'],
         ]);
 

@@ -41,6 +41,8 @@ class ImportCategoriesJob implements ShouldQueue
                 throw new \RuntimeException('No category rows supplied for import.');
             }
 
+            $organizationId = $this->importOrganizationId($task, $user);
+
             $created = 0;
             $failures = [];
             $total = count($rows);
@@ -62,6 +64,7 @@ class ImportCategoriesJob implements ShouldQueue
 
                     Category::create([
                         'category_name' => $name,
+                        'organization_id' => $organizationId,
                         'created_by' => (int) $user->id,
                     ]);
                     $created++;

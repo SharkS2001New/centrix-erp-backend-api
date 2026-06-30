@@ -41,6 +41,8 @@ class ImportVatsJob implements ShouldQueue
                 throw new \RuntimeException('No VAT rows supplied for import.');
             }
 
+            $organizationId = $this->importOrganizationId($task, $user);
+
             $created = 0;
             $failures = [];
             $total = count($rows);
@@ -66,6 +68,7 @@ class ImportVatsJob implements ShouldQueue
                         'vat_name' => $name,
                         'vat_percentage' => (float) ($row['vat_percentage'] ?? 0),
                         'is_active' => $this->parseBool($row['is_active'] ?? true, true),
+                        'organization_id' => $organizationId,
                         'created_by' => (int) $user->id,
                     ]);
                     $created++;

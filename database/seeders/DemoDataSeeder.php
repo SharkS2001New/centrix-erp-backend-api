@@ -22,6 +22,7 @@ use App\Models\Product;
 use App\Models\RetailPackageSetting;
 use App\Models\Role;
 use App\Services\Erp\PermissionMatrixService;
+use App\Services\Organization\OrganizationReferenceDataService;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -90,6 +91,8 @@ class DemoDataSeeder extends Seeder
             'branch_phone' => '0700111222',
             'settings' => ['stock_alert_mode' => 'both', 'global_low_stock_threshold' => 5],
         ]);
+
+        app(OrganizationReferenceDataService::class)->seedForOrganization((int) $org->id);
 
         $rAdmin = Role::create(['role_name' => 'Administrator', 'scope' => 'org']);
         $rCash = Role::create(['role_name' => 'Cashier', 'scope' => 'branch']);
@@ -208,12 +211,18 @@ class DemoDataSeeder extends Seeder
             'is_active' => true,
         ]);
 
-        $vatStd = Vat::where('vat_code', 'V')->first()
-            ?? Vat::create(['vat_code' => 'V', 'vat_name' => 'Standard Rated', 'vat_percentage' => 16, 'created_by' => $admin->id]);
+        $vatStd = Vat::where('vat_code', 'V')->where('organization_id', $org->id)->first()
+            ?? Vat::create([
+                'vat_code' => 'V',
+                'vat_name' => 'Standard Rated',
+                'vat_percentage' => 16,
+                'organization_id' => $org->id,
+                'created_by' => $admin->id,
+            ]);
 
         $uomKg = Uom::create([
             'conversion_factor' => 1, 'full_name' => 'Kilogram', 'uom_type' => 'kg',
-            'is_base_unit' => true, 'created_by' => $admin->id,
+            'is_base_unit' => true, 'organization_id' => $org->id, 'created_by' => $admin->id,
         ]);
 
         $sup = Supplier::create([
@@ -225,8 +234,13 @@ class DemoDataSeeder extends Seeder
             'created_by' => $admin->id,
         ]);
 
-        $cat = Category::create(['category_name' => 'Food & Beverage', 'created_by' => $admin->id]);
-        $sub = SubCategory::create(['category_id' => $cat->id, 'subcategory_name' => 'Sugar', 'created_by' => $admin->id]);
+        $cat = Category::create(['category_name' => 'Food & Beverage', 'organization_id' => $org->id, 'created_by' => $admin->id]);
+        $sub = SubCategory::create([
+            'category_id' => $cat->id,
+            'subcategory_name' => 'Sugar',
+            'organization_id' => $org->id,
+            'created_by' => $admin->id,
+        ]);
 
         $sugar = Product::create([
             'product_code' => '6161100100015',

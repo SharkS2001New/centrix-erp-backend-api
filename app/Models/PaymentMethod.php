@@ -14,6 +14,7 @@ class PaymentMethod extends Model
         'method_code',
         'requires_reference',
         'is_active',
+        'organization_id',
     ];
     protected $casts = [
         'requires_reference' => 'boolean',

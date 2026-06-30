@@ -68,11 +68,23 @@ abstract class BaseResourceController extends Controller
         $query = ($this->modelClass())::query();
         $user = $request->user();
 
-        if ($user && $this->scopesByOrganization() && in_array('organization_id', $this->fillableFields(), true)) {
-            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
+        if (! $user) {
+            return $query;
         }
 
-        if ($user && $this->scopesByBranch() && in_array('branch_id', $this->fillableFields(), true)) {
+        $fillable = $this->fillableFields();
+        $hasOrganization = in_array('organization_id', $fillable, true);
+        $hasBranch = in_array('branch_id', $fillable, true);
+
+        if ($this->scopesByOrganization()) {
+            if ($hasOrganization) {
+                $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
+            } elseif ($hasBranch) {
+                $this->access()->scopeOrganizationViaBranch($query, $user, 'branch_id', $request);
+            }
+        }
+
+        if ($this->scopesByBranch() && $hasBranch) {
             $this->access()->scopeBranchIfLimited($query, $user);
         }
 
@@ -128,7 +140,7 @@ abstract class BaseResourceController extends Controller
             }
         }
         if ($user) {
-            $this->applyBranchScopeToWriteData($user, $data);
+            $this->applyBranchScopeToWriteData($user, $data, $request);
         }
         $model = ($this->modelClass())::create($data);
 
@@ -151,7 +163,7 @@ abstract class BaseResourceController extends Controller
         $data = $request->validate($rules);
         unset($data['organization_id']);
         if ($request->user()) {
-            $this->applyBranchScopeToWriteData($request->user(), $data);
+            $this->applyBranchScopeToWriteData($request->user(), $data, $request);
         }
         $oldValues = $model->getAttributes();
         $model->update($data);
@@ -193,8 +205,14 @@ abstract class BaseResourceController extends Controller
     }
 
     /** @param  array<string, mixed>  $data */
-    protected function applyBranchScopeToWriteData(User $user, array &$data): void
+    protected function applyBranchScopeToWriteData(User $user, array &$data, ?Request $request = null): void
     {
+        if (in_array('branch_id', $this->fillableFields(), true)
+            && array_key_exists('branch_id', $data)
+            && $data['branch_id'] !== null) {
+            $this->access()->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
+        }
+
         if (! in_array('branch_id', $this->fillableFields(), true)) {
             return;
         }

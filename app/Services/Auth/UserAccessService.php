@@ -35,6 +35,48 @@ class UserAccessService
     /**
      * @param  Builder<\Illuminate\Database\Eloquent\Model>  $query
      */
+    public function scopeOrganizationViaBranch(
+        Builder $query,
+        User $user,
+        string $branchColumn = 'branch_id',
+        ?Request $request = null,
+    ): Builder {
+        $orgId = $this->organizationId($user, $request);
+        if (! $orgId) {
+            return $query;
+        }
+
+        return $query->whereIn($branchColumn, function ($sub) use ($orgId) {
+            $sub->select('id')
+                ->from('branches')
+                ->where('organization_id', $orgId);
+        });
+    }
+
+    public function assertBranchInOrganization(
+        User $user,
+        int $branchId,
+        ?Request $request = null,
+        string $message = 'You do not have access to this branch.',
+    ): void {
+        $orgId = $this->organizationId($user, $request);
+        if (! $orgId) {
+            return;
+        }
+
+        $exists = \App\Models\Branch::query()
+            ->where('id', $branchId)
+            ->where('organization_id', $orgId)
+            ->exists();
+
+        if (! $exists) {
+            abort(403, $message);
+        }
+    }
+
+    /**
+     * @param  Builder<\Illuminate\Database\Eloquent\Model>  $query
+     */
     public function scopeOrganization(
         Builder $query,
         User $user,

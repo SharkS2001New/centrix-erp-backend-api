@@ -2,7 +2,6 @@
 
 namespace App\Http\Controllers\Api\V1;
 
-use App\Models\Branch;
 use App\Models\Till;
 use App\Models\TillFloatSession;
 use Illuminate\Http\Request;
@@ -22,21 +21,7 @@ class TillController extends BaseResourceController
 
     protected function findScopedTill(Request $request, string $id): Till
     {
-        $query = Till::query()->where($this->routeKeyColumn(), $id);
-        $user = $request->user();
-
-        if ($user) {
-            $orgId = $this->access()->organizationId($user, $request);
-            if ($orgId) {
-                $query->whereIn(
-                    'branch_id',
-                    Branch::query()->where('organization_id', $orgId)->select('id'),
-                );
-            }
-            $this->access()->scopeBranchIfLimited($query, $user);
-        }
-
-        return $query->firstOrFail();
+        return $this->findScopedModel($request, $id);
     }
 
     protected function suggestNextTillLabel(?int $branchId = null): string

@@ -335,6 +335,14 @@ Route::prefix('v1')->group(function () {
                 Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions']);
                 Route::apiResource('routes', RouteModelController::class)->only(['index', 'show']);
                 Route::apiResource('employees', EmployeeController::class)->only(['index', 'show']);
+                Route::apiResource('vats', VatController::class);
+                Route::apiResource('uoms', UomController::class);
+                Route::apiResource('categories', CategoryController::class);
+                Route::apiResource('sub-categories', SubCategoryController::class);
+                Route::post('vats/import-batch', [VatImportController::class, 'store']);
+                Route::post('uoms/import-batch', [UomImportController::class, 'store']);
+                Route::post('categories/import-batch', [CategoryImportController::class, 'store']);
+                Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store']);
                 Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class);
                 Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class);
                 Route::prefix('attendance')->group(function () {

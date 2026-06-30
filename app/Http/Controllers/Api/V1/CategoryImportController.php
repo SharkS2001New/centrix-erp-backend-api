@@ -26,8 +26,7 @@ class CategoryImportController extends Controller
             'rows.*.category_name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('category_import', $user, [
+        $task = $this->tasks->createFromRequest('category_import', $request, [
             'rows' => $data['rows'],
         ]);
 

@@ -26,8 +26,7 @@ class RouteImportController extends Controller
             'rows.*.route_name' => ['nullable', 'string', 'max:255'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('route_import', $user, [
+        $task = $this->tasks->createFromRequest('route_import', $request, [
             'rows' => $data['rows'],
         ]);
 

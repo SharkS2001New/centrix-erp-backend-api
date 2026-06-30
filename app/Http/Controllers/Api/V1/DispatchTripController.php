@@ -19,11 +19,6 @@ class DispatchTripController extends BaseResourceController
         return DispatchTrip::class;
     }
 
-    protected function scopesByOrganization(): bool
-    {
-        return false;
-    }
-
     public function index(Request $request)
     {
         $query = $this->baseQuery($request)

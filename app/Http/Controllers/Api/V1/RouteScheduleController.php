@@ -15,11 +15,6 @@ class RouteScheduleController extends BaseResourceController
         return RouteSchedule::class;
     }
 
-    protected function scopesByOrganization(): bool
-    {
-        return false;
-    }
-
     public function index(Request $request)
     {
         $query = $this->baseQuery($request)

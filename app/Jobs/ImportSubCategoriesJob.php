@@ -42,7 +42,10 @@ class ImportSubCategoriesJob implements ShouldQueue
                 throw new \RuntimeException('No sub-category rows supplied for import.');
             }
 
+            $organizationId = $this->importOrganizationId($task, $user);
+
             $categoryByName = Category::query()
+                ->where('organization_id', $organizationId)
                 ->get(['id', 'category_name'])
                 ->mapWithKeys(fn (Category $category) => [strtolower(trim($category->category_name)) => (int) $category->id]);
 
@@ -74,9 +77,18 @@ class ImportSubCategoriesJob implements ShouldQueue
                         throw new \InvalidArgumentException('category_id or category_name is required.');
                     }
 
+                    $categoryExists = Category::query()
+                        ->where('id', $categoryId)
+                        ->where('organization_id', $organizationId)
+                        ->exists();
+                    if (! $categoryExists) {
+                        throw new \InvalidArgumentException('Category does not belong to this organization.');
+                    }
+
                     SubCategory::create([
                         'category_id' => $categoryId,
                         'subcategory_name' => $name,
+                        'organization_id' => $organizationId,
                         'created_by' => (int) $user->id,
                     ]);
                     $created++;

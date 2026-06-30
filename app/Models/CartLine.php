@@ -14,4 +14,9 @@ class CartLine extends Model
         'cart_id', 'product_code', 'product_name', 'unit_price', 'quantity', 'uom',
         'product_vat', 'amount', 'discount_given', 'on_wholesale_retail', 'line_no', 'update_code',
     ];
+
+    public function cart()
+    {
+        return $this->belongsTo(TemporaryCart::class, 'cart_id');
+    }
 }

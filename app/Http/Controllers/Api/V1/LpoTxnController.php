@@ -25,7 +25,7 @@ class LpoTxnController extends BaseResourceController
     public function index(Request $request)
     {
         $user = $request->user();
-        $orgId = (int) ($user?->organization_id ?? 0);
+        $orgId = (int) ($this->access()->organizationId($user, $request) ?? 0);
 
         $query = LpoTxn::query()
             ->with(['lpo:id,lpo_no,lpo_seq,organization_id,created_at,sent_at,reference_number'])

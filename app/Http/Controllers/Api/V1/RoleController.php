@@ -26,7 +26,7 @@ class RoleController extends BaseResourceController
 
     public function index(Request $request)
     {
-        $orgId = $request->user()?->organization_id;
+        $orgId = $this->access()->organizationId($request->user(), $request);
         $query = Role::query()->where(function ($q) use ($orgId) {
             $q->whereNull('organization_id');
             if ($orgId) {
@@ -52,9 +52,9 @@ class RoleController extends BaseResourceController
         return response()->json($payload);
     }
 
-    public function permissions(string $id, ?string $nestedId = null)
+    public function permissions(Request $request, string $id, ?string $nestedId = null)
     {
-        $role = $this->findRoleOrFail($this->resolveResourceId($id, $nestedId));
+        $role = $this->findRoleOrFail($request, $this->resolveResourceId($id, $nestedId));
         $permissionIds = DB::table('role_permissions')
             ->where('role_id', $role->id)
             ->pluck('permission_id')
@@ -71,7 +71,7 @@ class RoleController extends BaseResourceController
     public function syncPermissions(Request $request, string $id, ?string $nestedId = null)
     {
         $resourceId = $this->resolveResourceId($id, $nestedId);
-        $role = $this->findRoleOrFail($resourceId);
+        $role = $this->findRoleOrFail($request, $resourceId);
         $data = $request->validate([
             'permission_ids' => 'present|array',
             'permission_ids.*' => 'integer|exists:permissions,id',
@@ -128,7 +128,7 @@ class RoleController extends BaseResourceController
 
     public function destroy(Request $request, string $id, ?string $nestedId = null)
     {
-        $role = $this->findRoleOrFail($this->resolveResourceId($id, $nestedId));
+        $role = $this->findRoleOrFail($request, $this->resolveResourceId($id, $nestedId));
         $usersCount = User::query()->where('role_id', $role->id)->count();
 
         if ($usersCount > 0) {
@@ -143,12 +143,22 @@ class RoleController extends BaseResourceController
         return response()->json(null, 204);
     }
 
-    private function findRoleOrFail(string $id): Role
+    private function findRoleOrFail(Request $request, string $id): Role
     {
         if ($id === '' || ! ctype_digit($id)) {
             abort(404, 'Role not found.');
         }
 
-        return Role::query()->findOrFail((int) $id);
+        $orgId = $this->access()->organizationId($request->user(), $request);
+
+        return Role::query()
+            ->where('id', (int) $id)
+            ->where(function ($q) use ($orgId) {
+                $q->whereNull('organization_id');
+                if ($orgId) {
+                    $q->orWhere('organization_id', $orgId);
+                }
+            })
+            ->firstOrFail();
     }
 }

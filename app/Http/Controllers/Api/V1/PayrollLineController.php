@@ -1,35 +1,31 @@
 <?php
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Concerns\ScopesViaParentOrganization;
 use App\Models\PayrollLine;
 use Illuminate\Http\Request;
 
 class PayrollLineController extends BaseResourceController
 {
+    use ScopesViaParentOrganization;
+
     protected function modelClass(): string
     {
         return PayrollLine::class;
     }
 
-    public function index(Request $request)
+    protected function parentOrganizationScope(): array
     {
-        $query = PayrollLine::query()->with('employee');
+        return ['relation' => 'payrollRun.payPeriod'];
+    }
 
-        foreach ((array) $request->input('filter', []) as $col => $val) {
-            if (in_array($col, $this->filterableColumns(), true)) {
-                $query->where($col, $val);
-            }
-        }
-
-        $perPage = min((int) $request->input('per_page', 50), 500);
-
-        return response()->json($query->orderBy('id')->paginate($perPage));
+    protected function baseQuery(Request $request)
+    {
+        return parent::baseQuery($request)->with('employee');
     }
 
     public function show(Request $request, string $id)
     {
-        $line = PayrollLine::with('employee')->findOrFail($id);
-
-        return response()->json($line);
+        return response()->json($this->findScopedModel($request, $id)->load('employee'));
     }
 }

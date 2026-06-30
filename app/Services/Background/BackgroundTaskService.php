@@ -4,6 +4,8 @@ namespace App\Services\Background;
 
 use App\Models\BackgroundTask;
 use App\Models\User;
+use App\Services\Erp\ErpContext;
+use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 
@@ -13,14 +15,28 @@ class BackgroundTaskService
         protected BackgroundTaskQueueService $queue,
     ) {}
 
-    public function create(string $type, User $user, array $payload = []): BackgroundTask
+    public function create(string $type, User $user, array $payload = [], ?int $organizationId = null): BackgroundTask
     {
+        $resolvedOrganizationId = $organizationId > 0
+            ? $organizationId
+            : (int) $user->organization_id;
+
         return BackgroundTask::createPending(
             $type,
-            (int) $user->organization_id,
+            $resolvedOrganizationId,
             (int) $user->id,
             $payload,
         );
+    }
+
+    public function createFromRequest(string $type, Request $request, array $payload = []): BackgroundTask
+    {
+        $user = $request->user();
+        abort_unless($user, 403);
+
+        $organization = app(ErpContext::class)->resolveOrganization($request);
+
+        return $this->create($type, $user, $payload, (int) $organization->id);
     }
 
     public function markRunning(BackgroundTask $task): void

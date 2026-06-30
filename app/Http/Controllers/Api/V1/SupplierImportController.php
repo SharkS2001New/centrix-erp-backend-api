@@ -26,8 +26,7 @@ class SupplierImportController extends Controller
             'rows.*.supplier_name' => ['nullable', 'string', 'max:200'],
         ]);
 
-        $user = $request->user();
-        $task = $this->tasks->create('supplier_import', $user, [
+        $task = $this->tasks->createFromRequest('supplier_import', $request, [
             'rows' => $data['rows'],
         ]);
 

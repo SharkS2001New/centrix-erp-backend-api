@@ -21,11 +21,6 @@ class PodRecordController extends BaseResourceController
         return PodRecord::class;
     }
 
-    protected function scopesByOrganization(): bool
-    {
-        return false;
-    }
-
     public function index(Request $request)
     {
         $query = $this->baseQuery($request)->with(['sale', 'trip', 'capturedByUser']);

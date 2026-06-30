@@ -10,5 +10,5 @@ class SubCategory extends Model
 
     protected $table = 'sub_categories';
     public $timestamps = false;
-    protected $fillable = ['category_id', 'subcategory_name', 'created_by'];
+    protected $fillable = ['category_id', 'subcategory_name', 'organization_id', 'created_by'];
 }

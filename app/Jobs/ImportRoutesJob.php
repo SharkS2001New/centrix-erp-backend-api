@@ -36,7 +36,7 @@ class ImportRoutesJob implements ShouldQueue
                 throw new \RuntimeException('User not found for route import task.');
             }
 
-            $organizationId = (int) $user->organization_id;
+            $organizationId = $this->importOrganizationId($task, $user);
             if ($organizationId <= 0) {
                 throw new \RuntimeException('Route import requires an organization context.');
             }
