@@ -207,6 +207,9 @@ class CheckoutController extends Controller
                 $fulfillmentMeta['supersedes_sale_id'] = (int) $cart->superseded_sale_id;
                 $fulfillmentMeta['pos_edit'] = true;
             }
+            if (! empty($input['sales_workspace'])) {
+                $fulfillmentMeta['sales_workspace'] = (string) $input['sales_workspace'];
+            }
 
             $sale = Sale::create([
                 'order_num' => $orderNum,

@@ -602,6 +602,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.enable_mobile_orders' => 'sometimes|boolean',
             'sales_platform.require_pos_till_float' => 'sometimes|boolean',
             'sales_platform.enable_pos_order_edit' => 'sometimes|boolean',
+            'sales_platform.enable_backoffice_order_edit' => 'sometimes|boolean',
             'sales_platform.enable_mpesa_stk' => 'sometimes|boolean',
             'sales_platform.enable_kra_integration' => 'sometimes|boolean',
             'sales_platform.enable_ai' => 'sometimes|boolean',

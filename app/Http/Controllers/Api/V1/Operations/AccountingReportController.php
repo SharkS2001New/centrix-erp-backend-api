@@ -120,7 +120,7 @@ class AccountingReportController extends Controller
     protected function filters(Request $request): array
     {
         return $request->only([
-            'branch_id', 'account_id', 'from_date', 'to_date', 'per_page', 'page', 'method',
+            'branch_id', 'account_id', 'from_date', 'to_date', 'per_page', 'page', 'method', 'q',
         ]);
     }
 }

@@ -78,7 +78,46 @@ class AccountingReportTest extends TestCase
     {
         $this->getJson('/api/v1/reports/general-ledger?per_page=10')
             ->assertOk()
-            ->assertJsonStructure(['data']);
+            ->assertJsonStructure(['data', 'current_page', 'last_page', 'total']);
+    }
+
+    public function test_general_ledger_search_filters_by_entry_number(): void
+    {
+        $cash = ChartOfAccount::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('account_code', '1000')
+            ->firstOrFail();
+        $sales = ChartOfAccount::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('account_code', '4000')
+            ->firstOrFail();
+
+        $entry = JournalEntry::create([
+            'organization_id' => $this->user->organization_id,
+            'entry_number' => 'JE-GL-SEARCH-XYZ',
+            'entry_date' => '2026-06-15',
+            'description' => 'General ledger search test',
+            'created_by' => $this->user->id,
+        ]);
+        $entry->forceFill(['status' => 'posted', 'posted_at' => now()])->save();
+
+        JournalEntryLine::create([
+            'journal_entry_id' => $entry->id,
+            'account_id' => $cash->id,
+            'debit' => 250,
+            'credit' => 0,
+        ]);
+        JournalEntryLine::create([
+            'journal_entry_id' => $entry->id,
+            'account_id' => $sales->id,
+            'debit' => 0,
+            'credit' => 250,
+        ]);
+
+        $this->getJson('/api/v1/reports/general-ledger?q=GL-SEARCH-XYZ&per_page=10')
+            ->assertOk()
+            ->assertJsonPath('total', 2)
+            ->assertJsonPath('data.0.entry_number', 'JE-GL-SEARCH-XYZ');
     }
 
     public function test_accounts_receivable_and_payable_endpoints(): void

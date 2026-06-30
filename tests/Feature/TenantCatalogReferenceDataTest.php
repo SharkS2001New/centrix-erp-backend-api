@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Category;
 use App\Models\Organization;
+use App\Models\Product;
 use App\Models\SubCategory;
 use App\Models\Uom;
 use App\Models\User;
@@ -75,6 +76,22 @@ class TenantCatalogReferenceDataTest extends TestCase
             'is_active' => true,
         ])->assertCreated()
             ->assertJsonPath('organization_id', $admin->organization_id);
+    }
+
+    public function test_uom_delete_blocked_when_linked_to_products(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $uom = Uom::query()->where('organization_id', $admin->organization_id)->firstOrFail();
+        $product = Product::query()->where('organization_id', $admin->organization_id)->firstOrFail();
+        $product->update(['unit_id' => $uom->id]);
+
+        $this->deleteJson("/api/v1/uoms/{$uom->id}")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['uom']);
+
+        $this->assertDatabaseHas('uoms', ['id' => $uom->id]);
     }
 
     public function test_categories_and_subcategories_are_scoped_per_organization(): void

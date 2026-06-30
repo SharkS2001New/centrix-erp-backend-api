@@ -46,6 +46,17 @@ class AccountingReportService
         if (! empty($filters['to_date'])) {
             $query->where('je.entry_date', '<=', $filters['to_date']);
         }
+        if (! empty($filters['q'])) {
+            $term = '%'.addcslashes((string) $filters['q'], '%_\\').'%';
+            $query->where(function ($sub) use ($term) {
+                $sub->where('je.entry_number', 'like', $term)
+                    ->orWhere('je.description', 'like', $term)
+                    ->orWhere('je.reference_type', 'like', $term)
+                    ->orWhere('coa.account_code', 'like', $term)
+                    ->orWhere('coa.account_name', 'like', $term)
+                    ->orWhere('jel.line_notes', 'like', $term);
+            });
+        }
 
         $perPage = min((int) ($filters['per_page'] ?? 50), 200);
 

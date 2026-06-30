@@ -5,7 +5,9 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Sale;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
+use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\RouteOrderScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -136,11 +138,21 @@ class SaleController extends BaseResourceController
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         $paginator = $query->orderByDesc('id')->paginate($perPage);
-        $paginator->getCollection()->transform(function (Sale $sale) use ($workflow) {
+        $editService = app(PosOrderEditService::class);
+        $lineEditService = app(BackofficeOrderLineEditService::class);
+        $paginator->getCollection()->transform(function (Sale $sale) use ($workflow, $editService, $lineEditService, $request, $gate) {
             $channel = $sale->channel ?: 'backend';
             $sale->setAttribute(
                 'workflow_status',
                 $workflow->alignStatusToPipeline((string) $sale->status, $channel),
+            );
+            $sale->setAttribute(
+                'can_edit',
+                $editService->canRestoreSaleToCart($sale, $request->user(), $gate),
+            );
+            $sale->setAttribute(
+                'can_edit_lines',
+                $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
             );
 
             return $sale;
@@ -155,6 +167,8 @@ class SaleController extends BaseResourceController
         $gate = $this->erp->gateForUser($request->user());
         $channel = $sale->channel ?: 'backend';
         $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
+        $editService = app(PosOrderEditService::class);
+        $lineEditService = app(BackofficeOrderLineEditService::class);
 
         return response()->json(array_merge($sale->toArray(), [
             'workflow' => $workflow,
@@ -162,6 +176,8 @@ class SaleController extends BaseResourceController
                 (string) $sale->status,
                 $channel,
             ),
+            'can_edit' => $editService->canRestoreSaleToCart($sale, $request->user(), $gate),
+            'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
         ]));
     }
 }

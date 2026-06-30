@@ -24,6 +24,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\OrderNumberAllocator;
+use App\Services\Sales\PosLinePricingService;
 use App\Support\SalesCheckoutSettings;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Auth\UserMobileOrderScopeService;

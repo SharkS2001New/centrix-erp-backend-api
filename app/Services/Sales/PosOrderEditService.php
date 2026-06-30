@@ -26,7 +26,7 @@ class PosOrderEditService
 
         return match ($channel) {
             'pos' => $this->posOrderEditEnabled($gate),
-            'mobile' => true,
+            'mobile', 'backend', 'backoffice' => true,
             default => false,
         };
     }

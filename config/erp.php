@@ -364,6 +364,7 @@ return [
             'require_pos_till_float' => false,
             'require_backoffice_till_float' => false,
             'blind_till_close' => false,
+            'enable_backoffice_order_edit' => true,
             'default_submit_kra' => true,
             'order_document_type' => 'receipt',
             'invoice_valid_days' => 7,

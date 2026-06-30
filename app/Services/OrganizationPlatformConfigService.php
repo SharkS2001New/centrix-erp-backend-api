@@ -71,6 +71,10 @@ class OrganizationPlatformConfigService
             $nextSales['enable_pos_order_edit'] = (bool) $salesPlatform['enable_pos_order_edit'];
         }
 
+        if (array_key_exists('enable_backoffice_order_edit', $salesPlatform)) {
+            $nextSales['enable_backoffice_order_edit'] = (bool) $salesPlatform['enable_backoffice_order_edit'];
+        }
+
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['sales'] = $nextSales;
 
@@ -131,6 +135,7 @@ class OrganizationPlatformConfigService
             'require_pos_till_float' => false,
             'order_workflow' => config('erp.default_order_workflow', []),
             'enable_pos_order_edit' => false,
+            'enable_backoffice_order_edit' => true,
         ];
     }
 
@@ -161,6 +166,7 @@ class OrganizationPlatformConfigService
             'stock_deduct_on' => (string) ($sales['stock_deduct_on'] ?? 'order_created'),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
+            'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
             'order_workflow' => $workflow,
         ];
     }

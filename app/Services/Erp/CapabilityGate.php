@@ -290,6 +290,17 @@ class CapabilityGate
         return (bool) ($sales['enable_pos_order_edit'] ?? false);
     }
 
+    public function backofficeOrderEditEnabled(): bool
+    {
+        if (! $this->enabled('sales')) {
+            return false;
+        }
+
+        $sales = $this->moduleSettings('sales');
+
+        return (bool) ($sales['enable_backoffice_order_edit'] ?? true);
+    }
+
     public function mpesaStkPlatformEnabled(): bool
     {
         $finance = $this->moduleSettings('finance');
@@ -457,6 +468,7 @@ class CapabilityGate
             'distribution_ops_enabled' => $this->distributionOpsEnabled(),
             'mobile_orders_enabled' => $this->mobileSalesEnabled(),
             'pos_order_edit_enabled' => $this->posOrderEditEnabled(),
+            'backoffice_order_edit_enabled' => $this->backofficeOrderEditEnabled(),
             'platform_mpesa_stk_enabled' => $this->mpesaStkPlatformEnabled(),
             'platform_kra_integration_enabled' => $this->kraIntegrationPlatformEnabled(),
             'platform_ai_enabled' => $this->aiPlatformEnabled(),

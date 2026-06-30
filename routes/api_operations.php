@@ -87,6 +87,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('orders/{saleId}/pod', [\App\Http\Controllers\Api\V1\PodRecordController::class, 'storeForSale']);
     });
 
+    Route::middleware('erp.permission:sales.orders.edit')->prefix('sales')->group(function () {
+        Route::patch('orders/{saleId}/line-quantities', [\App\Http\Controllers\Api\V1\Operations\BackofficeOrderLineEditController::class, 'updateLineQuantities']);
+    });
+
     Route::middleware(['erp.module:payments', 'erp.permission:payments.manage'])->group(function () {
         Route::post('sales/{saleId}/payments', [PaymentOperationsController::class, 'paySale']);
     });
