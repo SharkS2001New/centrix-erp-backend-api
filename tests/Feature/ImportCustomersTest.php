@@ -5,9 +5,14 @@ namespace Tests\Feature;
 use App\Jobs\ImportCustomersJob;
 use App\Models\BackgroundTask;
 use App\Models\Customer;
+use App\Models\Organization;
+use App\Models\Permission;
+use App\Models\Role;
 use App\Models\RouteModel;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -16,8 +21,20 @@ class ImportCustomersTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    protected function enableAdvancedDataImportForDemoOrg(): void
+    {
+        $org = Organization::query()->where('company_code', 'DEMO')->firstOrFail();
+        $settings = $org->module_settings ?? [];
+        $settings['admin'] = array_merge($settings['admin'] ?? [], [
+            'enable_advanced_data_import' => true,
+        ]);
+        $org->update(['module_settings' => $settings]);
+    }
+
     public function test_customer_import_assigns_branch_and_creates_rows(): void
     {
+        $this->enableAdvancedDataImportForDemoOrg();
+
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
 
@@ -94,5 +111,97 @@ class ImportCustomersTest extends TestCase
         $this->assertSame(0, $task->result['created'] ?? null);
         $this->assertSame(1, $task->result['failed'] ?? null);
         $this->assertStringContainsString('Route ID 999999 does not exist', $task->result['failures'][0]['message'] ?? '');
+    }
+
+    public function test_non_admin_with_customers_manage_can_import_when_advanced_import_enabled(): void
+    {
+        $this->enableAdvancedDataImportForDemoOrg();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        $role = Role::create([
+            'role_name' => 'Customer Importer',
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $createId = (int) Permission::where('permission_code', 'customers.customers.create')->value('id');
+        $this->assertGreaterThan(0, $createId);
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $createId,
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'customer_importer',
+            'password' => Hash::make('password'),
+            'full_name' => 'Customer Importer',
+            'access_scope' => 'branch',
+            'is_active' => true,
+            'is_admin' => false,
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $this->postJson('/api/v1/customers/import-batch', [
+            'rows' => [
+                [
+                    'customer_name' => 'Permissioned Import Customer',
+                    'customer_type' => 'debtor',
+                    'phone_number' => '0711000099',
+                    'town' => 'Nairobi',
+                ],
+            ],
+        ])->assertAccepted();
+    }
+
+    public function test_non_admin_without_customers_manage_cannot_import(): void
+    {
+        $this->enableAdvancedDataImportForDemoOrg();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        $role = Role::create([
+            'role_name' => 'Customer Viewer',
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $viewId = (int) Permission::where('permission_code', 'customers.customers.view')->value('id');
+        $this->assertGreaterThan(0, $viewId);
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $viewId,
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'no_import_user',
+            'password' => Hash::make('password'),
+            'full_name' => 'No Import User',
+            'access_scope' => 'branch',
+            'is_active' => true,
+            'is_admin' => false,
+        ]);
+
+        Sanctum::actingAs($user);
+
+        $this->postJson('/api/v1/customers/import-batch', [
+            'rows' => [
+                [
+                    'customer_name' => 'Blocked Import Customer',
+                    'customer_type' => 'debtor',
+                    'phone_number' => '0711000088',
+                    'town' => 'Nairobi',
+                ],
+            ],
+        ])->assertForbidden();
     }
 }

@@ -11,7 +11,7 @@ trait EnsuresAdvancedDataImport
     protected function ensureAdvancedDataImport(Request $request): void
     {
         $user = $request->user();
-        abort_unless($user && $user->is_admin, 403, 'Only organization administrators can import data.');
+        abort_unless($user, 403);
 
         $orgId = (int) $user->organization_id;
         abort_unless($orgId > 0, 403);
