@@ -13,7 +13,7 @@ class ImportPayloadStorage
      * @param  array<int, array<string, mixed>>  $rows
      * @return array{rows?: array<int, array<string, mixed>>, rows_path?: string, row_count?: int}
      */
-    public function payloadForRows(array $rows, int $inlineLimit = 200): array
+    public function payloadForRows(array $rows, int $inlineLimit = 5000): array
     {
         if (count($rows) <= $inlineLimit) {
             return ['rows' => $rows];

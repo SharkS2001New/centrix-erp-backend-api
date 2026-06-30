@@ -14,6 +14,20 @@ class ImportPayloadStorageTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    public function test_import_rows_up_to_inline_limit_stay_in_task_payload(): void
+    {
+        $rows = [];
+        for ($i = 1; $i <= 250; $i++) {
+            $rows[] = ['customer_name' => "Customer {$i}"];
+        }
+
+        $payload = app(ImportPayloadStorage::class)->payloadForRows($rows);
+
+        $this->assertArrayHasKey('rows', $payload);
+        $this->assertCount(250, $payload['rows']);
+        $this->assertArrayNotHasKey('rows_path', $payload);
+    }
+
     public function test_large_import_rows_are_stored_on_disk_and_loaded_by_job(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

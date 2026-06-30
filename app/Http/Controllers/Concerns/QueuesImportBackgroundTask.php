@@ -19,7 +19,8 @@ trait QueuesImportBackgroundTask
         int $maxRows = 5000,
     ): JsonResponse {
         $data = $this->validateImportRows($request, $maxRows);
-        $payload = app(ImportPayloadStorage::class)->payloadForRows($data['rows']);
+        // Keep rows in the background_tasks payload (DB) so queue workers do not depend on local disk.
+        $payload = app(ImportPayloadStorage::class)->payloadForRows($data['rows'], $maxRows);
 
         $task = app(BackgroundTaskService::class)->createFromRequest($type, $request, $payload);
         $jobClass::dispatch($task->id);
