@@ -8,6 +8,8 @@ return [
     */
     'stale_pending_minutes' => (int) env('BACKGROUND_STALE_PENDING_MINUTES', 15),
     'stale_running_minutes' => (int) env('BACKGROUND_STALE_RUNNING_MINUTES', 35),
+    /** Longer threshold for catalog import tasks that may run up to an hour. */
+    'stale_import_running_minutes' => (int) env('BACKGROUND_STALE_IMPORT_RUNNING_MINUTES', 90),
 
     /*
     |--------------------------------------------------------------------------

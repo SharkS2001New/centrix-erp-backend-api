@@ -10,7 +10,10 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\RouteModel;
 use App\Models\User;
+use App\Services\Auth\UserAccessService;
 use App\Services\Background\BackgroundTaskService;
+use App\Services\Customers\CustomerNumberAllocator;
+use App\Services\Customers\CustomerUniquenessValidator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
@@ -63,8 +66,9 @@ class ImportCustomersTest extends TestCase
 
         (new ImportCustomersJob($taskId))->handle(
             app(BackgroundTaskService::class),
-            app(\App\Services\Customers\CustomerUniquenessValidator::class),
-            app(\App\Services\Auth\UserAccessService::class),
+            app(CustomerUniquenessValidator::class),
+            app(UserAccessService::class),
+            app(CustomerNumberAllocator::class),
         );
 
         $task = BackgroundTask::query()->findOrFail($taskId);
@@ -102,8 +106,9 @@ class ImportCustomersTest extends TestCase
         $job = new ImportCustomersJob($task->id);
         $job->handle(
             app(BackgroundTaskService::class),
-            app(\App\Services\Customers\CustomerUniquenessValidator::class),
-            app(\App\Services\Auth\UserAccessService::class),
+            app(CustomerUniquenessValidator::class),
+            app(UserAccessService::class),
+            app(CustomerNumberAllocator::class),
         );
 
         $task->refresh();
@@ -111,6 +116,49 @@ class ImportCustomersTest extends TestCase
         $this->assertSame(0, $task->result['created'] ?? null);
         $this->assertSame(1, $task->result['failed'] ?? null);
         $this->assertStringContainsString('Route ID 999999 does not exist', $task->result['failures'][0]['message'] ?? '');
+    }
+
+    public function test_customer_import_allocates_sequential_numbers_in_bulk(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $organizationId = (int) $admin->organization_id;
+        $existingMax = (int) (Customer::query()
+            ->where('organization_id', $organizationId)
+            ->max('customer_num') ?? 0);
+
+        $rows = [];
+        for ($i = 1; $i <= 5; $i++) {
+            $rows[] = [
+                'customer_name' => "Bulk Import Customer {$i}",
+                'customer_type' => 'debtor',
+                'phone_number' => '0799'.str_pad((string) $i, 6, '0', STR_PAD_LEFT),
+            ];
+        }
+
+        $task = BackgroundTask::createPending('customer_import', $organizationId, (int) $admin->id, [
+            'rows' => $rows,
+        ]);
+
+        (new ImportCustomersJob($task->id))->handle(
+            app(BackgroundTaskService::class),
+            app(CustomerUniquenessValidator::class),
+            app(UserAccessService::class),
+            app(CustomerNumberAllocator::class),
+        );
+
+        $task->refresh();
+        $this->assertSame('completed', $task->status);
+        $this->assertSame(5, $task->result['created'] ?? null);
+
+        $nums = Customer::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('customer_name', array_column($rows, 'customer_name'))
+            ->orderBy('customer_num')
+            ->pluck('customer_num')
+            ->map(fn ($num) => (int) $num)
+            ->all();
+
+        $this->assertSame(range($existingMax + 1, $existingMax + 5), $nums);
     }
 
     public function test_non_admin_with_customers_manage_can_import_when_advanced_import_enabled(): void

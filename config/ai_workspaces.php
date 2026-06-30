@@ -58,7 +58,7 @@ return [
         'label' => 'Distribution',
         'description' => 'Dispatch board, trips, fleet, proof of delivery, and route sales reporting.',
         'nav_section_ids' => ['dashboard', 'distribution_ops', 'distribution_fleet', 'distribution_orders', 'reports'],
-        'nav_path_prefixes' => ['/fulfillment', '/fulfillment/orders', '/sales/orders', '/reports'],
+        'nav_path_prefixes' => ['/fulfillment', '/reports'],
         'report_include_paths' => ['/reports', '/reports/builder', '/reports/mobile-route-sales'],
         'module_catalog_keys' => ['distribution', 'fulfillment', 'reports'],
         'action_types' => [],

@@ -17,6 +17,18 @@ class SupplierController extends BaseResourceController
         return Supplier::class;
     }
 
+    protected function sortableColumns(): array
+    {
+        return [
+            'supplier_name',
+            'supplier_code',
+            'contact_person',
+            'phone',
+            'town',
+            'created_at',
+        ];
+    }
+
     public function index(Request $request)
     {
         $query = $this->baseQuery($request);
@@ -43,6 +55,7 @@ class SupplierController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $this->applyListOrdering($request, $query, 'supplier_name', 'asc');
         $paginator = $query->paginate($perPage);
 
         $organizationId = (int) $request->user()->organization_id;

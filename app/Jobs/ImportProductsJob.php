@@ -13,17 +13,18 @@ use App\Models\Uom;
 use App\Models\User;
 use App\Models\Vat;
 use App\Services\Background\BackgroundTaskService;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
-class ImportProductsJob implements ShouldQueue
+class ImportProductsJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
     use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 1800;
+    public int $timeout = 3600;
 
     public function __construct(
         public string $taskId,

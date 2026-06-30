@@ -242,7 +242,7 @@ class BackgroundTaskService
     protected function isStale(BackgroundTask $task): bool
     {
         $pendingMinutes = max(1, (int) config('background.stale_pending_minutes', 15));
-        $runningMinutes = max(1, (int) config('background.stale_running_minutes', 35));
+        $runningMinutes = $this->staleRunningMinutesFor($task);
         $now = now();
 
         if ($task->status === 'pending') {
@@ -256,6 +256,20 @@ class BackgroundTaskService
         }
 
         return false;
+    }
+
+    protected function staleRunningMinutesFor(BackgroundTask $task): int
+    {
+        $default = max(1, (int) config('background.stale_running_minutes', 35));
+
+        if (! str_ends_with((string) ($task->type ?? ''), '_import')) {
+            return $default;
+        }
+
+        return max(
+            $default,
+            (int) config('background.stale_import_running_minutes', 90),
+        );
     }
 
     protected function isOlderThan(?Carbon $timestamp, int $minutes, Carbon $now): bool

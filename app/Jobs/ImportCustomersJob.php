@@ -14,19 +14,19 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Customers\CustomerNumberAllocator;
 use App\Services\Customers\CustomerUniquenessValidator;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
-class ImportCustomersJob implements ShouldQueue
+class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
     use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 1800;
+    public int $timeout = 3600;
 
     public function __construct(
         public string $taskId,
@@ -36,6 +36,7 @@ class ImportCustomersJob implements ShouldQueue
         BackgroundTaskService $tasks,
         CustomerUniquenessValidator $customerUniqueness,
         UserAccessService $access,
+        CustomerNumberAllocator $customerNumbers,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
         if ($this->shouldSkipBackgroundTask($task)) {
@@ -67,11 +68,17 @@ class ImportCustomersJob implements ShouldQueue
                 ->map(fn ($id) => (int) $id)
                 ->all();
             $validRouteSet = array_fill_keys($validRouteIds, true);
+            $routesByName = RouteModel::query()
+                ->where('organization_id', $organizationId)
+                ->pluck('id', 'route_name')
+                ->map(fn ($id) => (int) $id)
+                ->all();
 
             $created = 0;
             $skipped = 0;
             $failures = [];
             $total = count($rows);
+            $nextAutoCustomerNum = null;
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -89,6 +96,7 @@ class ImportCustomersJob implements ShouldQueue
                         $organizationId,
                         $defaultBranchId,
                         $validRouteSet,
+                        $routesByName,
                         $access,
                     );
                     if ($body['customer_name'] === '') {
@@ -102,17 +110,19 @@ class ImportCustomersJob implements ShouldQueue
                         $body['kra_pin'] ?? null,
                     );
 
-                    DB::transaction(function () use ($body, $organizationId, $user): void {
-                        if (empty($body['customer_num'])) {
-                            $body['customer_num'] = app(CustomerNumberAllocator::class)
-                                ->nextForOrganization($organizationId);
+                    if (empty($body['customer_num'])) {
+                        if ($nextAutoCustomerNum === null) {
+                            $nextAutoCustomerNum = $customerNumbers->reserveSequenceStart($organizationId);
+                        } else {
+                            $nextAutoCustomerNum++;
                         }
+                        $body['customer_num'] = $nextAutoCustomerNum;
+                    }
 
-                        $body['organization_id'] = $organizationId;
-                        $body['created_by'] = (int) $user->id;
+                    $body['organization_id'] = $organizationId;
+                    $body['created_by'] = (int) $user->id;
 
-                        Customer::create($body);
-                    });
+                    Customer::create($body);
 
                     $created++;
                 } catch (\Throwable $e) {
@@ -165,6 +175,7 @@ class ImportCustomersJob implements ShouldQueue
 
     /**
      * @param  array<string, true>  $validRouteSet
+     * @param  array<string, int>  $routesByName
      * @return array<string, mixed>
      */
     protected function normalizeRow(
@@ -173,6 +184,7 @@ class ImportCustomersJob implements ShouldQueue
         int $organizationId,
         int $defaultBranchId,
         array $validRouteSet,
+        array $routesByName,
         UserAccessService $access,
     ): array {
         $body = [
@@ -203,12 +215,9 @@ class ImportCustomersJob implements ShouldQueue
 
         $routeName = trim((string) ($row['route_name'] ?? ''));
         if ($routeName !== '' && empty($body['route_id'])) {
-            $route = RouteModel::query()
-                ->where('organization_id', $organizationId)
-                ->where('route_name', $routeName)
-                ->first();
-            if ($route !== null) {
-                $body['route_id'] = (int) $route->id;
+            $routeId = $routesByName[$routeName] ?? null;
+            if ($routeId !== null) {
+                $body['route_id'] = $routeId;
             }
         }
 

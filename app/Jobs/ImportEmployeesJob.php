@@ -10,18 +10,19 @@ use App\Models\Employee;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Hr\HrPayrollSettingsResolver;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
 
-class ImportEmployeesJob implements ShouldQueue
+class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
     use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 1800;
+    public int $timeout = 3600;
 
     public function __construct(
         public string $taskId,

@@ -9,17 +9,18 @@ use App\Models\BackgroundTask;
 use App\Models\RouteModel;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
+use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
-class ImportRoutesJob implements ShouldQueue
+class ImportRoutesJob implements ShouldBeUnique, ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
     use ResolvesImportRowsFromTask;
     use RunsBackgroundTaskOnce;
 
-    public int $timeout = 1800;
+    public int $timeout = 3600;
 
     public function __construct(
         public string $taskId,

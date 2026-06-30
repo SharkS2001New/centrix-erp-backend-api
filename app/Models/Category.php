@@ -13,4 +13,9 @@ class Category extends Model
         'organization_id',
         'created_by',
     ];
+
+    public function subCategories()
+    {
+        return $this->hasMany(SubCategory::class, 'category_id');
+    }
 }
