@@ -16,7 +16,7 @@ class VatImportController extends Controller
     /** POST /vats/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request);
+        $this->ensureAdvancedDataImport($request, 'vats');
 
         return $this->queueImportBackgroundTask(
             $request,

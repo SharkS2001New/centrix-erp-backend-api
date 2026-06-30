@@ -16,7 +16,7 @@ class EmployeeImportController extends Controller
     /** POST /employees/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request);
+        $this->ensureAdvancedDataImport($request, 'employees');
 
         return $this->queueImportBackgroundTask(
             $request,

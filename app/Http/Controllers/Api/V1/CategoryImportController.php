@@ -16,7 +16,7 @@ class CategoryImportController extends Controller
     /** POST /categories/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request);
+        $this->ensureAdvancedDataImport($request, 'categories');
 
         return $this->queueImportBackgroundTask(
             $request,

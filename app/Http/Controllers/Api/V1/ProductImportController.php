@@ -16,7 +16,7 @@ class ProductImportController extends Controller
     /** POST /products/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request);
+        $this->ensureAdvancedDataImport($request, 'products');
 
         return $this->queueImportBackgroundTask(
             $request,

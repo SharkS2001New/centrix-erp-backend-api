@@ -16,7 +16,7 @@ class CustomerImportController extends Controller
     /** POST /customers/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request);
+        $this->ensureAdvancedDataImport($request, 'customers');
 
         return $this->queueImportBackgroundTask(
             $request,

@@ -318,6 +318,25 @@ class CapabilityGate
         return (bool) ($admin['enable_advanced_data_import'] ?? false);
     }
 
+    /** @return array<string, bool> */
+    public function advancedDataImportPagesEnabled(): array
+    {
+        $admin = $this->moduleSettings('admin');
+        $overrides = is_array($admin['advanced_data_import_pages'] ?? null)
+            ? $admin['advanced_data_import_pages']
+            : [];
+
+        return AdvancedDataImportPageRegistry::resolveEnabledMap(
+            $overrides,
+            $this->advancedDataImportPlatformEnabled(),
+        );
+    }
+
+    public function advancedDataImportPageEnabled(string $page): bool
+    {
+        return ($this->advancedDataImportPagesEnabled()[$page] ?? false) === true;
+    }
+
     public function moduleSettings(string $section = 'sales'): array
     {
         $defaults = config("erp.module_settings_defaults.{$section}", []);
@@ -442,6 +461,7 @@ class CapabilityGate
             'platform_kra_integration_enabled' => $this->kraIntegrationPlatformEnabled(),
             'platform_ai_enabled' => $this->aiPlatformEnabled(),
             'platform_advanced_data_import_enabled' => $this->advancedDataImportPlatformEnabled(),
+            'advanced_data_import_pages' => $this->advancedDataImportPagesEnabled(),
             'modules' => $this->allModules(),
             'channels' => $this->allowedChannels(),
             'allowed_login_channels' => $this->allowedLoginChannels(),

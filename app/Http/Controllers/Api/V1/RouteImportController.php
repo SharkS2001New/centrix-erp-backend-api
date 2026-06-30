@@ -16,7 +16,7 @@ class RouteImportController extends Controller
     /** POST /routes/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request);
+        $this->ensureAdvancedDataImport($request, 'routes');
 
         return $this->queueImportBackgroundTask(
             $request,

@@ -176,7 +176,24 @@ return [
         ],
         'admin' => [
             'enable_advanced_data_import',
+            'advanced_data_import_pages',
         ],
+    ],
+
+    /*
+    | Advanced data import — per-page visibility when enable_advanced_data_import is on.
+    | Super admin toggles these per organization (Platform → Organization → Sales behaviour).
+    */
+    'advanced_data_import_pages' => [
+        'vats' => ['label' => 'VAT rates', 'default' => true],
+        'categories' => ['label' => 'Categories & subcategories', 'default' => true],
+        'uoms' => ['label' => 'Units of measure', 'default' => true],
+        'routes' => ['label' => 'Distribution routes', 'default' => false],
+        'products' => ['label' => 'Products', 'default' => true],
+        'suppliers' => ['label' => 'Suppliers', 'default' => true],
+        'customers' => ['label' => 'Customers', 'default' => true],
+        'retail_packages' => ['label' => 'Retail package settings', 'default' => true],
+        'employees' => ['label' => 'Employees (HR)', 'default' => false],
     ],
 
     /*
@@ -445,6 +462,7 @@ return [
         ],
         'admin' => [
             'enable_advanced_data_import' => false,
+            'advanced_data_import_pages' => [],
         ],
         'general' => [
             'currency' => 'KES',

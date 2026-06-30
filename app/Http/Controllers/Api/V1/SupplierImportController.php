@@ -16,7 +16,7 @@ class SupplierImportController extends Controller
     /** POST /suppliers/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request);
+        $this->ensureAdvancedDataImport($request, 'suppliers');
 
         return $this->queueImportBackgroundTask(
             $request,

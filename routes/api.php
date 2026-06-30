@@ -69,7 +69,9 @@ use App\Http\Controllers\Api\V1\PayrollRunController;
 use App\Http\Controllers\Api\V1\PermissionController;
 use App\Http\Controllers\Api\V1\PlatformActiveSessionsController;
 use App\Http\Controllers\Api\V1\PlatformAiTrainingController;
+use App\Http\Controllers\Api\V1\LegacyImportConverterController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
+use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
 use App\Http\Controllers\Api\V1\SystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
@@ -254,6 +256,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])
+            ->middleware(['erp.super_admin']);
 
         Route::get('admin/system-issue-reports/summary', [PlatformSystemIssueReportController::class, 'summary'])
             ->middleware(['erp.super_admin']);
@@ -431,6 +435,8 @@ Route::prefix('v1')->group(function () {
             Route::get('products/catalog-summary', [ProductController::class, 'catalogSummary'])
                 ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
             Route::post('products/import-batch', [ProductImportController::class, 'store'])
+                ->middleware(['erp.permission:products.manage']);
+            Route::post('retail-package-settings/import-batch', [RetailPackageImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])

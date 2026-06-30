@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Organization;
+use App\Services\Erp\AdvancedDataImportPageRegistry;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\OrderWorkflowService;
 use Illuminate\Validation\ValidationException;
@@ -94,9 +95,15 @@ class OrganizationPlatformConfigService
 
         $currentAdmin = is_array($moduleSettings['admin'] ?? null) ? $moduleSettings['admin'] : [];
         foreach ($this->platformControlledAdminKeys() as $key) {
-            if (array_key_exists($key, $salesPlatform)) {
-                $currentAdmin[$key] = (bool) $salesPlatform[$key];
+            if (! array_key_exists($key, $salesPlatform)) {
+                continue;
             }
+            if ($key === 'advanced_data_import_pages') {
+                $currentAdmin[$key] = AdvancedDataImportPageRegistry::normalizeOverrides($salesPlatform[$key]);
+
+                continue;
+            }
+            $currentAdmin[$key] = (bool) $salesPlatform[$key];
         }
         $moduleSettings['admin'] = $currentAdmin;
 
@@ -119,6 +126,7 @@ class OrganizationPlatformConfigService
             'enable_kra_integration' => true,
             'enable_ai' => true,
             'enable_advanced_data_import' => false,
+            'advanced_data_import_pages' => AdvancedDataImportPageRegistry::defaultEnabledMap(),
             'stock_deduct_on' => 'order_created',
             'require_pos_till_float' => false,
             'order_workflow' => config('erp.default_order_workflow', []),
@@ -137,6 +145,10 @@ class OrganizationPlatformConfigService
         $ai = $gate->moduleSettings('ai');
         $admin = $gate->moduleSettings('admin');
         $workflow = OrderWorkflowService::forGate($gate)->config();
+        $importPages = AdvancedDataImportPageRegistry::resolveEnabledMap(
+            is_array($admin['advanced_data_import_pages'] ?? null) ? $admin['advanced_data_import_pages'] : [],
+            (bool) ($admin['enable_advanced_data_import'] ?? false),
+        );
 
         return [
             'show_checkout_on_create_order' => (bool) ($sales['show_checkout_on_create_order'] ?? true),
@@ -145,6 +157,7 @@ class OrganizationPlatformConfigService
             'enable_kra_integration' => (bool) ($finance['enable_kra_integration'] ?? true),
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
             'enable_advanced_data_import' => (bool) ($admin['enable_advanced_data_import'] ?? false),
+            'advanced_data_import_pages' => $importPages,
             'stock_deduct_on' => (string) ($sales['stock_deduct_on'] ?? 'order_created'),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),

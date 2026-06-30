@@ -5,24 +5,24 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Concerns\EnsuresAdvancedDataImport;
 use App\Http\Controllers\Concerns\QueuesImportBackgroundTask;
 use App\Http\Controllers\Controller;
-use App\Jobs\ImportSubCategoriesJob;
+use App\Jobs\ImportRetailPackagesJob;
 use Illuminate\Http\Request;
 
-class SubCategoryImportController extends Controller
+class RetailPackageImportController extends Controller
 {
     use EnsuresAdvancedDataImport;
     use QueuesImportBackgroundTask;
 
-    /** POST /sub-categories/import-batch */
+    /** POST /retail-package-settings/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request, 'categories');
+        $this->ensureAdvancedDataImport($request, 'retail_packages');
 
         return $this->queueImportBackgroundTask(
             $request,
-            'subcategory_import',
-            ImportSubCategoriesJob::class,
-            'Sub-category import queued.',
+            'retail_package_import',
+            ImportRetailPackagesJob::class,
+            'Retail package import queued.',
         );
     }
 }

@@ -88,6 +88,26 @@ class ImportCustomersTest extends TestCase
         $this->assertNull($debtorCustomer->route_id);
     }
 
+    public function test_customer_import_rejected_when_import_page_disabled(): void
+    {
+        $org = Organization::query()->where('company_code', 'DEMO')->firstOrFail();
+        $settings = $org->module_settings ?? [];
+        $settings['admin'] = array_merge($settings['admin'] ?? [], [
+            'enable_advanced_data_import' => true,
+            'advanced_data_import_pages' => ['customers' => false],
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/customers/import-batch', [
+            'rows' => [
+                ['customer_name' => 'Blocked Import', 'customer_type' => 'route'],
+            ],
+        ])->assertForbidden();
+    }
+
     public function test_customer_import_reports_missing_route_without_failing_entire_job(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

@@ -59,8 +59,7 @@ class ExpenseController extends BaseResourceController
         if ($q = trim((string) $request->input('q', ''))) {
             $query->where(function ($inner) use ($q) {
                 $inner->where('description', 'like', "%{$q}%")
-                    ->orWhere('invoice_no', 'like', "%{$q}%")
-                    ->orWhere('notes', 'like', "%{$q}%");
+                    ->orWhere('invoice_no', 'like', "%{$q}%");
             });
         }
 

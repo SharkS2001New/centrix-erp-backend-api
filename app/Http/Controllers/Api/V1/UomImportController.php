@@ -16,7 +16,7 @@ class UomImportController extends Controller
     /** POST /uoms/import-batch */
     public function store(Request $request)
     {
-        $this->ensureAdvancedDataImport($request);
+        $this->ensureAdvancedDataImport($request, 'uoms');
 
         return $this->queueImportBackgroundTask(
             $request,

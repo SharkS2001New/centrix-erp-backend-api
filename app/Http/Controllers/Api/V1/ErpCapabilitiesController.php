@@ -109,6 +109,7 @@ class ErpCapabilitiesController extends Controller
         $payload['platform_kra_integration_enabled'] = $gate->kraIntegrationPlatformEnabled();
         $payload['platform_ai_enabled'] = $gate->aiPlatformEnabled();
         $payload['platform_advanced_data_import_enabled'] = $gate->advancedDataImportPlatformEnabled();
+        $payload['advanced_data_import_pages'] = $gate->advancedDataImportPagesEnabled();
 
         $archive = app(LegacyArchiveReader::class);
         if ($org) {

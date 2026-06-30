@@ -8,7 +8,7 @@ use Illuminate\Http\Request;
 
 trait EnsuresAdvancedDataImport
 {
-    protected function ensureAdvancedDataImport(Request $request): void
+    protected function ensureAdvancedDataImport(Request $request, ?string $page = null): void
     {
         abort_unless($request->user(), 403);
 
@@ -20,5 +20,13 @@ trait EnsuresAdvancedDataImport
             403,
             'Advanced data import is not enabled for this organization.',
         );
+
+        if ($page !== null) {
+            abort_unless(
+                $gate->advancedDataImportPageEnabled($page),
+                403,
+                'This data import type is not enabled for this organization.',
+            );
+        }
     }
 }
