@@ -211,6 +211,8 @@ class EmployeeController extends BaseResourceController
             $data['is_active'] = false;
         }
 
+        $data['user_id'] = ! empty($data['user_id']) ? (int) $data['user_id'] : null;
+
         $status = $data['employment_status'] ?? $existing?->employment_status ?? 'active';
         $salary = (float) ($data['base_salary'] ?? $existing?->base_salary ?? 0);
         $shiftId = $data['shift_id'] ?? $existing?->shift_id;
