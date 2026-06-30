@@ -18,6 +18,17 @@ class ExpenseController extends BaseResourceController
         return Expense::class;
     }
 
+    protected function sortableColumns(): array
+    {
+        return [
+            'expense_date',
+            'expense_amount',
+            'description',
+            'invoice_no',
+            'created_at',
+        ];
+    }
+
     public function index(Request $request)
     {
         $query = $this->baseQuery($request);
@@ -54,8 +65,9 @@ class ExpenseController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $this->applyListOrdering($request, $query, 'expense_date', 'desc');
 
-        return response()->json($query->orderByDesc('expense_date')->paginate($perPage));
+        return response()->json($query->paginate($perPage));
     }
 
     /** GET /expenses/summary */

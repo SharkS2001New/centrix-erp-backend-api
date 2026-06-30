@@ -62,6 +62,21 @@ class ProductController extends BaseResourceController
         return $data;
     }
 
+    protected function sortableColumns(): array
+    {
+        return [
+            'product_code',
+            'product_name',
+            'unit_price',
+            'last_cost_price',
+            'discount_percentage',
+            'discount_value',
+            'product_weight',
+            'reorder_point',
+            'created_at',
+        ];
+    }
+
     public function index(Request $request)
     {
         $query = Product::query();
@@ -128,10 +143,10 @@ class ProductController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $this->applyListOrdering($request, $query, 'product_name', 'asc');
         $paginator = $query
             ->select('products.*')
             ->with('branch:id,branch_code,branch_name')
-            ->orderBy('product_name')
             ->paginate($perPage);
 
         $branchId = $this->branchStock->resolveBranchIdOptional($user, $request);

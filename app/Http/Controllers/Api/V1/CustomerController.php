@@ -27,6 +27,20 @@ class CustomerController extends BaseResourceController
         return 'customer_num';
     }
 
+    protected function sortableColumns(): array
+    {
+        return [
+            'customer_num',
+            'customer_name',
+            'customer_type',
+            'phone_number',
+            'town',
+            'credit_limit',
+            'current_balance',
+            'created_at',
+        ];
+    }
+
     public function index(Request $request)
     {
         $query = $this->baseQuery($request);
@@ -59,8 +73,9 @@ class CustomerController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 100);
+        $this->applyListOrdering($request, $query, 'customer_num', 'desc');
 
-        return response()->json($query->orderByDesc('customer_num')->paginate($perPage));
+        return response()->json($query->paginate($perPage));
     }
 
     /** GET /customers/summary */

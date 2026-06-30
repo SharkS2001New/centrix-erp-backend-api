@@ -63,6 +63,33 @@ abstract class BaseResourceController extends Controller
         return $cols;
     }
 
+    /** @return list<string> */
+    protected function sortableColumns(): array
+    {
+        return [];
+    }
+
+    protected function applyListOrdering(
+        Request $request,
+        $query,
+        ?string $defaultColumn = null,
+        string $defaultDirection = 'desc',
+    ): void {
+        $allowed = $this->sortableColumns();
+        $sort = (string) $request->input('sort', '');
+        $direction = strtolower((string) $request->input('sort_dir', '')) === 'desc' ? 'desc' : 'asc';
+
+        if ($sort !== '' && in_array($sort, $allowed, true)) {
+            $query->orderBy($sort, $direction);
+
+            return;
+        }
+
+        if ($defaultColumn !== null) {
+            $query->orderBy($defaultColumn, $defaultDirection === 'asc' ? 'asc' : 'desc');
+        }
+    }
+
     protected function baseQuery(Request $request)
     {
         $query = ($this->modelClass())::query();
@@ -124,6 +151,7 @@ abstract class BaseResourceController extends Controller
             $query->where($searchCol, 'like', "%{$q}%");
         }
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $this->applyListOrdering($request, $query, 'id', 'desc');
 
         return response()->json($query->paginate($perPage));
     }
