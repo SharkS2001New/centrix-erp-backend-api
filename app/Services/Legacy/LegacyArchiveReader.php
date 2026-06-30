@@ -668,7 +668,8 @@ class LegacyArchiveReader
         $totalVat = round((float) ($row->total_vat ?? 0), 2);
         $returnSummary = $materializedSaleId
             ? $this->legacyReturnSummaryForMaterializedSale($org, $materializedSaleId)
-            : null;
+            : [];
+        $returnMeta = is_array($returnSummary) ? $returnSummary : [];
 
         $base = [
             'archive_source' => 'lightstores',
@@ -685,9 +686,9 @@ class LegacyArchiveReader
             'materialized_sale_id' => $materializedSaleId,
             'can_materialize' => $materializedSaleId === null,
             'can_create_return' => $materializedSaleId !== null
-                && ! ($returnSummary['fully_returned'] ?? false)
-                && ((int) ($returnSummary['return_count_all'] ?? 0)) === 0,
-            'legacy_return_summary' => $returnSummary,
+                && ! ($returnMeta['fully_returned'] ?? false)
+                && ((int) ($returnMeta['return_count_all'] ?? 0)) === 0,
+            'legacy_return_summary' => $materializedSaleId ? $returnMeta : null,
         ];
 
         return match ($channel) {
@@ -733,8 +734,8 @@ class LegacyArchiveReader
         return $id ? (int) $id : null;
     }
 
-    /** @return array<string, mixed>|null */
-    protected function legacyReturnSummaryForMaterializedSale(Organization $org, int $saleId): ?array
+    /** @return array<string, mixed> */
+    protected function legacyReturnSummaryForMaterializedSale(Organization $org, int $saleId): array
     {
         $sale = Sale::query()
             ->where('organization_id', $org->id)
@@ -742,7 +743,7 @@ class LegacyArchiveReader
             ->first(['id', 'organization_id', 'order_total', 'fulfillment_meta']);
 
         if (! $sale) {
-            return null;
+            return $this->legacyOrders->emptyLegacyReturnSummary();
         }
 
         return $this->legacyOrders->legacyReturnSummaryForSale($sale);

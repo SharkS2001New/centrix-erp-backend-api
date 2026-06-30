@@ -37,6 +37,25 @@ class LegacyReturnTest extends TestCase
         $org->update(['module_settings' => $settings]);
     }
 
+    public function test_legacy_orders_without_returns_expose_empty_return_summary(): void
+    {
+        $sale = $this->createLegacySale();
+
+        $item = collect($this->getJson('/api/v1/legacy-orders')->assertOk()->json('data'))
+            ->firstWhere('id', $sale->id);
+
+        $this->assertNotNull($item);
+        $this->assertFalse($item['legacy_return_summary']['has_returns']);
+        $this->assertFalse($item['legacy_return_summary']['fully_returned']);
+        $this->assertNull($item['legacy_return_summary']['legacy_return_id']);
+        $this->assertTrue($item['legacy_return_summary']['can_create_return']);
+
+        $this->getJson("/api/v1/legacy-orders/{$sale->id}")
+            ->assertOk()
+            ->assertJsonPath('legacy_return_summary.legacy_return_id', null)
+            ->assertJsonPath('legacy_return_summary.has_returns', false);
+    }
+
     public function test_legacy_return_requires_kra_device(): void
     {
         $sale = $this->createLegacySale();

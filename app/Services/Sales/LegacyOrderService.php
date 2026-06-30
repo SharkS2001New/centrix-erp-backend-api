@@ -226,6 +226,7 @@ class LegacyOrderService
      */
     public function legacyReturnSummariesForSaleIds(int $organizationId, array $saleIds): \Illuminate\Support\Collection
     {
+        $saleIds = array_values(array_unique(array_map('intval', $saleIds)));
         if ($saleIds === []) {
             return collect();
         }
@@ -243,7 +244,7 @@ class LegacyOrderService
             ->whereIn('sale_id', $saleIds)
             ->groupBy('sale_id')
             ->get()
-            ->keyBy('sale_id');
+            ->keyBy(fn ($row) => (int) $row->sale_id);
 
         return collect($saleIds)->mapWithKeys(function (int $saleId) use ($sales, $returnRows) {
             $sale = $sales->get($saleId);
@@ -251,30 +252,46 @@ class LegacyOrderService
                 return [$saleId => $this->emptyLegacyReturnSummary()];
             }
 
-            $row = $returnRows->get($saleId);
-            $returnedTotal = round((float) ($row->returned_total ?? 0), 2);
-            $remainingTotal = round((float) ($sale->order_total ?? 0), 2);
-            $originalTotal = $this->legacyOriginalOrderTotal($sale, $returnedTotal);
-            $returnCount = (int) ($row->return_count ?? 0);
-            $returnCountAll = (int) ($row->return_count_all ?? 0);
-            $fullyReturned = $this->isLegacyFullyReturned(
-                $returnCount,
-                $returnedTotal,
-                $remainingTotal,
-                $originalTotal,
-            );
-
-            return [$saleId => [
-                'return_count' => $returnCount,
-                'return_count_all' => $returnCountAll,
-                'returned_total' => $returnedTotal,
-                'original_order_total' => $originalTotal,
-                'has_returns' => $returnCount > 0,
-                'fully_returned' => $fullyReturned,
-                'legacy_return_id' => $row->latest_approved_return_id ? (int) $row->latest_approved_return_id : null,
-                'legacy_return_no' => $row->latest_approved_return_no ?? null,
-            ]];
+            return [$saleId => $this->buildLegacyReturnSummary($sale, $returnRows->get($saleId))];
         });
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function buildLegacyReturnSummary(Sale $sale, mixed $returnRow): array
+    {
+        if ($returnRow === null) {
+            return array_merge($this->emptyLegacyReturnSummary(), [
+                'original_order_total' => $this->legacyOriginalOrderTotal($sale, 0.0),
+            ]);
+        }
+
+        $returnedTotal = round((float) ($returnRow->returned_total ?? 0), 2);
+        $remainingTotal = round((float) ($sale->order_total ?? 0), 2);
+        $originalTotal = $this->legacyOriginalOrderTotal($sale, $returnedTotal);
+        $returnCount = (int) ($returnRow->return_count ?? 0);
+        $returnCountAll = (int) ($returnRow->return_count_all ?? 0);
+        $fullyReturned = $this->isLegacyFullyReturned(
+            $returnCount,
+            $returnedTotal,
+            $remainingTotal,
+            $originalTotal,
+        );
+        $approvedReturnId = $returnRow->latest_approved_return_id ?? null;
+
+        return [
+            'return_count' => $returnCount,
+            'return_count_all' => $returnCountAll,
+            'returned_total' => $returnedTotal,
+            'original_order_total' => $originalTotal,
+            'has_returns' => $returnCount > 0,
+            'fully_returned' => $fullyReturned,
+            'legacy_return_id' => $approvedReturnId !== null && $approvedReturnId !== ''
+                ? (int) $approvedReturnId
+                : null,
+            'legacy_return_no' => $returnRow->latest_approved_return_no ?? null,
+        ];
     }
 
     /** @return array<string, mixed> */
@@ -287,7 +304,7 @@ class LegacyOrderService
     }
 
     /** @return array<string, mixed> */
-    protected function emptyLegacyReturnSummary(): array
+    public function emptyLegacyReturnSummary(): array
     {
         return [
             'return_count' => 0,
