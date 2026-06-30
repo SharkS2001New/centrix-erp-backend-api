@@ -58,6 +58,7 @@ return [
                 ['label' => 'Finance overview', 'path' => '/accounting', 'module' => 'accounting', 'permission' => 'accounting.dashboard.view'],
                 ['label' => 'Chart of accounts', 'path' => '/accounting/chart-of-accounts', 'module' => 'accounting', 'permission' => 'accounting.chart_of_accounts.view'],
                 ['label' => 'Journal entries', 'path' => '/accounting/journal-entries', 'module' => 'accounting', 'permission' => 'accounting.journal_entries.view'],
+                ['label' => 'Bank reconciliation', 'path' => '/accounting/bank-reconciliation', 'module' => 'accounting', 'permission' => 'accounting.bank_reconciliation.view'],
                 ['label' => 'Expenses', 'path' => '/expenses', 'module' => 'accounting', 'permission' => 'accounting.expenses.view'],
                 ['label' => 'Accounts receivable', 'path' => '/accounting/accounts-receivable', 'module' => 'accounting', 'permission' => 'accounting.accounts_receivable.view'],
             ],

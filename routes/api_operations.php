@@ -20,6 +20,7 @@ use App\Http\Controllers\Api\V1\Operations\JournalOperationsController;
 use App\Http\Controllers\Api\V1\Operations\AccountingSettingsController;
 use App\Http\Controllers\Api\V1\Operations\YearEndCloseController;
 use App\Http\Controllers\Api\V1\Operations\AccountingReportController;
+use App\Http\Controllers\Api\V1\Operations\BankReconciliationController;
 use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
 use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\CompanyPremisesController;
@@ -130,6 +131,9 @@ Route::middleware('auth:sanctum')->group(function () {
     // ---- Accounting ----
     Route::middleware(['erp.module:accounting', 'erp.permission:accounting.view'])->prefix('accounting')->group(function () {
         Route::get('settings', [AccountingSettingsController::class, 'show']);
+        Route::get('bank-accounts', [BankReconciliationController::class, 'bankAccounts']);
+        Route::get('bank-reconciliations', [BankReconciliationController::class, 'index']);
+        Route::get('bank-reconciliations/{reconciliationId}', [BankReconciliationController::class, 'show']);
     });
 
     Route::middleware(['erp.module:accounting', 'erp.permission:accounting.manage'])->prefix('accounting')->group(function () {
@@ -152,6 +156,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('export-queue', [ExternalAccountingController::class, 'exportQueue']);
         Route::post('export-queue/process', [ExternalAccountingController::class, 'processExportQueue']);
         Route::post('export-queue/retry-failed', [ExternalAccountingController::class, 'retryFailedExports']);
+        Route::post('bank-reconciliations', [BankReconciliationController::class, 'store']);
+        Route::post('bank-reconciliations/{reconciliationId}/matches', [BankReconciliationController::class, 'applyMatch']);
+        Route::delete('bank-reconciliations/{reconciliationId}/matches/{matchId}', [BankReconciliationController::class, 'removeMatch']);
+        Route::post('bank-reconciliations/{reconciliationId}/complete', [BankReconciliationController::class, 'complete']);
     });
 
     // ---- HR / Attendance (clock device) ----

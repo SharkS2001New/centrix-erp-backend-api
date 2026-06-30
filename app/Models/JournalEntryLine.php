@@ -26,4 +26,9 @@ class JournalEntryLine extends Model
     {
         return $this->belongsTo(ChartOfAccount::class, 'account_id');
     }
+
+    public function journalEntry(): BelongsTo
+    {
+        return $this->belongsTo(JournalEntry::class, 'journal_entry_id');
+    }
 }

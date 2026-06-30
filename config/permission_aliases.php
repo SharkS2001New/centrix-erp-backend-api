@@ -168,6 +168,7 @@ return [
         'accounting.accounts_receivable.view',
         'accounting.accounts_payable.view',
         'accounting.expenses.view',
+        'accounting.bank_reconciliation.view',
     ],
     'accounting.manage' => [
         'accounting.chart_of_accounts.create',
@@ -184,6 +185,7 @@ return [
         'accounting.expenses.create',
         'accounting.expenses.edit',
         'accounting.expenses.delete',
+        'accounting.bank_reconciliation.manage',
     ],
     'hr.view' => [
         'hr.employees.view',

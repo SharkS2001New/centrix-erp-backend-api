@@ -122,6 +122,7 @@ return [
                 'accounts_receivable' => ['label' => 'Accounts receivable', 'actions' => ['view']],
                 'accounts_payable' => ['label' => 'Accounts payable', 'actions' => ['view']],
                 'expenses' => ['label' => 'Expenses', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'bank_reconciliation' => ['label' => 'Bank reconciliation', 'actions' => ['view', 'manage']],
             ],
         ],
         'reports' => [

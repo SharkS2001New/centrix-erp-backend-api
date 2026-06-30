@@ -167,6 +167,8 @@ return [
                 'accounting.accounts_receivable.view',
                 'accounting.accounts_payable.view',
                 'accounting.expenses.view',
+                'accounting.bank_reconciliation.view',
+                'accounting.bank_reconciliation.manage',
                 'accounting.export_queue.view',
                 'accounting.account_mappings.view',
                 'purchasing.supplier_payments.view',
