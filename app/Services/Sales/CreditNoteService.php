@@ -147,6 +147,7 @@ class CreditNoteService
 
             KraResponse::create([
                 'sale_id' => $return->sale_id,
+                'organization_id' => (int) $return->organization_id,
                 'order_no' => $return->sale?->order_num ?? 0,
                 'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
                 'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
@@ -169,10 +170,11 @@ class CreditNoteService
         } catch (\Throwable $e) {
             $creditNote->update([
                 'kra_status' => 'failed',
-                'kra_error_message' => $e->getMessage(),
+                'kra_error_message' => 'Could not save the KRA credit note response. Please try again or contact support.',
             ]);
             Log::error('KRA credit note exception: ' . $e->getMessage(), [
                 'credit_note_id' => $creditNote->id,
+                'exception' => $e,
             ]);
         }
 

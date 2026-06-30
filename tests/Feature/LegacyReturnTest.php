@@ -99,6 +99,12 @@ class LegacyReturnTest extends TestCase
             'kra_relevant_invoice_number' => '00007777',
         ]);
 
+        $this->assertDatabaseHas('kra_responses', [
+            'sale_id' => $sale->id,
+            'organization_id' => $sale->organization_id,
+            'status' => 'success',
+        ]);
+
         $sale->refresh();
         $this->assertSame(0.0, (float) $sale->order_total);
     }
