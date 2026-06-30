@@ -4,14 +4,18 @@ namespace App\Jobs;
 
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
+use App\Models\Branch;
 use App\Models\Customer;
+use App\Models\RouteModel;
 use App\Models\User;
+use App\Services\Auth\UserAccessService;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Customers\CustomerNumberAllocator;
 use App\Services\Customers\CustomerUniquenessValidator;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class ImportCustomersJob implements ShouldQueue
 {
@@ -27,6 +31,7 @@ class ImportCustomersJob implements ShouldQueue
     public function handle(
         BackgroundTaskService $tasks,
         CustomerUniquenessValidator $customerUniqueness,
+        UserAccessService $access,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
         if ($this->shouldSkipBackgroundTask($task)) {
@@ -47,6 +52,18 @@ class ImportCustomersJob implements ShouldQueue
             }
 
             $organizationId = (int) $user->organization_id;
+            if ($organizationId <= 0) {
+                throw new \RuntimeException('Customer import requires an organization context.');
+            }
+
+            $defaultBranchId = $this->resolveImportBranchId($user, $organizationId, $access);
+            $validRouteIds = RouteModel::query()
+                ->where('organization_id', $organizationId)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $validRouteSet = array_fill_keys($validRouteIds, true);
+
             $created = 0;
             $failures = [];
             $total = count($rows);
@@ -61,7 +78,13 @@ class ImportCustomersJob implements ShouldQueue
                 }
 
                 try {
-                    $body = $this->normalizeRow($row);
+                    $body = $this->normalizeRow(
+                        $row,
+                        $user,
+                        $defaultBranchId,
+                        $validRouteSet,
+                        $access,
+                    );
                     if ($body['customer_name'] === '') {
                         throw new \InvalidArgumentException('Missing customer name.');
                     }
@@ -90,7 +113,7 @@ class ImportCustomersJob implements ShouldQueue
                     $failures[] = [
                         'row' => $index + 1,
                         'code' => $row['customer_name'] ?? null,
-                        'message' => $e->getMessage(),
+                        'message' => $this->formatImportFailureMessage($e),
                     ];
                 }
 
@@ -114,9 +137,41 @@ class ImportCustomersJob implements ShouldQueue
         }
     }
 
-    /** @return array<string, mixed> */
-    protected function normalizeRow(array $row): array
+    protected function resolveImportBranchId(User $user, int $organizationId, UserAccessService $access): int
     {
+        $limitedBranch = $access->branchId($user);
+        if ($limitedBranch !== null) {
+            return $limitedBranch;
+        }
+
+        if (! empty($user->branch_id)) {
+            return (int) $user->branch_id;
+        }
+
+        $branch = Branch::query()
+            ->where('organization_id', $organizationId)
+            ->orderByRaw("CASE WHEN branch_code = 'HQ' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->first();
+
+        if ($branch === null) {
+            throw new \RuntimeException('Organization has no branch. Create a branch before importing customers.');
+        }
+
+        return (int) $branch->id;
+    }
+
+    /**
+     * @param  array<string, true>  $validRouteSet
+     * @return array<string, mixed>
+     */
+    protected function normalizeRow(
+        array $row,
+        User $user,
+        int $defaultBranchId,
+        array $validRouteSet,
+        UserAccessService $access,
+    ): array {
         $body = [
             'customer_name' => trim((string) ($row['customer_name'] ?? '')),
             'customer_type' => strtolower(trim((string) ($row['customer_type'] ?? 'debtor'))) ?: 'debtor',
@@ -139,14 +194,33 @@ class ImportCustomersJob implements ShouldQueue
             }
         }
 
-        foreach (['branch_id', 'route_id'] as $key) {
-            if (array_key_exists($key, $row) && $row[$key] !== '' && $row[$key] !== null) {
-                $body[$key] = (int) $row[$key];
-            }
+        if (array_key_exists('route_id', $row) && $row['route_id'] !== '' && $row['route_id'] !== null) {
+            $body['route_id'] = (int) $row['route_id'];
         }
 
         if ($body['customer_type'] !== 'route') {
             $body['route_id'] = null;
+        } elseif (empty($body['route_id'])) {
+            throw new \InvalidArgumentException('Route is required for route customers.');
+        } elseif (! isset($validRouteSet[(int) $body['route_id']])) {
+            throw new \InvalidArgumentException(
+                'Route ID '.(int) $body['route_id'].' does not exist. Create routes before importing route customers.',
+            );
+        }
+
+        $requestedBranchId = null;
+        if (array_key_exists('branch_id', $row) && $row['branch_id'] !== '' && $row['branch_id'] !== null) {
+            $requestedBranchId = (int) $row['branch_id'];
+        }
+
+        $limitedBranch = $access->branchId($user);
+        if ($limitedBranch !== null) {
+            if ($requestedBranchId !== null && $requestedBranchId !== $limitedBranch) {
+                throw new \InvalidArgumentException('You can only import customers into your assigned branch.');
+            }
+            $body['branch_id'] = $limitedBranch;
+        } else {
+            $body['branch_id'] = $requestedBranchId ?? $defaultBranchId;
         }
 
         if (array_key_exists('credit_limit', $row) && $row['credit_limit'] !== '' && $row['credit_limit'] !== null) {
@@ -167,5 +241,16 @@ class ImportCustomersJob implements ShouldQueue
         }
 
         return $body;
+    }
+
+    protected function formatImportFailureMessage(\Throwable $e): string
+    {
+        if ($e instanceof ValidationException) {
+            $messages = $e->validator?->errors()?->all() ?? [];
+
+            return $messages !== [] ? implode(' ', $messages) : $e->getMessage();
+        }
+
+        return $e->getMessage();
     }
 }

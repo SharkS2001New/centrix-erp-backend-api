@@ -80,6 +80,11 @@ use App\Http\Controllers\Api\V1\ProductController;
 use App\Http\Controllers\Api\V1\ProductImportController;
 use App\Http\Controllers\Api\V1\EmployeeImportController;
 use App\Http\Controllers\Api\V1\SupplierImportController;
+use App\Http\Controllers\Api\V1\CategoryImportController;
+use App\Http\Controllers\Api\V1\SubCategoryImportController;
+use App\Http\Controllers\Api\V1\UomImportController;
+use App\Http\Controllers\Api\V1\VatImportController;
+use App\Http\Controllers\Api\V1\RouteImportController;
 use App\Http\Controllers\Api\V1\RetailPackageSettingController;
 use App\Http\Controllers\Api\V1\ReturnRecordController;
 use App\Http\Controllers\Api\V1\RoleController;
@@ -406,6 +411,14 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('sub-categories', SubCategoryController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
+            Route::post('vats/import-batch', [VatImportController::class, 'store'])
+                ->middleware(['erp.permission:products.manage']);
+            Route::post('uoms/import-batch', [UomImportController::class, 'store'])
+                ->middleware(['erp.permission:products.manage']);
+            Route::post('categories/import-batch', [CategoryImportController::class, 'store'])
+                ->middleware(['erp.permission:products.manage']);
+            Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store'])
+                ->middleware(['erp.permission:products.manage']);
             Route::get('products/catalog-summary', [ProductController::class, 'catalogSummary'])
                 ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
             Route::post('products/import-batch', [ProductImportController::class, 'store'])
@@ -517,6 +530,8 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('routes', RouteModelController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|admin.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
+            Route::post('routes/import-batch', [RouteImportController::class, 'store'])
+                ->middleware(['erp.permission:fulfillment.manage']);
         });
 
         Route::middleware(['erp.module:sales.backend'])->group(function () {

@@ -174,6 +174,9 @@ return [
         'ai' => [
             'enable_ai',
         ],
+        'admin' => [
+            'enable_advanced_data_import',
+        ],
     ],
 
     /*
@@ -439,6 +442,9 @@ return [
             'model' => '',
             'api_key' => '',
             'base_url' => '',
+        ],
+        'admin' => [
+            'enable_advanced_data_import' => false,
         ],
         'general' => [
             'currency' => 'KES',

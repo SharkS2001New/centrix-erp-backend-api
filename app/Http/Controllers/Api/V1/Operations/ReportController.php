@@ -46,7 +46,7 @@ class ReportController extends Controller
             ['key' => 'damages', 'path' => '/reports/damages', 'label' => 'Damages & write-offs'],
             ['key' => 'supplier-returns', 'path' => '/reports/supplier-returns', 'label' => 'Supplier returns'],
             ['key' => 'returns', 'path' => '/reports/returns', 'label' => 'Customer returns'],
-            ['key' => 'price-list', 'path' => '/reports/price-list', 'label' => 'Price list'],
+            ['key' => 'price-list', 'path' => '/reports/price-list', 'label' => 'Price list & profit margins'],
         ]);
 
         return response()->json([
@@ -728,9 +728,15 @@ class ReportController extends Controller
         $voided = $voidedQuery->count();
 
         $gross = (float) ($agg->gross_sales ?? 0);
-        $totalVat = round((float) ($agg->total_vat ?? 0), 2);
+        $headerVat = round((float) ($agg->total_vat ?? 0), 2);
+        $lineVat = $saleIds->isEmpty()
+            ? 0.0
+            : round((float) DB::table('sale_items')->whereIn('sale_id', $saleIds)->sum('product_vat'), 2);
+        $totalVat = max($headerVat, $lineVat);
         $totalDiscounts = (float) ($agg->order_discounts ?? 0) + $lineDiscounts;
         $netSales = max(0, $gross - $totalDiscounts - $refunds);
+        $grossSalesExVat = max(0, round($gross - $totalVat, 2));
+        $netSalesExVat = max(0, round($netSales - $totalVat, 2));
 
         $cash = (float) ($agg->cash_collected ?? 0);
         $mpesa = (float) ($agg->mpesa_collected ?? 0);
@@ -804,6 +810,7 @@ class ReportController extends Controller
                 DB::raw('COALESCE(NULLIF(TRIM(u.full_name), ""), u.username) as cashier'),
                 DB::raw('COUNT(*) as transactions'),
                 DB::raw('COALESCE(SUM(s.order_total), 0) as gross_sales'),
+                DB::raw('COALESCE(SUM(s.total_vat), 0) as total_vat'),
                 DB::raw('COALESCE(SUM(s.cash), 0) as cash_collected'),
                 DB::raw('COALESCE(SUM(s.mpesa_amount), 0) as mpesa_collected'),
                 DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
@@ -933,10 +940,12 @@ class ReportController extends Controller
             'cashier_name' => $cashierName,
             'summary' => [
                 'gross_sales' => $gross,
+                'gross_sales_ex_vat' => $grossSalesExVat,
                 'transactions' => (int) ($agg->transactions ?? 0),
                 'total_discounts' => $totalDiscounts,
                 'total_refunds' => $refunds,
                 'net_sales' => $netSales,
+                'net_sales_ex_vat' => $netSalesExVat,
                 'total_vat' => $totalVat,
                 'opening_float' => $openingFloat,
                 'net_sales_minus_float' => $netSalesMinusFloat,
@@ -1350,6 +1359,7 @@ class ReportController extends Controller
                 'p.product_code',
                 'p.product_name',
                 'p.unit_price',
+                'p.last_cost_price',
                 'p.sell_on_retail',
                 'u.uom_type',
                 'u.conversion_factor',
@@ -1373,7 +1383,18 @@ class ReportController extends Controller
             });
         }
 
-        return $query->paginate($perPage, ['*'], 'page', $page);
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+        $paginator->getCollection()->transform(function ($row) {
+            $sell = (float) ($row->unit_price ?? 0);
+            $cost = (float) ($row->last_cost_price ?? 0);
+            $row->profit_margin_percent = $sell > 0 && $cost > 0
+                ? round((($sell - $cost) / $sell) * 100)
+                : null;
+
+            return $row;
+        });
+
+        return $paginator;
     }
 
     /** @return list<int> */

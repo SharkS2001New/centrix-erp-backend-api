@@ -311,6 +311,13 @@ class CapabilityGate
         return (bool) ($ai['enable_ai'] ?? true);
     }
 
+    public function advancedDataImportPlatformEnabled(): bool
+    {
+        $admin = $this->moduleSettings('admin');
+
+        return (bool) ($admin['enable_advanced_data_import'] ?? false);
+    }
+
     public function moduleSettings(string $section = 'sales'): array
     {
         $defaults = config("erp.module_settings_defaults.{$section}", []);
@@ -434,6 +441,7 @@ class CapabilityGate
             'platform_mpesa_stk_enabled' => $this->mpesaStkPlatformEnabled(),
             'platform_kra_integration_enabled' => $this->kraIntegrationPlatformEnabled(),
             'platform_ai_enabled' => $this->aiPlatformEnabled(),
+            'platform_advanced_data_import_enabled' => $this->advancedDataImportPlatformEnabled(),
             'modules' => $this->allModules(),
             'channels' => $this->allowedChannels(),
             'allowed_login_channels' => $this->allowedLoginChannels(),

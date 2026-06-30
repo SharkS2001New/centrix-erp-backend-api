@@ -33,6 +33,12 @@ class OrganizationPlatformConfigService
         return config('erp.platform_controlled.ai', []);
     }
 
+    /** @return list<string> */
+    public function platformControlledAdminKeys(): array
+    {
+        return config('erp.platform_controlled.admin', []);
+    }
+
     /**
      * @param  array<string, mixed>  $salesPlatform
      */
@@ -86,6 +92,14 @@ class OrganizationPlatformConfigService
         }
         $moduleSettings['ai'] = $currentAi;
 
+        $currentAdmin = is_array($moduleSettings['admin'] ?? null) ? $moduleSettings['admin'] : [];
+        foreach ($this->platformControlledAdminKeys() as $key) {
+            if (array_key_exists($key, $salesPlatform)) {
+                $currentAdmin[$key] = (bool) $salesPlatform[$key];
+            }
+        }
+        $moduleSettings['admin'] = $currentAdmin;
+
         $org->forceFill(['module_settings' => $moduleSettings])->save();
 
         return $org->fresh();
@@ -104,6 +118,7 @@ class OrganizationPlatformConfigService
             'enable_mpesa_stk' => true,
             'enable_kra_integration' => true,
             'enable_ai' => true,
+            'enable_advanced_data_import' => false,
             'stock_deduct_on' => 'order_created',
             'require_pos_till_float' => false,
             'order_workflow' => config('erp.default_order_workflow', []),
@@ -120,6 +135,7 @@ class OrganizationPlatformConfigService
         $sales = $gate->moduleSettings('sales');
         $finance = $gate->moduleSettings('finance');
         $ai = $gate->moduleSettings('ai');
+        $admin = $gate->moduleSettings('admin');
         $workflow = OrderWorkflowService::forGate($gate)->config();
 
         return [
@@ -128,6 +144,7 @@ class OrganizationPlatformConfigService
             'enable_mpesa_stk' => (bool) ($finance['enable_mpesa_stk'] ?? true),
             'enable_kra_integration' => (bool) ($finance['enable_kra_integration'] ?? true),
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
+            'enable_advanced_data_import' => (bool) ($admin['enable_advanced_data_import'] ?? false),
             'stock_deduct_on' => (string) ($sales['stock_deduct_on'] ?? 'order_created'),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),

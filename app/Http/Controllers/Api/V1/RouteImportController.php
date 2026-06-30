@@ -4,11 +4,11 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Concerns\EnsuresAdvancedDataImport;
 use App\Http\Controllers\Controller;
-use App\Jobs\ImportSuppliersJob;
+use App\Jobs\ImportRoutesJob;
 use App\Services\Background\BackgroundTaskService;
 use Illuminate\Http\Request;
 
-class SupplierImportController extends Controller
+class RouteImportController extends Controller
 {
     use EnsuresAdvancedDataImport;
 
@@ -16,25 +16,25 @@ class SupplierImportController extends Controller
         protected BackgroundTaskService $tasks,
     ) {}
 
-    /** POST /suppliers/import-batch */
+    /** POST /routes/import-batch */
     public function store(Request $request)
     {
         $this->ensureAdvancedDataImport($request);
 
         $data = $request->validate([
             'rows' => ['required', 'array', 'min:1', 'max:5000'],
-            'rows.*.supplier_name' => ['nullable', 'string', 'max:200'],
+            'rows.*.route_name' => ['nullable', 'string', 'max:255'],
         ]);
 
         $user = $request->user();
-        $task = $this->tasks->create('supplier_import', $user, [
+        $task = $this->tasks->create('route_import', $user, [
             'rows' => $data['rows'],
         ]);
 
-        ImportSuppliersJob::dispatch($task->id);
+        ImportRoutesJob::dispatch($task->id);
 
         return response()->json([
-            'message' => 'Supplier import queued.',
+            'message' => 'Route import queued.',
             'task_id' => $task->id,
         ], 202);
     }
