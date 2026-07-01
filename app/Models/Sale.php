@@ -40,7 +40,7 @@ class Sale extends Model
         'payment_status', 'amount_paid', 'fulfillment_meta',
         'payment_method_code', 'is_credit_sale', 'stock_balanced', 'receipt_printed',
         'comments', 'archived', 'deleted_by', 'deleted_at', 'completed_at',
-        'cancelled_at', 'cancelled_by',
+        'cancelled_at', 'cancelled_by', 'expired_at', 'expired_by',
     ];
     protected $casts = [
         'fulfillment_meta' => 'array',
@@ -49,6 +49,7 @@ class Sale extends Model
         'delivery_date' => 'datetime',
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',
+        'expired_at' => 'datetime',
         'deleted_at' => 'datetime',
     ];
 

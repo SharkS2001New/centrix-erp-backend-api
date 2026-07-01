@@ -62,8 +62,9 @@ class UserController extends BaseResourceController
             (string) $data['username'],
         );
         if (! empty($data['password'])) {
-            PasswordPolicy::assertValid($orgId ?: null, (string) $data['password']);
-            $data['password'] = Hash::make($data['password']);
+            $plain = PasswordPolicy::normalizeInput((string) $data['password']);
+            PasswordPolicy::assertValid($orgId ?: null, $plain);
+            $data['password'] = Hash::make($plain);
             $data['must_change_password'] = (bool) ($data['must_change_password'] ?? true);
             if ($data['must_change_password']) {
                 $data['password_changed_at'] = null;
@@ -116,8 +117,9 @@ class UserController extends BaseResourceController
         }
         unset($data['organization_id']);
         if (! empty($data['password'])) {
-            PasswordPolicy::assertValid((int) $model->organization_id, (string) $data['password']);
-            $data['password'] = Hash::make($data['password']);
+            $plain = PasswordPolicy::normalizeInput((string) $data['password']);
+            PasswordPolicy::assertValid((int) $model->organization_id, $plain);
+            $data['password'] = Hash::make($plain);
             $data['must_change_password'] = array_key_exists('must_change_password', $data)
                 ? (bool) $data['must_change_password']
                 : true;

@@ -165,6 +165,9 @@ return [
             'enable_mobile_orders',
             'stock_deduct_on',
             'require_pos_till_float',
+            'order_expiry_enabled',
+            'order_expiry_days',
+            'order_expiry_before_status',
         ],
         'distribution' => [],
         'finance' => [
@@ -206,15 +209,15 @@ return [
     */
     'workflows' => [
         'pos' => [
-            'statuses' => ['draft', 'held', 'booked', 'unpaid', 'pending_payment', 'paid', 'delivered', 'completed', 'cancelled'],
+            'statuses' => ['draft', 'held', 'booked', 'unpaid', 'pending_payment', 'paid', 'delivered', 'completed', 'cancelled', 'expired'],
             'pay_on_complete' => true,
         ],
         'mobile' => [
-            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled'],
+            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled', 'expired'],
             'payment_statuses' => ['unpaid', 'partial', 'paid'],
         ],
         'backend' => [
-            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled'],
+            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled', 'expired'],
             'payment_statuses' => ['unpaid', 'partial', 'paid'],
             'credit_allowed' => true,
         ],
@@ -232,6 +235,7 @@ return [
         'delivered' => 'Delivered',
         'completed' => 'Completed',
         'cancelled' => 'Cancelled',
+        'expired' => 'Expired',
     ],
 
     'default_order_workflow' => [
@@ -386,6 +390,9 @@ return [
             'receipt_copies' => 1,
             'show_branch_on_receipt' => true,
             'order_workflow' => null,
+            'order_expiry_enabled' => true,
+            'order_expiry_days' => 5,
+            'order_expiry_before_status' => 'processed',
             'stock_deduct_on' => [
                 'pos' => 'order_created',
                 'mobile' => 'order_completed',

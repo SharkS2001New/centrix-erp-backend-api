@@ -105,11 +105,13 @@ class AuthController extends Controller
             'force_logout' => 'sometimes|boolean',
         ]);
 
+        $password = PasswordPolicy::normalizeInput($data['password']);
+
         try {
             $result = $this->sessions->login(
                 $data['company_code'] ?? '',
                 $data['username'],
-                $data['password'],
+                $password,
                 $data['client_id'],
                 (bool) ($data['force_logout'] ?? false),
                 $data['login_channel'] ?? 'backoffice',
@@ -260,7 +262,7 @@ class AuthController extends Controller
             ]);
         }
 
-        $this->passwordResets->setRequiredPassword($user, $data['password']);
+        $this->passwordResets->setRequiredPassword($user, PasswordPolicy::normalizeInput($data['password']));
 
         return $this->respondAfterPasswordChange($user);
     }
@@ -277,7 +279,7 @@ class AuthController extends Controller
         $this->passwordResets->resetPassword(
             $data['company_code'],
             $data['token'],
-            $data['password'],
+            PasswordPolicy::normalizeInput($data['password']),
         );
 
         return response()->json([
@@ -296,8 +298,8 @@ class AuthController extends Controller
 
         $this->passwordResets->changePassword(
             $request->user(),
-            $data['current_password'],
-            $data['password'],
+            PasswordPolicy::normalizeInput($data['current_password']),
+            PasswordPolicy::normalizeInput($data['password']),
         );
 
         return $this->respondAfterPasswordChange($request->user()->fresh());
@@ -319,6 +321,7 @@ class AuthController extends Controller
         $data = $request->validate([
             'password' => 'required|string',
         ]);
+        $data['password'] = PasswordPolicy::normalizeInput($data['password']);
 
         if (! Hash::check($data['password'], $request->user()->password)) {
             throw ValidationException::withMessages([

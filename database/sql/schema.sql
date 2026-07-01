@@ -714,7 +714,7 @@ CREATE TABLE sales (
     delivery_date          DATETIME      NULL,
     status                 ENUM(
         'draft','held','booked','pending','unpaid','processed',
-        'pending_payment','paid','delivered','completed','cancelled'
+        'pending_payment','paid','delivered','completed','cancelled','expired'
     ) NOT NULL DEFAULT 'draft',
     total_vat              FLOAT         NOT NULL DEFAULT 0,
     order_total            FLOAT         NOT NULL DEFAULT 0,
@@ -739,6 +739,8 @@ CREATE TABLE sales (
     completed_at           TIMESTAMP     NULL,
     cancelled_at           TIMESTAMP     NULL,
     cancelled_by           INT           NULL,
+    expired_at             TIMESTAMP     NULL,
+    expired_by             INT           NULL,
     FOREIGN KEY (branch_id)        REFERENCES branches(id),
     FOREIGN KEY (organization_id)  REFERENCES organizations(id),
     FOREIGN KEY (till_id)          REFERENCES tills(id),
@@ -747,6 +749,7 @@ CREATE TABLE sales (
     FOREIGN KEY (organization_id, customer_num)     REFERENCES customers(organization_id, customer_num),
     FOREIGN KEY (route_id)         REFERENCES routes(id) ON DELETE SET NULL,
     FOREIGN KEY (cancelled_by)     REFERENCES users(id),
+    FOREIGN KEY (expired_by)       REFERENCES users(id),
     FOREIGN KEY (deleted_by)       REFERENCES users(id),
     UNIQUE KEY uq_org_order_num (organization_id, order_num),
     INDEX idx_order_num     (order_num),

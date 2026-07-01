@@ -6,6 +6,14 @@ use Illuminate\Validation\ValidationException;
 
 class PasswordPolicy
 {
+    /** Strip BOM and accidental whitespace from copy-paste (Slack, email, PDF). */
+    public static function normalizeInput(string $password): string
+    {
+        $password = str_replace("\u{FEFF}", '', $password);
+
+        return preg_replace('/^[\h\x00-\x1F\x7F]+|[\h\x00-\x1F\x7F]+$/u', '', $password) ?? $password;
+    }
+
     /** @return array<int, string> */
     public static function validationRules(?int $organizationId, bool $confirmed = true): array
     {
@@ -26,6 +34,7 @@ class PasswordPolicy
 
     public static function assertValid(?int $organizationId, string $password, string $field = 'password'): void
     {
+        $password = self::normalizeInput($password);
         $settings = SecuritySettingsResolver::forOrganizationId($organizationId);
         $min = (int) $settings['password_min_length'];
 

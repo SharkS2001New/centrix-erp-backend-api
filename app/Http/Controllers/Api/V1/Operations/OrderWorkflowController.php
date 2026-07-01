@@ -161,6 +161,28 @@ class OrderWorkflowController extends Controller
             return $sale->fresh();
         }
 
+        if ($toStatus === 'expired') {
+            DB::transaction(function () use ($sale, $user, $gate) {
+                $this->restoreCancelledSaleStock($sale, $user);
+
+                $sale->update([
+                    'status' => 'expired',
+                    'expired_at' => now(),
+                    'expired_by' => $user->id,
+                    'stock_balanced' => 0,
+                ]);
+
+                app(ReferenceJournalReversalService::class)->reverseIfEnabled(
+                    'sale',
+                    (int) $sale->id,
+                    $user,
+                    $gate,
+                );
+            });
+
+            return $sale->fresh();
+        }
+
         $salesSettings = $gate->moduleSettings('sales');
         $distributionSettings = $gate->distributionSettings();
         $distributionEnabled = $gate->distributionOpsEnabled();

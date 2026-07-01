@@ -11,7 +11,7 @@ use InvalidArgumentException;
 
 class MobileLoadingSheetService
 {
-    private const EXCLUDED_STATUSES = ['draft', 'held', 'cancelled'];
+    private const EXCLUDED_STATUSES = ['draft', 'held', 'cancelled', 'expired'];
 
     public function __construct(protected LoadingListBuilder $loadingListBuilder) {}
 

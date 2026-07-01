@@ -12,6 +12,11 @@ Schedule::command('erp:release-expired-stock-reservations')
     ->everyMinute()
     ->withoutOverlapping();
 
+Schedule::command('erp:expire-stale-orders')
+    ->hourly()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/expire-stale-orders.log'));
+
 Schedule::command('erp:recover-stale-background-tasks')
     ->everyFiveMinutes()
     ->withoutOverlapping();

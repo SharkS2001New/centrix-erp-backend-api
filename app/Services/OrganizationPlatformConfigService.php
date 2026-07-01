@@ -208,6 +208,9 @@ class OrganizationPlatformConfigService
                 15,
                 max(0, (int) ($inventory['cart_reservation_ttl_minutes'] ?? 15)),
             ),
+            'order_expiry_enabled' => ($sales['order_expiry_enabled'] ?? true) !== false,
+            'order_expiry_days' => max(1, min(90, (int) ($sales['order_expiry_days'] ?? 5))),
+            'order_expiry_before_status' => (string) ($sales['order_expiry_before_status'] ?? 'processed'),
         ];
     }
 

@@ -54,7 +54,7 @@ class AutoTripAssignmentService
             return null;
         }
 
-        if ($sale->status === 'cancelled') {
+        if (in_array($sale->status, ['cancelled', 'expired'], true)) {
             return null;
         }
 

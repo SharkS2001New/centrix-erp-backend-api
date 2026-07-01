@@ -104,6 +104,16 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertContains('completed', $service->statusesForQueueFilter('paid', 'backend'));
     }
 
+    public function test_statuses_for_queue_filter_includes_expired(): void
+    {
+        $service = OrderWorkflowService::forGate(
+            app(\App\Services\Erp\CapabilityGate::class)
+        );
+
+        $this->assertSame(['expired'], $service->statusesForQueueFilter('expired', 'backend'));
+        $this->assertSame(['cancelled'], $service->statusesForQueueFilter('cancelled', 'backend'));
+    }
+
     public function test_restorable_to_cart_statuses_follow_org_terminal_and_checkout_re_edit(): void
     {
         $org = new \App\Models\Organization([

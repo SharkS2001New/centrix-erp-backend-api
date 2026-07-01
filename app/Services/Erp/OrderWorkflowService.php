@@ -17,6 +17,7 @@ class OrderWorkflowService
         'delivered',
         'completed',
         'cancelled',
+        'expired',
     ];
 
     public function __construct(protected CapabilityGate $gate) {}
@@ -65,7 +66,7 @@ class OrderWorkflowService
         $enabled = $this->enabledStatuses($config);
         $statuses = array_values(array_unique(array_merge(
             array_intersect($channelStatuses, $enabled),
-            array_intersect(['draft', 'held', 'cancelled'], $channelStatuses),
+            array_intersect(['draft', 'held', 'cancelled', 'expired'], $channelStatuses),
         )));
 
         $pipeline = $this->pipelineSteps($config, $statuses);
@@ -138,8 +139,9 @@ class OrderWorkflowService
 
     public function canTransition(string $from, string $to, ?string $channel = null): bool
     {
-        if ($to === 'cancelled') {
-            return $from !== 'cancelled' && ! $this->isTerminalStatus($from, $channel);
+        if ($to === 'cancelled' || $to === 'expired') {
+            return ! in_array($from, ['cancelled', 'expired'], true)
+                && ! $this->isTerminalStatus($from, $channel);
         }
 
         return in_array($to, $this->allowedTransitions($from, $channel), true);
@@ -242,6 +244,10 @@ class OrderWorkflowService
             return ['cancelled'];
         }
 
+        if ($queueStatus === 'expired') {
+            return ['expired'];
+        }
+
         $matches = [$queueStatus];
         foreach (['completed', 'delivered', 'processed', 'booked', 'pending', 'draft', 'held'] as $alias) {
             if ($this->alignStatusToPipeline($alias, $channel) === $queueStatus) {
@@ -254,7 +260,7 @@ class OrderWorkflowService
 
     public function isTerminalStatus(string $status, ?string $channel = null): bool
     {
-        if (in_array($status, ['cancelled', 'held', 'draft'], true)) {
+        if (in_array($status, ['cancelled', 'expired', 'held', 'draft'], true)) {
             return false;
         }
 
