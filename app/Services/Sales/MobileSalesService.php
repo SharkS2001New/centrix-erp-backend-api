@@ -190,6 +190,7 @@ class MobileSalesService
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')
             ->selectRaw('DATE(created_at) as sale_day')
+            ->selectRaw('COUNT(*) as order_count')
             ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
             ->groupBy('sale_day')
             ->orderBy('sale_day')
@@ -201,8 +202,80 @@ class MobileSalesService
             return [
                 'create_date' => $day->format('j-n'),
                 'total_amount' => (float) $row->total_amount,
+                'order_count' => (int) $row->order_count,
             ];
         })->values()->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    protected function dailyTrendWithCounts(
+        User $user,
+        Carbon $from,
+        Carbon $to,
+        bool $allChannels = false,
+    ): array {
+        $rows = $this->mobileSalesQuery($user, $allChannels)
+            ->whereDate('created_at', '>=', $from->toDateString())
+            ->whereDate('created_at', '<=', $to->toDateString())
+            ->where('status', '!=', 'cancelled')
+            ->selectRaw('DATE(created_at) as sale_day')
+            ->selectRaw('COUNT(*) as order_count')
+            ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
+            ->groupBy('sale_day')
+            ->orderBy('sale_day')
+            ->get()
+            ->keyBy(fn ($row) => Carbon::parse($row->sale_day)->toDateString());
+
+        $result = [];
+        for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
+            $key = $day->toDateString();
+            $row = $rows->get($key);
+            $result[] = [
+                'create_date' => $key,
+                'label' => $day->format('j M'),
+                'order_count' => (int) ($row->order_count ?? 0),
+                'total_amount' => (float) ($row->total_amount ?? 0),
+            ];
+        }
+
+        return $result;
+    }
+
+    /** @return list<array<string, mixed>> */
+    protected function weeklyBucketsInMonth(
+        User $user,
+        Carbon $monthStart,
+        Carbon $to,
+        bool $allChannels = false,
+    ): array {
+        $buckets = [];
+        $cursor = $monthStart->copy();
+
+        while ($cursor->lte($to)) {
+            $bucketEnd = $cursor->copy()->addDays(6);
+            if ($bucketEnd->gt($to)) {
+                $bucketEnd = $to->copy();
+            }
+
+            $stats = $this->mobileSalesQuery($user, $allChannels)
+                ->whereDate('created_at', '>=', $cursor->toDateString())
+                ->whereDate('created_at', '<=', $bucketEnd->toDateString())
+                ->where('status', '!=', 'cancelled')
+                ->selectRaw('COUNT(*) as order_count')
+                ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
+                ->first();
+
+            $buckets[] = [
+                'create_date' => $cursor->toDateString(),
+                'label' => $cursor->format('j').'-'.$bucketEnd->format('j M'),
+                'order_count' => (int) ($stats->order_count ?? 0),
+                'total_amount' => (float) ($stats->total_amount ?? 0),
+            ];
+
+            $cursor = $bucketEnd->copy()->addDay();
+        }
+
+        return $buckets;
     }
 
     /** @return Builder<Sale> */
@@ -252,11 +325,42 @@ class MobileSalesService
 
     public function canRestoreSaleToCart(Sale $sale, User $user): bool
     {
+        if (! $sale->created_at?->isSameDay(now())) {
+            return false;
+        }
+
         return $this->posOrderEdit->canRestoreSaleToCart(
             $sale,
             $user,
             $this->erp->gateForUser($user),
         );
+    }
+
+    /**
+     * @return array{
+     *     month_label: string,
+     *     from_date: string,
+     *     to_date: string,
+     *     daily_sales: list<array<string, mixed>>,
+     *     weekly_sales: list<array<string, mixed>>
+     * }
+     */
+    public function reconciliation(User $user, bool $allChannels = false): array
+    {
+        if ($allChannels && ! $this->mobileScope->canUseAllChannels($user)) {
+            $allChannels = false;
+        }
+
+        $monthStart = now()->startOfMonth();
+        $today = now()->startOfDay();
+
+        return [
+            'month_label' => $monthStart->format('F Y'),
+            'from_date' => $monthStart->toDateString(),
+            'to_date' => $today->toDateString(),
+            'daily_sales' => $this->dailyTrendWithCounts($user, $monthStart, $today, $allChannels),
+            'weekly_sales' => $this->weeklyBucketsInMonth($user, $monthStart, $today, $allChannels),
+        ];
     }
 
     /** @param  array<string, mixed>  $data */
@@ -273,6 +377,12 @@ class MobileSalesService
         if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
             throw ValidationException::withMessages([
                 'sale_id' => 'Cannot return items from a cancelled order.',
+            ]);
+        }
+
+        if (! $sale->created_at?->isSameDay(now())) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'Returns are only allowed for orders placed today.',
             ]);
         }
 

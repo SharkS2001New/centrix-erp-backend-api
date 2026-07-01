@@ -407,6 +407,12 @@ class MobileFieldAttendanceService
             $session->sign_out_at = $data['sign_out_at'] === null || $data['sign_out_at'] === ''
                 ? null
                 : Carbon::parse($data['sign_out_at']);
+
+            if ($session->sign_out_at === null) {
+                $session->close_reason = null;
+            } elseif ($session->close_reason !== MobileRepAttendanceSession::CLOSE_REASON_SIGN_OUT) {
+                $session->close_reason = MobileRepAttendanceSession::CLOSE_REASON_ADMIN;
+            }
         }
 
         if ($session->sign_out_at && $session->sign_in_at && $session->sign_out_at->lt($session->sign_in_at)) {
@@ -539,8 +545,8 @@ class MobileFieldAttendanceService
     protected function closeReasonLabel(?string $reason): ?string
     {
         return match ($reason) {
-            MobileRepAttendanceSession::CLOSE_REASON_SIGN_OUT => 'Signed out',
-            MobileRepAttendanceSession::CLOSE_REASON_IDLE_END_OF_DAY => 'Idle session — rep did not close end of day',
+            MobileRepAttendanceSession::CLOSE_REASON_SIGN_OUT => 'User Logged Out',
+            MobileRepAttendanceSession::CLOSE_REASON_IDLE_END_OF_DAY => 'System Signed out at Midnight',
             MobileRepAttendanceSession::CLOSE_REASON_ADMIN => 'Adjusted by admin',
             default => null,
         };

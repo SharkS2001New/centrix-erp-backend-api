@@ -78,7 +78,9 @@ class MobileFieldAttendanceTest extends TestCase
             ->getJson('/api/v1/sales/mobile-field-attendance')
             ->assertOk()
             ->assertJsonPath('meta.total', 1)
-            ->assertJsonPath('data.0.sign_in_photo_url', fn ($value) => is_string($value) && $value !== '');
+            ->assertJsonPath('data.0.sign_in_photo_url', fn ($value) => is_string($value) && $value !== '')
+            ->assertJsonPath('data.0.close_reason', 'sign_out')
+            ->assertJsonPath('data.0.close_reason_label', 'User Logged Out');
 
         $this->withToken($adminToken)
             ->get('/api/v1/sales/mobile-field-attendance/'.$sessionId.'/sign-in-photo/file')
@@ -368,6 +370,11 @@ class MobileFieldAttendanceTest extends TestCase
         $session->refresh();
         $this->assertNotNull($session->sign_out_at);
         $this->assertSame('idle_end_of_day', $session->close_reason);
+        $this->assertSame(
+            'System Signed out at Midnight',
+            app(\App\Services\Sales\MobileFieldAttendanceService::class)
+                ->serializeSession($session->fresh(['user:id,username,full_name,branch_id']))['close_reason_label'],
+        );
         $this->assertSame($workBeforeClose, $session->accumulated_work_seconds);
     }
 

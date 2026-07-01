@@ -44,6 +44,20 @@ class MobileSalesController extends Controller
         );
     }
 
+    /** GET /mobile/reconciliation — current-month sales by day and week for reps. */
+    public function reconciliation(Request $request)
+    {
+        $data = $request->validate([
+            'all_channels' => 'nullable|boolean',
+        ]);
+
+        $allChannels = filter_var($data['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        return response()->json(
+            $this->mobileSales->reconciliation($request->user(), $allChannels),
+        );
+    }
+
     /** GET /mobile/orders — paginated mobile orders for the signed-in rep. */
     public function index(Request $request)
     {

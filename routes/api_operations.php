@@ -39,6 +39,7 @@ Route::middleware('auth:sanctum')->group(function () {
     // ---- Mobile field sales ----
     Route::middleware(['erp.module:sales.mobile', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
         Route::get('dashboard', [MobileSalesController::class, 'dashboard']);
+        Route::get('reconciliation', [MobileSalesController::class, 'reconciliation']);
         Route::get('routes', [MobileSalesController::class, 'indexRoutes']);
         Route::get('orders', [MobileSalesController::class, 'index']);
         Route::get('orders/{saleId}', [MobileSalesController::class, 'show']);
