@@ -633,6 +633,9 @@ class OrganizationProvisionController extends Controller
             'sales_platform.order_expiry_enabled' => 'sometimes|boolean',
             'sales_platform.order_expiry_days' => 'sometimes|integer|min:1|max:90',
             'sales_platform.order_expiry_before_status' => ['sometimes', 'string', $statusRule],
+            'sales_platform.order_cancellation_enabled' => 'sometimes|boolean',
+            'sales_platform.orders_list_default_days' => 'sometimes|integer|min:1|max:90',
+            'sales_platform.orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
         ];
     }
 

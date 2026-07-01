@@ -103,6 +103,8 @@ class ErpSettingsController extends Controller
             'receipt_copies',
             'show_branch_on_receipt',
             'stock_deduct_on',
+            'orders_list_default_days',
+            'orders_list_sort',
             'show_receipt_payment_details',
             'show_invoice_payment_details',
             'use_same_payment_details_for_routes',
@@ -154,6 +156,8 @@ class ErpSettingsController extends Controller
             'stock_deduct_on.pos' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
             'stock_deduct_on.mobile' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
             'stock_deduct_on.backend' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
+            'orders_list_default_days' => 'sometimes|integer|min:1|max:90',
+            'orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
             'show_receipt_payment_details' => 'sometimes|boolean',
             'show_invoice_payment_details' => 'sometimes|boolean',
@@ -254,6 +258,17 @@ class ErpSettingsController extends Controller
             $nextSales[$detailsKey] = ReceiptPaymentDetailsResolver::normalize(
                 is_array($raw) ? $raw : null,
             ) ?? ReceiptPaymentDetailsResolver::defaults();
+        }
+
+        if (array_key_exists('orders_list_default_days', $data)) {
+            $nextSales['orders_list_default_days'] = $this->platformConfig->normalizeOrdersListDefaultDays(
+                $data['orders_list_default_days'],
+            );
+        }
+        if (array_key_exists('orders_list_sort', $data)) {
+            $nextSales['orders_list_sort'] = $this->platformConfig->normalizeOrdersListSort(
+                $data['orders_list_sort'],
+            );
         }
 
         $moduleSettings = $org->module_settings ?? [];

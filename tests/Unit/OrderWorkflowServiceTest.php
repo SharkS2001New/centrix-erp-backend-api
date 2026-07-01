@@ -114,6 +114,35 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertSame(['cancelled'], $service->statusesForQueueFilter('cancelled', 'backend'));
     }
 
+    public function test_cancel_transition_only_allowed_for_early_pipeline_statuses(): void
+    {
+        $service = OrderWorkflowService::forGate(
+            app(\App\Services\Erp\CapabilityGate::class)
+        );
+
+        $this->assertTrue($service->canTransition('booked', 'cancelled', 'backend'));
+        $this->assertTrue($service->canTransition('pending', 'cancelled', 'backend'));
+        $this->assertTrue($service->canTransition('unpaid', 'cancelled', 'backend'));
+        $this->assertFalse($service->canTransition('pending_payment', 'cancelled', 'backend'));
+        $this->assertFalse($service->canTransition('paid', 'cancelled', 'backend'));
+        $this->assertFalse($service->canTransition('processed', 'cancelled', 'backend'));
+    }
+
+    public function test_cancel_transition_respects_disabled_setting(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'order_cancellation_enabled' => false,
+                ],
+            ],
+        ]);
+
+        $service = OrderWorkflowService::forGate(new \App\Services\Erp\CapabilityGate($org));
+
+        $this->assertFalse($service->canTransition('booked', 'cancelled', 'backend'));
+    }
+
     public function test_restorable_to_cart_statuses_follow_org_terminal_and_checkout_re_edit(): void
     {
         $org = new \App\Models\Organization([

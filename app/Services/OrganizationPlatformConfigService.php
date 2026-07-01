@@ -139,6 +139,13 @@ class OrganizationPlatformConfigService
         }
         $moduleSettings['inventory'] = $currentInventory;
 
+        if (array_key_exists('orders_list_default_days', $nextSales)) {
+            $nextSales['orders_list_default_days'] = $this->normalizeOrdersListDefaultDays($nextSales['orders_list_default_days']);
+        }
+        if (array_key_exists('orders_list_sort', $nextSales)) {
+            $nextSales['orders_list_sort'] = $this->normalizeOrdersListSort($nextSales['orders_list_sort']);
+        }
+
         $org->forceFill(['module_settings' => $moduleSettings])->save();
 
         return $org->fresh();
@@ -170,6 +177,8 @@ class OrganizationPlatformConfigService
             'enable_backoffice_order_edit' => true,
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
+            'orders_list_default_days' => 5,
+            'orders_list_sort' => '-created_at',
         ];
     }
 
@@ -198,7 +207,11 @@ class OrganizationPlatformConfigService
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
             'enable_advanced_data_import' => (bool) ($admin['enable_advanced_data_import'] ?? false),
             'advanced_data_import_pages' => $importPages,
-            'stock_deduct_on' => (string) ($sales['stock_deduct_on'] ?? 'order_created'),
+            'stock_deduct_on' => $this->normalizeStockDeductOn(
+                $sales['stock_deduct_on'] ?? null,
+                (bool) ($sales['show_checkout_on_create_order'] ?? true),
+                (bool) ($org->enabled_modules['sales.pos'] ?? false),
+            ),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
@@ -211,6 +224,9 @@ class OrganizationPlatformConfigService
             'order_expiry_enabled' => ($sales['order_expiry_enabled'] ?? true) !== false,
             'order_expiry_days' => max(1, min(90, (int) ($sales['order_expiry_days'] ?? 5))),
             'order_expiry_before_status' => (string) ($sales['order_expiry_before_status'] ?? 'processed'),
+            'order_cancellation_enabled' => ($sales['order_cancellation_enabled'] ?? true) !== false,
+            'orders_list_default_days' => $this->normalizeOrdersListDefaultDays($sales['orders_list_default_days'] ?? null),
+            'orders_list_sort' => $this->normalizeOrdersListSort($sales['orders_list_sort'] ?? null),
         ];
     }
 
@@ -405,6 +421,25 @@ class OrganizationPlatformConfigService
         }
 
         return $map;
+    }
+
+    public function normalizeOrdersListDefaultDays(mixed $value): int
+    {
+        $days = (int) $value;
+
+        if ($days < 1) {
+            return 5;
+        }
+
+        return min(90, $days);
+    }
+
+    public function normalizeOrdersListSort(mixed $value): string
+    {
+        $allowed = ['-created_at', 'created_at', '-order_num', 'order_num'];
+        $sort = (string) ($value ?? '-created_at');
+
+        return in_array($sort, $allowed, true) ? $sort : '-created_at';
     }
 
     /**

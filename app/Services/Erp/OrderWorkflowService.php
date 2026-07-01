@@ -4,6 +4,9 @@ namespace App\Services\Erp;
 
 class OrderWorkflowService
 {
+    /** Statuses staff may cancel via workflow transition (before partial/full payment). */
+    public const CANCELLABLE_ORDER_STATUSES = ['booked', 'pending', 'unpaid'];
+
     /** @var list<string> */
     public const ALL_STATUSES = [
         'draft',
@@ -137,9 +140,31 @@ class OrderWorkflowService
         return $this->transitions($config, $statuses)[$from] ?? [];
     }
 
+    public function orderCancellationEnabled(): bool
+    {
+        $sales = $this->gate->moduleSettings('sales');
+
+        return ($sales['order_cancellation_enabled'] ?? true) !== false;
+    }
+
+    public function isCancellableStatus(string $status, ?string $channel = null): bool
+    {
+        if (in_array($status, ['cancelled', 'expired', 'held', 'draft'], true)) {
+            return false;
+        }
+
+        $aligned = $this->alignStatusToPipeline($status, $channel);
+
+        return in_array($aligned, self::CANCELLABLE_ORDER_STATUSES, true);
+    }
+
     public function canTransition(string $from, string $to, ?string $channel = null): bool
     {
-        if ($to === 'cancelled' || $to === 'expired') {
+        if ($to === 'cancelled') {
+            return $this->orderCancellationEnabled() && $this->isCancellableStatus($from, $channel);
+        }
+
+        if ($to === 'expired') {
             return ! in_array($from, ['cancelled', 'expired'], true)
                 && ! $this->isTerminalStatus($from, $channel);
         }

@@ -168,6 +168,9 @@ return [
             'order_expiry_enabled',
             'order_expiry_days',
             'order_expiry_before_status',
+            'order_cancellation_enabled',
+            'orders_list_default_days',
+            'orders_list_sort',
         ],
         'distribution' => [],
         'finance' => [
@@ -393,11 +396,14 @@ return [
             'order_expiry_enabled' => true,
             'order_expiry_days' => 5,
             'order_expiry_before_status' => 'processed',
+            'order_cancellation_enabled' => true,
             'stock_deduct_on' => [
                 'pos' => 'order_created',
                 'mobile' => 'order_completed',
                 'backend' => 'order_completed',
             ],
+            'orders_list_default_days' => 5,
+            'orders_list_sort' => '-created_at',
         ],
         'distribution' => [
             'enable_distribution_ops' => true,
