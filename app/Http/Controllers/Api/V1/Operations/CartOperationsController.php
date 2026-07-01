@@ -27,6 +27,7 @@ use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
 use App\Support\SalesCheckoutSettings;
 use App\Services\Sales\PosOrderEditService;
+use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
@@ -149,11 +150,10 @@ class CartOperationsController extends Controller
 
         $this->assertSaleRestorableToCart($sale, $user);
 
-        $channel = $sale->channel ?: 'pos';
         $gate = $this->erp->gateForUser($user);
-        if (! $gate->channelEnabled($channel)) {
-            throw new InvalidArgumentException("Channel [{$channel}] is not enabled for this organization.");
-        }
+        $channel = $this->resolveCartChannel($sale->channel ?: 'pos', $gate, [
+            'order_source' => $sale->order_source ?? 'backoffice',
+        ], $user->currentAccessToken());
 
         $cart = $this->getOrCreateCart($user, [
             'channel' => $channel,
@@ -559,15 +559,44 @@ class CartOperationsController extends Controller
         );
     }
 
-    protected function getOrCreateCart(User $user, array $input): TemporaryCart
-    {
-        $channel = $input['channel'] ?? 'pos';
-        $token = $user->currentAccessToken();
-        $orderSource = app(OrderSourceResolver::class)->defaultForCart($input, $token);
-        $gate = $this->erp->gateForUser($user);
-        if (! $gate->channelEnabled($channel)) {
+    /**
+     * Map legacy pos-channel requests to backend when external POS is disabled.
+     *
+     * @param  array<string, mixed>  $input
+     */
+    protected function resolveCartChannel(
+        string $channel,
+        CapabilityGate $gate,
+        array $input = [],
+        $token = null,
+    ): string {
+        if ($gate->channelEnabled($channel)) {
+            return $channel;
+        }
+
+        if ($channel !== 'pos' || ! $gate->enabled('sales.backend')) {
             throw new InvalidArgumentException("Channel [{$channel}] is not enabled for this organization.");
         }
+
+        $orderSource = strtolower((string) ($input['order_source'] ?? ''));
+        $loginChannel = strtolower((string) ($token?->login_channel ?? ''));
+
+        if (
+            in_array($orderSource, ['backoffice', 'backend'], true)
+            || $loginChannel === UserLoginChannelService::BACKOFFICE
+        ) {
+            return 'backend';
+        }
+
+        throw new InvalidArgumentException("Channel [{$channel}] is not enabled for this organization.");
+    }
+
+    protected function getOrCreateCart(User $user, array $input): TemporaryCart
+    {
+        $gate = $this->erp->gateForUser($user);
+        $token = $user->currentAccessToken();
+        $channel = $this->resolveCartChannel((string) ($input['channel'] ?? 'pos'), $gate, $input, $token);
+        $orderSource = app(OrderSourceResolver::class)->defaultForCart($input, $token);
 
         $branchId = $this->userAccess()->resolveBranchId($user, $input['branch_id'] ?? null);
         $routeId = app(UserMobileOrderScopeService::class)->resolveCartRouteId(
