@@ -18,18 +18,28 @@ class TripStockService
 {
     public function __construct(protected ErpContext $erp) {}
 
-    public function deductTripStockIfNeeded(DispatchTrip $trip, User $user): void
+    public function deductTripStockIfNeeded(DispatchTrip $trip, User $user, string $when): void
     {
-        if ($trip->stock_deducted_at) {
+        if ($trip->stock_deducted_at && $when === 'trip_depart') {
             return;
         }
 
+        $gate = $this->erp->gateForUser($user);
         $trip->loadMissing(['sales.items']);
+        $deductedAny = false;
+
         foreach ($trip->sales as $sale) {
+            if ($gate->stockDeductTiming((string) $sale->channel) !== $when) {
+                continue;
+            }
+
             $this->deductSaleStockIfNeeded($sale, $user);
+            $deductedAny = true;
         }
 
-        $trip->update(['stock_deducted_at' => now()]);
+        if ($deductedAny && $when === 'trip_depart') {
+            $trip->update(['stock_deducted_at' => now()]);
+        }
     }
 
     protected function deductSaleStockIfNeeded(Sale $sale, User $user): void
@@ -66,6 +76,10 @@ class TripStockService
         }
 
         $sale->update(['stock_balanced' => 1]);
+        \App\Models\StockReservation::query()
+            ->where('sale_id', $sale->id)
+            ->whereNull('released_at')
+            ->update(['released_at' => now()]);
     }
 
     protected function saleTransactionType(string $channel): string

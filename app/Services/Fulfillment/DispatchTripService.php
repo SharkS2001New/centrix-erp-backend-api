@@ -181,9 +181,7 @@ class DispatchTripService
         $gate = $this->erp->gateForUser($user);
         $this->capacityValidator->assertTripCapacity($trip, $settings);
 
-        if ($gate->stockDeductTiming() === 'trip_depart') {
-            $this->tripStock->deductTripStockIfNeeded($trip, $user);
-        }
+        $this->tripStock->deductTripStockIfNeeded($trip, $user, 'trip_depart');
 
         $expectedCash = $this->computeExpectedCash($trip, $settings);
         $trip->update([
@@ -269,9 +267,7 @@ class DispatchTripService
         $trip->load(['vehicle', 'sales']);
         $this->capacityValidator->assertTripCapacity($trip, $settings);
 
-        if ($gate->stockDeductTiming() === 'trip_load') {
-            $this->tripStock->deductTripStockIfNeeded($trip, $user);
-        }
+        $this->tripStock->deductTripStockIfNeeded($trip, $user, 'trip_load');
 
         $now = now();
         $loadingList->update([

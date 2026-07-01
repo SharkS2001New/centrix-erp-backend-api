@@ -48,7 +48,7 @@ Configure at onboarding:
 All channels share:
 
 - **`temporary_carts` + `cart_lines`** while building an order
-- **`stock_reservations`** while cart/sale is open (config: `inventory.reserve_stock_on_cart`)
+- **`stock_reservations`** while cart/sale is open (config: platform `sales_platform.reserve_stock_on_cart` → `inventory` module settings)
 - **`sales` + `sale_items` + `sale_payments`** when committed
 - **`inventory_transactions`** for stock balance (POS / mobile / backend)
 

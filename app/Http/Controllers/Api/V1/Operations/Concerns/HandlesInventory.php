@@ -132,9 +132,16 @@ trait HandlesInventory
 
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
         $txns = InventoryTransaction::query()
-            ->where('reference_type', 'sale')
-            ->where('reference_id', $sale->id)
             ->where('quantity_change', '<', 0)
+            ->where(function ($query) use ($sale) {
+                $query->where(function ($sub) use ($sale) {
+                    $sub->where('reference_type', 'sale')
+                        ->where('reference_id', $sale->id);
+                })->orWhere(function ($sub) use ($sale) {
+                    $sub->where('reference_type', 'dispatch_trip')
+                        ->where('reference_id', $sale->id);
+                });
+            })
             ->get();
 
         foreach ($txns as $txn) {
@@ -218,6 +225,7 @@ trait HandlesInventory
         bool $allowBelowStock = false,
         ?int $cartLineId = null,
         ?\Illuminate\Support\Carbon $expiresAt = null,
+        ?int $saleId = null,
     ): StockReservation {
         if (! $allowBelowStock) {
             $available = $this->stockNetAvailable($productCode, $branchId, $location);
@@ -235,8 +243,9 @@ trait HandlesInventory
             'quantity' => $quantity,
             'cart_id' => $cartId,
             'cart_line_id' => $cartLineId,
+            'sale_id' => $saleId,
             'reserved_by' => $userId,
-            'expires_at' => $expiresAt ?? $this->reservationExpiresAt($userId),
+            'expires_at' => $saleId ? null : ($expiresAt ?? $this->reservationExpiresAt($userId)),
         ]);
     }
 
@@ -326,5 +335,58 @@ trait HandlesInventory
         StockReservation::where('sale_id', $saleId)
             ->whereNull('released_at')
             ->update(['released_at' => now()]);
+    }
+
+    protected function saleHasActiveReservations(int $saleId): bool
+    {
+        return StockReservation::query()
+            ->where('sale_id', $saleId)
+            ->whereNull('released_at')
+            ->exists();
+    }
+
+    protected function restoreCancelledSaleStock(Sale $sale, User $user): void
+    {
+        $this->releaseSaleReservations((int) $sale->id);
+        $this->reverseSaleStockDeductions($sale, $user);
+    }
+
+    protected function reserveSaleStockIfNeeded(Sale $sale, User $user, \App\Services\Erp\CapabilityGate $gate): void
+    {
+        if ($sale->stock_balanced || $this->saleHasActiveReservations((int) $sale->id)) {
+            return;
+        }
+
+        $workflow = \App\Services\Erp\OrderWorkflowService::forGate($gate);
+        if (! $gate->shouldReserveStockForOrder($workflow, (string) $sale->status, (string) $sale->channel)) {
+            return;
+        }
+
+        $inventorySettings = $gate->moduleSettings('inventory');
+        $salesSettings = $gate->moduleSettings('sales');
+        $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+        $items = $sale->items ?? SaleItem::query()->where('sale_id', $sale->id)->get();
+
+        foreach ($items as $item) {
+            $location = $this->saleLineStockLocation(
+                (string) $sale->channel,
+                $inventorySettings,
+                $salesSettings,
+                (bool) $item->on_wholesale_retail,
+            );
+
+            $this->reserveStock(
+                (int) $sale->branch_id,
+                (string) $item->product_code,
+                (float) $item->quantity,
+                $location,
+                (int) $user->id,
+                null,
+                $allowBelowStock,
+                null,
+                null,
+                saleId: (int) $sale->id,
+            );
+        }
     }
 }

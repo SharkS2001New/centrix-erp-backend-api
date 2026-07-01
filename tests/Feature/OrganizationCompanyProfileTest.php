@@ -39,4 +39,25 @@ class OrganizationCompanyProfileTest extends TestCase
             ->assertJsonPath('organization.primary_tel', '0711222333')
             ->assertJsonPath('organization.org_address', 'Updated address line');
     }
+
+    public function test_org_admin_can_upload_company_logo_via_profile_route(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $png = base64_decode(
+            'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+            true,
+        );
+        $this->assertNotFalse($png);
+
+        $file = \Illuminate\Http\UploadedFile::fake()->createWithContent('logo.png', $png);
+
+        $this->post('/api/v1/erp/organization/logo', ['image' => $file], ['Accept' => 'application/json'])
+            ->assertOk()
+            ->assertJsonPath('organization.has_logo', true);
+
+        $this->get('/api/v1/erp/organization/logo/file', ['Accept' => 'image/*'])
+            ->assertOk();
+    }
 }

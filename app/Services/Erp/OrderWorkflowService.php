@@ -83,13 +83,17 @@ class OrderWorkflowService
                 'partial' => $this->pickStatus($config['checkout']['partial'] ?? 'pending_payment', $statuses),
                 'unpaid' => $this->checkoutStatusForChannel($channel, $config, 'unpaid', $statuses),
             ],
-            'deduct_stock_on' => $this->pickStatus(
-                $config['deduct_stock_on'] ?? 'completed',
+            'deduct_stock_on' => $this->channelStatusForChannel(
+                $config,
+                'deduct_stock_on',
+                $channel,
                 $statuses,
                 'completed',
             ),
-            'reserve_stock_on' => $this->pickStatus(
-                $config['reserve_stock_on'] ?? 'unpaid',
+            'reserve_stock_on' => $this->channelStatusForChannel(
+                $config,
+                'reserve_stock_on',
+                $channel,
                 $statuses,
                 'unpaid',
             ),
@@ -377,7 +381,16 @@ class OrderWorkflowService
     {
         $target = $channel
             ? ($this->forChannel($channel)['deduct_stock_on'] ?? 'completed')
-            : ($this->config()['deduct_stock_on'] ?? 'completed');
+            : $this->channelStatusFromConfig($this->config(), 'deduct_stock_on', $channel ?? 'backend', 'completed');
+
+        return $status === $target;
+    }
+
+    public function shouldReserveStockOn(string $status, ?string $channel = null): bool
+    {
+        $target = $channel
+            ? ($this->forChannel($channel)['reserve_stock_on'] ?? 'unpaid')
+            : $this->channelStatusFromConfig($this->config(), 'reserve_stock_on', $channel ?? 'backend', 'unpaid');
 
         return $status === $target;
     }
@@ -453,10 +466,38 @@ class OrderWorkflowService
         $config['checkout'] = is_array($config['checkout'] ?? null)
             ? $config['checkout']
             : ($defaults['checkout'] ?? []);
-        $config['deduct_stock_on'] = (string) ($config['deduct_stock_on'] ?? $defaults['deduct_stock_on'] ?? 'completed');
-        $config['reserve_stock_on'] = (string) ($config['reserve_stock_on'] ?? $defaults['reserve_stock_on'] ?? 'unpaid');
+        $config['deduct_stock_on'] = $this->normalizeChannelStatusMap(
+            $config['deduct_stock_on'] ?? $defaults['deduct_stock_on'] ?? 'completed',
+            $defaults['deduct_stock_on'] ?? 'completed',
+        );
+        $config['reserve_stock_on'] = $this->normalizeChannelStatusMap(
+            $config['reserve_stock_on'] ?? $defaults['reserve_stock_on'] ?? 'unpaid',
+            $defaults['reserve_stock_on'] ?? 'unpaid',
+        );
 
         return $this->sanitizeWorkflowReferences($config);
+    }
+
+    /**
+     * @param  string|array<string, string>|null  $value
+     * @param  string|array<string, string>  $default
+     * @return array<string, string>
+     */
+    public function normalizeChannelStatusMap(mixed $value, mixed $default): array
+    {
+        $channels = ['pos', 'mobile', 'backend'];
+        $defaultMap = is_array($default)
+            ? $default
+            : ['pos' => (string) $default, 'mobile' => (string) $default, 'backend' => (string) $default];
+        $legacy = is_string($value) ? $value : null;
+        $map = is_array($value) ? $value : [];
+
+        $out = [];
+        foreach ($channels as $channel) {
+            $out[$channel] = (string) ($map[$channel] ?? $legacy ?? $defaultMap[$channel] ?? $defaultMap['backend'] ?? 'unpaid');
+        }
+
+        return $out;
     }
 
     /** @param array<string, mixed> $config */
@@ -504,10 +545,34 @@ class OrderWorkflowService
             }
         }
 
-        $config['deduct_stock_on'] = $pick((string) ($config['deduct_stock_on'] ?? $last));
-        $config['reserve_stock_on'] = $pick((string) ($config['reserve_stock_on'] ?? $first));
+        $config['deduct_stock_on'] = $this->sanitizeChannelStatusMap(
+            $config['deduct_stock_on'] ?? [],
+            $pick,
+            (string) ($enabled[array_key_last($enabled)] ?? 'paid'),
+        );
+        $config['reserve_stock_on'] = $this->sanitizeChannelStatusMap(
+            $config['reserve_stock_on'] ?? [],
+            $pick,
+            $first,
+        );
 
         return $config;
+    }
+
+    /**
+     * @param  array<string, string>  $map
+     * @param  callable(string): string  $pick
+     * @return array<string, string>
+     */
+    protected function sanitizeChannelStatusMap(array $map, callable $pick, string $fallback): array
+    {
+        $out = [];
+        foreach (['pos', 'mobile', 'backend'] as $channel) {
+            $status = is_string($map[$channel] ?? null) ? $map[$channel] : $fallback;
+            $out[$channel] = $pick($status);
+        }
+
+        return $out;
     }
 
     /** @param list<array<string, mixed>> $defaults */
@@ -634,6 +699,29 @@ class OrderWorkflowService
         }
 
         return $out;
+    }
+
+    /** @param array<string, mixed> $config */
+    protected function channelStatusForChannel(
+        array $config,
+        string $key,
+        string $channel,
+        array $allowedStatuses,
+        string $fallback,
+    ): string {
+        return $this->pickStatus(
+            $this->channelStatusFromConfig($config, $key, $channel, $fallback),
+            $allowedStatuses,
+            $fallback,
+        );
+    }
+
+    /** @param array<string, mixed> $config */
+    protected function channelStatusFromConfig(array $config, string $key, string $channel, string $fallback): string
+    {
+        $map = $this->normalizeChannelStatusMap($config[$key] ?? $fallback, $fallback);
+
+        return (string) ($map[$channel] ?? $fallback);
     }
 
     /** @param array<string, mixed> $config */

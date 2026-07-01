@@ -27,7 +27,7 @@ class CapabilityGateStockDeductionTest extends TestCase
         $workflow = OrderWorkflowService::forGate($gate);
 
         $this->assertTrue($gate->shouldDeductStockAtCheckout($workflow, 'booked', 'mobile'));
-        $this->assertFalse($gate->shouldDeductStockOnWorkflowTransition($workflow, 'completed'));
+        $this->assertFalse($gate->shouldDeductStockOnWorkflowTransition($workflow, 'completed', 'mobile'));
     }
 
     public function test_order_completed_deducts_only_at_matching_workflow_status(): void
@@ -37,8 +37,8 @@ class CapabilityGateStockDeductionTest extends TestCase
 
         $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'booked', 'mobile'));
         $this->assertTrue($gate->shouldDeductStockAtCheckout($workflow, 'completed', 'pos'));
-        $this->assertTrue($gate->shouldDeductStockOnWorkflowTransition($workflow, 'completed'));
-        $this->assertFalse($gate->shouldDeductStockOnWorkflowTransition($workflow, 'booked'));
+        $this->assertTrue($gate->shouldDeductStockOnWorkflowTransition($workflow, 'completed', 'backend'));
+        $this->assertFalse($gate->shouldDeductStockOnWorkflowTransition($workflow, 'booked', 'backend'));
     }
 
     public function test_trip_load_defers_checkout_and_workflow_deduction(): void
@@ -48,6 +48,6 @@ class CapabilityGateStockDeductionTest extends TestCase
 
         $this->assertTrue($gate->shouldDeferStockToTrip());
         $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'completed', 'mobile'));
-        $this->assertFalse($gate->shouldDeductStockOnWorkflowTransition($workflow, 'completed'));
+        $this->assertFalse($gate->shouldDeductStockOnWorkflowTransition($workflow, 'completed', 'mobile'));
     }
 }

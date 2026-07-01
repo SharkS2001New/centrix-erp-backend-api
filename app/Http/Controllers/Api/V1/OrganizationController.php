@@ -82,6 +82,29 @@ class OrganizationController extends BaseResourceController
     /** PATCH /api/v1/erp/organization/profile — update current tenant company profile */
     public function updateCurrentProfile(Request $request)
     {
+        return $this->update($request, (string) $this->currentOrganizationId($request));
+    }
+
+    /** POST /api/v1/erp/organization/logo */
+    public function uploadCurrentLogo(Request $request)
+    {
+        return $this->uploadLogo($request, (string) $this->currentOrganizationId($request));
+    }
+
+    /** GET /api/v1/erp/organization/logo/file */
+    public function currentLogoFile(Request $request)
+    {
+        return $this->logoFile($request, (string) $this->currentOrganizationId($request));
+    }
+
+    /** DELETE /api/v1/erp/organization/logo */
+    public function deleteCurrentLogo(Request $request)
+    {
+        return $this->deleteLogo($request, (string) $this->currentOrganizationId($request));
+    }
+
+    protected function currentOrganizationId(Request $request): int
+    {
         /** @var User $user */
         $user = $request->user();
         $orgId = (int) ($user->organization_id ?? 0);
@@ -90,7 +113,7 @@ class OrganizationController extends BaseResourceController
             abort(403, 'No organization context.');
         }
 
-        return $this->update($request, (string) $orgId);
+        return $orgId;
     }
 
     public function update(Request $request, string $id)
@@ -160,10 +183,17 @@ class OrganizationController extends BaseResourceController
             Storage::disk('public')->delete($model->logo);
         }
 
-        $path = $request->file('image')->store('organizations/'.$model->id, 'public');
+        $file = $request->file('image');
+        $path = $file?->store('organizations/'.$model->id, 'public');
+        if (! is_string($path) || $path === '') {
+            abort(500, 'Unable to save the logo. Ensure storage/app/public is writable.');
+        }
+
         $model->update(['logo' => $path]);
 
-        return response()->json($this->formatOrganization($model->fresh()));
+        return response()->json([
+            'organization' => $this->formatOrganization($model->fresh()),
+        ]);
     }
 
     /** GET /organizations/{id}/logo/file */

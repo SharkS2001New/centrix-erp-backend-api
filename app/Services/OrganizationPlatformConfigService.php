@@ -35,6 +35,12 @@ class OrganizationPlatformConfigService
     }
 
     /** @return list<string> */
+    public function platformControlledInventoryKeys(): array
+    {
+        return config('erp.platform_controlled.inventory', []);
+    }
+
+    /** @return list<string> */
     public function platformControlledAdminKeys(): array
     {
         return config('erp.platform_controlled.admin', []);
@@ -58,6 +64,14 @@ class OrganizationPlatformConfigService
             if (array_key_exists($key, $salesPlatform)) {
                 $nextSales[$key] = $salesPlatform[$key];
             }
+        }
+
+        if (array_key_exists('stock_deduct_on', $salesPlatform)) {
+            $nextSales['stock_deduct_on'] = $this->normalizeStockDeductOn(
+                $salesPlatform['stock_deduct_on'],
+                (bool) ($salesPlatform['show_checkout_on_create_order'] ?? $nextSales['show_checkout_on_create_order'] ?? true),
+                (bool) ($org->enabled_modules['sales.pos'] ?? false),
+            );
         }
 
         if (array_key_exists('order_workflow', $salesPlatform) && is_array($salesPlatform['order_workflow'])) {
@@ -111,6 +125,20 @@ class OrganizationPlatformConfigService
         }
         $moduleSettings['admin'] = $currentAdmin;
 
+        $currentInventory = is_array($moduleSettings['inventory'] ?? null) ? $moduleSettings['inventory'] : [];
+        foreach ($this->platformControlledInventoryKeys() as $key) {
+            if (! array_key_exists($key, $salesPlatform)) {
+                continue;
+            }
+            if ($key === 'cart_reservation_ttl_minutes') {
+                $currentInventory[$key] = min(15, max(0, (int) $salesPlatform[$key]));
+
+                continue;
+            }
+            $currentInventory[$key] = (bool) $salesPlatform[$key];
+        }
+        $moduleSettings['inventory'] = $currentInventory;
+
         $org->forceFill(['module_settings' => $moduleSettings])->save();
 
         return $org->fresh();
@@ -131,11 +159,17 @@ class OrganizationPlatformConfigService
             'enable_ai' => true,
             'enable_advanced_data_import' => false,
             'advanced_data_import_pages' => AdvancedDataImportPageRegistry::defaultEnabledMap(),
-            'stock_deduct_on' => 'order_created',
+            'stock_deduct_on' => [
+                'pos' => 'order_created',
+                'mobile' => 'order_completed',
+                'backend' => 'order_completed',
+            ],
             'require_pos_till_float' => false,
             'order_workflow' => config('erp.default_order_workflow', []),
             'enable_pos_order_edit' => false,
             'enable_backoffice_order_edit' => true,
+            'reserve_stock_on_cart' => true,
+            'cart_reservation_ttl_minutes' => 15,
         ];
     }
 
@@ -146,6 +180,7 @@ class OrganizationPlatformConfigService
     {
         $gate = app(CapabilityGate::class)->forOrganization($org);
         $sales = $gate->moduleSettings('sales');
+        $inventory = $gate->moduleSettings('inventory');
         $finance = $gate->moduleSettings('finance');
         $ai = $gate->moduleSettings('ai');
         $admin = $gate->moduleSettings('admin');
@@ -168,6 +203,11 @@ class OrganizationPlatformConfigService
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
             'order_workflow' => $workflow,
+            'reserve_stock_on_cart' => ($inventory['reserve_stock_on_cart'] ?? true) !== false,
+            'cart_reservation_ttl_minutes' => min(
+                15,
+                max(0, (int) ($inventory['cart_reservation_ttl_minutes'] ?? 15)),
+            ),
         ];
     }
 
@@ -246,6 +286,21 @@ class OrganizationPlatformConfigService
     }
 
     /**
+     * Strip keys tenant managers cannot change via org inventory settings API.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    public function filterOrgManagerInventoryPayload(array $data): array
+    {
+        foreach ($this->platformControlledInventoryKeys() as $key) {
+            unset($data[$key]);
+        }
+
+        return $data;
+    }
+
+    /**
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
      */
@@ -311,6 +366,42 @@ class OrganizationPlatformConfigService
         }
 
         return true;
+    }
+
+    /**
+     * @return array<string, string>|string
+     */
+    public function normalizeStockDeductOn(
+        mixed $value,
+        bool $posCheckoutOnCreate = true,
+        bool $externalPosEnabled = true,
+    ): array|string {
+        $allowed = ['order_created', 'order_completed', 'trip_load', 'trip_depart'];
+        $defaults = [
+            'pos' => 'order_created',
+            'mobile' => 'order_completed',
+            'backend' => 'order_completed',
+        ];
+
+        if (is_string($value) && in_array($value, $allowed, true)) {
+            $map = ['pos' => $value, 'mobile' => $value, 'backend' => $value];
+        } elseif (is_array($value)) {
+            $map = $defaults;
+            foreach (['pos', 'mobile', 'backend'] as $channel) {
+                $timing = (string) ($value[$channel] ?? '');
+                if (in_array($timing, $allowed, true)) {
+                    $map[$channel] = $timing;
+                }
+            }
+        } else {
+            $map = $defaults;
+        }
+
+        if ($externalPosEnabled && $posCheckoutOnCreate) {
+            $map['pos'] = 'order_created';
+        }
+
+        return $map;
     }
 
     /**

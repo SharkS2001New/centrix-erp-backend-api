@@ -130,4 +130,22 @@ return Application::configure(basePath: dirname(__DIR__))
                 return response()->json(['message' => $e->getMessage()], 422);
             }
         });
+        $exceptions->renderable(function (\Throwable $e, Request $request) {
+            if (! $request->is('api/*') || ! $request->expectsJson()) {
+                return null;
+            }
+
+            if ($e instanceof AuthenticationException
+                || $e instanceof \Illuminate\Validation\ValidationException
+                || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
+                || $e instanceof \InvalidArgumentException) {
+                return null;
+            }
+
+            report($e);
+
+            $payload = \App\Support\ApiErrorPresenter::userMessage($e, $request, $request->user());
+
+            return response()->json($payload, 500);
+        });
     })->create();

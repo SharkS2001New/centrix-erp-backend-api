@@ -178,6 +178,10 @@ return [
             'enable_advanced_data_import',
             'advanced_data_import_pages',
         ],
+        'inventory' => [
+            'reserve_stock_on_cart',
+            'cart_reservation_ttl_minutes',
+        ],
     ],
 
     /*
@@ -270,8 +274,16 @@ return [
                 'backend' => 'unpaid',
             ],
         ],
-        'deduct_stock_on' => 'completed',
-        'reserve_stock_on' => 'unpaid',
+        'deduct_stock_on' => [
+            'pos' => 'completed',
+            'mobile' => 'completed',
+            'backend' => 'completed',
+        ],
+        'reserve_stock_on' => [
+            'pos' => 'unpaid',
+            'mobile' => 'unpaid',
+            'backend' => 'unpaid',
+        ],
     ],
 
     'standard_chart_of_accounts' => [
@@ -374,7 +386,11 @@ return [
             'receipt_copies' => 1,
             'show_branch_on_receipt' => true,
             'order_workflow' => null,
-            'stock_deduct_on' => 'order_created',
+            'stock_deduct_on' => [
+                'pos' => 'order_created',
+                'mobile' => 'order_completed',
+                'backend' => 'order_completed',
+            ],
         ],
         'distribution' => [
             'enable_distribution_ops' => true,
@@ -486,6 +502,22 @@ return [
             'document_header_display' => 'auto',
             'print_font_family' => 'times',
             'print_font_scale' => 'standard',
+            'print_font_size_px' => 14,
+            'print_font_receipt_family' => 'arial',
+            'print_font_receipt_scale' => 'standard',
+            'print_font_receipt_size_px' => 11,
+            'print_font_invoice_family' => 'times',
+            'print_font_invoice_scale' => 'standard',
+            'print_font_invoice_size_px' => 14,
+            'print_font_lpo_family' => 'times',
+            'print_font_lpo_scale' => 'standard',
+            'print_font_lpo_size_px' => 14,
+            'print_font_loading_sheet_family' => 'arial',
+            'print_font_loading_sheet_scale' => 'standard',
+            'print_font_loading_sheet_size_px' => 16,
+            'print_font_report_family' => 'times',
+            'print_font_report_scale' => 'standard',
+            'print_font_report_size_px' => 14,
         ],
         'notifications' => [
             'sms_enabled' => false,

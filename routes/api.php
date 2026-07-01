@@ -169,6 +169,12 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:admin', 'erp.permission:admin.company.view|admin.view']);
         Route::patch('erp/organization/profile', [OrganizationController::class, 'updateCurrentProfile'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.company.edit|admin.manage']);
+        Route::post('erp/organization/logo', [OrganizationController::class, 'uploadCurrentLogo'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.company.edit|admin.manage']);
+        Route::get('erp/organization/logo/file', [OrganizationController::class, 'currentLogoFile'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.company.view|admin.view']);
+        Route::delete('erp/organization/logo', [OrganizationController::class, 'deleteCurrentLogo'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.company.edit|admin.manage']);
         Route::get('erp/profiles', [ErpCapabilitiesController::class, 'profiles'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])
@@ -387,11 +393,11 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
             Route::post('organizations/{organization}/logo', [OrganizationController::class, 'uploadLogo'])
-                ->middleware(['erp.permission:admin.manage']);
+                ->middleware(['erp.permission:admin.company.edit|admin.manage']);
             Route::get('organizations/{organization}/logo/file', [OrganizationController::class, 'logoFile'])
-                ->middleware(['erp.permission:admin.view']);
+                ->middleware(['erp.permission:admin.company.view|admin.view']);
             Route::delete('organizations/{organization}/logo', [OrganizationController::class, 'deleteLogo'])
-                ->middleware(['erp.permission:admin.manage']);
+                ->middleware(['erp.permission:admin.company.edit|admin.manage']);
             Route::apiResource('branches', BranchController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);

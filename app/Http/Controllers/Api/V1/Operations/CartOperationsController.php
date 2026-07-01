@@ -174,7 +174,7 @@ class CartOperationsController extends Controller
             }
 
             app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
-            $this->reverseSaleStockDeductions($sale, $user);
+            $this->restoreCancelledSaleStock($sale, $user);
 
             $heldOrderNum = (int) $sale->order_num;
 
@@ -494,13 +494,18 @@ class CartOperationsController extends Controller
             throw new InvalidArgumentException('Only held orders can be deleted.');
         }
 
-        $sale->update([
-            'status' => 'cancelled',
-            'cancelled_at' => now(),
-            'cancelled_by' => $user->id,
-        ]);
+        DB::transaction(function () use ($sale, $user) {
+            $this->restoreCancelledSaleStock($sale, $user);
 
-        $this->reverseSaleJournalIfPosted($sale, $user);
+            $sale->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $user->id,
+                'stock_balanced' => 0,
+            ]);
+
+            $this->reverseSaleJournalIfPosted($sale, $user);
+        });
 
         return response()->json($sale->fresh());
     }
@@ -514,7 +519,7 @@ class CartOperationsController extends Controller
         $this->assertSaleRestorableToCart($sale, $user);
 
         DB::transaction(function () use ($sale, $user) {
-            $this->reverseSaleStockDeductions($sale, $user);
+            $this->restoreCancelledSaleStock($sale, $user);
 
             $sale->update([
                 'status' => 'cancelled',

@@ -18,6 +18,7 @@ use App\Models\Product;
 use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\SaleItem;
+use App\Models\StockReservation;
 use App\Models\SalePayment;
 use App\Models\TemporaryCart;
 use App\Models\User;
@@ -138,7 +139,7 @@ class CheckoutController extends Controller
 
             $workflow = OrderWorkflowService::forGate($gate);
             $channelWorkflow = $workflow->forChannel($cart->channel);
-            $allowPartialPayment = ! empty($salesSettings['allow_credit_pay_now']);
+            $allowPartialPayment = false;
             $paymentMethodCode = (string) ($input['payment_method_code'] ?? 'CASH');
 
             $isSaveOnly = $payNow <= 0 && ! $isCredit && ! empty($input['save_only']);
@@ -291,8 +292,16 @@ class CheckoutController extends Controller
                 $sale->update(['stock_balanced' => 1]);
                 $this->releaseCartReservations((int) $cart->id);
                 $this->releaseSaleReservations((int) $sale->id);
-            } elseif ($gate->shouldReserveStockForOrder($workflow, $orderStatus)) {
-                $this->transferCartReservationsToSale((int) $cart->id, (int) $sale->id);
+            } elseif ($gate->shouldReserveStockForOrder($workflow, $orderStatus, (string) $cart->channel)) {
+                $transferred = StockReservation::query()
+                    ->where('cart_id', $cart->id)
+                    ->whereNull('released_at')
+                    ->exists();
+                if ($transferred) {
+                    $this->transferCartReservationsToSale((int) $cart->id, (int) $sale->id);
+                } else {
+                    $this->reserveSaleStockIfNeeded($sale->fresh(['items']), $user, $gate);
+                }
             } else {
                 $this->releaseCartReservations($cart->id);
             }

@@ -58,6 +58,61 @@ class PlatformOrganizationSettingsTest extends TestCase
             ->assertForbidden();
     }
 
+    public function test_tenant_org_admin_cannot_update_cart_reservation_via_inventory_settings(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $before = $orgAdmin->organization->module_settings['inventory']['reserve_stock_on_cart'] ?? true;
+
+        $this->patchJson('/api/v1/erp/settings/inventory', [
+            'reserve_stock_on_cart' => false,
+            'cart_reservation_ttl_minutes' => 5,
+        ])->assertOk();
+
+        $orgAdmin->organization->refresh();
+        $after = $orgAdmin->organization->module_settings['inventory']['reserve_stock_on_cart'] ?? true;
+
+        $this->assertSame($before, $after);
+    }
+
+    public function test_super_admin_can_update_cart_reservation_via_sales_platform(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'CARTRES',
+            'org_name' => 'Cart Reservation Org',
+            'org_email' => 'cart@org.com',
+            'primary_tel' => '0711000099',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'enabled_modules' => ['sales' => true, 'sales.pos' => true],
+            'admin_username' => 'cart_admin',
+            'admin_email' => 'cart@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Cart Admin',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'sales_platform' => [
+                'reserve_stock_on_cart' => false,
+                'cart_reservation_ttl_minutes' => 7,
+            ],
+        ])->assertOk()
+            ->assertJsonPath('sales_platform.reserve_stock_on_cart', false)
+            ->assertJsonPath('sales_platform.cart_reservation_ttl_minutes', 7);
+
+        $org = Organization::findOrFail($orgId);
+        $this->assertFalse($org->module_settings['inventory']['reserve_stock_on_cart']);
+        $this->assertSame(7, $org->module_settings['inventory']['cart_reservation_ttl_minutes']);
+    }
+
     public function test_tenant_org_admin_can_use_erp_module_settings_routes(): void
     {
         $orgAdmin = User::where('username', 'admin')->firstOrFail();

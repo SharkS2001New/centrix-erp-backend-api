@@ -44,6 +44,26 @@ class TenantOrganizationSettingsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('general.print_font_family', 'arial')
             ->assertJsonPath('general.print_font_scale', 'large');
+
+        $this->patchJson('/api/v1/erp/settings/general', [
+            'print_font_scale' => 'custom',
+            'print_font_size_px' => 13,
+        ])
+            ->assertOk()
+            ->assertJsonPath('general.print_font_scale', 'custom')
+            ->assertJsonPath('general.print_font_size_px', 13);
+
+        $this->patchJson('/api/v1/erp/settings/general', [
+            'print_font_receipt_family' => 'courier',
+            'print_font_receipt_scale' => 'large',
+            'print_font_invoice_family' => 'palatino',
+            'print_font_invoice_scale' => 'compact',
+        ])
+            ->assertOk()
+            ->assertJsonPath('general.print_font_receipt_family', 'courier')
+            ->assertJsonPath('general.print_font_receipt_scale', 'large')
+            ->assertJsonPath('general.print_font_invoice_family', 'palatino')
+            ->assertJsonPath('general.print_font_invoice_scale', 'compact');
     }
 
     public function test_org_admin_can_access_module_settings_routes(): void

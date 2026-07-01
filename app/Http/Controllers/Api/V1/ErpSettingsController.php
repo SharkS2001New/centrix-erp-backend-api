@@ -141,10 +141,19 @@ class ErpSettingsController extends Controller
             'order_workflow.checkout.unpaid.pos' => ['sometimes', 'string', $statusRule],
             'order_workflow.checkout.unpaid.mobile' => ['sometimes', 'string', $statusRule],
             'order_workflow.checkout.unpaid.backend' => ['sometimes', 'string', $statusRule],
-            'order_workflow.deduct_stock_on' => ['sometimes', 'string', $statusRule],
-            'order_workflow.reserve_stock_on' => ['sometimes', 'string', $statusRule],
+            'order_workflow.deduct_stock_on' => 'sometimes',
+            'order_workflow.deduct_stock_on.pos' => ['sometimes', 'string', $statusRule],
+            'order_workflow.deduct_stock_on.mobile' => ['sometimes', 'string', $statusRule],
+            'order_workflow.deduct_stock_on.backend' => ['sometimes', 'string', $statusRule],
+            'order_workflow.reserve_stock_on' => 'sometimes',
+            'order_workflow.reserve_stock_on.pos' => ['sometimes', 'string', $statusRule],
+            'order_workflow.reserve_stock_on.mobile' => ['sometimes', 'string', $statusRule],
+            'order_workflow.reserve_stock_on.backend' => ['sometimes', 'string', $statusRule],
             'receipt_copies' => 'sometimes|integer|min:1|max:10',
-            'stock_deduct_on' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
+            'stock_deduct_on' => 'sometimes',
+            'stock_deduct_on.pos' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
+            'stock_deduct_on.mobile' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
+            'stock_deduct_on.backend' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
             'show_receipt_payment_details' => 'sometimes|boolean',
             'show_invoice_payment_details' => 'sometimes|boolean',
@@ -371,8 +380,6 @@ class ErpSettingsController extends Controller
             'default_receive_location',
             'default_pos_sale_location',
             'default_distribution_sale_location',
-            'reserve_stock_on_cart',
-            'cart_reservation_ttl_minutes',
         ];
 
         $stockSourceKeys = [
@@ -387,8 +394,6 @@ class ErpSettingsController extends Controller
             'default_receive_location' => 'sometimes|in:shop,store',
             'default_pos_sale_location' => 'sometimes|in:shop,store',
             'default_distribution_sale_location' => 'sometimes|in:shop,store',
-            'reserve_stock_on_cart' => 'sometimes|boolean',
-            'cart_reservation_ttl_minutes' => 'sometimes|integer|min:0|max:15',
             'allow_sell_from_shop' => 'sometimes|boolean',
             'allow_sell_from_store' => 'sometimes|boolean',
             'enable_retail_pricing' => 'sometimes|boolean',
@@ -398,6 +403,8 @@ class ErpSettingsController extends Controller
             'stock_alert_mode' => 'sometimes|in:per_product,global,both',
             'global_low_stock_threshold' => 'sometimes|nullable|numeric|min:0',
         ]);
+
+        $data = $this->platformConfig->filterOrgManagerInventoryPayload($data);
 
         $currentSales = $gate->moduleSettings('sales');
         $nextSales = array_merge($currentSales, array_filter(
@@ -703,8 +710,7 @@ class ErpSettingsController extends Controller
             'print_footer_loading_sheet' => 'sometimes|nullable|string|max:500',
             'show_organization_on_documents' => 'sometimes|boolean',
             'document_header_display' => 'sometimes|in:auto,logo,name,logo_and_name',
-            'print_font_family' => 'sometimes|in:times,georgia,arial,helvetica,verdana,system',
-            'print_font_scale' => 'sometimes|in:compact,standard,large,extra_large',
+            ...GeneralSettingsResolver::printFontValidationRules(),
         ]);
 
         $next = GeneralSettingsResolver::normalize(array_merge(

@@ -18,6 +18,7 @@ use App\Models\RouteSchedule;
 use App\Services\Fulfillment\AutoTripAssignmentService;
 use App\Services\Fulfillment\PodService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
 class OrderWorkflowController extends Controller
@@ -139,18 +140,23 @@ class OrderWorkflowController extends Controller
         }
 
         if ($toStatus === 'cancelled') {
-            $sale->update([
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-                'cancelled_by' => $user->id,
-            ]);
+            DB::transaction(function () use ($sale, $user, $gate) {
+                $this->restoreCancelledSaleStock($sale, $user);
 
-            app(ReferenceJournalReversalService::class)->reverseIfEnabled(
-                'sale',
-                (int) $sale->id,
-                $user,
-                $gate,
-            );
+                $sale->update([
+                    'status' => 'cancelled',
+                    'cancelled_at' => now(),
+                    'cancelled_by' => $user->id,
+                    'stock_balanced' => 0,
+                ]);
+
+                app(ReferenceJournalReversalService::class)->reverseIfEnabled(
+                    'sale',
+                    (int) $sale->id,
+                    $user,
+                    $gate,
+                );
+            });
 
             return $sale->fresh();
         }
@@ -213,8 +219,10 @@ class OrderWorkflowController extends Controller
             $updates['completed_at'] = $sale->completed_at ?? now();
         }
 
-        if ($gate->shouldDeductStockOnWorkflowTransition($workflow, $toStatus) && ! $sale->stock_balanced) {
+        if ($gate->shouldDeductStockOnWorkflowTransition($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
             $this->deductSaleStockIfNeeded($sale, $user);
+        } elseif ($gate->shouldReserveStockForOrder($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
+            $this->reserveSaleStockIfNeeded($sale, $user, $gate);
         }
 
         $sale->update($updates);

@@ -363,15 +363,43 @@ class CapabilityGate
         return $merged;
     }
 
-    /** When inventory is reduced: order_created, order_completed (workflow status), trip_load, or trip_depart. */
-    public function stockDeductTiming(): string
+    public function externalPosEnabled(): bool
     {
+        return $this->enabled('sales.pos');
+    }
+
+    public function posCheckoutOnCreateEnabled(): bool
+    {
+        if (! $this->externalPosEnabled()) {
+            return false;
+        }
+
         $sales = $this->moduleSettings('sales');
-        if (array_key_exists('stock_deduct_on', $sales)) {
-            $timing = (string) $sales['stock_deduct_on'];
-            if (in_array($timing, ['order_created', 'order_completed', 'trip_load', 'trip_depart'], true)) {
+
+        return (bool) ($sales['show_checkout_on_create_order'] ?? true);
+    }
+
+    /** When inventory is reduced: order_created, order_completed (workflow status), trip_load, or trip_depart. */
+    public function stockDeductTiming(?string $channel = null): string
+    {
+        if ($channel === 'pos' && $this->posCheckoutOnCreateEnabled()) {
+            return 'order_created';
+        }
+
+        $sales = $this->moduleSettings('sales');
+        $raw = $sales['stock_deduct_on'] ?? null;
+        $channel = $channel ? OrderWorkflowService::forGate($this)->normalizeSalesChannel($channel) : null;
+        $allowed = ['order_created', 'order_completed', 'trip_load', 'trip_depart'];
+
+        if (is_array($raw) && $channel) {
+            $timing = (string) ($raw[$channel] ?? $raw['default'] ?? '');
+            if (in_array($timing, $allowed, true)) {
                 return $timing;
             }
+        }
+
+        if (is_string($raw) && in_array($raw, $allowed, true)) {
+            return $raw;
         }
 
         $dist = is_array($this->organization?->module_settings['distribution'] ?? null)
@@ -379,15 +407,15 @@ class CapabilityGate
             : [];
         $legacy = (string) ($dist['deduct_stock_on'] ?? 'order_completed');
 
-        return in_array($legacy, ['order_created', 'order_completed', 'trip_load', 'trip_depart'], true)
+        return in_array($legacy, $allowed, true)
             ? $legacy
             : 'order_completed';
     }
 
-    public function shouldDeferStockToTrip(): bool
+    public function shouldDeferStockToTrip(?string $channel = null): bool
     {
         return $this->distributionOpsEnabled()
-            && in_array($this->stockDeductTiming(), ['trip_load', 'trip_depart'], true);
+            && in_array($this->stockDeductTiming($channel), ['trip_load', 'trip_depart'], true);
     }
 
     public function shouldDeductStockAtCheckout(
@@ -395,11 +423,11 @@ class CapabilityGate
         string $orderStatus,
         string $channel,
     ): bool {
-        if ($this->shouldDeferStockToTrip()) {
+        if ($this->shouldDeferStockToTrip($channel)) {
             return false;
         }
 
-        return match ($this->stockDeductTiming()) {
+        return match ($this->stockDeductTiming($channel)) {
             'order_created' => true,
             'order_completed' => $workflow->shouldDeductStockOn($orderStatus, $channel),
             default => false,
@@ -409,25 +437,29 @@ class CapabilityGate
     public function shouldDeductStockOnWorkflowTransition(
         OrderWorkflowService $workflow,
         string $toStatus,
+        string $channel,
     ): bool {
-        if ($this->shouldDeferStockToTrip() || $this->stockDeductTiming() !== 'order_completed') {
+        if ($this->shouldDeferStockToTrip($channel) || $this->stockDeductTiming($channel) !== 'order_completed') {
             return false;
         }
 
-        $deductStatus = (string) ($workflow->config()['deduct_stock_on'] ?? 'completed');
-
-        return $toStatus === $deductStatus;
+        return $workflow->shouldDeductStockOn($toStatus, $channel);
     }
 
-    public function shouldReserveStockForOrder(OrderWorkflowService $workflow, string $orderStatus): bool
-    {
-        if ($this->stockDeductTiming() === 'order_created') {
+    public function shouldReserveStockForOrder(
+        OrderWorkflowService $workflow,
+        string $orderStatus,
+        string $channel,
+    ): bool {
+        if ($channel === 'pos' && $this->posCheckoutOnCreateEnabled()) {
             return false;
         }
 
-        $reserveStatus = (string) ($workflow->config()['reserve_stock_on'] ?? 'unpaid');
+        if ($this->stockDeductTiming($channel) === 'order_created') {
+            return false;
+        }
 
-        return $orderStatus === $reserveStatus;
+        return $workflow->shouldReserveStockOn($orderStatus, $channel);
     }
 
     /** @return array<string, mixed> */
