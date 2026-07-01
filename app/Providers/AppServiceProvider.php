@@ -38,16 +38,17 @@ class AppServiceProvider extends ServiceProvider
         $login = config('security.rate_limits.auth_login');
         RateLimiter::for('auth-login', function (Request $request) use ($login) {
             $username = strtolower(trim((string) $request->input('username', '')));
+            $companyCode = strtoupper(trim((string) $request->input('company_code', '')));
+            $decay = max(1, (int) ($login['decay_minutes'] ?? 1));
+            $perUser = max(5, (int) ($login['max_attempts'] ?? 15));
+            $perIp = max($perUser, (int) ($login['max_attempts_per_ip'] ?? 120));
+            $orgUserKey = $companyCode !== '' && $username !== ''
+                ? 'org-user:'.$companyCode.':'.$username
+                : ($username !== '' ? 'user:'.$username : 'ip:'.$request->ip());
 
             return [
-                Limit::perMinutes(
-                    max(1, (int) ($login['decay_minutes'] ?? 1)),
-                    max(1, (int) ($login['max_attempts'] ?? 5)),
-                )->by($request->ip()),
-                Limit::perMinutes(
-                    max(1, (int) ($login['decay_minutes'] ?? 1)),
-                    max(1, (int) ($login['max_attempts'] ?? 5)) * 2,
-                )->by($username !== '' ? 'user:'.$username : 'ip:'.$request->ip()),
+                Limit::perMinutes($decay, $perIp)->by('ip:'.$request->ip()),
+                Limit::perMinutes($decay, $perUser)->by($orgUserKey),
             ];
         });
 
@@ -62,7 +63,7 @@ class AppServiceProvider extends ServiceProvider
         $preview = config('security.rate_limits.auth_org_preview');
         RateLimiter::for('auth-org-preview', function (Request $request) use ($preview) {
             $decay = max(1, (int) ($preview['decay_minutes'] ?? 1));
-            $max = max(1, (int) ($preview['max_attempts'] ?? 10));
+            $max = max(1, (int) ($preview['max_attempts'] ?? 60));
             $companyCode = strtoupper(trim((string) $request->input('company_code', '')));
 
             $limits = [
@@ -70,7 +71,7 @@ class AppServiceProvider extends ServiceProvider
             ];
 
             if ($companyCode !== '') {
-                $limits[] = Limit::perMinutes($decay, min(5, $max))->by('org:'.$companyCode);
+                $limits[] = Limit::perMinutes($decay, $max)->by('org:'.$companyCode);
             }
 
             return $limits;

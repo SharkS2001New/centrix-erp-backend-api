@@ -65,15 +65,16 @@ return [
 
     'rate_limits' => [
         'auth_login' => [
-            'max_attempts' => (int) env('RATE_LIMIT_AUTH_LOGIN', 5),
+            'max_attempts' => (int) env('RATE_LIMIT_AUTH_LOGIN', 15),
+            'max_attempts_per_ip' => (int) env('RATE_LIMIT_AUTH_LOGIN_PER_IP', 120),
             'decay_minutes' => (int) env('RATE_LIMIT_AUTH_LOGIN_DECAY', 1),
         ],
         'auth_password' => [
-            'max_attempts' => (int) env('RATE_LIMIT_AUTH_PASSWORD', 5),
+            'max_attempts' => (int) env('RATE_LIMIT_AUTH_PASSWORD', 10),
             'decay_minutes' => (int) env('RATE_LIMIT_AUTH_PASSWORD_DECAY', 15),
         ],
         'auth_org_preview' => [
-            'max_attempts' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW', 20),
+            'max_attempts' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW', 60),
             'decay_minutes' => (int) env('RATE_LIMIT_AUTH_ORG_PREVIEW_DECAY', 1),
         ],
         'company_mobile_attendance' => [
