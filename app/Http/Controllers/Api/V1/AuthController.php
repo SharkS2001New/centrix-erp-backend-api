@@ -13,6 +13,7 @@ use App\Services\Auth\PasswordExpiryService;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
 use App\Services\Auth\TenantAccountResolver;
+use App\Services\Auth\UsernameValidator;
 use App\Services\Sales\UserCartCleanupService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -208,6 +209,32 @@ class AuthController extends Controller
     {
         return response()->json(
             $request->user()->load(['branch', 'role', 'organization']),
+        );
+    }
+
+    public function updateMe(Request $request)
+    {
+        $user = $request->user();
+        $data = $request->validate([
+            'full_name' => 'sometimes|required|string|max:200',
+            'email' => 'sometimes|nullable|email|max:255',
+            'username' => 'sometimes|required|string|max:50',
+        ]);
+
+        if (isset($data['username'])) {
+            app(UsernameValidator::class)->assertUniqueInOrganization(
+                (int) $user->organization_id,
+                (string) $data['username'],
+                ignoreUserId: (int) $user->id,
+            );
+        }
+
+        if ($data !== []) {
+            $user->update($data);
+        }
+
+        return response()->json(
+            $user->fresh()->load(['branch', 'role', 'organization']),
         );
     }
 

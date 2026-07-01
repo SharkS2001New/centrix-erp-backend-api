@@ -155,6 +155,7 @@ Route::prefix('v1')->group(function () {
 
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
+        Route::patch('auth/me', [AuthController::class, 'updateMe']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
         Route::post('auth/skip-password-expiry', [AuthController::class, 'skipPasswordExpiry']);
         Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);
@@ -260,18 +261,29 @@ Route::prefix('v1')->group(function () {
         Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])
             ->middleware(['erp.super_admin']);
 
-        Route::prefix('admin/platform-invoices')->middleware(['erp.super_admin'])->group(function () {
-            Route::get('billing-context', [PlatformInvoiceController::class, 'billingContext']);
-            Route::get('design-templates', [PlatformInvoiceController::class, 'designTemplates']);
-            Route::get('saved-templates', [PlatformInvoiceController::class, 'listSavedTemplates']);
-            Route::post('saved-templates', [PlatformInvoiceController::class, 'storeSavedTemplate']);
-            Route::delete('saved-templates/{template}', [PlatformInvoiceController::class, 'destroySavedTemplate']);
-            Route::get('/', [PlatformInvoiceController::class, 'index']);
-            Route::post('/', [PlatformInvoiceController::class, 'store']);
-            Route::get('{invoice}', [PlatformInvoiceController::class, 'show']);
-            Route::patch('{invoice}', [PlatformInvoiceController::class, 'update']);
-            Route::delete('{invoice}', [PlatformInvoiceController::class, 'destroy']);
-        });
+        Route::get('admin/platform-invoices/billing-context', [PlatformInvoiceController::class, 'billingContext'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-invoices/design-templates', [PlatformInvoiceController::class, 'designTemplates'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-invoices/saved-templates', [PlatformInvoiceController::class, 'listSavedTemplates'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-invoices/saved-templates', [PlatformInvoiceController::class, 'storeSavedTemplate'])
+            ->middleware(['erp.super_admin']);
+        Route::delete('admin/platform-invoices/saved-templates/{template}', [PlatformInvoiceController::class, 'destroySavedTemplate'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-invoices', [PlatformInvoiceController::class, 'index'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-invoices', [PlatformInvoiceController::class, 'store'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-invoices/{invoice}', [PlatformInvoiceController::class, 'show'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('invoice');
+        Route::patch('admin/platform-invoices/{invoice}', [PlatformInvoiceController::class, 'update'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('invoice');
+        Route::delete('admin/platform-invoices/{invoice}', [PlatformInvoiceController::class, 'destroy'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('invoice');
 
         Route::get('admin/system-issue-reports/summary', [PlatformSystemIssueReportController::class, 'summary'])
             ->middleware(['erp.super_admin']);
@@ -528,19 +540,30 @@ Route::prefix('v1')->group(function () {
         Route::middleware(['erp.module:customers_suppliers'])->group(function () {
             Route::get('supplier-payments', [SupplierPaymentController::class, 'index'])
                 ->middleware('erp.permission:purchasing.view');
+
+            // Static paths must register before {supplier}/{customer} resource routes.
             Route::get('suppliers/dashboard', [SupplierController::class, 'dashboard'])
                 ->middleware('erp.permission:purchasing.view');
             Route::post('suppliers/recalculate-balances', [SupplierController::class, 'recalculateBalances'])
                 ->middleware('erp.permission:purchasing.view');
-            Route::get('suppliers/{supplier}/summary', [SupplierController::class, 'summary'])
-                ->middleware('erp.permission:purchasing.view');
-            Route::post('suppliers/{supplier}/payments', [SupplierController::class, 'storePayment'])
-                ->middleware('erp.permission:purchasing.manage');
             Route::post('suppliers/import-batch', [SupplierImportController::class, 'store'])
                 ->middleware(['erp.permission:purchasing.manage']);
+            Route::get('customers/summary', [CustomerController::class, 'summary'])
+                ->middleware(['erp.permission:customers.view']);
+            Route::post('customers/import-batch', [CustomerImportController::class, 'store'])
+                ->middleware(['erp.permission:customers.manage']);
+
+            Route::get('suppliers/{supplier}/summary', [SupplierController::class, 'summary'])
+                ->middleware('erp.permission:purchasing.view')
+                ->whereNumber('supplier');
+            Route::post('suppliers/{supplier}/payments', [SupplierController::class, 'storePayment'])
+                ->middleware('erp.permission:purchasing.manage')
+                ->whereNumber('supplier');
             Route::apiResource('suppliers', SupplierController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:purchasing.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:purchasing.manage']);
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:purchasing.manage'])
+                ->where(['supplier' => '[0-9]+']);
+
             Route::get('customers/{customer}/sales', [CustomerController::class, 'sales'])
                 ->middleware('erp.permission:customers.view');
             Route::get('customers/{customer}/shop-image/file', [CustomerController::class, 'shopImageFile'])
@@ -549,10 +572,6 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:customers.manage');
             Route::delete('customers/{customer}/shop-image', [CustomerController::class, 'deleteShopImage'])
                 ->middleware('erp.permission:customers.manage');
-            Route::get('customers/summary', [CustomerController::class, 'summary'])
-                ->middleware(['erp.permission:customers.view']);
-            Route::post('customers/import-batch', [CustomerImportController::class, 'store'])
-                ->middleware(['erp.permission:customers.manage']);
             Route::apiResource('customers', CustomerController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:customers.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:customers.manage']);
