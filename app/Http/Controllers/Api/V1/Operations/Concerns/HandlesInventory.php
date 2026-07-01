@@ -308,4 +308,23 @@ trait HandlesInventory
             ->whereNull('released_at')
             ->update(['released_at' => now()]);
     }
+
+    protected function transferCartReservationsToSale(int $cartId, int $saleId): void
+    {
+        StockReservation::where('cart_id', $cartId)
+            ->whereNull('released_at')
+            ->update([
+                'sale_id' => $saleId,
+                'cart_id' => null,
+                'cart_line_id' => null,
+                'expires_at' => null,
+            ]);
+    }
+
+    protected function releaseSaleReservations(int $saleId): void
+    {
+        StockReservation::where('sale_id', $saleId)
+            ->whereNull('released_at')
+            ->update(['released_at' => now()]);
+    }
 }

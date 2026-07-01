@@ -289,6 +289,12 @@ class CheckoutController extends Controller
 
             if (! empty($stockDeducted)) {
                 $sale->update(['stock_balanced' => 1]);
+                $this->releaseCartReservations((int) $cart->id);
+                $this->releaseSaleReservations((int) $sale->id);
+            } elseif ($gate->shouldReserveStockForOrder($workflow, $orderStatus)) {
+                $this->transferCartReservationsToSale((int) $cart->id, (int) $sale->id);
+            } else {
+                $this->releaseCartReservations($cart->id);
             }
 
             if ($voucherPayment > 0 && $cart->payment_voucher_id) {

@@ -88,6 +88,11 @@ class OrderWorkflowService
                 $statuses,
                 'completed',
             ),
+            'reserve_stock_on' => $this->pickStatus(
+                $config['reserve_stock_on'] ?? 'unpaid',
+                $statuses,
+                'unpaid',
+            ),
             'pay_on_complete' => (bool) ($channelConfig['pay_on_complete'] ?? false),
         ];
     }
@@ -449,6 +454,7 @@ class OrderWorkflowService
             ? $config['checkout']
             : ($defaults['checkout'] ?? []);
         $config['deduct_stock_on'] = (string) ($config['deduct_stock_on'] ?? $defaults['deduct_stock_on'] ?? 'completed');
+        $config['reserve_stock_on'] = (string) ($config['reserve_stock_on'] ?? $defaults['reserve_stock_on'] ?? 'unpaid');
 
         return $this->sanitizeWorkflowReferences($config);
     }
@@ -499,6 +505,7 @@ class OrderWorkflowService
         }
 
         $config['deduct_stock_on'] = $pick((string) ($config['deduct_stock_on'] ?? $last));
+        $config['reserve_stock_on'] = $pick((string) ($config['reserve_stock_on'] ?? $first));
 
         return $config;
     }

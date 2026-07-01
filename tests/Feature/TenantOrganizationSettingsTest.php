@@ -32,6 +32,20 @@ class TenantOrganizationSettingsTest extends TestCase
         $this->getJson('/api/v1/erp/settings/ai')->assertOk();
     }
 
+    public function test_org_admin_can_update_print_typography_settings(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $this->patchJson('/api/v1/erp/settings/general', [
+            'print_font_family' => 'arial',
+            'print_font_scale' => 'large',
+        ])
+            ->assertOk()
+            ->assertJsonPath('general.print_font_family', 'arial')
+            ->assertJsonPath('general.print_font_scale', 'large');
+    }
+
     public function test_org_admin_can_access_module_settings_routes(): void
     {
         $orgAdmin = User::where('username', 'admin')->firstOrFail();

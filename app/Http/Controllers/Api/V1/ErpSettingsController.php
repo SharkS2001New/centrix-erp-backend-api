@@ -142,6 +142,7 @@ class ErpSettingsController extends Controller
             'order_workflow.checkout.unpaid.mobile' => ['sometimes', 'string', $statusRule],
             'order_workflow.checkout.unpaid.backend' => ['sometimes', 'string', $statusRule],
             'order_workflow.deduct_stock_on' => ['sometimes', 'string', $statusRule],
+            'order_workflow.reserve_stock_on' => ['sometimes', 'string', $statusRule],
             'receipt_copies' => 'sometimes|integer|min:1|max:10',
             'stock_deduct_on' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
@@ -702,6 +703,8 @@ class ErpSettingsController extends Controller
             'print_footer_loading_sheet' => 'sometimes|nullable|string|max:500',
             'show_organization_on_documents' => 'sometimes|boolean',
             'document_header_display' => 'sometimes|in:auto,logo,name,logo_and_name',
+            'print_font_family' => 'sometimes|in:times,georgia,arial,helvetica,verdana,system',
+            'print_font_scale' => 'sometimes|in:compact,standard,large,extra_large',
         ]);
 
         $next = GeneralSettingsResolver::normalize(array_merge(

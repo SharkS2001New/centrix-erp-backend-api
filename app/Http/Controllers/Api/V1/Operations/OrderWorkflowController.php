@@ -124,6 +124,20 @@ class OrderWorkflowController extends Controller
             );
         }
 
+        $balanceDue = max(0, (float) $sale->order_total - (float) $sale->amount_paid);
+        if ($balanceDue > 0.01) {
+            if ($toStatus === 'paid') {
+                throw new InvalidArgumentException(
+                    'Collect payment before marking this order as paid.',
+                );
+            }
+            if ($toStatus === 'pending_payment' && (float) $sale->amount_paid <= 0) {
+                throw new InvalidArgumentException(
+                    'Record a payment before marking this order as partially paid.',
+                );
+            }
+        }
+
         if ($toStatus === 'cancelled') {
             $sale->update([
                 'status' => 'cancelled',
@@ -310,6 +324,7 @@ class OrderWorkflowController extends Controller
         }
 
         $sale->update(['stock_balanced' => 1]);
+        $this->releaseSaleReservations((int) $sale->id);
     }
 
     protected function humanStatusLabel(string $status): string

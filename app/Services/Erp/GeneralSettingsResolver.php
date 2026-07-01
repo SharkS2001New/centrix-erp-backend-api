@@ -79,6 +79,12 @@ class GeneralSettingsResolver
         $out['document_header_display'] = in_array($out['document_header_display'] ?? '', ['auto', 'logo', 'name', 'logo_and_name'], true)
             ? $out['document_header_display']
             : 'auto';
+        $out['print_font_family'] = in_array($out['print_font_family'] ?? '', ['times', 'georgia', 'arial', 'helvetica', 'verdana', 'system'], true)
+            ? $out['print_font_family']
+            : 'times';
+        $out['print_font_scale'] = in_array($out['print_font_scale'] ?? '', ['compact', 'standard', 'large', 'extra_large'], true)
+            ? $out['print_font_scale']
+            : 'standard';
 
         return $out;
     }

@@ -271,6 +271,7 @@ return [
             ],
         ],
         'deduct_stock_on' => 'completed',
+        'reserve_stock_on' => 'unpaid',
     ],
 
     'standard_chart_of_accounts' => [
@@ -483,6 +484,8 @@ return [
             'print_footer_loading_sheet' => '',
             'show_organization_on_documents' => true,
             'document_header_display' => 'auto',
+            'print_font_family' => 'times',
+            'print_font_scale' => 'standard',
         ],
         'notifications' => [
             'sms_enabled' => false,

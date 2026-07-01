@@ -419,6 +419,17 @@ class CapabilityGate
         return $toStatus === $deductStatus;
     }
 
+    public function shouldReserveStockForOrder(OrderWorkflowService $workflow, string $orderStatus): bool
+    {
+        if ($this->stockDeductTiming() === 'order_created') {
+            return false;
+        }
+
+        $reserveStatus = (string) ($workflow->config()['reserve_stock_on'] ?? 'unpaid');
+
+        return $orderStatus === $reserveStatus;
+    }
+
     /** @return array<string, mixed> */
     public function toArray(): array
     {
