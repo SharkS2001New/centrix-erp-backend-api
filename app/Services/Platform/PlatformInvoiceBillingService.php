@@ -36,7 +36,7 @@ class PlatformInvoiceBillingService
 
         if (! $org) {
             return [
-                'name' => 'Centrix ERP',
+                'name' => 'CentrixERP',
                 'email' => config('mail.from.address', 'billing@centrixerp.com'),
                 'phone' => '',
                 'address' => 'Nairobi, Kenya',
@@ -45,10 +45,10 @@ class PlatformInvoiceBillingService
         }
 
         return [
-            'name' => $org->org_name,
-            'email' => $org->org_email,
+            'name' => 'CentrixERP',
+            'email' => $org->org_email ?: config('mail.from.address', 'billing@centrixerp.com'),
             'phone' => $org->primary_tel,
-            'address' => $org->org_address,
+            'address' => $org->org_address ?: 'Nairobi, Kenya',
             'tax_pin' => $org->org_pin,
         ];
     }
@@ -114,6 +114,9 @@ class PlatformInvoiceBillingService
         $out = [];
 
         foreach ($config as $key => $meta) {
+            if (($meta['billable'] ?? true) === false) {
+                continue;
+            }
             $out[] = [
                 'key' => $key,
                 'label' => $meta['label'] ?? $key,

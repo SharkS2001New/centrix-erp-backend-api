@@ -10,6 +10,7 @@ class PlatformInvoiceSavedTemplate extends Model
         'name',
         'description',
         'template_id',
+        'invoice_options',
         'line_items',
         'selected_modules',
         'notes',
@@ -19,6 +20,7 @@ class PlatformInvoiceSavedTemplate extends Model
     ];
 
     protected $casts = [
+        'invoice_options' => 'array',
         'line_items' => 'array',
         'selected_modules' => 'array',
         'tax_rate' => 'decimal:2',

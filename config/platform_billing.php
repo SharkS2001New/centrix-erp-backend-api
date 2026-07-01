@@ -59,8 +59,9 @@ return [
         'admin' => [
             'label' => 'Administration',
             'description' => 'Tenant self-service admin — users, roles, branches, and company settings.',
-            'default_amount' => 5000,
+            'default_amount' => 0,
             'billing_period' => 'monthly',
+            'billable' => false,
         ],
         'platform.ai' => [
             'label' => 'AI assistant',
@@ -86,9 +87,10 @@ return [
         'platform.advanced_import' => [
             'label' => 'Advanced data import',
             'description' => 'Bulk CSV import pipelines for products, customers, stock, and migration tools.',
-            'default_amount' => 2500,
+            'default_amount' => 0,
             'billing_period' => 'monthly',
             'platform_flag' => 'advanced_import',
+            'billable' => false,
         ],
         'platform.hosting' => [
             'label' => 'Platform hosting & support',
