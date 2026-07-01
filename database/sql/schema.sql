@@ -356,8 +356,7 @@ CREATE TABLE retail_package_settings (
     max_uom_measure        VARCHAR(45),
     pricing_tiers          JSON          NULL,
     created_at             TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (product_code) REFERENCES products(product_code) ON DELETE CASCADE,
-    UNIQUE KEY uq_product_code (product_code)
+    INDEX idx_product_code (product_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DROP TABLE IF EXISTS price_history;
@@ -370,7 +369,6 @@ CREATE TABLE price_history (
     changed_by      INT           NOT NULL,
     organization_id INT           NOT NULL,
     changed_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (product_code)    REFERENCES products(product_code),
     FOREIGN KEY (changed_by)      REFERENCES users(id),
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     INDEX idx_product_code (product_code),
@@ -445,7 +443,6 @@ CREATE TABLE current_stock (
     store_quantity  FLOAT         NOT NULL DEFAULT 0,
     last_updated    TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     PRIMARY KEY (product_code, branch_id),
-    FOREIGN KEY (product_code) REFERENCES products(product_code),
     FOREIGN KEY (branch_id)    REFERENCES branches(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -469,7 +466,6 @@ CREATE TABLE inventory_transactions (
     created_by       INT           NOT NULL,
     created_at       TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (branch_id)     REFERENCES branches(id),
-    FOREIGN KEY (product_code)  REFERENCES products(product_code),
     FOREIGN KEY (created_by)    REFERENCES users(id),
     INDEX idx_branch_product   (branch_id, product_code),
     INDEX idx_transaction_type (transaction_type),
@@ -525,7 +521,6 @@ CREATE TABLE stock_movement_history (
     moved_by        INT           NOT NULL,
     move_status     INT           DEFAULT 0,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (product_code) REFERENCES products(product_code),
     FOREIGN KEY (branch_id)    REFERENCES branches(id),
     FOREIGN KEY (moved_by)     REFERENCES users(id),
     INDEX idx_product_code (product_code)
@@ -543,7 +538,6 @@ CREATE TABLE damages (
     reason          TEXT,
     reported_by     INT           NOT NULL,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (product_code) REFERENCES products(product_code),
     FOREIGN KEY (branch_id)    REFERENCES branches(id),
     FOREIGN KEY (reported_by)  REFERENCES users(id),
     INDEX idx_product_code (product_code)
@@ -561,7 +555,6 @@ CREATE TABLE stock_receipts (
     cost_price      FLOAT,
     received_by     INT           NOT NULL,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (product_code)    REFERENCES products(product_code),
     FOREIGN KEY (branch_id)       REFERENCES branches(id),
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     FOREIGN KEY (received_by)     REFERENCES users(id),
@@ -631,7 +624,6 @@ CREATE TABLE supplier_returns (
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (supplier_id)  REFERENCES suppliers(id),
     FOREIGN KEY (branch_id)    REFERENCES branches(id),
-    FOREIGN KEY (product_code) REFERENCES products(product_code),
     FOREIGN KEY (returned_by)  REFERENCES users(id),
     INDEX idx_supplier_id  (supplier_id),
     INDEX idx_product_code (product_code)
@@ -785,7 +777,6 @@ CREATE TABLE sale_items (
     on_wholesale_retail INT           DEFAULT 0,
     created_at          DATE          DEFAULT (CURRENT_DATE),
     FOREIGN KEY (sale_id)       REFERENCES sales(id) ON DELETE CASCADE,
-    FOREIGN KEY (product_code)  REFERENCES products(product_code),
     UNIQUE KEY uq_sale_line (sale_id, line_no),
     INDEX idx_sale_id      (sale_id),
     INDEX idx_product_code (product_code)
@@ -866,7 +857,6 @@ CREATE TABLE stock_reservations (
     released_at     TIMESTAMP     NULL,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (branch_id)     REFERENCES branches(id),
-    FOREIGN KEY (product_code)  REFERENCES products(product_code),
     FOREIGN KEY (cart_id)       REFERENCES temporary_carts(id) ON DELETE SET NULL,
     FOREIGN KEY (cart_line_id)  REFERENCES cart_lines(id) ON DELETE SET NULL,
     FOREIGN KEY (sale_id)       REFERENCES sales(id) ON DELETE SET NULL,
@@ -1035,7 +1025,6 @@ CREATE TABLE lpo_txn (
     markup_amount   FLOAT,
     markup_percent  FLOAT,
     FOREIGN KEY (lpo_no)       REFERENCES lpo_mst(lpo_no),
-    FOREIGN KEY (product_code) REFERENCES products(product_code),
     INDEX idx_lpo_no       (lpo_no),
     INDEX idx_product_code (product_code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -1109,7 +1098,6 @@ CREATE TABLE returns (
     created_at    DATE          DEFAULT (CURRENT_DATE),
     FOREIGN KEY (sale_id)      REFERENCES sales(id),
     FOREIGN KEY (branch_id)    REFERENCES branches(id),
-    FOREIGN KEY (product_code) REFERENCES products(product_code),
     FOREIGN KEY (returned_by)  REFERENCES users(id),
     INDEX idx_sale_id      (sale_id),
     INDEX idx_product_code (product_code),
@@ -1443,7 +1431,6 @@ CREATE TABLE stock_take_lines (
     counted_quantity FLOAT        NOT NULL DEFAULT 0,
     variance        FLOAT         GENERATED ALWAYS AS (counted_quantity - system_quantity) STORED,
     FOREIGN KEY (session_id) REFERENCES stock_take_sessions(id) ON DELETE CASCADE,
-    FOREIGN KEY (product_code) REFERENCES products(product_code),
     INDEX idx_session (session_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -2231,29 +2218,6 @@ JOIN users u ON sr.returned_by = u.id;
 DROP VIEW IF EXISTS v_customer_returns_detail;
 CREATE VIEW v_customer_returns_detail AS
 SELECT
-    cr.return_date AS return_date,
-    cr.organization_id,
-    cr.branch_id,
-    cr.customer_num,
-    COALESCE(c.customer_name, s.customer_name_override, 'Walk-in') AS customer_name,
-    crl.product_code COLLATE utf8mb4_0900_ai_ci AS product_code,
-    COALESCE(crl.product_name COLLATE utf8mb4_0900_ai_ci, p.product_name) AS product_name,
-    crl.return_qty AS quantity,
-    CAST(cr.stock_location AS CHAR(10) CHARACTER SET utf8mb4) COLLATE utf8mb4_0900_ai_ci AS stock_location,
-    cr.reason COLLATE utf8mb4_0900_ai_ci AS reason,
-    u.username AS returned_by
-FROM customer_return_lines crl
-JOIN customer_returns cr ON crl.customer_return_id = cr.id
-JOIN users u ON cr.returned_by = u.id
-LEFT JOIN customers c ON cr.customer_num = c.customer_num AND cr.organization_id = c.organization_id
-LEFT JOIN products p ON crl.product_code COLLATE utf8mb4_0900_ai_ci = p.product_code
-    AND p.organization_id = cr.organization_id
-LEFT JOIN sales s ON cr.sale_id = s.id
-WHERE cr.status = 'approved'
-
-UNION ALL
-
-SELECT
     COALESCE(DATE(r.created_at), CURRENT_DATE) AS return_date,
     s.organization_id,
     r.branch_id,
@@ -2269,10 +2233,7 @@ FROM returns r
 JOIN users u ON r.returned_by = u.id
 JOIN sales s ON r.sale_id = s.id
 JOIN products p ON r.product_code = p.product_code AND p.organization_id = s.organization_id
-LEFT JOIN customers c ON s.customer_num = c.customer_num AND s.organization_id = c.organization_id
-WHERE NOT EXISTS (
-    SELECT 1 FROM customer_return_lines crl WHERE crl.legacy_return_id = r.id
-);
+LEFT JOIN customers c ON s.customer_num = c.customer_num AND s.organization_id = c.organization_id;
 
 DROP VIEW IF EXISTS v_stock_receipts_detail;
 CREATE VIEW v_stock_receipts_detail AS
@@ -2753,9 +2714,6 @@ INSERT INTO payment_methods (method_name, method_code, requires_reference) VALUE
 ('Credit',      'CREDIT', FALSE),
 ('Airtel Money','AIRTEL', TRUE),
 ('Cheque',      'CHEQUE', TRUE);
-
-INSERT INTO vats (vat_code, vat_name, vat_percentage) VALUES
-('V','Standard Rated',16.00),('Z','Zero Rated',0.00),('E','VAT Exempt',0.00);
 
 INSERT INTO roles (role_name, scope) VALUES
 ('Organisation Admin','org'),('Branch Manager','branch'),('Cashier','branch'),

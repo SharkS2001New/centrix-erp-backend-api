@@ -31,7 +31,9 @@ return new class extends Migration
                 $table->timestamps();
 
                 $table->foreign('organization_id')->references('id')->on('organizations');
-                $table->foreign('customer_num')->references('customer_num')->on('customers');
+                $table->foreign(['organization_id', 'customer_num'])
+                    ->references(['organization_id', 'customer_num'])
+                    ->on('customers');
                 $table->foreign('created_by')->references('id')->on('users');
                 $table->unique(['organization_id', 'card_number'], 'uq_org_loyalty_card');
                 $table->index(['organization_id', 'phone_number'], 'idx_loyalty_phone');

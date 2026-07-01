@@ -11,7 +11,7 @@ return new class extends Migration
         Schema::create('platform_invoices', function (Blueprint $table) {
             $table->id();
             $table->string('invoice_number', 40)->unique();
-            $table->unsignedInteger('organization_id')->nullable();
+            $table->integer('organization_id')->nullable();
             $table->foreign('organization_id')->references('id')->on('organizations')->nullOnDelete();
             $table->string('status', 20)->default('draft');
             $table->string('template_id', 40)->default('modern');

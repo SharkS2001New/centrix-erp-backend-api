@@ -37,7 +37,9 @@ return new class extends Migration
             $table->foreign('organization_id')->references('id')->on('organizations');
             $table->foreign('branch_id')->references('id')->on('branches');
             $table->foreign('sale_id')->references('id')->on('sales');
-            $table->foreign('customer_num')->references('customer_num')->on('customers');
+            $table->foreign(['organization_id', 'customer_num'])
+                ->references(['organization_id', 'customer_num'])
+                ->on('customers');
             $table->foreign('returned_by')->references('id')->on('users');
             $table->foreign('approved_by')->references('id')->on('users');
             $table->foreign('rejected_by')->references('id')->on('users');

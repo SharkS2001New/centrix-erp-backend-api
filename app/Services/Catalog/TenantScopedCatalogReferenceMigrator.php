@@ -254,11 +254,25 @@ class TenantScopedCatalogReferenceMigrator
     {
         $fallbackOrgId = DB::table('organizations')->orderBy('id')->value('id');
         if (! $fallbackOrgId) {
+            DB::table($table)->whereNull('organization_id')->delete();
+
             return;
         }
 
         DB::table($table)->whereNull('organization_id')->update([
             'organization_id' => $fallbackOrgId,
         ]);
+    }
+
+    /**
+     * Ensure tenant-scoped catalog rows have an organization before NOT NULL constraints.
+     *
+     * @param  list<string>  $tables
+     */
+    public function finalizeOrganizationIds(array $tables): void
+    {
+        foreach ($tables as $table) {
+            $this->assignFallbackOrganization($table);
+        }
     }
 }

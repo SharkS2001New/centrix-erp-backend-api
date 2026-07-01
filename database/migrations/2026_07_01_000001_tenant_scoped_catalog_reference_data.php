@@ -25,6 +25,7 @@ return new class extends Migration
         }
 
         app(TenantScopedCatalogReferenceMigrator::class)->run();
+        app(TenantScopedCatalogReferenceMigrator::class)->finalizeOrganizationIds($this->tables);
 
         foreach ($this->tables as $table) {
             if (! Schema::hasTable($table) || ! Schema::hasColumn($table, 'organization_id')) {
