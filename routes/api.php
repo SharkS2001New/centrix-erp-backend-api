@@ -74,6 +74,7 @@ use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
 use App\Http\Controllers\Api\V1\SystemIssueReportController;
+use App\Http\Controllers\Api\V1\PlatformInvoiceController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
 use App\Http\Controllers\Api\V1\PodRecordController;
 use App\Http\Controllers\Api\V1\PositionController;
@@ -258,6 +259,19 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])
             ->middleware(['erp.super_admin']);
+
+        Route::prefix('admin/platform-invoices')->middleware(['erp.super_admin'])->group(function () {
+            Route::get('billing-context', [PlatformInvoiceController::class, 'billingContext']);
+            Route::get('design-templates', [PlatformInvoiceController::class, 'designTemplates']);
+            Route::get('saved-templates', [PlatformInvoiceController::class, 'listSavedTemplates']);
+            Route::post('saved-templates', [PlatformInvoiceController::class, 'storeSavedTemplate']);
+            Route::delete('saved-templates/{template}', [PlatformInvoiceController::class, 'destroySavedTemplate']);
+            Route::get('/', [PlatformInvoiceController::class, 'index']);
+            Route::post('/', [PlatformInvoiceController::class, 'store']);
+            Route::get('{invoice}', [PlatformInvoiceController::class, 'show']);
+            Route::patch('{invoice}', [PlatformInvoiceController::class, 'update']);
+            Route::delete('{invoice}', [PlatformInvoiceController::class, 'destroy']);
+        });
 
         Route::get('admin/system-issue-reports/summary', [PlatformSystemIssueReportController::class, 'summary'])
             ->middleware(['erp.super_admin']);
