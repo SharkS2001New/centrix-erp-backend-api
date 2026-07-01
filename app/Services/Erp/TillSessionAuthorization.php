@@ -46,6 +46,15 @@ class TillSessionAuthorization
             return true;
         }
 
+        return self::canManageSessions($user);
+    }
+
+    public static function canManageSessions(User $user): bool
+    {
+        if ($user->is_admin) {
+            return true;
+        }
+
         return self::hasPermission($user, 'sales.manage');
     }
 

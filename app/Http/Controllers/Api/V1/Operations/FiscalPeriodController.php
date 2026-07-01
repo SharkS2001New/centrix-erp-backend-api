@@ -25,6 +25,10 @@ class FiscalPeriodController extends Controller
 
     public function store(Request $request)
     {
+        if (app()->environment('production')) {
+            abort(403, 'Fiscal period seeding is not available in production. Contact support if periods are missing.');
+        }
+
         $data = $request->validate([
             'year' => 'required|integer|min:2000|max:2100',
         ]);

@@ -432,9 +432,10 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware('erp.module:sales.pos')->group(function () {
             Route::apiResource('tills', TillController::class)
-                ->middleware('erp.permission:pos.till');
+                ->middleware('erp.permission:pos.till|pos.checkout.create|pos.terminal.view');
             Route::apiResource('till-float-sessions', TillFloatSessionController::class)
-                ->middleware('erp.permission:pos.till');
+                ->middlewareFor(['index', 'show'], ['erp.permission:pos.till|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['update', 'destroy'], ['erp.permission:pos.till|sales.manage']);
         });
 
         Route::middleware(['erp.module:inventory'])->group(function () {

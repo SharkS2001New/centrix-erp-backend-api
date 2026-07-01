@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Services\Background\BackgroundTaskService;
+use App\Services\Background\ReportRowCache;
 use Illuminate\Http\Request;
 
 class BackgroundTaskController extends Controller

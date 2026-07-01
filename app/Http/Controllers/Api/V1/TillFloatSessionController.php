@@ -16,6 +16,47 @@ class TillFloatSessionController extends BaseResourceController
         return TillFloatSession::class;
     }
 
+    protected function scopesByBranch(): bool
+    {
+        return true;
+    }
+
+    public function index(Request $request)
+    {
+        $query = $this->baseQuery($request);
+        $user = $request->user();
+
+        if ($user && ! $user->is_admin && ! TillSessionAuthorization::canManageSessions($user)) {
+            $query->where('cashier_id', $user->id);
+        }
+
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if (in_array($col, $this->filterableColumns(), true)) {
+                $query->where($col, $val);
+            }
+        }
+
+        if ($q = $request->input('q')) {
+            $searchCol = $this->routeKeyColumn() !== 'id'
+                ? $this->routeKeyColumn()
+                : ($this->fillableFields()[0] ?? 'id');
+            $query->where($searchCol, 'like', "%{$q}%");
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+        $this->applyListOrdering($request, $query, 'id', 'desc');
+
+        return response()->json($query->paginate($perPage));
+    }
+
+    public function show(Request $request, string $id)
+    {
+        $session = $this->findScopedModel($request, $id);
+        TillSessionAuthorization::assertCanView($request->user(), $session);
+
+        return response()->json($session);
+    }
+
     /** @param  mixed  $breakdown */
     protected function normalizeFloatEntries($breakdown): array
     {

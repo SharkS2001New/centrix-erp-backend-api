@@ -67,6 +67,10 @@ class AccountingSettingsController extends Controller
 
     public function seedChart(Request $request)
     {
+        if (app()->environment('production')) {
+            abort(403, 'Chart seeding is not available in production.');
+        }
+
         $org = Organization::findOrFail($request->user()->organization_id);
         $accounts = app(StandardChartOfAccounts::class)->seedForOrganization($org);
 
