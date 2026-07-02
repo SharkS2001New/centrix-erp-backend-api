@@ -47,6 +47,12 @@ class LoadingListBuilder
         return $this->aggregateLinesFromSaleIds($this->eligibleSaleIdsForTrip($trip));
     }
 
+    /** @return array<int, array<string, mixed>> */
+    public function linesForTrip(DispatchTrip $trip): array
+    {
+        return $this->aggregateLines($trip);
+    }
+
     /** @param  array<int, int|string>  $saleIds
      * @return array<int, array<string, mixed>>
      */
