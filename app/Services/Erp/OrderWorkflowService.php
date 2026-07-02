@@ -426,6 +426,24 @@ class OrderWorkflowService
         return $status === $target;
     }
 
+    /**
+     * Whether an order at this status should hold stock in reservation (at or past reserve_stock_on).
+     */
+    public function shouldHaveStockReserved(string $status, ?string $channel = null): bool
+    {
+        if (in_array($status, ['cancelled', 'expired', 'held', 'draft'], true)) {
+            return false;
+        }
+
+        $channel = $this->normalizeSalesChannel($channel ?? 'backend');
+        $target = (string) (
+            $this->forChannel($channel)['reserve_stock_on']
+            ?? $this->channelStatusFromConfig($this->config(), 'reserve_stock_on', $channel, 'unpaid')
+        );
+
+        return $this->isAtOrPastStatus($status, $target, $channel);
+    }
+
     /** Whether $current has reached or passed $target in the channel workflow pipeline. */
     public function isAtOrPastStatus(string $current, string $target, string $channel): bool
     {
@@ -438,7 +456,10 @@ class OrderWorkflowService
         }
 
         $workflow = $this->forChannel($channel);
-        $enabled = $this->enabledStatuses($workflow);
+        $enabled = array_column($workflow['pipeline'] ?? [], 'key');
+        if ($enabled === []) {
+            $enabled = $this->enabledStatuses($this->config());
+        }
         $currentIdx = array_search($current, $enabled, true);
         $targetIdx = array_search($target, $enabled, true);
 

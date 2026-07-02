@@ -5,6 +5,7 @@ namespace App\Services\Customers;
 use App\Models\Customer;
 use App\Models\User;
 use App\Services\Auth\UserMobileOrderScopeService;
+use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -13,6 +14,7 @@ class MobileCustomerService
     public function __construct(
         protected CustomerUniquenessValidator $uniqueness,
         protected UserMobileOrderScopeService $mobileScope,
+        protected CustomerRoutePolicy $customerRoutePolicy,
     ) {}
 
     public function list(User $user, array $filters): array
@@ -78,6 +80,8 @@ class MobileCustomerService
     {
         $payload = $this->normalizePayload($data);
         $this->mobileScope->assertCustomerPayload($user, $payload);
+        $gate = app(CapabilityGate::class)->forOrganization($user->organization);
+        $payload = $this->customerRoutePolicy->applyDistributionCustomerRules($payload, $gate);
         $this->uniqueness->assertUnique(
             (int) $user->organization_id,
             $payload['phone_number'] ?? null,
@@ -109,6 +113,8 @@ class MobileCustomerService
 
         $payload = $this->normalizePayload($data, partial: true);
         $this->mobileScope->assertCustomerPayload($user, $payload, $customer);
+        $gate = app(CapabilityGate::class)->forOrganization($user->organization);
+        $payload = $this->customerRoutePolicy->applyDistributionCustomerRules($payload, $gate, $customer);
         $this->uniqueness->assertUnique(
             (int) $user->organization_id,
             $payload['phone_number'] ?? $customer->phone_number,

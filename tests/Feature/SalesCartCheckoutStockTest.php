@@ -245,6 +245,53 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
     }
 
+    public function test_backend_save_at_unpaid_reserves_stock_when_reserve_point_is_booked(): void
+    {
+        $org = $this->user->organization;
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'order_workflow' => array_merge(config('erp.default_order_workflow', []), [
+                'steps' => [
+                    ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
+                    ['status' => 'pending', 'label' => 'Pending', 'enabled' => true],
+                    ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+                    ['status' => 'processed', 'label' => 'Processed', 'enabled' => true],
+                ],
+                'save_status' => ['backend' => 'unpaid'],
+                'reserve_stock_on' => ['backend' => 'booked'],
+                'deduct_stock_on' => ['backend' => 'processed'],
+            ]),
+            'stock_deduct_on' => ['backend' => 'trip_load'],
+        ]);
+        $org->forceFill(['module_settings' => $settings])->save();
+
+        $before = $this->availableStore();
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'backend',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 4,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'save_only' => true,
+            'pay_now' => 0,
+            'payment_method_code' => 'CREDIT',
+        ])->assertCreated()->json();
+
+        $this->assertSame('unpaid', $sale['status'] ?? null);
+        $this->assertDatabaseHas('stock_reservations', [
+            'sale_id' => $sale['id'],
+            'product_code' => $this->productCode,
+            'released_at' => null,
+        ]);
+        $this->assertEquals($before - 4, $this->availableStore());
+    }
+
     protected function onHandShop(): float
     {
         return (float) CurrentStock::where('product_code', $this->productCode)
@@ -261,6 +308,21 @@ class SalesCartCheckoutStockTest extends TestCase
         $reserved = (float) StockReservation::where('product_code', $this->productCode)
             ->where('branch_id', $this->user->branch_id)
             ->where('stock_location', 'shop')
+            ->whereNull('released_at')
+            ->sum('quantity');
+
+        return $onHand - $reserved;
+    }
+
+    protected function availableStore(): float
+    {
+        $row = CurrentStock::where('product_code', $this->productCode)
+            ->where('branch_id', $this->user->branch_id)
+            ->first();
+        $onHand = (float) ($row->store_quantity ?? 0);
+        $reserved = (float) StockReservation::where('product_code', $this->productCode)
+            ->where('branch_id', $this->user->branch_id)
+            ->where('stock_location', 'store')
             ->whereNull('released_at')
             ->sum('quantity');
 

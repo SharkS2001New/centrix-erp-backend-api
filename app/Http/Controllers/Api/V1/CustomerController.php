@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Customer;
 use App\Models\Sale;
 use App\Services\Customers\CustomerNumberAllocator;
+use App\Services\Customers\CustomerRoutePolicy;
 use App\Services\Customers\CustomerUniquenessValidator;
+use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -15,6 +17,8 @@ class CustomerController extends BaseResourceController
 {
     public function __construct(
         protected CustomerUniquenessValidator $customerUniqueness,
+        protected CustomerRoutePolicy $customerRoutePolicy,
+        protected ErpContext $erp,
     ) {}
 
     protected function modelClass(): string
@@ -114,6 +118,7 @@ class CustomerController extends BaseResourceController
 
     public function store(Request $request)
     {
+        $user = $request->user();
         $fields = array_values(array_filter(
             $this->fillableFields(),
             fn (string $field) => $field !== 'customer_num',
@@ -121,8 +126,8 @@ class CustomerController extends BaseResourceController
         $data = $this->normalizeCustomerPayload($request->validate(
             $this->customerRules($fields),
         ));
-
-        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+        $data = $this->customerRoutePolicy->applyDistributionCustomerRules($data, $gate);
         $organizationId = (int) ($this->access()->organizationId($user, $request) ?? $data['organization_id'] ?? 0);
         $this->customerUniqueness->assertUnique(
             $organizationId,
@@ -150,6 +155,8 @@ class CustomerController extends BaseResourceController
         $data = $this->normalizeCustomerPayload($request->validate(
             $this->customerRules($this->fillableFields(), partial: true),
         ));
+        $gate = $this->erp->gateForUser($request->user());
+        $data = $this->customerRoutePolicy->applyDistributionCustomerRules($data, $gate, $customer);
 
         $this->customerUniqueness->assertUnique(
             (int) $customer->organization_id,

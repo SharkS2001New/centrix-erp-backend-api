@@ -234,7 +234,8 @@ class DatabaseBackupService
                         $backup['filename'],
                     );
                 } catch (\Throwable $e) {
-                    $googleDriveError = $e->getMessage();
+                    $googleDriveError = app(GoogleDriveBackupUploader::class)
+                        ->humanizeDriveErrorForUser($e->getMessage());
                     Log::warning('Google Drive backup upload failed', [
                         'filename' => $backup['filename'],
                         'error' => $googleDriveError,

@@ -459,7 +459,7 @@ class CapabilityGate
             return false;
         }
 
-        return $workflow->shouldReserveStockOn($orderStatus, $channel);
+        return $workflow->shouldHaveStockReserved($orderStatus, $channel);
     }
 
     /** @return array<string, mixed> */
@@ -480,7 +480,7 @@ class CapabilityGate
             $this->organization?->module_settings ?? [],
         );
         if ($this->organization) {
-            $sales = is_array($moduleSettings['sales'] ?? null) ? $moduleSettings['sales'] : [];
+            $sales = $this->moduleSettings('sales');
             $sales['order_workflow'] = OrderWorkflowService::forGate($this)->config();
             $moduleSettings['sales'] = $sales;
 

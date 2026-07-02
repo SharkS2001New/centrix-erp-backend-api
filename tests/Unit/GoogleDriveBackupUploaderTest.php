@@ -29,6 +29,8 @@ class GoogleDriveBackupUploaderTest extends TestCase
             $this->markTestSkipped('google/apiclient is not installed.');
         }
 
+        config(['backup.google_drive.verify_folder_access' => false]);
+
         $this->assertTrue($uploader->isConfigured());
         $this->assertTrue($uploader->isEnabled());
         $diagnostics = $uploader->diagnostics();
@@ -48,6 +50,7 @@ class GoogleDriveBackupUploaderTest extends TestCase
         ]);
 
         $uploader = app(GoogleDriveBackupUploader::class);
+        config(['backup.google_drive.verify_folder_access' => false]);
         $diagnostics = $uploader->diagnostics();
 
         $this->assertFalse($diagnostics['upload_ready']);
@@ -65,5 +68,15 @@ class GoogleDriveBackupUploaderTest extends TestCase
         $uploader = app(GoogleDriveBackupUploader::class);
 
         $this->assertFalse($uploader->isConfigured());
+    }
+
+    public function test_humanize_drive_error_for_missing_folder(): void
+    {
+        config(['backup.google_drive.verify_folder_access' => false]);
+        $uploader = app(GoogleDriveBackupUploader::class);
+        $message = $uploader->humanizeDriveErrorForUser('File not found: abc123.');
+
+        $this->assertStringContainsString('Share', $message);
+        $this->assertStringContainsString('Editor', $message);
     }
 }

@@ -23,7 +23,15 @@ class GoogleDriveBackupUploader
 
         $folderId = trim((string) config('backup.google_drive.folder_id', ''));
 
-        return $folderId !== '' && $this->resolveAuthConfig() !== null;
+        if ($folderId === '') {
+            return false;
+        }
+
+        if ($this->usesOAuth()) {
+            return $this->oauthCredentialsComplete();
+        }
+
+        return $this->resolveAuthConfig() !== null;
     }
 
     /**
@@ -32,8 +40,12 @@ class GoogleDriveBackupUploader
      *     configured: bool,
      *     upload_ready: bool,
      *     service_account_email: string|null,
+     *     auth_mode: string,
      *     folder_id: string|null,
+     *     folder_accessible: bool|null,
+     *     folder_on_shared_drive: bool|null,
      *     issues: list<string>,
+     *     setup_notes: list<string>,
      * }
      */
     public function diagnostics(): array
@@ -41,7 +53,8 @@ class GoogleDriveBackupUploader
         $issues = [];
         $enabledFlag = (bool) config('backup.google_drive.enabled', false);
         $folderId = trim((string) config('backup.google_drive.folder_id', ''));
-        $authConfig = $this->resolveAuthConfig();
+        $authMode = $this->usesOAuth() ? 'oauth' : 'service_account';
+        $authConfig = $authMode === 'service_account' ? $this->resolveAuthConfig() : null;
         $serviceAccountEmail = $this->serviceAccountEmailFromConfig($authConfig);
 
         if (! class_exists(GoogleClient::class)) {
@@ -56,24 +69,46 @@ class GoogleDriveBackupUploader
             $issues[] = 'Set BACKUP_GOOGLE_DRIVE_FOLDER_ID to the target Drive folder ID.';
         }
 
-        if ($authConfig === null) {
+        if ($authMode === 'oauth') {
+            if (! $this->oauthCredentialsComplete()) {
+                $issues[] = 'Set BACKUP_GOOGLE_DRIVE_OAUTH_CLIENT_ID, BACKUP_GOOGLE_DRIVE_OAUTH_CLIENT_SECRET, and BACKUP_GOOGLE_DRIVE_OAUTH_REFRESH_TOKEN (run php artisan erp:authorize-google-drive-backup).';
+            }
+        } elseif ($authConfig === null) {
             $issues[] = 'Set BACKUP_GOOGLE_DRIVE_CREDENTIALS_JSON or BACKUP_GOOGLE_DRIVE_CREDENTIALS (service account JSON).';
         }
 
-        $configured = $folderId !== '' && $authConfig !== null && class_exists(GoogleClient::class);
-        $uploadReady = $enabledFlag && $configured;
+        $configured = $folderId !== ''
+            && class_exists(GoogleClient::class)
+            && ($authMode === 'oauth' ? $this->oauthCredentialsComplete() : $authConfig !== null);
+        $folderAccess = $configured ? $this->folderAccessCheck() : null;
+
+        if ($folderAccess !== null && ! $folderAccess['accessible']) {
+            $issues[] = $folderAccess['issue'];
+        }
+
+        $uploadReady = $enabledFlag && $configured && ($folderAccess === null || $folderAccess['accessible']);
 
         $setupNotes = [];
-        if ($serviceAccountEmail && $folderId !== '' && $uploadReady) {
-            $setupNotes[] = 'The Drive folder must be shared with '.$serviceAccountEmail.' as Editor.';
+        if ($authMode === 'service_account' && $serviceAccountEmail && $folderId !== '' && $configured) {
+            $setupNotes[] = 'Share the target Drive folder with '.$serviceAccountEmail.' as Editor (or add that account to a Shared drive).';
+        }
+        if ($authMode === 'oauth' && $configured) {
+            $setupNotes[] = 'OAuth uploads use your Google account storage (works with personal Gmail folders).';
+        }
+        if ($folderAccess !== null && $folderAccess['accessible'] && $folderAccess['shared_drive'] === false && $authMode === 'service_account') {
+            $issues[] = 'Personal Gmail folders cannot receive service-account uploads (Google storage quota policy). Set BACKUP_GOOGLE_DRIVE_AUTH=oauth and run php artisan erp:authorize-google-drive-backup, or use a Google Workspace Shared drive.';
+            $uploadReady = false;
         }
 
         return [
             'enabled' => $enabledFlag && $configured,
             'configured' => $configured,
             'upload_ready' => $uploadReady,
+            'auth_mode' => $authMode,
             'service_account_email' => $serviceAccountEmail,
             'folder_id' => $folderId !== '' ? $folderId : null,
+            'folder_accessible' => $folderAccess['accessible'] ?? null,
+            'folder_on_shared_drive' => $folderAccess['shared_drive'] ?? null,
             'issues' => array_values(array_unique($issues)),
             'setup_notes' => $setupNotes,
         ];
@@ -90,6 +125,15 @@ class GoogleDriveBackupUploader
 
         $service = $this->driveService();
         $folderId = (string) config('backup.google_drive.folder_id');
+        $folderAccess = $this->folderAccessCheck($service);
+        if ($folderAccess !== null && ! $folderAccess['accessible']) {
+            throw new \RuntimeException($folderAccess['issue']);
+        }
+        if (! $this->usesOAuth() && $folderAccess !== null && $folderAccess['accessible'] && $folderAccess['shared_drive'] === false) {
+            throw new \RuntimeException(
+                'Personal Gmail folders cannot receive service-account uploads. Set BACKUP_GOOGLE_DRIVE_AUTH=oauth and run php artisan erp:authorize-google-drive-backup.',
+            );
+        }
         $mimeType = str_ends_with($filename, '.gz') ? 'application/gzip' : 'application/sql';
         $fileSize = (int) filesize($absolutePath);
 
@@ -175,18 +219,130 @@ class GoogleDriveBackupUploader
         }
     }
 
+    public function humanizeDriveErrorForUser(string $raw): string
+    {
+        return $this->humanizeDriveError($raw, $this->serviceAccountEmailFromConfig($this->resolveAuthConfig()));
+    }
+
     protected function driveService(): Drive
     {
+        $client = new GoogleClient;
+
+        if ($this->usesOAuth()) {
+            if (! $this->oauthCredentialsComplete()) {
+                throw new \RuntimeException('Google Drive OAuth credentials are not configured.');
+            }
+
+            $client->setClientId((string) config('backup.google_drive.oauth_client_id'));
+            $client->setClientSecret((string) config('backup.google_drive.oauth_client_secret'));
+            $client->setAccessType('offline');
+            $client->setScopes([Drive::DRIVE_FILE]);
+            $token = $client->fetchAccessTokenWithRefreshToken(
+                (string) config('backup.google_drive.oauth_refresh_token'),
+            );
+            if (isset($token['error'])) {
+                throw new \RuntimeException('Google Drive OAuth token refresh failed: '
+                    .($token['error_description'] ?? $token['error']));
+            }
+            $client->setAccessToken($token);
+
+            return new Drive($client);
+        }
+
         $authConfig = $this->resolveAuthConfig();
         if ($authConfig === null) {
             throw new \RuntimeException('Google Drive credentials are not configured.');
         }
 
-        $client = new GoogleClient;
         $client->setAuthConfig($authConfig);
-        $client->setScopes([Drive::DRIVE_FILE]);
+        // drive.file only sees files this app created; shared backup folders need full drive scope.
+        $client->setScopes([Drive::DRIVE]);
 
         return new Drive($client);
+    }
+
+    protected function usesOAuth(): bool
+    {
+        if (strtolower((string) config('backup.google_drive.auth_mode', 'service_account')) === 'oauth') {
+            return true;
+        }
+
+        return trim((string) config('backup.google_drive.oauth_refresh_token', '')) !== '';
+    }
+
+    protected function oauthCredentialsComplete(): bool
+    {
+        return trim((string) config('backup.google_drive.oauth_client_id', '')) !== ''
+            && trim((string) config('backup.google_drive.oauth_client_secret', '')) !== ''
+            && trim((string) config('backup.google_drive.oauth_refresh_token', '')) !== '';
+    }
+
+    /**
+     * @return array{accessible: bool, shared_drive: bool|null, issue: string}|null
+     */
+    protected function folderAccessCheck(?Drive $service = null): ?array
+    {
+        if (! config('backup.google_drive.verify_folder_access', true)) {
+            return null;
+        }
+
+        $folderId = trim((string) config('backup.google_drive.folder_id', ''));
+        if ($folderId === '' || $this->resolveAuthConfig() === null) {
+            return null;
+        }
+
+        $email = $this->usesOAuth()
+            ? null
+            : $this->serviceAccountEmailFromConfig($this->resolveAuthConfig());
+
+        try {
+            $service ??= $this->driveService();
+            $folder = $service->files->get($folderId, [
+                'supportsAllDrives' => true,
+                'fields' => 'id,name,driveId,capabilities',
+            ]);
+            $canAdd = $folder->getCapabilities()?->getCanAddChildren() ?? true;
+
+            if (! $canAdd) {
+                return [
+                    'accessible' => false,
+                    'shared_drive' => $folder->getDriveId() !== null,
+                    'issue' => 'The service account can see the folder but cannot add files. Grant Editor (or Shared drive Content manager) to '
+                        .($email ?? 'the backup service account').'.',
+                ];
+            }
+
+            return [
+                'accessible' => true,
+                'shared_drive' => $folder->getDriveId() !== null,
+                'issue' => '',
+            ];
+        } catch (\Throwable $e) {
+            $message = $this->humanizeDriveError($e->getMessage(), $email);
+
+            return [
+                'accessible' => false,
+                'shared_drive' => null,
+                'issue' => $message,
+            ];
+        }
+    }
+
+    protected function humanizeDriveError(string $raw, ?string $serviceAccountEmail = null): string
+    {
+        $account = $serviceAccountEmail ?? 'the backup service account';
+
+        if (str_contains($raw, 'storageQuotaExceeded') || str_contains($raw, 'do not have storage quota')) {
+            return 'Google Drive rejected the upload: service accounts have no storage of their own. Share folder '
+                .$account.' as Editor so files use your Drive quota, or use a Shared drive (Google Workspace).';
+        }
+
+        if (str_contains($raw, 'notFound') || str_contains($raw, 'File not found')) {
+            return 'The backup folder is not visible to '.$account.'. Open the folder in Drive → Share → add '
+                .$account.' as Editor, then retry.';
+        }
+
+        return trim($raw) !== '' ? $raw : 'Google Drive access check failed.';
     }
 
     /** @return array<string, mixed>|string|null */

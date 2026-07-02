@@ -13,7 +13,10 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Customers\CustomerNumberAllocator;
+use App\Services\Customers\CustomerRoutePolicy;
 use App\Services\Customers\CustomerUniquenessValidator;
+use App\Services\Erp\CapabilityGate;
+use App\Models\Organization;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -37,6 +40,7 @@ class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
         CustomerUniquenessValidator $customerUniqueness,
         UserAccessService $access,
         CustomerNumberAllocator $customerNumbers,
+        CustomerRoutePolicy $customerRoutePolicy,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
         if ($this->shouldSkipBackgroundTask($task)) {
@@ -74,6 +78,11 @@ class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
                 ->map(fn ($id) => (int) $id)
                 ->all();
 
+            $organization = Organization::findOrFail($organizationId);
+            $routeCustomersOnly = $customerRoutePolicy->routeCustomersOnly(
+                app(CapabilityGate::class)->forOrganization($organization),
+            );
+
             $created = 0;
             $skipped = 0;
             $failures = [];
@@ -98,6 +107,7 @@ class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
                         $validRouteSet,
                         $routesByName,
                         $access,
+                        $routeCustomersOnly,
                     );
                     if ($body['customer_name'] === '') {
                         throw new \InvalidArgumentException('Missing customer name.');
@@ -186,13 +196,17 @@ class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
         array $validRouteSet,
         array $routesByName,
         UserAccessService $access,
+        bool $routeCustomersOnly = false,
     ): array {
         $body = [
             'customer_name' => trim((string) ($row['customer_name'] ?? '')),
-            'customer_type' => strtolower(trim((string) ($row['customer_type'] ?? 'debtor'))) ?: 'debtor',
+            'customer_type' => strtolower(trim((string) ($row['customer_type'] ?? ($routeCustomersOnly ? 'route' : 'debtor'))))
+                ?: ($routeCustomersOnly ? 'route' : 'debtor'),
         ];
 
-        if (! in_array($body['customer_type'], ['debtor', 'route'], true)) {
+        if ($routeCustomersOnly) {
+            $body['customer_type'] = 'route';
+        } elseif (! in_array($body['customer_type'], ['debtor', 'route'], true)) {
             $body['customer_type'] = 'debtor';
         }
 
@@ -222,18 +236,26 @@ class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
         }
 
         if ($body['customer_type'] !== 'route') {
-            $body['route_id'] = null;
-        } elseif (empty($body['route_id'])) {
-            if ($routeName !== '') {
+            if ($routeCustomersOnly) {
+                $body['customer_type'] = 'route';
+            } else {
+                $body['route_id'] = null;
+            }
+        }
+        if ($body['customer_type'] === 'route') {
+            if (empty($body['route_id'])) {
+                if ($routeName !== '') {
+                    throw new \InvalidArgumentException(
+                        'Route "'.$routeName.'" was not found. Import routes before importing route customers.',
+                    );
+                }
+                throw new \InvalidArgumentException('Route is required for route customers (route_name or route_id).');
+            }
+            if (! isset($validRouteSet[(int) $body['route_id']])) {
                 throw new \InvalidArgumentException(
-                    'Route "'.$routeName.'" was not found. Import routes before importing route customers.',
+                    'Route ID '.(int) $body['route_id'].' does not exist. Create routes before importing route customers.',
                 );
             }
-            throw new \InvalidArgumentException('Route is required for route customers (route_name or route_id).');
-        } elseif (! isset($validRouteSet[(int) $body['route_id']])) {
-            throw new \InvalidArgumentException(
-                'Route ID '.(int) $body['route_id'].' does not exist. Create routes before importing route customers.',
-            );
         }
 
         $requestedBranchId = null;

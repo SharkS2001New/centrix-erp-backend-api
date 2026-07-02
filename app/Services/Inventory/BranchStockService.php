@@ -9,6 +9,7 @@ use App\Services\Auth\UserAccessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
 
 class BranchStockService
 {
@@ -58,13 +59,23 @@ class BranchStockService
 
         $shop = (float) ($row?->shop_quantity ?? 0);
         $store = (float) ($row?->store_quantity ?? 0);
+        $reservedShop = $this->activeReservedQty($code, $branchId, 'shop');
+        $reservedStore = $this->activeReservedQty($code, $branchId, 'store');
 
         $payload['stock_in_shop'] = $shop;
         $payload['stock_in_store'] = $store;
+        $payload['stock_reserved_shop'] = $reservedShop;
+        $payload['stock_reserved_store'] = $reservedStore;
+        $payload['stock_available_shop'] = max(0, $shop - $reservedShop);
+        $payload['stock_available_store'] = max(0, $store - $reservedStore);
         $payload['branch_stock'] = [
             'branch_id' => $branchId,
             'shop_quantity' => $shop,
             'store_quantity' => $store,
+            'shop_reserved' => $reservedShop,
+            'store_reserved' => $reservedStore,
+            'shop_available' => max(0, $shop - $reservedShop),
+            'store_available' => max(0, $store - $reservedStore),
         ];
 
         return $payload;
@@ -91,12 +102,23 @@ class BranchStockService
             $row = $rows->get($item['product_code'] ?? '');
             $shop = (float) ($row?->shop_quantity ?? 0);
             $store = (float) ($row?->store_quantity ?? 0);
+            $code = (string) ($item['product_code'] ?? '');
+            $reservedShop = $code !== '' ? $this->activeReservedQty($code, $branchId, 'shop') : 0.0;
+            $reservedStore = $code !== '' ? $this->activeReservedQty($code, $branchId, 'store') : 0.0;
             $item['stock_in_shop'] = $shop;
             $item['stock_in_store'] = $store;
+            $item['stock_reserved_shop'] = $reservedShop;
+            $item['stock_reserved_store'] = $reservedStore;
+            $item['stock_available_shop'] = max(0, $shop - $reservedShop);
+            $item['stock_available_store'] = max(0, $store - $reservedStore);
             $item['branch_stock'] = [
                 'branch_id' => $branchId,
                 'shop_quantity' => $shop,
                 'store_quantity' => $store,
+                'shop_reserved' => $reservedShop,
+                'store_reserved' => $reservedStore,
+                'shop_available' => max(0, $shop - $reservedShop),
+                'store_available' => max(0, $store - $reservedStore),
             ];
 
             return $item;
@@ -172,5 +194,19 @@ class BranchStockService
         }
 
         return false;
+    }
+
+    protected function activeReservedQty(string $productCode, int $branchId, string $location): float
+    {
+        return (float) DB::table('stock_reservations')
+            ->whereNull('released_at')
+            ->where(function ($query) {
+                $query->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            })
+            ->where('product_code', $productCode)
+            ->where('branch_id', $branchId)
+            ->where('stock_location', $location)
+            ->sum('quantity');
     }
 }

@@ -143,6 +143,38 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertFalse($service->canTransition('booked', 'cancelled', 'backend'));
     }
 
+    public function test_should_have_stock_reserved_when_at_or_past_reserve_status(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'order_workflow' => [
+                        'steps' => [
+                            ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
+                            ['status' => 'pending', 'label' => 'Pending', 'enabled' => true],
+                            ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+                            ['status' => 'processed', 'label' => 'Processed', 'enabled' => true],
+                        ],
+                        'save_status' => ['backend' => 'unpaid'],
+                        'reserve_stock_on' => ['backend' => 'booked'],
+                        'deduct_stock_on' => ['backend' => 'processed'],
+                    ],
+                    'stock_deduct_on' => ['backend' => 'trip_load'],
+                ],
+            ],
+            'enabled_modules' => ['distribution' => true, 'sales.backend' => true],
+        ]);
+
+        $gate = new \App\Services\Erp\CapabilityGate($org);
+        $service = OrderWorkflowService::forGate($gate);
+
+        $this->assertFalse($service->shouldReserveStockOn('unpaid', 'backend'));
+        $this->assertTrue($service->shouldHaveStockReserved('booked', 'backend'));
+        $this->assertTrue($service->shouldHaveStockReserved('unpaid', 'backend'));
+        $this->assertTrue($service->shouldHaveStockReserved('processed', 'backend'));
+        $this->assertTrue($gate->shouldReserveStockForOrder($service, 'unpaid', 'backend'));
+    }
+
     public function test_restorable_to_cart_statuses_follow_org_terminal_and_checkout_re_edit(): void
     {
         $org = new \App\Models\Organization([
