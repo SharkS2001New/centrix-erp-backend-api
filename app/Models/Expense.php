@@ -15,6 +15,7 @@ class Expense extends Model
         'branch_id',
         'expense_group_id',
         'float_session_id',
+        'dispatch_trip_id',
         'description',
         'expense_amount',
         'expense_date',
@@ -37,5 +38,15 @@ class Expense extends Model
     public function paymentMethod()
     {
         return $this->belongsTo(PaymentMethod::class, 'payment_method_id');
+    }
+
+    public function expenseGroup()
+    {
+        return $this->belongsTo(ExpenseGroup::class, 'expense_group_id');
+    }
+
+    public function dispatchTrip()
+    {
+        return $this->belongsTo(DispatchTrip::class, 'dispatch_trip_id');
     }
 }

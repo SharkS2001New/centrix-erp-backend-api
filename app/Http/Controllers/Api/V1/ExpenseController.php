@@ -93,6 +93,7 @@ class ExpenseController extends BaseResourceController
             'branch_id' => 'required|integer',
             'expense_group_id' => 'required|integer',
             'float_session_id' => 'nullable|integer',
+            'dispatch_trip_id' => 'nullable|integer|exists:dispatch_trips,id',
             'description' => 'nullable|string|max:200',
             'expense_amount' => 'required|numeric|min:0.01',
             'expense_date' => 'required|date',

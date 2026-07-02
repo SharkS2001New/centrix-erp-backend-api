@@ -109,4 +109,9 @@ class DispatchTrip extends Model
     {
         return $this->hasMany(PodRecord::class, 'trip_id');
     }
+
+    public function expenses()
+    {
+        return $this->hasMany(Expense::class, 'dispatch_trip_id');
+    }
 }

@@ -186,6 +186,7 @@ class DispatchTripController extends BaseResourceController
 
         return response()->json([
             'loading_list' => $payload,
+            'financial_summary' => $this->financials->summarizeForTrip($model),
         ]);
     }
 

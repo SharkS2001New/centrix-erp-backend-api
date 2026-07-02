@@ -3,6 +3,7 @@
 namespace App\Services\Fulfillment;
 
 use App\Models\DispatchTrip;
+use App\Models\Expense;
 use App\Models\Sale;
 use App\Services\Accounting\SaleCogsCalculator;
 use Illuminate\Support\Collection;
@@ -12,30 +13,37 @@ class TripFinancialSummaryService
 {
     public function __construct(protected SaleCogsCalculator $cogsCalculator) {}
 
-    /** @return array{order_count: int, total_amount: float, total_profit: float, profit_margin_percent: float|null} */
+    /** @return array<string, mixed> */
     public function emptySummary(): array
     {
         return [
             'order_count' => 0,
             'total_amount' => 0.0,
+            'net_revenue' => 0.0,
             'total_profit' => 0.0,
             'profit_margin_percent' => null,
+            'expenses' => [],
+            'total_expenses' => 0.0,
+            'net_profit' => 0.0,
+            'net_profit_margin_percent' => null,
         ];
     }
 
-    /** @return array{order_count: int, total_amount: float, total_profit: float, profit_margin_percent: float|null} */
+    /** @return array<string, mixed> */
     public function summarizeForTrip(DispatchTrip $trip): array
     {
         if (! $trip->relationLoaded('sales')) {
             $trip->load('sales');
         }
 
-        return $this->summarizeSales($trip->sales);
+        $summary = $this->summarizeSales($trip->sales);
+
+        return $this->mergeExpensesIntoSummary($summary, $this->expensesForTrip((int) $trip->id));
     }
 
     /**
      * @param  list<int>  $tripIds
-     * @return array<int, array{order_count: int, total_amount: float, total_profit: float, profit_margin_percent: float|null}>
+     * @return array<int, array<string, mixed>>
      */
     public function summarizeForTripIds(array $tripIds): array
     {
@@ -71,9 +79,21 @@ class TripFinancialSummaryService
             $salesByTrip[$tripId]->push($sale);
         }
 
+        $expensesByTrip = Expense::query()
+            ->with('expenseGroup')
+            ->whereIn('dispatch_trip_id', $tripIds)
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->get()
+            ->groupBy('dispatch_trip_id');
+
         $summaries = [];
         foreach ($tripIds as $tripId) {
-            $summaries[$tripId] = $this->summarizeSales($salesByTrip[$tripId] ?? collect());
+            $summary = $this->summarizeSales($salesByTrip[$tripId] ?? collect());
+            $summaries[$tripId] = $this->mergeExpensesIntoSummary(
+                $summary,
+                $expensesByTrip->get($tripId, collect()),
+            );
         }
 
         return $summaries;
@@ -81,7 +101,7 @@ class TripFinancialSummaryService
 
     /**
      * @param  Collection<int, Sale>  $sales
-     * @return array{order_count: int, total_amount: float, total_profit: float, profit_margin_percent: float|null}
+     * @return array<string, mixed>
      */
     protected function summarizeSales(Collection $sales): array
     {
@@ -102,6 +122,7 @@ class TripFinancialSummaryService
         }
 
         $totalAmount = round($totalAmount, 2);
+        $netRevenue = round($netRevenue, 2);
         $totalProfit = round($netRevenue - $totalCost, 2);
         $profitMarginPercent = $netRevenue > 0
             ? round(($totalProfit / $netRevenue) * 100, 1)
@@ -110,8 +131,67 @@ class TripFinancialSummaryService
         return [
             'order_count' => $sales->count(),
             'total_amount' => $totalAmount,
+            'net_revenue' => $netRevenue,
             'total_profit' => $totalProfit,
             'profit_margin_percent' => $profitMarginPercent,
+            'expenses' => [],
+            'total_expenses' => 0.0,
+            'net_profit' => $totalProfit,
+            'net_profit_margin_percent' => $profitMarginPercent,
         ];
+    }
+
+  /** @return Collection<int, Expense> */
+    protected function expensesForTrip(int $tripId): Collection
+    {
+        return Expense::query()
+            ->with('expenseGroup')
+            ->where('dispatch_trip_id', $tripId)
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->get();
+    }
+
+    /**
+     * @param  array<string, mixed>  $summary
+     * @param  Collection<int, Expense>  $expenses
+     * @return array<string, mixed>
+     */
+    protected function mergeExpensesIntoSummary(array $summary, Collection $expenses): array
+    {
+        $expenseRows = [];
+        $totalExpenses = 0.0;
+
+        foreach ($expenses as $expense) {
+            $amount = round((float) $expense->expense_amount, 2);
+            $totalExpenses += $amount;
+            $label = trim((string) ($expense->expenseGroup?->group_name ?? ''));
+            if ($label === '') {
+                $label = trim((string) ($expense->description ?? ''));
+            }
+            if ($label === '') {
+                $label = 'Expense';
+            }
+
+            $expenseRows[] = [
+                'id' => (int) $expense->id,
+                'label' => $label,
+                'amount' => $amount,
+            ];
+        }
+
+        $totalExpenses = round($totalExpenses, 2);
+        $netProfit = round((float) $summary['total_profit'] - $totalExpenses, 2);
+        $netRevenue = (float) ($summary['net_revenue'] ?? 0);
+        $netProfitMarginPercent = $netRevenue > 0
+            ? round(($netProfit / $netRevenue) * 100, 1)
+            : null;
+
+        $summary['expenses'] = $expenseRows;
+        $summary['total_expenses'] = $totalExpenses;
+        $summary['net_profit'] = $netProfit;
+        $summary['net_profit_margin_percent'] = $netProfitMarginPercent;
+
+        return $summary;
     }
 }

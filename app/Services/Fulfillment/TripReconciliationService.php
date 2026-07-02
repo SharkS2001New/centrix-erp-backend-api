@@ -9,7 +9,10 @@ class TripReconciliationService
 {
     private const DELIVERED_STATUSES = ['delivered', 'completed'];
 
-    public function __construct(protected DispatchTripService $trips) {}
+    public function __construct(
+        protected DispatchTripService $trips,
+        protected TripFinancialSummaryService $financials,
+    ) {}
 
     /** @return array<string, mixed> */
     public function build(DispatchTrip $trip, User $user): array
@@ -176,6 +179,7 @@ class TripReconciliationService
                 && $expectedCash >= 0,
             'can_complete' => $trip->status === 'in_transit' && $blockers === [],
             'blockers' => $blockers,
+            'financial_summary' => $this->financials->summarizeForTrip($trip),
         ];
     }
 
