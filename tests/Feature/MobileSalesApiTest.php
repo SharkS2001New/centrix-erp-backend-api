@@ -338,6 +338,79 @@ class MobileSalesApiTest extends TestCase
         $this->assertEquals(0, (float) ($sale['amount_paid'] ?? -1));
     }
 
+    public function test_mobile_checkout_payment_mode_requires_payment(): void
+    {
+        $user = $this->makeMobileUser();
+        $this->setMobileCheckoutMode($user, 'payment');
+        $product = \App\Models\Product::firstOrFail();
+        $customer = \App\Models\Customer::firstOrFail();
+        $token = $this->loginMobile($user);
+
+        $cart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+                'product_code' => $product->product_code,
+                'quantity' => 1,
+                'unit_price' => 100,
+                'on_wholesale_retail' => 0,
+            ])
+            ->assertCreated();
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+                'customer_num' => $customer->customer_num,
+                'payment_method_code' => 'CASH',
+            ])
+            ->assertUnprocessable()
+            ->assertJsonFragment([
+                'message' => 'Enter payment details to complete this order.',
+            ]);
+    }
+
+    public function test_mobile_checkout_ask_mode_honours_save_only_flag(): void
+    {
+        $user = $this->makeMobileUser();
+        $this->setMobileCheckoutMode($user, 'ask');
+        $product = \App\Models\Product::firstOrFail();
+        $customer = \App\Models\Customer::firstOrFail();
+        $token = $this->loginMobile($user);
+
+        $cart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+                'product_code' => $product->product_code,
+                'quantity' => 1,
+                'unit_price' => 100,
+                'on_wholesale_retail' => 0,
+            ])
+            ->assertCreated();
+
+        $sale = $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+                'customer_num' => $customer->customer_num,
+                'save_only' => true,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->assertEquals('unpaid', $sale['status'] ?? null);
+        $this->assertEquals(0, (float) ($sale['amount_paid'] ?? -1));
+    }
+
     public function test_mobile_paid_order_can_be_restored_to_cart_for_editing(): void
     {
         $user = $this->makeMobileUser();
@@ -686,6 +759,16 @@ class MobileSalesApiTest extends TestCase
                 'order_connectivity' => 'offline',
                 'is_offline_order' => true,
             ]);
+    }
+
+    protected function setMobileCheckoutMode(User $user, string $mode): void
+    {
+        $org = $user->organization()->firstOrFail();
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'mobile_checkout_mode' => $mode,
+        ]);
+        $org->update(['module_settings' => $settings]);
     }
 
     protected function makeMobileUser(array $overrides = []): User

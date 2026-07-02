@@ -381,6 +381,7 @@ return [
             'mobile_enable_checkout_location_verification' => false,
             'mobile_allow_offline_orders' => false,
             'mobile_checkout_location_radius_metres' => 5,
+            'mobile_checkout_mode' => 'save_only',
             'mobile_enable_field_attendance' => false,
             'require_pos_till_float' => false,
             'require_backoffice_till_float' => false,

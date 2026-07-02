@@ -36,6 +36,7 @@ use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
 use App\Services\Notifications\CustomerNotificationService;
 use App\Services\Sales\MobileCheckoutLocationService;
+use App\Services\Sales\MobileCheckoutSettings;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Support\CustomerCreditLimit;
@@ -197,10 +198,24 @@ class CheckoutController extends Controller
 
             $cashDue = max(0, $total - $voucherPayment - $pointsPayment);
             $isMobileChannel = (string) $cart->channel === 'mobile';
+            $mobileCheckout = app(MobileCheckoutSettings::class);
+            $mobileCheckout->applyCheckoutPolicy($salesSettings, $input, (string) $cart->channel);
+
             if (! $isCredit && $payNow <= 0 && $cashDue > 0 && empty($input['save_only'])) {
                 if ($isMobileChannel) {
-                    // Mobile field sales place orders only; payment is collected later in ERP.
-                    $input['save_only'] = true;
+                    if ($mobileCheckout->shouldDefaultMobileSaveOnly(
+                        $salesSettings,
+                        (string) $cart->channel,
+                        false,
+                    )) {
+                        $input['save_only'] = true;
+                    } elseif ($mobileCheckout->requiresPaymentAtCheckout($salesSettings, (string) $cart->channel)) {
+                        throw new InvalidArgumentException(
+                            'Enter payment details to complete this order.',
+                        );
+                    } else {
+                        $input['save_only'] = true;
+                    }
                 } else {
                     $payNow = $cashDue;
                 }
