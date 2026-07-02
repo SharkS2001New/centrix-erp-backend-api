@@ -12,8 +12,6 @@ use App\Http\Requests\Sales\CheckoutRequest;
 use App\Models\CartLine;
 use App\Models\Customer;
 use App\Services\Sales\SaleRouteResolver;
-use App\Models\Sale;
-use App\Services\Sales\SaleRouteResolver;
 use App\Models\KraResponse;
 use App\Models\PaymentMethod;
 use App\Models\Product;
@@ -61,7 +59,13 @@ class CheckoutController extends Controller
 
         app(AutoTripAssignmentService::class)->tryAssignSale($sale, $request->user());
 
-        return response()->json($sale->fresh(['items', 'payments.paymentMethod']), 201);
+        $sale = $sale->fresh(['items', 'payments.paymentMethod']);
+        $labels = config('erp.order_status_labels', []);
+
+        return response()->json(array_merge($sale->toArray(), [
+            'status_name' => $labels[$sale->status]
+                ?? ucfirst(str_replace('_', ' ', (string) $sale->status)),
+        ]), 201);
     }
 
     public function quoteFromCart(\Illuminate\Http\Request $request, int $cartId)

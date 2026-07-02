@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Models\DispatchTrip;
 use App\Services\Fulfillment\DispatchTripService;
+use App\Services\Fulfillment\TripFinancialSummaryService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 
@@ -12,7 +13,10 @@ class DispatchTripController extends BaseResourceController
 {
     use HandlesBranchScope;
 
-    public function __construct(protected DispatchTripService $trips) {}
+    public function __construct(
+        protected DispatchTripService $trips,
+        protected TripFinancialSummaryService $financials,
+    ) {}
 
     protected function modelClass(): string
     {
@@ -41,7 +45,12 @@ class DispatchTripController extends BaseResourceController
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         $paginator = $query->orderByDesc('scheduled_date')->orderByDesc('id')->paginate($perPage);
-        $paginator->getCollection()->transform(fn (DispatchTrip $trip) => $this->presentTrip($trip));
+        $summaries = $this->financials->summarizeForTripIds(
+            $paginator->getCollection()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+        );
+        $paginator->getCollection()->transform(
+            fn (DispatchTrip $trip) => $this->presentTrip($trip, $summaries[(int) $trip->id] ?? null),
+        );
 
         return response()->json($paginator);
     }
@@ -56,7 +65,7 @@ class DispatchTripController extends BaseResourceController
     }
 
     /** @return array<string, mixed> */
-    protected function presentTrip(DispatchTrip $trip): array
+    protected function presentTrip(DispatchTrip $trip, ?array $financialSummary = null): array
     {
         $payload = $trip->toArray();
         $payload['route_ids'] = $trip->routeIdList();
@@ -64,6 +73,10 @@ class DispatchTripController extends BaseResourceController
             ? $trip->routes->pluck('route_name')->values()->all()
             : ($trip->route ? [$trip->route->route_name] : []);
         $payload['is_multi_route'] = count($payload['route_ids']) > 1;
+        $payload['financial_summary'] = $financialSummary
+            ?? ($trip->relationLoaded('sales')
+                ? $this->financials->summarizeForTrip($trip)
+                : $this->financials->emptySummary());
 
         return $payload;
     }
