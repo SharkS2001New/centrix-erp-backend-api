@@ -3,7 +3,9 @@ namespace App\Providers;
 
 use App\Models\Organization;
 use App\Models\PersonalAccessToken;
+use App\Models\Sale;
 use App\Observers\OrganizationObserver;
+use App\Observers\SaleObserver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -20,6 +22,7 @@ class AppServiceProvider extends ServiceProvider
         Sanctum::usePersonalAccessTokenModel(PersonalAccessToken::class);
 
         Organization::observe(OrganizationObserver::class);
+        Sale::observe(SaleObserver::class);
 
         $this->configureRateLimiting();
         $this->configureCorsFromRuntimeEnv();

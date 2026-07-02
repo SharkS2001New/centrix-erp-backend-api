@@ -11,6 +11,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Sales\CheckoutRequest;
 use App\Models\CartLine;
 use App\Models\Customer;
+use App\Services\Sales\SaleRouteResolver;
 use App\Models\CustomerInvoice;
 use App\Models\KraResponse;
 use App\Models\PaymentMethod;
@@ -551,32 +552,11 @@ class CheckoutController extends Controller
         ?int $customerNum,
         CapabilityGate $gate,
     ): ?int {
-        if ($cart->route_id) {
-            return (int) $cart->route_id;
-        }
-
-        if (! $customerNum) {
-            return null;
-        }
-
-        $customer = Customer::find($customerNum);
-        if (! $customer?->route_id) {
-            return null;
-        }
-
-        if ($cart->channel === 'mobile') {
-            return (int) $customer->route_id;
-        }
-
-        if (! $gate->distributionOpsEnabled()) {
-            return null;
-        }
-
-        $distributionSettings = $gate->distributionSettings();
-        if (empty($distributionSettings['inherit_customer_route'])) {
-            return null;
-        }
-
-        return (int) $customer->route_id;
+        return app(SaleRouteResolver::class)->resolveFromCustomer(
+            $customerNum,
+            $gate,
+            (string) $cart->channel,
+            $cart->route_id ? (int) $cart->route_id : null,
+        );
     }
 }

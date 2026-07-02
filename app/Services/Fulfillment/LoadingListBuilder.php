@@ -20,7 +20,7 @@ class LoadingListBuilder
     /** @return array<int, int> */
     protected function eligibleSaleIdsForTrip(DispatchTrip $trip): array
     {
-        $trip->loadMissing(['sales', 'branch']);
+        $trip->loadMissing(['sales.customer', 'branch']);
         $organizationId = $trip->branch?->organization_id
             ?? $trip->sales->first()?->organization_id;
 

@@ -31,6 +31,11 @@ class Sale extends Model
         return $this->belongsTo(User::class, 'cashier_id');
     }
 
+    public function organization()
+    {
+        return $this->belongsTo(Organization::class, 'organization_id');
+    }
+
     protected $fillable = [
         'order_num', 'branch_id', 'organization_id', 'channel', 'order_source', 'till_id',
         'float_session_id', 'cashier_id', 'customer_num', 'customer_name_override',

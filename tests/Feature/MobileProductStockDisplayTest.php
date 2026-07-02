@@ -86,5 +86,7 @@ class MobileProductStockDisplayTest extends TestCase
         $this->assertTrue($row['sales_stock_split'] ?? false);
         $this->assertEquals(12.0, (float) $row['stock_in_shop']);
         $this->assertEquals(71.0, (float) $row['stock_in_store']);
+        $this->assertEquals(12.0, (float) $row['stock_available_shop']);
+        $this->assertEquals(71.0, (float) $row['stock_available_store']);
     }
 }

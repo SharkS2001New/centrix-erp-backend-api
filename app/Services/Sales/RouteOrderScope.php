@@ -3,12 +3,15 @@
 namespace App\Services\Sales;
 
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 /**
- * Route orders: sales with route_id from mobile, POS, or (by default) backoffice checkout.
+ * Route orders: sales tied to a route directly or via the customer's assigned route.
  */
 class RouteOrderScope
 {
+    public const CUSTOMER_JOIN_ALIAS = 'route_order_customers';
+
     public const DEFAULT_INCLUDE_NORMAL_ORDERS = true;
 
     /** @param  array<string, mixed>  $distributionSettings */
@@ -21,6 +24,39 @@ class RouteOrderScope
         return (bool) $distributionSettings['include_normal_orders_in_loading_list'];
     }
 
+    public static function effectiveRouteIdSql(): string
+    {
+        return 'COALESCE(sales.route_id, '.self::CUSTOMER_JOIN_ALIAS.'.route_id)';
+    }
+
+    public static function withCustomerRouteJoin(Builder $query): Builder
+    {
+        $joins = $query->getQuery()->joins ?? [];
+        foreach ($joins as $join) {
+            if ($join->table === self::CUSTOMER_JOIN_ALIAS) {
+                return $query;
+            }
+        }
+
+        return $query->leftJoin(
+            'customers as '.self::CUSTOMER_JOIN_ALIAS,
+            self::CUSTOMER_JOIN_ALIAS.'.customer_num',
+            '=',
+            'sales.customer_num',
+        );
+    }
+
+    public static function applyChannelScope(Builder $query, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): Builder
+    {
+        return $query->where(function (Builder $sub) use ($includeNormalOrders) {
+            $sub->whereIn('sales.channel', ['mobile', 'pos']);
+            if ($includeNormalOrders) {
+                $sub->orWhereIn('sales.channel', ['backend', 'backoffice'])
+                    ->orWhereIn('sales.order_source', ['backend', 'backoffice']);
+            }
+        });
+    }
+
     public static function apply(Builder $query, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): Builder
     {
         return self::applyForLoadingList($query, $includeNormalOrders);
@@ -28,17 +64,23 @@ class RouteOrderScope
 
     /**
      * Orders eligible for distribution loading lists, dispatch trips, and route orders.
-     * Mobile/POS route orders always; backoffice route orders when enabled (default on).
      */
     public static function applyForLoadingList(Builder $query, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): Builder
     {
-        return $query->whereNotNull('route_id')->where(function (Builder $sub) use ($includeNormalOrders) {
-            $sub->whereIn('channel', ['mobile', 'pos']);
-            if ($includeNormalOrders) {
-                $sub->orWhereIn('channel', ['backend', 'backoffice'])
-                    ->orWhereIn('order_source', ['backend', 'backoffice']);
-            }
-        });
+        self::withCustomerRouteJoin($query);
+
+        return $query
+            ->whereNotNull(DB::raw(self::effectiveRouteIdSql()))
+            ->where(function (Builder $sub) use ($includeNormalOrders) {
+                self::applyChannelScope($sub, $includeNormalOrders);
+            });
+    }
+
+    public static function applyRouteFilter(Builder $query, int $routeId): Builder
+    {
+        self::withCustomerRouteJoin($query);
+
+        return $query->where(DB::raw(self::effectiveRouteIdSql()), $routeId);
     }
 
     public static function matches(?object $sale, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): bool
@@ -46,9 +88,20 @@ class RouteOrderScope
         return self::eligibleForLoadingList($sale, $includeNormalOrders);
     }
 
+    public static function effectiveRouteId(?object $sale): ?int
+    {
+        if ($sale === null) {
+            return null;
+        }
+
+        $routeId = $sale->route_id ?? $sale->customer?->route_id ?? null;
+
+        return $routeId ? (int) $routeId : null;
+    }
+
     public static function eligibleForLoadingList(?object $sale, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): bool
     {
-        if ($sale === null || empty($sale->route_id)) {
+        if ($sale === null || ! self::effectiveRouteId($sale)) {
             return false;
         }
 

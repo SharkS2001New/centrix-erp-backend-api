@@ -7,6 +7,8 @@ use App\Models\Driver;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\TemporaryCart;
+use App\Services\Erp\ErpContext;
+use App\Services\Fulfillment\RouteDashboardStatsService;
 use App\Services\Sales\ReceiptPaymentDetailsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -15,9 +17,44 @@ use Illuminate\Validation\Rule;
 
 class RouteModelController extends BaseResourceController
 {
+    public function __construct(protected ErpContext $erp) {}
+
     protected function modelClass(): string
     {
         return RouteModel::class;
+    }
+
+    public function index(Request $request)
+    {
+        $query = $this->baseQuery($request);
+        foreach ((array) $request->input('filter', []) as $col => $val) {
+            if (in_array($col, $this->filterableColumns(), true)) {
+                $query->where($col, $val);
+            }
+        }
+        if ($q = $request->input('q')) {
+            $searchCol = $this->routeKeyColumn() !== 'id'
+                ? $this->routeKeyColumn()
+                : ($this->fillableFields()[0] ?? 'id');
+            $query->where($searchCol, 'like', "%{$q}%");
+        }
+        $perPage = min((int) $request->input('per_page', 25), 200);
+        $this->applyListOrdering($request, $query, 'id', 'desc');
+
+        $paginator = $query->paginate($perPage);
+
+        if ($request->boolean('include_stats')) {
+            $gate = $this->erp->gateForUser($request->user());
+            $period = (string) $request->input('stats_period', 'day');
+            $collection = app(RouteDashboardStatsService::class)->attachStats(
+                $paginator->getCollection(),
+                $period,
+                $gate,
+            );
+            $paginator->setCollection($collection);
+        }
+
+        return response()->json($paginator);
     }
 
     protected function scopesByOrganization(): bool

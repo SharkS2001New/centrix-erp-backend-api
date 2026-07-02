@@ -29,7 +29,7 @@ class SaleController extends BaseResourceController
             $query->with(['items.product.unit']);
         }
 
-        $query->with(['cashier:id,username,full_name', 'customer:customer_num,customer_name']);
+        $query->with(['cashier:id,username,full_name', 'customer:customer_num,customer_name,route_id']);
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if ($col === 'status') {
@@ -46,6 +46,7 @@ class SaleController extends BaseResourceController
 
         if ($request->boolean('route_orders') || $request->boolean('dispatch_orders') || $request->boolean('loading_list_orders')) {
             $gate = $this->erp->gateForUser($request->user());
+            app(\App\Services\Sales\SaleRouteBackfillService::class)->syncOrganization($gate->organization());
             $settings = $gate->distributionSettings();
             RouteOrderScope::applyForLoadingList(
                 $query,
@@ -106,7 +107,7 @@ class SaleController extends BaseResourceController
         }
 
         if ($request->filled('route_id')) {
-            $query->where('route_id', $request->input('route_id'));
+            RouteOrderScope::applyRouteFilter($query, (int) $request->input('route_id'));
         }
 
         if ($request->filled('status_in')) {
@@ -129,6 +130,10 @@ class SaleController extends BaseResourceController
                     ->orWhere('customer_name_override', 'like', "%{$q}%")
                     ->orWhere('customer_num', 'like', "%{$q}%");
             });
+        }
+
+        if (! empty($query->getQuery()->joins)) {
+            $query->select('sales.*');
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
