@@ -446,7 +446,23 @@ class CapabilityGate
         return $workflow->shouldDeductStockOn($toStatus, $channel);
     }
 
-    public function shouldReserveStockForOrder(
+    public function shouldReserveStockOnTransition(
+        OrderWorkflowService $workflow,
+        string $toStatus,
+        string $channel,
+    ): bool {
+        if ($channel === 'pos' && $this->posCheckoutOnCreateEnabled()) {
+            return false;
+        }
+
+        if ($this->stockDeductTiming($channel) === 'order_created') {
+            return false;
+        }
+
+        return $workflow->shouldReserveStockOn($toStatus, $channel);
+    }
+
+    public function shouldReserveStockOnCheckout(
         OrderWorkflowService $workflow,
         string $orderStatus,
         string $channel,
@@ -459,7 +475,21 @@ class CapabilityGate
             return false;
         }
 
+        if ($workflow->shouldReserveStockOn($orderStatus, $channel)) {
+            return true;
+        }
+
+        // Saved directly at a later pipeline step without passing through reserve_stock_on.
         return $workflow->shouldHaveStockReserved($orderStatus, $channel);
+    }
+
+    /** @deprecated Use shouldReserveStockOnTransition or shouldReserveStockOnCheckout */
+    public function shouldReserveStockForOrder(
+        OrderWorkflowService $workflow,
+        string $orderStatus,
+        string $channel,
+    ): bool {
+        return $this->shouldReserveStockOnCheckout($workflow, $orderStatus, $channel);
     }
 
     /** @return array<string, mixed> */

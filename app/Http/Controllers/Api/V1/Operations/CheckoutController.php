@@ -292,7 +292,7 @@ class CheckoutController extends Controller
                 $sale->update(['stock_balanced' => 1]);
                 $this->releaseCartReservations((int) $cart->id);
                 $this->releaseSaleReservations((int) $sale->id);
-            } elseif ($gate->shouldReserveStockForOrder($workflow, $orderStatus, (string) $cart->channel)) {
+            } elseif ($gate->shouldReserveStockOnCheckout($workflow, $orderStatus, (string) $cart->channel)) {
                 $transferred = StockReservation::query()
                     ->where('cart_id', $cart->id)
                     ->whereNull('released_at')

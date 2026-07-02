@@ -172,7 +172,10 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($service->shouldHaveStockReserved('booked', 'backend'));
         $this->assertTrue($service->shouldHaveStockReserved('unpaid', 'backend'));
         $this->assertTrue($service->shouldHaveStockReserved('processed', 'backend'));
-        $this->assertTrue($gate->shouldReserveStockForOrder($service, 'unpaid', 'backend'));
+        $this->assertTrue($gate->shouldReserveStockOnCheckout($service, 'unpaid', 'backend'));
+        $this->assertTrue($gate->shouldReserveStockOnTransition($service, 'booked', 'backend'));
+        $this->assertFalse($gate->shouldReserveStockOnTransition($service, 'pending', 'backend'));
+        $this->assertFalse($gate->shouldReserveStockOnTransition($service, 'unpaid', 'backend'));
     }
 
     public function test_restorable_to_cart_statuses_follow_org_terminal_and_checkout_re_edit(): void

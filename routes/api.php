@@ -40,6 +40,7 @@ use App\Http\Controllers\Api\V1\ErpCapabilitiesController;
 use App\Http\Controllers\Api\V1\ErpSettingsController;
 use App\Http\Controllers\Api\V1\ExpenseController;
 use App\Http\Controllers\Api\V1\ExpenseGroupController;
+use App\Http\Controllers\Api\V1\InAppNotificationController;
 use App\Http\Controllers\Api\V1\InventoryTransactionController;
 use App\Http\Controllers\Api\V1\JournalEntryController;
 use App\Http\Controllers\Api\V1\JournalEntryLineController;
@@ -163,6 +164,14 @@ Route::prefix('v1')->group(function () {
         Route::get('auth/memberships', [AuthController::class, 'memberships']);
         Route::post('auth/switch-organization', [AuthController::class, 'switchOrganization']);
         Route::post('auth/switch-workspace', [AuthController::class, 'switchWorkspace']);
+
+        Route::get('notifications/unread-count', [InAppNotificationController::class, 'unreadCount']);
+        Route::get('notifications/all', [InAppNotificationController::class, 'all']);
+        Route::get('notifications', [InAppNotificationController::class, 'index']);
+        Route::post('notifications/read-all', [InAppNotificationController::class, 'markAllRead']);
+        Route::post('notifications/{id}/read', [InAppNotificationController::class, 'markRead']);
+        Route::post('action-requests/{id}/approve', [InAppNotificationController::class, 'approveActionRequest']);
+        Route::post('action-requests/{id}/reject', [InAppNotificationController::class, 'rejectActionRequest']);
 
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
         Route::get('erp/organization/profile', [OrganizationController::class, 'currentProfile'])

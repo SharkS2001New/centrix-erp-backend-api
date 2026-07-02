@@ -357,11 +357,6 @@ trait HandlesInventory
             return;
         }
 
-        $workflow = \App\Services\Erp\OrderWorkflowService::forGate($gate);
-        if (! $gate->shouldReserveStockForOrder($workflow, (string) $sale->status, (string) $sale->channel)) {
-            return;
-        }
-
         $inventorySettings = $gate->moduleSettings('inventory');
         $salesSettings = $gate->moduleSettings('sales');
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);

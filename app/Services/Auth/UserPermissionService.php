@@ -6,6 +6,7 @@ use App\Models\Permission;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\PermissionMatrixService;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -217,6 +218,17 @@ class UserPermissionService
                 ]);
             }
         });
+    }
+
+    /** @return Collection<int, User> */
+    public function usersWithPermission(int $organizationId, string $permissionCode): Collection
+    {
+        return User::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->get()
+            ->filter(fn (User $user) => $this->hasPermission($user, $permissionCode))
+            ->values();
     }
 
     /** @return array<string, mixed> */

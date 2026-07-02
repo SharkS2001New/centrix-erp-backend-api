@@ -243,7 +243,7 @@ class OrderWorkflowController extends Controller
 
         if ($gate->shouldDeductStockOnWorkflowTransition($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
             $this->deductSaleStockIfNeeded($sale, $user);
-        } elseif ($gate->shouldReserveStockForOrder($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
+        } elseif ($gate->shouldReserveStockOnTransition($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
             $this->reserveSaleStockIfNeeded($sale, $user, $gate);
         }
 

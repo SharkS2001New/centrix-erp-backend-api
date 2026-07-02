@@ -101,6 +101,14 @@ class SupplierReturnDocumentController extends Controller
         $doc = $this->service->findForUser($request->user(), (int) $id);
         $approved = $this->service->approve($doc, $request->user());
 
+        app(\App\Services\Notifications\ActionRequestService::class)->markResolvedFromDomain(
+            'supplier_return',
+            'supplier_return_document',
+            (int) $approved->id,
+            'approved',
+            $request->user(),
+        );
+
         return response()->json([
             'data' => $this->service->formatDocument($approved, $request->user()),
         ]);
@@ -114,6 +122,15 @@ class SupplierReturnDocumentController extends Controller
 
         $doc = $this->service->findForUser($request->user(), (int) $id);
         $rejected = $this->service->reject($doc, $request->user(), $data['rejection_reason']);
+
+        app(\App\Services\Notifications\ActionRequestService::class)->markResolvedFromDomain(
+            'supplier_return',
+            'supplier_return_document',
+            (int) $rejected->id,
+            'rejected',
+            $request->user(),
+            $data['rejection_reason'],
+        );
 
         return response()->json([
             'data' => $this->service->formatDocument($rejected, $request->user()),

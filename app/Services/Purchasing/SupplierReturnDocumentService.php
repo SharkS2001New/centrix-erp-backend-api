@@ -94,6 +94,9 @@ class SupplierReturnDocumentService
 
             $this->syncLines($doc, $lines);
 
+            $doc->load(['supplier', 'returnedByUser']);
+            $this->createApprovalRequest($user, $doc);
+
             return $doc->fresh(['lines', 'supplier', 'returnedByUser']);
         });
     }
@@ -569,6 +572,31 @@ class SupplierReturnDocumentService
     {
         return (bool) $user->is_admin
             || $this->permissions->hasPermission($user, 'purchasing.manage');
+    }
+
+    protected function createApprovalRequest(User $user, SupplierReturnDocument $doc): void
+    {
+        $requesterName = $user->full_name ?: $user->username;
+        $supplierName = $doc->supplier?->supplier_name ?? 'Supplier';
+        $returnLabel = 'SR-'.str_pad((string) $doc->id, 4, '0', STR_PAD_LEFT);
+
+        app(\App\Services\Notifications\ActionRequestService::class)->requestApproval($user, [
+            'type' => 'supplier_return',
+            'module' => 'purchasing',
+            'reference_type' => 'supplier_return_document',
+            'reference_id' => (int) $doc->id,
+            'approver_permission' => 'purchasing.manage',
+            'title' => 'Supplier return approval required',
+            'message' => "{$requesterName} requested supplier return {$returnLabel} for {$supplierName}.",
+            'reason' => $doc->return_reason,
+            'severity' => 'warning',
+            'action_url' => '/suppliers/returns',
+            'payload' => [
+                'action_url' => '/suppliers/returns',
+                'return_label' => $returnLabel,
+                'supplier_name' => $supplierName,
+            ],
+        ]);
     }
 
     protected function canMutate(SupplierReturnDocument $doc, User $user): bool
