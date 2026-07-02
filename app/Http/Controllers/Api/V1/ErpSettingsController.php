@@ -335,6 +335,7 @@ class ErpSettingsController extends Controller
             'loading_sheet_show_qty_column',
             'loading_sheet_show_price_columns',
             'loading_sheet_default_checked_by',
+            'enable_fulfillment_guidance',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);

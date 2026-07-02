@@ -172,7 +172,9 @@ return [
             'orders_list_default_days',
             'orders_list_sort',
         ],
-        'distribution' => [],
+        'distribution' => [
+            'enable_fulfillment_guidance',
+        ],
         'finance' => [
             'enable_mpesa_stk',
             'enable_kra_integration',
@@ -429,6 +431,7 @@ return [
             'loading_sheet_show_qty_column' => true,
             'loading_sheet_show_price_columns' => true,
             'loading_sheet_default_checked_by' => '',
+            'enable_fulfillment_guidance' => false,
         ],
         'inventory' => [
             'default_receive_location' => 'store',
