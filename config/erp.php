@@ -253,9 +253,9 @@ return [
             ['status' => 'completed', 'label' => 'Completed', 'enabled' => true],
         ],
         'transitions' => [
-            'booked' => ['pending', 'unpaid', 'cancelled'],
-            'pending' => ['unpaid', 'pending_payment', 'cancelled'],
-            'unpaid' => ['pending_payment', 'paid', 'cancelled'],
+            'booked' => ['pending', 'unpaid', 'processed', 'cancelled'],
+            'pending' => ['unpaid', 'pending_payment', 'processed', 'cancelled'],
+            'unpaid' => ['pending_payment', 'paid', 'processed', 'cancelled'],
             'pending_payment' => ['paid', 'cancelled'],
             'paid' => ['processed', 'delivered', 'completed'],
             'processed' => ['delivered', 'completed'],
@@ -425,6 +425,7 @@ return [
             'include_normal_orders_in_loading_list' => true,
             'loading_sheet_footer_lines' => '',
             'loading_sheet_show_signatures' => true,
+            'loading_sheet_show_price_columns' => true,
             'loading_sheet_default_checked_by' => '',
         ],
         'inventory' => [

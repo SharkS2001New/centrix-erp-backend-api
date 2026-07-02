@@ -190,8 +190,14 @@ class CheckoutController extends Controller
             }
 
             $cashDue = max(0, $total - $voucherPayment - $pointsPayment);
+            $isMobileChannel = (string) $cart->channel === 'mobile';
             if (! $isCredit && $payNow <= 0 && $cashDue > 0 && empty($input['save_only'])) {
-                $payNow = $cashDue;
+                if ($isMobileChannel) {
+                    // Mobile field sales place orders only; payment is collected later in ERP.
+                    $input['save_only'] = true;
+                } else {
+                    $payNow = $cashDue;
+                }
             }
             $payNow = min($payNow, $cashDue);
             $amountPaid = $payNow + $voucherPayment + $pointsPayment;
@@ -451,7 +457,8 @@ class CheckoutController extends Controller
                 );
             }
 
-            if ($isCredit && $sale->customer_num) {
+            $balanceDue = max(0, $total - $amountPaid);
+            if ($sale->customer_num && $balanceDue > 0.01) {
                 CustomerInvoice::create([
                     'invoice_number' => 'AR-' . $sale->order_num,
                     'sale_id' => $sale->id,

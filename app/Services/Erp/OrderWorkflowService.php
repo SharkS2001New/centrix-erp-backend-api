@@ -750,6 +750,17 @@ class OrderWorkflowService
             }
         }
 
+        $processedIdx = array_search('processed', $keys, true);
+        if ($processedIdx !== false) {
+            $skipFrom = ['cancelled', 'expired', 'draft', 'held', 'processed', 'delivered', 'completed'];
+            foreach ($keys as $index => $from) {
+                if ($index >= $processedIdx || in_array($from, $skipFrom, true)) {
+                    continue;
+                }
+                $out[$from] = array_values(array_unique(array_merge($out[$from] ?? [], ['processed'])));
+            }
+        }
+
         return $out;
     }
 

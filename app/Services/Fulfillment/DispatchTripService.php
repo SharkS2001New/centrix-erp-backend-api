@@ -42,10 +42,18 @@ class DispatchTripService
         }
 
         $scheduledDate = (string) ($data['scheduled_date'] ?? now()->toDateString());
-        $routeId = isset($data['route_id']) ? (int) $data['route_id'] : null;
+        $routeIds = $this->normalizeRouteIds($data);
+        $routeId = $routeIds[0] ?? (isset($data['route_id']) ? (int) $data['route_id'] : null);
 
         $driverId = isset($data['driver_id']) ? (int) $data['driver_id'] : null;
         $vehicleId = isset($data['vehicle_id']) ? (int) $data['vehicle_id'] : null;
+        $requireAssignment = array_key_exists('require_assignment', $data)
+            ? (bool) $data['require_assignment']
+            : true;
+
+        if ($requireAssignment && (! $driverId || ! $vehicleId)) {
+            throw new InvalidArgumentException('Driver and vehicle are required to create a trip chart.');
+        }
 
         if (! $driverId && $routeId) {
             $schedule = $this->resolveSchedule($branchId, $routeId, $scheduledDate);
@@ -55,7 +63,11 @@ class DispatchTripService
             }
         }
 
-        return DB::transaction(function () use ($user, $branchId, $scheduledDate, $routeId, $driverId, $vehicleId, $data) {
+        if ($requireAssignment && (! $driverId || ! $vehicleId)) {
+            throw new InvalidArgumentException('Driver and vehicle are required to create a trip chart.');
+        }
+
+        return DB::transaction(function () use ($user, $branchId, $scheduledDate, $routeId, $routeIds, $driverId, $vehicleId, $data) {
             $trip = DispatchTrip::create([
                 'branch_id' => $branchId,
                 'trip_code' => $this->generateTripCode($branchId, $scheduledDate),
@@ -68,13 +80,193 @@ class DispatchTripService
                 'created_by' => $user->id,
             ]);
 
+            if ($routeIds !== []) {
+                $this->syncTripRoutes($trip, $routeIds);
+            }
+
             $saleIds = array_map('intval', (array) ($data['sale_ids'] ?? []));
             if ($saleIds !== []) {
                 $this->assignOrders($trip, $saleIds, $user);
             }
 
-            return $trip->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
+            return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
         });
+    }
+
+    /**
+     * Merge draft trip charts that share the same delivery date into one run.
+     *
+     * @param  array<int, int>  $sourceTripIds
+     * @param  array<string, mixed>  $data
+     */
+    public function mergeTrips(User $user, array $sourceTripIds, array $data): DispatchTrip
+    {
+        $sourceTripIds = array_values(array_unique(array_filter(array_map('intval', $sourceTripIds))));
+        if (count($sourceTripIds) < 2) {
+            throw new InvalidArgumentException('Select at least two trips to merge.');
+        }
+
+        $sources = DispatchTrip::query()
+            ->with(['sales', 'routes'])
+            ->whereIn('id', $sourceTripIds)
+            ->get();
+
+        if ($sources->count() !== count($sourceTripIds)) {
+            throw new InvalidArgumentException('One or more trips could not be found.');
+        }
+
+        $branchId = (int) $sources->first()->branch_id;
+        $scheduledDate = (string) $sources->first()->scheduled_date->toDateString();
+
+        foreach ($sources as $source) {
+            if ($source->status !== 'draft') {
+                throw new InvalidArgumentException('Only draft trips can be merged.');
+            }
+            if ((int) $source->branch_id !== $branchId) {
+                throw new InvalidArgumentException('Trips must belong to the same branch.');
+            }
+            if ($source->scheduled_date->toDateString() !== $scheduledDate) {
+                throw new InvalidArgumentException('Trips must share the same scheduled date.');
+            }
+        }
+
+        $driverId = (int) ($data['driver_id'] ?? 0);
+        $vehicleId = (int) ($data['vehicle_id'] ?? 0);
+        if (! $driverId || ! $vehicleId) {
+            throw new InvalidArgumentException('Driver and vehicle are required to merge trip charts.');
+        }
+
+        $targetTripId = isset($data['target_trip_id']) ? (int) $data['target_trip_id'] : null;
+        $target = $targetTripId
+            ? $sources->firstWhere('id', $targetTripId)
+            : null;
+
+        if ($targetTripId && ! $target) {
+            throw new InvalidArgumentException('Target trip must be one of the selected trips.');
+        }
+
+        return DB::transaction(function () use ($user, $sources, $target, $driverId, $vehicleId, $data, $branchId, $scheduledDate) {
+            if (! $target) {
+                $routeIds = $sources
+                    ->flatMap(fn (DispatchTrip $trip) => $trip->routeIdList())
+                    ->unique()
+                    ->values()
+                    ->all();
+
+                $target = DispatchTrip::create([
+                    'branch_id' => $branchId,
+                    'trip_code' => $this->generateTripCode($branchId, $scheduledDate),
+                    'route_id' => $routeIds[0] ?? null,
+                    'driver_id' => $driverId,
+                    'vehicle_id' => $vehicleId,
+                    'scheduled_date' => $scheduledDate,
+                    'status' => 'draft',
+                    'notes' => $data['notes'] ?? 'Merged trip chart',
+                    'created_by' => $user->id,
+                ]);
+                $this->syncTripRoutes($target, $routeIds);
+            } else {
+                $target->update([
+                    'driver_id' => $driverId,
+                    'vehicle_id' => $vehicleId,
+                    'notes' => trim((string) ($data['notes'] ?? $target->notes ?? '')) ?: $target->notes,
+                ]);
+            }
+
+            $seq = (int) $target->sales()->max('dispatch_trip_sales.stop_seq');
+            $mergedRouteIds = $target->routeIdList();
+
+            foreach ($sources as $source) {
+                if ($source->id === $target->id) {
+                    continue;
+                }
+
+                $source->loadMissing('sales');
+                foreach ($source->sales as $sale) {
+                    if ($target->sales()->where('sales.id', $sale->id)->exists()) {
+                        continue;
+                    }
+
+                    $seq++;
+                    $target->sales()->attach($sale->id, ['stop_seq' => $seq]);
+
+                    $meta = array_merge($sale->fulfillment_meta ?? [], [
+                        'trip_id' => $target->id,
+                        'driver_id' => $driverId,
+                        'vehicle_id' => $vehicleId,
+                    ]);
+                    $sale->update(['fulfillment_meta' => $meta]);
+
+                    if ($sale->route_id) {
+                        $mergedRouteIds[] = (int) $sale->route_id;
+                    }
+                }
+
+                $source->sales()->detach();
+                $source->loadingList?->delete();
+                $source->routes()->detach();
+                $source->delete();
+            }
+
+            $this->syncTripRoutes($target, $mergedRouteIds);
+            $this->syncTripRoutesFromSales($target->fresh());
+            $this->loadingListBuilder->syncLoadingList($target->fresh());
+
+            return $target->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
+        });
+    }
+
+    /** @param  array<string, mixed>  $data
+     * @return list<int>
+     */
+    protected function normalizeRouteIds(array $data): array
+    {
+        $routeIds = array_values(array_unique(array_filter(array_map(
+            'intval',
+            (array) ($data['route_ids'] ?? []),
+        ))));
+
+        if (isset($data['route_id']) && (int) $data['route_id'] > 0) {
+            $routeIds[] = (int) $data['route_id'];
+            $routeIds = array_values(array_unique($routeIds));
+        }
+
+        return $routeIds;
+    }
+
+    /** @param  list<int>  $routeIds */
+    protected function syncTripRoutes(DispatchTrip $trip, array $routeIds): void
+    {
+        $routeIds = array_values(array_unique(array_filter(array_map('intval', $routeIds))));
+        $trip->routes()->sync($routeIds);
+
+        if ($routeIds !== []) {
+            $trip->update(['route_id' => $routeIds[0]]);
+        }
+    }
+
+    protected function syncTripRoutesFromSales(DispatchTrip $trip): void
+    {
+        $trip->loadMissing('sales');
+        $routeIds = $trip->sales
+            ->pluck('route_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($routeIds !== []) {
+            $this->syncTripRoutes($trip, $routeIds);
+        }
+    }
+
+    /** @return list<int> */
+    protected function tripRouteIds(DispatchTrip $trip): array
+    {
+        $trip->loadMissing('routes');
+
+        return $trip->routeIdList();
     }
 
     /** @param  array<int, int>  $saleIds */
@@ -97,6 +289,7 @@ class DispatchTripService
         $includeNormalOrders = RouteOrderScope::includeNormalOrders($distributionSettings);
 
         DB::transaction(function () use ($trip, $sales, $includeNormalOrders) {
+            $tripRouteIds = $this->tripRouteIds($trip);
             $seq = (int) $trip->sales()->max('dispatch_trip_sales.stop_seq');
             foreach ($sales as $sale) {
                 if (! RouteOrderScope::eligibleForLoadingList($sale, $includeNormalOrders)) {
@@ -105,8 +298,9 @@ class DispatchTripService
                     );
                 }
 
-                if ($trip->route_id && $sale->route_id && (int) $sale->route_id !== (int) $trip->route_id) {
-                    throw new InvalidArgumentException("Order #{$sale->order_num} belongs to a different route.");
+                if ($tripRouteIds !== [] && $sale->route_id
+                    && ! in_array((int) $sale->route_id, $tripRouteIds, true)) {
+                    throw new InvalidArgumentException("Order #{$sale->order_num} belongs to a route not on this trip chart.");
                 }
 
                 if ($trip->sales()->where('sales.id', $sale->id)->exists()) {
@@ -127,17 +321,12 @@ class DispatchTripService
                 $sale->update(['fulfillment_meta' => $meta]);
             }
 
-            if (! $trip->route_id) {
-                $routeId = $sales->first(fn ($s) => $s->route_id)?->route_id;
-                if ($routeId) {
-                    $trip->update(['route_id' => $routeId]);
-                }
-            }
+            $this->syncTripRoutesFromSales($trip->fresh());
         });
 
         $this->loadingListBuilder->syncLoadingList($trip->fresh());
 
-        return $trip->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
+        return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
     }
 
     /** @param  array<string, mixed>  $data */
@@ -159,13 +348,20 @@ class DispatchTripService
             $trip->update($updates);
         }
 
-        return $trip->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
+        if (array_key_exists('route_ids', $data)) {
+            $this->syncTripRoutes($trip, $this->normalizeRouteIds($data));
+        }
+
+        return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
     }
 
     public function startTrip(DispatchTrip $trip, User $user): DispatchTrip
     {
         if (! in_array($trip->status, ['draft', 'loading'], true)) {
             throw new InvalidArgumentException('Trip cannot depart from its current status.');
+        }
+        if (! $trip->driver_id || ! $trip->vehicle_id) {
+            throw new InvalidArgumentException('Assign a driver and vehicle before starting the trip.');
         }
         if ($trip->sales()->count() === 0) {
             throw new InvalidArgumentException('Assign at least one order before starting the trip.');

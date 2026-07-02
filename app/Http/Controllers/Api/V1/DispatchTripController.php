@@ -22,7 +22,7 @@ class DispatchTripController extends BaseResourceController
     public function index(Request $request)
     {
         $query = $this->baseQuery($request)
-            ->with(['route', 'driver', 'vehicle'])
+            ->with(['route', 'routes', 'driver', 'vehicle'])
             ->withCount('sales');
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
@@ -40,7 +40,10 @@ class DispatchTripController extends BaseResourceController
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        return response()->json($query->orderByDesc('scheduled_date')->orderByDesc('id')->paginate($perPage));
+        $paginator = $query->orderByDesc('scheduled_date')->orderByDesc('id')->paginate($perPage);
+        $paginator->getCollection()->transform(fn (DispatchTrip $trip) => $this->presentTrip($trip));
+
+        return response()->json($paginator);
     }
 
     public function show(Request $request, string $id)
@@ -48,8 +51,21 @@ class DispatchTripController extends BaseResourceController
         $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
 
         return response()->json(
-            $trip->load(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']),
+            $this->presentTrip($trip->load(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines'])),
         );
+    }
+
+    /** @return array<string, mixed> */
+    protected function presentTrip(DispatchTrip $trip): array
+    {
+        $payload = $trip->toArray();
+        $payload['route_ids'] = $trip->routeIdList();
+        $payload['route_names'] = $trip->relationLoaded('routes') && $trip->routes->isNotEmpty()
+            ? $trip->routes->pluck('route_name')->values()->all()
+            : ($trip->route ? [$trip->route->route_name] : []);
+        $payload['is_multi_route'] = count($payload['route_ids']) > 1;
+
+        return $payload;
     }
 
     public function store(Request $request)
@@ -57,8 +73,10 @@ class DispatchTripController extends BaseResourceController
         $data = $request->validate([
             'branch_id' => 'nullable|integer|exists:branches,id',
             'route_id' => 'nullable|integer|exists:routes,id',
-            'driver_id' => 'nullable|integer|exists:drivers,id',
-            'vehicle_id' => 'nullable|integer|exists:vehicles,id',
+            'route_ids' => 'sometimes|array|min:1',
+            'route_ids.*' => 'integer|exists:routes,id',
+            'driver_id' => 'required|integer|exists:drivers,id',
+            'vehicle_id' => 'required|integer|exists:vehicles,id',
             'scheduled_date' => 'required|date',
             'notes' => 'nullable|string|max:2000',
             'sale_ids' => 'sometimes|array',
@@ -71,7 +89,7 @@ class DispatchTripController extends BaseResourceController
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        return response()->json($trip, 201);
+        return response()->json($this->presentTrip($trip), 201);
     }
 
     public function update(Request $request, string $id)
@@ -79,6 +97,8 @@ class DispatchTripController extends BaseResourceController
         $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
         $data = $request->validate([
             'route_id' => 'sometimes|nullable|integer|exists:routes,id',
+            'route_ids' => 'sometimes|array|min:1',
+            'route_ids.*' => 'integer|exists:routes,id',
             'driver_id' => 'sometimes|nullable|integer|exists:drivers,id',
             'vehicle_id' => 'sometimes|nullable|integer|exists:vehicles,id',
             'scheduled_date' => 'sometimes|date',
@@ -91,7 +111,7 @@ class DispatchTripController extends BaseResourceController
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        return response()->json($trip);
+        return response()->json($this->presentTrip($trip));
     }
 
     public function destroy(Request $request, string $id)
@@ -119,7 +139,27 @@ class DispatchTripController extends BaseResourceController
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        return response()->json($updated);
+        return response()->json($this->presentTrip($updated));
+    }
+
+    public function merge(Request $request)
+    {
+        $data = $request->validate([
+            'trip_ids' => 'required|array|min:2',
+            'trip_ids.*' => 'integer|exists:dispatch_trips,id',
+            'target_trip_id' => 'nullable|integer|exists:dispatch_trips,id',
+            'driver_id' => 'required|integer|exists:drivers,id',
+            'vehicle_id' => 'required|integer|exists:vehicles,id',
+            'notes' => 'nullable|string|max:2000',
+        ]);
+
+        try {
+            $trip = $this->trips->mergeTrips($request->user(), $data['trip_ids'], $data);
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($this->presentTrip($trip));
     }
 
     public function loadingList(Request $request, int $trip)

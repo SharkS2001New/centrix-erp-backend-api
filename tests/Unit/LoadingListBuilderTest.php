@@ -102,4 +102,51 @@ class LoadingListBuilderTest extends TestCase
         $this->assertSame('2 bag', $lines[0]['quantity_label']);
         $this->assertSame('2 bag', $lines[0]['pack_breakdown']);
     }
+
+    public function test_aggregate_lines_resolves_product_name_with_wholesale_retail_group_keys(): void
+    {
+        $template = Sale::query()->firstOrFail();
+        $product = Product::query()->where('product_code', '6161100100015')->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 96003,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $template->cashier_id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'processed',
+            'total_vat' => 0,
+            'order_total' => 7500,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'quantity' => 30,
+            'selling_price' => 125,
+            'amount' => 3750,
+            'on_wholesale_retail' => 0,
+        ]);
+        SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 2,
+            'quantity' => 30,
+            'selling_price' => 125,
+            'amount' => 3750,
+            'on_wholesale_retail' => 1,
+        ]);
+
+        $lines = app(LoadingListBuilder::class)->aggregateLinesFromSaleIds([$sale->id]);
+
+        $this->assertCount(2, $lines);
+        foreach ($lines as $line) {
+            $this->assertSame('Mumias White Sugar 50kg', $line['product_name']);
+        }
+    }
 }

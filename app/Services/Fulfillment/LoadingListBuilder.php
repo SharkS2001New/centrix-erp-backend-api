@@ -71,9 +71,10 @@ class LoadingListBuilder
         $grouped = $items->groupBy(
             fn (SaleItem $item) => $item->product_code.'|'.(int) ($item->on_wholesale_retail ?? 0),
         );
+        $productCodes = $items->pluck('product_code')->unique()->values()->all();
         $products = Product::query()
             ->with('unit')
-            ->whereIn('product_code', $grouped->keys()->all())
+            ->whereIn('product_code', $productCodes)
             ->get()
             ->keyBy('product_code');
 

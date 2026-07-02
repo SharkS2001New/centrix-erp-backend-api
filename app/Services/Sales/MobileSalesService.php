@@ -147,18 +147,31 @@ class MobileSalesService
             [
                 'can_edit' => $this->canRestoreSaleToCart($sale, $user),
                 'can_cancel' => $this->canRestoreSaleToCart($sale, $user),
-                'items' => $sale->items->map(fn ($item) => [
-                    'sale_item_id' => (int) $item->id,
-                    'product_code' => $item->product_code,
-                    'product_name' => $item->product?->product_name ?? $item->product_code,
-                    'qty' => (float) $item->quantity,
-                    'qtyDisp' => trim((float) $item->quantity.' '.($item->uom ?? '')),
-                    'uom' => $item->uom,
-                    'unit_price' => (float) $item->selling_price,
-                    'product_vat' => (float) $item->product_vat,
-                    'amount' => (float) $item->amount,
-                    'sell_on_retail' => (int) $item->on_wholesale_retail,
-                ])->values()->all(),
+                'items' => $sale->items->map(function ($item) {
+                    $product = $item->product;
+                    $isRetail = (bool) $item->on_wholesale_retail;
+                    $qtyDisp = $product
+                        ? app(SaleLineQuantityDisplayService::class)->formatLineQtyDisplay(
+                            (float) $item->quantity,
+                            $product,
+                            $isRetail,
+                            $item->uom,
+                        )
+                        : trim((float) $item->quantity.' '.($item->uom ?? ''));
+
+                    return [
+                        'sale_item_id' => (int) $item->id,
+                        'product_code' => $item->product_code,
+                        'product_name' => $product?->product_name ?? $item->product_code,
+                        'qty' => (float) $item->quantity,
+                        'qtyDisp' => $qtyDisp,
+                        'uom' => $item->uom,
+                        'unit_price' => (float) $item->selling_price,
+                        'product_vat' => (float) $item->product_vat,
+                        'amount' => (float) $item->amount,
+                        'sell_on_retail' => (int) $item->on_wholesale_retail,
+                    ];
+                })->values()->all(),
             ],
         );
     }

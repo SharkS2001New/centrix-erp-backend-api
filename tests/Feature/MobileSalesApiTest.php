@@ -301,6 +301,43 @@ class MobileSalesApiTest extends TestCase
             ->assertJsonPath('can_edit', true);
     }
 
+    public function test_mobile_checkout_without_payment_uses_save_status(): void
+    {
+        $user = $this->makeMobileUser();
+        $product = \App\Models\Product::firstOrFail();
+        $customer = \App\Models\Customer::firstOrFail();
+        $token = $this->loginMobile($user);
+
+        $cart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+                'product_code' => $product->product_code,
+                'quantity' => 1,
+                'unit_price' => 100,
+                'on_wholesale_retail' => 0,
+            ])
+            ->assertCreated();
+
+        $sale = $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+                'customer_num' => $customer->customer_num,
+                'payment_method_code' => 'CASH',
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->assertEquals('unpaid', $sale['status'] ?? null);
+        $this->assertEquals('unpaid', $sale['payment_status'] ?? null);
+        $this->assertEquals(0, (float) ($sale['amount_paid'] ?? -1));
+    }
+
     public function test_mobile_paid_order_can_be_restored_to_cart_for_editing(): void
     {
         $user = $this->makeMobileUser();

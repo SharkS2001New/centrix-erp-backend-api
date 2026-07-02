@@ -848,6 +848,8 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show', 'forDate'], ['erp.permission:fulfillment.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
 
+            Route::post('dispatch-trips/merge', [DispatchTripController::class, 'merge'])
+                ->middleware('erp.permission:fulfillment.manage');
             Route::post('dispatch-trips/{trip}/reorder-stops', [DispatchTripController::class, 'reorderStops'])
                 ->middleware('erp.permission:fulfillment.manage');
             Route::post('dispatch-trips/{trip}/assign-orders', [DispatchTripController::class, 'assignOrders'])

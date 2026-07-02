@@ -89,6 +89,7 @@ class AutoTripAssignmentService
                 'branch_id' => (int) $sale->branch_id,
                 'route_id' => (int) $sale->route_id,
                 'scheduled_date' => $scheduledDate,
+                'require_assignment' => false,
             ]);
         }
 

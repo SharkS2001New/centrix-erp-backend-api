@@ -2,9 +2,11 @@
 
 namespace App\Http\Controllers\Api\V1\Operations\Concerns;
 
+use App\Models\Product;
 use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Services\Sales\OrderNumberAllocator;
+use App\Services\Sales\SaleLineQuantityDisplayService;
 
 trait HandlesCartAccess
 {
@@ -46,6 +48,33 @@ trait HandlesCartAccess
             $payload['next_order_num'] = app(OrderNumberAllocator::class)
                 ->nextForOrganization((int) $user->organization_id);
         }
+
+        $productCodes = $cart->lines->pluck('product_code')->unique()->values()->all();
+        $products = Product::query()
+            ->with('unit')
+            ->whereIn('product_code', $productCodes)
+            ->get()
+            ->keyBy('product_code');
+        $qtyDisplay = app(SaleLineQuantityDisplayService::class);
+
+        $payload['lines'] = $cart->lines->map(function ($line) use ($products, $qtyDisplay) {
+            $lineArray = $line->toArray();
+            $product = $products->get($line->product_code);
+            $isRetail = (bool) $line->on_wholesale_retail;
+
+            if ($product) {
+                $lineArray['qty_disp'] = $qtyDisplay->formatLineQtyDisplay(
+                    (float) $line->quantity,
+                    $product,
+                    $isRetail,
+                    $line->uom,
+                );
+            } else {
+                $lineArray['qty_disp'] = trim((float) $line->quantity.' '.($line->uom ?? ''));
+            }
+
+            return $lineArray;
+        })->values()->all();
 
         return $payload;
     }

@@ -998,7 +998,12 @@ class ReportController extends Controller
 
     public function invoicePayments(Request $request)
     {
-        return response()->json($this->reportFromView('v_invoice_payment_history', $this->filters($request), [
+        $filters = $this->filters($request);
+        if (($filters['date_column'] ?? '') === 'payment_date') {
+            $filters['date_column'] = 'date_paid';
+        }
+
+        return response()->json($this->reportFromView('v_invoice_payment_history', $filters, [
             'customer_num', 'date_paid',
         ]));
     }

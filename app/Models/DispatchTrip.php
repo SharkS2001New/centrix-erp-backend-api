@@ -56,6 +56,28 @@ class DispatchTrip extends Model
         return $this->belongsTo(RouteModel::class, 'route_id');
     }
 
+    public function routes(): BelongsToMany
+    {
+        return $this->belongsToMany(RouteModel::class, 'dispatch_trip_routes', 'trip_id', 'route_id')
+            ->withTimestamps()
+            ->orderBy('routes.route_name');
+    }
+
+    /** @return list<int> */
+    public function routeIdList(): array
+    {
+        if ($this->relationLoaded('routes') && $this->routes->isNotEmpty()) {
+            return $this->routes->pluck('id')->map(fn ($id) => (int) $id)->values()->all();
+        }
+
+        return $this->route_id ? [(int) $this->route_id] : [];
+    }
+
+    public function isMultiRoute(): bool
+    {
+        return count($this->routeIdList()) > 1;
+    }
+
     public function driver(): BelongsTo
     {
         return $this->belongsTo(Driver::class, 'driver_id');
