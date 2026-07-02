@@ -21,6 +21,21 @@ class SaleController extends BaseResourceController
         return Sale::class;
     }
 
+    protected function baseQuery(Request $request)
+    {
+        $query = Sale::query();
+        $user = $request->user();
+
+        if ($user) {
+            $this->access()->scopeOrganization($query, $user, 'sales.organization_id', $request);
+            if ($this->scopesByBranch()) {
+                $this->access()->scopeBranchIfLimited($query, $user, 'sales.branch_id');
+            }
+        }
+
+        return $query;
+    }
+
     public function index(Request $request)
     {
         $query = $this->baseQuery($request);
