@@ -170,6 +170,8 @@ class SaleController extends BaseResourceController
                 'can_edit_lines',
                 $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
             );
+            $sale->setAttribute('order_connectivity', $sale->mobileOrderConnectivity());
+            $sale->setAttribute('is_offline_order', $sale->isOfflineMobileOrder());
 
             return $sale;
         });
@@ -194,6 +196,8 @@ class SaleController extends BaseResourceController
             ),
             'can_edit' => $editService->canRestoreSaleToCart($sale, $request->user(), $gate),
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
+            'order_connectivity' => $sale->mobileOrderConnectivity(),
+            'is_offline_order' => $sale->isOfflineMobileOrder(),
         ]));
     }
 }

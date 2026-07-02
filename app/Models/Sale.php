@@ -63,6 +63,26 @@ class Sale extends Model
         return (bool) ($this->fulfillment_meta['legacy_import'] ?? false);
     }
 
+    /** @return 'online'|'offline'|null */
+    public function mobileOrderConnectivity(): ?string
+    {
+        if ($this->channel !== 'mobile') {
+            return null;
+        }
+
+        $offline = data_get($this->fulfillment_meta, 'location_check.offline_order');
+        if ($offline === null) {
+            return null;
+        }
+
+        return filter_var($offline, FILTER_VALIDATE_BOOLEAN) ? 'offline' : 'online';
+    }
+
+    public function isOfflineMobileOrder(): bool
+    {
+        return $this->mobileOrderConnectivity() === 'offline';
+    }
+
     public function scopeCentrixMetrics($query)
     {
         return \App\Services\Sales\CentrixSalesScope::excludeLegacyMaterialized($query);

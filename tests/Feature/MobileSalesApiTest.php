@@ -614,6 +614,43 @@ class MobileSalesApiTest extends TestCase
             ->assertJsonPath('code', 'login_channel_forbidden');
     }
 
+    public function test_mobile_orders_list_includes_connectivity_fields(): void
+    {
+        $rep = $this->makeMobileUser();
+        $template = Sale::query()
+            ->where('channel', 'mobile')
+            ->firstOrFail();
+
+        Sale::create([
+            'order_num' => 94001,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'unpaid',
+            'total_vat' => 10,
+            'order_total' => 100,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'fulfillment_meta' => [
+                'location_check' => ['offline_order' => true, 'verified' => false],
+            ],
+        ]);
+
+        $token = $this->loginMobile($rep);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders')
+            ->assertOk()
+            ->assertJsonFragment([
+                'order_no' => 94001,
+                'order_connectivity' => 'offline',
+                'is_offline_order' => true,
+            ]);
+    }
+
     protected function makeMobileUser(array $overrides = []): User
     {
         $admin = User::where('username', 'admin')->firstOrFail();
