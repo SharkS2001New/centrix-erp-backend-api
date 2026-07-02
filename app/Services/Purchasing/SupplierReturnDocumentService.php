@@ -14,6 +14,8 @@ use App\Models\SupplierReturnDocumentLine;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
+use App\Services\Returns\ReturnProofService;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -25,6 +27,7 @@ class SupplierReturnDocumentService
     public function __construct(
         protected UserAccessService $access,
         protected UserPermissionService $permissions,
+        protected ReturnProofService $proofService,
     ) {}
 
     /** @param  array<string, mixed>  $filters */
@@ -70,13 +73,13 @@ class SupplierReturnDocumentService
     }
 
     /** @param  array<string, mixed>  $data */
-    public function create(User $user, array $data): SupplierReturnDocument
+    public function create(User $user, array $data, ?UploadedFile $proof = null): SupplierReturnDocument
     {
         $this->assertSupplierInOrg($user, (int) $data['supplier_id']);
         $this->assertBranchAccess($user, (int) $data['branch_id']);
         $lines = $this->normalizeLines($data, $user);
 
-        return DB::transaction(function () use ($user, $data, $lines) {
+        return DB::transaction(function () use ($user, $data, $lines, $proof) {
             $lpoNo = ! empty($data['lpo_no']) ? (int) $data['lpo_no'] : null;
             $doc = SupplierReturnDocument::create([
                 'organization_id' => $user->organization_id,
@@ -94,6 +97,11 @@ class SupplierReturnDocumentService
 
             $this->syncLines($doc, $lines);
 
+            if ($proof !== null) {
+                $this->proofService->store($doc, $proof, 'returns/supplier/'.$doc->id);
+                $doc->refresh();
+            }
+
             $doc->load(['supplier', 'returnedByUser']);
             $this->createApprovalRequest($user, $doc);
 
@@ -102,7 +110,7 @@ class SupplierReturnDocumentService
     }
 
     /** @param  array<string, mixed>  $data */
-    public function update(SupplierReturnDocument $doc, User $user, array $data): SupplierReturnDocument
+    public function update(SupplierReturnDocument $doc, User $user, array $data, ?UploadedFile $proof = null): SupplierReturnDocument
     {
         if ($doc->status !== 'pending_approval') {
             throw ValidationException::withMessages([
@@ -112,7 +120,7 @@ class SupplierReturnDocumentService
 
         $this->assertCanMutate($doc, $user);
 
-        return DB::transaction(function () use ($doc, $user, $data) {
+        return DB::transaction(function () use ($doc, $user, $data, $proof) {
             if (isset($data['supplier_id'])) {
                 $this->assertSupplierInOrg($user, (int) $data['supplier_id']);
             }
@@ -144,6 +152,10 @@ class SupplierReturnDocumentService
             if ($lines !== null) {
                 $doc->lines()->delete();
                 $this->syncLines($doc, $lines);
+            }
+
+            if ($proof !== null) {
+                $this->proofService->store($doc, $proof, 'returns/supplier/'.$doc->id);
             }
 
             return $doc->fresh(['lines', 'supplier', 'returnedByUser']);
@@ -258,6 +270,7 @@ class SupplierReturnDocumentService
                 $this->assertCanApprove($user);
                 $this->reverseApprovedStock($doc, $user);
                 $this->deleteLegacySupplierReturns($doc);
+                $this->proofService->deleteExisting($doc);
                 $doc->lines()->delete();
                 $doc->delete();
             });
@@ -271,6 +284,7 @@ class SupplierReturnDocumentService
             $this->assertCanApprove($user);
         }
 
+        $this->proofService->deleteExisting($doc);
         $doc->lines()->delete();
         $doc->delete();
     }
@@ -305,6 +319,7 @@ class SupplierReturnDocumentService
             'supplier_invoice_no' => $doc->supplier_invoice_no,
             'reason_scope' => $doc->reason_scope,
             'return_reason' => $doc->return_reason,
+            'proof' => $this->proofService->meta($doc, '/supplier-return-documents/'.$doc->id.'/proof/file'),
             'notes' => $doc->notes,
             'status' => $doc->status,
             'status_label' => $this->statusLabel($doc->status),
@@ -580,6 +595,16 @@ class SupplierReturnDocumentService
         $supplierName = $doc->supplier?->supplier_name ?? 'Supplier';
         $returnLabel = 'SR-'.str_pad((string) $doc->id, 4, '0', STR_PAD_LEFT);
         $actionUrl = \App\Services\Notifications\NotificationActionUrlBuilder::for('supplier_return', (int) $doc->id);
+        $returnReason = trim((string) ($doc->return_reason ?? ''));
+        $proof = $this->proofService->meta($doc, '/supplier-return-documents/'.$doc->id.'/proof/file');
+
+        $message = "{$requesterName} requested supplier return {$returnLabel} for {$supplierName}.";
+        if ($returnReason !== '') {
+            $message .= " Reason: {$returnReason}.";
+        }
+        if ($proof !== null) {
+            $message .= ' Proof attached.';
+        }
 
         app(\App\Services\Notifications\ActionRequestService::class)->requestApproval($user, [
             'type' => 'supplier_return',
@@ -588,15 +613,17 @@ class SupplierReturnDocumentService
             'reference_id' => (int) $doc->id,
             'approver_permission' => 'purchasing.manage',
             'title' => 'Supplier return approval required',
-            'message' => "{$requesterName} requested supplier return {$returnLabel} for {$supplierName}.",
-            'reason' => $doc->return_reason,
+            'message' => $message,
+            'reason' => $returnReason !== '' ? $returnReason : null,
             'severity' => 'warning',
             'action_url' => $actionUrl,
-            'payload' => [
+            'payload' => array_filter([
                 'action_url' => $actionUrl,
                 'return_label' => $returnLabel,
                 'supplier_name' => $supplierName,
-            ],
+                'return_reason' => $returnReason !== '' ? $returnReason : null,
+                'proof' => $proof,
+            ], fn ($value) => $value !== null),
         ]);
     }
 

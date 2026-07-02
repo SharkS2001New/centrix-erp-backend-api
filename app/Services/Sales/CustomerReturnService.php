@@ -15,6 +15,8 @@ use App\Models\User;
 use App\Services\Accounting\ReturnJournalService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Returns\ReturnProofService;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -26,6 +28,7 @@ class CustomerReturnService
         protected CreditNoteService $creditNoteService,
         protected ReturnJournalService $returnJournal,
         protected UserPermissionService $permissions,
+        protected ReturnProofService $proofService,
     ) {}
 
     public function withActionFlags(CustomerReturn $return, User $user): CustomerReturn
@@ -40,6 +43,10 @@ class CustomerReturnService
         $return->setAttribute('can_approve', $pending && $canManage);
         $return->setAttribute('can_reject', ($pending || $approved) && $canManage);
         $return->setAttribute('can_print', true);
+        $return->setAttribute(
+            'proof',
+            $this->proofService->meta($return, '/customer-returns/'.$return->id.'/proof/file'),
+        );
 
         return $return;
     }
@@ -60,9 +67,9 @@ class CustomerReturnService
     }
 
     /** @param  array<string, mixed>  $data */
-    public function create(User $user, array $data): CustomerReturn
+    public function create(User $user, array $data, ?UploadedFile $proof = null): CustomerReturn
     {
-        return DB::transaction(function () use ($user, $data) {
+        return DB::transaction(function () use ($user, $data, $proof) {
             $saleId = isset($data['sale_id']) ? (int) $data['sale_id'] : null;
             $lines = $this->normalizeLines($data['lines'] ?? [], $saleId);
             $total = round(array_sum(array_column($lines, 'amount')), 2);
@@ -86,6 +93,11 @@ class CustomerReturnService
 
             $this->syncLines($return, $lines);
 
+            if ($proof !== null) {
+                $this->proofService->store($return, $proof, 'returns/customer/'.$return->id);
+                $return->refresh();
+            }
+
             if (! empty($data['auto_approve'])) {
                 return $this->approve($return->fresh(['lines']), $user);
             }
@@ -98,7 +110,7 @@ class CustomerReturnService
     }
 
     /** @param  array<string, mixed>  $data */
-    public function update(CustomerReturn $return, array $data): CustomerReturn
+    public function update(CustomerReturn $return, array $data, ?UploadedFile $proof = null): CustomerReturn
     {
         if ($return->status !== 'pending') {
             throw ValidationException::withMessages([
@@ -106,7 +118,7 @@ class CustomerReturnService
             ]);
         }
 
-        return DB::transaction(function () use ($return, $data) {
+        return DB::transaction(function () use ($return, $data, $proof) {
             $saleId = isset($data['sale_id']) ? (int) $data['sale_id'] : (int) ($return->sale_id ?? 0);
             $lines = isset($data['lines'])
                 ? $this->normalizeLines($data['lines'], $saleId ?: null, $return->id)
@@ -127,6 +139,10 @@ class CustomerReturnService
             if ($lines !== null) {
                 $return->lines()->delete();
                 $this->syncLines($return, $lines);
+            }
+
+            if ($proof !== null) {
+                $this->proofService->store($return, $proof, 'returns/customer/'.$return->id);
             }
 
             return $return->fresh(['lines', 'sale', 'customer', 'returnedByUser']);
@@ -343,6 +359,7 @@ class CustomerReturnService
                 $this->reverseApprovedStock($return, $user);
                 $this->deleteLegacySyncRows($return);
                 CreditNote::query()->where('customer_return_id', $return->id)->delete();
+                $this->proofService->deleteExisting($return);
                 $return->lines()->delete();
                 $return->delete();
             });
@@ -350,6 +367,7 @@ class CustomerReturnService
             return;
         }
 
+        $this->proofService->deleteExisting($return);
         $return->lines()->delete();
         $return->delete();
     }

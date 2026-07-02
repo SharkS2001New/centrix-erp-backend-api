@@ -2,14 +2,22 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Api\V1\Concerns\ParsesMultipartJsonFields;
 use App\Http\Controllers\Controller;
 use App\Models\SupplierReturnDocument;
 use App\Services\Purchasing\SupplierReturnDocumentService;
+use App\Services\Returns\ReturnProofService;
 use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
 
 class SupplierReturnDocumentController extends Controller
 {
-    public function __construct(protected SupplierReturnDocumentService $service) {}
+    use ParsesMultipartJsonFields;
+
+    public function __construct(
+        protected SupplierReturnDocumentService $service,
+        protected ReturnProofService $proofService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -24,6 +32,8 @@ class SupplierReturnDocumentController extends Controller
 
     public function store(Request $request)
     {
+        $this->decodeMultipartJsonFields($request, ['lines']);
+
         $data = $request->validate([
             'supplier_id' => 'required|integer|exists:suppliers,id',
             'branch_id' => 'required|integer|exists:branches,id',
@@ -33,6 +43,7 @@ class SupplierReturnDocumentController extends Controller
             'reason_scope' => 'nullable|in:order,per_product',
             'return_reason' => 'required|string|min:3',
             'notes' => 'nullable|string',
+            'proof' => ReturnProofService::fileRules(),
             'lines' => 'required|array|min:1',
             'lines.*.product_code' => 'required|string',
             'lines.*.quantity' => 'required|numeric|min:0.0001',
@@ -42,7 +53,7 @@ class SupplierReturnDocumentController extends Controller
             'lines.*.reason' => 'nullable|string',
         ]);
 
-        $doc = $this->service->create($request->user(), $data);
+        $doc = $this->service->create($request->user(), $data, $request->file('proof'));
 
         return response()->json([
             'data' => $this->service->formatDocument($doc, $request->user()),
@@ -62,6 +73,7 @@ class SupplierReturnDocumentController extends Controller
     public function update(Request $request, string $id)
     {
         $doc = $this->service->findForUser($request->user(), (int) $id);
+        $this->decodeMultipartJsonFields($request, ['lines']);
 
         $data = $request->validate([
             'supplier_id' => 'sometimes|integer|exists:suppliers,id',
@@ -72,6 +84,7 @@ class SupplierReturnDocumentController extends Controller
             'reason_scope' => 'nullable|in:order,per_product',
             'return_reason' => 'sometimes|string|min:3',
             'notes' => 'nullable|string',
+            'proof' => ReturnProofService::fileRules(),
             'lines' => 'sometimes|array|min:1',
             'lines.*.product_code' => 'required_with:lines|string',
             'lines.*.quantity' => 'required_with:lines|numeric|min:0.0001',
@@ -81,7 +94,7 @@ class SupplierReturnDocumentController extends Controller
             'lines.*.reason' => 'nullable|string',
         ]);
 
-        $updated = $this->service->update($doc, $request->user(), $data);
+        $updated = $this->service->update($doc, $request->user(), $data, $request->file('proof'));
 
         return response()->json([
             'data' => $this->service->formatDocument($updated, $request->user()),
@@ -134,6 +147,21 @@ class SupplierReturnDocumentController extends Controller
 
         return response()->json([
             'data' => $this->service->formatDocument($rejected, $request->user()),
+        ]);
+    }
+
+    public function proofFile(Request $request, string $id)
+    {
+        $doc = $this->service->findForUser($request->user(), (int) $id);
+        $absolute = $this->proofService->absolutePath($doc);
+
+        if ($absolute === null) {
+            abort(Response::HTTP_NOT_FOUND, 'Proof file not found.');
+        }
+
+        return response()->file($absolute, [
+            'Content-Type' => $doc->proof_file_mime_type ?: 'application/octet-stream',
+            'Content-Disposition' => 'inline; filename="'.($doc->proof_file_name ?: 'proof').'"',
         ]);
     }
 }

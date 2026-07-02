@@ -80,6 +80,83 @@ class InAppNotificationTest extends TestCase
         $this->assertTrue($list[0]['action_request']['can_approve']);
     }
 
+    public function test_supplier_return_notification_includes_reason_and_proof(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $approverId = DB::table('users')->insertGetId([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'purchasing_mgr_proof',
+            'email' => 'purchasing_mgr_proof@example.test',
+            'password' => $admin->password,
+            'full_name' => 'Purchasing Manager Proof',
+            'is_admin' => 1,
+            'is_active' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $approver = User::query()->findOrFail($approverId);
+
+        Sanctum::actingAs($admin);
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $productCode = DB::table('products')->value('product_code');
+
+        $this->post('/api/v1/supplier-return-documents', [
+            'supplier_id' => $supplier->id,
+            'branch_id' => $admin->branch_id,
+            'source_type' => 'manual',
+            'reason_scope' => 'order',
+            'return_reason' => 'Damaged packaging on delivery',
+            'lines' => json_encode([
+                [
+                    'product_code' => $productCode,
+                    'quantity' => 2,
+                    'package_type' => 'pieces',
+                    'stock_location' => 'store',
+                ],
+            ]),
+            'proof' => \Illuminate\Http\UploadedFile::fake()->create('damage.jpg', 100, 'image/jpeg'),
+        ])->assertCreated();
+
+        Sanctum::actingAs($approver);
+
+        $list = $this->getJson('/api/v1/notifications')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertNotEmpty($list);
+        $notification = $list[0];
+        $this->assertStringContainsString('Reason: Damaged packaging on delivery', $notification['message']);
+        $this->assertSame('Damaged packaging on delivery', $notification['action_request']['reason']);
+        $this->assertSame('damage.jpg', $notification['action_request']['payload']['proof']['file_name'] ?? null);
+    }
+
+    public function test_customer_return_requires_reason(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $product = DB::table('products')->value('product_code');
+        $sale = DB::table('sales')->value('id');
+
+        $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale,
+            'return_date' => '2026-06-20',
+            'refund_method' => 'CASH',
+            'lines' => [
+                [
+                    'product_code' => $product,
+                    'quantity_sold' => 5,
+                    'return_qty' => 1,
+                    'unit_price' => 100,
+                    'amount' => 100,
+                ],
+            ],
+        ])->assertUnprocessable();
+    }
+
     public function test_approver_can_resolve_action_request_from_notification_api(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

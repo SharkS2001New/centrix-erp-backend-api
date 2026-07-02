@@ -335,6 +335,8 @@ class ErpSettingsController extends Controller
             'loading_sheet_show_qty_column',
             'loading_sheet_show_price_columns',
             'loading_sheet_show_total',
+            'loading_sheet_show_trip_expenses',
+            'loading_sheet_show_trip_profit',
             'loading_sheet_default_checked_by',
             'enable_fulfillment_guidance',
         ];

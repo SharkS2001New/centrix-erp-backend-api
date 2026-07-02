@@ -516,6 +516,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:purchasing.manage');
             Route::post('supplier-return-documents/{id}/reject', [SupplierReturnDocumentController::class, 'reject'])
                 ->middleware('erp.permission:purchasing.manage');
+            Route::get('supplier-return-documents/{id}/proof/file', [SupplierReturnDocumentController::class, 'proofFile'])
+                ->middleware('erp.permission:purchasing.view|purchasing.manage');
             Route::apiResource('stock-reservations', StockReservationController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
@@ -592,7 +594,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:customers.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:customers.manage']);
             Route::apiResource('routes', RouteModelController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|admin.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|admin.view|sales.view|mobile.routes.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
             Route::post('routes/import-batch', [RouteImportController::class, 'store'])
                 ->middleware(['erp.permission:fulfillment.manage']);
@@ -653,6 +655,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:sales.manage');
             Route::post('customer-returns/{id}/reject', [CustomerReturnController::class, 'reject'])
                 ->middleware('erp.permission:sales.manage');
+            Route::get('customer-returns/{id}/proof/file', [CustomerReturnController::class, 'proofFile'])
+                ->middleware('erp.permission:sales.view|sales.manage');
             Route::apiResource('customer-returns', CustomerReturnController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);

@@ -109,17 +109,28 @@ class GeneralSettingsResolver
         $out['number_thousands_separator'] = in_array($out['number_thousands_separator'] ?? '', ['comma', 'space', 'none'], true)
             ? $out['number_thousands_separator']
             : 'comma';
-        $out['document_footer_text'] = trim((string) ($out['document_footer_text'] ?? ''));
-        $out['print_footer_receipt'] = trim((string) ($out['print_footer_receipt'] ?? ''));
-        $out['print_footer_a4_invoice'] = trim((string) ($out['print_footer_a4_invoice'] ?? ''));
-        $out['print_footer_lpo'] = trim((string) ($out['print_footer_lpo'] ?? ''));
-        $out['print_footer_loading_sheet'] = trim((string) ($out['print_footer_loading_sheet'] ?? ''));
+        $out['document_footer_text'] = self::normalizeFooterField($out['document_footer_text'] ?? '');
+        $out['print_footer_receipt'] = self::normalizeFooterField($out['print_footer_receipt'] ?? '');
+        $out['print_footer_a4_invoice'] = self::normalizeFooterField($out['print_footer_a4_invoice'] ?? '');
+        $out['print_footer_lpo'] = self::normalizeFooterField($out['print_footer_lpo'] ?? '');
+        $out['print_footer_loading_sheet'] = self::normalizeFooterField($out['print_footer_loading_sheet'] ?? '');
         $out['show_organization_on_documents'] = (bool) ($out['show_organization_on_documents'] ?? true);
         $out['document_header_display'] = in_array($out['document_header_display'] ?? '', ['auto', 'logo', 'name', 'logo_and_name'], true)
             ? $out['document_header_display']
             : 'auto';
 
         return self::normalizePrintFonts($out, $settings);
+    }
+
+    public static function normalizeFooterField(mixed $value): string
+    {
+        if (is_array($value)) {
+            $encoded = json_encode(array_values($value));
+
+            return $encoded === false ? '' : trim($encoded);
+        }
+
+        return trim((string) ($value ?? ''));
     }
 
     /**

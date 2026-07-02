@@ -153,6 +153,7 @@ class InAppNotificationService
                 'reference_type' => $request->reference_type,
                 'reference_id' => (int) $request->reference_id,
                 'reason' => $request->reason,
+                'payload' => $request->payload,
                 'can_approve' => app(ActionRequestService::class)->canApprove($viewer, $request),
             ];
         }

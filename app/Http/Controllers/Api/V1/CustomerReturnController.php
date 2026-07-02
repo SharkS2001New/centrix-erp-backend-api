@@ -2,18 +2,26 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Api\V1\Concerns\ParsesMultipartJsonFields;
 use App\Http\Controllers\Controller;
 use App\Models\CustomerReturn;
 use App\Models\Sale;
 use App\Services\Auth\UserAccessService;
 use App\Services\Notifications\ActionRequestService;
+use App\Services\Returns\ReturnProofService;
 use App\Services\Sales\CustomerReturnService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
+use Symfony\Component\HttpFoundation\Response;
 
 class CustomerReturnController extends Controller
 {
-    public function __construct(protected CustomerReturnService $service) {}
+    use ParsesMultipartJsonFields;
+
+    public function __construct(
+        protected CustomerReturnService $service,
+        protected ReturnProofService $proofService,
+    ) {}
 
     public function index(Request $request)
     {
@@ -77,16 +85,19 @@ class CustomerReturnController extends Controller
 
     public function store(Request $request)
     {
+        $this->decodeMultipartJsonFields($request, ['lines']);
+
         $data = $request->validate([
             'sale_id' => 'nullable|integer|exists:sales,id',
             'branch_id' => 'nullable|integer|exists:branches,id',
             'customer_num' => 'nullable|integer|exists:customers,customer_num',
             'return_date' => 'nullable|date',
             'refund_method' => 'nullable|string|max:45',
-            'reason' => 'nullable|string|max:200',
+            'reason' => 'required|string|min:3|max:200',
             'notes' => 'nullable|string',
             'stock_location' => 'nullable|in:shop,store',
             'auto_approve' => 'sometimes|boolean',
+            'proof' => ReturnProofService::fileRules(),
             'lines' => 'required|array|min:1',
             'lines.*.product_code' => 'required|string',
             'lines.*.return_qty' => 'required|numeric|min:0',
@@ -108,7 +119,7 @@ class CustomerReturnController extends Controller
             $data['branch_id'] = $data['branch_id'] ?? $sale->branch_id;
         }
 
-        $return = $this->service->create($request->user(), $data);
+        $return = $this->service->create($request->user(), $data, $request->file('proof'));
 
         return response()->json($this->service->withActionFlags($return, $request->user()), 201);
     }
@@ -137,15 +148,17 @@ class CustomerReturnController extends Controller
     public function update(Request $request, string $id)
     {
         $return = $this->findForUser($id);
+        $this->decodeMultipartJsonFields($request, ['lines']);
 
         $data = $request->validate([
             'sale_id' => 'sometimes|nullable|integer|exists:sales,id',
             'customer_num' => 'sometimes|nullable|integer|exists:customers,customer_num',
             'return_date' => 'sometimes|date',
             'refund_method' => 'sometimes|string|max:45',
-            'reason' => 'sometimes|nullable|string|max:200',
+            'reason' => 'sometimes|required|string|min:3|max:200',
             'notes' => 'sometimes|nullable|string',
             'stock_location' => 'sometimes|in:shop,store',
+            'proof' => ReturnProofService::fileRules(),
             'lines' => 'sometimes|array|min:1',
             'lines.*.product_code' => 'required_with:lines|string',
             'lines.*.return_qty' => 'required_with:lines|numeric|min:0',
@@ -158,7 +171,7 @@ class CustomerReturnController extends Controller
             'lines.*.line_no' => 'nullable|integer',
         ]);
 
-        $updated = $this->service->update($return, $data);
+        $updated = $this->service->update($return, $data, $request->file('proof'));
 
         return response()->json($this->service->withActionFlags($updated, $request->user()));
     }
@@ -208,6 +221,21 @@ class CustomerReturnController extends Controller
         );
 
         return response()->json($this->service->withActionFlags($rejected, $user));
+    }
+
+    public function proofFile(string $id)
+    {
+        $return = $this->findForUser($id);
+        $absolute = $this->proofService->absolutePath($return);
+
+        if ($absolute === null) {
+            abort(Response::HTTP_NOT_FOUND, 'Proof file not found.');
+        }
+
+        return response()->file($absolute, [
+            'Content-Type' => $return->proof_file_mime_type ?: 'application/octet-stream',
+            'Content-Disposition' => 'inline; filename="'.($return->proof_file_name ?: 'proof').'"',
+        ]);
     }
 
     public function saleLines(Request $request, string $saleId)
