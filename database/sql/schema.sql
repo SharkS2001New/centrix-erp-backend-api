@@ -229,6 +229,7 @@ CREATE TABLE suppliers (
     address         TEXT,
     town            VARCHAR(100),
     tax_pin         VARCHAR(45),
+    terms_of_payment VARCHAR(45),
     additional_info TEXT,
     contacts        JSON,         -- [{ "label","phone","email" }, ...]
     organization_id INT           NULL,

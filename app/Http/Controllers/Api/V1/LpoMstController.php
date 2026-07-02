@@ -9,6 +9,7 @@ use App\Models\Product;
 use App\Models\Supplier;
 use App\Services\Erp\ErpContext;
 use App\Services\LpoModuleService;
+use App\Services\Purchasing\LpoNumberAllocator;
 use App\Services\Purchasing\LpoWorkflowService;
 use App\Services\Purchasing\ProcurementSettingsResolver;
 use Illuminate\Http\Request;
@@ -20,6 +21,7 @@ class LpoMstController extends BaseResourceController
     public function __construct(
         protected LpoModuleService $lpoModule,
         protected LpoWorkflowService $workflow,
+        protected LpoNumberAllocator $lpoNumbers,
         protected ErpContext $erp,
     ) {}
 
@@ -121,12 +123,19 @@ class LpoMstController extends BaseResourceController
         $org = Organization::findOrFail($user->organization_id);
         $settings = ProcurementSettingsResolver::forOrganization($org);
 
-        $lpo = DB::transaction(function () use ($payload, $user, $settings) {
+        $lpo = DB::transaction(function () use ($payload, $user, $settings, $org) {
+            Supplier::query()
+                ->where('id', $payload['supplier_id'])
+                ->where('organization_id', $org->id)
+                ->firstOrFail();
+
             $totals = $this->computeTotals($payload['lines']);
             $dueDate = $payload['due_date']
                 ?? now()->addDays($settings['default_payment_terms_days'])->toDateString();
 
             $lpo = LpoMst::create([
+                'organization_id' => $org->id,
+                'lpo_seq' => $this->lpoNumbers->nextForOrganization((int) $org->id),
                 'supplier_id' => $payload['supplier_id'],
                 'reference_number' => $payload['reference_number'] ?? null,
                 'due_date' => $dueDate,

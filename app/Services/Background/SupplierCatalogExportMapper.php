@@ -43,6 +43,7 @@ class SupplierCatalogExportMapper implements ListExportRowMapper
             'email' => $supplier['email'] ?? '',
             'town' => $supplier['town'] ?? '',
             'tax_pin' => $supplier['tax_pin'] ?? '',
+            'terms_of_payment' => $supplier['terms_of_payment'] ?? '',
             'address' => $supplier['address'] ?? '',
             'current_balance' => $supplier['current_balance'] ?? '',
             'other_contacts' => $supplier['other_contacts'] ?? $contactSummary,

@@ -327,7 +327,7 @@ class LightStoresCentrixImportCsvGenerator
   {
     $headers = [
       'supplier_name', 'supplier_code', 'contact_person', 'phone', 'alternate_phone',
-      'email', 'town', 'tax_pin', 'address', 'is_active',
+      'email', 'town', 'tax_pin', 'terms_of_payment', 'address', 'is_active',
     ];
     $referenceHeaders = array_merge(['legacy_supplier_id'], $headers);
     $rows = [];

@@ -70,4 +70,42 @@ class SaleOrderListDateFilterTest extends TestCase
         $ids = collect($response->json('data'))->pluck('id');
         $this->assertFalse($ids->contains($sale->id));
     }
+
+    public function test_sales_list_filters_by_payment_status_independent_of_workflow_status(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $processedUnpaid = Sale::query()->create([
+            'order_num' => 993003,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'order_total' => 800,
+            'amount_paid' => 0,
+        ]);
+
+        $processedPaid = Sale::query()->create([
+            'order_num' => 993004,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'processed',
+            'payment_status' => 'paid',
+            'order_total' => 900,
+            'amount_paid' => 900,
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?filter[payment_status]=unpaid&per_page=200');
+
+        $response->assertOk();
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($processedUnpaid->id));
+        $this->assertFalse($ids->contains($processedPaid->id));
+    }
 }

@@ -139,6 +139,7 @@ class ImportSuppliersJob implements ShouldBeUnique, ShouldQueue
             'town',
             'tax_pin',
             'address',
+            'terms_of_payment',
         ] as $key) {
             if (array_key_exists($key, $row) && $row[$key] !== '' && $row[$key] !== null) {
                 $body[$key] = trim((string) $row[$key]);

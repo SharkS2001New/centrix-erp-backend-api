@@ -425,6 +425,7 @@ return [
             'include_normal_orders_in_loading_list' => true,
             'loading_sheet_footer_lines' => '',
             'loading_sheet_show_signatures' => true,
+            'loading_sheet_show_qty_column' => true,
             'loading_sheet_show_price_columns' => true,
             'loading_sheet_default_checked_by' => '',
         ],

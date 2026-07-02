@@ -46,6 +46,20 @@ class SaleLineQuantityDisplayService
         return trim($this->formatDisplayQty($entryQty).' '.$label);
     }
 
+    public function displayUnitPrice(
+        float $baseQty,
+        float $lineAmount,
+        Product $product,
+        bool $isRetailLine,
+    ): float {
+        $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
+        if ($entryQty <= 0) {
+            return 0.0;
+        }
+
+        return round($lineAmount / $entryQty, 2);
+    }
+
     protected function defaultLineUomLabel(Product $product, bool $isRetailLine): string
     {
         $uom = $this->productUnit($product);

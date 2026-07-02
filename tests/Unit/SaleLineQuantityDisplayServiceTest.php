@@ -27,6 +27,24 @@ class SaleLineQuantityDisplayServiceTest extends TestCase
         $this->assertSame('2 Bag', $display);
     }
 
+    public function test_wholesale_line_display_unit_price_uses_entry_qty(): void
+    {
+        $product = new Product([
+            'product_code' => 'TEST-003',
+            'product_name' => 'Sugar 50kg',
+        ]);
+        $product->setRelation('unit', new Uom([
+            'conversion_factor' => 50,
+            'full_name' => 'Bag',
+            'measure_name' => 'kg',
+            'small_packaging_label' => 'kg',
+        ]));
+
+        $display = (new SaleLineQuantityDisplayService())->displayUnitPrice(100, 2500, $product, false);
+
+        $this->assertSame(1250.0, $display);
+    }
+
     public function test_retail_line_with_base_qty_shows_pieces(): void
     {
         $product = new Product([

@@ -69,8 +69,15 @@ trait HandlesCartAccess
                     $isRetail,
                     $line->uom,
                 );
+                $lineArray['display_unit_price'] = $qtyDisplay->displayUnitPrice(
+                    (float) $line->quantity,
+                    (float) $line->amount,
+                    $product,
+                    $isRetail,
+                );
             } else {
                 $lineArray['qty_disp'] = trim((float) $line->quantity.' '.($line->uom ?? ''));
+                $lineArray['display_unit_price'] = round((float) $line->unit_price, 2);
             }
 
             return $lineArray;

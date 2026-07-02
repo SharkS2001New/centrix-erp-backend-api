@@ -330,6 +330,7 @@ class ErpSettingsController extends Controller
             'include_normal_orders_in_loading_list',
             'loading_sheet_footer_lines',
             'loading_sheet_show_signatures',
+            'loading_sheet_show_qty_column',
             'loading_sheet_show_price_columns',
             'loading_sheet_default_checked_by',
         ];

@@ -150,14 +150,23 @@ class MobileSalesService
                 'items' => $sale->items->map(function ($item) {
                     $product = $item->product;
                     $isRetail = (bool) $item->on_wholesale_retail;
+                    $display = app(SaleLineQuantityDisplayService::class);
                     $qtyDisp = $product
-                        ? app(SaleLineQuantityDisplayService::class)->formatLineQtyDisplay(
+                        ? $display->formatLineQtyDisplay(
                             (float) $item->quantity,
                             $product,
                             $isRetail,
                             $item->uom,
                         )
                         : trim((float) $item->quantity.' '.($item->uom ?? ''));
+                    $displayUnitPrice = $product
+                        ? $display->displayUnitPrice(
+                            (float) $item->quantity,
+                            (float) $item->amount,
+                            $product,
+                            $isRetail,
+                        )
+                        : (float) $item->selling_price;
 
                     return [
                         'sale_item_id' => (int) $item->id,
@@ -166,7 +175,8 @@ class MobileSalesService
                         'qty' => (float) $item->quantity,
                         'qtyDisp' => $qtyDisp,
                         'uom' => $item->uom,
-                        'unit_price' => (float) $item->selling_price,
+                        'unit_price' => $displayUnitPrice,
+                        'unit_price_per_base' => (float) $item->selling_price,
                         'product_vat' => (float) $item->product_vat,
                         'amount' => (float) $item->amount,
                         'sell_on_retail' => (int) $item->on_wholesale_retail,

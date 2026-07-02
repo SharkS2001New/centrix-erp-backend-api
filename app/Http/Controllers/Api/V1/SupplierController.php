@@ -46,6 +46,7 @@ class SupplierController extends BaseResourceController
                     ->orWhere('email', 'like', "%{$q}%")
                     ->orWhere('town', 'like', "%{$q}%")
                     ->orWhere('tax_pin', 'like', "%{$q}%")
+                    ->orWhere('terms_of_payment', 'like', "%{$q}%")
                     ->orWhere('address', 'like', "%{$q}%");
             });
         }

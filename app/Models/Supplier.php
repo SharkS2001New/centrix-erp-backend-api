@@ -11,7 +11,7 @@ class Supplier extends Model
     protected $table = 'suppliers';
     protected $fillable = [
         'supplier_code', 'supplier_name', 'contact_person', 'email', 'phone',
-        'alternate_phone', 'address', 'town', 'tax_pin', 'additional_info',
+        'alternate_phone', 'address', 'town', 'tax_pin', 'terms_of_payment', 'additional_info',
         'contacts', 'organization_id', 'is_active', 'created_by', 'deleted_by', 'deleted_at',
     ];
     protected $casts = ['contacts' => 'array', 'is_active' => 'boolean', 'deleted_at' => 'datetime'];

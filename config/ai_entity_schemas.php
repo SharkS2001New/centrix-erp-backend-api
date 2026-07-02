@@ -418,6 +418,7 @@ return [
             'email',
             'town',
             'tax_pin',
+            'terms_of_payment',
             'address',
         ],
         'fields' => [
@@ -459,6 +460,12 @@ return [
             ],
             'tax_pin' => [
                 'label' => 'KRA PIN',
+                'type' => 'string',
+                'required' => false,
+                'important' => false,
+            ],
+            'terms_of_payment' => [
+                'label' => 'Terms of payment',
                 'type' => 'string',
                 'required' => false,
                 'important' => false,

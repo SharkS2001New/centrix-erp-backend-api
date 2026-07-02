@@ -67,4 +67,34 @@ class OrderWorkflowTransitionTest extends TestCase
             ->assertStatus(422)
             ->assertJsonFragment(['message' => 'Order is already marked as processed.']);
     }
+
+    public function test_credit_sale_can_advance_to_processed_while_payment_remains_unpaid(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $sale = Sale::query()->create([
+            'order_num' => 992003,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'unpaid',
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'order_total' => 1200,
+            'amount_paid' => 0,
+        ]);
+
+        $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
+            'status' => 'processed',
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 'processed')
+            ->assertJsonPath('payment_status', 'unpaid');
+
+        $sale->refresh();
+        $this->assertSame('processed', $sale->status);
+        $this->assertSame('unpaid', $sale->payment_status);
+    }
 }
