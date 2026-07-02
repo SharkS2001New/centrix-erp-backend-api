@@ -52,6 +52,7 @@ class CheckoutController extends Controller
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
+        app(\App\Services\Sales\DiscountApprovalService::class)->assertCartCanCheckout($cart, $request->user());
         $sale = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
 
         app(AutoTripAssignmentService::class)->tryAssignSale($sale, $request->user());

@@ -136,44 +136,46 @@ class EmployeeLeaveDayController extends HrOrgResourceController
             );
         }
 
-        return response()->json(
-            EmployeeLeaveDay::create($data)->load('employee'),
-            201,
-        );
+        $row = EmployeeLeaveDay::create($data)->load('employee');
+
+        if ($row->approval_status === 'pending') {
+            app(\App\Services\Hr\LeaveApprovalService::class)->notifyOnCreate($request->user(), $row);
+        }
+
+        return response()->json($row, 201);
     }
 
-    /** POST /employee-leave-days/{id}/approve */
     public function approve(string $id)
     {
         $row = $this->findScoped($id);
-        if ($row->approval_status === 'approved') {
-            return response()->json($row->load('employee'));
-        }
-        if ($row->approval_status === 'rejected') {
-            return response()->json(['message' => 'Rejected leave cannot be approved.'], 422);
-        }
-        $employee = Employee::findOrFail($row->employee_id);
-        app(LeaveBalanceService::class)->assertCanDeduct(
-            $employee,
-            $row->deduct_from,
-            (float) $row->days_deducted,
-            (int) $row->id,
-        );
-        $row->update(['approval_status' => 'approved']);
+        $approved = app(\App\Services\Hr\LeaveApprovalService::class)->approve($row, request()->user());
 
-        return response()->json($row->fresh(['employee']));
+        app(\App\Services\Notifications\ActionRequestService::class)->markResolvedFromDomain(
+            'leave_request',
+            'employee_leave_day',
+            (int) $approved->id,
+            'approved',
+            request()->user(),
+        );
+
+        return response()->json($approved);
     }
 
     /** POST /employee-leave-days/{id}/reject */
     public function reject(string $id)
     {
         $row = $this->findScoped($id);
-        if ($row->approval_status === 'approved') {
-            return response()->json(['message' => 'Approved leave cannot be rejected.'], 422);
-        }
-        $row->update(['approval_status' => 'rejected']);
+        $rejected = app(\App\Services\Hr\LeaveApprovalService::class)->reject($row, request()->user());
 
-        return response()->json($row->fresh(['employee']));
+        app(\App\Services\Notifications\ActionRequestService::class)->markResolvedFromDomain(
+            'leave_request',
+            'employee_leave_day',
+            (int) $rejected->id,
+            'rejected',
+            request()->user(),
+        );
+
+        return response()->json($rejected);
     }
 
     public function update(Request $request, string $id)

@@ -8,6 +8,11 @@ use App\Models\InAppNotification;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\Contracts\ActionRequestHandler;
+use App\Services\Notifications\Handlers\DiscountApprovalActionRequestHandler;
+use App\Services\Notifications\Handlers\JournalEntryActionRequestHandler;
+use App\Services\Notifications\Handlers\LeaveActionRequestHandler;
+use App\Services\Notifications\Handlers\OrderCancellationActionRequestHandler;
+use App\Services\Notifications\Handlers\StockAdjustmentActionRequestHandler;
 use App\Services\Notifications\Handlers\SupplierReturnActionRequestHandler;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -22,9 +27,19 @@ class ActionRequestService
         protected InAppNotificationService $notifications,
         protected UserPermissionService $permissions,
         SupplierReturnActionRequestHandler $supplierReturnHandler,
+        DiscountApprovalActionRequestHandler $discountHandler,
+        OrderCancellationActionRequestHandler $orderCancelHandler,
+        LeaveActionRequestHandler $leaveHandler,
+        JournalEntryActionRequestHandler $journalHandler,
+        StockAdjustmentActionRequestHandler $stockAdjustmentHandler,
     ) {
         $this->handlers = collect([
             $supplierReturnHandler,
+            $discountHandler,
+            $orderCancelHandler,
+            $leaveHandler,
+            $journalHandler,
+            $stockAdjustmentHandler,
         ])->keyBy(fn (ActionRequestHandler $handler) => $handler->type());
     }
 
@@ -37,13 +52,16 @@ class ActionRequestService
             throw ValidationException::withMessages(['type' => 'Unknown action request type.']);
         }
 
-        $existing = ActionRequest::query()
-            ->where('organization_id', $requester->organization_id)
-            ->where('type', $type)
-            ->where('reference_type', (string) $data['reference_type'])
-            ->where('reference_id', (int) $data['reference_id'])
-            ->where('status', 'pending')
-            ->first();
+        $existing = null;
+        if (empty($data['allow_duplicate_reference'])) {
+            $existing = ActionRequest::query()
+                ->where('organization_id', $requester->organization_id)
+                ->where('type', $type)
+                ->where('reference_type', (string) $data['reference_type'])
+                ->where('reference_id', (int) $data['reference_id'])
+                ->where('status', 'pending')
+                ->first();
+        }
 
         if ($existing !== null) {
             return $existing;

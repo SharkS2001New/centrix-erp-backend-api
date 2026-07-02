@@ -107,6 +107,39 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart->fresh('lines'), $request->user(), includeNextOrderNum: false);
     }
 
+    public function requestDiscount(Request $request, int $cartId)
+    {
+        $user = $request->user();
+        $cart = $this->findOwnedCart($cartId, $user);
+        $gate = $this->erp->gateForUser($user);
+
+        $data = $request->validate([
+            'scope' => 'required|in:line,order',
+            'line_ref' => 'nullable|string',
+            'discount_amount' => 'required|numeric|min:0',
+            'reason' => 'nullable|string|max:500',
+        ]);
+
+        $result = app(\App\Services\Sales\DiscountApprovalService::class)->applyOrRequest(
+            $user,
+            $cart,
+            $gate,
+            $data,
+        );
+
+        $payload = [
+            'applied' => $result['applied'],
+            'cart' => $this->presentCart($result['cart'], $user, includeNextOrderNum: false),
+        ];
+
+        if (! $result['applied']) {
+            $payload['pending_approval'] = true;
+            $payload['action_request_id'] = (int) $result['action_request']->id;
+        }
+
+        return response()->json($payload, $result['applied'] ? 200 : 202);
+    }
+
     public function addLine(AddCartLineRequest $request, int $cartId)
     {
         $user = $request->user();

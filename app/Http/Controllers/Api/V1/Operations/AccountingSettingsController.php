@@ -36,6 +36,7 @@ class AccountingSettingsController extends Controller
             'auto_post_payroll' => 'sometimes|boolean',
             'auto_post_returns' => 'sometimes|boolean',
             'post_till_variance' => 'sometimes|boolean',
+            'journal_entry_approval_enabled' => 'sometimes|boolean',
             'account_codes' => 'sometimes|array',
             'account_codes.*' => 'nullable|string|max:20',
             'payment_method_accounts' => 'sometimes|array',

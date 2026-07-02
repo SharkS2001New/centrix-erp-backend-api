@@ -61,6 +61,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('carts', [CartOperationsController::class, 'store']);
         Route::get('carts/{cartId}', [CartOperationsController::class, 'show']);
         Route::patch('carts/{cartId}', [CartOperationsController::class, 'update']);
+        Route::post('carts/{cartId}/discount-requests', [CartOperationsController::class, 'requestDiscount']);
         Route::post('carts/{cartId}/lines', [CartOperationsController::class, 'addLine']);
         Route::patch('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'updateLine']);
         Route::delete('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'deleteLine']);
@@ -81,6 +82,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('orders/{saleId}/restore-to-cart', [CartOperationsController::class, 'restoreHeldOrder']);
         Route::post('orders/{saleId}/cancel-held', [CartOperationsController::class, 'cancelHeldOrder']);
         Route::post('orders/{saleId}/cancel', [CartOperationsController::class, 'cancelOrder']);
+        Route::post('orders/{saleId}/request-cancellation', [OrderWorkflowController::class, 'requestCancellation']);
     });
 
     Route::middleware('erp.permission:sales.manage')->prefix('sales')->group(function () {
@@ -120,6 +122,7 @@ Route::middleware('auth:sanctum')->group(function () {
         ->prefix('inventory')
         ->group(function () {
             Route::post('adjust', [StockOperationsController::class, 'adjust']);
+            Route::post('adjust/request', [StockOperationsController::class, 'requestAdjust']);
         });
 
     Route::middleware(['erp.module:inventory', 'erp.permission:inventory.manage'])->prefix('inventory')->group(function () {
@@ -145,6 +148,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('settings', [AccountingSettingsController::class, 'update']);
         Route::post('seed-chart-of-accounts', [AccountingSettingsController::class, 'seedChart']);
         Route::post('journal-entries', [JournalOperationsController::class, 'store']);
+        Route::post('journal-entries/{entryId}/request-post', [JournalOperationsController::class, 'requestPost']);
         Route::post('journal-entries/{entryId}/post', [JournalOperationsController::class, 'post']);
         Route::post('journal-entries/{entryId}/reverse', [JournalOperationsController::class, 'reverse']);
         Route::get('fiscal-periods', [FiscalPeriodController::class, 'index']);

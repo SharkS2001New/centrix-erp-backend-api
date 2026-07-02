@@ -82,6 +82,28 @@ class BranchStockService
     }
 
     /**
+     * Sales channels (mobile/POS) historically read stock_in_shop — expose net available there
+     * while preserving on-hand figures for admin consumers.
+     *
+     * @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    public function applySalesConsumerStock(array $payload): array
+    {
+        if (array_key_exists('stock_available_shop', $payload)) {
+            $payload['stock_on_hand_shop'] = $payload['stock_in_shop'];
+            $payload['stock_in_shop'] = $payload['stock_available_shop'];
+        }
+
+        if (array_key_exists('stock_available_store', $payload)) {
+            $payload['stock_on_hand_store'] = $payload['stock_in_store'];
+            $payload['stock_in_store'] = $payload['stock_available_store'];
+        }
+
+        return $payload;
+    }
+
+    /**
      * @param  Collection<int, array<string, mixed>>  $items
      * @return Collection<int, array<string, mixed>>
      */

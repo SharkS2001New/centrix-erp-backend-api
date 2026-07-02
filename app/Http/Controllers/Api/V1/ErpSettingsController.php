@@ -62,6 +62,9 @@ class ErpSettingsController extends Controller
             'allow_discounts',
             'allow_edit_line_discount',
             'enable_order_discount',
+            'discount_approval_enabled',
+            'discount_approval_threshold_percent',
+            'order_cancellation_approval_enabled',
             'enable_vouchers',
             'enable_redeemable_points',
             'point_cash_value',
@@ -157,6 +160,7 @@ class ErpSettingsController extends Controller
             'stock_deduct_on.mobile' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
             'stock_deduct_on.backend' => 'sometimes|in:order_created,order_completed,trip_load,trip_depart',
             'orders_list_default_days' => 'sometimes|integer|min:1|max:90',
+            'discount_approval_threshold_percent' => 'sometimes|numeric|min:0|max:100',
             'orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
             'show_receipt_payment_details' => 'sometimes|boolean',
@@ -395,6 +399,7 @@ class ErpSettingsController extends Controller
             'default_receive_location',
             'default_pos_sale_location',
             'default_distribution_sale_location',
+            'stock_adjustment_approval_enabled',
         ];
 
         $stockSourceKeys = [
@@ -414,6 +419,7 @@ class ErpSettingsController extends Controller
             'enable_retail_pricing' => 'sometimes|boolean',
             'retail_shop_wholesale_store_stock' => 'sometimes|boolean',
             'enable_barcode_scanner' => 'sometimes|boolean',
+            'stock_adjustment_approval_enabled' => 'sometimes|boolean',
             'allow_negative_stock' => 'sometimes|boolean',
             'stock_alert_mode' => 'sometimes|in:per_product,global,both',
             'global_low_stock_threshold' => 'sometimes|nullable|numeric|min:0',

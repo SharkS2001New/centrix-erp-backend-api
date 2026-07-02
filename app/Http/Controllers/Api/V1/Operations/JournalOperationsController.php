@@ -4,13 +4,18 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Models\JournalEntry;
+use App\Services\Accounting\JournalEntryApprovalService;
 use App\Services\Accounting\JournalPostingService;
+use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class JournalOperationsController extends Controller
 {
     public function __construct(
         protected JournalPostingService $posting,
+        protected JournalEntryApprovalService $approval,
+        protected ErpContext $erp,
     ) {}
 
     public function store(Request $request)
@@ -41,6 +46,30 @@ class JournalOperationsController extends Controller
         return response()->json($entry, 201);
     }
 
+    public function requestPost(Request $request, int $entryId)
+    {
+        $entry = JournalEntry::with('lines')->findOrFail($entryId);
+
+        if ((int) $entry->organization_id !== (int) $request->user()->organization_id) {
+            abort(403);
+        }
+
+        $gate = $this->erp->gateForUser($request->user());
+        if (! $this->approval->approvalEnabled($gate)) {
+            throw ValidationException::withMessages([
+                'authorization' => 'Journal entry posting approval is not enabled.',
+            ]);
+        }
+
+        $actionRequest = $this->approval->requestPost($request->user(), $entry);
+
+        return response()->json([
+            'message' => 'Journal entry submitted for posting approval.',
+            'pending_approval' => true,
+            'action_request_id' => (int) $actionRequest->id,
+        ], 202);
+    }
+
     public function post(Request $request, int $entryId)
     {
         $entry = JournalEntry::with('lines')->findOrFail($entryId);
@@ -49,7 +78,26 @@ class JournalOperationsController extends Controller
             abort(403);
         }
 
-        return response()->json($this->posting->postDraft($entry));
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+
+        if ($this->approval->approvalEnabled($gate) && ! $this->approval->canDirectPost($user)) {
+            throw ValidationException::withMessages([
+                'authorization' => 'You need manager approval to post journal entries.',
+            ]);
+        }
+
+        $posted = $this->approval->postEntry($entry, $user);
+
+        app(\App\Services\Notifications\ActionRequestService::class)->markResolvedFromDomain(
+            'journal_entry',
+            'journal_entry',
+            (int) $posted->id,
+            'approved',
+            $user,
+        );
+
+        return response()->json($posted);
     }
 
     public function reverse(Request $request, int $entryId)

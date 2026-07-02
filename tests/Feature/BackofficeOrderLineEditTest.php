@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Sale;
 use App\Models\SaleItem;
+use App\Models\StockReservation;
 use App\Models\User;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -110,6 +111,56 @@ class BackofficeOrderLineEditTest extends TestCase
                 ['id' => $sale->items->first()->id, 'quantity' => 2],
             ],
         ])->assertStatus(422);
+    }
+
+    public function test_backoffice_line_edit_syncs_sale_reservations_before_stock_deduction(): void
+    {
+        $org = $this->user->organization;
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'order_workflow' => array_merge(config('erp.default_order_workflow', []), [
+                'steps' => [
+                    ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
+                    ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+                    ['status' => 'processed', 'label' => 'Processed', 'enabled' => true],
+                ],
+                'reserve_stock_on' => ['backend' => 'booked'],
+                'deduct_stock_on' => ['backend' => 'processed'],
+            ]),
+        ]);
+        $org->forceFill(['module_settings' => $settings])->save();
+
+        $sale = $this->createBackofficeSale(3, 150.0, 'booked');
+        $item = $sale->items->first();
+
+        StockReservation::create([
+            'branch_id' => $sale->branch_id,
+            'product_code' => $item->product_code,
+            'stock_location' => 'store',
+            'quantity' => 3,
+            'sale_id' => $sale->id,
+            'reserved_by' => $this->user->id,
+        ]);
+
+        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
+            'items' => [
+                ['id' => $item->id, 'quantity' => 5],
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('order_total', 250.0);
+
+        $this->assertDatabaseHas('stock_reservations', [
+            'sale_id' => $sale->id,
+            'product_code' => $item->product_code,
+            'stock_location' => 'store',
+            'quantity' => 5,
+            'released_at' => null,
+        ]);
+        $this->assertEquals(1, StockReservation::query()
+            ->where('sale_id', $sale->id)
+            ->whereNull('released_at')
+            ->count());
     }
 
     protected function createBackofficeSale(float $qty, float $amount, string $status = 'held'): Sale

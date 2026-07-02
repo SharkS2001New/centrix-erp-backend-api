@@ -9,6 +9,7 @@ use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\OrderWorkflowService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -89,6 +90,7 @@ class BackofficeOrderLineEditService
             $salesSettings = $gate->moduleSettings('sales');
             $inventorySettings = $gate->moduleSettings('inventory');
             $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+            $qtyChanged = false;
 
             foreach ($items as $row) {
                 $itemId = (int) $row['id'];
@@ -103,6 +105,8 @@ class BackofficeOrderLineEditService
                 if (abs($newQty - $oldQty) < 0.0001) {
                     continue;
                 }
+
+                $qtyChanged = true;
 
                 if ($newQty <= 0) {
                     throw new InvalidArgumentException('Quantity must be greater than zero.');
@@ -131,6 +135,16 @@ class BackofficeOrderLineEditService
                 'amount_paid' => $amountPaid,
                 'payment_status' => $this->derivePaymentStatus($orderTotal, $amountPaid),
             ]);
+
+            if ($qtyChanged && ! $sale->stock_balanced) {
+                $workflow = app(OrderWorkflowService::class);
+                if ($workflow->shouldHaveStockReserved(
+                    (string) $sale->status,
+                    (string) ($sale->channel ?: 'backend'),
+                )) {
+                    $this->syncSaleStockReservations($sale->fresh(['items']), $user, $gate);
+                }
+            }
 
             return $sale->fresh(['items.product.unit', 'cashier:id,username,full_name', 'customer:customer_num,customer_name']);
         });

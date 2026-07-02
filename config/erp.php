@@ -318,6 +318,7 @@ return [
             'auto_post_payroll' => true,
             'auto_post_returns' => true,
             'post_till_variance' => true,
+            'journal_entry_approval_enabled' => false,
             'account_codes' => [
                 'cash' => '1000',
                 'bank' => '1100',
@@ -397,6 +398,9 @@ return [
             'order_expiry_days' => 5,
             'order_expiry_before_status' => 'processed',
             'order_cancellation_enabled' => true,
+            'order_cancellation_approval_enabled' => false,
+            'discount_approval_enabled' => false,
+            'discount_approval_threshold_percent' => 10,
             'stock_deduct_on' => [
                 'pos' => 'order_created',
                 'mobile' => 'order_completed',
@@ -429,6 +433,7 @@ return [
             'default_distribution_sale_location' => 'store',
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
+            'stock_adjustment_approval_enabled' => false,
         ],
         'finance' => [
             'enable_mpesa_stk' => true,

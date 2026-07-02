@@ -57,9 +57,28 @@ class ProductController extends BaseResourceController
         $branchId = $this->branchStock->resolveBranchIdOptional($request->user(), $request);
         if ($branchId !== null) {
             $data = $this->branchStock->overlayPayload($data, $branchId);
+            if ($this->shouldUseSalesConsumerStock($request)) {
+                $data = $this->branchStock->applySalesConsumerStock($data);
+            }
         }
 
         return $data;
+    }
+
+    protected function shouldUseSalesConsumerStock(?Request $request): bool
+    {
+        if (! $request) {
+            return false;
+        }
+
+        if ($request->boolean('sales_stock')) {
+            return true;
+        }
+
+        $token = $request->user()?->currentAccessToken();
+        $channel = strtolower((string) ($token->login_channel ?? ''));
+
+        return in_array($channel, ['mobile', 'pos'], true);
     }
 
     protected function sortableColumns(): array
@@ -156,6 +175,11 @@ class ProductController extends BaseResourceController
 
         if ($branchId !== null) {
             $presented = $this->branchStock->overlayCollection($presented, $branchId);
+            if ($this->shouldUseSalesConsumerStock($request)) {
+                $presented = $presented->map(
+                    fn (array $item) => $this->branchStock->applySalesConsumerStock($item),
+                );
+            }
         }
 
         $paginator->setCollection($presented);

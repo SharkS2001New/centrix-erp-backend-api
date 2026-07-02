@@ -1,0 +1,103 @@
+<?php
+
+namespace App\Services\Inventory;
+
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
+use App\Models\ActionRequest;
+use App\Models\InventoryTransaction;
+use App\Models\Product;
+use App\Models\User;
+use App\Services\Auth\UserAccessService;
+use App\Services\Auth\UserPermissionService;
+use App\Services\Erp\CapabilityGate;
+use App\Services\Notifications\ActionRequestService;
+use Illuminate\Validation\ValidationException;
+
+class StockAdjustmentApprovalService
+{
+    use HandlesInventory;
+
+    public function __construct(
+        protected UserPermissionService $permissions,
+        protected UserAccessService $access,
+    ) {}
+
+    public function approvalEnabled(CapabilityGate $gate): bool
+    {
+        $settings = $gate->moduleSettings('inventory');
+
+        return ! empty($settings['stock_adjustment_approval_enabled']);
+    }
+
+    public function canDirectAdjust(User $user): bool
+    {
+        return (bool) $user->is_admin
+            || $this->permissions->hasPermission($user, 'inventory.manage');
+    }
+
+    /** @param  array<string, mixed>  $data */
+    public function requestAdjustment(User $user, array $data, CapabilityGate $gate): ActionRequest
+    {
+        if (! $this->approvalEnabled($gate)) {
+            throw ValidationException::withMessages([
+                'authorization' => 'Stock adjustment approval is not enabled.',
+            ]);
+        }
+
+        if ($this->canDirectAdjust($user)) {
+            throw ValidationException::withMessages([
+                'authorization' => 'You can post stock adjustments directly.',
+            ]);
+        }
+
+        $this->access->assertBranchAccess($user, (int) $data['branch_id']);
+
+        $product = Product::query()->where('product_code', $data['product_code'])->first();
+        $productName = $product?->product_name ?? $data['product_code'];
+        $requesterName = $user->full_name ?: $user->username;
+        $qty = (float) $data['quantity_change'];
+        $qtyLabel = ($qty > 0 ? '+' : '').rtrim(rtrim(number_format($qty, 4, '.', ''), '0'), '.');
+
+        return app(ActionRequestService::class)->requestApproval($user, [
+            'type' => 'stock_adjustment',
+            'module' => 'inventory',
+            'reference_type' => 'stock_adjustment_request',
+            'reference_id' => 0,
+            'approver_permission' => 'inventory.manage',
+            'title' => 'Stock adjustment approval required',
+            'message' => "{$requesterName} requested {$qtyLabel} adjustment for {$productName}.",
+            'reason' => $data['notes'] ?? null,
+            'severity' => 'warning',
+            'action_url' => '/inventory/adjustments',
+            'allow_duplicate_reference' => true,
+            'payload' => [
+                'branch_id' => (int) $data['branch_id'],
+                'product_code' => (string) $data['product_code'],
+                'product_name' => $productName,
+                'stock_location' => (string) $data['stock_location'],
+                'quantity_change' => $qty,
+                'notes' => $data['notes'] ?? null,
+                'action_url' => '/inventory/adjustments',
+            ],
+        ]);
+    }
+
+    public function applyFromActionRequest(ActionRequest $request, User $approver): InventoryTransaction
+    {
+        $payload = $request->payload ?? [];
+        $this->access->assertBranchAccess($approver, (int) ($payload['branch_id'] ?? 0));
+
+        $allowBelowStock = $this->organizationAllowsBelowStock($approver->organization_id);
+
+        return $this->postStockLedger([
+            'branch_id' => (int) $payload['branch_id'],
+            'product_code' => (string) $payload['product_code'],
+            'stock_location' => (string) $payload['stock_location'],
+            'quantity_change' => (float) $payload['quantity_change'],
+            'notes' => $payload['notes'] ?? $request->reason,
+            'transaction_type' => 'ADJUSTMENT',
+            'reference_type' => 'adjustment',
+            'created_by' => (int) $request->requested_by,
+        ], $allowBelowStock);
+    }
+}

@@ -6,6 +6,7 @@ use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SaleItem;
 use App\Models\StockReservation;
 use App\Models\User;
 use App\Models\SystemSetting;
@@ -354,6 +355,25 @@ trait HandlesInventory
     protected function reserveSaleStockIfNeeded(Sale $sale, User $user, \App\Services\Erp\CapabilityGate $gate): void
     {
         if ($sale->stock_balanced || $this->saleHasActiveReservations((int) $sale->id)) {
+            return;
+        }
+
+        $this->reserveAllSaleItemStock($sale, $user, $gate);
+    }
+
+    protected function syncSaleStockReservations(Sale $sale, User $user, \App\Services\Erp\CapabilityGate $gate): void
+    {
+        if ($sale->stock_balanced) {
+            return;
+        }
+
+        $this->releaseSaleReservations((int) $sale->id);
+        $this->reserveAllSaleItemStock($sale->fresh(['items']), $user, $gate);
+    }
+
+    protected function reserveAllSaleItemStock(Sale $sale, User $user, \App\Services\Erp\CapabilityGate $gate): void
+    {
+        if ($sale->stock_balanced) {
             return;
         }
 

@@ -15,7 +15,8 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Models\RouteSchedule;
-use App\Services\Fulfillment\AutoTripAssignmentService;
+use App\Services\Sales\OrderCancellationRequestService;
+use App\Services\Sales\SaleCancellationService;
 use App\Services\Fulfillment\PodService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -46,6 +47,29 @@ class OrderWorkflowController extends Controller
         );
 
         return response()->json($updated);
+    }
+
+    public function requestCancellation(Request $request, int $saleId)
+    {
+        $data = $request->validate([
+            'reason' => 'required|string|min:3',
+        ]);
+
+        $sale = $this->findScopedSale($saleId, $request->user());
+        $gate = $this->erp->gateForUser($request->user());
+
+        $actionRequest = app(OrderCancellationRequestService::class)->requestCancellation(
+            $request->user(),
+            $sale,
+            $data['reason'],
+            $gate,
+        );
+
+        return response()->json([
+            'message' => 'Cancellation request submitted for manager approval.',
+            'pending_approval' => true,
+            'action_request_id' => (int) $actionRequest->id,
+        ], 202);
     }
 
     protected function applyFulfillmentMeta(Sale $sale, string $status, array $meta, CapabilityGate $gate): Sale
@@ -140,23 +164,15 @@ class OrderWorkflowController extends Controller
         }
 
         if ($toStatus === 'cancelled') {
-            DB::transaction(function () use ($sale, $user, $gate) {
-                $this->restoreCancelledSaleStock($sale, $user);
+            app(SaleCancellationService::class)->cancelSale($sale, $user, $gate);
 
-                $sale->update([
-                    'status' => 'cancelled',
-                    'cancelled_at' => now(),
-                    'cancelled_by' => $user->id,
-                    'stock_balanced' => 0,
-                ]);
-
-                app(ReferenceJournalReversalService::class)->reverseIfEnabled(
-                    'sale',
-                    (int) $sale->id,
-                    $user,
-                    $gate,
-                );
-            });
+            app(\App\Services\Notifications\ActionRequestService::class)->markResolvedFromDomain(
+                'order_cancel',
+                'sale',
+                (int) $sale->id,
+                'approved',
+                $user,
+            );
 
             return $sale->fresh();
         }
