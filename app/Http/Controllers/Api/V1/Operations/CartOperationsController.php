@@ -22,6 +22,7 @@ use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
+use App\Services\Sales\MobileRouteMarkupCheckoutService;
 use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
@@ -700,7 +701,7 @@ class CartOperationsController extends Controller
             $qty,
             $isRetail,
             $discountGiven,
-            $cart->route_id ? (int) $cart->route_id : null,
+            app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
             array_key_exists('unit_price', $line) ? (float) $line['unit_price'] : null,
             SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
@@ -797,7 +798,7 @@ class CartOperationsController extends Controller
             $qty,
             $isRetail,
             $discountGiven,
-            $cart->route_id ? (int) $cart->route_id : null,
+            app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
             array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : null,
             SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );

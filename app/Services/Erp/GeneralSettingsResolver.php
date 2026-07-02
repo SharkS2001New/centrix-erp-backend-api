@@ -8,21 +8,42 @@ use App\Support\AppTimezone;
 class GeneralSettingsResolver
 {
     public const PRINT_FONT_FAMILIES = [
-        'times', 'georgia', 'palatino', 'garamond', 'arial', 'helvetica', 'verdana',
-        'tahoma', 'trebuchet', 'calibri', 'courier', 'system',
+        'times', 'georgia', 'palatino', 'garamond', 'book_antiqua', 'cambria', 'constantia',
+        'arial', 'helvetica', 'verdana', 'tahoma', 'trebuchet', 'calibri', 'segoe_ui', 'aptos',
+        'lucida_sans', 'franklin_gothic', 'century_gothic', 'courier', 'lucida_console', 'system',
     ];
 
     public const PRINT_FONT_SCALES = ['compact', 'standard', 'large', 'extra_large', 'custom'];
 
     public const PRINT_FONT_WEIGHTS = ['normal', 'medium', 'semibold', 'bold', 'extra_bold'];
 
-    /** @var array<string, array{family: string, scale: string, size_px: int, weight: string}> */
+    /** @var array<string, array{family: string, scale: string, size_px: int, weight: string, header_scale: string, header_weight: string, footer_scale: string, footer_weight: string}> */
     public const PRINT_FONT_VARIANT_DEFAULTS = [
-        'receipt' => ['family' => 'arial', 'scale' => 'standard', 'size_px' => 11, 'weight' => 'semibold'],
-        'invoice' => ['family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold'],
-        'lpo' => ['family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold'],
-        'loading_sheet' => ['family' => 'arial', 'scale' => 'standard', 'size_px' => 16, 'weight' => 'semibold'],
-        'report' => ['family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold'],
+        'receipt' => [
+            'family' => 'arial', 'scale' => 'standard', 'size_px' => 11, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
+        'invoice' => [
+            'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
+        'lpo' => [
+            'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
+        'loading_sheet' => [
+            'family' => 'arial', 'scale' => 'standard', 'size_px' => 16, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
+        'report' => [
+            'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
     ];
 
     /** @return array<string, mixed> */
@@ -128,11 +149,23 @@ class GeneralSettingsResolver
             $scaleKey = "print_font_{$variant}_scale";
             $sizeKey = "print_font_{$variant}_size_px";
             $weightKey = "print_font_{$variant}_weight";
+            $headerScaleKey = "print_font_{$variant}_header_scale";
+            $headerSizeKey = "print_font_{$variant}_header_size_px";
+            $headerWeightKey = "print_font_{$variant}_header_weight";
+            $footerScaleKey = "print_font_{$variant}_footer_scale";
+            $footerSizeKey = "print_font_{$variant}_footer_size_px";
+            $footerWeightKey = "print_font_{$variant}_footer_weight";
 
             $hasSpecific = array_key_exists($familyKey, $source)
                 || array_key_exists($scaleKey, $source)
                 || array_key_exists($sizeKey, $source)
-                || array_key_exists($weightKey, $source);
+                || array_key_exists($weightKey, $source)
+                || array_key_exists($headerScaleKey, $source)
+                || array_key_exists($headerSizeKey, $source)
+                || array_key_exists($headerWeightKey, $source)
+                || array_key_exists($footerScaleKey, $source)
+                || array_key_exists($footerSizeKey, $source)
+                || array_key_exists($footerWeightKey, $source);
 
             $out[$familyKey] = in_array($out[$familyKey] ?? '', self::PRINT_FONT_FAMILIES, true)
                 ? $out[$familyKey]
@@ -147,6 +180,27 @@ class GeneralSettingsResolver
             $out[$weightKey] = in_array($out[$weightKey] ?? '', self::PRINT_FONT_WEIGHTS, true)
                 ? $out[$weightKey]
                 : ($hasSpecific ? $defaults['weight'] : $legacyWeight);
+
+            $out[$headerScaleKey] = in_array($out[$headerScaleKey] ?? '', self::PRINT_FONT_SCALES, true)
+                ? $out[$headerScaleKey]
+                : $defaults['header_scale'];
+            $out[$headerSizeKey] = max(
+                8,
+                min(24, (int) ($out[$headerSizeKey] ?? $defaults['size_px'])),
+            );
+            $out[$headerWeightKey] = in_array($out[$headerWeightKey] ?? '', self::PRINT_FONT_WEIGHTS, true)
+                ? $out[$headerWeightKey]
+                : $defaults['header_weight'];
+            $out[$footerScaleKey] = in_array($out[$footerScaleKey] ?? '', self::PRINT_FONT_SCALES, true)
+                ? $out[$footerScaleKey]
+                : $defaults['footer_scale'];
+            $out[$footerSizeKey] = max(
+                8,
+                min(24, (int) ($out[$footerSizeKey] ?? max(8, $defaults['size_px'] - 2))),
+            );
+            $out[$footerWeightKey] = in_array($out[$footerWeightKey] ?? '', self::PRINT_FONT_WEIGHTS, true)
+                ? $out[$footerWeightKey]
+                : $defaults['footer_weight'];
         }
 
         return $out;
@@ -172,6 +226,12 @@ class GeneralSettingsResolver
             $rules["print_font_{$variant}_scale"] = $scaleRule;
             $rules["print_font_{$variant}_size_px"] = $sizeRule;
             $rules["print_font_{$variant}_weight"] = $weightRule;
+            $rules["print_font_{$variant}_header_scale"] = $scaleRule;
+            $rules["print_font_{$variant}_header_size_px"] = $sizeRule;
+            $rules["print_font_{$variant}_header_weight"] = $weightRule;
+            $rules["print_font_{$variant}_footer_scale"] = $scaleRule;
+            $rules["print_font_{$variant}_footer_size_px"] = $sizeRule;
+            $rules["print_font_{$variant}_footer_weight"] = $weightRule;
         }
 
         return $rules;

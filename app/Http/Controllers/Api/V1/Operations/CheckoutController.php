@@ -36,6 +36,7 @@ use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
 use App\Services\Notifications\CustomerNotificationService;
 use App\Services\Sales\MobileCheckoutLocationService;
+use App\Services\Sales\MobileRouteMarkupCheckoutService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
@@ -61,6 +62,49 @@ class CheckoutController extends Controller
         return response()->json($sale->fresh(['items', 'payments.paymentMethod']), 201);
     }
 
+    public function quoteFromCart(\Illuminate\Http\Request $request, int $cartId)
+    {
+        $cart = $this->findOwnedCart($cartId, $request->user());
+        $gate = $this->erp->gateForUser($request->user());
+        $data = $request->validate([
+            'customer_num' => 'required|integer|min:1',
+        ]);
+
+        $lines = CartLine::where('cart_id', $cart->id)->get();
+        if ($lines->isEmpty()) {
+            throw new InvalidArgumentException('Cart is empty.');
+        }
+
+        $routeId = $this->resolveCheckoutRouteId(
+            $cart,
+            (int) $data['customer_num'],
+            $gate,
+        );
+
+        $prepared = app(MobileRouteMarkupCheckoutService::class)->prepareCheckoutLines(
+            $cart,
+            $lines,
+            $routeId,
+            $gate,
+        );
+
+        $salesSettings = $gate->moduleSettings('sales');
+        $lineNet = (float) $prepared['order_total'];
+        $orderDiscount = 0.0;
+        if (! empty($salesSettings['enable_order_discount'])) {
+            $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
+        }
+
+        return response()->json([
+            'order_total' => max(0, round($lineNet - $orderDiscount, 2)),
+            'line_total' => $lineNet,
+            'order_discount' => $orderDiscount,
+            'route_id' => $routeId,
+            'route_markup_applied' => $prepared['meta'] !== null,
+            'route_markup' => $prepared['meta'],
+        ]);
+    }
+
     protected function checkoutFromCart(TemporaryCart $cart, User $user, CapabilityGate $gate, array $input): Sale
     {
         $lines = CartLine::where('cart_id', $cart->id)->get();
@@ -76,12 +120,32 @@ class CheckoutController extends Controller
 
         return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $inventorySettings, $salesSettings, $txnType, $allowBelowStock) {
             $stockDeducted = false;
+            $customerNum = $input['customer_num'] ?? null;
+            $loyaltyCardIdEarly = $cart->loyalty_card_id ? (int) $cart->loyalty_card_id : null;
+            if (! $customerNum && $loyaltyCardIdEarly) {
+                $customerNum = LoyaltyCard::find($loyaltyCardIdEarly)?->customer_num;
+            }
             $orderNum = isset($input['order_num'])
                 ? (int) $input['order_num']
                 : ($cart->held_order_num
                     ? (int) $cart->held_order_num
                     : app(OrderNumberAllocator::class)->nextForOrganization((int) $user->organization_id));
-            $lineNet = (float) $lines->sum('amount');
+
+            $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
+            app(UserMobileOrderScopeService::class)->assertCheckoutRoute($user, (string) $cart->channel, $routeId);
+
+            $prepared = app(MobileRouteMarkupCheckoutService::class)->prepareCheckoutLines(
+                $cart,
+                $lines,
+                $routeId,
+                $gate,
+            );
+            $lines = $prepared['lines'];
+            $lineNet = (float) $prepared['order_total'];
+            $vat = (float) ($input['total_vat'] ?? $prepared['total_vat']);
+            $isCredit = (bool) ($input['is_credit_sale'] ?? false);
+            $payNow = (float) ($input['pay_now'] ?? 0);
+
             $orderDiscount = 0.0;
             if (! empty($salesSettings['enable_vouchers']) && $cart->discount_voucher_id) {
                 $discountVoucher = Voucher::find($cart->discount_voucher_id);
@@ -92,9 +156,6 @@ class CheckoutController extends Controller
                 $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
             }
             $total = max(0, $lineNet - $orderDiscount);
-            $vat = (float) ($input['total_vat'] ?? $lines->sum('product_vat'));
-            $isCredit = (bool) ($input['is_credit_sale'] ?? false);
-            $payNow = (float) ($input['pay_now'] ?? 0);
 
             $voucherPayment = 0.0;
             if (! empty($salesSettings['enable_vouchers']) && $cart->payment_voucher_id) {
@@ -134,7 +195,6 @@ class CheckoutController extends Controller
             }
             $payNow = min($payNow, $cashDue);
             $amountPaid = $payNow + $voucherPayment + $pointsPayment;
-            $customerNum = $input['customer_num'] ?? null;
             if (! $customerNum && $loyaltyCardId) {
                 $customerNum = LoyaltyCard::find($loyaltyCardId)?->customer_num;
             }
@@ -187,9 +247,6 @@ class CheckoutController extends Controller
                 $isCredit,
             );
 
-            $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
-            app(UserMobileOrderScopeService::class)->assertCheckoutRoute($user, (string) $cart->channel, $routeId);
-
             $customer = $customerNum
                 ? Customer::query()->where('customer_num', (int) $customerNum)->first()
                 : null;
@@ -206,6 +263,9 @@ class CheckoutController extends Controller
             }
 
             $fulfillmentMeta = $locationMeta !== [] ? ['location_check' => $locationMeta] : [];
+            if ($prepared['meta'] !== null) {
+                $fulfillmentMeta['route_markup'] = $prepared['meta'];
+            }
             if ($cart->superseded_sale_id) {
                 $fulfillmentMeta['supersedes_sale_id'] = (int) $cart->superseded_sale_id;
                 $fulfillmentMeta['pos_edit'] = true;

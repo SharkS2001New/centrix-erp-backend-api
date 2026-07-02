@@ -320,6 +320,8 @@ class MobileSalesService
             'createdBy' => $sale->cashier?->username ?? '',
             'channel' => $sale->channel,
             'created_at' => $sale->created_at,
+            'route_markup_applied' => (bool) (($sale->fulfillment_meta ?? [])['route_markup']['applied'] ?? false),
+            'route_markup_message' => ($sale->fulfillment_meta ?? [])['route_markup']['message'] ?? null,
         ];
     }
 

@@ -13,6 +13,13 @@ class SaleRouteResolver
         string $channel = 'backend',
         ?int $explicitRouteId = null,
     ): ?int {
+        if ($channel === 'mobile' && $customerNum) {
+            $customer = Customer::query()->where('customer_num', $customerNum)->first();
+            if ($customer?->route_id) {
+                return (int) $customer->route_id;
+            }
+        }
+
         if ($explicitRouteId) {
             return (int) $explicitRouteId;
         }

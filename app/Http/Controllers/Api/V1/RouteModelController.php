@@ -50,6 +50,7 @@ class RouteModelController extends BaseResourceController
                 $paginator->getCollection(),
                 $period,
                 $gate,
+                $request->user(),
             );
             $paginator->setCollection($collection);
         }

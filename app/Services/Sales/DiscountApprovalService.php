@@ -198,7 +198,10 @@ class DiscountApprovalService
                 $qty,
                 $isRetail,
                 $discountAmount,
-                $cart->route_id ? (int) $cart->route_id : null,
+                app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing(
+                    $cart,
+                    $salesSettings,
+                ),
                 (float) $row->unit_price,
                 SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
             );
@@ -244,7 +247,10 @@ class DiscountApprovalService
             $qty,
             $isRetail,
             0,
-            $cart->route_id ? (int) $cart->route_id : null,
+            app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing(
+                $cart,
+                $salesSettings,
+            ),
             (float) $row->unit_price,
             SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );

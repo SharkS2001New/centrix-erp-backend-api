@@ -79,6 +79,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('carts/{cartId}/payment/mpesa/skip', [MpesaPaymentController::class, 'skipIncomingPayment']);
         Route::delete('carts/{cartId}/payment', [CartOperationsController::class, 'clearCartPayments']);
         Route::post('carts/{cartId}/checkout', [CheckoutController::class, 'fromCart']);
+        Route::post('carts/{cartId}/checkout-quote', [CheckoutController::class, 'quoteFromCart']);
         Route::post('orders/{saleId}/restore-to-cart', [CartOperationsController::class, 'restoreHeldOrder']);
         Route::post('orders/{saleId}/cancel-held', [CartOperationsController::class, 'cancelHeldOrder']);
         Route::post('orders/{saleId}/cancel', [CartOperationsController::class, 'cancelOrder']);

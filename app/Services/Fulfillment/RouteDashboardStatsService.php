@@ -4,46 +4,61 @@ namespace App\Services\Fulfillment;
 
 use App\Models\Customer;
 use App\Models\Sale;
+use App\Models\User;
+use App\Services\Auth\UserAccessService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\RouteOrderScope;
+use App\Services\Sales\SaleRouteBackfillService;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class RouteDashboardStatsService
 {
+    public function __construct(
+        protected UserAccessService $access,
+        protected SaleRouteBackfillService $routeBackfill,
+    ) {}
+
     /** @param  Collection<int, object>  $routes */
-    public function attachStats(Collection $routes, string $period, CapabilityGate $gate): Collection
+    public function attachStats(Collection $routes, string $period, CapabilityGate $gate, User $user): Collection
     {
         $routeIds = $routes->pluck('id')->map(fn ($id) => (int) $id)->filter()->values()->all();
         if ($routeIds === []) {
             return $routes;
         }
 
-        $includeNormalOrders = RouteOrderScope::includeNormalOrders($gate->distributionSettings());
+        $organization = $gate->organization();
+        if ($organization) {
+            $this->routeBackfill->syncOrganization($organization);
+        }
+
+        $distributionSettings = $gate->distributionSettings();
+        $includeNormalOrders = RouteOrderScope::includeNormalOrders($distributionSettings);
         $bounds = $this->periodBounds($period);
 
         $customerCounts = Customer::query()
             ->whereIn('route_id', $routeIds)
-            ->whereNull('deleted_at')
+            ->whereNull('deleted_at');
+        $this->access->scopeOrganization($customerCounts, $user);
+        $customerCounts = $customerCounts
             ->groupBy('route_id')
             ->selectRaw('route_id, COUNT(*) AS customer_count')
             ->pluck('customer_count', 'route_id');
 
-        $effectiveRoute = RouteOrderScope::effectiveRouteIdSql();
-        $salesQuery = Sale::query()
-            ->leftJoin(
-                'customers as route_order_customers',
-                'route_order_customers.customer_num',
-                '=',
-                'sales.customer_num',
-            )
-            ->whereIn(DB::raw($effectiveRoute), $routeIds)
+        $salesQuery = Sale::query();
+        $this->access->scopeOrganization($salesQuery, $user, 'sales.organization_id');
+        $this->access->scopeBranchIfLimited($salesQuery, $user, 'sales.branch_id');
+
+        RouteOrderScope::applyForLoadingList($salesQuery, $includeNormalOrders);
+        CentrixSalesScope::excludeLegacyMaterialized($salesQuery, 'sales');
+
+        $salesQuery
+            ->whereIn(DB::raw(RouteOrderScope::effectiveRouteIdSql()), $routeIds)
             ->whereNotIn('sales.status', ['cancelled', 'expired', 'held'])
             ->where('sales.archived', 0)
             ->whereNull('sales.deleted_at');
-
-        RouteOrderScope::applyChannelScope($salesQuery, $includeNormalOrders);
 
         if ($bounds !== null) {
             $salesQuery->whereBetween(
@@ -52,19 +67,20 @@ class RouteDashboardStatsService
             );
         }
 
+        $effectiveRoute = RouteOrderScope::effectiveRouteIdSql();
         $salesStats = $salesQuery
             ->groupBy(DB::raw($effectiveRoute))
             ->selectRaw("{$effectiveRoute} AS route_id, COUNT(*) AS order_count, COALESCE(SUM(sales.order_total), 0) AS sales_total")
             ->get()
-            ->keyBy('route_id');
+            ->keyBy(fn ($row) => (int) $row->route_id);
 
         return $routes->map(function ($route) use ($customerCounts, $salesStats) {
             $routeId = (int) $route->id;
             $stats = $salesStats->get($routeId);
 
-            $route->customer_count = (int) ($customerCounts[$routeId] ?? 0);
-            $route->orders_count = (int) ($stats->order_count ?? 0);
-            $route->sales_total = (float) ($stats->sales_total ?? 0);
+            $route->setAttribute('customer_count', (int) ($customerCounts[$routeId] ?? $customerCounts[(string) $routeId] ?? 0));
+            $route->setAttribute('orders_count', (int) ($stats->order_count ?? 0));
+            $route->setAttribute('sales_total', (float) ($stats->sales_total ?? 0));
 
             return $route;
         });
