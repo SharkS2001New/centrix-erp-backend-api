@@ -94,14 +94,14 @@ class DispatchTripService
             : ($trip->branch?->organization_id
                 ? $this->erp->gateForOrganization(Organization::findOrFail($trip->branch->organization_id))->distributionSettings()
                 : []);
-        $includeNormalOrders = (bool) ($distributionSettings['include_normal_orders_in_loading_list'] ?? false);
+        $includeNormalOrders = RouteOrderScope::includeNormalOrders($distributionSettings);
 
         DB::transaction(function () use ($trip, $sales, $includeNormalOrders) {
             $seq = (int) $trip->sales()->max('dispatch_trip_sales.stop_seq');
             foreach ($sales as $sale) {
                 if (! RouteOrderScope::eligibleForLoadingList($sale, $includeNormalOrders)) {
                     throw new InvalidArgumentException(
-                        "Order #{$sale->order_num} is not a mobile or route order eligible for loading lists.",
+                        "Order #{$sale->order_num} is not a route order eligible for loading lists.",
                     );
                 }
 

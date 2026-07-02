@@ -44,8 +44,13 @@ class SaleController extends BaseResourceController
             $query->where('status', '!=', $exclude);
         }
 
-        if ($request->boolean('route_orders')) {
-            RouteOrderScope::apply($query);
+        if ($request->boolean('route_orders') || $request->boolean('dispatch_orders') || $request->boolean('loading_list_orders')) {
+            $gate = $this->erp->gateForUser($request->user());
+            $settings = $gate->distributionSettings();
+            RouteOrderScope::applyForLoadingList(
+                $query,
+                RouteOrderScope::includeNormalOrders($settings),
+            );
         }
 
         if (! $request->boolean('include_legacy')) {
@@ -116,15 +121,6 @@ class SaleController extends BaseResourceController
             if ($statuses !== []) {
                 $query->whereNotIn('status', $statuses);
             }
-        }
-
-        if ($request->boolean('dispatch_orders') || $request->boolean('loading_list_orders')) {
-            $gate = $this->erp->gateForUser($request->user());
-            $settings = $gate->distributionSettings();
-            RouteOrderScope::applyForLoadingList(
-                $query,
-                (bool) ($settings['include_normal_orders_in_loading_list'] ?? false),
-            );
         }
 
         if ($q = $request->input('q')) {

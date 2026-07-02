@@ -422,7 +422,7 @@ return [
             'enforce_vehicle_capacity' => true,
             'enable_cod_reconciliation' => true,
             'require_trip_cash_settlement' => false,
-            'include_normal_orders_in_loading_list' => false,
+            'include_normal_orders_in_loading_list' => true,
             'loading_sheet_footer_lines' => '',
             'loading_sheet_show_signatures' => true,
             'loading_sheet_default_checked_by' => '',

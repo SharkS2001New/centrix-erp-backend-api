@@ -64,6 +64,7 @@ class ProductController extends BaseResourceController
                 $data = $this->branchStock->applySalesConsumerStock(
                     $data,
                     $this->salesConsumerStockLocation($request),
+                    $this->salesConsumerStockSplitEnabled($request),
                 );
             }
         }
@@ -107,6 +108,17 @@ class ProductController extends BaseResourceController
             $gate->moduleSettings('inventory'),
             $gate->moduleSettings('sales'),
         );
+    }
+
+    protected function salesConsumerStockSplitEnabled(?Request $request): bool
+    {
+        if (! $request?->user()) {
+            return false;
+        }
+
+        $gate = $this->erp->gateForUser($request->user());
+
+        return ! empty($gate->moduleSettings('sales')['retail_shop_wholesale_store_stock']);
     }
 
     protected function sortableColumns(): array
@@ -205,8 +217,13 @@ class ProductController extends BaseResourceController
             $presented = $this->branchStock->overlayCollection($presented, $branchId);
             if ($this->shouldUseSalesConsumerStock($request)) {
                 $saleLocation = $this->salesConsumerStockLocation($request);
+                $splitShopStore = $this->salesConsumerStockSplitEnabled($request);
                 $presented = $presented->map(
-                    fn (array $item) => $this->branchStock->applySalesConsumerStock($item, $saleLocation),
+                    fn (array $item) => $this->branchStock->applySalesConsumerStock(
+                        $item,
+                        $saleLocation,
+                        $splitShopStore,
+                    ),
                 );
             }
         }

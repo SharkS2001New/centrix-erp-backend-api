@@ -45,7 +45,7 @@ class AutoTripAssignmentService
             return null;
         }
 
-        $includeNormalOrders = (bool) ($settings['include_normal_orders_in_loading_list'] ?? false);
+        $includeNormalOrders = RouteOrderScope::includeNormalOrders($settings);
         if (! RouteOrderScope::eligibleForLoadingList($sale, $includeNormalOrders)) {
             return null;
         }

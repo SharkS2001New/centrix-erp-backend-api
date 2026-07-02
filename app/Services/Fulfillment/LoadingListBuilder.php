@@ -24,12 +24,12 @@ class LoadingListBuilder
         $organizationId = $trip->branch?->organization_id
             ?? $trip->sales->first()?->organization_id;
 
-        $includeNormalOrders = false;
+        $includeNormalOrders = RouteOrderScope::DEFAULT_INCLUDE_NORMAL_ORDERS;
         if ($organizationId) {
             $org = Organization::query()->find($organizationId);
             if ($org) {
                 $settings = $this->erp->gateForOrganization($org)->distributionSettings();
-                $includeNormalOrders = (bool) ($settings['include_normal_orders_in_loading_list'] ?? false);
+                $includeNormalOrders = RouteOrderScope::includeNormalOrders($settings);
             }
         }
 

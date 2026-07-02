@@ -22,9 +22,10 @@ class DistributionRouteOrdersTest extends TestCase
         $org->update(['enabled_modules' => $modules]);
     }
 
-    public function test_sales_index_route_orders_filter_returns_only_mobile_and_pos_route_orders(): void
+    public function test_sales_index_route_orders_filter_includes_backoffice_route_orders_by_default(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
+        $this->enableDistributionModules($admin);
         Sanctum::actingAs($admin);
 
         $mobileRoute = Sale::query()->where('channel', 'mobile')->whereNotNull('route_id')->first();
@@ -32,25 +33,6 @@ class DistributionRouteOrdersTest extends TestCase
 
         $nonRoute = Sale::query()->whereNull('route_id')->first();
         $this->assertNotNull($nonRoute, 'Demo seed should include a non-route order');
-
-        $res = $this->getJson('/api/v1/sales?route_orders=1&per_page=200');
-        $res->assertOk();
-
-        $ids = collect($res->json('data'))->pluck('id')->all();
-        $this->assertContains($mobileRoute->id, $ids);
-        $this->assertNotContains($nonRoute->id, $ids);
-
-        foreach ($res->json('data') as $row) {
-            $this->assertNotNull($row['route_id']);
-            $this->assertContains($row['channel'], ['mobile', 'pos']);
-        }
-    }
-
-    public function test_dispatch_orders_filter_excludes_backend_route_orders_by_default(): void
-    {
-        $admin = User::where('username', 'admin')->firstOrFail();
-        $this->enableDistributionModules($admin);
-        Sanctum::actingAs($admin);
 
         $route = \App\Models\RouteModel::query()->firstOrFail();
         $template = Sale::query()->firstOrFail();
@@ -70,14 +52,52 @@ class DistributionRouteOrdersTest extends TestCase
             'amount_paid' => 0,
         ]);
 
+        $res = $this->getJson('/api/v1/sales?route_orders=1&per_page=200');
+        $res->assertOk();
+
+        $ids = collect($res->json('data'))->pluck('id')->all();
+        $this->assertContains($mobileRoute->id, $ids);
+        $this->assertContains($backendRouteOrder->id, $ids);
+        $this->assertNotContains($nonRoute->id, $ids);
+
+        foreach ($res->json('data') as $row) {
+            $this->assertNotNull($row['route_id']);
+            $this->assertContains($row['channel'], ['mobile', 'pos', 'backend', 'backoffice']);
+        }
+    }
+
+    public function test_dispatch_orders_filter_includes_backend_route_orders_by_default(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->enableDistributionModules($admin);
+        Sanctum::actingAs($admin);
+
+        $route = \App\Models\RouteModel::query()->firstOrFail();
+        $template = Sale::query()->firstOrFail();
+
+        $backendRouteOrder = Sale::create([
+            'order_num' => 95011,
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $route->id,
+            'status' => 'processed',
+            'total_vat' => 100,
+            'order_total' => 1200,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
         $res = $this->getJson('/api/v1/sales?dispatch_orders=1&per_page=200');
         $res->assertOk();
 
         $ids = collect($res->json('data'))->pluck('id')->all();
-        $this->assertNotContains($backendRouteOrder->id, $ids);
+        $this->assertContains($backendRouteOrder->id, $ids);
     }
 
-    public function test_loading_list_aggregates_only_mobile_route_orders_unless_setting_enabled(): void
+    public function test_loading_list_excludes_backend_route_orders_when_setting_disabled(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         $this->enableDistributionModules($admin);
@@ -130,17 +150,17 @@ class DistributionRouteOrdersTest extends TestCase
         $trip->sales()->attach([$mobileSale->id => ['stop_seq' => 1], $backendSale->id => ['stop_seq' => 2]]);
 
         $loadingList = app(\App\Services\Fulfillment\LoadingListBuilder::class)->syncLoadingList($trip->fresh());
-        $this->assertSame(500.0, (float) $loadingList->total_amount);
+        $this->assertSame(1400.0, (float) $loadingList->total_amount);
 
         $org = Organization::findOrFail($admin->organization_id);
         $settings = $org->module_settings ?? [];
         $settings['distribution'] = array_merge($settings['distribution'] ?? [], [
-            'include_normal_orders_in_loading_list' => true,
+            'include_normal_orders_in_loading_list' => false,
         ]);
         $org->update(['module_settings' => $settings]);
 
         $loadingList = app(\App\Services\Fulfillment\LoadingListBuilder::class)->syncLoadingList($trip->fresh());
-        $this->assertSame(1400.0, (float) $loadingList->total_amount);
+        $this->assertSame(500.0, (float) $loadingList->total_amount);
     }
 
     public function test_trip_reconciliation_endpoint_returns_checklist(): void
