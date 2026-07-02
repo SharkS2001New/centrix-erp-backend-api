@@ -9,6 +9,7 @@ use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\GeneralSettingsResolver;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\Mpesa\MpesaSettingsResolver;
+use App\Services\Sales\MobileCheckoutSettings;
 
 class CapabilityGate
 {
@@ -540,6 +541,9 @@ class CapabilityGate
             'profile_label' => $profileConfig['label'] ?? $profile,
             'distribution_ops_enabled' => $this->distributionOpsEnabled(),
             'mobile_orders_enabled' => $this->mobileSalesEnabled(),
+            'mobile_checkout_mode' => $this->mobileSalesEnabled()
+                ? app(MobileCheckoutSettings::class)->mode($this->moduleSettings('sales'))
+                : MobileCheckoutSettings::MODE_SAVE_ONLY,
             'pos_order_edit_enabled' => $this->posOrderEditEnabled(),
             'backoffice_order_edit_enabled' => $this->backofficeOrderEditEnabled(),
             'platform_mpesa_stk_enabled' => $this->mpesaStkPlatformEnabled(),
@@ -610,6 +614,7 @@ class CapabilityGate
                     $moduleSettings['sales']['mobile_enable_checkout_location_verification'],
                     $moduleSettings['sales']['mobile_allow_offline_orders'],
                     $moduleSettings['sales']['mobile_checkout_location_radius_metres'],
+                    $moduleSettings['sales']['mobile_checkout_mode'],
                     $moduleSettings['sales']['mobile_enable_field_attendance'],
                 );
             }
