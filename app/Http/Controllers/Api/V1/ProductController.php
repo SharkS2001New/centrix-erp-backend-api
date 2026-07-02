@@ -8,6 +8,8 @@ use App\Models\SubCategory;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\OpeningStockService;
+use App\Services\Inventory\SaleStockLocationResolver;
+use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -18,6 +20,7 @@ class ProductController extends BaseResourceController
         protected ProductCatalogScopeService $catalogScope,
         protected BranchStockService $branchStock,
         protected OpeningStockService $openingStock,
+        protected ErpContext $erp,
     ) {}
 
     protected function modelClass(): string
@@ -58,7 +61,10 @@ class ProductController extends BaseResourceController
         if ($branchId !== null) {
             $data = $this->branchStock->overlayPayload($data, $branchId);
             if ($this->shouldUseSalesConsumerStock($request)) {
-                $data = $this->branchStock->applySalesConsumerStock($data);
+                $data = $this->branchStock->applySalesConsumerStock(
+                    $data,
+                    $this->salesConsumerStockLocation($request),
+                );
             }
         }
 
@@ -79,6 +85,28 @@ class ProductController extends BaseResourceController
         $channel = strtolower((string) ($token->login_channel ?? ''));
 
         return in_array($channel, ['mobile', 'pos'], true);
+    }
+
+    protected function salesConsumerStockLocation(?Request $request): ?string
+    {
+        if (! $request?->user()) {
+            return null;
+        }
+
+        $token = $request->user()->currentAccessToken();
+        $loginChannel = strtolower((string) ($token->login_channel ?? ''));
+        $channel = match ($loginChannel) {
+            'mobile' => 'mobile',
+            'pos' => 'pos',
+            default => 'backend',
+        };
+        $gate = $this->erp->gateForUser($request->user());
+
+        return SaleStockLocationResolver::forCatalogList(
+            $channel,
+            $gate->moduleSettings('inventory'),
+            $gate->moduleSettings('sales'),
+        );
     }
 
     protected function sortableColumns(): array
@@ -176,8 +204,9 @@ class ProductController extends BaseResourceController
         if ($branchId !== null) {
             $presented = $this->branchStock->overlayCollection($presented, $branchId);
             if ($this->shouldUseSalesConsumerStock($request)) {
+                $saleLocation = $this->salesConsumerStockLocation($request);
                 $presented = $presented->map(
-                    fn (array $item) => $this->branchStock->applySalesConsumerStock($item),
+                    fn (array $item) => $this->branchStock->applySalesConsumerStock($item, $saleLocation),
                 );
             }
         }

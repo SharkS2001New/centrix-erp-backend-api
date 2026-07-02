@@ -82,7 +82,7 @@ return [
             'decay_minutes' => (int) env('RATE_LIMIT_COMPANY_MOBILE_ATTENDANCE_DECAY', 1),
         ],
         'api' => [
-            'max_attempts' => (int) env('RATE_LIMIT_API', 120),
+            'max_attempts' => (int) env('RATE_LIMIT_API', env('APP_ENV') === 'local' ? 600 : 120),
             'decay_minutes' => (int) env('RATE_LIMIT_API_DECAY', 1),
         ],
     ],

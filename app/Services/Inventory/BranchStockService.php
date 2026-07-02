@@ -88,16 +88,28 @@ class BranchStockService
      * @param  array<string, mixed>  $payload
      * @return array<string, mixed>
      */
-    public function applySalesConsumerStock(array $payload): array
+    public function applySalesConsumerStock(array $payload, ?string $saleLocation = null): array
     {
-        if (array_key_exists('stock_available_shop', $payload)) {
+        $location = in_array($saleLocation, ['shop', 'store'], true) ? $saleLocation : 'shop';
+        $availableKey = $location === 'store' ? 'stock_available_store' : 'stock_available_shop';
+        $onHandKey = $location === 'store' ? 'stock_in_store' : 'stock_in_shop';
+        $onHandAvailableKey = $location === 'store' ? 'stock_on_hand_store' : 'stock_on_hand_shop';
+
+        if (array_key_exists($availableKey, $payload)) {
+            $payload[$onHandAvailableKey] = $payload[$onHandKey] ?? null;
+            $payload['stock_in_shop'] = $payload[$availableKey];
+            $payload['sales_stock_location'] = $location;
+        } elseif (array_key_exists('stock_available_shop', $payload)) {
             $payload['stock_on_hand_shop'] = $payload['stock_in_shop'];
             $payload['stock_in_shop'] = $payload['stock_available_shop'];
+            $payload['sales_stock_location'] = 'shop';
         }
 
         if (array_key_exists('stock_available_store', $payload)) {
             $payload['stock_on_hand_store'] = $payload['stock_in_store'];
-            $payload['stock_in_store'] = $payload['stock_available_store'];
+            if ($location === 'store') {
+                $payload['stock_in_store'] = $payload['stock_available_store'];
+            }
         }
 
         return $payload;

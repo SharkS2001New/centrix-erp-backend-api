@@ -349,13 +349,21 @@ class OrderWorkflowController extends Controller
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
 
         foreach ($sale->items ?? SaleItem::where('sale_id', $sale->id)->get() as $item) {
-            $isRetailLine = (bool) $item->on_wholesale_retail;
-            $location = $this->saleLineStockLocation(
-                $sale->channel,
-                $inventorySettings,
-                $salesSettings,
-                $isRetailLine,
-            );
+            $product = Product::query()->find($item->product_code);
+            $location = $product
+                ? $this->resolveSaleLineStockLocation(
+                    (string) $sale->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    $product,
+                    (bool) $item->on_wholesale_retail,
+                )
+                : $this->saleLineStockLocation(
+                    (string) $sale->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    (bool) $item->on_wholesale_retail,
+                );
 
             $this->postStockLedger([
                 'branch_id' => $sale->branch_id,

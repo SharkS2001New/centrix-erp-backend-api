@@ -172,11 +172,12 @@ class BackofficeOrderLineEditService
         }
 
         $isRetailLine = (bool) $saleItem->on_wholesale_retail;
-        $location = $this->saleLineStockLocation(
+        $location = $this->resolveSaleLineStockLocation(
             (string) ($sale->channel ?: 'backend'),
             $inventorySettings,
             $salesSettings,
-            $this->stockRouteAsRetail($product, $isRetailLine, $salesSettings),
+            $product,
+            $isRetailLine,
         );
 
         $unitCost = max(0, (float) ($product->last_cost_price ?? 0));

@@ -10,6 +10,7 @@ use App\Models\SaleItem;
 use App\Models\StockReservation;
 use App\Models\User;
 use App\Models\SystemSetting;
+use App\Services\Inventory\SaleStockLocationResolver;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -171,39 +172,40 @@ trait HandlesInventory
         };
     }
 
-    /**
-     * When sales.retail_shop_wholesale_store_stock is enabled, retail lines use shop and wholesale lines use store.
-     * When only shop or only store is enabled, all lines use that location.
-     */
     protected function saleLineStockLocation(
         string $channel,
         array $inventorySettings,
         array $salesSettings,
-        bool $isRetailLine,
+        bool $stockAsRetail,
     ): string {
-        if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
-            return $isRetailLine ? 'shop' : 'store';
-        }
+        return SaleStockLocationResolver::forRouteFlag(
+            $channel,
+            $inventorySettings,
+            $salesSettings,
+            $stockAsRetail,
+        );
+    }
 
-        if (! empty($salesSettings['allow_sell_from_shop']) && empty($salesSettings['allow_sell_from_store'])) {
-            return 'shop';
-        }
-
-        if (empty($salesSettings['allow_sell_from_shop']) && ! empty($salesSettings['allow_sell_from_store'])) {
-            return 'store';
-        }
-
-        return $this->saleStockLocation($channel, $inventorySettings);
+    protected function resolveSaleLineStockLocation(
+        string $channel,
+        array $inventorySettings,
+        array $salesSettings,
+        Product $product,
+        bool $onWholesaleRetailFlag,
+    ): string {
+        return SaleStockLocationResolver::forLine(
+            $channel,
+            $inventorySettings,
+            $salesSettings,
+            $product,
+            $onWholesaleRetailFlag,
+        );
     }
 
     /** Whether a line deducts from shop (retail) vs store (wholesale) when per-line routing is on. */
     protected function stockRouteAsRetail(Product $product, bool $onWholesaleRetailFlag, array $salesSettings): bool
     {
-        if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
-            return $onWholesaleRetailFlag;
-        }
-
-        return $this->isRetailLine($product, $onWholesaleRetailFlag);
+        return SaleStockLocationResolver::stockRouteAsRetail($product, $onWholesaleRetailFlag, $salesSettings);
     }
 
     protected function saleTransactionType(string $channel): string
@@ -383,10 +385,16 @@ trait HandlesInventory
         $items = $sale->items ?? SaleItem::query()->where('sale_id', $sale->id)->get();
 
         foreach ($items as $item) {
-            $location = $this->saleLineStockLocation(
+            $product = Product::query()->find($item->product_code);
+            if (! $product) {
+                continue;
+            }
+
+            $location = $this->resolveSaleLineStockLocation(
                 (string) $sale->channel,
                 $inventorySettings,
                 $salesSettings,
+                $product,
                 (bool) $item->on_wholesale_retail,
             );
 

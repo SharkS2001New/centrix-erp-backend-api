@@ -250,13 +250,21 @@ class CheckoutController extends Controller
                 && $gate->shouldDeductStockAtCheckout($workflow, $orderStatus, (string) $cart->channel);
 
             foreach ($lines as $i => $line) {
-                $isRetailLine = (bool) $line->on_wholesale_retail;
-                $location = $this->saleLineStockLocation(
-                    $cart->channel,
-                    $inventorySettings,
-                    $salesSettings,
-                    $isRetailLine,
-                );
+                $product = Product::query()->find($line->product_code);
+                $location = $product
+                    ? $this->resolveSaleLineStockLocation(
+                        (string) $cart->channel,
+                        $inventorySettings,
+                        $salesSettings,
+                        $product,
+                        (bool) $line->on_wholesale_retail,
+                    )
+                    : $this->saleLineStockLocation(
+                        (string) $cart->channel,
+                        $inventorySettings,
+                        $salesSettings,
+                        (bool) $line->on_wholesale_retail,
+                    );
 
                 SaleItem::create([
                     'sale_id' => $sale->id,
