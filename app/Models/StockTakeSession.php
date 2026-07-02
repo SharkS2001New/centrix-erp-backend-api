@@ -14,9 +14,17 @@ class StockTakeSession extends Model
   1 => 'session_code',
   2 => 'status',
   3 => 'stock_location',
-  4 => 'started_by',
-  5 => 'completed_by',
-  6 => 'completed_at',
-  7 => 'notes',
+  4 => 'filter_category_id',
+  5 => 'filter_subcategory_id',
+  6 => 'filter_supplier_id',
+  7 => 'started_by',
+  8 => 'completed_by',
+  9 => 'completed_at',
+  10 => 'notes',
 );
+    protected $casts = [
+        'filter_category_id' => 'integer',
+        'filter_subcategory_id' => 'integer',
+        'filter_supplier_id' => 'integer',
+    ];
 }

@@ -14,6 +14,7 @@ use App\Models\StockTakeSession;
 use App\Models\User;
 use App\Services\Accounting\StockTakeJournalService;
 use App\Services\Background\BackgroundTaskService;
+use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
@@ -140,6 +141,12 @@ class StockTakeOperationsController extends Controller
 
         $productQuery = Product::query()->whereNull('deleted_at');
         $this->catalogScope->scopeForUser($productQuery, $request->user(), $request);
+        ProductCatalogFilterService::applyTaxonomyFilters(
+            $productQuery,
+            $session->filter_category_id ? (int) $session->filter_category_id : null,
+            $session->filter_subcategory_id ? (int) $session->filter_subcategory_id : null,
+            $session->filter_supplier_id ? (int) $session->filter_supplier_id : null,
+        );
         $productCodes = $productQuery->pluck('product_code');
 
         $stockByCode = CurrentStock::query()
