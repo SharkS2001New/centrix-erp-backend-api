@@ -17,7 +17,16 @@ class EnsureErpModule
             ? $this->erp->gateForRequest($request)
             : $this->erp->gateForUser(null);
 
-        if (! $gate->enabled($module)) {
+        $modules = array_values(array_filter(array_map('trim', explode(',', $module))));
+        $enabled = false;
+        foreach ($modules as $key) {
+            if ($gate->enabled($key)) {
+                $enabled = true;
+                break;
+            }
+        }
+
+        if (! $enabled) {
             return response()->json([
                 'message' => 'This feature is not enabled for your organization.',
                 'module' => $module,

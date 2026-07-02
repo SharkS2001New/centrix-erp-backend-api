@@ -52,6 +52,7 @@ class ReportController extends Controller
         return response()->json([
             'sales' => [
                 ['key' => 'sales-by-product', 'path' => '/reports/sales-by-product', 'label' => 'Sales by product'],
+                ['key' => 'sales-by-supplier', 'path' => '/reports/sales-by-supplier', 'label' => 'Sales by supplier'],
                 ['key' => 'sales-by-user', 'path' => '/reports/sales-by-user', 'label' => 'Sales by cashier / user'],
                 ['key' => 'sales-by-customer', 'path' => '/reports/sales-by-customer', 'label' => 'Sales by customer'],
                 ['key' => 'sales-by-channel', 'path' => '/reports/sales-by-channel', 'label' => 'Sales by channel & payment status'],
@@ -356,6 +357,13 @@ class ReportController extends Controller
     {
         return response()->json($this->reportFromView('v_sales_by_product', $this->filters($request), [
             'sale_date', 'branch_id', 'product_code', 'channel',
+        ]));
+    }
+
+    public function salesBySupplier(Request $request)
+    {
+        return response()->json($this->reportFromView('v_sales_by_supplier', $this->filters($request), [
+            'sale_date', 'branch_id', 'supplier_id', 'channel',
         ]));
     }
 

@@ -4,6 +4,7 @@ namespace App\Services\Accounting;
 
 use App\Models\AccountingExportQueue;
 use App\Models\JournalEntry;
+use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
@@ -15,6 +16,7 @@ class SaleJournalService
         protected SaleJournalBuilder $builder,
         protected JournalExportService $exports,
         protected AccountingSettingsResolver $settings,
+        protected StandardChartOfAccounts $chartOfAccounts,
     ) {}
 
     public function postIfEnabled(Sale $sale, User $user, CapabilityGate $gate): JournalEntry|AccountingExportQueue|null
@@ -26,6 +28,14 @@ class SaleJournalService
         $accounting = $gate->moduleSettings('accounting') ?? [];
         if (! ($accounting['auto_post_sales'] ?? true)) {
             return null;
+        }
+
+        $orgId = (int) $sale->organization_id;
+        if ($orgId > 0 && ! $this->chartOfAccounts->isSeeded($orgId)) {
+            $organization = Organization::find($orgId);
+            if ($organization) {
+                $this->chartOfAccounts->seedForOrganization($organization);
+            }
         }
 
         $financeSettings = $this->settings->fromFinanceSettings($gate->moduleSettings('finance'));

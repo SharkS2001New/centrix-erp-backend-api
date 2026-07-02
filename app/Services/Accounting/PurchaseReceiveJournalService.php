@@ -29,6 +29,13 @@ class PurchaseReceiveJournalService
         }
 
         $orgId = (int) ($receipt->organization_id ?: $user->organization_id);
+        $chart = app(StandardChartOfAccounts::class);
+        if ($orgId > 0 && ! $chart->isSeeded($orgId)) {
+            $organization = \App\Models\Organization::find($orgId);
+            if ($organization) {
+                $chart->seedForOrganization($organization);
+            }
+        }
         $codes = $this->posting->defaultAccountCodes();
         $inventoryCode = $codes['inventory'] ?? '1300';
         $inventoryAccount = $this->posting->resolveAccount($orgId, $inventoryCode)

@@ -248,6 +248,7 @@ Route::middleware('auth:sanctum')->group(function () {
             });
 
             Route::get('sales-by-product', [ReportController::class, 'salesByProduct']);
+            Route::get('sales-by-supplier', [ReportController::class, 'salesBySupplier']);
             Route::get('sales-by-user', [ReportController::class, 'salesByUser']);
             Route::get('sales-by-customer', [ReportController::class, 'salesByCustomer']);
             Route::get('sales-by-channel', [ReportController::class, 'salesByChannel']);

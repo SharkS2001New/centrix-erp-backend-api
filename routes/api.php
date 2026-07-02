@@ -658,16 +658,16 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);
         });
 
-        Route::middleware(['erp.module:payments'])->group(function () {
+        Route::middleware(['erp.module:payments,accounting'])->group(function () {
             Route::apiResource('sale-payments', SalePaymentController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:payments.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:payments.manage']);
             Route::apiResource('customer-invoices', CustomerInvoiceController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:payments.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:payments.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:payments.view|accounting.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:payments.manage|accounting.manage']);
             Route::apiResource('customer-invoice-payments', CustomerInvoicePaymentController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:payments.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:payments.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:payments.view|accounting.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:payments.manage|accounting.manage']);
         });
 
         Route::middleware(['erp.module:accounting'])->group(function () {

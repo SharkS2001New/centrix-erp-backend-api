@@ -1878,6 +1878,29 @@ JOIN products p ON si.product_code = p.product_code AND p.organization_id = s.or
 WHERE s.status = 'completed'
 GROUP BY s.organization_id, si.product_code, p.product_name, DATE(s.created_at), s.branch_id, s.channel, si.uom;
 
+DROP VIEW IF EXISTS v_sales_by_supplier;
+CREATE VIEW v_sales_by_supplier AS
+SELECT
+    s.organization_id,
+    sup.id AS supplier_id,
+    COALESCE(sup.supplier_name, 'No supplier') AS supplier_name,
+    COALESCE(sup.supplier_code, '') AS supplier_code,
+    DATE(s.completed_at) AS sale_date,
+    s.branch_id,
+    s.channel,
+    COUNT(DISTINCT si.product_code) AS products_sold,
+    COUNT(DISTINCT s.id) AS order_count,
+    SUM(si.quantity) AS qty_sold,
+    SUM(si.amount) AS total_revenue,
+    SUM(si.product_vat) AS total_vat,
+    SUM(si.discount_given) AS total_discount
+FROM sale_items si
+JOIN sales s ON si.sale_id = s.id
+JOIN products p ON si.product_code = p.product_code AND p.organization_id = s.organization_id
+LEFT JOIN suppliers sup ON p.supplier_id = sup.id AND sup.organization_id = s.organization_id
+WHERE s.status = 'completed' AND s.archived = 0
+GROUP BY s.organization_id, sup.id, sup.supplier_name, sup.supplier_code, DATE(s.completed_at), s.branch_id, s.channel;
+
 DROP VIEW IF EXISTS v_sales_by_customer;
 CREATE VIEW v_sales_by_customer AS
 SELECT

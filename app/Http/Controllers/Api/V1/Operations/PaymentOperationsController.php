@@ -4,13 +4,13 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
-use App\Models\CustomerInvoice;
 use App\Models\CustomerInvoicePayment;
 use App\Models\Organization;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
 use App\Models\SalePayment;
 use App\Models\TillFloatSession;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
@@ -107,7 +107,12 @@ class PaymentOperationsController extends Controller
             SalePaymentColumnMapper::applyToSale($sale->fresh(), $paymentMethodCode, $amount);
 
             if ($sale->customer_num) {
-                $invoice = CustomerInvoice::where('sale_id', $sale->id)->first();
+                $invoice = app(CustomerInvoiceService::class)->ensureForSale(
+                    $sale->fresh(),
+                    $user,
+                    (float) $sale->order_total,
+                    $newPaid,
+                );
                 if ($invoice) {
                     CustomerInvoicePayment::create([
                         'customer_invoice_id' => $invoice->id,

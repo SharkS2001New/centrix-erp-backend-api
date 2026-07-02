@@ -16,4 +16,9 @@ class CustomerInvoicePayment extends Model
         'amount_due_snapshot', 'cheque_number', 'reference_number', 'date_paid',
         'received_by', 'organization_id', 'notes',
     ];
+
+    public function customerInvoice()
+    {
+        return $this->belongsTo(CustomerInvoice::class, 'customer_invoice_id');
+    }
 }

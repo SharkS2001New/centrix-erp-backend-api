@@ -97,4 +97,30 @@ class OrderWorkflowTransitionTest extends TestCase
         $this->assertSame('processed', $sale->status);
         $this->assertSame('unpaid', $sale->payment_status);
     }
+
+    public function test_unpaid_order_can_advance_to_processed_without_credit_flag(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $sale = Sale::query()->create([
+            'order_num' => 992004,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $admin->id,
+            'status' => 'unpaid',
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => false,
+            'order_total' => 900,
+            'amount_paid' => 0,
+        ]);
+
+        $this->postJson("/api/v1/sales/orders/{$sale->id}/transition", [
+            'status' => 'processed',
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 'processed')
+            ->assertJsonPath('payment_status', 'unpaid');
+    }
 }

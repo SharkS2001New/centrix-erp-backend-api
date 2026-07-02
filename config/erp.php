@@ -256,7 +256,7 @@ return [
             'booked' => ['pending', 'unpaid', 'processed', 'cancelled'],
             'pending' => ['unpaid', 'pending_payment', 'processed', 'cancelled'],
             'unpaid' => ['pending_payment', 'paid', 'processed', 'cancelled'],
-            'pending_payment' => ['paid', 'cancelled'],
+            'pending_payment' => ['paid', 'processed', 'cancelled'],
             'paid' => ['processed', 'delivered', 'completed'],
             'processed' => ['delivered', 'completed'],
             'delivered' => ['completed'],

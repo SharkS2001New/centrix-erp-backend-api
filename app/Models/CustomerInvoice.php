@@ -14,4 +14,10 @@ class CustomerInvoice extends Model
         'created_by', 'invoice_date', 'due_date', 'total_vat', 'invoice_total',
         'amount_paid', 'payment_status', 'notes', 'deleted_by', 'deleted_at',
     ];
+    protected $casts = ['deleted_at' => 'datetime'];
+
+    public function sale()
+    {
+        return $this->belongsTo(Sale::class, 'sale_id');
+    }
 }

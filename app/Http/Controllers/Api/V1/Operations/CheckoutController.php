@@ -12,7 +12,8 @@ use App\Http\Requests\Sales\CheckoutRequest;
 use App\Models\CartLine;
 use App\Models\Customer;
 use App\Services\Sales\SaleRouteResolver;
-use App\Models\CustomerInvoice;
+use App\Models\Sale;
+use App\Services\Sales\SaleRouteResolver;
 use App\Models\KraResponse;
 use App\Models\PaymentMethod;
 use App\Models\Product;
@@ -28,6 +29,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Fulfillment\AutoTripAssignmentService;
@@ -457,22 +459,7 @@ class CheckoutController extends Controller
                 );
             }
 
-            $balanceDue = max(0, $total - $amountPaid);
-            if ($sale->customer_num && $balanceDue > 0.01) {
-                CustomerInvoice::create([
-                    'invoice_number' => 'AR-' . $sale->order_num,
-                    'sale_id' => $sale->id,
-                    'customer_num' => $sale->customer_num,
-                    'branch_id' => $sale->branch_id,
-                    'organization_id' => $sale->organization_id,
-                    'created_by' => $user->id,
-                    'invoice_date' => now()->toDateString(),
-                    'total_vat' => $sale->total_vat,
-                    'invoice_total' => $total,
-                    'amount_paid' => $amountPaid,
-                    'payment_status' => $amountPaid >= $total ? 2 : ($amountPaid > 0 ? 1 : 0),
-                ]);
-            }
+            app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
 
             $this->releaseCartReservations($cart->id);
             CartLine::where('cart_id', $cart->id)->delete();
