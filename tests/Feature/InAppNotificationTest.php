@@ -143,4 +143,70 @@ class InAppNotificationTest extends TestCase
             ->assertOk()
             ->assertJsonPath('count', 0);
     }
+
+    public function test_customer_return_creates_approval_notification_for_other_approvers(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $approverId = DB::table('users')->insertGetId([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'sales_mgr_test',
+            'email' => 'sales_mgr_test@example.test',
+            'password' => $admin->password,
+            'full_name' => 'Sales Manager Test',
+            'is_admin' => 1,
+            'is_active' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $approver = User::query()->findOrFail($approverId);
+
+        Sanctum::actingAs($admin);
+
+        $product = DB::table('products')->value('product_code');
+        $sale = DB::table('sales')->where('status', 'completed')->value('id')
+            ?? DB::table('sales')->value('id');
+
+        $created = $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale,
+            'return_date' => '2026-06-20',
+            'refund_method' => 'CASH',
+            'reason' => 'Damaged goods',
+            'lines' => [
+                [
+                    'product_code' => $product,
+                    'quantity_sold' => 5,
+                    'return_qty' => 1,
+                    'unit_price' => 100,
+                    'amount' => 100,
+                ],
+            ],
+        ])->assertCreated();
+
+        $returnId = (int) $created->json('id');
+
+        $this->assertDatabaseHas('action_requests', [
+            'organization_id' => $admin->organization_id,
+            'type' => 'customer_return',
+            'reference_id' => $returnId,
+            'status' => 'pending',
+            'requested_by' => $admin->id,
+        ]);
+
+        $notification = DB::table('in_app_notifications')
+            ->where('user_id', $approver->id)
+            ->where('type', 'approval')
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($notification);
+        $this->assertSame('/sales/returns?return_id='.$returnId, $notification->action_url);
+
+        Sanctum::actingAs($approver);
+
+        $this->getJson('/api/v1/notifications/unread-count')
+            ->assertOk()
+            ->assertJsonPath('count', 1);
+    }
 }

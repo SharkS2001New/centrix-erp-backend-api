@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\CustomerReturn;
 use App\Models\Sale;
 use App\Services\Auth\UserAccessService;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Sales\CustomerReturnService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -173,9 +174,18 @@ class CustomerReturnController extends Controller
     public function approve(Request $request, string $id)
     {
         $return = $this->findForUser($id);
-        $approved = $this->service->approve($return, $request->user());
+        $user = $request->user();
+        $approved = $this->service->approve($return, $user);
 
-        return response()->json($this->service->withActionFlags($approved, $request->user()));
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'customer_return',
+            'customer_return',
+            (int) $approved->id,
+            'approved',
+            $user,
+        );
+
+        return response()->json($this->service->withActionFlags($approved, $user));
     }
 
     public function reject(Request $request, string $id)
@@ -185,9 +195,19 @@ class CustomerReturnController extends Controller
         ]);
 
         $return = $this->findForUser($id);
-        $rejected = $this->service->reject($return, $request->user(), $data['reason'] ?? null);
+        $user = $request->user();
+        $rejected = $this->service->reject($return, $user, $data['reason'] ?? null);
 
-        return response()->json($this->service->withActionFlags($rejected, $request->user()));
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'customer_return',
+            'customer_return',
+            (int) $rejected->id,
+            'rejected',
+            $user,
+            $data['reason'] ?? null,
+        );
+
+        return response()->json($this->service->withActionFlags($rejected, $user));
     }
 
     public function saleLines(Request $request, string $saleId)

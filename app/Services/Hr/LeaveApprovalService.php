@@ -7,7 +7,9 @@ use App\Models\EmployeeLeaveDay;
 use App\Models\User;
 use App\Services\Attendance\LeaveBalanceService;
 use App\Services\Auth\UserPermissionService;
+use App\Services\Hr\LeaveApprovalService;
 use App\Services\Notifications\ActionRequestService;
+use App\Services\Notifications\NotificationActionUrlBuilder;
 use Illuminate\Validation\ValidationException;
 
 class LeaveApprovalService
@@ -37,6 +39,8 @@ class LeaveApprovalService
             ? $leave->start_date
             : "{$leave->start_date} – {$leave->end_date}";
 
+        $actionUrl = NotificationActionUrlBuilder::for('leave_request', (int) $leave->id);
+
         app(ActionRequestService::class)->requestApproval($requester, [
             'type' => 'leave_request',
             'module' => 'hr_payroll',
@@ -47,12 +51,12 @@ class LeaveApprovalService
             'message' => "{$requesterName} submitted leave for {$employeeName} ({$range}).",
             'reason' => $leave->notes,
             'severity' => 'warning',
-            'action_url' => '/hr/leave',
+            'action_url' => $actionUrl,
             'payload' => [
                 'employee_name' => $employeeName,
                 'start_date' => $leave->start_date,
                 'end_date' => $leave->end_date,
-                'action_url' => '/hr/leave',
+                'action_url' => $actionUrl,
             ],
         ]);
     }

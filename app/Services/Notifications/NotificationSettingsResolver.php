@@ -170,6 +170,8 @@ class NotificationSettingsResolver
         $out['notify_on_delivery'] = (bool) ($out['notify_on_delivery'] ?? false);
         $out['notify_on_order_placed'] = (bool) ($out['notify_on_order_placed'] ?? false);
         $out['notify_on_debtor_payment'] = (bool) ($out['notify_on_debtor_payment'] ?? false);
+        $out['notify_on_approval_request'] = (bool) ($out['notify_on_approval_request'] ?? false);
+        $out['notify_on_approval_outcome'] = (bool) ($out['notify_on_approval_outcome'] ?? false);
         $out['order_placed_scope'] = in_array($out['order_placed_scope'] ?? '', ['all', 'debtors', 'route_orders'], true)
             ? $out['order_placed_scope']
             : 'all';
@@ -197,6 +199,10 @@ class NotificationSettingsResolver
             'order_placed_email_template',
             'debtor_payment_sms_template',
             'debtor_payment_email_template',
+            'approval_request_email_subject',
+            'approval_request_email_template',
+            'approval_outcome_email_subject',
+            'approval_outcome_email_template',
         ] as $key) {
             $out[$key] = trim((string) ($out[$key] ?? ''));
         }

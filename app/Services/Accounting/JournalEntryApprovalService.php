@@ -9,6 +9,7 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Notifications\ActionRequestService;
+use App\Services\Notifications\NotificationActionUrlBuilder;
 use Illuminate\Validation\ValidationException;
 
 class JournalEntryApprovalService
@@ -48,6 +49,7 @@ class JournalEntryApprovalService
         }
 
         $requesterName = $user->full_name ?: $user->username;
+        $actionUrl = NotificationActionUrlBuilder::for('journal_entry', (int) $entry->id);
 
         return app(ActionRequestService::class)->requestApproval($user, [
             'type' => 'journal_entry',
@@ -59,11 +61,11 @@ class JournalEntryApprovalService
             'message' => "{$requesterName} requested posting of journal {$entry->entry_number}.",
             'reason' => $entry->description,
             'severity' => 'warning',
-            'action_url' => '/accounting/journal-entries/'.$entry->id,
+            'action_url' => $actionUrl,
             'payload' => [
                 'entry_number' => $entry->entry_number,
                 'entry_date' => $entry->entry_date,
-                'action_url' => '/accounting/journal-entries/'.$entry->id,
+                'action_url' => $actionUrl,
             ],
         ]);
     }

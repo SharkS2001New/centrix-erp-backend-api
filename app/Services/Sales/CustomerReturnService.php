@@ -90,7 +90,10 @@ class CustomerReturnService
                 return $this->approve($return->fresh(['lines']), $user);
             }
 
-            return $return->fresh(['lines', 'sale', 'customer', 'returnedByUser']);
+            $return = $return->fresh(['lines', 'sale', 'customer', 'returnedByUser']);
+            app(CustomerReturnApprovalService::class)->notifyOnCreate($user, $return);
+
+            return $return;
         });
     }
 

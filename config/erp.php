@@ -566,6 +566,12 @@ return [
             'order_placed_email_template' => '',
             'debtor_payment_sms_template' => 'Payment of KES {amount} received for order {order_num}. Balance due: KES {balance_due}.',
             'debtor_payment_email_template' => '',
+            'notify_on_approval_request' => false,
+            'notify_on_approval_outcome' => false,
+            'approval_request_email_subject' => 'Approval required: {title}',
+            'approval_request_email_template' => "{message}\n\nOpen in Centrix: {link}",
+            'approval_outcome_email_subject' => '{title}',
+            'approval_outcome_email_template' => "{message}\n\nOpen in Centrix: {link}",
         ],
         'procurement' => [
             'default_payment_terms_days' => 30,

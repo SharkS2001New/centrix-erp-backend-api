@@ -579,6 +579,7 @@ class SupplierReturnDocumentService
         $requesterName = $user->full_name ?: $user->username;
         $supplierName = $doc->supplier?->supplier_name ?? 'Supplier';
         $returnLabel = 'SR-'.str_pad((string) $doc->id, 4, '0', STR_PAD_LEFT);
+        $actionUrl = \App\Services\Notifications\NotificationActionUrlBuilder::for('supplier_return', (int) $doc->id);
 
         app(\App\Services\Notifications\ActionRequestService::class)->requestApproval($user, [
             'type' => 'supplier_return',
@@ -590,9 +591,9 @@ class SupplierReturnDocumentService
             'message' => "{$requesterName} requested supplier return {$returnLabel} for {$supplierName}.",
             'reason' => $doc->return_reason,
             'severity' => 'warning',
-            'action_url' => '/suppliers/returns',
+            'action_url' => $actionUrl,
             'payload' => [
-                'action_url' => '/suppliers/returns',
+                'action_url' => $actionUrl,
                 'return_label' => $returnLabel,
                 'supplier_name' => $supplierName,
             ],

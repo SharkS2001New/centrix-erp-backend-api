@@ -8,6 +8,7 @@ use App\Models\InAppNotification;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\Contracts\ActionRequestHandler;
+use App\Services\Notifications\Handlers\CustomerReturnActionRequestHandler;
 use App\Services\Notifications\Handlers\DiscountApprovalActionRequestHandler;
 use App\Services\Notifications\Handlers\JournalEntryActionRequestHandler;
 use App\Services\Notifications\Handlers\LeaveActionRequestHandler;
@@ -32,6 +33,7 @@ class ActionRequestService
         LeaveActionRequestHandler $leaveHandler,
         JournalEntryActionRequestHandler $journalHandler,
         StockAdjustmentActionRequestHandler $stockAdjustmentHandler,
+        CustomerReturnActionRequestHandler $customerReturnHandler,
     ) {
         $this->handlers = collect([
             $supplierReturnHandler,
@@ -40,6 +42,7 @@ class ActionRequestService
             $leaveHandler,
             $journalHandler,
             $stockAdjustmentHandler,
+            $customerReturnHandler,
         ])->keyBy(fn (ActionRequestHandler $handler) => $handler->type());
     }
 

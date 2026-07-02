@@ -15,7 +15,7 @@ class InAppNotificationService
     /** @param  array<string, mixed>  $data */
     public function createForUser(User $recipient, array $data): InAppNotification
     {
-        return InAppNotification::query()->create([
+        $notification = InAppNotification::query()->create([
             'organization_id' => (int) ($data['organization_id'] ?? $recipient->organization_id),
             'user_id' => $recipient->id,
             'action_request_id' => $data['action_request_id'] ?? null,
@@ -26,6 +26,10 @@ class InAppNotificationService
             'action_url' => $data['action_url'] ?? null,
             'created_by' => $data['created_by'] ?? null,
         ]);
+
+        app(InAppNotificationMailDelivery::class)->deliver($notification, $recipient);
+
+        return $notification;
     }
 
     public function unreadCount(User $user): int

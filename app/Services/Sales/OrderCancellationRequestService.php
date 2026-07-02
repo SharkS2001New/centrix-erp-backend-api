@@ -10,6 +10,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Notifications\ActionRequestService;
+use App\Services\Notifications\NotificationActionUrlBuilder;
 use Illuminate\Validation\ValidationException;
 
 class OrderCancellationRequestService
@@ -72,6 +73,7 @@ class OrderCancellationRequestService
 
         $requesterName = $user->full_name ?: $user->username;
         $orderLabel = $sale->order_num ? 'Order #'.$sale->order_num : 'Order #'.$sale->id;
+        $actionUrl = NotificationActionUrlBuilder::for('order_cancel', (int) $sale->id);
 
         return app(ActionRequestService::class)->requestApproval($user, [
             'type' => 'order_cancel',
@@ -83,11 +85,11 @@ class OrderCancellationRequestService
             'message' => "{$requesterName} requested cancellation of {$orderLabel}.",
             'reason' => $reason,
             'severity' => 'danger',
-            'action_url' => '/sales/orders/'.$sale->id,
+            'action_url' => $actionUrl,
             'payload' => [
                 'order_num' => $sale->order_num,
                 'order_total' => (float) $sale->order_total,
-                'action_url' => '/sales/orders/'.$sale->id,
+                'action_url' => $actionUrl,
             ],
         ]);
     }
