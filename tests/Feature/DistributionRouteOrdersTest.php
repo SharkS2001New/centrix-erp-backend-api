@@ -66,6 +66,31 @@ class DistributionRouteOrdersTest extends TestCase
         }
     }
 
+    public function test_sales_index_route_orders_with_date_range_does_not_error(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->enableDistributionModules($admin);
+        Sanctum::actingAs($admin);
+
+        $from = now()->subDays(30)->toDateString();
+        $to = now()->toDateString();
+
+        $res = $this->getJson("/api/v1/sales?route_orders=1&from_date={$from}&to_date={$to}&per_page=25");
+        $res->assertOk();
+    }
+
+    public function test_dispatch_orders_with_route_id_does_not_duplicate_customer_join(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->enableDistributionModules($admin);
+        Sanctum::actingAs($admin);
+
+        $route = \App\Models\RouteModel::query()->firstOrFail();
+
+        $res = $this->getJson("/api/v1/sales?dispatch_orders=1&route_id={$route->id}&per_page=200");
+        $res->assertOk();
+    }
+
     public function test_dispatch_orders_filter_includes_backend_route_orders_by_default(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

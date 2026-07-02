@@ -51,12 +51,12 @@ class SaleController extends BaseResourceController
                 continue;
             }
             if (in_array($col, $this->filterableColumns(), true)) {
-                $query->where($col, $val);
+                $query->where("sales.{$col}", $val);
             }
         }
 
         if ($exclude = $request->input('exclude_status')) {
-            $query->where('status', '!=', $exclude);
+            $query->where('sales.status', '!=', $exclude);
         }
 
         if ($request->boolean('route_orders') || $request->boolean('dispatch_orders') || $request->boolean('loading_list_orders')) {
@@ -70,11 +70,11 @@ class SaleController extends BaseResourceController
         }
 
         if (! $request->boolean('include_legacy')) {
-            CentrixSalesScope::excludeLegacyMaterialized($query);
+            CentrixSalesScope::excludeLegacyMaterialized($query, 'sales');
         }
 
         if (! $request->boolean('include_archived')) {
-            $query->where('archived', 0);
+            $query->where('sales.archived', 0);
         }
 
         $gate = $this->erp->gateForUser($request->user());
@@ -84,41 +84,41 @@ class SaleController extends BaseResourceController
             $channel = (string) ($request->input('channel') ?: 'backend');
             $statuses = $workflow->statusesForQueueFilter((string) $statusFilter, $channel);
             if ($statuses !== []) {
-                $query->whereIn('status', $statuses);
+                $query->whereIn('sales.status', $statuses);
             }
         }
 
         if ($request->input('order_source') === 'backoffice') {
             $query->where(function ($sub) {
-                $sub->whereIn('order_source', ['backoffice', 'backend'])
-                    ->orWhereIn('channel', ['backoffice', 'backend']);
+                $sub->whereIn('sales.order_source', ['backoffice', 'backend'])
+                    ->orWhereIn('sales.channel', ['backoffice', 'backend']);
             });
         } elseif ($request->filled('order_source')) {
-            $query->where('order_source', $request->input('order_source'));
+            $query->where('sales.order_source', $request->input('order_source'));
         }
 
         if ($request->filled('channel')) {
-            $query->where('channel', $request->input('channel'));
+            $query->where('sales.channel', $request->input('channel'));
         }
 
         if ($request->filled('from_date')) {
-            $query->whereDate(DB::raw('COALESCE(completed_at, created_at)'), '>=', $request->input('from_date'));
+            $query->whereDate(DB::raw('COALESCE(sales.completed_at, sales.created_at)'), '>=', $request->input('from_date'));
         }
 
         if ($request->filled('to_date')) {
-            $query->whereDate(DB::raw('COALESCE(completed_at, created_at)'), '<=', $request->input('to_date'));
+            $query->whereDate(DB::raw('COALESCE(sales.completed_at, sales.created_at)'), '<=', $request->input('to_date'));
         }
 
         if ($request->filled('min_order_total')) {
-            $query->where('order_total', '>=', (float) $request->input('min_order_total'));
+            $query->where('sales.order_total', '>=', (float) $request->input('min_order_total'));
         }
 
         if ($request->filled('max_order_total')) {
-            $query->where('order_total', '<=', (float) $request->input('max_order_total'));
+            $query->where('sales.order_total', '<=', (float) $request->input('max_order_total'));
         }
 
         if ($request->filled('required_date')) {
-            $query->whereDate('required_date', $request->input('required_date'));
+            $query->whereDate('sales.required_date', $request->input('required_date'));
         }
 
         if ($request->filled('route_id')) {
@@ -128,22 +128,22 @@ class SaleController extends BaseResourceController
         if ($request->filled('status_in')) {
             $statuses = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('status_in')))));
             if ($statuses !== []) {
-                $query->whereIn('status', $statuses);
+                $query->whereIn('sales.status', $statuses);
             }
         }
 
         if ($request->filled('exclude_statuses')) {
             $statuses = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('exclude_statuses')))));
             if ($statuses !== []) {
-                $query->whereNotIn('status', $statuses);
+                $query->whereNotIn('sales.status', $statuses);
             }
         }
 
         if ($q = $request->input('q')) {
             $query->where(function ($sub) use ($q) {
-                $sub->where('order_num', 'like', "%{$q}%")
-                    ->orWhere('customer_name_override', 'like', "%{$q}%")
-                    ->orWhere('customer_num', 'like', "%{$q}%");
+                $sub->where('sales.order_num', 'like', "%{$q}%")
+                    ->orWhere('sales.customer_name_override', 'like', "%{$q}%")
+                    ->orWhere('sales.customer_num', 'like', "%{$q}%");
             });
         }
 
@@ -153,7 +153,7 @@ class SaleController extends BaseResourceController
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        $paginator = $query->orderByDesc('id')->paginate($perPage);
+        $paginator = $query->orderByDesc('sales.id')->paginate($perPage);
         $editService = app(PosOrderEditService::class);
         $lineEditService = app(BackofficeOrderLineEditService::class);
         $paginator->getCollection()->transform(function (Sale $sale) use ($workflow, $editService, $lineEditService, $request, $gate) {

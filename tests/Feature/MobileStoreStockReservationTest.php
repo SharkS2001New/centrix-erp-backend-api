@@ -107,6 +107,64 @@ class MobileStoreStockReservationTest extends TestCase
         );
     }
 
+    public function test_mobile_cart_reserves_store_for_wholesale_when_retail_shop_wholesale_store_routing_enabled(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'enable_retail_pricing' => true,
+            'retail_shop_wholesale_store_stock' => true,
+            'allow_sell_from_shop' => false,
+            'allow_sell_from_store' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $user = $this->makeMobileUser();
+        $token = $this->loginMobile($user);
+        $product = Product::firstOrFail();
+
+        CurrentStock::query()
+            ->where('product_code', $product->product_code)
+            ->where('branch_id', $user->branch_id)
+            ->update(['shop_quantity' => 0, 'store_quantity' => 71]);
+
+        $capabilities = $this->withToken($token)
+            ->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->json();
+
+        $sales = $capabilities['module_settings']['sales'] ?? [];
+        $this->assertTrue((bool) ($sales['enable_retail_pricing'] ?? false));
+        $this->assertTrue((bool) ($sales['retail_shop_wholesale_store_stock'] ?? false));
+        $this->assertFalse((bool) ($sales['allow_sell_from_shop'] ?? true));
+        $this->assertFalse((bool) ($sales['allow_sell_from_store'] ?? true));
+
+        $cart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+                'product_code' => $product->product_code,
+                'quantity' => 4,
+                'on_wholesale_retail' => 0,
+            ])
+            ->assertCreated();
+
+        $this->assertDatabaseHas('stock_reservations', [
+            'cart_id' => $cart['id'],
+            'product_code' => $product->product_code,
+            'stock_location' => 'store',
+            'quantity' => 4,
+            'released_at' => null,
+        ]);
+    }
+
     public function test_mobile_cart_reserves_store_for_wholesale_only_product_when_split_stock_enabled(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

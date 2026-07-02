@@ -29,13 +29,22 @@ class RouteOrderScope
         return 'COALESCE(sales.route_id, '.self::CUSTOMER_JOIN_ALIAS.'.route_id)';
     }
 
+    public static function hasCustomerRouteJoin(Builder $query): bool
+    {
+        foreach ($query->getQuery()->joins ?? [] as $join) {
+            $table = (string) ($join->table ?? '');
+            if ($table === self::CUSTOMER_JOIN_ALIAS || str_contains($table, self::CUSTOMER_JOIN_ALIAS)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     public static function withCustomerRouteJoin(Builder $query): Builder
     {
-        $joins = $query->getQuery()->joins ?? [];
-        foreach ($joins as $join) {
-            if ($join->table === self::CUSTOMER_JOIN_ALIAS) {
-                return $query;
-            }
+        if (self::hasCustomerRouteJoin($query)) {
+            return $query;
         }
 
         return $query->leftJoin(
