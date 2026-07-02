@@ -61,6 +61,22 @@ class SaleStockLocationResolverTest extends TestCase
         );
     }
 
+    public function test_wholesale_only_product_always_routes_to_store_even_when_retail_flag_set(): void
+    {
+        $sales = ['retail_shop_wholesale_store_stock' => true];
+        $inventory = [];
+        $wholesaleOnly = $this->product(sellOnRetail: false);
+
+        $this->assertSame(
+            'store',
+            SaleStockLocationResolver::forLine('mobile', $inventory, $sales, $wholesaleOnly, true),
+        );
+        $this->assertSame(
+            'store',
+            SaleStockLocationResolver::forLine('mobile', $inventory, $sales, $wholesaleOnly, false),
+        );
+    }
+
     public function test_fallback_uses_distribution_default_for_mobile(): void
     {
         $sales = [];

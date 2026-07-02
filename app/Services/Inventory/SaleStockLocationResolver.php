@@ -11,10 +11,6 @@ class SaleStockLocationResolver
         bool $onWholesaleRetailFlag,
         array $salesSettings,
     ): bool {
-        if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
-            return $onWholesaleRetailFlag;
-        }
-
         return (bool) $product->sell_on_retail && $onWholesaleRetailFlag;
     }
 

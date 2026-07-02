@@ -715,8 +715,13 @@ class CartOperationsController extends Controller
             );
 
         $settings = $gate->moduleSettings('inventory');
-        $stockAsRetail = $this->stockRouteAsRetail($product, $onWholesaleRetailFlag, $salesSettings);
-        $location = $this->saleLineStockLocation($cart->channel, $settings, $salesSettings, $stockAsRetail);
+        $location = $this->resolveSaleLineStockLocation(
+            $cart->channel,
+            $settings,
+            $salesSettings,
+            $product,
+            $onWholesaleRetailFlag,
+        );
 
         $lineNo = (int) CartLine::where('cart_id', $cart->id)->max('line_no') + 1;
 
@@ -798,8 +803,13 @@ class CartOperationsController extends Controller
         );
 
         $settings = $gate->moduleSettings('inventory');
-        $stockAsRetail = $this->stockRouteAsRetail($product, $onWholesaleRetailFlag, $salesSettings);
-        $location = $this->saleLineStockLocation($cart->channel, $settings, $salesSettings, $stockAsRetail);
+        $location = $this->resolveSaleLineStockLocation(
+            $cart->channel,
+            $settings,
+            $salesSettings,
+            $product,
+            $onWholesaleRetailFlag,
+        );
 
         if ($settings['reserve_stock_on_cart'] ?? true) {
             $this->releaseLineReservation($row->id);

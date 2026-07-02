@@ -11,6 +11,7 @@ use App\Models\SaleItem;
 use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\Erp\ErpContext;
+use App\Services\Inventory\SaleStockLocationResolver;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -56,12 +57,21 @@ class TripStockService
 
         $items = $sale->items ?? SaleItem::query()->where('sale_id', $sale->id)->get();
         foreach ($items as $item) {
-            $location = $this->saleLineStockLocation(
-                $sale->channel,
-                $inventorySettings,
-                $salesSettings,
-                (bool) $item->on_wholesale_retail,
-            );
+            $product = Product::query()->find($item->product_code);
+            $location = $product
+                ? SaleStockLocationResolver::forLine(
+                    (string) $sale->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    $product,
+                    (bool) $item->on_wholesale_retail,
+                )
+                : SaleStockLocationResolver::forRouteFlag(
+                    (string) $sale->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    (bool) $item->on_wholesale_retail,
+                );
 
             $this->postStockLedger([
                 'branch_id' => $sale->branch_id,
@@ -89,28 +99,6 @@ class TripStockService
             'mobile' => 'MOBILE_SALE',
             'backend' => 'BACKEND_SALE',
             default => 'POS_SALE',
-        };
-    }
-
-    protected function saleLineStockLocation(
-        string $channel,
-        array $inventorySettings,
-        array $salesSettings,
-        bool $isRetailLine,
-    ): string {
-        if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
-            return $isRetailLine ? 'shop' : 'store';
-        }
-        if (! empty($salesSettings['allow_sell_from_shop']) && empty($salesSettings['allow_sell_from_store'])) {
-            return 'shop';
-        }
-        if (empty($salesSettings['allow_sell_from_shop']) && ! empty($salesSettings['allow_sell_from_store'])) {
-            return 'store';
-        }
-
-        return match ($channel) {
-            'backend', 'mobile' => $inventorySettings['default_distribution_sale_location'] ?? 'store',
-            default => $inventorySettings['default_pos_sale_location'] ?? 'shop',
         };
     }
 

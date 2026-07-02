@@ -17,6 +17,7 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Models\RouteSchedule;
 use App\Services\Sales\OrderCancellationRequestService;
 use App\Services\Sales\SaleCancellationService;
+use App\Services\Fulfillment\AutoTripAssignmentService;
 use App\Services\Fulfillment\PodService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
