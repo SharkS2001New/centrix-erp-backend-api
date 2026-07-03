@@ -12,9 +12,24 @@ class CustomerInvoiceController extends BaseResourceController
         return CustomerInvoice::class;
     }
 
+    /** @return array<string, mixed> */
+    protected function presentInvoice(CustomerInvoice $invoice): array
+    {
+        $payload = $invoice->toArray();
+        $payload['customer_name'] = $invoice->customer?->customer_name;
+        $payload['balance_due'] = max(
+            0,
+            round((float) $invoice->invoice_total - (float) $invoice->amount_paid, 2),
+        );
+
+        return $payload;
+    }
+
     public function index(Request $request)
     {
-        $query = $this->baseQuery($request)->whereNull('deleted_at');
+        $query = $this->baseQuery($request)
+            ->whereNull('deleted_at')
+            ->with(['customer:customer_num,customer_name,organization_id']);
 
         if ($request->filled('customer_num')) {
             $query->where('customer_num', $request->input('customer_num'));
@@ -33,14 +48,28 @@ class CustomerInvoiceController extends BaseResourceController
         if ($q = trim((string) $request->input('q', ''))) {
             $query->where(function ($inner) use ($q) {
                 $inner->where('invoice_number', 'like', "%{$q}%")
-                    ->orWhere('customer_num', 'like', "%{$q}%");
+                    ->orWhere('customer_num', 'like', "%{$q}%")
+                    ->orWhereHas('customer', function ($customer) use ($q) {
+                        $customer->where('customer_name', 'like', "%{$q}%");
+                    });
             });
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        return response()->json(
-            $query->orderByDesc('invoice_date')->orderByDesc('id')->paginate($perPage),
+        $paginator = $query->orderByDesc('invoice_date')->orderByDesc('id')->paginate($perPage);
+        $paginator->setCollection(
+            $paginator->getCollection()->map(fn (CustomerInvoice $invoice) => $this->presentInvoice($invoice)),
         );
+
+        return response()->json($paginator);
+    }
+
+    public function show(Request $request, string $id)
+    {
+        $invoice = $this->findScopedModel($request, $id)
+            ->load(['customer:customer_num,customer_name,organization_id']);
+
+        return response()->json($this->presentInvoice($invoice));
     }
 }

@@ -257,6 +257,35 @@ class BankReconciliationService
         return $this->refreshSummary($reconciliation->fresh(['chartOfAccount']));
     }
 
+    /**
+     * Import bank statement lines into an in-progress reconciliation.
+     *
+     * @param  array<int, array<string, mixed>>  $lines
+     * @return array<string, mixed>
+     */
+    public function importStatement(
+        int $organizationId,
+        int $reconciliationId,
+        array $lines = [],
+        ?string $csv = null,
+    ): array {
+        $reconciliation = $this->findReconciliation($organizationId, $reconciliationId);
+        $this->assertEditable($reconciliation);
+
+        if ($csv !== null && trim($csv) !== '') {
+            $lines = array_merge($lines, $this->parseCsvRows($csv));
+        }
+
+        if ($lines === []) {
+            throw new InvalidArgumentException('Provide statement lines or CSV data to import.');
+        }
+
+        $this->importStatementLines($reconciliation, $lines);
+        $this->refreshSummary($reconciliation->fresh(['chartOfAccount']));
+
+        return $this->show($organizationId, $reconciliationId);
+    }
+
     public function complete(int $organizationId, int $reconciliationId, User $user, ?string $notes = null): BankReconciliation
     {
         $reconciliation = $this->findReconciliation($organizationId, $reconciliationId);

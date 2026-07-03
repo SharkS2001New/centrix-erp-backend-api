@@ -167,6 +167,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('export-queue/process', [ExternalAccountingController::class, 'processExportQueue']);
         Route::post('export-queue/retry-failed', [ExternalAccountingController::class, 'retryFailedExports']);
         Route::post('bank-reconciliations', [BankReconciliationController::class, 'store']);
+        Route::post('bank-reconciliations/{reconciliationId}/statement-lines', [BankReconciliationController::class, 'importStatement']);
         Route::post('bank-reconciliations/{reconciliationId}/matches', [BankReconciliationController::class, 'applyMatch']);
         Route::delete('bank-reconciliations/{reconciliationId}/matches/{matchId}', [BankReconciliationController::class, 'removeMatch']);
         Route::post('bank-reconciliations/{reconciliationId}/complete', [BankReconciliationController::class, 'complete']);

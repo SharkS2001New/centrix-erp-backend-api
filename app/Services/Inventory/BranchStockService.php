@@ -203,6 +203,62 @@ class BranchStockService
     }
 
     /**
+     * Limit catalog results to products with sellable quantity at the consumer stock location.
+     *
+     * @param  Builder<Product>  $query
+     */
+    public function applyConsumerAvailableStockFilter(
+        Builder $query,
+        ?int $branchId,
+        string $channel,
+        array $inventorySettings,
+        array $salesSettings,
+    ): void {
+        if ($branchId) {
+            $alias = 'branch_stock';
+            $this->joinBranchStock($query, $branchId, $alias);
+
+            if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
+                $shopAvailable = $this->availableQuantitySql($branchId, 'shop', $alias);
+                $storeAvailable = $this->availableQuantitySql($branchId, 'store', $alias);
+                $query->whereRaw("(
+                    (products.sell_on_retail = 1 AND ({$shopAvailable}) > 0)
+                    OR (COALESCE(products.sell_on_retail, 0) = 0 AND ({$storeAvailable}) > 0)
+                )");
+
+                return;
+            }
+
+            $location = SaleStockLocationResolver::forCatalogList(
+                $channel,
+                $inventorySettings,
+                $salesSettings,
+            );
+            $available = $this->availableQuantitySql($branchId, $location, $alias);
+            $query->whereRaw("({$available}) > 0");
+
+            return;
+        }
+
+        $query->whereRaw('(COALESCE(products.stock_in_shop, 0) + COALESCE(products.stock_in_store, 0)) > 0');
+    }
+
+    protected function availableQuantitySql(int $branchId, string $location, string $stockAlias): string
+    {
+        $location = $location === 'store' ? 'store' : 'shop';
+        $qtyColumn = $location === 'store' ? 'store_quantity' : 'shop_quantity';
+        $reservedSubquery = "(SELECT COALESCE(SUM(sr.quantity), 0)
+            FROM stock_reservations sr
+            WHERE sr.released_at IS NULL
+              AND (sr.expires_at IS NULL OR sr.expires_at > NOW())
+              AND sr.product_code = products.product_code
+              AND sr.branch_id = {$branchId}
+              AND sr.stock_location = '{$location}')";
+
+        return "GREATEST(0, COALESCE({$stockAlias}.{$qtyColumn}, 0) - {$reservedSubquery})";
+    }
+
+    /**
      * @param  Builder<Product>  $query
      */
     public function applyStockStatusFilter(Builder $query, string $stockStatus, ?int $branchId): void

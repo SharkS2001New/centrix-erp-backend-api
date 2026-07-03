@@ -115,6 +115,34 @@ class BankReconciliationController extends Controller
         return response()->json($reconciliation);
     }
 
+    public function importStatement(Request $request, int $reconciliationId)
+    {
+        $data = $request->validate([
+            'statement_lines' => 'nullable|array',
+            'statement_lines.*.line_date' => 'nullable|date',
+            'statement_lines.*.date' => 'nullable|date',
+            'statement_lines.*.description' => 'nullable|string|max:500',
+            'statement_lines.*.reference' => 'nullable|string|max:120',
+            'statement_lines.*.amount' => 'nullable|numeric',
+            'statement_lines.*.debit' => 'nullable|numeric',
+            'statement_lines.*.credit' => 'nullable|numeric',
+            'csv' => 'nullable|string',
+        ]);
+
+        try {
+            $payload = $this->reconciliations->importStatement(
+                (int) $request->user()->organization_id,
+                $reconciliationId,
+                $data['statement_lines'] ?? [],
+                $data['csv'] ?? null,
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($payload);
+    }
+
     public function complete(Request $request, int $reconciliationId)
     {
         $data = $request->validate([

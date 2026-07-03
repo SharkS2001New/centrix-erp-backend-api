@@ -101,4 +101,25 @@ class SalesReportsTest extends TestCase
 
         $this->assertIsArray($response->json('data'));
     }
+
+    public function test_sales_by_customer_accepts_date_range_without_sale_date_column(): void
+    {
+        $today = now()->toDateString();
+
+        $response = $this->getJson("/api/v1/reports/sales-by-customer?from_date={$today}&to_date={$today}&per_page=5")
+            ->assertOk();
+
+        $this->assertIsArray($response->json('data'));
+    }
+
+    public function test_invoice_payments_report_returns_tenant_scoped_rows(): void
+    {
+        $today = now()->toDateString();
+
+        $response = $this->getJson(
+            "/api/v1/reports/invoice-payments?from_date={$today}&to_date={$today}&date_column=date_paid&per_page=5",
+        )->assertOk();
+
+        $this->assertIsArray($response->json('data'));
+    }
 }

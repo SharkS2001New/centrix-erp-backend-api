@@ -382,9 +382,46 @@ class ReportController extends Controller
 
     public function salesByCustomer(Request $request)
     {
-        return response()->json($this->reportFromView('v_sales_by_customer', $this->filters($request), [
+        $filters = $this->filters($request);
+        $q = DB::table('v_sales_by_customer');
+        $this->scopeReportQueryToOrganization($q, $request, 'v_sales_by_customer', [
             'customer_num', 'route_name',
-        ]));
+        ]);
+
+        foreach (['customer_num', 'route_name'] as $col) {
+            if (isset($filters[$col]) && $filters[$col] !== '') {
+                $q->where($col, $filters[$col]);
+            }
+        }
+
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($inner) use ($search) {
+                $inner->where('customer_name', 'like', "%{$search}%")
+                    ->orWhere('customer_num', 'like', "%{$search}%")
+                    ->orWhere('phone_number', 'like', "%{$search}%");
+            });
+        }
+
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if ($orgId && ! empty($filters['from_date']) && ! empty($filters['to_date'])) {
+            $legacy = CentrixSalesScope::legacyExcludeSql('s');
+            $q->whereExists(function ($sub) use ($filters, $orgId, $legacy) {
+                $sub->select(DB::raw('1'))
+                    ->from('sales as s')
+                    ->whereColumn('s.customer_num', 'v_sales_by_customer.customer_num')
+                    ->where('s.organization_id', $orgId)
+                    ->where('s.status', 'completed')
+                    ->where('s.archived', 0)
+                    ->whereDate('s.completed_at', '>=', $filters['from_date'])
+                    ->whereDate('s.completed_at', '<=', $filters['to_date'])
+                    ->whereRaw($legacy);
+            });
+        }
+
+        return response()->json(
+            $q->orderByDesc('total_purchased')
+                ->paginate(min((int) ($filters['per_page'] ?? 20), 200)),
+        );
     }
 
     public function salesByChannel(Request $request)
@@ -1016,9 +1053,12 @@ class ReportController extends Controller
         if (($filters['date_column'] ?? '') === 'payment_date') {
             $filters['date_column'] = 'date_paid';
         }
+        if (empty($filters['date_column'])) {
+            $filters['date_column'] = 'date_paid';
+        }
 
         return response()->json($this->reportFromView('v_invoice_payment_history', $filters, [
-            'customer_num', 'date_paid',
+            'customer_num', 'date_paid', 'branch_id',
         ]));
     }
 
@@ -1146,7 +1186,7 @@ class ReportController extends Controller
             'transfer_date', 'payment_date', 'entry_date', 'session_date', 'method_code',
             'stock_location', 'from_location', 'to_location', 'from_branch_id', 'to_branch_id', 'lpo_status_code',
             'category_id', 'sub_category_id', 'till_id', 'reference_type', 'user_id',
-            'table_name', 'action',
+            'table_name', 'action', 'transaction_type', 'location',
         ]);
 
         $user = $request->user();
@@ -1180,10 +1220,34 @@ class ReportController extends Controller
             }
         }
         if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
-            $q->where($filters['date_column'], '>=', $filters['from_date']);
+            $dateColumn = $filters['date_column'];
+            if ($this->viewColumnExists($view, $dateColumn)) {
+                $q->where($dateColumn, '>=', $filters['from_date']);
+            }
         }
         if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
-            $q->where($filters['date_column'], '<=', $filters['to_date']);
+            $dateColumn = $filters['date_column'];
+            if ($this->viewColumnExists($view, $dateColumn)) {
+                $q->where($dateColumn, '<=', $filters['to_date']);
+            }
+        }
+
+        if ($search = trim((string) $request->input('q', ''))) {
+            $searchable = array_values(array_filter(
+                [
+                    'product_name', 'product_code', 'customer_name', 'customer_num',
+                    'supplier_name', 'cashier_name', 'invoice_number', 'reference_number',
+                ],
+                fn ($col) => $this->viewColumnExists($view, $col),
+            ));
+            if ($searchable !== []) {
+                $q->where(function ($inner) use ($search, $searchable) {
+                    foreach ($searchable as $i => $col) {
+                        $method = $i === 0 ? 'where' : 'orWhere';
+                        $inner->{$method}($col, 'like', "%{$search}%");
+                    }
+                });
+            }
         }
 
         return $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));

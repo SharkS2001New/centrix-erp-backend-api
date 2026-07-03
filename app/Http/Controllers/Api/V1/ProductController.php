@@ -82,10 +82,27 @@ class ProductController extends BaseResourceController
             return true;
         }
 
-        $token = $request->user()?->currentAccessToken();
-        $channel = strtolower((string) ($token->login_channel ?? ''));
+        return in_array($this->salesLoginChannel($request), ['mobile', 'pos'], true);
+    }
 
-        return in_array($channel, ['mobile', 'pos'], true);
+    protected function shouldFilterMobileInStock(?Request $request): bool
+    {
+        if (! $request || $request->boolean('include_out_of_stock')) {
+            return false;
+        }
+
+        return $this->salesLoginChannel($request) === 'mobile';
+    }
+
+    protected function salesLoginChannel(?Request $request): string
+    {
+        if (! $request?->user()) {
+            return '';
+        }
+
+        $token = $request->user()->currentAccessToken();
+
+        return strtolower((string) ($token->login_channel ?? ''));
     }
 
     protected function salesConsumerStockLocation(?Request $request): ?string
@@ -94,8 +111,7 @@ class ProductController extends BaseResourceController
             return null;
         }
 
-        $token = $request->user()->currentAccessToken();
-        $loginChannel = strtolower((string) ($token->login_channel ?? ''));
+        $loginChannel = $this->salesLoginChannel($request);
         $channel = match ($loginChannel) {
             'mobile' => 'mobile',
             'pos' => 'pos',
@@ -189,9 +205,19 @@ class ProductController extends BaseResourceController
             }
         }
 
+        $branchIdForFilter = $this->branchStock->resolveBranchIdOptional($user, $request);
+
         if ($stockStatus = (string) $request->input('stock_status', '')) {
-            $branchIdForFilter = $this->branchStock->resolveBranchIdOptional($user, $request);
             $this->branchStock->applyStockStatusFilter($query, $stockStatus, $branchIdForFilter);
+        } elseif ($this->shouldFilterMobileInStock($request) && $user) {
+            $gate = $this->erp->gateForUser($user);
+            $this->branchStock->applyConsumerAvailableStockFilter(
+                $query,
+                $branchIdForFilter,
+                'mobile',
+                $gate->moduleSettings('inventory'),
+                $gate->moduleSettings('sales'),
+            );
         }
 
         if ($q = trim((string) $request->input('q', ''))) {

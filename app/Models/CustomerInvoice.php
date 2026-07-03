@@ -20,4 +20,10 @@ class CustomerInvoice extends Model
     {
         return $this->belongsTo(Sale::class, 'sale_id');
     }
+
+    public function customer()
+    {
+        return $this->hasOne(Customer::class, 'customer_num', 'customer_num')
+            ->whereColumn('customers.organization_id', 'customer_invoices.organization_id');
+    }
 }

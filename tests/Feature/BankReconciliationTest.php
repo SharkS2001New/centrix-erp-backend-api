@@ -139,4 +139,36 @@ CSV;
             ->assertJsonPath('statement_lines.0.amount', 1200.5)
             ->assertJsonPath('statement_lines.1.amount', -150);
     }
+
+    public function test_can_import_statement_lines_into_existing_reconciliation(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        $bank = ChartOfAccount::query()
+            ->where('organization_id', $orgId)
+            ->where('account_code', '1100')
+            ->firstOrFail();
+
+        $created = $this->postJson('/api/v1/accounting/bank-reconciliations', [
+            'chart_of_account_id' => $bank->id,
+            'period_end' => '2026-06-30',
+            'statement_balance' => 500,
+        ])->assertCreated();
+
+        $reconciliationId = (int) $created->json('id');
+
+        $this->getJson("/api/v1/accounting/bank-reconciliations/{$reconciliationId}")
+            ->assertOk()
+            ->assertJsonCount(0, 'statement_lines');
+
+        $csv = <<<'CSV'
+date,description,reference,amount
+2026-06-15,Customer deposit,DEP-99,500
+CSV;
+
+        $this->postJson("/api/v1/accounting/bank-reconciliations/{$reconciliationId}/statement-lines", [
+            'csv' => $csv,
+        ])->assertOk()
+            ->assertJsonCount(1, 'statement_lines')
+            ->assertJsonPath('statement_lines.0.reference', 'DEP-99');
+    }
 }

@@ -11,6 +11,7 @@ use App\Models\SaleItem;
 use App\Models\Uom;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\RouteOrderScope;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Collection;
 
 class LoadingListBuilder
@@ -173,7 +174,11 @@ class LoadingListBuilder
 
             LoadingListLine::query()->where('loading_list_id', $loadingList->id)->delete();
             foreach ($lines as $line) {
-                LoadingListLine::create(array_merge($line, ['loading_list_id' => $loadingList->id]));
+                $payload = array_merge($line, ['loading_list_id' => $loadingList->id]);
+                if (! Schema::hasColumn('loading_list_lines', 'on_wholesale_retail')) {
+                    unset($payload['on_wholesale_retail']);
+                }
+                LoadingListLine::create($payload);
             }
         }
 

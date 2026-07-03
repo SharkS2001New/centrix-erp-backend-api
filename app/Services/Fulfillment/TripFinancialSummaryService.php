@@ -8,6 +8,7 @@ use App\Models\Sale;
 use App\Services\Accounting\SaleCogsCalculator;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class TripFinancialSummaryService
 {
@@ -79,13 +80,7 @@ class TripFinancialSummaryService
             $salesByTrip[$tripId]->push($sale);
         }
 
-        $expensesByTrip = Expense::query()
-            ->with('expenseGroup')
-            ->whereIn('dispatch_trip_id', $tripIds)
-            ->whereNull('deleted_at')
-            ->orderBy('id')
-            ->get()
-            ->groupBy('dispatch_trip_id');
+        $expensesByTrip = $this->expensesForTripIds($tripIds)->groupBy('dispatch_trip_id');
 
         $summaries = [];
         foreach ($tripIds as $tripId) {
@@ -141,15 +136,25 @@ class TripFinancialSummaryService
         ];
     }
 
-  /** @return Collection<int, Expense> */
-    protected function expensesForTrip(int $tripId): Collection
+    /** @param  list<int>  $tripIds @return Collection<int, Expense> */
+    protected function expensesForTripIds(array $tripIds): Collection
     {
+        if ($tripIds === [] || ! Schema::hasColumn('expenses', 'dispatch_trip_id')) {
+            return collect();
+        }
+
         return Expense::query()
             ->with('expenseGroup')
-            ->where('dispatch_trip_id', $tripId)
+            ->whereIn('dispatch_trip_id', $tripIds)
             ->whereNull('deleted_at')
             ->orderBy('id')
             ->get();
+    }
+
+    /** @return Collection<int, Expense> */
+    protected function expensesForTrip(int $tripId): Collection
+    {
+        return $this->expensesForTripIds([$tripId]);
     }
 
     /**

@@ -184,9 +184,16 @@ class DispatchTripController extends BaseResourceController
         $payload = $loadingList->toArray();
         $payload['lines'] = $builder->linesForTrip($model);
 
+        try {
+            $financialSummary = $this->financials->summarizeForTrip($model);
+        } catch (\Throwable $e) {
+            report($e);
+            $financialSummary = $this->financials->emptySummary();
+        }
+
         return response()->json([
             'loading_list' => $payload,
-            'financial_summary' => $this->financials->summarizeForTrip($model),
+            'financial_summary' => $financialSummary,
         ]);
     }
 

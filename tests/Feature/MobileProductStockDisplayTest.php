@@ -58,6 +58,36 @@ class MobileProductStockDisplayTest extends TestCase
         ])->assertOk()->json('token');
     }
 
+    public function test_mobile_product_list_excludes_out_of_stock_products(): void
+    {
+        $user = $this->makeMobileUser();
+        $token = $this->loginMobile($user);
+        $inStock = Product::firstOrFail();
+        $outOfStock = Product::query()
+            ->where('product_code', '!=', $inStock->product_code)
+            ->firstOrFail();
+
+        CurrentStock::query()
+            ->where('product_code', $inStock->product_code)
+            ->where('branch_id', $user->branch_id)
+            ->update(['shop_quantity' => 5, 'store_quantity' => 10]);
+
+        CurrentStock::query()
+            ->where('product_code', $outOfStock->product_code)
+            ->where('branch_id', $user->branch_id)
+            ->update(['shop_quantity' => 0, 'store_quantity' => 0]);
+
+        $codes = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/products', ['per_page' => 200, 'branch_id' => $user->branch_id])
+                ->assertOk()
+                ->json('data') ?? [],
+        )->pluck('product_code')->all();
+
+        $this->assertContains($inStock->product_code, $codes);
+        $this->assertNotContains($outOfStock->product_code, $codes);
+    }
+
     public function test_mobile_product_list_preserves_split_shop_and_store_stock(): void
     {
         $this->enableSplitShopStoreStock();
