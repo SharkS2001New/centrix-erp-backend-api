@@ -49,9 +49,10 @@ class RouteOrderScope
 
         return $query->leftJoin(
             'customers as '.self::CUSTOMER_JOIN_ALIAS,
-            self::CUSTOMER_JOIN_ALIAS.'.customer_num',
-            '=',
-            'sales.customer_num',
+            function ($join) {
+                $join->on(self::CUSTOMER_JOIN_ALIAS.'.customer_num', '=', 'sales.customer_num')
+                    ->whereColumn(self::CUSTOMER_JOIN_ALIAS.'.organization_id', 'sales.organization_id');
+            },
         );
     }
 

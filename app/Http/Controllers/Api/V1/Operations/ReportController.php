@@ -159,7 +159,7 @@ class ReportController extends Controller
         $plBase = fn (\Carbon\Carbon $start, \Carbon\Carbon $end) => DB::table('v_profit_loss_summary')
             ->where('period', '>=', $start->toDateString())
             ->where('period', '<=', $end->toDateString())
-            ->when($orgId, fn ($q) => $q->whereIn('branch_id', $this->organizationBranchIds($orgId)))
+            ->when($orgId, fn ($q) => $this->scopeOrganizationBranches($q, $orgId))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
 
         $grossProfit = (float) $plBase($from, $to)->sum('gross_profit');
@@ -195,7 +195,7 @@ class ReportController extends Controller
         $prevReceivables = max(0, $receivables - $creditIssued + $paymentsCollected);
 
         $inventoryValue = (float) DB::table('v_stock_valuation')
-            ->when($orgId, fn ($q) => $q->whereIn('branch_id', $this->organizationBranchIds($orgId)))
+            ->when($orgId, fn ($q) => $this->scopeOrganizationBranches($q, $orgId))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->sum('retail_value');
 
@@ -250,7 +250,13 @@ class ReportController extends Controller
         $topProducts = DB::table('v_sales_by_product')
             ->where('sale_date', '>=', $from->toDateString())
             ->where('sale_date', '<=', $to->toDateString())
-            ->when($orgId, fn ($q) => $q->whereIn('branch_id', $this->organizationBranchIds($orgId)))
+            ->when($orgId, function ($q) use ($orgId) {
+                if ($this->viewColumnExists('v_sales_by_product', 'organization_id')) {
+                    $q->where('organization_id', $orgId);
+                } else {
+                    $this->scopeOrganizationBranches($q, $orgId);
+                }
+            })
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
             ->selectRaw('product_code, product_name, SUM(total_revenue) as revenue')
             ->groupBy('product_code', 'product_name')
@@ -425,28 +431,28 @@ class ReportController extends Controller
     public function dispatchTrips(Request $request)
     {
         return response()->json($this->reportFromView('v_dispatch_trips_summary', $this->filters($request), [
-            'scheduled_date', 'route_name', 'driver_name', 'status',
+            'scheduled_date', 'branch_id', 'route_name', 'driver_name', 'status',
         ]));
     }
 
     public function tripCashSettlement(Request $request)
     {
         return response()->json($this->reportFromView('v_trip_cash_settlement', $this->filters($request), [
-            'scheduled_date', 'route_name', 'driver_name', 'status',
+            'scheduled_date', 'branch_id', 'route_name', 'driver_name', 'status',
         ]));
     }
 
     public function podCompliance(Request $request)
     {
         return response()->json($this->reportFromView('v_pod_compliance', $this->filters($request), [
-            'capture_date', 'route_name', 'driver_name',
+            'capture_date', 'branch_id', 'route_name', 'driver_name',
         ]));
     }
 
     public function driverDeliveries(Request $request)
     {
         return response()->json($this->reportFromView('v_driver_deliveries', $this->filters($request), [
-            'delivery_date', 'driver_name', 'route_name',
+            'delivery_date', 'branch_id', 'driver_name', 'route_name',
         ]));
     }
 
@@ -521,7 +527,7 @@ class ReportController extends Controller
         $q = \App\Models\InventoryTransaction::query();
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
         if ($orgId) {
-            $q->whereIn('branch_id', $this->organizationBranchIds($orgId));
+            $this->scopeOrganizationBranches($q, $orgId);
         }
         foreach (['branch_id', 'product_code', 'transaction_type', 'stock_location'] as $col) {
             if ($request->filled($col)) {
@@ -1145,9 +1151,12 @@ class ReportController extends Controller
 
         $user = $request->user();
         if ($user && empty($filters['branch_id'])) {
-            $branchId = app(UserAccessService::class)->branchId($user);
-            if ($branchId !== null) {
-                $filters['branch_id'] = $branchId;
+            $access = app(UserAccessService::class);
+            if (! $access->isOrgWide($user)) {
+                $branchId = $access->branchId($user);
+                if ($branchId !== null) {
+                    $filters['branch_id'] = $branchId;
+                }
             }
         }
 
@@ -1160,7 +1169,12 @@ class ReportController extends Controller
         $q = DB::table($view);
         $this->scopeReportQueryToOrganization($q, $request, $view, $allowedCols);
 
-        foreach ($allowedCols as $col) {
+        $filterColumns = $allowedCols;
+        if ($this->viewColumnExists($view, 'branch_id') && ! in_array('branch_id', $filterColumns, true)) {
+            $filterColumns[] = 'branch_id';
+        }
+
+        foreach ($filterColumns as $col) {
             if (isset($filters[$col]) && $filters[$col] !== '') {
                 $q->where($col, $filters[$col]);
             }
@@ -1441,14 +1455,14 @@ class ReportController extends Controller
             return;
         }
 
-        if ($view === 'v_branch_stock_transfers') {
+        if ($this->viewColumnExists($view, 'organization_id')) {
             $query->where('organization_id', $orgId);
 
             return;
         }
 
-        if (in_array('branch_id', $allowedCols, true)) {
-            $query->whereIn('branch_id', $this->organizationBranchIds($orgId));
+        if ($this->viewColumnExists($view, 'branch_id')) {
+            $this->scopeOrganizationBranches($query, $orgId);
 
             return;
         }
@@ -1483,5 +1497,31 @@ class ReportController extends Controller
                     ->whereNull('deleted_at');
             });
         }
+    }
+
+    protected function scopeOrganizationBranches($query, int $organizationId, string $branchColumn = 'branch_id'): void
+    {
+        $query->whereIn($branchColumn, function ($sub) use ($organizationId) {
+            $sub->select('id')
+                ->from('branches')
+                ->where('organization_id', $organizationId);
+        });
+    }
+
+    protected function viewColumnExists(string $view, string $column): bool
+    {
+        static $cache = [];
+
+        $key = "{$view}.{$column}";
+        if (! array_key_exists($key, $cache)) {
+            $cache[$key] = collect(DB::select(
+                'SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
+                 LIMIT 1',
+                [$view, $column],
+            ))->isNotEmpty();
+        }
+
+        return $cache[$key];
     }
 }

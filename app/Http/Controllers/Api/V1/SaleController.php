@@ -118,7 +118,11 @@ class SaleController extends BaseResourceController
         }
 
         if ($request->filled('required_date')) {
-            $query->whereDate('sales.required_date', $request->input('required_date'));
+            $date = $request->input('required_date');
+            $query->whereDate(
+                DB::raw('COALESCE(sales.required_date, sales.delivery_date, DATE(sales.created_at))'),
+                $date,
+            );
         }
 
         if ($request->filled('route_id')) {
