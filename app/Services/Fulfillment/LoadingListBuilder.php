@@ -2,17 +2,20 @@
 
 namespace App\Services\Fulfillment;
 
+use App\Exceptions\MissingProductWeightsException;
 use App\Models\DispatchTrip;
 use App\Models\LoadingList;
 use App\Models\LoadingListLine;
 use App\Models\Organization;
 use App\Models\Product;
+use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\Uom;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\RouteOrderScope;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Collection;
+use InvalidArgumentException;
 
 class LoadingListBuilder
 {
@@ -120,17 +123,144 @@ class LoadingListBuilder
         }
 
         $items = SaleItem::query()->whereIn('sale_id', $saleIds)->get();
+        $organizationId = $trip->branch?->organization_id
+            ?? $trip->sales->first()?->organization_id;
+
+        return $this->computeItemsWeightKg($items, $organizationId);
+    }
+
+    public function computeSaleWeightKg(Sale $sale): float
+    {
+        $items = $sale->relationLoaded('items')
+            ? $sale->items
+            : SaleItem::query()->where('sale_id', $sale->id)->get();
+
+        return $this->computeItemsWeightKg($items, $sale->organization_id);
+    }
+
+    /**
+     * @return array{
+     *     ready: bool,
+     *     total_weight_kg: float,
+     *     missing_products: array<int, array{product_code: string, product_name: string, quantity: float, product_weight: float|null}>
+     * }
+     */
+    public function saleWeightStatus(Sale $sale): array
+    {
+        $items = $sale->relationLoaded('items')
+            ? $sale->items
+            : SaleItem::query()->where('sale_id', $sale->id)->get();
+
+        if ($items->isEmpty()) {
+            return [
+                'ready' => false,
+                'total_weight_kg' => 0.0,
+                'missing_products' => [],
+            ];
+        }
+
         $codes = $items->pluck('product_code')->unique()->values()->all();
-        $weights = Product::query()
-            ->whereIn('product_code', $codes)
-            ->pluck('product_weight', 'product_code');
+        $products = $this->productsForWeightLookup($codes, $sale->organization_id);
+
+        $qtyByCode = [];
+        foreach ($items as $item) {
+            $code = (string) $item->product_code;
+            $qtyByCode[$code] = ($qtyByCode[$code] ?? 0.0) + (float) $item->quantity;
+        }
+
+        $missingProducts = [];
+        $totalWeight = 0.0;
+        foreach ($qtyByCode as $code => $quantity) {
+            $product = $products->get($code);
+            $unitWeight = (float) ($product?->product_weight ?? 0);
+            $lineWeight = $unitWeight * $quantity;
+            $totalWeight += $lineWeight;
+
+            if ($unitWeight <= 0) {
+                $missingProducts[] = [
+                    'product_code' => $code,
+                    'product_name' => (string) ($product?->product_name ?: $code),
+                    'quantity' => round($quantity, 3),
+                    'product_weight' => $product?->product_weight !== null ? (float) $product->product_weight : null,
+                ];
+            }
+        }
+
+        usort($missingProducts, fn ($a, $b) => strcmp($a['product_name'], $b['product_name']));
+
+        return [
+            'ready' => $totalWeight > 0 && $missingProducts === [],
+            'total_weight_kg' => round($totalWeight, 3),
+            'missing_products' => $missingProducts,
+        ];
+    }
+
+    public function assertSaleHasLoadWeight(Sale $sale): void
+    {
+        $items = $sale->relationLoaded('items')
+            ? $sale->items
+            : SaleItem::query()->where('sale_id', $sale->id)->get();
+
+        if ($items->isEmpty()) {
+            throw new InvalidArgumentException('Cannot load an order with no line items.');
+        }
+
+        $status = $this->saleWeightStatus($sale);
+        if ($status['ready']) {
+            return;
+        }
+
+        $missing = $status['missing_products'];
+        $preview = collect($missing)
+            ->map(fn (array $row) => "{$row['product_code']} ({$row['product_name']})")
+            ->take(3)
+            ->implode(', ');
+        $suffix = count($missing) > 3 ? sprintf(' and %d more', count($missing) - 3) : '';
+
+        throw new MissingProductWeightsException(
+            'Set product weight (kg per unit) so order tonnage can be calculated'
+            .($preview !== '' ? ": {$preview}{$suffix}." : '.'),
+            $missing,
+            $status['total_weight_kg'],
+        );
+    }
+
+    /** @param  Collection<int, SaleItem>|iterable<int, SaleItem>  $items */
+    public function computeItemsWeightKg(iterable $items, ?int $organizationId = null): float
+    {
+        $collection = $items instanceof Collection ? $items : collect($items);
+        if ($collection->isEmpty()) {
+            return 0.0;
+        }
+
+        $codes = $collection->pluck('product_code')->unique()->values()->all();
+        $weights = $this->productsForWeightLookup($codes, $organizationId)
+            ->map(fn (Product $product) => (float) ($product->product_weight ?? 0));
 
         $total = 0.0;
-        foreach ($items as $item) {
+        foreach ($collection as $item) {
             $total += (float) ($weights[$item->product_code] ?? 0) * (float) $item->quantity;
         }
 
         return round($total, 3);
+    }
+
+    /**
+     * @param  array<int, string>  $codes
+     * @return Collection<string, Product>
+     */
+    protected function productsForWeightLookup(array $codes, ?int $organizationId = null): Collection
+    {
+        if ($codes === []) {
+            return collect();
+        }
+
+        $query = Product::query()->withTrashed()->whereIn('product_code', $codes);
+        if ($organizationId) {
+            $query->where('organization_id', $organizationId);
+        }
+
+        return $query->get()->keyBy('product_code');
     }
 
     public function computeTripVolumeM3(DispatchTrip $trip): float

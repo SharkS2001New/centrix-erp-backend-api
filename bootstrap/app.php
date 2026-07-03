@@ -42,6 +42,8 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.module_any' => \App\Http\Middleware\EnsureAnyErpModule::class,
             'erp.report_module' => \App\Http\Middleware\EnsureReportModule::class,
             'erp.permission' => \App\Http\Middleware\EnsurePermission::class,
+            'erp.mobile_sales' => \App\Http\Middleware\EnsureMobileSalesAppEnabled::class,
+            'erp.mobile_driver' => \App\Http\Middleware\EnsureMobileDriverAppEnabled::class,
             'erp.admin' => \App\Http\Middleware\EnsureAdmin::class,
             'erp.super_admin' => \App\Http\Middleware\EnsureSuperAdmin::class,
             'erp.org_provisioning' => \App\Http\Middleware\EnsureOrgProvisioningAllowed::class,
@@ -125,6 +127,11 @@ return Application::configure(basePath: dirname(__DIR__))
                 'detail' => $detail,
             ], fn ($value) => $value !== null && $value !== ''), 500);
         });
+        $exceptions->renderable(function (\App\Exceptions\MissingProductWeightsException $e, Request $request) {
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json($e->toArray(), 422);
+            }
+        });
         $exceptions->renderable(function (\InvalidArgumentException $e, Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
                 return response()->json(['message' => $e->getMessage()], 422);
@@ -138,6 +145,7 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($e instanceof AuthenticationException
                 || $e instanceof \Illuminate\Validation\ValidationException
                 || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
+                || $e instanceof \App\Exceptions\MissingProductWeightsException
                 || $e instanceof \InvalidArgumentException) {
                 return null;
             }

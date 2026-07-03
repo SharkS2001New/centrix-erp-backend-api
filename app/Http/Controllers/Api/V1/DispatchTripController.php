@@ -278,6 +278,19 @@ class DispatchTripController extends BaseResourceController
         return response()->json($updated);
     }
 
+    public function confirmDeliveries(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+
+        try {
+            $updated = $this->trips->confirmAllDelivered($model, $request->user());
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($this->presentTrip($updated));
+    }
+
     public function complete(Request $request, int $trip)
     {
         $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());

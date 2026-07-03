@@ -290,13 +290,20 @@ class DispatchTripService
                 : []);
         $includeNormalOrders = RouteOrderScope::includeNormalOrders($distributionSettings);
 
-        DB::transaction(function () use ($trip, $sales, $includeNormalOrders) {
+        DB::transaction(function () use ($trip, $sales, $includeNormalOrders, $distributionSettings) {
             $tripRouteIds = $this->tripRouteIds($trip);
+            $assignStatus = (string) ($distributionSettings['assign_on_status'] ?? 'processed');
             $seq = (int) $trip->sales()->max('dispatch_trip_sales.stop_seq');
             foreach ($sales as $sale) {
                 if (! RouteOrderScope::eligibleForLoadingList($sale, $includeNormalOrders)) {
                     throw new InvalidArgumentException(
                         "Order #{$sale->order_num} is not a route order eligible for loading lists.",
+                    );
+                }
+
+                if ((string) $sale->status !== $assignStatus) {
+                    throw new InvalidArgumentException(
+                        "Order #{$sale->order_num} must be {$assignStatus} before it can be added to a trip.",
                     );
                 }
 
@@ -327,6 +334,49 @@ class DispatchTripService
         });
 
         $this->syncTripLists($trip->fresh());
+
+        return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
+    }
+
+    /** Mark every processed stop on an in-transit trip as delivered. */
+    public function confirmAllDelivered(DispatchTrip $trip, User $user): DispatchTrip
+    {
+        if ($trip->status !== 'in_transit') {
+            throw new InvalidArgumentException('Deliveries can only be confirmed while the trip is in transit.');
+        }
+
+        $settings = $this->erp->gateForUser($user)->distributionSettings();
+        if (! empty($settings['require_pod_on_delivered'])) {
+            throw new InvalidArgumentException(
+                'Proof of delivery must be captured for each stop before confirming deliveries.',
+            );
+        }
+
+        $trip->load('sales');
+        $workflow = app(\App\Http\Controllers\Api\V1\Operations\OrderWorkflowController::class);
+
+        foreach ($trip->sales as $sale) {
+            if (in_array((string) $sale->status, ['delivered', 'completed'], true)) {
+                continue;
+            }
+
+            if ((string) $sale->status !== 'processed') {
+                throw new InvalidArgumentException(
+                    "Order #{$sale->order_num} must be processed before confirming delivery.",
+                );
+            }
+
+            $workflow->transitionSaleForUser(
+                $sale,
+                'delivered',
+                $user,
+                [
+                    'trip_id' => $trip->id,
+                    'delivery_confirmed_via_trip' => true,
+                ],
+                true,
+            );
+        }
 
         return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
     }

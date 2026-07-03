@@ -375,6 +375,18 @@ class ErpSettingsController extends Controller
             ARRAY_FILTER_USE_KEY
         ));
 
+        $distributionEnabled = ($next['enable_distribution_ops'] ?? true) !== false
+            && $gate->distributionOpsEnabled();
+        if ($distributionEnabled) {
+            $workflow = OrderWorkflowService::forGate($gate);
+            $pipelineKeys = array_column($workflow->config()['pipeline'] ?? [], 'key');
+            if (! in_array('processed', $pipelineKeys, true)) {
+                throw ValidationException::withMessages([
+                    'assign_on_status' => 'Distribution requires the Processed workflow step to be enabled.',
+                ]);
+            }
+        }
+
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['distribution'] = $next;
         $org->update(['module_settings' => $moduleSettings]);

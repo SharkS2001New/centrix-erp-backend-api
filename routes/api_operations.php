@@ -40,7 +40,7 @@ use App\Http\Controllers\Api\V1\Operations\MobileSalesController;
 Route::middleware('auth:sanctum')->group(function () {
 
     // ---- Mobile field sales ----
-    Route::middleware(['erp.module:sales.mobile', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
+    Route::middleware(['erp.module:sales.mobile', 'erp.mobile_sales', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
         Route::get('dashboard', [MobileSalesController::class, 'dashboard']);
         Route::get('reconciliation', [MobileSalesController::class, 'reconciliation']);
         Route::get('routes', [MobileSalesController::class, 'indexRoutes']);
@@ -59,7 +59,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('attendance/sign-out', [MobileAttendanceController::class, 'signOut']);
     });
 
-    Route::middleware(['erp.module:sales.mobile', 'erp.module:distribution', 'erp.permission:driver.mobile'])->prefix('mobile/driver')->group(function () {
+    Route::middleware(['erp.module:sales.mobile', 'erp.module:distribution', 'erp.mobile_driver', 'erp.permission:driver.mobile'])->prefix('mobile/driver')->group(function () {
         Route::get('attendance/session', [MobileDriverAttendanceController::class, 'session']);
         Route::get('attendance/summary', [MobileDriverAttendanceController::class, 'summary']);
         Route::post('attendance/sign-in', [MobileDriverAttendanceController::class, 'signIn']);
@@ -105,6 +105,8 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     Route::middleware('erp.permission:sales.manage')->prefix('sales')->group(function () {
+        Route::get('orders/{saleId}/load-weight-status', [OrderWorkflowController::class, 'loadWeightStatus']);
+        Route::post('orders/{saleId}/product-weights', [OrderWorkflowController::class, 'updateOrderProductWeights']);
         Route::post('orders/{saleId}/transition', [OrderWorkflowController::class, 'transition']);
         Route::post('orders/{saleId}/pod', [\App\Http\Controllers\Api\V1\PodRecordController::class, 'storeForSale']);
     });

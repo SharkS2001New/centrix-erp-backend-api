@@ -163,6 +163,7 @@ return [
         'sales' => [
             'show_checkout_on_create_order',
             'enable_mobile_orders',
+            'mobile_enable_field_attendance',
             'stock_deduct_on',
             'require_pos_till_float',
             'order_expiry_enabled',
@@ -175,6 +176,8 @@ return [
         'distribution' => [
             'enable_fulfillment_guidance',
             'enable_product_shelf_location',
+            'mobile_enable_driver_app',
+            'mobile_enable_driver_attendance',
         ],
         'finance' => [
             'enable_mpesa_stk',

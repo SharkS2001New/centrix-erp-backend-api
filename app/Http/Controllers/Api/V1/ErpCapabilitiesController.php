@@ -12,6 +12,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\WorkspaceResolver;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
+use App\Services\Mobile\MobileAppModuleAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 
@@ -127,6 +128,13 @@ class ErpCapabilitiesController extends Controller
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
             $payload['module_settings'] = $gate->maskPlatformDisabledModuleSettings($payload['module_settings']);
         }
+
+        if ($org) {
+            $payload['capabilities_version'] = OrganizationCache::capabilitiesVersion((int) $org->id);
+        }
+
+        $payload['mobile_app'] = app(MobileAppModuleAccessService::class)
+            ->capabilitiesForUser($user, $gate);
 
         return $payload;
     }

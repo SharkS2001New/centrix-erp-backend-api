@@ -185,9 +185,19 @@ class ReportController extends Controller
         )->sum('order_total');
 
         $paymentsCollected = (float) DB::table('customer_invoice_payments as p')
+            ->when($orgId, fn ($q) => $q->where('p.organization_id', $orgId))
             ->when($branchId, function ($q) use ($branchId) {
                 $q->join('customer_invoices as ci', 'ci.id', '=', 'p.customer_invoice_id')
                     ->where('ci.branch_id', $branchId);
+            }, function ($q) use ($orgId) {
+                if ($orgId) {
+                    $q->whereIn('p.customer_invoice_id', function ($sub) use ($orgId) {
+                        $sub->select('ci.id')
+                            ->from('customer_invoices as ci')
+                            ->join('branches as b', 'b.id', '=', 'ci.branch_id')
+                            ->where('b.organization_id', $orgId);
+                    });
+                }
             })
             ->whereDate('p.date_paid', '>=', $from->toDateString())
             ->whereDate('p.date_paid', '<=', $to->toDateString())
@@ -691,6 +701,13 @@ class ReportController extends Controller
             $cashierId = null;
         }
 
+        $access = app(UserAccessService::class);
+        $orgId = $access->organizationId($request->user(), $request);
+        if (! $branchId && $request->user() && ! $access->isOrgWide($request->user())) {
+            $branchId = $access->branchId($request->user());
+        }
+        $branchId = $branchId ? (int) $branchId : null;
+
         $isMonthly = ! empty($data['sale_month']);
         if ($isMonthly) {
             $periodStart = Carbon::parse($data['sale_month'].'-01')->startOfDay();
@@ -710,13 +727,11 @@ class ReportController extends Controller
                 ->where('status', 'completed')
                 ->where('archived', 0),
         );
+        $this->applySalesTenantScope($salesBase, $orgId, $branchId);
         if ($isMonthly) {
             $salesBase->whereBetween('completed_at', [$periodStart, $periodEnd]);
         } else {
             $salesBase->whereDate('completed_at', $date);
-        }
-        if ($branchId) {
-            $salesBase->where('branch_id', $branchId);
         }
         if ($cashierId) {
             $salesBase->where('cashier_id', $cashierId);
@@ -742,10 +757,10 @@ class ReportController extends Controller
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
                 ->where('s.status', 'completed')
                 ->where('s.archived', 0)
-                ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
                 ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
             's',
         );
+        $this->applySalesTenantScope($lineDiscountQuery, $orgId, $branchId, 's');
         if ($isMonthly) {
             $lineDiscountQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
         } else {
@@ -758,10 +773,10 @@ class ReportController extends Controller
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
                 ->where('s.status', 'completed')
                 ->where('s.archived', 0)
-                ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
                 ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
             's',
         );
+        $this->applySalesTenantScope($itemsSoldQuery, $orgId, $branchId, 's');
         if ($isMonthly) {
             $itemsSoldQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
         } else {
@@ -775,9 +790,9 @@ class ReportController extends Controller
             : (float) DB::table('returns')->whereIn('sale_id', $saleIds)->sum('amount');
 
         $voidedQuery = DB::table('sales')
-            ->where('status', 'cancelled')
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
-            ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId));
+            ->where('status', 'cancelled');
+        $this->applySalesTenantScope($voidedQuery, $orgId, $branchId);
+        $voidedQuery->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId));
         if ($isMonthly) {
             $voidedQuery->whereBetween('cancelled_at', [$periodStart, $periodEnd]);
         } else {
@@ -801,13 +816,11 @@ class ReportController extends Controller
         $bank = (float) ($agg->equity_collected ?? 0) + (float) ($agg->kcb_collected ?? 0);
 
         $sessionQ = DB::table('till_float_sessions as tfs');
+        $this->applyBranchTenantScope($sessionQ, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
             $sessionQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
         } else {
             $sessionQ->whereDate('tfs.session_date', $date);
-        }
-        if ($branchId) {
-            $sessionQ->where('tfs.branch_id', $branchId);
         }
         if ($cashierId) {
             $sessionQ->where('tfs.cashier_id', $cashierId);
@@ -824,8 +837,8 @@ class ReportController extends Controller
                   AND '.CentrixSalesScope::legacyExcludeSql('sales').'
                 GROUP BY float_session_id
             ) s'), 's.float_session_id', '=', 'tfs.id')
-            ->when($branchId, fn ($q) => $q->where('tfs.branch_id', $branchId))
             ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
+        $this->applyBranchTenantScope($tillRowsQuery, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
             $tillRowsQuery->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
         } else {
@@ -851,10 +864,10 @@ class ReportController extends Controller
             DB::table('sales as s')
                 ->join('users as u', 's.cashier_id', '=', 'u.id')
                 ->where('s.status', 'completed')
-                ->where('s.archived', 0)
-                ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId)),
+                ->where('s.archived', 0),
             's',
         );
+        $this->applySalesTenantScope($cashierRowsQuery, $orgId, $branchId, 's');
         if ($isMonthly) {
             $cashierRowsQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
         } else {
@@ -874,7 +887,7 @@ class ReportController extends Controller
                 DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
             )
             ->get()
-            ->map(function ($row) use ($date, $branchId, $isMonthly, $periodStartDate, $periodEndDate) {
+            ->map(function ($row) use ($date, $branchId, $orgId, $isMonthly, $periodStartDate, $periodEndDate) {
                 $floatQuery = DB::table('till_float_sessions')
                     ->where('cashier_id', $row->cashier_id);
                 if ($isMonthly) {
@@ -882,16 +895,14 @@ class ReportController extends Controller
                 } else {
                     $floatQuery->whereDate('session_date', $date);
                 }
-                if ($branchId) {
-                    $floatQuery->where('branch_id', $branchId);
-                }
+                $this->applyBranchTenantScope($floatQuery, $orgId, $branchId);
                 $row->opening_float = (float) $floatQuery->sum('working_amount');
 
                 return $row;
             });
 
-        $expenseRowsQuery = DB::table('v_expenses_summary')
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+        $expenseRowsQuery = DB::table('v_expenses_summary');
+        $this->applyBranchTenantScope($expenseRowsQuery, $orgId, $branchId);
         if ($isMonthly) {
             $expenseRowsQuery->whereBetween('expense_date', [$periodStartDate, $periodEndDate]);
         } else {
@@ -908,8 +919,8 @@ class ReportController extends Controller
             ->join('till_float_sessions as tfs', 'e.float_session_id', '=', 'tfs.id')
             ->whereNotNull('e.float_session_id')
             ->whereNull('e.deleted_at')
-            ->when($branchId, fn ($q) => $q->where('tfs.branch_id', $branchId))
             ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
+        $this->applyBranchTenantScope($sessionExpenseQ, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
             $sessionExpenseQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
         } else {
@@ -917,7 +928,12 @@ class ReportController extends Controller
         }
         $sessionExpenses = (float) $sessionExpenseQ->sum('e.expense_amount');
 
-        $creditPaymentsQuery = DB::table('customer_invoice_payments');
+        $creditPaymentsQuery = DB::table('customer_invoice_payments as cip')
+            ->join('customer_invoices as ci', 'ci.id', '=', 'cip.customer_invoice_id');
+        if ($orgId) {
+            $creditPaymentsQuery->where('cip.organization_id', $orgId);
+        }
+        $this->applyBranchTenantScope($creditPaymentsQuery, $orgId, $branchId, 'ci.branch_id');
         if ($isMonthly) {
             $creditPaymentsQuery->whereBetween('date_paid', [$periodStartDate, $periodEndDate]);
         } else {
@@ -927,13 +943,11 @@ class ReportController extends Controller
 
         $closingDebtors = (float) DB::table('customers')
             ->whereNull('deleted_at')
-            ->when($branchId, function ($q) use ($branchId) {
-                $q->whereIn('customer_num', function ($sub) use ($branchId) {
-                    $sub->select('customer_num')
-                        ->from('sales')
-                        ->where('branch_id', $branchId)
-                        ->whereNotNull('customer_num');
-                });
+            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId), function ($q) use ($orgId) {
+                if ($orgId) {
+                    $this->scopeOrganizationBranches($q, $orgId);
+                }
             })
             ->sum('current_balance');
 
@@ -949,9 +963,10 @@ class ReportController extends Controller
                     ->where('status', 'completed')
                     ->where('archived', 0)
                     ->whereBetween('completed_at', [$periodStart, $periodEnd])
-                    ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
                     ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId)),
-            )
+            );
+            $this->applySalesTenantScope($dailyBreakdown, $orgId, $branchId);
+            $dailyBreakdown = $dailyBreakdown
                 ->selectRaw('
                     DATE(completed_at) as sale_date,
                     COUNT(*) as transactions,
@@ -1057,7 +1072,6 @@ class ReportController extends Controller
     public function invoicePayments(Request $request)
     {
         $filters = $this->filters($request);
-        unset($filters['branch_id']);
 
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
 
@@ -1101,6 +1115,12 @@ class ReportController extends Controller
 
         if (Schema::hasColumn('customer_invoices', 'deleted_at')) {
             $q->whereNull('ci.deleted_at');
+        }
+
+        if (! empty($filters['branch_id'])) {
+            $q->where('ci.branch_id', $filters['branch_id']);
+        } elseif ($orgId) {
+            $this->scopeOrganizationBranches($q, $orgId, 'ci.branch_id');
         }
 
         if (! empty($filters['customer_num'])) {
@@ -1190,6 +1210,10 @@ class ReportController extends Controller
     {
         $filters = $this->filters($request);
         $q = DB::table('audit_logs');
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if ($orgId && Schema::hasColumn('audit_logs', 'organization_id')) {
+            $q->where('organization_id', $orgId);
+        }
 
         foreach (['user_id', 'branch_id', 'table_name', 'action'] as $col) {
             if (! empty($filters[$col])) {
@@ -1219,17 +1243,22 @@ class ReportController extends Controller
         );
     }
 
-    public function customerStatement(int $customerNum)
+    public function customerStatement(Request $request, int $customerNum)
     {
-        return response()->json($this->buildCustomerStatement($customerNum));
+        return response()->json($this->buildCustomerStatement($request, $customerNum));
     }
 
     public function returns(Request $request)
     {
         $q = \App\Models\ReturnRecord::query();
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if ($orgId) {
+            $q->whereIn('branch_id', $this->organizationBranchIds($orgId));
+        }
+        $filters = $this->filters($request);
         foreach (['branch_id', 'return_type'] as $col) {
-            if ($request->filled($col)) {
-                $q->where($col, $request->input($col));
+            if (! empty($filters[$col])) {
+                $q->where($col, $filters[$col]);
             }
         }
         if ($request->filled('product_code')) {
@@ -1467,12 +1496,17 @@ class ReportController extends Controller
         return $q->orderBy('product_name')->paginate($perPage);
     }
 
-    protected function buildCustomerStatement(int $customerNum): array
+    protected function buildCustomerStatement(Request $request, int $customerNum): array
     {
-        $customer = Customer::query()
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+
+        $customerQuery = Customer::query()
             ->where('customer_num', $customerNum)
-            ->whereNull('deleted_at')
-            ->firstOrFail();
+            ->whereNull('deleted_at');
+        if ($orgId) {
+            $customerQuery->where('organization_id', $orgId);
+        }
+        $customer = $customerQuery->firstOrFail();
 
         $branchName = DB::table('branches')
             ->where('id', $customer->branch_id)
@@ -1484,17 +1518,20 @@ class ReportController extends Controller
 
         $invoices = DB::table('customer_invoices')
             ->where('customer_num', $customerNum)
+            ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereNull('deleted_at')
             ->orderBy('invoice_date')
             ->get();
 
         $payments = DB::table('customer_invoice_payments')
             ->where('customer_num', $customerNum)
+            ->when($orgId && Schema::hasColumn('customer_invoice_payments', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->orderBy('date_paid')
             ->get();
 
         $sales = DB::table('sales')
             ->where('customer_num', $customerNum)
+            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->where('status', 'completed')
             ->orderByDesc('completed_at')
             ->limit(100)
@@ -1664,6 +1701,28 @@ class ReportController extends Controller
                 ->from('branches')
                 ->where('organization_id', $organizationId);
         });
+    }
+
+    protected function applySalesTenantScope($query, ?int $orgId, ?int $branchId, string $alias = ''): void
+    {
+        $prefix = $alias !== '' ? "{$alias}." : '';
+        if ($orgId && Schema::hasColumn('sales', 'organization_id')) {
+            $query->where("{$prefix}organization_id", $orgId);
+        }
+        $this->applyBranchTenantScope($query, $orgId, $branchId, "{$prefix}branch_id");
+    }
+
+    protected function applyBranchTenantScope($query, ?int $orgId, ?int $branchId, string $branchColumn = 'branch_id'): void
+    {
+        if ($branchId) {
+            $query->where($branchColumn, $branchId);
+
+            return;
+        }
+
+        if ($orgId) {
+            $this->scopeOrganizationBranches($query, $orgId, $branchColumn);
+        }
     }
 
     protected function viewColumnExists(string $view, string $column): bool

@@ -229,7 +229,7 @@ class PickingListBuilder
             return 'store';
         }
 
-        $settings = $this->erp->gateForOrganization($org)->inventorySettings();
+        $settings = $this->erp->gateForOrganization($org)->moduleSettings('inventory');
 
         return in_array($settings['default_distribution_sale_location'] ?? 'store', ['shop', 'store'], true)
             ? $settings['default_distribution_sale_location']

@@ -156,7 +156,7 @@ class SalesReportsTest extends TestCase
         );
     }
 
-    public function test_invoice_payments_report_ignores_branch_filter(): void
+    public function test_invoice_payments_report_respects_branch_filter(): void
     {
         $today = now()->toDateString();
         $customer = Customer::firstOrFail();
@@ -191,11 +191,11 @@ class SalesReportsTest extends TestCase
             "/api/v1/reports/invoice-payments?from_date={$today}&to_date={$today}&branch_id={$wrongBranchId}&per_page=50",
         )->assertOk();
 
-        $this->assertTrue(
+        $this->assertFalse(
             collect($response->json('data'))->contains(
                 fn (array $row) => ($row['reference_number'] ?? null) === 'RPT-TEST-2',
             ),
-            'Invoice payments must not be filtered by customer branch_id.',
+            'Invoice payments must be filtered by invoice branch_id.',
         );
     }
 }

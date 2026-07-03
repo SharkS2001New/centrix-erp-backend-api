@@ -48,6 +48,17 @@ class ErpCapabilitiesTest extends TestCase
         $this->assertNotSame('demo-passkey', $mpesa['passkey']);
     }
 
+    public function test_capabilities_include_generation_version(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        $versionBefore = OrganizationCache::capabilitiesVersion((int) $user->organization_id);
+
+        $response = $this->getJson('/api/v1/erp/capabilities')->assertOk();
+        $response->assertJsonPath('capabilities_version', $versionBefore);
+    }
+
     public function test_allow_org_provisioning_reflects_current_config_not_stale_cache(): void
     {
         $superAdmin = User::where('username', 'superadmin')->firstOrFail();

@@ -21,6 +21,7 @@ class HrReportController extends Controller
                 'department:id,department_name',
                 'branch:id,branch_name',
             ])
+            ->when($filters['organization_id'] ?? null, fn ($q, $id) => $q->where('organization_id', $id))
             ->when($filters['branch_id'] ?? null, fn ($q, $id) => $q->where('branch_id', $id))
             ->when($filters['department_id'] ?? null, fn ($q, $id) => $q->where('department_id', $id))
             ->when($filters['employment_status'] ?? null, fn ($q, $status) => $q->where('employment_status', $status))

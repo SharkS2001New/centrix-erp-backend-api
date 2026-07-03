@@ -92,6 +92,14 @@ class OrganizationPlatformConfigService
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['sales'] = $nextSales;
 
+        $currentDistribution = is_array($moduleSettings['distribution'] ?? null) ? $moduleSettings['distribution'] : [];
+        foreach ($this->platformControlledDistributionKeys() as $key) {
+            if (array_key_exists($key, $salesPlatform)) {
+                $currentDistribution[$key] = (bool) $salesPlatform[$key];
+            }
+        }
+        $moduleSettings['distribution'] = $currentDistribution;
+
         $currentFinance = is_array($moduleSettings['finance'] ?? null) ? $moduleSettings['finance'] : [];
         foreach ($this->platformControlledFinanceKeys() as $key) {
             if (array_key_exists($key, $salesPlatform)) {
@@ -161,6 +169,9 @@ class OrganizationPlatformConfigService
         return [
             'show_checkout_on_create_order' => true,
             'enable_mobile_orders' => ! in_array($deploymentProfile, ['small_shop', 'supermarket'], true),
+            'mobile_enable_field_attendance' => false,
+            'mobile_enable_driver_app' => in_array($deploymentProfile, ['distribution', 'wholesale_retail'], true),
+            'mobile_enable_driver_attendance' => false,
             'enable_mpesa_stk' => true,
             'enable_kra_integration' => true,
             'enable_ai' => true,
@@ -189,6 +200,7 @@ class OrganizationPlatformConfigService
     {
         $gate = app(CapabilityGate::class)->forOrganization($org);
         $sales = $gate->moduleSettings('sales');
+        $distribution = $gate->distributionSettings();
         $inventory = $gate->moduleSettings('inventory');
         $finance = $gate->moduleSettings('finance');
         $ai = $gate->moduleSettings('ai');
@@ -202,6 +214,9 @@ class OrganizationPlatformConfigService
         return [
             'show_checkout_on_create_order' => (bool) ($sales['show_checkout_on_create_order'] ?? true),
             'enable_mobile_orders' => (bool) ($sales['enable_mobile_orders'] ?? true),
+            'mobile_enable_field_attendance' => (bool) ($sales['mobile_enable_field_attendance'] ?? false),
+            'mobile_enable_driver_app' => (bool) ($distribution['mobile_enable_driver_app'] ?? true),
+            'mobile_enable_driver_attendance' => (bool) ($distribution['mobile_enable_driver_attendance'] ?? false),
             'enable_mpesa_stk' => (bool) ($finance['enable_mpesa_stk'] ?? true),
             'enable_kra_integration' => (bool) ($finance['enable_kra_integration'] ?? true),
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
@@ -295,6 +310,10 @@ class OrganizationPlatformConfigService
                     unset($data[$key]);
                 }
             }
+        }
+
+        if ($gate && ! $gate->driverMobileEnabled()) {
+            unset($data['mobile_enable_driver_app'], $data['mobile_enable_driver_attendance']);
         }
 
         if ($gate && ! $gate->mpesaStkPlatformEnabled()) {
