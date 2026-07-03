@@ -70,6 +70,37 @@ class LowStockReportTest extends TestCase
         $this->assertSame(0.0, (float) $row['total_base_units']);
     }
 
+    public function test_stock_on_hand_in_stock_only_excludes_zero_quantity_rows(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $product = Product::query()
+            ->where('organization_id', $admin->organization_id)
+            ->whereNull('deleted_at')
+            ->orderByDesc('id')
+            ->firstOrFail();
+
+        DB::table('current_stock')->updateOrInsert(
+            [
+                'product_code' => $product->product_code,
+                'branch_id' => $admin->branch_id,
+            ],
+            [
+                'shop_quantity' => 0,
+                'store_quantity' => 0,
+            ],
+        );
+
+        $response = $this->getJson(
+            '/api/v1/reports/stock-on-hand?branch_id='.$admin->branch_id.'&in_stock_only=1&per_page=200',
+        );
+        $response->assertOk();
+
+        $codes = collect($response->json('data'))->pluck('product_code')->all();
+        $this->assertNotContains($product->product_code, $codes);
+    }
+
     public function test_price_list_report_returns_paginated_org_scoped_rows(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

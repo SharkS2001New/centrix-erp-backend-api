@@ -82,7 +82,7 @@ return [
         'report_include_paths' => [
             '/reports', '/reports/builder', '/reports/customer-statement',
             '/reports/sales-summary', '/reports/profit-loss', '/reports/ar-aging',
-            '/reports/top-debtors', '/reports/stock-on-hand',
+            '/reports/top-debtors', '/inventory/stock',
         ],
         'module_catalog_keys' => ['accounting', 'payments', 'reports'],
         'action_types' => ['record_customer_payment', 'create_report_template'],

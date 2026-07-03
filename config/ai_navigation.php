@@ -95,7 +95,7 @@ return [
                 ['label' => 'Report overview', 'path' => '/reports', 'module' => 'reports', 'permission' => 'reports.hub.view'],
                 ['label' => 'Report builder', 'path' => '/reports/builder', 'module' => 'reports', 'permission' => 'reports.builder.view'],
                 ['label' => 'Sales summary', 'path' => '/reports/sales-summary', 'module' => 'reports', 'permission' => 'reports.sales_summary.view'],
-                ['label' => 'Stock on hand', 'path' => '/reports/stock-on-hand', 'module' => 'reports', 'permission' => 'reports.stock_on_hand.view'],
+                ['label' => 'Items currently in stock', 'path' => '/inventory/stock', 'module' => 'inventory', 'permission' => 'inventory.stock.view'],
                 ['label' => 'Payroll summary', 'path' => '/reports/payroll-summary', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
                 ['label' => 'Leave balance', 'path' => '/reports/leave-balance', 'module' => 'hr_payroll.reports', 'permission' => 'hr.leave.view'],
                 ['label' => 'Statutory deductions', 'path' => '/reports/statutory-deductions', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],

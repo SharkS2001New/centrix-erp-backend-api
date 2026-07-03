@@ -180,6 +180,7 @@ return [
         'eod-report' => 'sales.reports',
         'returns' => 'sales.reports',
 
+        'items-currently-in-stock' => 'inventory.reports',
         'stock-on-hand' => 'inventory.reports',
         'low-stock' => 'inventory.reports',
         'stock-movement' => 'inventory.reports',

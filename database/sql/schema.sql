@@ -2700,20 +2700,24 @@ CREATE VIEW v_stock_transfers AS
 SELECT
     DATE(smh.created_at) AS transfer_date,
     smh.branch_id,
+    b.organization_id,
     smh.product_code,
-    p.product_name,
+    MAX(p.product_name) AS product_name,
     smh.from_location,
     smh.to_location,
     SUM(smh.quantity_moved) AS total_moved,
     COUNT(*) AS transfer_count
 FROM stock_movement_history smh
+JOIN branches b ON smh.branch_id = b.id
 JOIN products p ON smh.product_code = p.product_code
-GROUP BY DATE(smh.created_at), smh.branch_id, smh.product_code, smh.from_location, smh.to_location;
+    AND p.organization_id = b.organization_id
+GROUP BY DATE(smh.created_at), smh.branch_id, b.organization_id, smh.product_code, smh.from_location, smh.to_location;
 
 DROP VIEW IF EXISTS v_invoice_payment_history;
 CREATE VIEW v_invoice_payment_history AS
 SELECT
     cip.id AS payment_id,
+    cip.customer_invoice_id,
     cip.organization_id,
     c.branch_id,
     cip.customer_num,

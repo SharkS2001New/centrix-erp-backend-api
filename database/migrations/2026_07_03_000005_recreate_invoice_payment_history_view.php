@@ -12,6 +12,7 @@ return new class extends Migration
 CREATE VIEW v_invoice_payment_history AS
 SELECT
     cip.id AS payment_id,
+    cip.customer_invoice_id,
     cip.organization_id,
     c.branch_id,
     cip.customer_num,

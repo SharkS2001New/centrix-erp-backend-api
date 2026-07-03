@@ -162,6 +162,11 @@ class OrderWorkflowController extends Controller
                     'Record a payment before marking this order as partially paid.',
                 );
             }
+            if ($toStatus === 'completed') {
+                throw new InvalidArgumentException(
+                    'Collect the outstanding balance before marking this order as completed.',
+                );
+            }
         }
 
         if ($toStatus === 'cancelled') {

@@ -22,7 +22,7 @@ class ReportController extends Controller
     public function catalog(Request $request)
     {
         $inventory = [
-            ['key' => 'stock-on-hand', 'path' => '/reports/stock-on-hand', 'label' => 'Stock on hand'],
+            ['key' => 'items-currently-in-stock', 'path' => '/inventory/stock', 'label' => 'Items currently in stock'],
             ['key' => 'low-stock', 'path' => '/reports/low-stock', 'label' => 'Low stock / reorder'],
             ['key' => 'stock-movement', 'path' => '/reports/stock-movement', 'label' => 'Stock ledger (transactions)'],
             ['key' => 'stock-chain', 'path' => '/reports/stock-chain', 'label' => 'Stock chain (receive → sell)'],
@@ -53,7 +53,7 @@ class ReportController extends Controller
             'sales' => [
                 ['key' => 'sales-by-product', 'path' => '/reports/sales-by-product', 'label' => 'Sales by product'],
                 ['key' => 'sales-by-supplier', 'path' => '/reports/sales-by-supplier', 'label' => 'Sales by supplier'],
-                ['key' => 'sales-by-user', 'path' => '/reports/sales-by-user', 'label' => 'Sales by cashier / user'],
+                ['key' => 'sales-by-user', 'path' => '/reports/sales-by-user', 'label' => 'Sales by user'],
                 ['key' => 'sales-by-customer', 'path' => '/reports/sales-by-customer', 'label' => 'Sales by customer'],
                 ['key' => 'sales-by-channel', 'path' => '/reports/sales-by-channel', 'label' => 'Sales by channel & payment status'],
                 ['key' => 'daily-sales', 'path' => '/reports/daily-sales', 'label' => 'Daily sales summary'],
@@ -1050,16 +1050,47 @@ class ReportController extends Controller
     public function invoicePayments(Request $request)
     {
         $filters = $this->filters($request);
-        if (($filters['date_column'] ?? '') === 'payment_date') {
-            $filters['date_column'] = 'date_paid';
-        }
-        if (empty($filters['date_column'])) {
-            $filters['date_column'] = 'date_paid';
+        unset($filters['branch_id']);
+
+        $q = DB::table('v_invoice_payment_history');
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if ($orgId && $this->viewColumnExists('v_invoice_payment_history', 'organization_id')) {
+            $q->where('organization_id', $orgId);
+        } elseif ($orgId) {
+            $q->whereIn('customer_num', function ($sub) use ($orgId) {
+                $sub->select('customer_num')
+                    ->from('customers')
+                    ->where('organization_id', $orgId)
+                    ->whereNull('deleted_at');
+            });
         }
 
-        return response()->json($this->reportFromView('v_invoice_payment_history', $filters, [
-            'customer_num', 'date_paid', 'branch_id',
-        ]));
+        if (! empty($filters['customer_num'])) {
+            $q->where('customer_num', $filters['customer_num']);
+        }
+
+        $dateColumn = 'date_paid';
+        if (! empty($filters['from_date'])) {
+            $q->where($dateColumn, '>=', $filters['from_date']);
+        }
+        if (! empty($filters['to_date'])) {
+            $q->where($dateColumn, '<=', $filters['to_date']);
+        }
+
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($inner) use ($search) {
+                $inner->where('customer_name', 'like', "%{$search}%")
+                    ->orWhere('customer_num', 'like', "%{$search}%")
+                    ->orWhere('invoice_number', 'like', "%{$search}%")
+                    ->orWhere('reference_number', 'like', "%{$search}%");
+            });
+        }
+
+        return response()->json(
+            $q->orderByDesc('date_paid')
+                ->orderByDesc('payment_id')
+                ->paginate(min((int) ($filters['per_page'] ?? 20), 200)),
+        );
     }
 
     public function purchasesBySupplier(Request $request)
@@ -1159,10 +1190,23 @@ class ReportController extends Controller
     public function returns(Request $request)
     {
         $q = \App\Models\ReturnRecord::query();
-        foreach (['branch_id', 'product_code', 'return_type'] as $col) {
+        foreach (['branch_id', 'return_type'] as $col) {
             if ($request->filled($col)) {
                 $q->where($col, $request->input($col));
             }
+        }
+        if ($request->filled('product_code')) {
+            $q->where('product_code', $request->input('product_code'));
+        }
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($inner) use ($search) {
+                $inner->where('product_code', 'like', "%{$search}%")
+                    ->orWhereIn('product_code', function ($sub) use ($search) {
+                        $sub->select('product_code')
+                            ->from('products')
+                            ->where('product_name', 'like', "%{$search}%");
+                    });
+            });
         }
         if ($request->filled('from_date')) {
             $q->where('created_at', '>=', $request->input('from_date'));
@@ -1360,12 +1404,25 @@ class ReportController extends Controller
             });
         }
 
+        if ($request->filled('subcategory_id')) {
+            $q->whereIn('product_code', function ($sub) use ($request) {
+                $sub->select('p.product_code')
+                    ->from('products as p')
+                    ->where('p.subcategory_id', (int) $request->input('subcategory_id'))
+                    ->whereNull('p.deleted_at');
+            });
+        }
+
         if ($location = (string) $request->input('location', '')) {
             if ($location === 'shop') {
                 $q->where('shop_quantity', '>', 0);
             } elseif ($location === 'store') {
                 $q->where('store_quantity', '>', 0);
             }
+        }
+
+        if ($request->boolean('in_stock_only') && $this->viewColumnExists($view, 'total_qty')) {
+            $q->where('total_qty', '>', 0);
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);

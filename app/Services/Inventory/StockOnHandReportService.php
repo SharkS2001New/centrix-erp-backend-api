@@ -90,12 +90,20 @@ class StockOnHandReportService
             });
         }
 
+        if ($request->filled('subcategory_id')) {
+            $query->where('p.subcategory_id', (int) $request->input('subcategory_id'));
+        }
+
         if ($location = (string) $request->input('location', '')) {
             if ($location === 'shop') {
                 $query->whereRaw('COALESCE(cs.shop_quantity, 0) > 0');
             } elseif ($location === 'store') {
                 $query->whereRaw('COALESCE(cs.store_quantity, 0) > 0');
             }
+        }
+
+        if ($request->boolean('in_stock_only')) {
+            $query->whereRaw("{$totalSql} > 0");
         }
 
         $paginator = $query->orderBy('p.product_name')->paginate($perPage);

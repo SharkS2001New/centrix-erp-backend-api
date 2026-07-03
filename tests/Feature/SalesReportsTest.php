@@ -2,6 +2,9 @@
 
 namespace Tests\Feature;
 
+use App\Models\Customer;
+use App\Models\CustomerInvoice;
+use App\Models\CustomerInvoicePayment;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\User;
@@ -115,11 +118,84 @@ class SalesReportsTest extends TestCase
     public function test_invoice_payments_report_returns_tenant_scoped_rows(): void
     {
         $today = now()->toDateString();
+        $customer = Customer::firstOrFail();
+        $invoice = CustomerInvoice::create([
+            'invoice_number' => 'AR-INV-PAY-RPT-1',
+            'sale_id' => Sale::query()->value('id') ?? 1,
+            'customer_num' => $customer->customer_num,
+            'branch_id' => $customer->branch_id ?? $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'created_by' => $this->admin->id,
+            'invoice_date' => $today,
+            'total_vat' => 0,
+            'invoice_total' => 1500,
+            'amount_paid' => 0,
+            'payment_status' => 0,
+        ]);
+
+        CustomerInvoicePayment::create([
+            'customer_invoice_id' => $invoice->id,
+            'customer_num' => $customer->customer_num,
+            'payment_method_id' => 1,
+            'amount_paid' => 500,
+            'date_paid' => $today,
+            'received_by' => $this->admin->id,
+            'organization_id' => $this->admin->organization_id,
+            'reference_number' => 'RPT-TEST-1',
+        ]);
 
         $response = $this->getJson(
-            "/api/v1/reports/invoice-payments?from_date={$today}&to_date={$today}&date_column=date_paid&per_page=5",
+            "/api/v1/reports/invoice-payments?from_date={$today}&to_date={$today}&date_column=date_paid&per_page=50",
         )->assertOk();
 
-        $this->assertIsArray($response->json('data'));
+        $this->assertGreaterThan(0, (int) $response->json('total'));
+        $this->assertTrue(
+            collect($response->json('data'))->contains(
+                fn (array $row) => ($row['reference_number'] ?? null) === 'RPT-TEST-1',
+            ),
+        );
+    }
+
+    public function test_invoice_payments_report_ignores_branch_filter(): void
+    {
+        $today = now()->toDateString();
+        $customer = Customer::firstOrFail();
+        $invoice = CustomerInvoice::create([
+            'invoice_number' => 'AR-INV-PAY-RPT-2',
+            'sale_id' => Sale::query()->value('id') ?? 1,
+            'customer_num' => $customer->customer_num,
+            'branch_id' => $customer->branch_id ?? $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'created_by' => $this->admin->id,
+            'invoice_date' => $today,
+            'total_vat' => 0,
+            'invoice_total' => 2000,
+            'amount_paid' => 0,
+            'payment_status' => 0,
+        ]);
+
+        CustomerInvoicePayment::create([
+            'customer_invoice_id' => $invoice->id,
+            'customer_num' => $customer->customer_num,
+            'payment_method_id' => 1,
+            'amount_paid' => 750,
+            'date_paid' => $today,
+            'received_by' => $this->admin->id,
+            'organization_id' => $this->admin->organization_id,
+            'reference_number' => 'RPT-TEST-2',
+        ]);
+
+        $wrongBranchId = ((int) ($customer->branch_id ?? $this->admin->branch_id)) + 99;
+
+        $response = $this->getJson(
+            "/api/v1/reports/invoice-payments?from_date={$today}&to_date={$today}&branch_id={$wrongBranchId}&per_page=50",
+        )->assertOk();
+
+        $this->assertTrue(
+            collect($response->json('data'))->contains(
+                fn (array $row) => ($row['reference_number'] ?? null) === 'RPT-TEST-2',
+            ),
+            'Invoice payments must not be filtered by customer branch_id.',
+        );
     }
 }

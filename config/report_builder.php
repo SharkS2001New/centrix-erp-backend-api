@@ -36,6 +36,12 @@ return [
                     'type' => 'string',
                     'groupable' => true,
                 ],
+                'sale_id' => [
+                    'label' => 'Sale ID',
+                    'expr' => 's.id',
+                    'type' => 'number',
+                    'groupable' => true,
+                ],
                 'branch_name' => [
                     'label' => 'Branch',
                     'expr' => 'b.branch_name',

@@ -222,8 +222,8 @@ class ProductController extends BaseResourceController
 
         if ($q = trim((string) $request->input('q', ''))) {
             $query->where(function ($inner) use ($q) {
-                $inner->where('product_code', 'like', "%{$q}%")
-                    ->orWhere('product_name', 'like', "%{$q}%");
+                $inner->where('products.product_code', 'like', "%{$q}%")
+                    ->orWhere('products.product_name', 'like', "%{$q}%");
             });
         }
 
