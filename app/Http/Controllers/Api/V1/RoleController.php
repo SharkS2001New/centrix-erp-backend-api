@@ -55,17 +55,8 @@ class RoleController extends BaseResourceController
     public function permissions(Request $request, string $id, ?string $nestedId = null)
     {
         $role = $this->findRoleOrFail($request, $this->resolveResourceId($id, $nestedId));
-        $permissionIds = DB::table('role_permissions')
-            ->where('role_id', $role->id)
-            ->pluck('permission_id')
-            ->map(fn ($v) => (int) $v)
-            ->values()
-            ->all();
 
-        return response()->json([
-            'role_id' => (int) $role->id,
-            'permission_ids' => $permissionIds,
-        ]);
+        return response()->json($this->rolePermissionsPayload($role));
     }
 
     public function syncPermissions(Request $request, string $id, ?string $nestedId = null)
@@ -104,7 +95,7 @@ class RoleController extends BaseResourceController
 
         CapabilitiesCacheInvalidator::forRole($role->fresh());
 
-        return $this->permissions($resourceId);
+        return response()->json($this->rolePermissionsPayload($role));
     }
 
     public function permissionMatrix(Request $request)
@@ -160,5 +151,21 @@ class RoleController extends BaseResourceController
                 }
             })
             ->firstOrFail();
+    }
+
+    /** @return array{role_id: int, permission_ids: list<int>} */
+    private function rolePermissionsPayload(Role $role): array
+    {
+        $permissionIds = DB::table('role_permissions')
+            ->where('role_id', $role->id)
+            ->pluck('permission_id')
+            ->map(fn ($v) => (int) $v)
+            ->values()
+            ->all();
+
+        return [
+            'role_id' => (int) $role->id,
+            'permission_ids' => $permissionIds,
+        ];
     }
 }
