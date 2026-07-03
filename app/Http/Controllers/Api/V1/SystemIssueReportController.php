@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\SystemIssueReport;
+use App\Services\Notifications\AdminNotificationService;
 use App\Services\SystemIssues\SystemIssueDigestService;
 use App\Services\SystemIssues\SystemIssueFingerprint;
 use Illuminate\Http\Request;
@@ -60,6 +61,14 @@ class SystemIssueReportController extends Controller
             'duration_ms' => $data['duration_ms'] ?? null,
             'context' => $this->sanitizeContext($data['context'] ?? null, $request),
             'reported_by_user' => (bool) ($data['reported_by_user'] ?? false),
+        ]);
+
+        app(AdminNotificationService::class)->notifyAdmins($user, [
+            'type' => 'alert',
+            'severity' => $data['kind'] === 'error' ? 'danger' : 'warning',
+            'title' => 'System issue reported',
+            'message' => "{$user->full_name} reported {$data['kind']}: {$data['message']}",
+            'action_url' => '/admin/system-issues',
         ]);
 
         return response()->json($report, 201);

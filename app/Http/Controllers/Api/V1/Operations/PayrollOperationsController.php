@@ -16,6 +16,7 @@ use App\Models\PayPeriod;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollEarningsService;
 use App\Services\Payroll\PayrollRunScheduleService;
+use App\Services\Notifications\ActionRequestService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -300,6 +301,13 @@ class PayrollOperationsController extends Controller
             'approved_by' => $request->user()->id,
             'approved_at' => now(),
         ]);
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'payroll_run',
+            'payroll_run',
+            (int) $run->id,
+            'approved',
+            $request->user(),
+        );
 
         return response()->json($run->fresh(['payPeriod', 'approvedByUser']));
     }
@@ -316,6 +324,13 @@ class PayrollOperationsController extends Controller
         }
 
         $run->update(['status' => 'void']);
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'payroll_run',
+            'payroll_run',
+            (int) $run->id,
+            'rejected',
+            $request->user(),
+        );
 
         return response()->json($run->fresh('payPeriod'));
     }

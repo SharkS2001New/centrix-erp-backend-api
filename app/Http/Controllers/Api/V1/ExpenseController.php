@@ -3,6 +3,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Expense;
 use App\Models\TillFloatSession;
+use App\Services\Accounting\ExpenseApprovalService;
 use App\Services\Accounting\ExpenseJournalService;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\ErpContext;
@@ -103,6 +104,19 @@ class ExpenseController extends BaseResourceController
             'payment_method_id' => 'required|integer',
         ]);
 
+        $user = $request->user();
+        abort_unless($user, 401);
+
+        if (! app(ExpenseApprovalService::class)->canApprove($user)) {
+            $actionRequest = app(ExpenseApprovalService::class)->requestCreate($user, $data);
+
+            return response()->json([
+                'message' => 'Expense submitted for admin approval.',
+                'pending_approval' => true,
+                'action_request_id' => (int) $actionRequest->id,
+            ], 202);
+        }
+
         if (! empty($data['float_session_id'])) {
             $session = TillFloatSession::find($data['float_session_id']);
             if (! $session || strtolower((string) $session->status) !== 'open') {
@@ -113,11 +127,11 @@ class ExpenseController extends BaseResourceController
             }
         }
 
-        $data['recorded_by'] = $request->user()->id;
+        $data['recorded_by'] = $user->id;
         $expense = Expense::create($data);
 
-        $gate = $this->erp->gateForUser($request->user());
-        app(ExpenseJournalService::class)->postIfEnabled($expense, $request->user(), $gate);
+        $gate = $this->erp->gateForUser($user);
+        app(ExpenseJournalService::class)->postIfEnabled($expense, $user, $gate);
 
         return response()->json($expense, 201);
     }
@@ -126,6 +140,18 @@ class ExpenseController extends BaseResourceController
     {
         $expense = $this->findScopedModel($request, $id);
         $user = $request->user();
+        abort_unless($user, 401);
+
+        if (! app(ExpenseApprovalService::class)->canApprove($user)) {
+            $actionRequest = app(ExpenseApprovalService::class)->requestDelete($user, $expense);
+
+            return response()->json([
+                'message' => 'Expense deletion submitted for admin approval.',
+                'pending_approval' => true,
+                'action_request_id' => (int) $actionRequest->id,
+            ], 202);
+        }
+
         $gate = $this->erp->gateForUser($user);
 
         app(ReferenceJournalReversalService::class)->reverseIfEnabled(

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\FiscalPeriod;
 use App\Services\Accounting\FiscalPeriodService;
+use App\Services\Notifications\AdminNotificationService;
 use Illuminate\Http\Request;
 
 class FiscalPeriodController extends Controller
@@ -45,14 +46,32 @@ class FiscalPeriodController extends Controller
     {
         $period = $this->findOrgPeriod($request, $periodId);
 
-        return response()->json($this->periods->close($period, $request->user()));
+        $closed = $this->periods->close($period, $request->user());
+        app(AdminNotificationService::class)->notifyPermission($request->user(), 'accounting.manage', [
+            'type' => 'info',
+            'severity' => 'warning',
+            'title' => 'Fiscal period closed',
+            'message' => ($request->user()->full_name ?: $request->user()->username)." closed fiscal period {$closed->period_name}.",
+            'action_url' => '/accounting/fiscal-periods',
+        ]);
+
+        return response()->json($closed);
     }
 
     public function reopen(Request $request, int $periodId)
     {
         $period = $this->findOrgPeriod($request, $periodId);
 
-        return response()->json($this->periods->reopen($period));
+        $reopened = $this->periods->reopen($period);
+        app(AdminNotificationService::class)->notifyPermission($request->user(), 'accounting.manage', [
+            'type' => 'info',
+            'severity' => 'danger',
+            'title' => 'Fiscal period reopened',
+            'message' => ($request->user()->full_name ?: $request->user()->username)." reopened fiscal period {$reopened->period_name}.",
+            'action_url' => '/accounting/fiscal-periods',
+        ]);
+
+        return response()->json($reopened);
     }
 
     protected function findOrgPeriod(Request $request, int $periodId): FiscalPeriod

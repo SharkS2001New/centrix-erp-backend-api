@@ -39,6 +39,8 @@ class SaleController extends BaseResourceController
     public function index(Request $request)
     {
         $query = $this->baseQuery($request);
+        $dispatchOrders = $request->boolean('dispatch_orders');
+        $distributionSettings = null;
 
         if ($request->boolean('with_items')) {
             $query->with(['items.product.unit']);
@@ -59,13 +61,13 @@ class SaleController extends BaseResourceController
             $query->where('sales.status', '!=', $exclude);
         }
 
-        if ($request->boolean('route_orders') || $request->boolean('dispatch_orders') || $request->boolean('loading_list_orders')) {
+        if ($request->boolean('route_orders') || $dispatchOrders || $request->boolean('loading_list_orders')) {
             $gate = $this->erp->gateForUser($request->user());
             app(\App\Services\Sales\SaleRouteBackfillService::class)->syncOrganization($gate->organization());
-            $settings = $gate->distributionSettings();
+            $distributionSettings = $gate->distributionSettings();
             RouteOrderScope::applyForLoadingList(
                 $query,
-                RouteOrderScope::includeNormalOrders($settings),
+                RouteOrderScope::includeNormalOrders($distributionSettings),
             );
         }
 
@@ -129,7 +131,10 @@ class SaleController extends BaseResourceController
             RouteOrderScope::applyRouteFilter($query, (int) $request->input('route_id'));
         }
 
-        if ($request->filled('status_in')) {
+        if ($dispatchOrders) {
+            $assignStatus = (string) (($distributionSettings ?? [])['assign_on_status'] ?? 'processed');
+            $query->where('sales.status', $assignStatus);
+        } elseif ($request->filled('status_in')) {
             $statuses = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('status_in')))));
             if ($statuses !== []) {
                 $query->whereIn('sales.status', $statuses);

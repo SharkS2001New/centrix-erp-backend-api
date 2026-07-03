@@ -9,11 +9,17 @@ use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\Contracts\ActionRequestHandler;
 use App\Services\Notifications\Handlers\CustomerReturnActionRequestHandler;
+use App\Services\Notifications\Handlers\CashAdvanceActionRequestHandler;
+use App\Services\Notifications\Handlers\DamageWriteOffActionRequestHandler;
 use App\Services\Notifications\Handlers\DiscountApprovalActionRequestHandler;
+use App\Services\Notifications\Handlers\ExpenseActionRequestHandler;
 use App\Services\Notifications\Handlers\JournalEntryActionRequestHandler;
 use App\Services\Notifications\Handlers\LeaveActionRequestHandler;
+use App\Services\Notifications\Handlers\LpoApprovalActionRequestHandler;
 use App\Services\Notifications\Handlers\OrderCancellationActionRequestHandler;
+use App\Services\Notifications\Handlers\PayrollRunActionRequestHandler;
 use App\Services\Notifications\Handlers\StockAdjustmentActionRequestHandler;
+use App\Services\Notifications\Handlers\StockTakeCompletionActionRequestHandler;
 use App\Services\Notifications\Handlers\StockTransferActionRequestHandler;
 use App\Services\Notifications\Handlers\SupplierReturnActionRequestHandler;
 use Illuminate\Support\Collection;
@@ -36,6 +42,12 @@ class ActionRequestService
         StockAdjustmentActionRequestHandler $stockAdjustmentHandler,
         StockTransferActionRequestHandler $stockTransferHandler,
         CustomerReturnActionRequestHandler $customerReturnHandler,
+        LpoApprovalActionRequestHandler $lpoApprovalHandler,
+        PayrollRunActionRequestHandler $payrollRunHandler,
+        CashAdvanceActionRequestHandler $cashAdvanceHandler,
+        ExpenseActionRequestHandler $expenseActionHandler,
+        StockTakeCompletionActionRequestHandler $stockTakeCompletionHandler,
+        DamageWriteOffActionRequestHandler $damageWriteOffHandler,
     ) {
         $this->handlers = collect([
             $supplierReturnHandler,
@@ -46,6 +58,12 @@ class ActionRequestService
             $stockAdjustmentHandler,
             $stockTransferHandler,
             $customerReturnHandler,
+            $lpoApprovalHandler,
+            $payrollRunHandler,
+            $cashAdvanceHandler,
+            $expenseActionHandler,
+            $stockTakeCompletionHandler,
+            $damageWriteOffHandler,
         ])->keyBy(fn (ActionRequestHandler $handler) => $handler->type());
     }
 

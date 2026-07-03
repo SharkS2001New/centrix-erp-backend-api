@@ -17,6 +17,7 @@ use App\Services\Background\BackgroundTaskService;
 use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\ErpContext;
+use App\Services\Inventory\StockTakeApprovalService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -197,12 +198,22 @@ class StockTakeOperationsController extends Controller
     {
         $session = $this->findScopedStockTakeSession($sessionId, $request->user());
 
+        if (! app(StockTakeApprovalService::class)->canApprove($request->user())) {
+            $actionRequest = app(StockTakeApprovalService::class)->requestCompletion($request->user(), $session);
+
+            return response()->json([
+                'message' => 'Stock take completion submitted for admin approval.',
+                'pending_approval' => true,
+                'action_request_id' => (int) $actionRequest->id,
+            ], 202);
+        }
+
         return response()->json(
             $this->completeStockTakeSession($session, $request->user())
         );
     }
 
-    protected function completeStockTakeSession(StockTakeSession $session, User $user): StockTakeSession
+    public function completeStockTakeSession(StockTakeSession $session, User $user): StockTakeSession
     {
         if ($session->status === 'completed') {
             throw new InvalidArgumentException('Session already completed.');

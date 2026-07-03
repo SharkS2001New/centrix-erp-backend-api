@@ -18,6 +18,7 @@ class MobileDriverAttendanceSession extends Model
         'branch_id',
         'user_id',
         'driver_id',
+        'employee_id',
         'sign_in_at',
         'sign_out_at',
         'suspended_at',
@@ -60,6 +61,11 @@ class MobileDriverAttendanceSession extends Model
     public function driver(): BelongsTo
     {
         return $this->belongsTo(Driver::class);
+    }
+
+    public function employee(): BelongsTo
+    {
+        return $this->belongsTo(Employee::class);
     }
 
     public function isClosed(): bool

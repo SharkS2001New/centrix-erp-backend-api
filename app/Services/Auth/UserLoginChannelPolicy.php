@@ -45,7 +45,7 @@ class UserLoginChannelPolicy
 
             $message = match ($channel) {
                 UserLoginChannelService::POS => 'POS login cannot be assigned while external POS is disabled for this organization.',
-                UserLoginChannelService::MOBILE => 'Mobile users cannot be created while mobile orders are disabled for this organization.',
+                UserLoginChannelService::MOBILE => 'Mobile users cannot be created while mobile app access is disabled for this organization.',
                 UserLoginChannelService::BACKOFFICE => 'Backoffice login cannot be assigned while backoffice sales is disabled for this organization.',
                 default => sprintf('%s login is not enabled for this organization.', $service->label($channel)),
             };

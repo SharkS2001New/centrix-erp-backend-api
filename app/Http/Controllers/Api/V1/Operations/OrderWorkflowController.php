@@ -2,12 +2,11 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
-use App\Exceptions\MissingProductWeightsException;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Controller;
-use App\Models\DispatchTrip;
 use App\Models\Driver;
+use App\Models\Organization;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -20,8 +19,9 @@ use App\Models\RouteSchedule;
 use App\Services\Sales\OrderCancellationRequestService;
 use App\Services\Sales\SaleCancellationService;
 use App\Services\Fulfillment\AutoTripAssignmentService;
-use App\Services\Fulfillment\LoadingListBuilder;
+use App\Services\Fulfillment\FulfillmentNotificationService;
 use App\Services\Fulfillment\PodService;
+use App\Services\Notifications\AdminNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -31,10 +31,7 @@ class OrderWorkflowController extends Controller
     use HandlesBranchScope;
     use HandlesInventory;
 
-    public function __construct(
-        protected ErpContext $erp,
-        protected LoadingListBuilder $loadingListBuilder,
-    ) {}
+    public function __construct(protected ErpContext $erp) {}
 
     public function transition(Request $request, int $saleId)
     {
@@ -45,77 +42,15 @@ class OrderWorkflowController extends Controller
 
         $sale = $this->findScopedSale($saleId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
-        $meta = $data['fulfillment_meta'] ?? [];
         $updated = $this->transitionSale(
             $sale,
             $data['status'],
             $request->user(),
-            $meta,
+            $data['fulfillment_meta'] ?? [],
             $gate,
-            $this->isFulfillmentTransitionContext($sale, $meta),
         );
 
         return response()->json($updated);
-    }
-
-    public function loadWeightStatus(Request $request, int $saleId)
-    {
-        $sale = $this->findScopedSale($saleId, $request->user());
-
-        return response()->json($this->loadingListBuilder->saleWeightStatus($sale));
-    }
-
-    public function updateOrderProductWeights(Request $request, int $saleId)
-    {
-        $data = $request->validate([
-            'weights' => 'required|array|min:1',
-            'weights.*.product_code' => 'required|string|max:50',
-            'weights.*.product_weight' => 'required|numeric|gt:0',
-        ]);
-
-        $sale = $this->findScopedSale($saleId, $request->user());
-        $allowedCodes = SaleItem::query()
-            ->where('sale_id', $sale->id)
-            ->pluck('product_code')
-            ->unique()
-            ->values()
-            ->all();
-
-        $user = $request->user();
-        $updated = [];
-
-        DB::transaction(function () use ($data, $allowedCodes, $sale, $user, &$updated) {
-            foreach ($data['weights'] as $row) {
-                $code = (string) $row['product_code'];
-                if (! in_array($code, $allowedCodes, true)) {
-                    throw new InvalidArgumentException("Product {$code} is not on this order.");
-                }
-
-                $query = Product::query()->withTrashed()->where('product_code', $code);
-                if ($sale->organization_id) {
-                    $query->where('organization_id', $sale->organization_id);
-                }
-
-                $product = $query->first();
-                if (! $product) {
-                    throw new InvalidArgumentException("Product {$code} was not found.");
-                }
-
-                $product->update([
-                    'product_weight' => (float) $row['product_weight'],
-                    'updated_by' => $user->id,
-                ]);
-                $updated[] = $code;
-            }
-        });
-
-        $status = $this->loadingListBuilder->saleWeightStatus($sale->fresh());
-
-        return response()->json([
-            'message' => 'Product weights updated.',
-            'updated_product_codes' => $updated,
-            ...$status,
-        ]);
     }
 
     /** Public wrapper for internal/mobile delivery flows. */
@@ -124,7 +59,6 @@ class OrderWorkflowController extends Controller
         string $toStatus,
         User $user,
         array $meta = [],
-        bool $fulfillmentContext = false,
     ): Sale {
         return $this->transitionSale(
             $sale,
@@ -132,7 +66,6 @@ class OrderWorkflowController extends Controller
             $user,
             $meta,
             $this->erp->gateForUser($user),
-            $fulfillmentContext || $this->isFulfillmentTransitionContext($sale, $meta),
         );
     }
 
@@ -166,7 +99,7 @@ class OrderWorkflowController extends Controller
 
         $assignOnStatus = (string) ($distributionSettings['assign_on_status'] ?? 'processed');
         if ($distributionEnabled && $status === $assignOnStatus && ! empty($distributionSettings['require_weight_on_load'])) {
-            $this->loadingListBuilder->assertSaleHasLoadWeight($sale);
+            $this->assertLoadWeight($sale);
         }
 
         if ($distributionEnabled && empty($meta['driver_id']) && ! empty($distributionSettings['auto_assign_driver'])) {
@@ -206,7 +139,6 @@ class OrderWorkflowController extends Controller
         User $user,
         array $meta = [],
         ?CapabilityGate $gate = null,
-        bool $fulfillmentContext = false,
     ): Sale {
         $gate ??= $this->erp->gateForUser($user);
         $workflow = OrderWorkflowService::forGate($gate);
@@ -236,8 +168,6 @@ class OrderWorkflowController extends Controller
                 "Cannot move order from {$this->humanStatusLabel($from)} to {$this->humanStatusLabel($toStatus)}.{$hint}",
             );
         }
-
-        $this->assertDistributionManualTransitionAllowed($sale, $from, $toStatus, $gate, $fulfillmentContext);
 
         $balanceDue = max(0, (float) $sale->order_total - (float) $sale->amount_paid);
         if ($balanceDue > 0.01) {
@@ -269,7 +199,10 @@ class OrderWorkflowController extends Controller
                 $user,
             );
 
-            return $sale->fresh();
+            $sale = $sale->fresh();
+            $this->notifyWorkflowTransition($sale, $from, 'cancelled', $user);
+
+            return $sale;
         }
 
         if ($toStatus === 'expired') {
@@ -291,7 +224,10 @@ class OrderWorkflowController extends Controller
                 );
             });
 
-            return $sale->fresh();
+            $sale = $sale->fresh();
+            $this->notifyWorkflowTransition($sale, $from, 'expired', $user);
+
+            return $sale;
         }
 
         $salesSettings = $gate->moduleSettings('sales');
@@ -303,7 +239,7 @@ class OrderWorkflowController extends Controller
 
         if ($distributionEnabled && in_array($toStatus, ['processed', 'delivered', 'completed'], true)) {
             if ($toStatus === $assignOnStatus && ! empty($distributionSettings['require_weight_on_load'])) {
-                $this->loadingListBuilder->assertSaleHasLoadWeight($sale);
+                $this->assertLoadWeight($sale);
             }
 
             if (empty($meta['driver_id']) && ! empty($distributionSettings['auto_assign_driver'])) {
@@ -366,17 +302,29 @@ class OrderWorkflowController extends Controller
             $sale = $sale->fresh();
         }
 
-        if (
-            $distributionEnabled
-            && $toStatus === 'delivered'
-            && $fulfillmentContext
-            && $balanceDue <= 0.01
-            && $workflow->canTransition('delivered', 'completed', (string) $sale->channel)
-        ) {
-            return $this->transitionSale($sale, 'completed', $user, $meta, $gate, true);
-        }
+        $this->notifyWorkflowTransition($sale, $from, $toStatus, $user);
 
         return $sale;
+    }
+
+    protected function notifyWorkflowTransition(Sale $sale, string $from, string $to, User $user): void
+    {
+        app(AdminNotificationService::class)->notifyPermission($user, 'sales.manage', [
+            'type' => 'info',
+            'severity' => in_array($to, ['cancelled', 'expired'], true) ? 'warning' : 'default',
+            'title' => 'Order status changed',
+            'message' => "Order #{$sale->order_num} moved from {$from} to {$to} by ".($user->full_name ?: $user->username).'.',
+            'action_url' => "/orders/{$sale->id}",
+        ]);
+
+        if ($to !== 'delivered') {
+            return;
+        }
+
+        $organization = Organization::query()->find((int) $sale->organization_id);
+        if ($organization) {
+            app(FulfillmentNotificationService::class)->notifyOrderDelivered($sale, $organization);
+        }
     }
 
     protected function resolveAutoDriver(Sale $sale): ?Driver
@@ -415,6 +363,31 @@ class OrderWorkflowController extends Controller
         }
 
         return $query->orderBy('id')->first();
+    }
+
+    protected function assertLoadWeight(Sale $sale): void
+    {
+        $items = $sale->items ?? SaleItem::where('sale_id', $sale->id)->get();
+        if ($items->isEmpty()) {
+            throw new InvalidArgumentException('Cannot load an order with no line items.');
+        }
+
+        $codes = $items->pluck('product_code')->unique()->values()->all();
+        $weights = Product::query()
+            ->whereIn('product_code', $codes)
+            ->pluck('product_weight', 'product_code');
+
+        $totalWeight = 0.0;
+        foreach ($items as $item) {
+            $weight = (float) ($weights[$item->product_code] ?? 0);
+            $totalWeight += $weight * (float) $item->quantity;
+        }
+
+        if ($totalWeight <= 0) {
+            throw new InvalidArgumentException(
+                'Load weight is required. Ensure products have weights configured before processing for delivery.',
+            );
+        }
     }
 
     protected function deductSaleStockIfNeeded(Sale $sale, User $user): void
@@ -479,48 +452,5 @@ class OrderWorkflowController extends Controller
         }
 
         return false;
-    }
-
-    protected function assertDistributionManualTransitionAllowed(
-        Sale $sale,
-        string $from,
-        string $toStatus,
-        CapabilityGate $gate,
-        bool $fulfillmentContext,
-    ): void {
-        if (! $gate->distributionOpsEnabled()) {
-            return;
-        }
-
-        if ($from === 'processed' && $toStatus === 'delivered' && ! $fulfillmentContext) {
-            throw new InvalidArgumentException(
-                'Mark this order as delivered from the Distribution module after the trip is dispatched.',
-            );
-        }
-
-        if ($toStatus === 'completed') {
-            throw new InvalidArgumentException(
-                'Complete this order by collecting payment at the till.',
-            );
-        }
-    }
-
-    /** @param  array<string, mixed>  $meta */
-    protected function isFulfillmentTransitionContext(Sale $sale, array $meta): bool
-    {
-        $tripId = (int) ($meta['trip_id'] ?? 0);
-        if ($tripId <= 0) {
-            return false;
-        }
-
-        $saleTripId = (int) (($sale->fulfillment_meta ?? [])['trip_id'] ?? 0);
-        if ($saleTripId === $tripId) {
-            return true;
-        }
-
-        return DispatchTrip::query()
-            ->whereKey($tripId)
-            ->whereHas('sales', fn ($query) => $query->where('sales.id', $sale->id))
-            ->exists();
     }
 }

@@ -5,6 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Employee;
 use App\Models\EmployeeCashAdvance;
 use App\Services\Hr\HrPayrollSettingsResolver;
+use App\Services\Hr\CashAdvanceApprovalService;
+use App\Services\Notifications\ActionRequestService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -52,7 +54,12 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
         }
         $data = $this->normalizeRepayment($data);
 
-        return response()->json(EmployeeCashAdvance::create($data)->load('employee'), 201);
+        $advance = EmployeeCashAdvance::create($data)->load('employee');
+        if ($advance->status === 'pending' && $request->user()) {
+            app(CashAdvanceApprovalService::class)->requestApproval($request->user(), $advance);
+        }
+
+        return response()->json($advance, 201);
     }
 
     /** POST /employee-cash-advances/{id}/approve */
@@ -66,6 +73,13 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             return response()->json(['message' => 'Only pending advances can be approved.'], 422);
         }
         $row->update(['status' => 'open']);
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'cash_advance',
+            'employee_cash_advance',
+            (int) $row->id,
+            'approved',
+            request()->user(),
+        );
 
         return response()->json($row->fresh('employee'));
     }
@@ -78,6 +92,13 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             return response()->json(['message' => 'Only pending advances can be rejected.'], 422);
         }
         $row->update(['status' => 'cancelled']);
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'cash_advance',
+            'employee_cash_advance',
+            (int) $row->id,
+            'rejected',
+            request()->user(),
+        );
 
         return response()->json($row->fresh('employee'));
     }

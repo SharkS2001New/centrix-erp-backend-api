@@ -20,7 +20,7 @@ class PermissionMatrixService
     /** @return list<string> */
     public static function actions(): array
     {
-        return ['view', 'create', 'edit', 'delete', 'approve'];
+        return ['view', 'create', 'edit', 'delete', 'approve', 'deliver'];
     }
 
     /** @return list<string> */
@@ -67,6 +67,7 @@ class PermissionMatrixService
             'sales.create' => 'sales',
             'sales.manage' => 'sales',
             'sales.view' => 'sales',
+            'driver.mobile' => 'mobile_driver',
             'payments.manage' => 'payments',
             'payments.view' => 'payments',
             'inventory.view' => 'inventory',
@@ -117,6 +118,12 @@ class PermissionMatrixService
     {
         if ($registryModule === 'ai') {
             return $gate->aiPlatformEnabled();
+        }
+        if ($registryModule === 'mobile_sales') {
+            return $gate->mobileSalesEnabled();
+        }
+        if ($registryModule === 'mobile_driver') {
+            return $gate->driverMobileEnabled();
         }
 
         $erpKeys = self::erpModuleMap()[$registryModule] ?? [$registryModule];

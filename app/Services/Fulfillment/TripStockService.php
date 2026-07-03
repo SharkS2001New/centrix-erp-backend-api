@@ -43,6 +43,30 @@ class TripStockService
         }
     }
 
+    public function deductDeferredTripStockOnPickingComplete(DispatchTrip $trip, User $user): void
+    {
+        if ($trip->stock_deducted_at) {
+            return;
+        }
+
+        $gate = $this->erp->gateForUser($user);
+        $trip->loadMissing(['sales.items']);
+        $deductedAny = false;
+
+        foreach ($trip->sales as $sale) {
+            if (! in_array($gate->stockDeductTiming((string) $sale->channel), ['trip_load', 'trip_depart'], true)) {
+                continue;
+            }
+
+            $this->deductSaleStockIfNeeded($sale, $user);
+            $deductedAny = true;
+        }
+
+        if ($deductedAny) {
+            $trip->update(['stock_deducted_at' => now()]);
+        }
+    }
+
     protected function deductSaleStockIfNeeded(Sale $sale, User $user): void
     {
         if ($sale->stock_balanced) {

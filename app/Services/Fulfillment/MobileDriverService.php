@@ -7,6 +7,8 @@ use App\Models\Driver;
 use App\Models\PaymentMethod;
 use App\Models\PodRecord;
 use App\Models\Sale;
+use App\Models\CustomerReturn;
+use App\Models\Organization;
 use App\Models\SalePayment;
 use App\Models\User;
 use App\Http\Controllers\Api\V1\Operations\OrderWorkflowController;
@@ -15,6 +17,8 @@ use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\SalePaymentColumnMapper;
+use App\Services\Notifications\CustomerNotificationService;
+use App\Services\Sales\CustomerReturnService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -26,6 +30,7 @@ class MobileDriverService
         protected PodService $podService,
         protected TripFinancialSummaryService $financials,
         protected DispatchTripService $dispatchTrips,
+        protected CustomerReturnService $customerReturns,
     ) {}
 
     public function resolveDriver(User $user): ?Driver
@@ -116,7 +121,7 @@ class MobileDriverService
     {
         $driver = $this->requireDriver($user);
         $sale = $this->findDriverStop($driver, $saleId);
-        $sale->load(['items', 'customer']);
+        $sale->load(['items.product', 'customer']);
 
         return $this->presentStop($sale, includeLines: true);
     }
@@ -131,26 +136,37 @@ class MobileDriverService
     {
         $driver = $this->requireDriver($user);
         $sale = $this->findDriverStop($driver, $saleId);
+        $sale->loadMissing(['items.product', 'customer']);
         $tripId = (int) (($sale->fulfillment_meta ?? [])['trip_id'] ?? 0);
+        $outcome = $this->normalizeDeliveryOutcome($data['delivery_outcome'] ?? null);
+        $linePayloads = $this->normalizeDeliveryLines($sale, $data['lines'] ?? [], $outcome);
 
         $recipient = trim((string) ($data['recipient_name'] ?? ''));
         $gate = $this->erp->gateForUser($user);
         $distributionSettings = $gate->distributionSettings();
         $requirePod = ! empty($distributionSettings['require_pod_on_delivered']);
 
-        if ($requirePod && $recipient === '' && ! $photo) {
+        if ($outcome !== 'failed' && $recipient === '') {
+            throw new InvalidArgumentException('Enter who received the delivery.');
+        }
+
+        if ($requirePod && $outcome !== 'failed' && ! $photo) {
             throw new InvalidArgumentException(
-                'Recipient name and delivery photo are required before marking this order as delivered.',
+                'Invoice/photo proof is required before marking this order as delivered.',
             );
         }
 
-        $this->collectDeliveryPayment($user, $sale, $data, $distributionSettings);
+        if ($outcome !== 'failed') {
+            $this->collectDeliveryPayment($user, $sale, $data, $distributionSettings);
+        }
 
-        if ($recipient !== '' || $photo !== null) {
+        if ($recipient !== '' || $photo !== null || $linePayloads !== []) {
             $this->podService->capture($user, $sale, array_merge($data, [
                 'photo' => $photo,
                 'trip_id' => $tripId > 0 ? $tripId : null,
                 'recipient_name' => $recipient !== '' ? $recipient : 'Customer',
+                'status' => $this->podStatusForOutcome($outcome),
+                'lines' => $linePayloads,
             ]));
             $sale = $sale->fresh();
         } elseif ($requirePod && ! $this->podService->hasPod($sale)) {
@@ -159,21 +175,48 @@ class MobileDriverService
             );
         }
 
-        if ((string) $sale->status !== 'delivered') {
+        $return = $this->recordDriverReturns($user, $sale->fresh(['items.product', 'customer']), $linePayloads, $data);
+        $meta = array_merge($sale->fulfillment_meta ?? [], [
+            'driver_id' => $driver->id,
+            'trip_id' => $tripId > 0 ? $tripId : null,
+            'driver_delivery_outcome' => $outcome,
+            'driver_delivery_reason' => $data['failure_reason'] ?? $data['return_reason'] ?? null,
+            'driver_delivery_recorded_at' => now()->toIso8601String(),
+            'pod_captured' => $this->podService->hasPod($sale->fresh()),
+        ]);
+
+        if (in_array($outcome, ['partial', 'failed'], true) && ! $return) {
+            throw new InvalidArgumentException(
+                'A return record is required for partial or failed delivery.',
+            );
+        }
+
+        if ($return) {
+            $meta['driver_return_id'] = (int) $return->id;
+            $meta['driver_return_no'] = $return->return_no;
+        }
+
+        if ($outcome === 'failed') {
+            $sale->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $user->id,
+                'fulfillment_meta' => $meta,
+            ]);
+            $sale = $sale->fresh(['items.product', 'customer']);
+        } elseif ((string) $sale->status !== 'delivered') {
             app(OrderWorkflowController::class)->transitionSaleForUser(
                 $sale,
                 'delivered',
                 $user,
-                array_merge($sale->fulfillment_meta ?? [], [
-                    'driver_id' => $driver->id,
-                    'trip_id' => $tripId > 0 ? $tripId : null,
-                    'pod_captured' => $this->podService->hasPod($sale->fresh()),
-                ]),
+                $meta,
             );
-            $sale = $sale->fresh(['items', 'customer']);
+            $sale = $sale->fresh(['items.product', 'customer']);
+        } else {
+            $sale->update(['fulfillment_meta' => $meta]);
         }
 
-        return $this->presentStop($sale->load(['items', 'customer']), includeLines: true);
+        return $this->presentStop($sale->load(['items.product', 'customer']), includeLines: true);
     }
 
     /** @return array<string, mixed> */
@@ -188,6 +231,121 @@ class MobileDriverService
             'trip' => $this->presentTripSummary($trip, $summary),
             'message' => 'Trip cash settlement recorded.',
         ];
+    }
+
+    protected function normalizeDeliveryOutcome(mixed $value): string
+    {
+        $outcome = strtolower(trim((string) ($value ?: 'complete')));
+
+        return in_array($outcome, ['complete', 'partial', 'failed'], true)
+            ? $outcome
+            : 'complete';
+    }
+
+    protected function podStatusForOutcome(string $outcome): string
+    {
+        return match ($outcome) {
+            'partial' => 'partial',
+            'failed' => 'refused',
+            default => 'complete',
+        };
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>|mixed  $lines
+     * @return list<array<string, mixed>>
+     */
+    protected function normalizeDeliveryLines(Sale $sale, mixed $lines, string $outcome): array
+    {
+        $sale->loadMissing('items.product');
+        $input = is_array($lines) ? collect($lines) : collect();
+        $payloads = [];
+
+        foreach ($sale->items as $item) {
+            $lineData = $input->first(function ($line) use ($item) {
+                if (! is_array($line)) {
+                    return false;
+                }
+                if (! empty($line['sale_item_id']) && (int) $line['sale_item_id'] === (int) $item->id) {
+                    return true;
+                }
+
+                return (string) ($line['product_code'] ?? '') === (string) $item->product_code;
+            }) ?? [];
+
+            $qtyOrdered = max(0, (float) $item->quantity);
+            $qtyDelivered = match ($outcome) {
+                'failed' => 0.0,
+                'partial' => array_key_exists('qty_delivered', $lineData)
+                    ? max(0, (float) $lineData['qty_delivered'])
+                    : $qtyOrdered,
+                default => $qtyOrdered,
+            };
+            $qtyDelivered = min($qtyDelivered, $qtyOrdered);
+
+            $qtyRefused = array_key_exists('qty_refused', $lineData)
+                ? max(0, (float) $lineData['qty_refused'])
+                : max(0, $qtyOrdered - $qtyDelivered);
+            $qtyRefused = min($qtyRefused, $qtyOrdered);
+
+            $payloads[] = [
+                'sale_item_id' => (int) $item->id,
+                'product_code' => (string) $item->product_code,
+                'product_name' => $item->product?->product_name ?? $item->product_code,
+                'qty_ordered' => $qtyOrdered,
+                'qty_delivered' => $qtyDelivered,
+                'qty_refused' => $qtyRefused,
+                'reason' => $lineData['reason'] ?? null,
+                'unit_price' => (float) ($item->unit_price ?? $item->selling_price ?? 0),
+                'amount' => (float) $item->amount,
+            ];
+        }
+
+        return $payloads;
+    }
+
+    /** @param list<array<string, mixed>> $linePayloads */
+    protected function recordDriverReturns(
+        User $user,
+        Sale $sale,
+        array $linePayloads,
+        array $data,
+    ): ?CustomerReturn {
+        $returnLines = collect($linePayloads)
+            ->filter(fn ($line) => (float) ($line['qty_refused'] ?? 0) > 0)
+            ->map(function ($line) {
+                $returnQty = (float) $line['qty_refused'];
+                $unitPrice = (float) ($line['unit_price'] ?? 0);
+
+                return [
+                    'sale_item_id' => (int) $line['sale_item_id'],
+                    'product_code' => (string) $line['product_code'],
+                    'product_name' => (string) ($line['product_name'] ?? $line['product_code']),
+                    'return_qty' => $returnQty,
+                    'unit_price' => $unitPrice,
+                    'amount' => round($returnQty * $unitPrice, 2),
+                    'reason' => $line['reason'] ?? null,
+                ];
+            })
+            ->values()
+            ->all();
+
+        if ($returnLines === []) {
+            return null;
+        }
+
+        $reason = trim((string) ($data['return_reason'] ?? $data['failure_reason'] ?? 'Driver delivery return'));
+
+        return $this->customerReturns->create($user, [
+            'sale_id' => (int) $sale->id,
+            'branch_id' => (int) $sale->branch_id,
+            'customer_num' => $sale->customer_num,
+            'return_date' => now()->toDateString(),
+            'refund_method' => 'CREDIT_NOTE',
+            'reason' => $reason !== '' ? $reason : 'Driver delivery return',
+            'notes' => $data['notes'] ?? null,
+            'lines' => $returnLines,
+        ]);
     }
 
     /**
@@ -299,6 +457,10 @@ class MobileDriverService
         });
 
         $sale->refresh();
+        $organization = Organization::query()->find((int) $sale->organization_id);
+        if ($organization) {
+            app(CustomerNotificationService::class)->notifyDebtorPayment($sale, $organization, $amount);
+        }
     }
 
     protected function findDriverTrip(Driver $driver, int $tripId): DispatchTrip
@@ -410,16 +572,28 @@ class MobileDriverService
             'balance_due' => round($balanceDue, 2),
             'pod_captured' => ! empty($meta['pod_captured']) || PodRecord::query()->where('sale_id', $sale->id)->exists(),
             'trip_id' => isset($meta['trip_id']) ? (int) $meta['trip_id'] : null,
+            'delivery_outcome' => $meta['driver_delivery_outcome'] ?? ($isDelivered ? 'complete' : null),
+            'delivery_reason' => $meta['driver_delivery_reason'] ?? null,
+            'return_no' => $meta['driver_return_no'] ?? null,
         ];
 
         if ($includeLines) {
-            $payload['lines'] = $sale->items->map(fn ($item) => [
-                'product_code' => $item->product_code,
-                'product_name' => $item->product_name,
-                'quantity' => (float) $item->quantity,
-                'unit_price' => (float) $item->unit_price,
-                'amount' => (float) $item->amount,
-            ])->values()->all();
+            $payload['lines'] = $sale->items->map(function ($item) {
+                $productName = trim((string) ($item->product?->product_name ?? ''));
+                if ($productName === '') {
+                    $productName = (string) $item->product_code;
+                }
+
+                return [
+                    'sale_item_id' => (int) $item->id,
+                    'product_code' => $item->product_code,
+                    'product_name' => $productName,
+                    'uom' => $item->uom,
+                    'quantity' => (float) $item->quantity,
+                    'unit_price' => (float) ($item->unit_price ?? $item->selling_price ?? 0),
+                    'amount' => (float) $item->amount,
+                ];
+            })->values()->all();
         }
 
         return $payload;

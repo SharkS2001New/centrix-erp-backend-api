@@ -26,9 +26,9 @@ return [
         ],
         'mobile' => [
             'label' => 'Mobile application',
-            'description' => 'Field sales mobile app — orders, customers, stock, and routes.',
+            'description' => 'Separate permissions for field sales reps and driver delivery users.',
             'standalone' => true,
-            'registry_modules' => ['mobile'],
+            'registry_modules' => ['mobile_sales', 'mobile_driver'],
         ],
         'backoffice' => [
             'label' => 'Backoffice',

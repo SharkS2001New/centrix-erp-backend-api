@@ -91,7 +91,7 @@ class PodService
         });
 
         $org = Organization::find($user->organization_id);
-        if ($org) {
+        if ($org && $record->status !== 'refused') {
             $this->notifications->notifyOrderDelivered($sale->fresh(), $org);
         }
 

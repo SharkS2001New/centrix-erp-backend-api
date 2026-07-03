@@ -350,7 +350,7 @@ class AuthSessionService
         $label = app(UserLoginChannelService::class)->label($loginChannel);
         $message = match ($loginChannel) {
             UserLoginChannelService::POS => 'External POS is not enabled for this organization.',
-            UserLoginChannelService::MOBILE => 'Mobile sales is not enabled for this organization.',
+            UserLoginChannelService::MOBILE => 'Mobile app access is not enabled for this organization.',
             UserLoginChannelService::BACKOFFICE => 'Backoffice sales is not enabled for this organization.',
             default => sprintf('%s is not enabled for this organization.', $label),
         };

@@ -5,6 +5,7 @@ use App\Models\PayPeriod;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
 use App\Services\Hr\HrPayrollSettingsResolver;
+use App\Services\Payroll\PayrollRunApprovalService;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollRunScheduleService;
 use Illuminate\Http\Request;
@@ -60,6 +61,9 @@ class PayrollRunController extends BaseResourceController
         }
 
         $run = PayrollRun::create($data);
+        if ($run->status === 'pending_approval' && $request->user()) {
+            app(PayrollRunApprovalService::class)->requestApproval($request->user(), $run->fresh('payPeriod'));
+        }
 
         return response()->json($this->runWithMeta($run->load('payPeriod')), 201);
     }

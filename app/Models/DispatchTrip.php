@@ -88,6 +88,19 @@ class DispatchTrip extends Model
         return $this->belongsTo(Vehicle::class, 'vehicle_id');
     }
 
+    public function crewMembers(): BelongsToMany
+    {
+        return $this->belongsToMany(Employee::class, 'dispatch_trip_crew', 'trip_id', 'employee_id')
+            ->withPivot('role')
+            ->withTimestamps()
+            ->orderBy('employees.full_name');
+    }
+
+    public function turnBoys(): BelongsToMany
+    {
+        return $this->crewMembers()->wherePivot('role', 'turn_boy');
+    }
+
     public function creator(): BelongsTo
     {
         return $this->belongsTo(User::class, 'created_by');

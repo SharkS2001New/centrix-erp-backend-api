@@ -15,6 +15,7 @@ use App\Models\User;
 use App\Services\Accounting\ReturnJournalService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Fulfillment\TripAutoCloseService;
 use App\Services\Returns\ReturnProofService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
@@ -210,6 +211,10 @@ class CustomerReturnService
 
             if ($return->sale_id) {
                 $this->applyReturnToSale($return->fresh(['lines']));
+                $sale = Sale::query()->find($return->sale_id);
+                if ($sale) {
+                    app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
+                }
             }
 
             $return->update([

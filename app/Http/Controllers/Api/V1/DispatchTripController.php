@@ -4,8 +4,11 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Models\DispatchTrip;
+use App\Models\Employee;
 use App\Services\Fulfillment\DispatchTripService;
 use App\Services\Fulfillment\TripFinancialSummaryService;
+use App\Services\Fulfillment\TripStockService;
+use App\Services\Notifications\AdminNotificationService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 
@@ -26,7 +29,7 @@ class DispatchTripController extends BaseResourceController
     public function index(Request $request)
     {
         $query = $this->baseQuery($request)
-            ->with(['route', 'routes', 'driver', 'vehicle'])
+            ->with(['route', 'routes', 'driver', 'vehicle', 'crewMembers'])
             ->withCount('sales');
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
@@ -60,7 +63,7 @@ class DispatchTripController extends BaseResourceController
         $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
 
         return response()->json(
-            $this->presentTrip($trip->load(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines'])),
+            $this->presentTrip($trip->load(['route', 'routes', 'driver', 'vehicle', 'crewMembers', 'sales', 'loadingList.lines'])),
         );
     }
 
@@ -73,6 +76,18 @@ class DispatchTripController extends BaseResourceController
             ? $trip->routes->pluck('route_name')->values()->all()
             : ($trip->route ? [$trip->route->route_name] : []);
         $payload['is_multi_route'] = count($payload['route_ids']) > 1;
+        $payload['crew_employee_ids'] = $trip->relationLoaded('crewMembers')
+            ? $trip->crewMembers->pluck('id')->map(fn ($id) => (int) $id)->values()->all()
+            : [];
+        $payload['turn_boys'] = $trip->relationLoaded('crewMembers')
+            ? $trip->crewMembers->values()->map(fn (Employee $employee) => [
+                'id' => (int) $employee->id,
+                'employee_code' => $employee->employee_code,
+                'full_name' => $employee->full_name,
+                'phone' => $employee->phone,
+                'role' => $employee->pivot?->role ?? 'turn_boy',
+            ])->all()
+            : [];
         $payload['financial_summary'] = $financialSummary
             ?? ($trip->relationLoaded('sales')
                 ? $this->financials->summarizeForTrip($trip)
@@ -94,15 +109,18 @@ class DispatchTripController extends BaseResourceController
             'notes' => 'nullable|string|max:2000',
             'sale_ids' => 'sometimes|array',
             'sale_ids.*' => 'integer|exists:sales,id',
+            'crew_employee_ids' => 'sometimes|array',
+            'crew_employee_ids.*' => 'integer|exists:employees,id',
         ]);
 
         try {
             $trip = $this->trips->createTrip($request->user(), $data);
+            $this->syncCrew($request, $trip, $data['crew_employee_ids'] ?? []);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        return response()->json($this->presentTrip($trip), 201);
+        return response()->json($this->presentTrip($trip->fresh(['route', 'routes', 'driver', 'vehicle', 'crewMembers'])), 201);
     }
 
     public function update(Request $request, string $id)
@@ -116,15 +134,20 @@ class DispatchTripController extends BaseResourceController
             'vehicle_id' => 'sometimes|nullable|integer|exists:vehicles,id',
             'scheduled_date' => 'sometimes|date',
             'notes' => 'sometimes|nullable|string|max:2000',
+            'crew_employee_ids' => 'sometimes|array',
+            'crew_employee_ids.*' => 'integer|exists:employees,id',
         ]);
 
         try {
             $trip = $this->trips->updateTrip($trip, $data);
+            if (array_key_exists('crew_employee_ids', $data)) {
+                $this->syncCrew($request, $trip, $data['crew_employee_ids'] ?? []);
+            }
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        return response()->json($this->presentTrip($trip));
+        return response()->json($this->presentTrip($trip->fresh(['route', 'routes', 'driver', 'vehicle', 'crewMembers'])));
     }
 
     public function destroy(Request $request, string $id)
@@ -136,6 +159,39 @@ class DispatchTripController extends BaseResourceController
         $trip->delete();
 
         return response()->json(null, 204);
+    }
+
+    /** @param list<int|string> $employeeIds */
+    protected function syncCrew(Request $request, DispatchTrip $trip, array $employeeIds): void
+    {
+        $ids = collect($employeeIds)
+            ->map(fn ($id) => (int) $id)
+            ->filter(fn ($id) => $id > 0)
+            ->unique()
+            ->values();
+
+        if ($ids->isEmpty()) {
+            $trip->crewMembers()->sync([]);
+            return;
+        }
+
+        $orgId = $this->access()->organizationId($request->user(), $request);
+        $employees = Employee::query()
+            ->where('organization_id', $orgId)
+            ->whereIn('id', $ids)
+            ->get(['id']);
+
+        if ($employees->count() !== $ids->count()) {
+            throw new InvalidArgumentException('One or more selected turn boys do not belong to this organization.');
+        }
+
+        $driverEmployeeId = (int) optional($trip->driver()->first())->employee_id;
+        if ($driverEmployeeId > 0 && $ids->contains($driverEmployeeId)) {
+            throw new InvalidArgumentException('The driver cannot also be selected as a turn boy on the same trip.');
+        }
+
+        $sync = $ids->mapWithKeys(fn ($id) => [$id => ['role' => 'turn_boy']])->all();
+        $trip->crewMembers()->sync($sync);
     }
 
     public function assignOrders(Request $request, int $trip)
@@ -164,15 +220,18 @@ class DispatchTripController extends BaseResourceController
             'driver_id' => 'required|integer|exists:drivers,id',
             'vehicle_id' => 'required|integer|exists:vehicles,id',
             'notes' => 'nullable|string|max:2000',
+            'crew_employee_ids' => 'sometimes|array',
+            'crew_employee_ids.*' => 'integer|exists:employees,id',
         ]);
 
         try {
             $trip = $this->trips->mergeTrips($request->user(), $data['trip_ids'], $data);
+            $this->syncCrew($request, $trip, $data['crew_employee_ids'] ?? []);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
 
-        return response()->json($this->presentTrip($trip));
+        return response()->json($this->presentTrip($trip->fresh(['route', 'routes', 'driver', 'vehicle', 'crewMembers'])));
     }
 
     public function loadingList(Request $request, int $trip)
@@ -242,6 +301,7 @@ class DispatchTripController extends BaseResourceController
             $pickingList,
             $data['picker_name'] ?? null,
         );
+        app(TripStockService::class)->deductDeferredTripStockOnPickingComplete($model, $request->user());
 
         return response()->json([
             'picking_list' => $updated,
@@ -271,6 +331,7 @@ class DispatchTripController extends BaseResourceController
 
         try {
             $updated = $this->trips->startTrip($model, $request->user());
+            $this->notifyTripManagers($request, $updated, 'Trip chart started', 'started');
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
@@ -284,6 +345,7 @@ class DispatchTripController extends BaseResourceController
 
         try {
             $updated = $this->trips->confirmAllDelivered($model, $request->user());
+            $this->notifyTripManagers($request, $updated, 'Trip deliveries confirmed', 'confirmed deliveries for');
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
@@ -297,6 +359,7 @@ class DispatchTripController extends BaseResourceController
 
         try {
             $updated = $this->trips->completeTrip($model, $request->user());
+            $this->notifyTripManagers($request, $updated, 'Trip chart closed', 'closed');
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
@@ -313,6 +376,7 @@ class DispatchTripController extends BaseResourceController
 
         try {
             $updated = $this->trips->settleTrip($model, $request->user(), $data);
+            $this->notifyTripManagers($request, $updated, 'Trip cash settlement recorded', 'settled cash for');
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }
@@ -327,6 +391,7 @@ class DispatchTripController extends BaseResourceController
             return response()->json(['message' => 'Completed trips cannot be cancelled.'], 422);
         }
         $model->update(['status' => 'cancelled']);
+        $this->notifyTripManagers($request, $model->fresh(), 'Trip chart cancelled', 'cancelled');
 
         return response()->json($model->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']));
     }
@@ -356,5 +421,21 @@ class DispatchTripController extends BaseResourceController
         return response()->json(
             app(\App\Services\Fulfillment\TripReconciliationService::class)->build($model, $request->user()),
         );
+    }
+
+    protected function notifyTripManagers(Request $request, DispatchTrip $trip, string $title, string $verb): void
+    {
+        $user = $request->user();
+        if (! $user) {
+            return;
+        }
+
+        app(AdminNotificationService::class)->notifyPermission($user, 'fulfillment.manage', [
+            'type' => 'info',
+            'severity' => $trip->status === 'cancelled' ? 'warning' : 'default',
+            'title' => $title,
+            'message' => ($user->full_name ?: $user->username)." {$verb} trip {$trip->trip_code}.",
+            'action_url' => "/dispatch-trips/{$trip->id}",
+        ]);
     }
 }

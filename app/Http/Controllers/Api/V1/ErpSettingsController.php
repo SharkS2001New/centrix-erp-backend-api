@@ -342,7 +342,6 @@ class ErpSettingsController extends Controller
             'loading_sheet_show_trip_profit',
             'loading_sheet_default_checked_by',
             'enable_fulfillment_guidance',
-            'enable_product_shelf_location',
             'mobile_enable_driver_app',
             'mobile_enable_driver_attendance',
         ];
@@ -374,18 +373,6 @@ class ErpSettingsController extends Controller
             fn ($key) => in_array($key, $distributionKeys, true),
             ARRAY_FILTER_USE_KEY
         ));
-
-        $distributionEnabled = ($next['enable_distribution_ops'] ?? true) !== false
-            && $gate->distributionOpsEnabled();
-        if ($distributionEnabled) {
-            $workflow = OrderWorkflowService::forGate($gate);
-            $pipelineKeys = array_column($workflow->config()['pipeline'] ?? [], 'key');
-            if (! in_array('processed', $pipelineKeys, true)) {
-                throw ValidationException::withMessages([
-                    'assign_on_status' => 'Distribution requires the Processed workflow step to be enabled.',
-                ]);
-            }
-        }
 
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['distribution'] = $next;
@@ -426,7 +413,6 @@ class ErpSettingsController extends Controller
             'default_pos_sale_location',
             'default_distribution_sale_location',
             'stock_adjustment_approval_enabled',
-            'stock_transfer_approval_enabled',
         ];
 
         $stockSourceKeys = [
@@ -447,7 +433,6 @@ class ErpSettingsController extends Controller
             'retail_shop_wholesale_store_stock' => 'sometimes|boolean',
             'enable_barcode_scanner' => 'sometimes|boolean',
             'stock_adjustment_approval_enabled' => 'sometimes|boolean',
-            'stock_transfer_approval_enabled' => 'sometimes|boolean',
             'allow_negative_stock' => 'sometimes|boolean',
             'stock_alert_mode' => 'sometimes|in:per_product,global,both',
             'global_low_stock_threshold' => 'sometimes|nullable|numeric|min:0',

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\Damage;
 use App\Models\User;
+use App\Services\Inventory\DamageApprovalService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -27,20 +28,34 @@ class DamageController extends BaseResourceController
         $this->access()->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
         $this->access()->assertBranchAccess($user, (int) $data['branch_id']);
 
-        return DB::transaction(function () use ($data, $user, $request) {
-            $damage = Damage::create([
-                ...$data,
-                'reported_by' => $user->id,
-            ]);
+        if (! app(DamageApprovalService::class)->canApprove($user)) {
+            $actionRequest = app(DamageApprovalService::class)->requestCreate($user, $data);
 
-            $this->postDamageDeduction($damage, $user);
+            return response()->json([
+                'message' => 'Damage write-off submitted for admin approval.',
+                'pending_approval' => true,
+                'action_request_id' => (int) $actionRequest->id,
+            ], 202);
+        }
 
-            if ($this->auditable()) {
-                $this->auditLogger()->logModel($user, 'create', $damage, request: $request);
-            }
+        try {
+            return DB::transaction(function () use ($data, $user, $request) {
+                $damage = Damage::create([
+                    ...$data,
+                    'reported_by' => $user->id,
+                ]);
 
-            return response()->json($damage, 201);
-        });
+                $this->postDamageDeduction($damage, $user);
+
+                if ($this->auditable()) {
+                    $this->auditLogger()->logModel($user, 'create', $damage, request: $request);
+                }
+
+                return response()->json($damage, 201);
+            });
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
     }
 
     public function update(Request $request, string $id)
@@ -52,27 +67,31 @@ class DamageController extends BaseResourceController
         $data = $this->validateDamagePayload($request, partial: true);
         $oldValues = $damage->getAttributes();
 
-        return DB::transaction(function () use ($damage, $data, $user, $request, $oldValues) {
-            $this->reverseDamageDeduction($damage, $user);
+        try {
+            return DB::transaction(function () use ($damage, $data, $user, $request, $oldValues) {
+                $this->reverseDamageDeduction($damage, $user);
 
-            $damage->update($data);
-            $damage->refresh();
+                $damage->update($data);
+                $damage->refresh();
 
-            $this->postDamageDeduction($damage, $user);
+                $this->postDamageDeduction($damage, $user);
 
-            if ($this->auditable()) {
-                $this->auditLogger()->logModel(
-                    $user,
-                    'update',
-                    $damage,
-                    $oldValues,
-                    $damage->getAttributes(),
-                    $request,
-                );
-            }
+                if ($this->auditable()) {
+                    $this->auditLogger()->logModel(
+                        $user,
+                        'update',
+                        $damage,
+                        $oldValues,
+                        $damage->getAttributes(),
+                        $request,
+                    );
+                }
 
-            return response()->json($damage);
-        });
+                return response()->json($damage);
+            });
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
     }
 
     public function destroy(Request $request, string $id)
@@ -81,23 +100,27 @@ class DamageController extends BaseResourceController
         $user = $request->user();
         abort_unless($user, 401);
 
-        return DB::transaction(function () use ($damage, $user, $request) {
-            if ($this->auditable()) {
-                $this->auditLogger()->logModel(
-                    $user,
-                    'delete',
-                    $damage,
-                    $damage->getAttributes(),
-                    null,
-                    $request,
-                );
-            }
+        try {
+            return DB::transaction(function () use ($damage, $user, $request) {
+                if ($this->auditable()) {
+                    $this->auditLogger()->logModel(
+                        $user,
+                        'delete',
+                        $damage,
+                        $damage->getAttributes(),
+                        null,
+                        $request,
+                    );
+                }
 
-            $this->reverseDamageDeduction($damage, $user);
-            $damage->delete();
+                $this->reverseDamageDeduction($damage, $user);
+                $damage->delete();
 
-            return response()->json(null, 204);
-        });
+                return response()->json(null, 204);
+            });
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
     }
 
     /** @return array<string, mixed> */

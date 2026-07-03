@@ -15,6 +15,7 @@ use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\SalePaymentColumnMapper;
+use App\Services\Fulfillment\TripAutoCloseService;
 use App\Services\Notifications\CustomerNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -129,6 +130,7 @@ class PaymentOperationsController extends Controller
             }
 
             $sale = $sale->fresh();
+            app(TripAutoCloseService::class)->tryAutoCloseTripsForSale($sale, $user);
 
             if ($collectsReceivable) {
                 $gate = $this->erp->gateForUser($user);

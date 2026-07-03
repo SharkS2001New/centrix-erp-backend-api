@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\Fulfillment\MobileDriverService;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
+use Illuminate\Validation\ValidationException;
 
 class MobileDriverController extends Controller
 {
@@ -49,7 +50,23 @@ class MobileDriverController extends Controller
             'collect_amount' => 'nullable|numeric|min:0',
             'payment_method_code' => 'nullable|string|max:40',
             'payment_reference' => 'nullable|string|max:120',
+            'delivery_outcome' => 'nullable|in:complete,partial,failed',
+            'failure_reason' => 'nullable|string|max:255',
+            'return_reason' => 'nullable|string|max:255',
+            'lines' => 'nullable',
         ]);
+
+        if (isset($data['lines'])) {
+            $decoded = is_string($data['lines'])
+                ? json_decode((string) $data['lines'], true)
+                : $data['lines'];
+            if (! is_array($decoded)) {
+                throw ValidationException::withMessages([
+                    'lines' => ['Delivery lines must be valid JSON.'],
+                ]);
+            }
+            $data['lines'] = $decoded;
+        }
 
         try {
             $stop = $this->driverService->deliverStop(

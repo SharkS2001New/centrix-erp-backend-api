@@ -113,6 +113,7 @@ class MobileDriverAttendanceService
                 'branch_id' => $user->branch_id ? (int) $user->branch_id : null,
                 'user_id' => (int) $user->id,
                 'driver_id' => (int) $driver->id,
+                'employee_id' => $driver->employee_id ? (int) $driver->employee_id : null,
                 'sign_in_at' => now(),
                 'sign_in_latitude' => (float) $data['latitude'],
                 'sign_in_longitude' => (float) $data['longitude'],

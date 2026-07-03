@@ -427,7 +427,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
             Route::apiResource('payment-methods', PaymentMethodController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:admin.view|purchasing.view|payments.view|payments.manage'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:admin.view|purchasing.view|payments.view|payments.manage|driver.mobile'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
             Route::apiResource('kra-responses', KraResponseController::class)
                 ->middleware('erp.permission:admin.view');
@@ -896,7 +896,7 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:fulfillment.view');
             Route::apiResource('drivers', DriverController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage|hr.manage']);
             Route::get('vehicles/{vehicle}/deliveries', [VehicleController::class, 'deliveries'])
                 ->middleware('erp.permission:fulfillment.view');
             Route::apiResource('vehicles', VehicleController::class)

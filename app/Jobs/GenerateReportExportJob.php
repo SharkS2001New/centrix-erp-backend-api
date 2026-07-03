@@ -266,17 +266,6 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
             );
             $truncated = $truncated || $result['truncated'];
 
-            if (! empty($payload['legacy_merge']['enabled'])) {
-                $tasks->updateProgress($task, 72, 'Loading legacy archive data…');
-                $paginator->eachLegacyArchiveMerge(
-                    $path,
-                    $searchParams,
-                    $user,
-                    $onBatch,
-                    $onProgress,
-                    $task,
-                );
-            }
         };
     }
 

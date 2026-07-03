@@ -483,7 +483,8 @@ class DispatchTripService
         }
 
         $collected = (float) ($data['collected_cash'] ?? 0);
-        $expected = (float) ($trip->expected_cash ?? $this->computeExpectedCash($trip, $settings));
+        $reconciliation = app(TripReconciliationService::class)->build($trip, $user);
+        $expected = (float) ($reconciliation['cash']['outstanding_from_orders'] ?? 0);
 
         $trip->update([
             'expected_cash' => $expected,

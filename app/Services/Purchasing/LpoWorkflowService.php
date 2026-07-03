@@ -7,6 +7,7 @@ use App\Models\Organization;
 use App\Models\Supplier;
 use App\Models\User;
 use App\Services\LpoModuleService;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Notifications\OrganizationMailSender;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -66,7 +67,21 @@ class LpoWorkflowService
                 ]),
             };
 
-            return $lpo->fresh();
+            $fresh = $lpo->fresh();
+            if ($action === 'mark_checked' && (int) $fresh->lpo_status_code === self::STATUS_AWAITING_APPROVAL) {
+                app(LpoApprovalService::class)->requestApproval($user, $fresh);
+            }
+            if ($action === 'approve') {
+                app(ActionRequestService::class)->markResolvedFromDomain(
+                    'lpo_approval',
+                    'lpo_mst',
+                    (int) $fresh->lpo_no,
+                    'approved',
+                    $user,
+                );
+            }
+
+            return $fresh;
         });
     }
 
@@ -101,6 +116,15 @@ class LpoWorkflowService
         }
 
         $lpo->update(['lpo_status_code' => self::STATUS_AWAITING_SEND]);
+    }
+
+    public function approveFromActionRequest(LpoMst $lpo, User $user, Organization $organization): LpoMst
+    {
+        $settings = ProcurementSettingsResolver::forOrganization($organization);
+        $status = (int) ($lpo->lpo_status_code ?? 0);
+        $this->approve($lpo, $settings, $status);
+
+        return $lpo->fresh();
     }
 
     protected function markSent(

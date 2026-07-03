@@ -10,6 +10,7 @@ use App\Models\BranchStockTransfer;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
+use App\Services\Notifications\AdminNotificationService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -44,6 +45,13 @@ class BranchStockTransferController extends Controller
         $data = $request->validated();
         $user = $request->user();
         $result = $this->transferBetweenBranches($data, $user);
+        app(AdminNotificationService::class)->notifyPermission($user, 'inventory.manage', [
+            'type' => 'info',
+            'severity' => 'warning',
+            'title' => 'Branch stock transfer posted',
+            'message' => ($user->full_name ?: $user->username)." transferred {$result->quantity} {$result->product_code} between branches.",
+            'action_url' => '/inventory/transfers',
+        ]);
 
         return response()->json($result, 201);
     }

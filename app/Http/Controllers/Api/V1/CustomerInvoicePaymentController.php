@@ -8,6 +8,7 @@ use App\Models\Organization;
 use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Erp\ErpContext;
+use App\Services\Fulfillment\TripAutoCloseService;
 use App\Services\Notifications\CustomerNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -84,6 +85,7 @@ class CustomerInvoicePaymentController extends BaseResourceController
         }
 
         $payment->loadMissing('customerInvoice');
+        $payment->customerInvoice?->refresh();
 
         $organization = Organization::find($organizationId);
         if ($organization) {
@@ -92,6 +94,13 @@ class CustomerInvoicePaymentController extends BaseResourceController
 
         $sale = $payment->customerInvoice?->loadMissing('sale')?->sale;
         if ($sale) {
+            $sale = app(TripAutoCloseService::class)->syncSaleAfterAccountingPayment(
+                $sale,
+                $user,
+                (float) $payment->amount_paid,
+                (float) $payment->customerInvoice->amount_paid,
+                (int) $payment->payment_method_id,
+            );
             $gate = $this->erp->gateForUser($user);
             app(CustomerPaymentJournalService::class)->postIfEnabled(
                 $sale,

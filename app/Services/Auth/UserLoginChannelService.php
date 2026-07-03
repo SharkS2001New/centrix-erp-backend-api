@@ -114,7 +114,7 @@ class UserLoginChannelService
     /** @param  list<string>  $channels */
     public function syncLegacyMobileFlag(array $channels): bool
     {
-        return $channels === [self::MOBILE];
+        return in_array(self::MOBILE, $channels, true);
     }
 
     public function label(string $channel): string

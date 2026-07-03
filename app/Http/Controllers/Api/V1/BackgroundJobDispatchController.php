@@ -35,8 +35,6 @@ class BackgroundJobDispatchController extends Controller
             'meta' => ['sometimes', 'array'],
             'footer_row' => ['nullable', 'array'],
             'rows' => ['sometimes', 'array'],
-            'legacy_merge' => ['sometimes', 'array'],
-            'legacy_merge.enabled' => ['sometimes', 'boolean'],
         ]);
 
         $inlineMax = (int) config('background.inline_rows_max', 5000);

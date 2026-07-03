@@ -128,7 +128,6 @@ class ReportController extends Controller
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date',
             'branch_id' => 'nullable|integer',
-            'include_legacy_archive' => 'nullable|boolean',
         ]);
 
         $period = AppTimezone::reportPeriod(
@@ -333,31 +332,6 @@ class ReportController extends Controller
             'sales_by_channel' => $salesByChannel,
         ];
 
-        if ($request->boolean('include_legacy_archive')) {
-            $org = $this->erp->resolveOrganization($request);
-            $archive = app(LegacyArchiveReader::class);
-            if ($archive->isAvailable($org) && $archive->shouldMergeForRange($org, $from, $to)) {
-                $merged = $archive->mergeSummaryForReports($org, [
-                    'order_total' => $totalSales,
-                ], $from, $to);
-
-                if ($merged) {
-                    $payload['legacy_archive'] = [
-                        'label' => app(\App\Services\Legacy\OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive',
-                        'cutover_date' => $archive->cutoverDate($org)?->toDateString(),
-                        'summary' => $merged['archive'],
-                        'kpis' => [
-                            'total_sales' => [
-                                'live' => $totalSales,
-                                'archive' => $merged['archive']['order_total'],
-                                'combined' => $merged['combined']['order_total'],
-                            ],
-                        ],
-                    ];
-                }
-            }
-        }
-
         return response()->json($payload);
     }
 
@@ -437,36 +411,16 @@ class ReportController extends Controller
 
     public function salesByChannel(Request $request)
     {
-        $paginator = $this->reportFromView('v_sales_by_channel', $this->filters($request), [
+        return response()->json($this->reportFromView('v_sales_by_channel', $this->filters($request), [
             'sale_date', 'branch_id', 'channel', 'payment_status',
-        ]);
-
-        if (! $request->boolean('include_legacy_archive')) {
-            return response()->json($paginator);
-        }
-
-        return $this->withLegacyArchiveRows(
-            $request,
-            $paginator,
-            fn ($org, $from, $to, $page, $perPage) => app(LegacyArchiveReader::class)->paginatedSalesByChannelRows($org, $from, $to, $page, $perPage),
-        );
+        ]));
     }
 
     public function dailySales(Request $request)
     {
-        $paginator = $this->reportFromView('v_daily_sales', $this->filters($request), [
+        return response()->json($this->reportFromView('v_daily_sales', $this->filters($request), [
             'sale_day', 'branch_id', 'channel',
-        ]);
-
-        if (! $request->boolean('include_legacy_archive')) {
-            return response()->json($paginator);
-        }
-
-        return $this->withLegacyArchiveRows(
-            $request,
-            $paginator,
-            fn ($org, $from, $to, $page, $perPage) => app(LegacyArchiveReader::class)->paginatedDailySalesRows($org, $from, $to, $page, $perPage),
-        );
+        ]));
     }
 
     public function routeSales(Request $request)

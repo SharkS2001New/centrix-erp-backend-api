@@ -145,6 +145,11 @@ class Employee extends Model
         return $this->belongsTo(User::class, 'user_id');
     }
 
+    public function driver()
+    {
+        return $this->hasOne(Driver::class, 'employee_id');
+    }
+
     public function faceProfile()
     {
         return $this->hasOne(EmployeeFaceProfile::class, 'employee_id');

@@ -15,6 +15,12 @@ class NotificationActionUrlBuilder
             'discount' => '/pos',
             'stock_adjustment' => '/inventory/adjustments',
             'stock_transfer' => '/inventory/transfers',
+            'lpo' => '/suppliers/lpos/'.$referenceId,
+            'payroll_run' => '/hr/payroll/runs/'.$referenceId,
+            'cash_advance' => '/hr/cash-advances?advance_id='.$referenceId,
+            'expense' => $referenceId > 0 ? '/accounting/expenses?expense_id='.$referenceId : '/accounting/expenses',
+            'stock_take' => '/inventory/stock-take/'.$referenceId,
+            'damage' => $referenceId > 0 ? '/inventory/damages?damage_id='.$referenceId : '/inventory/damages',
             default => '/notifications',
         };
     }

@@ -104,7 +104,7 @@ class RolePermissionTest extends TestCase
         $this->assertNotNull($mobile);
         $this->assertSame('Mobile application', $mobile['label']);
         $this->assertTrue($mobile['standalone']);
-        $this->assertSame(['mobile'], collect($mobile['modules'])->pluck('module')->all());
+        $this->assertSame(['mobile_sales', 'mobile_driver'], collect($mobile['modules'])->pluck('module')->all());
     }
 
     public function test_clearing_role_permissions_persists_empty_set(): void
