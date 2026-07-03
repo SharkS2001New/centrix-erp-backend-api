@@ -21,7 +21,22 @@ abstract class BaseResourceController extends Controller
 
     protected function routeKeyColumn(): string
     {
-        return 'id';
+        return $this->modelKeyName();
+    }
+
+    protected function modelKeyName(): string
+    {
+        return (new ($this->modelClass()))->getKeyName();
+    }
+
+    protected function defaultListOrderColumn(): ?string
+    {
+        return $this->routeKeyColumn();
+    }
+
+    protected function defaultListOrderDirection(): string
+    {
+        return 'desc';
     }
 
     /** When true, list/show/update/delete are limited to the authenticated user's organization. */
@@ -54,9 +69,8 @@ abstract class BaseResourceController extends Controller
     protected function filterableColumns(): array
     {
         $cols = $this->fillableFields();
-        $cols[] = 'id';
         $key = $this->routeKeyColumn();
-        if ($key !== 'id' && ! in_array($key, $cols, true)) {
+        if (! in_array($key, $cols, true)) {
             $cols[] = $key;
         }
 
@@ -151,7 +165,12 @@ abstract class BaseResourceController extends Controller
             $query->where($searchCol, 'like', "%{$q}%");
         }
         $perPage = min((int) $request->input('per_page', 25), 200);
-        $this->applyListOrdering($request, $query, 'id', 'desc');
+        $this->applyListOrdering(
+            $request,
+            $query,
+            $this->defaultListOrderColumn(),
+            $this->defaultListOrderDirection(),
+        );
 
         return response()->json($query->paginate($perPage));
     }

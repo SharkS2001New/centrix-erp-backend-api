@@ -178,6 +178,40 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertFalse($gate->shouldReserveStockOnTransition($service, 'unpaid', 'backend'));
     }
 
+    public function test_resolve_status_after_payment_advances_deferred_fulfillment_to_terminal(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'order_workflow' => [
+                        'steps' => [
+                            ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+                            ['status' => 'pending_payment', 'label' => 'Partially paid', 'enabled' => true],
+                            ['status' => 'paid', 'label' => 'Paid', 'enabled' => true],
+                            ['status' => 'processed', 'label' => 'Processed', 'enabled' => true],
+                            ['status' => 'delivered', 'label' => 'Delivered', 'enabled' => true],
+                            ['status' => 'completed', 'label' => 'Completed', 'enabled' => true],
+                        ],
+                        'checkout' => [
+                            'full_paid' => ['backend' => 'paid'],
+                            'partial' => 'pending_payment',
+                            'unpaid' => ['backend' => 'unpaid'],
+                        ],
+                    ],
+                ],
+            ],
+        ]);
+
+        $gate = new \App\Services\Erp\CapabilityGate($org);
+        $service = OrderWorkflowService::forGate($gate);
+
+        $this->assertSame('paid', $service->resolveStatusAfterPayment('backend', 'unpaid', 100, 100, false));
+        $this->assertSame('pending_payment', $service->resolveStatusAfterPayment('backend', 'unpaid', 50, 100, false));
+        $this->assertSame('delivered', $service->resolveStatusAfterPayment('backend', 'delivered', 50, 100, false));
+        $this->assertSame('completed', $service->resolveStatusAfterPayment('backend', 'delivered', 100, 100, false));
+        $this->assertSame('completed', $service->resolveStatusAfterPayment('backend', 'processed', 100, 100, false));
+    }
+
     public function test_restorable_to_cart_statuses_follow_org_terminal_and_checkout_re_edit(): void
     {
         $org = new \App\Models\Organization([

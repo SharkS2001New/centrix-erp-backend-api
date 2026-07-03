@@ -397,6 +397,65 @@ class OrderWorkflowService
         return $this->pickEnabledStatus((string) ($checkout['unpaid'] ?? 'unpaid'), $workflow);
     }
 
+    /**
+     * Resolve workflow status after recording payment on an existing order.
+     * When fulfillment advanced while payment was deferred (e.g. delivered + unpaid),
+     * full payment advances to the last pipeline step instead of regressing to paid.
+     */
+    public function resolveStatusAfterPayment(
+        string $channel,
+        string $currentStatus,
+        float $newPaid,
+        float $total,
+        bool $isCredit,
+        string $paymentMethodCode = 'CASH',
+        bool $allowPartialPayment = false,
+    ): string {
+        $channel = $this->normalizeSalesChannel($channel);
+        $checkoutStatus = $this->resolveCheckoutStatus(
+            $channel,
+            $isCredit,
+            $newPaid,
+            $total,
+            $paymentMethodCode,
+            $allowPartialPayment,
+        );
+
+        $fullyPaid = $newPaid + 0.01 >= $total && $total > 0;
+        if (! $fullyPaid) {
+            return $this->isPaymentWorkflowStatus($currentStatus, $channel)
+                ? $checkoutStatus
+                : $currentStatus;
+        }
+
+        if ($this->isPaymentWorkflowStatus($currentStatus, $channel)) {
+            return $checkoutStatus;
+        }
+
+        $workflow = $this->forChannel($channel);
+        $fullPaidStatus = (string) ($workflow['checkout']['full_paid'] ?? 'paid');
+        $lastStatus = $this->lastPipelineStatus($channel);
+
+        if ($this->isAtOrPastStatus($currentStatus, $fullPaidStatus, $channel)) {
+            if ($lastStatus && ! $this->isAtOrPastStatus($currentStatus, $lastStatus, $channel)) {
+                return $this->pickEnabledStatus($lastStatus, $workflow);
+            }
+
+            return $currentStatus;
+        }
+
+        return $checkoutStatus;
+    }
+
+    public function isPaymentWorkflowStatus(string $status, ?string $channel = null): bool
+    {
+        $aligned = $channel
+            ? $this->alignStatusToPipeline($status, $channel)
+            : $status;
+
+        return in_array($aligned, ['unpaid', 'pending_payment', 'paid'], true);
+    }
+
     public function resolveSaveStatus(string $channel, bool $hold = false): string
     {
         if ($hold) {

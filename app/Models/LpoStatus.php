@@ -9,6 +9,7 @@ class LpoStatus extends Model
     use HasFactory;
     protected $table = 'lpo_statuses';
     protected $primaryKey = 'status_code';
+    public $incrementing = false;
     public $timestamps = false;
     protected $fillable = [
         'status_code',

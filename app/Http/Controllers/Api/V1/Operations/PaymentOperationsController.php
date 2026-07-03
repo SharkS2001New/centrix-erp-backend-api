@@ -82,11 +82,12 @@ class PaymentOperationsController extends Controller
             $method = PaymentMethod::find($payment['payment_method_id']);
             $paymentMethodCode = $method?->method_code ?? 'CASH';
 
-            $orderStatus = $workflow->resolveCheckoutStatus(
-                $sale->channel,
-                (bool) $sale->is_credit_sale,
+            $orderStatus = $workflow->resolveStatusAfterPayment(
+                (string) $sale->channel,
+                (string) $sale->status,
                 $newPaid,
                 (float) $sale->order_total,
+                (bool) $sale->is_credit_sale,
                 $paymentMethodCode,
                 ! empty($salesSettings['allow_credit_pay_now']),
             );
