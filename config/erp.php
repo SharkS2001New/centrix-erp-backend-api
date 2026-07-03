@@ -390,6 +390,7 @@ return [
             'mobile_checkout_mode' => 'save_only',
             'mobile_product_list_mode' => 'in_stock_only',
             'mobile_enable_field_attendance' => false,
+            'mobile_show_customer_phone' => true,
             'require_pos_till_float' => false,
             'require_backoffice_till_float' => false,
             'blind_till_close' => false,
