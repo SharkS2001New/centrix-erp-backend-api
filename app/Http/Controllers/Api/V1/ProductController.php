@@ -10,6 +10,7 @@ use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\OpeningStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Erp\ErpContext;
+use App\Services\Sales\MobileProductListSettings;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -91,7 +92,20 @@ class ProductController extends BaseResourceController
             return false;
         }
 
-        return $this->salesLoginChannel($request) === 'mobile';
+        if ($this->salesLoginChannel($request) !== 'mobile') {
+            return false;
+        }
+
+        $user = $request->user();
+        if (! $user) {
+            return true;
+        }
+
+        $gate = $this->erp->gateForUser($user);
+
+        return app(MobileProductListSettings::class)->filtersToInStockOnly(
+            $gate->moduleSettings('sales'),
+        );
     }
 
     protected function salesLoginChannel(?Request $request): string
@@ -298,7 +312,9 @@ class ProductController extends BaseResourceController
         $rules['opening_stock.branch_id'] = 'required_with:opening_stock|integer|exists:branches,id';
         $rules['opening_stock.shop_quantity'] = 'nullable|numeric|min:0';
         $rules['opening_stock.store_quantity'] = 'nullable|numeric|min:0';
+        $rules['shelf_location'] = 'nullable|string|max:50';
         $data = $request->validate($rules);
+        $data = $this->filterProductWriteData($request, $data);
 
         if (empty($data['product_code'])) {
             $orgId = (int) ($request->user()?->organization_id ?? $data['organization_id'] ?? 0);
@@ -374,8 +390,10 @@ class ProductController extends BaseResourceController
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $rules['catalog_scope'] = 'nullable|in:organization,branch';
         $rules['branch_id'] = 'nullable|integer|exists:branches,id';
+        $rules['shelf_location'] = 'nullable|string|max:50';
         $data = $request->validate($rules);
         unset($data['organization_id']);
+        $data = $this->filterProductWriteData($request, $data);
 
         if ($request->user()) {
             $data['updated_by'] = $request->user()->id;
@@ -472,5 +490,18 @@ class ProductController extends BaseResourceController
             'organization_id' => $product->organization_id ?? $user->organization_id,
             'changed_at' => now(),
         ]);
+    }
+
+    /** @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    protected function filterProductWriteData(Request $request, array $data): array
+    {
+        $user = $request->user();
+        if ($user && ! $this->erp->gateForUser($user)->productShelfLocationEnabled()) {
+            unset($data['shelf_location']);
+        }
+
+        return $data;
     }
 }

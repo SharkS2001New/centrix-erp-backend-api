@@ -14,6 +14,7 @@ use App\Services\Notifications\Handlers\JournalEntryActionRequestHandler;
 use App\Services\Notifications\Handlers\LeaveActionRequestHandler;
 use App\Services\Notifications\Handlers\OrderCancellationActionRequestHandler;
 use App\Services\Notifications\Handlers\StockAdjustmentActionRequestHandler;
+use App\Services\Notifications\Handlers\StockTransferActionRequestHandler;
 use App\Services\Notifications\Handlers\SupplierReturnActionRequestHandler;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -33,6 +34,7 @@ class ActionRequestService
         LeaveActionRequestHandler $leaveHandler,
         JournalEntryActionRequestHandler $journalHandler,
         StockAdjustmentActionRequestHandler $stockAdjustmentHandler,
+        StockTransferActionRequestHandler $stockTransferHandler,
         CustomerReturnActionRequestHandler $customerReturnHandler,
     ) {
         $this->handlers = collect([
@@ -42,6 +44,7 @@ class ActionRequestService
             $leaveHandler,
             $journalHandler,
             $stockAdjustmentHandler,
+            $stockTransferHandler,
             $customerReturnHandler,
         ])->keyBy(fn (ActionRequestHandler $handler) => $handler->type());
     }

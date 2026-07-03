@@ -105,6 +105,11 @@ class DispatchTrip extends Model
         return $this->hasOne(LoadingList::class, 'trip_id');
     }
 
+    public function pickingList(): HasOne
+    {
+        return $this->hasOne(PickingList::class, 'trip_id');
+    }
+
     public function podRecords()
     {
         return $this->hasMany(PodRecord::class, 'trip_id');

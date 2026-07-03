@@ -26,12 +26,15 @@ use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\CompanyPremisesController;
 use App\Http\Controllers\Api\V1\FieldRepHrLinkageController;
 use App\Http\Controllers\Api\V1\MobileFieldAttendanceController;
+use App\Http\Controllers\Api\V1\MobileDriverAttendanceAdminController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 use App\Http\Controllers\Api\V1\Operations\KraProductRegistrationController;
 use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MobileAttendanceController;
+use App\Http\Controllers\Api\V1\Operations\MobileDriverController;
+use App\Http\Controllers\Api\V1\Operations\MobileDriverAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\MobileSalesController;
 
 Route::middleware('auth:sanctum')->group(function () {
@@ -54,6 +57,21 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('attendance/suspend', [MobileAttendanceController::class, 'suspend']);
         Route::post('attendance/resume', [MobileAttendanceController::class, 'resume']);
         Route::post('attendance/sign-out', [MobileAttendanceController::class, 'signOut']);
+    });
+
+    Route::middleware(['erp.module:sales.mobile', 'erp.module:distribution', 'erp.permission:driver.mobile'])->prefix('mobile/driver')->group(function () {
+        Route::get('attendance/session', [MobileDriverAttendanceController::class, 'session']);
+        Route::get('attendance/summary', [MobileDriverAttendanceController::class, 'summary']);
+        Route::post('attendance/sign-in', [MobileDriverAttendanceController::class, 'signIn']);
+        Route::post('attendance/suspend', [MobileDriverAttendanceController::class, 'suspend']);
+        Route::post('attendance/resume', [MobileDriverAttendanceController::class, 'resume']);
+        Route::post('attendance/sign-out', [MobileDriverAttendanceController::class, 'signOut']);
+        Route::get('trips/today', [MobileDriverController::class, 'todayTrips']);
+        Route::get('trips/{tripId}', [MobileDriverController::class, 'showTrip']);
+        Route::get('trips/{tripId}/stops', [MobileDriverController::class, 'tripStops']);
+        Route::post('trips/{tripId}/settle', [MobileDriverController::class, 'settleTrip']);
+        Route::get('stops/{saleId}', [MobileDriverController::class, 'showStop']);
+        Route::post('stops/{saleId}/deliver', [MobileDriverController::class, 'deliverStop']);
     });
 
     // ---- Sales ----
@@ -128,6 +146,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware(['erp.module:inventory', 'erp.permission:inventory.manage'])->prefix('inventory')->group(function () {
         Route::post('transfer', [StockTransferController::class, 'store']);
+        Route::post('transfer/request', [StockTransferController::class, 'requestTransfer']);
         Route::get('branch-transfers', [BranchStockTransferController::class, 'index']);
         Route::post('branch-transfer', [BranchStockTransferController::class, 'store']);
         Route::post('receive', [LpoReceiveController::class, 'store']);
@@ -199,6 +218,12 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hr.manage');
         Route::post('field-sessions/{sessionId}/reopen', [MobileFieldAttendanceController::class, 'reopen'])
             ->middleware('erp.permission:hr.manage');
+        Route::get('driver-sessions', [MobileDriverAttendanceAdminController::class, 'index'])
+            ->middleware('erp.permission:hr.attendance.view|hr.view|fulfillment.view');
+        Route::get('driver-sessions/{sessionId}', [MobileDriverAttendanceAdminController::class, 'show'])
+            ->middleware('erp.permission:hr.attendance.view|hr.view|fulfillment.view');
+        Route::post('driver-sessions/{sessionId}/reopen', [MobileDriverAttendanceAdminController::class, 'reopen'])
+            ->middleware('erp.permission:hr.manage|fulfillment.manage');
     });
 
     // ---- HR / Payroll ----

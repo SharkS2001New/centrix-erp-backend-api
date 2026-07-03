@@ -14,6 +14,7 @@ class NotificationActionUrlBuilder
             'order_cancel' => '/sales/orders/'.$referenceId,
             'discount' => '/pos',
             'stock_adjustment' => '/inventory/adjustments',
+            'stock_transfer' => '/inventory/transfers',
             default => '/notifications',
         };
     }

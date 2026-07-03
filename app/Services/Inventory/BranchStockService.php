@@ -221,9 +221,10 @@ class BranchStockService
             if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
                 $shopAvailable = $this->availableQuantitySql($branchId, 'shop', $alias);
                 $storeAvailable = $this->availableQuantitySql($branchId, 'store', $alias);
+                // Wholesale lines draw from store; retail lines from shop. W/R products can sell from either.
                 $query->whereRaw("(
-                    (products.sell_on_retail = 1 AND ({$shopAvailable}) > 0)
-                    OR (COALESCE(products.sell_on_retail, 0) = 0 AND ({$storeAvailable}) > 0)
+                    (COALESCE(products.sell_on_retail, 0) = 0 AND ({$storeAvailable}) > 0)
+                    OR (products.sell_on_retail = 1 AND (({$shopAvailable}) > 0 OR ({$storeAvailable}) > 0))
                 )");
 
                 return;

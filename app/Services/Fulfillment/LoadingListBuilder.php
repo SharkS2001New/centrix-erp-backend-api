@@ -19,7 +19,7 @@ class LoadingListBuilder
     public function __construct(protected ErpContext $erp) {}
 
     /** @return array<int, int> */
-    protected function eligibleSaleIdsForTrip(DispatchTrip $trip): array
+    public function eligibleSaleIdsForTrip(DispatchTrip $trip): array
     {
         $trip->loadMissing(['sales.customer', 'branch']);
         $organizationId = $trip->branch?->organization_id

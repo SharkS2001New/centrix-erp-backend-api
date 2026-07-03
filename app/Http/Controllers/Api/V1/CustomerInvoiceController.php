@@ -4,12 +4,38 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\CustomerInvoice;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class CustomerInvoiceController extends BaseResourceController
 {
     protected function modelClass(): string
     {
         return CustomerInvoice::class;
+    }
+
+    protected function scopesByBranch(): bool
+    {
+        return true;
+    }
+
+    protected function baseQuery(Request $request)
+    {
+        $query = CustomerInvoice::query();
+        $user = $request->user();
+
+        if (! $user) {
+            return $query;
+        }
+
+        if (Schema::hasColumn('customer_invoices', 'organization_id')) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
+        } else {
+            $this->access()->scopeOrganizationViaBranch($query, $user, 'branch_id', $request);
+        }
+
+        $this->access()->scopeBranchIfLimited($query, $user);
+
+        return $query;
     }
 
     /** @return array<string, mixed> */
@@ -25,11 +51,26 @@ class CustomerInvoiceController extends BaseResourceController
         return $payload;
     }
 
+    /** @return array<string, mixed> */
+    protected function customerEagerLoad(Request $request): array
+    {
+        $orgId = $this->access()->organizationId($request->user(), $request);
+
+        return [
+            'customer' => function ($query) use ($orgId) {
+                $query->select('customer_num', 'customer_name', 'organization_id');
+                if ($orgId) {
+                    $query->where('customers.organization_id', $orgId);
+                }
+            },
+        ];
+    }
+
     public function index(Request $request)
     {
         $query = $this->baseQuery($request)
             ->whereNull('deleted_at')
-            ->with(['customer:customer_num,customer_name,organization_id']);
+            ->with($this->customerEagerLoad($request));
 
         if ($request->filled('customer_num')) {
             $query->where('customer_num', $request->input('customer_num'));
@@ -68,7 +109,7 @@ class CustomerInvoiceController extends BaseResourceController
     public function show(Request $request, string $id)
     {
         $invoice = $this->findScopedModel($request, $id)
-            ->load(['customer:customer_num,customer_name,organization_id']);
+            ->load($this->customerEagerLoad($request));
 
         return response()->json($this->presentInvoice($invoice));
     }

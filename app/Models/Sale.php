@@ -31,6 +31,13 @@ class Sale extends Model
         return $this->belongsTo(User::class, 'cashier_id');
     }
 
+    public function dispatchTrips()
+    {
+        return $this->belongsToMany(DispatchTrip::class, 'dispatch_trip_sales', 'sale_id', 'trip_id')
+            ->withPivot('stop_seq')
+            ->orderBy('dispatch_trip_sales.stop_seq');
+    }
+
     public function organization()
     {
         return $this->belongsTo(Organization::class, 'organization_id');

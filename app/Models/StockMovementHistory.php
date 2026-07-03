@@ -9,6 +9,9 @@ class StockMovementHistory extends Model
     use HasFactory;
 
     protected $table = 'stock_movement_history';
+
+    public const UPDATED_AT = null;
+
     protected $fillable = [
         'product_code', 'branch_id', 'quantity_moved', 'from_location', 'to_location',
         'moved_by', 'move_status',

@@ -139,7 +139,12 @@ class ReportBuilderService
             }
 
             $fields = [];
+            $fieldKeys = array_keys($source['fields']);
+            $hasProductName = in_array('product_name', $fieldKeys, true);
             foreach ($source['fields'] as $fieldKey => $field) {
+                if ($hasProductName && $fieldKey === 'product_code') {
+                    continue;
+                }
                 $fields[] = [
                     'key' => $fieldKey,
                     'label' => $field['label'],

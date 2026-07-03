@@ -860,6 +860,12 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:fulfillment.manage');
             Route::get('dispatch-trips/{trip}/loading-list', [DispatchTripController::class, 'loadingList'])
                 ->middleware('erp.permission:fulfillment.view');
+            Route::get('dispatch-trips/{trip}/picking-list', [DispatchTripController::class, 'pickingList'])
+                ->middleware('erp.permission:fulfillment.view');
+            Route::patch('dispatch-trips/{trip}/picking-list/lines', [DispatchTripController::class, 'updatePickingListLines'])
+                ->middleware('erp.permission:fulfillment.manage');
+            Route::post('dispatch-trips/{trip}/picking-list/complete', [DispatchTripController::class, 'completePickingList'])
+                ->middleware('erp.permission:fulfillment.manage');
             Route::get('dispatch-trips/{trip}/reconciliation', [DispatchTripController::class, 'reconciliation'])
                 ->middleware('erp.permission:fulfillment.view');
             Route::post('dispatch-trips/{trip}/loading-list/lock', [DispatchTripController::class, 'lockLoadingList'])

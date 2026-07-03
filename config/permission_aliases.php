@@ -18,6 +18,14 @@ return [
         'mobile.stock.view',
         'mobile.routes.view',
     ],
+    'driver.mobile' => [
+        'mobile.drivers.view',
+        'mobile.drivers.deliver',
+    ],
+    'driver.deliver' => [
+        'mobile.drivers.deliver',
+        'sales.orders.edit',
+    ],
     'sales.manage' => [
         'sales.orders.edit',
         'sales.orders.delete',

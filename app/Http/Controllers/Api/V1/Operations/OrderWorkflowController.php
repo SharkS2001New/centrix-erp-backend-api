@@ -50,6 +50,22 @@ class OrderWorkflowController extends Controller
         return response()->json($updated);
     }
 
+    /** Public wrapper for internal/mobile delivery flows. */
+    public function transitionSaleForUser(
+        Sale $sale,
+        string $toStatus,
+        User $user,
+        array $meta = [],
+    ): Sale {
+        return $this->transitionSale(
+            $sale,
+            $toStatus,
+            $user,
+            $meta,
+            $this->erp->gateForUser($user),
+        );
+    }
+
     public function requestCancellation(Request $request, int $saleId)
     {
         $data = $request->validate([

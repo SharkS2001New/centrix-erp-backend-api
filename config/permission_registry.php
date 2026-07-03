@@ -56,6 +56,7 @@ return [
                 'catalog' => ['label' => 'Product search', 'actions' => ['view']],
                 'stock' => ['label' => 'Stock levels', 'actions' => ['view']],
                 'routes' => ['label' => 'Route selection', 'actions' => ['view']],
+                'drivers' => ['label' => 'Driver deliveries', 'actions' => ['view', 'deliver']],
             ],
         ],
         'pos' => [

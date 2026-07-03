@@ -3,6 +3,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class CustomerInvoice extends Model
 {
@@ -16,14 +17,13 @@ class CustomerInvoice extends Model
     ];
     protected $casts = ['deleted_at' => 'datetime'];
 
-    public function sale()
+    public function sale(): BelongsTo
     {
         return $this->belongsTo(Sale::class, 'sale_id');
     }
 
-    public function customer()
+    public function customer(): BelongsTo
     {
-        return $this->hasOne(Customer::class, 'customer_num', 'customer_num')
-            ->whereColumn('customers.organization_id', 'customer_invoices.organization_id');
+        return $this->belongsTo(Customer::class, 'customer_num', 'customer_num');
     }
 }

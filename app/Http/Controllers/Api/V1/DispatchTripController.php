@@ -197,6 +197,57 @@ class DispatchTripController extends BaseResourceController
         ]);
     }
 
+    public function pickingList(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $builder = app(\App\Services\Fulfillment\PickingListBuilder::class);
+        $pickingList = $builder->syncPickingList($model);
+        $pickingList->load(['route', 'trip.route', 'trip.driver', 'trip.vehicle']);
+
+        return response()->json([
+            'picking_list' => $pickingList,
+        ]);
+    }
+
+    public function updatePickingListLines(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $data = $request->validate([
+            'lines' => 'required|array|min:1',
+            'lines.*.id' => 'nullable|integer',
+            'lines.*.product_code' => 'nullable|string|max:200',
+            'lines.*.picked_qty' => 'required|numeric|min:0',
+            'lines.*.shortage_reason' => 'nullable|string|max:255',
+        ]);
+
+        $builder = app(\App\Services\Fulfillment\PickingListBuilder::class);
+        $pickingList = $builder->syncPickingList($model);
+        $updated = $builder->updatePickedQuantities($pickingList, $data['lines']);
+
+        return response()->json([
+            'picking_list' => $updated,
+        ]);
+    }
+
+    public function completePickingList(Request $request, int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $data = $request->validate([
+            'picker_name' => 'nullable|string|max:200',
+        ]);
+
+        $builder = app(\App\Services\Fulfillment\PickingListBuilder::class);
+        $pickingList = $builder->syncPickingList($model);
+        $updated = $builder->completePickingList(
+            $pickingList,
+            $data['picker_name'] ?? null,
+        );
+
+        return response()->json([
+            'picking_list' => $updated,
+        ]);
+    }
+
     public function lockLoadingList(Request $request, int $trip)
     {
         $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());

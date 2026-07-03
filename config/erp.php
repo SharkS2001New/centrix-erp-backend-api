@@ -174,6 +174,7 @@ return [
         ],
         'distribution' => [
             'enable_fulfillment_guidance',
+            'enable_product_shelf_location',
         ],
         'finance' => [
             'enable_mpesa_stk',
@@ -384,6 +385,7 @@ return [
             'mobile_allow_offline_orders' => false,
             'mobile_checkout_location_radius_metres' => 5,
             'mobile_checkout_mode' => 'save_only',
+            'mobile_product_list_mode' => 'in_stock_only',
             'mobile_enable_field_attendance' => false,
             'require_pos_till_float' => false,
             'require_backoffice_till_float' => false,
@@ -425,6 +427,7 @@ return [
             'enforce_vehicle_capacity' => true,
             'enable_cod_reconciliation' => true,
             'require_trip_cash_settlement' => false,
+            'require_picking_before_lock' => false,
             'include_normal_orders_in_loading_list' => true,
             'loading_sheet_footer_lines' => '',
             'loading_sheet_show_signatures' => true,
@@ -435,6 +438,9 @@ return [
             'loading_sheet_show_trip_profit' => true,
             'loading_sheet_default_checked_by' => '',
             'enable_fulfillment_guidance' => false,
+            'enable_product_shelf_location' => false,
+            'mobile_enable_driver_app' => true,
+            'mobile_enable_driver_attendance' => false,
         ],
         'inventory' => [
             'default_receive_location' => 'store',
@@ -443,6 +449,7 @@ return [
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
             'stock_adjustment_approval_enabled' => false,
+            'stock_transfer_approval_enabled' => false,
         ],
         'finance' => [
             'enable_mpesa_stk' => true,

@@ -10,6 +10,7 @@ use App\Services\Erp\GeneralSettingsResolver;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\Sales\MobileCheckoutSettings;
+use App\Services\Sales\MobileProductListSettings;
 
 class CapabilityGate
 {
@@ -280,6 +281,30 @@ class CapabilityGate
         return (bool) ($sales['enable_mobile_orders'] ?? true);
     }
 
+    /** Driver delivery module on the mobile app (requires mobile sales + distribution). */
+    public function driverMobileEnabled(): bool
+    {
+        if (! $this->mobileSalesEnabled() || ! $this->distributionOpsEnabled()) {
+            return false;
+        }
+
+        $distribution = $this->distributionSettings();
+
+        return (bool) ($distribution['mobile_enable_driver_app'] ?? true);
+    }
+
+    /** Driver sign-in photo + GPS on the mobile app. */
+    public function driverAttendanceEnabled(): bool
+    {
+        if (! $this->driverMobileEnabled()) {
+            return false;
+        }
+
+        $distribution = $this->distributionSettings();
+
+        return (bool) ($distribution['mobile_enable_driver_attendance'] ?? false);
+    }
+
     public function posOrderEditEnabled(): bool
     {
         if (! $this->enabled('sales.pos')) {
@@ -540,10 +565,16 @@ class CapabilityGate
             'deployment_profile' => $profile,
             'profile_label' => $profileConfig['label'] ?? $profile,
             'distribution_ops_enabled' => $this->distributionOpsEnabled(),
+            'product_shelf_location_enabled' => $this->productShelfLocationEnabled(),
+            'driver_mobile_enabled' => $this->driverMobileEnabled(),
+            'driver_attendance_enabled' => $this->driverAttendanceEnabled(),
             'mobile_orders_enabled' => $this->mobileSalesEnabled(),
             'mobile_checkout_mode' => $this->mobileSalesEnabled()
                 ? app(MobileCheckoutSettings::class)->mode($this->moduleSettings('sales'))
                 : MobileCheckoutSettings::MODE_SAVE_ONLY,
+            'mobile_product_list_mode' => $this->mobileSalesEnabled()
+                ? app(MobileProductListSettings::class)->mode($this->moduleSettings('sales'))
+                : MobileProductListSettings::MODE_IN_STOCK_ONLY,
             'pos_order_edit_enabled' => $this->posOrderEditEnabled(),
             'backoffice_order_edit_enabled' => $this->backofficeOrderEditEnabled(),
             'platform_mpesa_stk_enabled' => $this->mpesaStkPlatformEnabled(),
@@ -615,6 +646,7 @@ class CapabilityGate
                     $moduleSettings['sales']['mobile_allow_offline_orders'],
                     $moduleSettings['sales']['mobile_checkout_location_radius_metres'],
                     $moduleSettings['sales']['mobile_checkout_mode'],
+                    $moduleSettings['sales']['mobile_product_list_mode'],
                     $moduleSettings['sales']['mobile_enable_field_attendance'],
                 );
             }
@@ -627,6 +659,17 @@ class CapabilityGate
     {
         // Platform enables the distribution module → operational features on by default.
         return $this->enabled('distribution');
+    }
+
+    public function productShelfLocationEnabled(): bool
+    {
+        if (! $this->distributionOpsEnabled()) {
+            return false;
+        }
+
+        $settings = $this->distributionSettings();
+
+        return ! empty($settings['enable_product_shelf_location']);
     }
 
     /** @return array<string, mixed> */

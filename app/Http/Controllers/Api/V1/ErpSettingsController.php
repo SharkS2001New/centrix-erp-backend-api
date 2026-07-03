@@ -97,6 +97,7 @@ class ErpSettingsController extends Controller
             'mobile_allow_offline_orders',
             'mobile_checkout_location_radius_metres',
             'mobile_checkout_mode',
+            'mobile_product_list_mode',
             'mobile_enable_field_attendance',
             'require_pos_till_float',
             'require_backoffice_till_float',
@@ -165,6 +166,7 @@ class ErpSettingsController extends Controller
             'orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
             'mobile_checkout_mode' => 'sometimes|in:save_only,payment,ask',
+            'mobile_product_list_mode' => 'sometimes|in:in_stock_only,all_products',
             'show_receipt_payment_details' => 'sometimes|boolean',
             'show_invoice_payment_details' => 'sometimes|boolean',
             'use_same_payment_details_for_routes' => 'sometimes|boolean',
@@ -329,6 +331,7 @@ class ErpSettingsController extends Controller
             'enforce_vehicle_capacity',
             'enable_cod_reconciliation',
             'require_trip_cash_settlement',
+            'require_picking_before_lock',
             'include_normal_orders_in_loading_list',
             'loading_sheet_footer_lines',
             'loading_sheet_show_signatures',
@@ -339,6 +342,9 @@ class ErpSettingsController extends Controller
             'loading_sheet_show_trip_profit',
             'loading_sheet_default_checked_by',
             'enable_fulfillment_guidance',
+            'enable_product_shelf_location',
+            'mobile_enable_driver_app',
+            'mobile_enable_driver_attendance',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -408,6 +414,7 @@ class ErpSettingsController extends Controller
             'default_pos_sale_location',
             'default_distribution_sale_location',
             'stock_adjustment_approval_enabled',
+            'stock_transfer_approval_enabled',
         ];
 
         $stockSourceKeys = [
@@ -428,6 +435,7 @@ class ErpSettingsController extends Controller
             'retail_shop_wholesale_store_stock' => 'sometimes|boolean',
             'enable_barcode_scanner' => 'sometimes|boolean',
             'stock_adjustment_approval_enabled' => 'sometimes|boolean',
+            'stock_transfer_approval_enabled' => 'sometimes|boolean',
             'allow_negative_stock' => 'sometimes|boolean',
             'stock_alert_mode' => 'sometimes|in:per_product,global,both',
             'global_low_stock_threshold' => 'sometimes|nullable|numeric|min:0',

@@ -136,15 +136,11 @@ return [
 
         'Driver' => [
             'scope' => 'branch',
-            'description' => 'Mobile delivery runs: view route orders, capture POD, and update delivery status.',
-            'requires_modules' => ['sales.mobile'],
+            'description' => 'Mobile delivery runs: view assigned trip stops, navigate to customers, capture POD, and mark deliveries.',
+            'requires_modules' => ['sales.mobile', 'distribution'],
             'permissions' => [
-                'mobile.dashboard.view',
-                'mobile.orders.view',
-                'mobile.orders.edit',
-                'mobile.routes.view',
-                'mobile.customers.view',
-                'mobile.catalog.view',
+                'mobile.drivers.view',
+                'mobile.drivers.deliver',
             ],
         ],
 

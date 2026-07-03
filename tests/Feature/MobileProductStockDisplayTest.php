@@ -28,6 +28,17 @@ class MobileProductStockDisplayTest extends TestCase
         $org->update(['module_settings' => $settings]);
     }
 
+    protected function setMobileProductListMode(string $mode): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'mobile_product_list_mode' => $mode,
+        ]);
+        $org->update(['module_settings' => $settings]);
+    }
+
     protected function makeMobileUser(): User
     {
         $admin = User::where('username', 'admin')->firstOrFail();
@@ -88,6 +99,37 @@ class MobileProductStockDisplayTest extends TestCase
         $this->assertNotContains($outOfStock->product_code, $codes);
     }
 
+    public function test_mobile_product_list_includes_out_of_stock_when_configured(): void
+    {
+        $this->setMobileProductListMode('all_products');
+        $user = $this->makeMobileUser();
+        $token = $this->loginMobile($user);
+        $inStock = Product::firstOrFail();
+        $outOfStock = Product::query()
+            ->where('product_code', '!=', $inStock->product_code)
+            ->firstOrFail();
+
+        CurrentStock::query()
+            ->where('product_code', $inStock->product_code)
+            ->where('branch_id', $user->branch_id)
+            ->update(['shop_quantity' => 5, 'store_quantity' => 10]);
+
+        CurrentStock::query()
+            ->where('product_code', $outOfStock->product_code)
+            ->where('branch_id', $user->branch_id)
+            ->update(['shop_quantity' => 0, 'store_quantity' => 0]);
+
+        $codes = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/products', ['per_page' => 200, 'branch_id' => $user->branch_id])
+                ->assertOk()
+                ->json('data') ?? [],
+        )->pluck('product_code')->all();
+
+        $this->assertContains($inStock->product_code, $codes);
+        $this->assertContains($outOfStock->product_code, $codes);
+    }
+
     public function test_mobile_product_list_preserves_split_shop_and_store_stock(): void
     {
         $this->enableSplitShopStoreStock();
@@ -118,5 +160,33 @@ class MobileProductStockDisplayTest extends TestCase
         $this->assertEquals(71.0, (float) $row['stock_in_store']);
         $this->assertEquals(12.0, (float) $row['stock_available_shop']);
         $this->assertEquals(71.0, (float) $row['stock_available_store']);
+    }
+
+    public function test_mobile_product_list_includes_wholesale_retail_product_with_store_only_stock(): void
+    {
+        $this->enableSplitShopStoreStock();
+        $user = $this->makeMobileUser();
+        $token = $this->loginMobile($user);
+
+        $product = Product::query()->firstOrFail();
+        $product->update(['sell_on_retail' => true]);
+
+        CurrentStock::query()
+            ->where('product_code', $product->product_code)
+            ->where('branch_id', $user->branch_id)
+            ->update(['shop_quantity' => 0, 'store_quantity' => 106]);
+
+        $codes = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/products', [
+                    'q' => $product->product_code,
+                    'per_page' => 5,
+                    'branch_id' => $user->branch_id,
+                ])
+                ->assertOk()
+                ->json('data') ?? [],
+        )->pluck('product_code')->all();
+
+        $this->assertContains($product->product_code, $codes);
     }
 }

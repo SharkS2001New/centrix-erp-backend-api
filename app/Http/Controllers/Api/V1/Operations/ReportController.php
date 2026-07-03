@@ -13,6 +13,7 @@ use App\Support\AppTimezone;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class ReportController extends Controller
 {
@@ -588,7 +589,13 @@ class ReportController extends Controller
         return response()->json(
             $q->with(['product:product_code,product_name,unit_id'])
                 ->orderByDesc('id')
-                ->paginate(min((int) $request->input('per_page', 50), 200)),
+                ->paginate(min((int) $request->input('per_page', 50), 200))
+                ->through(function ($transaction) {
+                    $payload = $transaction->toArray();
+                    $payload['product_name'] = $transaction->product?->product_name;
+
+                    return $payload;
+                }),
         );
     }
 
@@ -1052,12 +1059,39 @@ class ReportController extends Controller
         $filters = $this->filters($request);
         unset($filters['branch_id']);
 
-        $q = DB::table('v_invoice_payment_history');
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
-        if ($orgId && $this->viewColumnExists('v_invoice_payment_history', 'organization_id')) {
-            $q->where('organization_id', $orgId);
+
+        $q = DB::table('customer_invoice_payments as cip')
+            ->join('customer_invoices as ci', 'ci.id', '=', 'cip.customer_invoice_id')
+            ->join('payment_methods as pm', 'pm.id', '=', 'cip.payment_method_id')
+            ->join('users as u', 'u.id', '=', 'cip.received_by')
+            ->leftJoin('customers as c', function ($join) use ($orgId) {
+                $join->on('c.customer_num', '=', 'cip.customer_num');
+                if ($orgId && Schema::hasColumn('customers', 'organization_id')) {
+                    $join->where('c.organization_id', '=', $orgId);
+                }
+            })
+            ->select([
+                'cip.id as payment_id',
+                'cip.customer_invoice_id',
+                'cip.customer_num',
+                'c.customer_name',
+                'ci.invoice_number',
+                'ci.branch_id',
+                'cip.date_paid',
+                'cip.amount_paid',
+                'pm.method_name',
+                'u.username as received_by',
+                'cip.reference_number',
+            ]);
+
+        if (Schema::hasColumn('customer_invoice_payments', 'organization_id')) {
+            $q->addSelect('cip.organization_id');
+            if ($orgId) {
+                $q->where('cip.organization_id', $orgId);
+            }
         } elseif ($orgId) {
-            $q->whereIn('customer_num', function ($sub) use ($orgId) {
+            $q->whereIn('cip.customer_num', function ($sub) use ($orgId) {
                 $sub->select('customer_num')
                     ->from('customers')
                     ->where('organization_id', $orgId)
@@ -1065,30 +1099,33 @@ class ReportController extends Controller
             });
         }
 
-        if (! empty($filters['customer_num'])) {
-            $q->where('customer_num', $filters['customer_num']);
+        if (Schema::hasColumn('customer_invoices', 'deleted_at')) {
+            $q->whereNull('ci.deleted_at');
         }
 
-        $dateColumn = 'date_paid';
+        if (! empty($filters['customer_num'])) {
+            $q->where('cip.customer_num', $filters['customer_num']);
+        }
+
         if (! empty($filters['from_date'])) {
-            $q->where($dateColumn, '>=', $filters['from_date']);
+            $q->where('cip.date_paid', '>=', $filters['from_date']);
         }
         if (! empty($filters['to_date'])) {
-            $q->where($dateColumn, '<=', $filters['to_date']);
+            $q->where('cip.date_paid', '<=', $filters['to_date']);
         }
 
         if ($search = trim((string) $request->input('q', ''))) {
             $q->where(function ($inner) use ($search) {
-                $inner->where('customer_name', 'like', "%{$search}%")
-                    ->orWhere('customer_num', 'like', "%{$search}%")
-                    ->orWhere('invoice_number', 'like', "%{$search}%")
-                    ->orWhere('reference_number', 'like', "%{$search}%");
+                $inner->where('c.customer_name', 'like', "%{$search}%")
+                    ->orWhere('cip.customer_num', 'like', "%{$search}%")
+                    ->orWhere('ci.invoice_number', 'like', "%{$search}%")
+                    ->orWhere('cip.reference_number', 'like', "%{$search}%");
             });
         }
 
         return response()->json(
-            $q->orderByDesc('date_paid')
-                ->orderByDesc('payment_id')
+            $q->orderByDesc('cip.date_paid')
+                ->orderByDesc('cip.id')
                 ->paginate(min((int) ($filters['per_page'] ?? 20), 200)),
         );
     }

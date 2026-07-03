@@ -16,6 +16,7 @@ class DispatchTripService
 {
     public function __construct(
         protected LoadingListBuilder $loadingListBuilder,
+        protected PickingListBuilder $pickingListBuilder,
         protected TripStockService $tripStock,
         protected TripCapacityValidator $capacityValidator,
         protected FulfillmentNotificationService $notifications,
@@ -89,7 +90,7 @@ class DispatchTripService
                 $this->assignOrders($trip, $saleIds, $user);
             }
 
-            return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
+            return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
         });
     }
 
@@ -204,15 +205,16 @@ class DispatchTripService
 
                 $source->sales()->detach();
                 $source->loadingList?->delete();
+                $source->pickingList?->delete();
                 $source->routes()->detach();
                 $source->delete();
             }
 
             $this->syncTripRoutes($target, $mergedRouteIds);
             $this->syncTripRoutesFromSales($target->fresh());
-            $this->loadingListBuilder->syncLoadingList($target->fresh());
+            $this->syncTripLists($target->fresh());
 
-            return $target->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
+            return $target->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
         });
     }
 
@@ -324,9 +326,9 @@ class DispatchTripService
             $this->syncTripRoutesFromSales($trip->fresh());
         });
 
-        $this->loadingListBuilder->syncLoadingList($trip->fresh());
+        $this->syncTripLists($trip->fresh());
 
-        return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
+        return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
     }
 
     /** @param  array<string, mixed>  $data */
@@ -448,6 +450,7 @@ class DispatchTripService
     public function lockLoadingList(DispatchTrip $trip, User $user, array $data): DispatchTrip
     {
         $loadingList = $this->loadingListBuilder->syncLoadingList($trip);
+        $pickingList = $this->pickingListBuilder->syncPickingList($trip);
         if ($loadingList->status !== 'open') {
             throw new InvalidArgumentException('Loading list is already locked.');
         }
@@ -459,6 +462,15 @@ class DispatchTripService
         }
 
         $settings = $this->erp->gateForUser($user)->distributionSettings();
+        if (! empty($settings['require_picking_before_lock'])) {
+            $pickingList->refresh();
+            if (! in_array($pickingList->status, ['completed', 'locked'], true)) {
+                throw new InvalidArgumentException(
+                    'Complete warehouse picking before locking the loading list.',
+                );
+            }
+        }
+
         $gate = $this->erp->gateForUser($user);
         $trip->load(['vehicle', 'sales']);
         $this->capacityValidator->assertTripCapacity($trip, $settings);
@@ -473,6 +485,8 @@ class DispatchTripService
             'locked_at' => $now,
         ]);
 
+        $this->pickingListBuilder->lockPickingList($pickingList);
+
         $trip->update([
             'status' => 'loading',
             'prepared_by_name' => $preparedBy,
@@ -481,7 +495,13 @@ class DispatchTripService
             'checked_at' => $now,
         ]);
 
-        return $trip->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']);
+        return $trip->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
+    }
+
+    protected function syncTripLists(DispatchTrip $trip): void
+    {
+        $this->loadingListBuilder->syncLoadingList($trip);
+        $this->pickingListBuilder->syncPickingList($trip);
     }
 
     /** @param  array<int, array{sale_id: int, stop_seq: int}>  $stops */
