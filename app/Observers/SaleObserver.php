@@ -3,6 +3,8 @@
 namespace App\Observers;
 
 use App\Models\Sale;
+use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\SaleRouteResolver;
 
@@ -29,5 +31,36 @@ class SaleObserver
         if ($routeId) {
             $sale->route_id = $routeId;
         }
+    }
+
+    public function created(Sale $sale): void
+    {
+        $this->syncCustomerInvoice($sale);
+    }
+
+    public function updated(Sale $sale): void
+    {
+        if ($sale->wasChanged(['customer_num', 'order_total', 'amount_paid', 'payment_status', 'total_vat'])) {
+            $this->syncCustomerInvoice($sale);
+        }
+    }
+
+    protected function syncCustomerInvoice(Sale $sale): void
+    {
+        if (! $sale->customer_num || (float) $sale->order_total <= 0.01) {
+            return;
+        }
+
+        $userId = $sale->cashier_id ?? $sale->created_by;
+        if (! $userId) {
+            return;
+        }
+
+        $user = User::query()->find($userId);
+        if (! $user) {
+            return;
+        }
+
+        app(CustomerInvoiceService::class)->ensureForSale($sale, $user);
     }
 }
