@@ -122,6 +122,123 @@ class DistributionRouteOrdersTest extends TestCase
         $this->assertContains($backendRouteOrder->id, $ids);
     }
 
+    public function test_dispatch_board_processed_only_defaults_to_processed_status(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->enableDistributionModules($admin);
+        Sanctum::actingAs($admin);
+
+        $route = \App\Models\RouteModel::query()->firstOrFail();
+        $template = Sale::query()->firstOrFail();
+
+        $processedOrder = Sale::create([
+            'order_num' => 95021,
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $route->id,
+            'status' => 'processed',
+            'total_vat' => 100,
+            'order_total' => 1200,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        $paidOrder = Sale::create([
+            'order_num' => 95022,
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $route->id,
+            'status' => 'paid',
+            'total_vat' => 100,
+            'order_total' => 1300,
+            'payment_status' => 'paid',
+            'amount_paid' => 1300,
+        ]);
+
+        $res = $this->getJson('/api/v1/sales?dispatch_orders=1&per_page=200');
+        $res->assertOk();
+
+        $ids = collect($res->json('data'))->pluck('id')->all();
+        $this->assertContains($processedOrder->id, $ids);
+        $this->assertNotContains($paidOrder->id, $ids);
+    }
+
+    public function test_dispatch_board_includes_all_active_statuses_when_processed_only_disabled(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->enableDistributionModules($admin);
+        Sanctum::actingAs($admin);
+
+        $org = Organization::findOrFail($admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['distribution'] = array_merge($settings['distribution'] ?? [], [
+            'dispatch_board_processed_only' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $route = \App\Models\RouteModel::query()->firstOrFail();
+        $template = Sale::query()->firstOrFail();
+
+        $processedOrder = Sale::create([
+            'order_num' => 95031,
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $route->id,
+            'status' => 'processed',
+            'total_vat' => 100,
+            'order_total' => 1200,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        $paidOrder = Sale::create([
+            'order_num' => 95032,
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $route->id,
+            'status' => 'paid',
+            'total_vat' => 100,
+            'order_total' => 1300,
+            'payment_status' => 'paid',
+            'amount_paid' => 1300,
+        ]);
+
+        $completedOrder = Sale::create([
+            'order_num' => 95033,
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $route->id,
+            'status' => 'completed',
+            'total_vat' => 100,
+            'order_total' => 1400,
+            'payment_status' => 'paid',
+            'amount_paid' => 1400,
+        ]);
+
+        $res = $this->getJson('/api/v1/sales?dispatch_orders=1&per_page=200');
+        $res->assertOk();
+
+        $ids = collect($res->json('data'))->pluck('id')->all();
+        $this->assertContains($processedOrder->id, $ids);
+        $this->assertContains($paidOrder->id, $ids);
+        $this->assertNotContains($completedOrder->id, $ids);
+    }
+
     public function test_loading_list_excludes_backend_route_orders_when_setting_disabled(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

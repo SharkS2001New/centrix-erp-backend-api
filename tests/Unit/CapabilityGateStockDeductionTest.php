@@ -50,4 +50,14 @@ class CapabilityGateStockDeductionTest extends TestCase
         $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'completed', 'mobile'));
         $this->assertFalse($gate->shouldDeductStockOnWorkflowTransition($workflow, 'completed', 'mobile'));
     }
+
+    public function test_trip_pick_defers_checkout_and_workflow_deduction(): void
+    {
+        $gate = $this->gateWithStockTiming('trip_pick');
+        $workflow = OrderWorkflowService::forGate($gate);
+
+        $this->assertTrue($gate->shouldDeferStockToTrip());
+        $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'completed', 'mobile'));
+        $this->assertFalse($gate->shouldDeductStockOnWorkflowTransition($workflow, 'completed', 'mobile'));
+    }
 }

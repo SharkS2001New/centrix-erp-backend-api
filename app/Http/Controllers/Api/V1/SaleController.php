@@ -142,8 +142,12 @@ class SaleController extends BaseResourceController
         }
 
         if ($dispatchOrders) {
-            $assignStatus = (string) (($distributionSettings ?? [])['assign_on_status'] ?? 'processed');
-            $query->where('sales.status', $assignStatus);
+            $processedOnly = ($distributionSettings ?? [])['dispatch_board_processed_only'] ?? true;
+            if ($processedOnly) {
+                $query->where('sales.status', 'processed');
+            } else {
+                $query->whereNotIn('sales.status', ['cancelled', 'completed', 'delivered', 'expired']);
+            }
         } elseif ($request->filled('status_in')) {
             $statuses = array_values(array_filter(array_map('trim', explode(',', (string) $request->input('status_in')))));
             if ($statuses !== []) {

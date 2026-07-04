@@ -405,7 +405,7 @@ class CapabilityGate
         return (bool) ($sales['show_checkout_on_create_order'] ?? true);
     }
 
-    /** When inventory is reduced: order_created, order_completed (workflow status), trip_load, or trip_depart. */
+    /** When inventory is reduced: order_created, order_completed (workflow status), trip_pick, trip_load, or trip_depart. */
     public function stockDeductTiming(?string $channel = null): string
     {
         if ($channel === 'pos' && $this->posCheckoutOnCreateEnabled()) {
@@ -415,7 +415,7 @@ class CapabilityGate
         $sales = $this->moduleSettings('sales');
         $raw = $sales['stock_deduct_on'] ?? null;
         $channel = $channel ? OrderWorkflowService::forGate($this)->normalizeSalesChannel($channel) : null;
-        $allowed = ['order_created', 'order_completed', 'trip_load', 'trip_depart'];
+        $allowed = ['order_created', 'order_completed', 'trip_pick', 'trip_load', 'trip_depart'];
 
         if (is_array($raw) && $channel) {
             $timing = (string) ($raw[$channel] ?? $raw['default'] ?? '');
@@ -441,7 +441,7 @@ class CapabilityGate
     public function shouldDeferStockToTrip(?string $channel = null): bool
     {
         return $this->distributionOpsEnabled()
-            && in_array($this->stockDeductTiming($channel), ['trip_load', 'trip_depart'], true);
+            && in_array($this->stockDeductTiming($channel), ['trip_pick', 'trip_load', 'trip_depart'], true);
     }
 
     public function shouldDeductStockAtCheckout(

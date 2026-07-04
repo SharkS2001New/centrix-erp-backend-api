@@ -68,6 +68,52 @@ class BackofficeOrderLineEditTest extends TestCase
             ->assertStatus(422);
     }
 
+    public function test_backoffice_line_edit_returns_stock_when_already_deducted(): void
+    {
+        $sale = $this->createBackofficeSale(10, 500.0, 'pending');
+        $item = $sale->items->first();
+        $sale->update(['stock_balanced' => 1]);
+
+        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
+            'items' => [
+                ['id' => $item->id, 'quantity' => 8],
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('order_total', 400.0);
+
+        $this->assertDatabaseHas('inventory_transactions', [
+            'reference_type' => 'sale_line_edit',
+            'reference_id' => $sale->id,
+            'product_code' => $item->product_code,
+            'transaction_type' => 'RETURN',
+            'quantity_change' => 2,
+        ]);
+    }
+
+    public function test_backoffice_line_edit_deducts_more_stock_when_already_deducted(): void
+    {
+        $sale = $this->createBackofficeSale(5, 250.0, 'pending');
+        $item = $sale->items->first();
+        $sale->update(['stock_balanced' => 1]);
+
+        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
+            'items' => [
+                ['id' => $item->id, 'quantity' => 7],
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('order_total', 350.0);
+
+        $this->assertDatabaseHas('inventory_transactions', [
+            'reference_type' => 'sale_line_edit',
+            'reference_id' => $sale->id,
+            'product_code' => $item->product_code,
+            'transaction_type' => 'BACKEND_SALE',
+            'quantity_change' => -2,
+        ]);
+    }
+
     public function test_pending_backoffice_order_can_be_edited(): void
     {
         $sale = $this->createBackofficeSale(2, 100.0, 'pending');

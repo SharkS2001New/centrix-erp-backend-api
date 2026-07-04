@@ -433,6 +433,7 @@ return [
             'require_trip_cash_settlement' => false,
             'require_picking_before_lock' => false,
             'include_normal_orders_in_loading_list' => true,
+            'dispatch_board_processed_only' => true,
             'loading_sheet_footer_lines' => '',
             'loading_sheet_show_signatures' => true,
             'loading_sheet_show_qty_column' => true,

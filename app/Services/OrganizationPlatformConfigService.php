@@ -414,7 +414,7 @@ class OrganizationPlatformConfigService
         bool $posCheckoutOnCreate = true,
         bool $externalPosEnabled = true,
     ): array|string {
-        $allowed = ['order_created', 'order_completed', 'trip_load', 'trip_depart'];
+        $allowed = ['order_created', 'order_completed', 'trip_pick', 'trip_load', 'trip_depart'];
         $defaults = [
             'pos' => 'order_created',
             'mobile' => 'order_completed',

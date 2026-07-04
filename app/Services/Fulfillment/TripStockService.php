@@ -54,7 +54,7 @@ class TripStockService
         $deductedAny = false;
 
         foreach ($trip->sales as $sale) {
-            if (! in_array($gate->stockDeductTiming((string) $sale->channel), ['trip_load', 'trip_depart'], true)) {
+            if ($gate->stockDeductTiming((string) $sale->channel) !== 'trip_pick') {
                 continue;
             }
 
