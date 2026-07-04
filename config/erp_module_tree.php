@@ -29,7 +29,7 @@ return [
         'channel' => 'mobile',
     ],
     'sales.backend' => [
-        'label' => 'Backend sales & orders',
+        'label' => 'Backoffice sales & orders',
         'nav_group' => 'Sales',
         'parent' => 'sales',
         'kind' => 'feature',

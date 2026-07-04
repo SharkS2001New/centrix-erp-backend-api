@@ -22,7 +22,7 @@ return [
             'paths' => ['/sales/pos', '/sales/orders', '/customers'],
             'tasks' => [
                 'POS checkout — create cart, add lines, pay with cash/M-Pesa/voucher',
-                'Backend sales orders — customer + line items + checkout',
+                'Backoffice sales orders — customer + line items + checkout',
                 'Held orders — save_only checkout with status held (resume or cancel later)',
                 'Credit sales, vouchers, loyalty points, order discounts',
             ],

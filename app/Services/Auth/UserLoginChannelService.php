@@ -171,9 +171,9 @@ class UserLoginChannelService
     public function label(string $channel): string
     {
         return match ($channel) {
-            self::BACKOFFICE => 'Backoffice',
+            self::BACKOFFICE => 'CentrixERP',
             self::POS => 'POS',
-            self::MOBILE => 'Mobile',
+            self::MOBILE => 'CentrixMobileapp',
             default => $channel,
         };
     }

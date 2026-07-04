@@ -4,6 +4,7 @@ namespace App\Services\Inventory;
 
 use App\Models\SystemSetting;
 use App\Services\Auth\UserAccessService;
+use App\Services\Catalog\ProductCatalogFilterService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -63,6 +64,10 @@ class LowStockReportService
             ->where('p.organization_id', $organizationId)
             ->whereNull('p.deleted_at')
             ->when($request->filled('product_code'), fn ($q) => $q->where('p.product_code', $request->input('product_code')))
+            ->when(
+                ($subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) !== null,
+                fn ($q) => $q->where('p.subcategory_id', $subcategoryId),
+            )
             ->select([
                 'br.id as branch_id',
                 'p.product_code',

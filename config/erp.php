@@ -42,7 +42,7 @@ return [
             'default_channels' => ['backend'],
         ],
         'small_shop' => [
-            'label' => 'Small shop (backend sales only)',
+            'label' => 'Small shop (backoffice sales only)',
             'modules' => array_merge($allModulesFalse, [
                 'sales' => true,
                 'sales.backend' => true,

@@ -399,7 +399,7 @@ return [
                 'required' => false,
                 'important' => false,
                 'options' => [
-                    ['value' => 'backend', 'label' => 'Backend / backoffice'],
+                    ['value' => 'backend', 'label' => 'Backoffice'],
                     ['value' => 'pos', 'label' => 'POS'],
                 ],
             ],

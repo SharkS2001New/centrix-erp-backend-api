@@ -1291,7 +1291,33 @@ class ReportController extends Controller
             }
         }
 
+        $this->applyProductSubcategoryFilter($q, $request, $view);
+
         return $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+    }
+
+    protected function applyProductSubcategoryFilter($query, Request $request, string $view): void
+    {
+        if (! $subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) {
+            return;
+        }
+
+        if ($this->viewColumnExists($view, 'sub_category_id')) {
+            $query->where('sub_category_id', $subcategoryId);
+
+            return;
+        }
+
+        if (! $this->viewColumnExists($view, 'product_code')) {
+            return;
+        }
+
+        $query->whereIn('product_code', function ($sub) use ($subcategoryId) {
+            $sub->select('p.product_code')
+                ->from('products as p')
+                ->where('p.subcategory_id', $subcategoryId)
+                ->whereNull('p.deleted_at');
+        });
     }
 
     /**
