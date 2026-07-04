@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Sale;
+use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Support\SalesOrderQueuePermissions;
 use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\PosOrderEditService;
@@ -82,9 +84,16 @@ class SaleController extends BaseResourceController
 
         $gate = $this->erp->gateForUser($request->user());
         $workflow = OrderWorkflowService::forGate($gate);
+        $channel = (string) ($request->input('channel') ?: 'backend');
+        SalesOrderQueuePermissions::applyIndexScope(
+            $query,
+            $request->user(),
+            $gate,
+            app(UserPermissionService::class),
+            $channel,
+        );
         $statusFilter = data_get($request->input('filter', []), 'status');
         if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {
-            $channel = (string) ($request->input('channel') ?: 'backend');
             $statuses = $workflow->statusesForQueueFilter((string) $statusFilter, $channel);
             if ($statuses !== []) {
                 $query->whereIn('sales.status', $statuses);
@@ -149,6 +158,16 @@ class SaleController extends BaseResourceController
             }
         }
 
+        if ($request->boolean('outstanding_balance')) {
+            $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
+        }
+
+        $paymentStatusFilter = data_get($request->input('filter', []), 'payment_status');
+        if (in_array($paymentStatusFilter, ['unpaid', 'partial'], true)) {
+            $query->whereNotIn('sales.status', ['completed', 'cancelled', 'expired']);
+            $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
+        }
+
         if ($q = $request->input('q')) {
             $query->where(function ($sub) use ($q) {
                 $sub->where('sales.order_num', 'like', "%{$q}%")
@@ -193,6 +212,10 @@ class SaleController extends BaseResourceController
     {
         $sale = $this->baseQuery($request)->with(['items.product.unit', 'customer:customer_num,customer_name'])->findOrFail($id);
         $gate = $this->erp->gateForUser($request->user());
+        $permissions = app(UserPermissionService::class);
+        if (! SalesOrderQueuePermissions::userCanViewSale($request->user(), $sale, $gate, $permissions)) {
+            abort(403, 'You do not have permission to view this order.');
+        }
         $channel = $sale->channel ?: 'backend';
         $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
         $editService = app(PosOrderEditService::class);

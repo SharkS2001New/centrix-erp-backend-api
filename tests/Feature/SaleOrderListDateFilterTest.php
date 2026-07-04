@@ -108,4 +108,41 @@ class SaleOrderListDateFilterTest extends TestCase
         $this->assertTrue($ids->contains($processedUnpaid->id));
         $this->assertFalse($ids->contains($processedPaid->id));
     }
+
+    public function test_payment_status_unpaid_queue_excludes_completed_and_fully_paid_orders(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $completedUnpaidLabel = Sale::query()->create([
+            'order_num' => 993005,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'unpaid',
+            'order_total' => 500,
+            'amount_paid' => 500,
+        ]);
+
+        $deliveredUnpaid = Sale::query()->create([
+            'order_num' => 993006,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'delivered',
+            'payment_status' => 'unpaid',
+            'order_total' => 1200,
+            'amount_paid' => 0,
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?filter[payment_status]=unpaid&per_page=200');
+
+        $response->assertOk();
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertFalse($ids->contains($completedUnpaidLabel->id));
+        $this->assertTrue($ids->contains($deliveredUnpaid->id));
+    }
 }

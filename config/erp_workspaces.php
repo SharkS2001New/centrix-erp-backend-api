@@ -42,6 +42,17 @@ return [
         'domain_modules' => ['distribution'],
         'permission_prefixes' => ['fulfillment.'],
         'entry_permission' => 'fulfillment.drivers.view',
+        'home_path_by_permissions' => [
+            ['prefixes' => ['fulfillment.dispatch.'], 'path' => '/fulfillment/dispatch'],
+            ['prefixes' => ['fulfillment.trips.'], 'path' => '/fulfillment/trips'],
+            ['prefixes' => ['fulfillment.picking.'], 'path' => '/fulfillment/picking'],
+            ['prefixes' => ['fulfillment.loading_lists.'], 'path' => '/fulfillment/loading-lists'],
+            ['prefixes' => ['fulfillment.routes.'], 'path' => '/fulfillment/routes'],
+            ['prefixes' => ['fulfillment.drivers.'], 'path' => '/fulfillment/drivers'],
+            ['prefixes' => ['fulfillment.vehicles.'], 'path' => '/fulfillment/vehicles'],
+            ['prefixes' => ['fulfillment.schedules.'], 'path' => '/fulfillment/schedules'],
+            ['prefixes' => ['fulfillment.pod.'], 'path' => '/fulfillment/pod-records'],
+        ],
     ],
     'accounting' => [
         'label' => 'Accounting',

@@ -55,8 +55,9 @@ class RoleController extends BaseResourceController
     public function permissions(Request $request, string $id, ?string $nestedId = null)
     {
         $role = $this->findRoleOrFail($request, $this->resolveResourceId($id, $nestedId));
+        $gate = app(ErpContext::class)->gateForUser($request->user());
 
-        return response()->json($this->rolePermissionsPayload($role));
+        return response()->json($this->rolePermissionsPayload($role, $gate));
     }
 
     public function syncPermissions(Request $request, string $id, ?string $nestedId = null)
@@ -76,12 +77,7 @@ class RoleController extends BaseResourceController
 
         $gate = app(ErpContext::class)->gateForUser($request->user());
         $allowedIds = PermissionMatrixService::enabledPermissionIds($gate);
-        $invalid = array_diff($permissionIds, $allowedIds);
-        if ($invalid !== []) {
-            throw ValidationException::withMessages([
-                'permission_ids' => ['One or more permissions belong to modules that are not enabled for this organization.'],
-            ]);
-        }
+        $permissionIds = array_values(array_intersect($permissionIds, $allowedIds));
 
         DB::transaction(function () use ($role, $permissionIds) {
             DB::table('role_permissions')->where('role_id', $role->id)->delete();
@@ -95,7 +91,7 @@ class RoleController extends BaseResourceController
 
         CapabilitiesCacheInvalidator::forRole($role->fresh());
 
-        return response()->json($this->rolePermissionsPayload($role));
+        return response()->json($this->rolePermissionsPayload($role, $gate));
     }
 
     public function permissionMatrix(Request $request)
@@ -154,7 +150,7 @@ class RoleController extends BaseResourceController
     }
 
     /** @return array{role_id: int, permission_ids: list<int>} */
-    private function rolePermissionsPayload(Role $role): array
+    private function rolePermissionsPayload(Role $role, ?\App\Services\Erp\CapabilityGate $gate = null): array
     {
         $permissionIds = DB::table('role_permissions')
             ->where('role_id', $role->id)
@@ -162,6 +158,14 @@ class RoleController extends BaseResourceController
             ->map(fn ($v) => (int) $v)
             ->values()
             ->all();
+
+        if ($gate !== null) {
+            $allowed = array_flip(PermissionMatrixService::enabledPermissionIds($gate));
+            $permissionIds = array_values(array_filter(
+                $permissionIds,
+                fn (int $id) => isset($allowed[$id]),
+            ));
+        }
 
         return [
             'role_id' => (int) $role->id,

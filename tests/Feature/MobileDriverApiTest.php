@@ -137,6 +137,36 @@ class MobileDriverApiTest extends TestCase
         ]);
     }
 
+    public function test_carry_over_trip_with_processed_stop_appears_on_today_and_can_deliver(): void
+    {
+        [$user, $driver, $trip, $sale] = $this->makeDriverTripWithStop();
+        $trip->update([
+            'scheduled_date' => now()->subDay()->toDateString(),
+            'status' => 'completed',
+        ]);
+        $token = $this->loginMobile($user);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/driver/trips/today')
+            ->assertOk()
+            ->assertJsonPath('trips.0.id', $trip->id)
+            ->assertJsonPath('trips.0.is_carry_over', true)
+            ->assertJsonPath('trips.0.pending_stops_count', 1);
+
+        $this->withToken($token)
+            ->getJson("/api/v1/mobile/driver/trips/{$trip->id}/stops")
+            ->assertOk()
+            ->assertJsonPath('stops.0.is_deliverable', true);
+
+        $this->withToken($token)
+            ->post("/api/v1/mobile/driver/stops/{$sale->id}/deliver", [
+                'recipient_name' => 'Jane Customer',
+                'photo' => UploadedFile::fake()->image('delivery.jpg'),
+            ])
+            ->assertOk()
+            ->assertJsonPath('stop.status', 'delivered');
+    }
+
     public function test_driver_attendance_session_when_enabled(): void
     {
         [$user, $driver, $trip, $sale] = $this->makeDriverTripWithStop();

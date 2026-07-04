@@ -71,7 +71,7 @@ class BranchScopeTest extends TestCase
             'is_active' => true,
         ]);
 
-        $viewId = (int) Permission::where('permission_code', 'sales.orders.view')->value('id');
+        $viewId = (int) Permission::where('permission_code', 'sales.order_queue_all.view')->value('id');
         DB::table('role_permissions')->insert([
             'role_id' => $role->id,
             'permission_id' => $viewId,
@@ -107,7 +107,7 @@ class BranchScopeTest extends TestCase
             ->where('role_permissions.role_id', $role->id)
             ->pluck('permissions.permission_code');
 
-        $this->assertTrue($codes->contains('sales.orders.view'));
+        $this->assertTrue($codes->contains('sales.order_queue_all.view'));
         $this->assertTrue($codes->contains('reports.hub.view'));
         $this->assertFalse($codes->contains('purchasing.manage'));
     }

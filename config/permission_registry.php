@@ -39,7 +39,8 @@ return [
             'label' => 'Sales & orders',
             'features' => [
                 'dashboard' => ['label' => 'Sales analytics', 'actions' => ['view']],
-                'orders' => ['label' => 'Orders & queues', 'actions' => ['view', 'create', 'edit', 'delete', 'approve']],
+                'orders' => ['label' => 'Order actions', 'actions' => ['create', 'edit', 'delete', 'approve']],
+                ...\App\Support\SalesOrderQueuePermissions::registryFeatures(),
                 'carts' => ['label' => 'Carts (read-only)', 'actions' => ['view']],
                 'vouchers' => ['label' => 'Vouchers', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'loyalty_cards' => ['label' => 'Loyalty cards', 'actions' => ['view', 'create', 'edit', 'delete']],

@@ -25,6 +25,8 @@ use InvalidArgumentException;
 
 class MobileDriverService
 {
+    private const CARRY_OVER_LOOKBACK_DAYS = 7;
+
     public function __construct(
         protected ErpContext $erp,
         protected PodService $podService,
@@ -56,7 +58,44 @@ class MobileDriverService
     /** @return array<string, mixed> */
     public function todayTrips(User $user): array
     {
-        return $this->tripsForDate($user, now()->toDateString());
+        $driver = $this->requireDriver($user);
+        $today = now()->toDateString();
+        $carryOverFrom = now()->subDays(self::CARRY_OVER_LOOKBACK_DAYS)->toDateString();
+
+        $todayTrips = $this->driverTripsQuery($driver)
+            ->whereDate('scheduled_date', $today)
+            ->whereNotIn('status', ['cancelled'])
+            ->orderByRaw("FIELD(status, 'in_transit', 'loading', 'draft', 'completed')")
+            ->orderBy('id')
+            ->get();
+
+        $carryOverTrips = $this->driverTripsQuery($driver)
+            ->whereDate('scheduled_date', '<', $today)
+            ->whereDate('scheduled_date', '>=', $carryOverFrom)
+            ->whereNotIn('status', ['cancelled'])
+            ->whereHas('sales', fn ($q) => $q->where('status', 'processed'))
+            ->orderByDesc('scheduled_date')
+            ->orderBy('id')
+            ->get();
+
+        $trips = $carryOverTrips
+            ->concat($todayTrips)
+            ->unique('id')
+            ->values();
+
+        return $this->presentTripsPayload($driver, $trips, $today);
+    }
+
+    /** @return \Illuminate\Database\Eloquent\Builder<DispatchTrip> */
+    protected function driverTripsQuery(Driver $driver)
+    {
+        return DispatchTrip::query()
+            ->with(['route', 'routes', 'driver', 'vehicle'])
+            ->withCount('sales')
+            ->withCount([
+                'sales as pending_stops_count' => fn ($q) => $q->where('status', 'processed'),
+            ])
+            ->where('driver_id', $driver->id);
     }
 
     /** @return array<string, mixed> */
@@ -65,10 +104,7 @@ class MobileDriverService
         $driver = $this->requireDriver($user);
         $today = now()->toDateString();
 
-        $trips = DispatchTrip::query()
-            ->with(['route', 'routes', 'driver', 'vehicle'])
-            ->withCount('sales')
-            ->where('driver_id', $driver->id)
+        $trips = $this->driverTripsQuery($driver)
             ->whereDate('scheduled_date', '>', $today)
             ->whereNotIn('status', ['cancelled', 'completed'])
             ->orderBy('scheduled_date')
@@ -84,10 +120,7 @@ class MobileDriverService
         $driver = $this->requireDriver($user);
         $parsed = \Carbon\Carbon::parse($date)->toDateString();
 
-        $trips = DispatchTrip::query()
-            ->with(['route', 'routes', 'driver', 'vehicle'])
-            ->withCount('sales')
-            ->where('driver_id', $driver->id)
+        $trips = $this->driverTripsQuery($driver)
             ->whereDate('scheduled_date', $parsed)
             ->whereNotIn('status', ['cancelled'])
             ->orderByRaw("FIELD(status, 'in_transit', 'loading', 'draft', 'completed')")
@@ -170,6 +203,7 @@ class MobileDriverService
     {
         $driver = $this->requireDriver($user);
         $sale = $this->findDriverStop($driver, $saleId);
+        $this->assertStopDeliverable($sale);
         $sale->loadMissing(['items.product', 'customer']);
         $tripId = (int) (($sale->fulfillment_meta ?? [])['trip_id'] ?? 0);
         $outcome = $this->normalizeDeliveryOutcome($data['delivery_outcome'] ?? null);
@@ -525,6 +559,21 @@ class MobileDriverService
         return $sale;
     }
 
+    protected function assertStopDeliverable(Sale $sale): void
+    {
+        if ((string) $sale->status === 'processed') {
+            return;
+        }
+
+        if (in_array((string) $sale->status, ['delivered', 'completed'], true)) {
+            throw new InvalidArgumentException('This order is already delivered.');
+        }
+
+        throw new InvalidArgumentException(
+            'Only processed orders that are not yet delivered can be marked from the driver app.',
+        );
+    }
+
     /** @return list<array<string, mixed>> */
     protected function buildStopsPayload(DispatchTrip $trip): array
     {
@@ -569,6 +618,9 @@ class MobileDriverService
                     ?: $trip->vehicle->vehicle_code,
             ] : null,
             'sales_count' => (int) ($trip->sales_count ?? $trip->sales()->count()),
+            'pending_stops_count' => (int) ($trip->pending_stops_count ?? 0),
+            'is_carry_over' => $trip->scheduled_date?->toDateString() < now()->toDateString()
+                && (int) ($trip->pending_stops_count ?? 0) > 0,
             'departed_at' => $trip->departed_at?->toIso8601String(),
             'expected_cash' => $trip->expected_cash !== null ? (float) $trip->expected_cash : null,
             'collected_cash' => $trip->collected_cash !== null ? (float) $trip->collected_cash : null,
@@ -585,12 +637,14 @@ class MobileDriverService
         $meta = $sale->fulfillment_meta ?? [];
         $balanceDue = max(0, (float) $sale->order_total - (float) $sale->amount_paid);
         $isDelivered = in_array((string) $sale->status, ['delivered', 'completed'], true);
+        $isDeliverable = (string) $sale->status === 'processed' && ! $isDelivered;
 
         $payload = [
             'sale_id' => (int) $sale->id,
             'order_num' => $sale->order_num,
             'status' => (string) $sale->status,
             'is_delivered' => $isDelivered,
+            'is_deliverable' => $isDeliverable,
             'stop_seq' => (int) ($sale->pivot->stop_seq ?? $meta['stop_seq'] ?? 0),
             'customer_num' => $sale->customer_num,
             'customer_name' => $sale->customer_name_override ?: ($customer?->customer_name ?? ''),

@@ -6,6 +6,7 @@ use App\Models\Permission;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\PermissionMatrixService;
+use App\Support\SalesOrderQueuePermissions;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -100,6 +101,13 @@ class UserPermissionService
             return true;
         }
 
+        if (
+            preg_match('/^sales\.order_queue_.+\.view$/', $permissionCode) === 1
+            && $this->hasDirectPermission($user, 'sales.orders.view')
+        ) {
+            return true;
+        }
+
         $aliases = config('permission_aliases', []);
 
         foreach ($aliases[$permissionCode] ?? [] as $aliasCode) {
@@ -161,7 +169,25 @@ class UserPermissionService
     /** @return array<string, bool> */
     public function permissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
-        return $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
+        $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
+
+        return $this->expandLegacySalesOrderQueueView($map);
+    }
+
+    /** @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function expandLegacySalesOrderQueueView(array $map): array
+    {
+        if (! ($map['sales.orders.view'] ?? false)) {
+            return $map;
+        }
+
+        foreach (SalesOrderQueuePermissions::allViewPermissionCodes() as $code) {
+            $map[$code] = true;
+        }
+
+        return $map;
     }
 
     /** @param  array<string, bool>  $map

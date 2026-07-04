@@ -9,6 +9,7 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\PermissionMatrixService;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -65,12 +66,12 @@ class ModuleScopedPermissionsTest extends TestCase
         $gate = app(ErpContext::class)->gateForUser($admin);
         $map = app(UserPermissionService::class)->permissionMapForUser($admin, $gate);
 
-        $this->assertTrue($map['sales.orders.view'] ?? false);
+        $this->assertTrue($map['sales.order_queue_all.view'] ?? false);
         $this->assertTrue($map['inventory.stock.view'] ?? false);
         $this->assertFalse($map['accounting.chart_of_accounts.view'] ?? false);
     }
 
-    public function test_role_sync_rejects_permissions_for_disabled_modules(): void
+    public function test_role_sync_strips_permissions_for_disabled_modules(): void
     {
         PermissionMatrixService::ensure();
 
@@ -88,9 +89,21 @@ class ModuleScopedPermissionsTest extends TestCase
 
         $role = \App\Models\Role::query()->firstOrFail();
         $accountingPerm = Permission::where('permission_code', 'accounting.chart_of_accounts.view')->firstOrFail();
+        $salesPerm = Permission::where('permission_code', 'sales.order_queue_all.view')->firstOrFail();
+
+        DB::table('role_permissions')->insert([
+            ['role_id' => $role->id, 'permission_id' => $accountingPerm->id],
+            ['role_id' => $role->id, 'permission_id' => $salesPerm->id],
+        ]);
+
+        $this->getJson("/api/v1/roles/{$role->id}/permissions")
+            ->assertOk()
+            ->assertJsonPath('permission_ids', [$salesPerm->id]);
 
         $this->putJson("/api/v1/roles/{$role->id}/permissions", [
-            'permission_ids' => [$accountingPerm->id],
-        ])->assertUnprocessable();
+            'permission_ids' => [$salesPerm->id, $accountingPerm->id],
+        ])
+            ->assertOk()
+            ->assertJsonPath('permission_ids', [$salesPerm->id]);
     }
 }

@@ -29,7 +29,7 @@ class UserPermissionOverrideTest extends TestCase
             'is_active' => true,
         ]);
 
-        $viewId = (int) Permission::where('permission_code', 'sales.orders.view')->value('id');
+        $viewId = (int) Permission::where('permission_code', 'sales.order_queue_all.view')->value('id');
         $createId = (int) Permission::where('permission_code', 'sales.orders.create')->value('id');
 
         DB::table('role_permissions')->insert([
@@ -54,7 +54,7 @@ class UserPermissionOverrideTest extends TestCase
         ])->assertOk();
 
         $service = app(UserPermissionService::class);
-        $this->assertTrue($service->hasPermission($target->fresh(), 'sales.orders.view'));
+        $this->assertTrue($service->hasPermission($target->fresh(), 'sales.order_queue_all.view'));
         $this->assertFalse($service->hasPermission($target->fresh(), 'sales.orders.create'));
     }
 
@@ -70,7 +70,7 @@ class UserPermissionOverrideTest extends TestCase
             'is_active' => true,
         ]);
 
-        $viewId = (int) Permission::where('permission_code', 'sales.orders.view')->value('id');
+        $viewId = (int) Permission::where('permission_code', 'sales.order_queue_all.view')->value('id');
         $manageId = (int) Permission::where('permission_code', 'sales.orders.approve')->value('id');
 
         DB::table('role_permissions')->insert([

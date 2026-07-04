@@ -1,8 +1,12 @@
 <?php
 
+use App\Support\SalesOrderQueuePermissions;
+
 /**
  * Maps route capability codes (erp.permission middleware) to feature permission codes.
  */
+$salesOrderQueueViewAliases = SalesOrderQueuePermissions::allViewPermissionCodes();
+
 return [
     'sales.create' => [
         'sales.orders.create',
@@ -57,17 +61,19 @@ return [
         'fulfillment.picking.edit',
         'fulfillment.schedules.edit',
     ],
-    'sales.view' => [
-        'sales.orders.view',
-        'sales.carts.view',
-        'sales.vouchers.view',
-        'sales.loyalty_cards.view',
-        'sales.reservations.view',
-        'sales.returns.view',
-        'sales.loading_sheets.view',
-        'sales.field_attendance.view',
-        'sales.legacy_orders.view',
-    ],
+    'sales.view' => array_merge(
+        $salesOrderQueueViewAliases,
+        [
+            'sales.carts.view',
+            'sales.vouchers.view',
+            'sales.loyalty_cards.view',
+            'sales.reservations.view',
+            'sales.returns.view',
+            'sales.loading_sheets.view',
+            'sales.field_attendance.view',
+            'sales.legacy_orders.view',
+        ],
+    ),
     'payments.manage' => [
         'payments.sale_payments.create',
         'payments.sale_payments.edit',

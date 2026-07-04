@@ -367,7 +367,7 @@ class AiAssistantTest extends TestCase
             'role_name' => 'AI view only '.uniqid(),
             'scope' => 'branch',
         ]);
-        $viewPermId = \App\Models\Permission::where('permission_code', 'sales.orders.view')->value('id');
+        $viewPermId = \App\Models\Permission::where('permission_code', 'sales.order_queue_all.view')->value('id');
         $aiPermId = \App\Models\Permission::where('permission_code', 'ai.assist.create')->value('id');
         foreach (array_filter([$viewPermId, $aiPermId]) as $permId) {
             \Illuminate\Support\Facades\DB::table('role_permissions')->insert([

@@ -24,7 +24,7 @@ return [
                 ['label' => 'Create order', 'path' => '/sales/pos', 'module' => 'sales.pos', 'permission' => 'pos.checkout.create'],
                 ['label' => 'Cashier terminal', 'path' => '/pos', 'module' => 'sales.pos', 'permission' => 'pos.terminal.view'],
                 ['label' => 'Till management', 'path' => '/sales/till-management', 'module' => 'sales.pos', 'permission' => 'pos.till_management.view'],
-                ['label' => 'Sales orders', 'path' => '/sales/orders', 'module' => 'sales.backend', 'permission' => 'sales.orders.view'],
+                ['label' => 'Sales orders', 'path' => '/sales/orders', 'module' => 'sales.backend', 'permission' => 'sales.order_queue_all.view'],
                 ['label' => 'Customers', 'path' => '/customers', 'module' => 'customers_suppliers', 'permission' => 'customers.customers.view'],
                 ['label' => 'Vouchers', 'path' => '/sales/vouchers', 'module' => 'sales.backend', 'permission' => 'sales.vouchers.view'],
                 ['label' => 'Credit notes', 'path' => '/sales/returns', 'module' => 'sales.backend', 'permission' => 'sales.returns.view'],

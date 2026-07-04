@@ -123,7 +123,7 @@ class ErpCapabilitiesTest extends TestCase
             'is_active' => true,
         ]);
 
-        $viewId = (int) Permission::where('permission_code', 'sales.orders.view')->value('id');
+        $viewId = (int) Permission::where('permission_code', 'sales.order_queue_all.view')->value('id');
         $createId = (int) Permission::where('permission_code', 'sales.orders.create')->value('id');
 
         DB::table('role_permissions')->insert([
