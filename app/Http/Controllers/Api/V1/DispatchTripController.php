@@ -441,7 +441,7 @@ class DispatchTripController extends BaseResourceController
             'severity' => $trip->status === 'cancelled' ? 'warning' : 'default',
             'title' => $title,
             'message' => ($user->full_name ?: $user->username)." {$verb} trip {$trip->trip_code}.",
-            'action_url' => "/dispatch-trips/{$trip->id}",
+            'action_url' => "/fulfillment/trips/{$trip->id}",
         ]);
     }
 }
