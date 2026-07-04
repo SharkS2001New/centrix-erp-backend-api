@@ -198,4 +198,22 @@ class SalesReportsTest extends TestCase
             'Invoice payments must be filtered by invoice branch_id.',
         );
     }
+
+    public function test_report_filter_cashiers_searches_org_users(): void
+    {
+        $needle = (string) ($this->admin->username ?? 'admin');
+
+        $response = $this->getJson('/api/v1/reports/filter-cashiers?q='.urlencode($needle))
+            ->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+        $this->assertTrue($ids->contains((int) $this->admin->id));
+    }
+
+    public function test_report_filter_cashiers_resolves_by_id(): void
+    {
+        $this->getJson('/api/v1/reports/filter-cashiers?id='.$this->admin->id)
+            ->assertOk()
+            ->assertJsonPath('id', $this->admin->id);
+    }
 }

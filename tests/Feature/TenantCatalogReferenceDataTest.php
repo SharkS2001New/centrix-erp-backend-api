@@ -122,6 +122,22 @@ class TenantCatalogReferenceDataTest extends TestCase
         $this->assertFalse($subNames->contains('Org B Sub'));
     }
 
+    public function test_subcategories_can_be_searched_by_name(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $sub = SubCategory::query()->firstOrFail();
+        $needle = mb_substr((string) $sub->subcategory_name, 0, 4);
+        $this->assertNotSame('', $needle);
+
+        $res = $this->getJson('/api/v1/sub-categories?per_page=50&q='.urlencode($needle));
+        $res->assertOk();
+
+        $names = collect($res->json('data'))->pluck('subcategory_name');
+        $this->assertTrue($names->contains($sub->subcategory_name));
+    }
+
     protected function createOrganization(string $companyCode, string $orgName): Organization
     {
         return Organization::create([

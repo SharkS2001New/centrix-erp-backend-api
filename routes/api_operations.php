@@ -268,6 +268,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('erp.permission:reports.view')->group(function () {
             Route::get('/', [ReportController::class, 'catalog']);
             Route::get('dashboard', [ReportController::class, 'dashboard']);
+            Route::get('filter-cashiers', [ReportController::class, 'filterCashiers']);
 
             Route::middleware('erp.permission:reports.builder')->prefix('builder')->group(function () {
                 Route::get('schema', [ReportBuilderController::class, 'schema']);

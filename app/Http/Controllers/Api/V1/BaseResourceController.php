@@ -78,6 +78,12 @@ abstract class BaseResourceController extends Controller
     }
 
     /** @return list<string> */
+    protected function searchColumns(): array
+    {
+        return [];
+    }
+
+    /** @return list<string> */
     protected function sortableColumns(): array
     {
         return [];
@@ -158,11 +164,24 @@ abstract class BaseResourceController extends Controller
                 $query->where($col, $val);
             }
         }
-        if ($q = $request->input('q')) {
-            $searchCol = $this->routeKeyColumn() !== 'id'
-                ? $this->routeKeyColumn()
-                : ($this->fillableFields()[0] ?? 'id');
-            $query->where($searchCol, 'like', "%{$q}%");
+        if ($q = trim((string) $request->input('q', ''))) {
+            $columns = $this->searchColumns();
+            if ($columns !== []) {
+                $query->where(function ($inner) use ($columns, $q) {
+                    foreach ($columns as $index => $col) {
+                        if ($index === 0) {
+                            $inner->where($col, 'like', "%{$q}%");
+                        } else {
+                            $inner->orWhere($col, 'like', "%{$q}%");
+                        }
+                    }
+                });
+            } else {
+                $searchCol = $this->routeKeyColumn() !== 'id'
+                    ? $this->routeKeyColumn()
+                    : ($this->fillableFields()[0] ?? 'id');
+                $query->where($searchCol, 'like', "%{$q}%");
+            }
         }
         $perPage = min((int) $request->input('per_page', 25), 200);
         $this->applyListOrdering(

@@ -12,6 +12,12 @@ class SubCategoryController extends BaseResourceController
         return SubCategory::class;
     }
 
+    /** @return list<string> */
+    protected function searchColumns(): array
+    {
+        return ['subcategory_name'];
+    }
+
     public function store(Request $request)
     {
         $this->assertCategoryInOrganization($request);

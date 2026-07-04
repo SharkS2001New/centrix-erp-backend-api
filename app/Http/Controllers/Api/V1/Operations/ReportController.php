@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
+use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Legacy\LegacyArchiveReader;
@@ -19,6 +20,58 @@ use Illuminate\Support\Facades\Schema;
 class ReportController extends Controller
 {
     public function __construct(protected ErpContext $erp) {}
+
+    /** Cashier/user lookup for report filters (no admin module required). */
+    public function filterCashiers(Request $request)
+    {
+        $user = $request->user();
+        $access = app(UserAccessService::class);
+        $orgId = $access->organizationId($user, $request);
+        abort_unless($orgId, 403);
+
+        $query = User::query()
+            ->whereNull('deleted_at')
+            ->where('organization_id', $orgId);
+
+        if (! $access->isOrgWide($user)) {
+            $branchId = $access->branchId($user);
+            if ($branchId !== null) {
+                $query->where(function ($inner) use ($branchId) {
+                    $inner->where('branch_id', $branchId)
+                        ->orWhere('access_scope', 'org');
+                });
+            }
+        }
+
+        if ($request->filled('id')) {
+            $row = (clone $query)
+                ->where('id', (int) $request->input('id'))
+                ->first(['id', 'full_name', 'username']);
+
+            abort_unless($row, 404);
+
+            return response()->json($row);
+        }
+
+        $q = trim((string) $request->input('q', ''));
+        if ($q === '') {
+            return response()->json(['data' => []]);
+        }
+
+        $query->where(function ($inner) use ($q) {
+            $inner->where('full_name', 'like', "%{$q}%")
+                ->orWhere('email', 'like', "%{$q}%")
+                ->orWhere('username', 'like', "%{$q}%");
+        });
+
+        $perPage = min((int) $request->input('per_page', 50), 50);
+        $rows = $query
+            ->orderBy('full_name')
+            ->limit($perPage)
+            ->get(['id', 'full_name', 'username']);
+
+        return response()->json(['data' => $rows]);
+    }
 
     /** Report catalog for ERP clients (bootstrap UI). */
     public function catalog(Request $request)
