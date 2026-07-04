@@ -24,6 +24,11 @@ class RouteOrderScope
         return (bool) $distributionSettings['include_normal_orders_in_loading_list'];
     }
 
+    public static function includePosRouteOrders(bool $externalPosEnabled): bool
+    {
+        return $externalPosEnabled;
+    }
+
     public static function effectiveRouteIdSql(): string
     {
         return 'COALESCE(sales.route_id, '.self::CUSTOMER_JOIN_ALIAS.'.route_id)';
@@ -56,33 +61,44 @@ class RouteOrderScope
         );
     }
 
-    public static function applyChannelScope(Builder $query, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): Builder
-    {
-        return $query->where(function (Builder $sub) use ($includeNormalOrders) {
-            $sub->whereIn('sales.channel', ['mobile', 'pos']);
+    public static function applyChannelScope(
+        Builder $query,
+        bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS,
+        bool $includePosOrders = true,
+    ): Builder {
+        return $query->where(function (Builder $sub) use ($includeNormalOrders, $includePosOrders) {
+            $sub->where('sales.channel', 'mobile');
+            if ($includePosOrders) {
+                $sub->orWhere('sales.channel', 'pos');
+            }
             if ($includeNormalOrders) {
-                $sub->orWhereIn('sales.channel', ['backend', 'backoffice'])
-                    ->orWhereIn('sales.order_source', ['backend', 'backoffice']);
+                $sub->orWhere(function (Builder $backoffice) {
+                    $backoffice->whereIn('sales.channel', ['backend', 'backoffice'])
+                        ->orWhereIn('sales.order_source', ['backend', 'backoffice']);
+                });
             }
         });
     }
 
-    public static function apply(Builder $query, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): Builder
+    public static function apply(Builder $query, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS, bool $includePosOrders = true): Builder
     {
-        return self::applyForLoadingList($query, $includeNormalOrders);
+        return self::applyForLoadingList($query, $includeNormalOrders, $includePosOrders);
     }
 
     /**
      * Orders eligible for distribution loading lists, dispatch trips, and route orders.
      */
-    public static function applyForLoadingList(Builder $query, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): Builder
-    {
+    public static function applyForLoadingList(
+        Builder $query,
+        bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS,
+        bool $includePosOrders = true,
+    ): Builder {
         self::withCustomerRouteJoin($query);
 
         return $query
             ->whereNotNull(DB::raw(self::effectiveRouteIdSql()))
-            ->where(function (Builder $sub) use ($includeNormalOrders) {
-                self::applyChannelScope($sub, $includeNormalOrders);
+            ->where(function (Builder $sub) use ($includeNormalOrders, $includePosOrders) {
+                self::applyChannelScope($sub, $includeNormalOrders, $includePosOrders);
             });
     }
 
@@ -93,9 +109,9 @@ class RouteOrderScope
         return $query->where(DB::raw(self::effectiveRouteIdSql()), $routeId);
     }
 
-    public static function matches(?object $sale, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): bool
+    public static function matches(?object $sale, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS, bool $includePosOrders = true): bool
     {
-        return self::eligibleForLoadingList($sale, $includeNormalOrders);
+        return self::eligibleForLoadingList($sale, $includeNormalOrders, $includePosOrders);
     }
 
     public static function effectiveRouteId(?object $sale): ?int
@@ -109,8 +125,11 @@ class RouteOrderScope
         return $routeId ? (int) $routeId : null;
     }
 
-    public static function eligibleForLoadingList(?object $sale, bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS): bool
-    {
+    public static function eligibleForLoadingList(
+        ?object $sale,
+        bool $includeNormalOrders = self::DEFAULT_INCLUDE_NORMAL_ORDERS,
+        bool $includePosOrders = true,
+    ): bool {
         if ($sale === null || ! self::effectiveRouteId($sale)) {
             return false;
         }
@@ -118,8 +137,12 @@ class RouteOrderScope
         $channel = (string) ($sale->channel ?? '');
         $orderSource = (string) ($sale->order_source ?? '');
 
-        if (in_array($channel, ['mobile', 'pos'], true)) {
+        if ($channel === 'mobile') {
             return true;
+        }
+
+        if ($channel === 'pos') {
+            return $includePosOrders;
         }
 
         if (! $includeNormalOrders) {

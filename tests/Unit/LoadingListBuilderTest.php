@@ -149,4 +149,61 @@ class LoadingListBuilderTest extends TestCase
             $this->assertSame('Mumias White Sugar 50kg', $line['product_name']);
         }
     }
+
+    public function test_aggregate_orders_groups_by_customer_order(): void
+    {
+        $template = Sale::query()->firstOrFail();
+        $product = Product::query()->where('product_code', '6161100100015')->firstOrFail();
+
+        $saleA = Sale::create([
+            'order_num' => 96010,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $template->cashier_id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'processed',
+            'total_vat' => 0,
+            'order_total' => 3750,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        $saleB = Sale::create([
+            'order_num' => 96011,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $template->cashier_id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'processed',
+            'total_vat' => 0,
+            'order_total' => 2500,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        foreach ([$saleA, $saleB] as $index => $sale) {
+            SaleItem::create([
+                'sale_id' => $sale->id,
+                'product_code' => $product->product_code,
+                'line_no' => 1,
+                'quantity' => 10 + $index,
+                'selling_price' => 125,
+                'amount' => 1250 * (1 + $index),
+                'on_wholesale_retail' => 0,
+            ]);
+        }
+
+        $orders = app(LoadingListBuilder::class)->aggregateOrdersFromSaleIds([$saleA->id, $saleB->id]);
+
+        $this->assertCount(2, $orders);
+        $this->assertSame(96010, $orders[0]['order_num']);
+        $this->assertSame(96011, $orders[1]['order_num']);
+        $this->assertCount(1, $orders[0]['lines']);
+        $this->assertSame(10.0, (float) $orders[0]['lines'][0]['quantity']);
+        $this->assertSame(11.0, (float) $orders[1]['lines'][0]['quantity']);
+    }
 }

@@ -132,6 +132,37 @@ php artisan migrate --force
 
 Never run `migrate:fresh` or `db:wipe` against a live database.
 
+## Production deploy (Docker / Kubernetes)
+
+Every API container start runs `docker-bootstrap.sh` (see `docker-entrypoint.sh`):
+
+| Step | Command | Env to skip |
+|------|---------|-------------|
+| Migrations | `php artisan migrate --force` | `RUN_MIGRATIONS_ON_START=false` |
+| Permission registry | `php artisan erp:permissions-sync` | `RUN_PERMISSIONS_SYNC_ON_START=false` |
+| Public storage link | `php artisan storage:link --force` | `RUN_STORAGE_LINK_ON_START=false` |
+| Config cache | `php artisan config:cache` | — (always in entrypoint) |
+| Event cache | `php artisan event:cache` | — (best-effort) |
+
+Push to `main`/`master` builds a new image (`ghcr.io/.../centrix-erp-backend-api`) and bumps the Helm tag in `pitchpredk3ssetup`. After Argo/Helm rolls out new pods, pending migrations apply automatically.
+
+**Important:** migration PHP files must be **committed and pushed** before deploy — otherwise `migrate --force` has nothing to run and you can get “Unknown column” errors when new code ships first.
+
+Optional one-time after large permission changes:
+
+```bash
+php artisan erp:permissions-sync --grant-admin
+```
+
+Separate Helm charts (`centrix-erp-queue-worker`, `centrix-erp-scheduler`) should set `RUN_MIGRATIONS_ON_START=false` on workers if only the API pod runs bootstrap — or leave defaults if all charts share the same entrypoint (migrate is idempotent).
+
+Manual fallback on the server:
+
+```bash
+php artisan migrate --force
+php artisan erp:permissions-sync
+```
+
 ## Automated backups
 
 Daily compressed SQL backups via:

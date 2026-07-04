@@ -27,6 +27,23 @@ class ApiErrorPresenterTest extends TestCase
         $this->assertSame('Settings', $payload['module']);
     }
 
+    public function test_org_admin_receives_detailed_server_error(): void
+    {
+        $user = new \App\Models\User(['is_admin' => true, 'is_super_admin' => false]);
+        $request = Request::create('/api/v1/notifications/unread-count', 'GET');
+        $request->setUserResolver(fn () => $user);
+
+        $payload = ApiErrorPresenter::userMessage(
+            new ParseError('Unknown column dismissed_at', 503),
+            $request,
+            $user,
+        );
+
+        $this->assertTrue($payload['expose_detail']);
+        $this->assertStringContainsString('dismissed_at', $payload['message']);
+        $this->assertSame('Notifications', $payload['module']);
+    }
+
     public function test_regular_user_receives_module_scoped_message(): void
     {
         $user = new \App\Models\User(['is_super_admin' => false]);

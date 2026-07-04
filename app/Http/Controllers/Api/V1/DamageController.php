@@ -5,14 +5,18 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\Damage;
 use App\Models\User;
+use App\Services\Erp\ErpContext;
 use App\Services\Inventory\DamageApprovalService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 class DamageController extends BaseResourceController
 {
     use HandlesInventory;
+
+    public function __construct(protected ErpContext $erp) {}
 
     protected function modelClass(): string
     {
@@ -34,34 +38,36 @@ class DamageController extends BaseResourceController
         $this->access()->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
         $this->access()->assertBranchAccess($user, (int) $data['branch_id']);
 
-        if (! app(DamageApprovalService::class)->canApprove($user)) {
-            $actionRequest = app(DamageApprovalService::class)->requestCreate($user, $data);
+        $approval = app(DamageApprovalService::class);
+        $gate = $this->erp->gateForUser($user);
 
-            return response()->json([
-                'message' => 'Damage write-off submitted for admin approval.',
-                'pending_approval' => true,
-                'action_request_id' => (int) $actionRequest->id,
-            ], 202);
+        if ($approval->approvalEnabled($gate) && ! $approval->canDirectWriteOff($user)) {
+            throw ValidationException::withMessages([
+                'authorization' => 'Damage write-offs require manager approval. Submit a request instead.',
+            ]);
         }
 
-        try {
-            return DB::transaction(function () use ($data, $user, $request) {
-                $damage = Damage::create([
-                    ...$data,
-                    'reported_by' => $user->id,
-                ]);
+        return $this->createDamageRecord($data, $user, $request);
+    }
 
-                $this->postDamageDeduction($damage, $user);
+    public function requestStore(Request $request)
+    {
+        $data = $this->validateDamagePayload($request);
+        $user = $request->user();
+        abort_unless($user, 401);
 
-                if ($this->auditable()) {
-                    $this->auditLogger()->logModel($user, 'create', $damage, request: $request);
-                }
+        $this->access()->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
+        $this->access()->assertBranchAccess($user, (int) $data['branch_id']);
 
-                return response()->json($damage, 201);
-            });
-        } catch (InvalidArgumentException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
-        }
+        $approval = app(DamageApprovalService::class);
+        $gate = $this->erp->gateForUser($user);
+        $actionRequest = $approval->requestCreate($user, $data, $gate);
+
+        return response()->json([
+            'message' => 'Damage write-off submitted for admin approval.',
+            'pending_approval' => true,
+            'action_request_id' => (int) $actionRequest->id,
+        ], 202);
     }
 
     public function update(Request $request, string $id)
@@ -149,6 +155,29 @@ class DamageController extends BaseResourceController
         }
 
         return $data;
+    }
+
+    /** @param  array<string, mixed>  $data */
+    protected function createDamageRecord(array $data, User $user, Request $request)
+    {
+        try {
+            return DB::transaction(function () use ($data, $user, $request) {
+                $damage = Damage::create([
+                    ...$data,
+                    'reported_by' => $user->id,
+                ]);
+
+                $this->postDamageDeduction($damage, $user);
+
+                if ($this->auditable()) {
+                    $this->auditLogger()->logModel($user, 'create', $damage, request: $request);
+                }
+
+                return response()->json($damage, 201);
+            });
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
     }
 
     protected function normalizePackageType(string $packageType): string

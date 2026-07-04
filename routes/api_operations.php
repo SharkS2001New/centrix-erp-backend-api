@@ -1,6 +1,7 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\Api\V1\DamageController;
 use App\Http\Controllers\Api\V1\Operations\CartOperationsController;
 use App\Http\Controllers\Api\V1\Operations\CheckoutController;
 use App\Http\Controllers\Api\V1\Operations\OrderWorkflowController;
@@ -67,6 +68,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('attendance/resume', [MobileDriverAttendanceController::class, 'resume']);
         Route::post('attendance/sign-out', [MobileDriverAttendanceController::class, 'signOut']);
         Route::get('trips/today', [MobileDriverController::class, 'todayTrips']);
+        Route::get('trips/upcoming', [MobileDriverController::class, 'upcomingTrips']);
+        Route::get('trips/by-date', [MobileDriverController::class, 'tripsByDate']);
         Route::get('trips/{tripId}', [MobileDriverController::class, 'showTrip']);
         Route::get('trips/{tripId}/stops', [MobileDriverController::class, 'tripStops']);
         Route::post('trips/{tripId}/settle', [MobileDriverController::class, 'settleTrip']);
@@ -145,6 +148,9 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('adjust', [StockOperationsController::class, 'adjust']);
             Route::post('adjust/request', [StockOperationsController::class, 'requestAdjust']);
         });
+
+    Route::middleware(['erp.module:inventory', 'erp.permission:inventory.damages.create|inventory.manage'])
+        ->post('damages/request', [DamageController::class, 'requestStore']);
 
     Route::middleware(['erp.module:inventory', 'erp.permission:inventory.manage'])->prefix('inventory')->group(function () {
         Route::post('transfer', [StockTransferController::class, 'store']);

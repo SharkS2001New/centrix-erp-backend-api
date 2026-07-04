@@ -2,7 +2,10 @@
 
 namespace App\Services\Auth;
 
+use App\Models\Organization;
 use App\Models\User;
+use App\Services\Erp\CapabilityGate;
+use App\Services\Mobile\MobileAppModuleAccessService;
 use Illuminate\Validation\ValidationException;
 
 class UserLoginChannelService
@@ -109,6 +112,54 @@ class UserLoginChannelService
         }
 
         return $this->isMobileAllowedPath($path);
+    }
+
+    public function mobileTokenCanAccessPath(User $user, string $path): bool
+    {
+        $path = $this->normalizeApiPath($path);
+
+        if ($this->isSharedAuthPath($path)) {
+            return true;
+        }
+
+        if (! $this->isMobileAllowedPath($path)) {
+            return false;
+        }
+
+        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+        if (! $organization) {
+            return false;
+        }
+
+        $gate = app(CapabilityGate::class)->forOrganization($organization);
+        $modules = app(MobileAppModuleAccessService::class)->capabilitiesForUser($user, $gate);
+        $salesOk = (bool) ($modules['modules']['sales']['accessible'] ?? false);
+        $driverOk = (bool) ($modules['modules']['driver']['accessible'] ?? false);
+
+        if (str_starts_with($path, 'mobile/driver/')) {
+            return $driverOk;
+        }
+
+        if (str_starts_with($path, 'mobile/')) {
+            return $salesOk;
+        }
+
+        $salesOnlyPrefixes = [
+            'sales/carts',
+            'sales/customers',
+            'sales/loyalty-cards',
+        ];
+        foreach ($salesOnlyPrefixes as $prefix) {
+            if ($this->pathMatchesAny($path, [$prefix])) {
+                return $salesOk;
+            }
+        }
+
+        if ($this->pathMatchesAny($path, ['sales/']) && str_contains($path, '/payments')) {
+            return $salesOk || $driverOk;
+        }
+
+        return $salesOk || $driverOk;
     }
 
     /** @param  list<string>  $channels */

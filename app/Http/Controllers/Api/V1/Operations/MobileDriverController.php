@@ -18,6 +18,24 @@ class MobileDriverController extends Controller
         return response()->json($this->driverService->todayTrips($request->user()));
     }
 
+    /** GET /mobile/driver/trips/upcoming */
+    public function upcomingTrips(Request $request)
+    {
+        return response()->json($this->driverService->upcomingTrips($request->user()));
+    }
+
+    /** GET /mobile/driver/trips/by-date?date=YYYY-MM-DD */
+    public function tripsByDate(Request $request)
+    {
+        $data = $request->validate([
+            'date' => 'required|date_format:Y-m-d',
+        ]);
+
+        return response()->json(
+            $this->driverService->tripsForDate($request->user(), $data['date']),
+        );
+    }
+
     /** GET /mobile/driver/trips/{tripId} */
     public function showTrip(Request $request, int $tripId)
     {

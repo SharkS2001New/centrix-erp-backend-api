@@ -68,6 +68,7 @@ class SaleController extends BaseResourceController
             RouteOrderScope::applyForLoadingList(
                 $query,
                 RouteOrderScope::includeNormalOrders($distributionSettings),
+                RouteOrderScope::includePosRouteOrders($gate->enabled('sales.pos')),
             );
         }
 

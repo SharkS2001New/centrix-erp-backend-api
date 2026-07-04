@@ -71,6 +71,33 @@ class InAppNotificationController extends Controller
         ]);
     }
 
+    public function dismiss(Request $request, string $id)
+    {
+        $notification = InAppNotification::query()
+            ->where('organization_id', $request->user()->organization_id)
+            ->findOrFail((int) $id);
+
+        try {
+            $updated = $this->notifications->dismiss($notification, $request->user());
+        } catch (\InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json([
+            'data' => $this->notifications->format($updated, $request->user()),
+        ]);
+    }
+
+    public function clearAll(Request $request)
+    {
+        $count = $this->notifications->clearAll($request->user());
+
+        return response()->json([
+            'message' => 'Notifications cleared.',
+            'updated' => $count,
+        ]);
+    }
+
     public function approveActionRequest(Request $request, string $id)
     {
         $actionRequest = ActionRequest::query()

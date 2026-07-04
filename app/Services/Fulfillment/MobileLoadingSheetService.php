@@ -113,8 +113,8 @@ class MobileLoadingSheetService
 
         $route = RouteModel::query()->find($routeId);
         $saleIds = $sales->pluck('id')->all();
-        $lines = $this->loadingListBuilder->aggregateLinesFromSaleIds($saleIds);
-        $totalAmount = array_sum(array_column($lines, 'line_total'));
+        $orders = $this->loadingListBuilder->aggregateOrdersFromSaleIds($saleIds);
+        $totalAmount = round(array_sum(array_column($orders, 'subtotal')), 2);
 
         return [
             'loading_list' => [
@@ -125,8 +125,8 @@ class MobileLoadingSheetService
                     'route_name' => $route->route_name,
                 ] : null,
                 'order_count' => $sales->count(),
-                'total_amount' => round($totalAmount, 2),
-                'lines' => $lines,
+                'total_amount' => $totalAmount,
+                'orders' => $orders,
             ],
             'orders' => $sales->map(fn (Sale $sale) => [
                 'id' => $sale->id,

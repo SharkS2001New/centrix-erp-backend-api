@@ -19,6 +19,7 @@ class InAppNotification extends Model
         'is_read',
         'read_at',
         'resolved_at',
+        'dismissed_at',
         'created_by',
     ];
 
@@ -26,6 +27,7 @@ class InAppNotification extends Model
         'is_read' => 'boolean',
         'read_at' => 'datetime',
         'resolved_at' => 'datetime',
+        'dismissed_at' => 'datetime',
     ];
 
     public function user(): BelongsTo

@@ -12,6 +12,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserDeletionService;
 use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserLoginChannelPolicy;
+use App\Services\Auth\UserMobileLoginValidator;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Auth\UserLoginService;
 use App\Services\Auth\UserPermissionService;
@@ -53,6 +54,12 @@ class UserController extends BaseResourceController
         app(UserLoginChannelPolicy::class)->assertAllowedForOrganization(
             $organization,
             $data['login_channels'],
+        );
+        app(UserMobileLoginValidator::class)->assertMobileChannelAllowedForUser(
+            $organization,
+            $data['login_channels'],
+            isset($data['role_id']) ? (int) $data['role_id'] : null,
+            (bool) ($data['is_admin'] ?? false),
         );
         $data = $this->normalizeLoginChannels($data);
         $data = app(UserMobileOrderScopeService::class)->normalizeUserAttributes($data);
@@ -100,7 +107,21 @@ class UserController extends BaseResourceController
                 Organization::findOrFail((int) $model->organization_id),
                 $data['login_channels'],
             );
+            app(UserMobileLoginValidator::class)->assertMobileChannelAllowedForUser(
+                Organization::findOrFail((int) $model->organization_id),
+                $data['login_channels'],
+                (int) ($data['role_id'] ?? $model->role_id),
+                (bool) ($data['is_admin'] ?? $model->is_admin),
+            );
             $data = $this->normalizeLoginChannels($data);
+        }
+        if (array_key_exists('role_id', $data) && ! array_key_exists('login_channels', $data)) {
+            app(UserMobileLoginValidator::class)->assertMobileChannelAllowedForUser(
+                Organization::findOrFail((int) $model->organization_id),
+                $model->login_channels ?? [],
+                (int) $data['role_id'],
+                (bool) ($data['is_admin'] ?? $model->is_admin),
+            );
         }
         if (array_key_exists('mobile_order_scope', $data)
             || array_key_exists('assigned_route_id', $data)

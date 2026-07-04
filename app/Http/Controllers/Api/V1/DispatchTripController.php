@@ -154,7 +154,7 @@ class DispatchTripController extends BaseResourceController
     {
         $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
         if (! in_array($trip->status, ['draft', 'cancelled'], true)) {
-            return response()->json(['message' => 'Only draft trips can be deleted. Cancel the trip first.'], 422);
+            return response()->json(['message' => 'Only draft or cancelled trips can be deleted. Cancel the trip first.'], 422);
         }
         $trip->delete();
 
@@ -241,7 +241,13 @@ class DispatchTripController extends BaseResourceController
         $loadingList = $builder->syncLoadingList($model);
         $loadingList->load(['route', 'trip.route', 'trip.driver', 'trip.vehicle']);
         $payload = $loadingList->toArray();
-        $payload['lines'] = $builder->linesForTrip($model);
+        $orders = $builder->ordersForTrip($model);
+        $payload['orders'] = $orders;
+        $payload['order_count'] = count($orders);
+        $payload['line_count'] = array_sum(array_map(
+            fn (array $order) => count($order['lines'] ?? []),
+            $orders,
+        ));
 
         try {
             $financialSummary = $this->financials->summarizeForTrip($model);

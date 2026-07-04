@@ -322,6 +322,12 @@ class AuthSessionService
 
     protected function assertLoginChannelPermission(User $user, string $loginChannel): void
     {
+        if ($loginChannel === UserLoginChannelService::MOBILE) {
+            app(UserMobileLoginValidator::class)->assertCanLoginViaMobile($user);
+
+            return;
+        }
+
         if ($loginChannel !== UserLoginChannelService::POS) {
             return;
         }

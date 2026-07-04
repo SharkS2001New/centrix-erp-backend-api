@@ -60,7 +60,7 @@ RUN mkdir -p resources/views storage/framework/cache/data storage/framework/sess
     && chown -R www-data:www-data storage bootstrap/cache resources \
     && chmod -R ug+rwx storage bootstrap/cache
 
-# Runtime: docker-entrypoint.sh runs docker-bootstrap.sh (migrate + storage:link) before Apache.
+# Runtime: docker-entrypoint.sh runs docker-bootstrap.sh (migrate, permissions sync, storage:link) before Apache.
 
 EXPOSE 8001
 

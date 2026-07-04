@@ -56,6 +56,12 @@ class MobileDriverService
     /** @return array<string, mixed> */
     public function todayTrips(User $user): array
     {
+        return $this->tripsForDate($user, now()->toDateString());
+    }
+
+    /** @return array<string, mixed> */
+    public function upcomingTrips(User $user): array
+    {
         $driver = $this->requireDriver($user);
         $today = now()->toDateString();
 
@@ -63,19 +69,47 @@ class MobileDriverService
             ->with(['route', 'routes', 'driver', 'vehicle'])
             ->withCount('sales')
             ->where('driver_id', $driver->id)
-            ->whereDate('scheduled_date', $today)
+            ->whereDate('scheduled_date', '>', $today)
+            ->whereNotIn('status', ['cancelled', 'completed'])
+            ->orderBy('scheduled_date')
+            ->orderBy('id')
+            ->get();
+
+        return $this->presentTripsPayload($driver, $trips, null);
+    }
+
+    /** @return array<string, mixed> */
+    public function tripsForDate(User $user, string $date): array
+    {
+        $driver = $this->requireDriver($user);
+        $parsed = \Carbon\Carbon::parse($date)->toDateString();
+
+        $trips = DispatchTrip::query()
+            ->with(['route', 'routes', 'driver', 'vehicle'])
+            ->withCount('sales')
+            ->where('driver_id', $driver->id)
+            ->whereDate('scheduled_date', $parsed)
             ->whereNotIn('status', ['cancelled'])
             ->orderByRaw("FIELD(status, 'in_transit', 'loading', 'draft', 'completed')")
             ->orderBy('id')
             ->get();
 
+        return $this->presentTripsPayload($driver, $trips, $parsed);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, DispatchTrip>  $trips
+     * @return array<string, mixed>
+     */
+    protected function presentTripsPayload(Driver $driver, $trips, ?string $scheduledDate): array
+    {
         $summaries = $this->financials->summarizeForTripIds(
             $trips->pluck('id')->map(fn ($id) => (int) $id)->all(),
         );
 
         return [
             'driver' => $this->presentDriver($driver),
-            'scheduled_date' => $today,
+            'scheduled_date' => $scheduledDate,
             'trips' => $trips->map(
                 fn (DispatchTrip $trip) => $this->presentTripSummary(
                     $trip,
@@ -144,15 +178,15 @@ class MobileDriverService
         $recipient = trim((string) ($data['recipient_name'] ?? ''));
         $gate = $this->erp->gateForUser($user);
         $distributionSettings = $gate->distributionSettings();
-        $requirePod = ! empty($distributionSettings['require_pod_on_delivered']);
+        $requirePod = $outcome !== 'failed';
 
         if ($outcome !== 'failed' && $recipient === '') {
             throw new InvalidArgumentException('Enter who received the delivery.');
         }
 
-        if ($requirePod && $outcome !== 'failed' && ! $photo) {
+        if ($requirePod && ! $photo) {
             throw new InvalidArgumentException(
-                'Invoice/photo proof is required before marking this order as delivered.',
+                'Photo proof of delivery is required before marking this order as delivered.',
             );
         }
 

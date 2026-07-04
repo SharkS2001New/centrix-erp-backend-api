@@ -390,7 +390,7 @@ return [
             'mobile_checkout_mode' => 'save_only',
             'mobile_product_list_mode' => 'in_stock_only',
             'mobile_enable_field_attendance' => false,
-            'mobile_show_customer_phone' => true,
+            'mobile_show_customer_phone' => false,
             'require_pos_till_float' => false,
             'require_backoffice_till_float' => false,
             'blind_till_close' => false,
@@ -454,6 +454,7 @@ return [
             'cart_reservation_ttl_minutes' => 15,
             'stock_adjustment_approval_enabled' => false,
             'stock_transfer_approval_enabled' => false,
+            'damage_write_off_approval_enabled' => false,
         ],
         'finance' => [
             'enable_mpesa_stk' => true,

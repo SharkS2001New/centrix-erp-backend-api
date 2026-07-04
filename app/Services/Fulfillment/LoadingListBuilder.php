@@ -46,16 +46,55 @@ class LoadingListBuilder
             ->all();
     }
 
-    /** @return array<int, array<string, mixed>> */
+    /** @return array<int, array<string, mixed>> Product totals aggregated across the trip (warehouse sync / totals). */
     public function aggregateLines(DispatchTrip $trip): array
     {
         return $this->aggregateLinesFromSaleIds($this->eligibleSaleIdsForTrip($trip));
     }
 
-    /** @return array<int, array<string, mixed>> */
+    /** @return array<int, array<string, mixed>> Loading list grouped by customer order (door loading sequence). */
+    public function ordersForTrip(DispatchTrip $trip): array
+    {
+        $trip->loadMissing(['sales.customer', 'sales.items']);
+
+        $eligibleIds = collect($this->eligibleSaleIdsForTrip($trip))->flip();
+
+        $sales = $trip->sales
+            ->filter(fn (Sale $sale) => $eligibleIds->has($sale->id))
+            ->sortBy([
+                fn (Sale $sale) => (int) ($sale->pivot?->stop_seq ?? 9999),
+                fn (Sale $sale) => (int) $sale->order_num,
+                fn (Sale $sale) => (int) $sale->id,
+            ])
+            ->values();
+
+        return $this->buildOrdersFromSales($sales);
+    }
+
+    /** @return array<int, array<string, mixed>> @deprecated Use ordersForTrip() for loading list display. */
     public function linesForTrip(DispatchTrip $trip): array
     {
         return $this->aggregateLines($trip);
+    }
+
+    /** @param  array<int, int|string>  $saleIds
+     * @return array<int, array<string, mixed>>
+     */
+    public function aggregateOrdersFromSaleIds(array $saleIds): array
+    {
+        $saleIds = array_values(array_unique(array_map('intval', $saleIds)));
+        if ($saleIds === []) {
+            return [];
+        }
+
+        $sales = Sale::query()
+            ->whereIn('id', $saleIds)
+            ->with(['customer:customer_num,customer_name', 'items'])
+            ->orderBy('order_num')
+            ->orderBy('id')
+            ->get();
+
+        return $this->buildOrdersFromSales($sales);
     }
 
     /** @param  array<int, int|string>  $saleIds
@@ -72,16 +111,89 @@ class LoadingListBuilder
             ->whereIn('sale_id', $saleIds)
             ->get();
 
+        return $this->buildProductLinesFromItems($items);
+    }
+
+    /**
+     * @param  Collection<int, Sale>|iterable<int, Sale>  $sales
+     * @return array<int, array<string, mixed>>
+     */
+    protected function buildOrdersFromSales(iterable $sales): array
+    {
+        $collection = $sales instanceof Collection ? $sales : collect($sales);
+        if ($collection->isEmpty()) {
+            return [];
+        }
+
+        $productCodes = $collection
+            ->flatMap(fn (Sale $sale) => $sale->items->pluck('product_code'))
+            ->unique()
+            ->values()
+            ->all();
+
+        $products = $productCodes === []
+            ? collect()
+            : Product::query()
+                ->with('unit')
+                ->whereIn('product_code', $productCodes)
+                ->get()
+                ->keyBy('product_code');
+
+        $orders = [];
+        $stopNo = 1;
+
+        foreach ($collection as $sale) {
+            $lines = $this->buildProductLinesFromItems($sale->items, $products);
+            $subtotal = round(array_sum(array_column($lines, 'line_total')), 2);
+            $customerName = trim((string) (
+                $sale->customer_name_override
+                ?: ($sale->customer?->customer_name ?? '')
+            ));
+
+            $orders[] = [
+                'stop_no' => (int) ($sale->pivot?->stop_seq ?? $stopNo),
+                'sale_id' => (int) $sale->id,
+                'order_num' => $sale->order_num,
+                'customer_num' => $sale->customer_num,
+                'customer_name' => $customerName !== '' ? $customerName : 'Customer #'.($sale->customer_num ?? $sale->id),
+                'order_total' => round((float) $sale->order_total, 2),
+                'payment_status' => $sale->payment_status,
+                'subtotal' => $subtotal,
+                'lines' => $lines,
+            ];
+            $stopNo++;
+        }
+
+        usort($orders, fn ($a, $b) => ($a['stop_no'] <=> $b['stop_no']) ?: ($a['order_num'] <=> $b['order_num']));
+
+        return array_values($orders);
+    }
+
+    /**
+     * @param  Collection<int, SaleItem>|iterable<int, SaleItem>  $items
+     * @param  Collection<string, Product>|null  $products
+     * @return array<int, array<string, mixed>>
+     */
+    protected function buildProductLinesFromItems(iterable $items, ?Collection $products = null): array
+    {
+        $collection = $items instanceof Collection ? $items : collect($items);
+        if ($collection->isEmpty()) {
+            return [];
+        }
+
+        if ($products === null) {
+            $productCodes = $collection->pluck('product_code')->unique()->values()->all();
+            $products = Product::query()
+                ->with('unit')
+                ->whereIn('product_code', $productCodes)
+                ->get()
+                ->keyBy('product_code');
+        }
+
         /** @var Collection<string, Collection<int, SaleItem>> $grouped */
-        $grouped = $items->groupBy(
+        $grouped = $collection->groupBy(
             fn (SaleItem $item) => $item->product_code.'|'.(int) ($item->on_wholesale_retail ?? 0),
         );
-        $productCodes = $items->pluck('product_code')->unique()->values()->all();
-        $products = Product::query()
-            ->with('unit')
-            ->whereIn('product_code', $productCodes)
-            ->get()
-            ->keyBy('product_code');
 
         $lines = [];
         $lineNo = 1;

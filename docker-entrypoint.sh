@@ -12,5 +12,6 @@ if [ "${APP_ENV:-local}" = "production" ] && [ -z "${CORS_ALLOWED_ORIGINS:-}" ] 
 fi
 
 php artisan config:cache
+php artisan event:cache 2>/dev/null || true
 
 exec "$@"

@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Notifications\ActionRequestService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
+use InvalidArgumentException;
 
 class InAppNotificationService
 {
@@ -34,9 +35,7 @@ class InAppNotificationService
 
     public function unreadCount(User $user): int
     {
-        return InAppNotification::query()
-            ->where('user_id', $user->id)
-            ->where('organization_id', $user->organization_id)
+        return $this->visibleQuery($user)
             ->where('is_read', false)
             ->whereNull('resolved_at')
             ->count();
@@ -45,10 +44,8 @@ class InAppNotificationService
     /** @return Collection<int, array<string, mixed>> */
     public function listRecent(User $user, int $limit = 20): Collection
     {
-        return InAppNotification::query()
+        return $this->visibleQuery($user)
             ->with(['actionRequest.requester', 'creator'])
-            ->where('user_id', $user->id)
-            ->where('organization_id', $user->organization_id)
             ->orderByDesc('created_at')
             ->limit(min($limit, 50))
             ->get()
@@ -58,10 +55,8 @@ class InAppNotificationService
     /** @param  array<string, mixed>  $filters */
     public function paginate(User $user, array $filters = []): LengthAwarePaginator
     {
-        $query = InAppNotification::query()
-            ->with(['actionRequest.requester', 'creator'])
-            ->where('user_id', $user->id)
-            ->where('organization_id', $user->organization_id);
+        $query = $this->visibleQuery($user)
+            ->with(['actionRequest.requester', 'creator']);
 
         $bucket = (string) ($filters['bucket'] ?? '');
         if ($bucket === 'pending_approvals') {
@@ -98,14 +93,66 @@ class InAppNotificationService
 
     public function markAllRead(User $user): int
     {
-        return InAppNotification::query()
-            ->where('user_id', $user->id)
-            ->where('organization_id', $user->organization_id)
+        return $this->visibleQuery($user)
             ->where('is_read', false)
             ->update([
                 'is_read' => true,
                 'read_at' => now(),
             ]);
+    }
+
+    public function dismiss(InAppNotification $notification, User $user): InAppNotification
+    {
+        abort_if((int) $notification->user_id !== (int) $user->id, 404);
+
+        if ($this->isPendingApproval($notification)) {
+            throw new InvalidArgumentException('Pending approval notifications cannot be cleared until resolved.');
+        }
+
+        if ($notification->dismissed_at === null) {
+            $notification->update([
+                'dismissed_at' => now(),
+                'is_read' => true,
+                'read_at' => $notification->read_at ?? now(),
+            ]);
+        }
+
+        return $notification->fresh(['actionRequest.requester', 'creator']);
+    }
+
+    public function clearAll(User $user): int
+    {
+        return $this->visibleQuery($user)
+            ->where(function ($query) {
+                $query->where('type', '!=', 'approval')
+                    ->orWhereDoesntHave('actionRequest', fn ($q) => $q->where('status', 'pending'));
+            })
+            ->update([
+                'dismissed_at' => now(),
+                'is_read' => true,
+                'read_at' => now(),
+            ]);
+    }
+
+    public function isPendingApproval(InAppNotification $notification): bool
+    {
+        if ($notification->type !== 'approval') {
+            return false;
+        }
+
+        $request = $notification->relationLoaded('actionRequest')
+            ? $notification->actionRequest
+            : $notification->actionRequest()->first();
+
+        return $request !== null && $request->status === 'pending';
+    }
+
+    protected function visibleQuery(User $user)
+    {
+        return InAppNotification::query()
+            ->where('user_id', $user->id)
+            ->where('organization_id', $user->organization_id)
+            ->whereNull('dismissed_at');
     }
 
     public function resolveForActionRequest(ActionRequest $request): void

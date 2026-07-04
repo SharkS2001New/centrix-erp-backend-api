@@ -413,6 +413,7 @@ class ErpSettingsController extends Controller
             'default_pos_sale_location',
             'default_distribution_sale_location',
             'stock_adjustment_approval_enabled',
+            'damage_write_off_approval_enabled',
         ];
 
         $stockSourceKeys = [
@@ -433,6 +434,7 @@ class ErpSettingsController extends Controller
             'retail_shop_wholesale_store_stock' => 'sometimes|boolean',
             'enable_barcode_scanner' => 'sometimes|boolean',
             'stock_adjustment_approval_enabled' => 'sometimes|boolean',
+            'damage_write_off_approval_enabled' => 'sometimes|boolean',
             'allow_negative_stock' => 'sometimes|boolean',
             'stock_alert_mode' => 'sometimes|in:per_product,global,both',
             'global_low_stock_threshold' => 'sometimes|nullable|numeric|min:0',

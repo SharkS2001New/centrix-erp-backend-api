@@ -42,6 +42,7 @@ class PermissionMatrixService
     {
         self::ensureRegistryPermissions();
         self::ensureCapabilityCodes();
+        self::remapLegacyPermissionAssignments();
     }
 
     public static function ensureRegistryPermissions(): void
@@ -67,6 +68,7 @@ class PermissionMatrixService
             'sales.create' => 'sales',
             'sales.manage' => 'sales',
             'sales.view' => 'sales',
+            'mobile.access' => 'mobile_sales',
             'driver.mobile' => 'mobile_driver',
             'payments.manage' => 'payments',
             'payments.view' => 'payments',
@@ -237,5 +239,55 @@ class PermissionMatrixService
         }
 
         return $applications;
+    }
+
+    /** Remap role assignments from retired mobile.* codes to mobile_sales.* / mobile_driver.* */
+    public static function remapLegacyPermissionAssignments(): void
+    {
+        $map = [
+            'mobile.dashboard.view' => 'mobile_sales.dashboard.view',
+            'mobile.orders.view' => 'mobile_sales.orders.view',
+            'mobile.orders.create' => 'mobile_sales.orders.create',
+            'mobile.orders.edit' => 'mobile_sales.orders.edit',
+            'mobile.customers.view' => 'mobile_sales.customers.view',
+            'mobile.customers.create' => 'mobile_sales.customers.create',
+            'mobile.customers.edit' => 'mobile_sales.customers.edit',
+            'mobile.catalog.view' => 'mobile_sales.catalog.view',
+            'mobile.stock.view' => 'mobile_sales.stock.view',
+            'mobile.routes.view' => 'mobile_sales.routes.view',
+            'mobile.drivers.view' => 'mobile_driver.deliveries.view',
+            'mobile.drivers.deliver' => 'mobile_driver.deliveries.deliver',
+        ];
+
+        $permissions = Permission::query()
+            ->whereIn('permission_code', array_merge(array_keys($map), array_values($map)))
+            ->pluck('id', 'permission_code');
+
+        foreach ($map as $from => $to) {
+            $fromId = $permissions[$from] ?? null;
+            $toId = $permissions[$to] ?? null;
+            if (! $fromId || ! $toId) {
+                continue;
+            }
+
+            $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+                ->where('permission_id', $fromId)
+                ->pluck('role_id');
+
+            foreach ($roleIds as $roleId) {
+                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                    'role_id' => $roleId,
+                    'permission_id' => $toId,
+                ]);
+            }
+
+            \Illuminate\Support\Facades\DB::table('role_permissions')
+                ->where('permission_id', $fromId)
+                ->delete();
+
+            \Illuminate\Support\Facades\DB::table('user_permission_overrides')
+                ->where('permission_id', $fromId)
+                ->update(['permission_id' => $toId]);
+        }
     }
 }

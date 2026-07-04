@@ -8,6 +8,7 @@ use App\Models\Driver;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Hash;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -34,16 +35,53 @@ class MobileDriverApiTest extends TestCase
             ->assertJsonPath('stops.0.sale_id', $sale->id);
     }
 
+    public function test_driver_can_list_upcoming_and_past_trips(): void
+    {
+        [$user, $driver, $trip, $sale] = $this->makeDriverTripWithStop();
+        $token = $this->loginMobile($user);
+
+        $upcoming = DispatchTrip::create([
+            'branch_id' => $trip->branch_id,
+            'trip_code' => 'TRIP-UP-'.uniqid(),
+            'driver_id' => $driver->id,
+            'scheduled_date' => now()->addDay()->toDateString(),
+            'status' => 'draft',
+            'created_by' => $trip->created_by,
+        ]);
+
+        $past = DispatchTrip::create([
+            'branch_id' => $trip->branch_id,
+            'trip_code' => 'TRIP-PAST-'.uniqid(),
+            'driver_id' => $driver->id,
+            'scheduled_date' => now()->subDay()->toDateString(),
+            'status' => 'completed',
+            'created_by' => $trip->created_by,
+        ]);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/driver/trips/upcoming')
+            ->assertOk()
+            ->assertJsonCount(1, 'trips')
+            ->assertJsonPath('trips.0.id', $upcoming->id);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/driver/trips/by-date?date='.now()->subDay()->toDateString())
+            ->assertOk()
+            ->assertJsonCount(1, 'trips')
+            ->assertJsonPath('trips.0.id', $past->id);
+    }
+
     public function test_driver_can_mark_stop_delivered_with_pod(): void
     {
         [$user, $driver, $trip, $sale] = $this->makeDriverTripWithStop();
         $token = $this->loginMobile($user);
 
         $this->withToken($token)
-            ->postJson("/api/v1/mobile/driver/stops/{$sale->id}/deliver", [
+            ->post("/api/v1/mobile/driver/stops/{$sale->id}/deliver", [
                 'recipient_name' => 'Jane Customer',
                 'gps_lat' => -1.2921,
                 'gps_lng' => 36.8219,
+                'photo' => UploadedFile::fake()->image('delivery.jpg'),
             ])
             ->assertOk()
             ->assertJsonPath('stop.status', 'delivered')
@@ -53,6 +91,22 @@ class MobileDriverApiTest extends TestCase
             'id' => $sale->id,
             'status' => 'delivered',
         ]);
+    }
+
+    public function test_driver_cannot_mark_stop_delivered_without_photo(): void
+    {
+        [$user, $driver, $trip, $sale] = $this->makeDriverTripWithStop();
+        $token = $this->loginMobile($user);
+
+        $this->withToken($token)
+            ->postJson("/api/v1/mobile/driver/stops/{$sale->id}/deliver", [
+                'recipient_name' => 'Jane Customer',
+            ])
+            ->assertStatus(422)
+            ->assertJsonPath(
+                'message',
+                'Photo proof of delivery is required before marking this order as delivered.',
+            );
     }
 
     public function test_driver_can_collect_cod_on_deliver(): void
@@ -67,10 +121,11 @@ class MobileDriverApiTest extends TestCase
         $token = $this->loginMobile($user);
 
         $this->withToken($token)
-            ->postJson("/api/v1/mobile/driver/stops/{$sale->id}/deliver", [
+            ->post("/api/v1/mobile/driver/stops/{$sale->id}/deliver", [
                 'recipient_name' => 'Jane Customer',
                 'collect_amount' => 100,
                 'payment_method_code' => 'CASH',
+                'photo' => UploadedFile::fake()->image('delivery.jpg'),
             ])
             ->assertOk()
             ->assertJsonPath('stop.status', 'delivered');

@@ -343,7 +343,7 @@ class OrderWorkflowController extends Controller
             'severity' => in_array($to, ['cancelled', 'expired'], true) ? 'warning' : 'default',
             'title' => 'Order status changed',
             'message' => "Order #{$sale->order_num} moved from {$from} to {$to} by ".($user->full_name ?: $user->username).'.',
-            'action_url' => "/orders/{$sale->id}",
+            'action_url' => "/sales/orders/{$sale->id}",
         ]);
 
         if ($to !== 'delivered') {

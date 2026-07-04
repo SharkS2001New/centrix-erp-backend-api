@@ -7,6 +7,9 @@ class OrderWorkflowService
     /** Statuses staff may cancel via workflow transition (before partial/full payment). */
     public const CANCELLABLE_ORDER_STATUSES = ['booked', 'pending', 'unpaid'];
 
+    /** Statuses that allow backoffice line-quantity edits (Edit Order). */
+    public const EDITABLE_LINE_STATUSES = ['booked', 'pending'];
+
     /** @var list<string> */
     public const ALL_STATUSES = [
         'draft',
@@ -256,6 +259,17 @@ class OrderWorkflowService
         }
 
         return $this->pickEnabledStatus($status, $workflow);
+    }
+
+    public function isEditableLineStatus(string $status, ?string $channel = null): bool
+    {
+        if (in_array($status, ['cancelled', 'expired', 'held', 'draft'], true)) {
+            return false;
+        }
+
+        $aligned = $this->alignStatusToPipeline($status, $channel);
+
+        return in_array($aligned, self::EDITABLE_LINE_STATUSES, true);
     }
 
     /** @return list<string> */

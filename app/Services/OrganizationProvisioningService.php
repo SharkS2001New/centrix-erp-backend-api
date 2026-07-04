@@ -19,6 +19,7 @@ use App\Services\OrganizationPlatformConfigService;
 use App\Services\Auth\RoleTemplateService;
 use App\Services\Auth\UserLoginChannelPolicy;
 use App\Services\Auth\UserLoginChannelService;
+use App\Services\Auth\UserMobileLoginValidator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 
@@ -311,6 +312,13 @@ class OrganizationProvisioningService
             $channels = app(UserLoginChannelPolicy::class)->sanitizeForOrganization(
                 $org,
                 $data['login_channels'] ?? app(UserLoginChannelPolicy::class)->defaultChannelsForOrganization($org),
+            );
+
+            app(UserMobileLoginValidator::class)->assertMobileChannelAllowedForUser(
+                $org,
+                $channels,
+                (int) $role->id,
+                $isAdmin,
             );
 
             return User::create([

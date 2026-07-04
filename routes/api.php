@@ -169,7 +169,9 @@ Route::prefix('v1')->group(function () {
         Route::get('notifications/all', [InAppNotificationController::class, 'all']);
         Route::get('notifications', [InAppNotificationController::class, 'index']);
         Route::post('notifications/read-all', [InAppNotificationController::class, 'markAllRead']);
+        Route::post('notifications/clear-all', [InAppNotificationController::class, 'clearAll']);
         Route::post('notifications/{id}/read', [InAppNotificationController::class, 'markRead']);
+        Route::post('notifications/{id}/dismiss', [InAppNotificationController::class, 'dismiss']);
         Route::post('action-requests/{id}/approve', [InAppNotificationController::class, 'approveActionRequest']);
         Route::post('action-requests/{id}/reject', [InAppNotificationController::class, 'rejectActionRequest']);
 
@@ -495,7 +497,7 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:inventory.view');
             Route::apiResource('damages', DamageController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage|inventory.damages.create']);
             Route::apiResource('stock-receipts', StockReceiptController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
@@ -594,7 +596,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:customers.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:customers.manage']);
             Route::apiResource('routes', RouteModelController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|admin.view|sales.view|mobile.routes.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|admin.view|sales.view|mobile_sales.routes.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
             Route::post('routes/import-batch', [RouteImportController::class, 'store'])
                 ->middleware(['erp.permission:fulfillment.manage']);

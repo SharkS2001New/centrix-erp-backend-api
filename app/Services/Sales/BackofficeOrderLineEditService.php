@@ -75,6 +75,12 @@ class BackofficeOrderLineEditService
         if ((bool) (($sale->fulfillment_meta ?? [])['legacy_import'] ?? false)) {
             throw new InvalidArgumentException('Legacy orders cannot be edited.');
         }
+
+        $workflow = OrderWorkflowService::forGate($gate);
+        $channel = (string) ($sale->channel ?: 'backend');
+        if (! $workflow->isEditableLineStatus((string) $sale->status, $channel)) {
+            throw new InvalidArgumentException('Orders can only be edited while booked or pending.');
+        }
     }
 
     /**

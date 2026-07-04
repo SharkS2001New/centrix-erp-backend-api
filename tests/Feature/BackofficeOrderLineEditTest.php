@@ -41,9 +41,36 @@ class BackofficeOrderLineEditTest extends TestCase
         $this->assertEquals(250.0, (float) $item->amount);
     }
 
-    public function test_completed_backoffice_order_can_be_edited(): void
+    public function test_completed_backoffice_order_cannot_be_edited(): void
     {
         $sale = $this->createBackofficeSale(2, 100.0, 'completed');
+
+        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
+            'items' => [
+                ['id' => $sale->items->first()->id, 'quantity' => 4],
+            ],
+        ])
+            ->assertStatus(422)
+            ->assertJsonFragment([
+                'message' => 'Orders can only be edited while booked or pending.',
+            ]);
+    }
+
+    public function test_paid_backoffice_order_cannot_be_edited(): void
+    {
+        $sale = $this->createBackofficeSale(2, 100.0, 'paid');
+
+        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
+            'items' => [
+                ['id' => $sale->items->first()->id, 'quantity' => 3],
+            ],
+        ])
+            ->assertStatus(422);
+    }
+
+    public function test_pending_backoffice_order_can_be_edited(): void
+    {
+        $sale = $this->createBackofficeSale(2, 100.0, 'pending');
 
         $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
             'items' => [
@@ -54,26 +81,21 @@ class BackofficeOrderLineEditTest extends TestCase
             ->assertJsonPath('order_total', 200.0);
     }
 
-    public function test_paid_backoffice_pos_channel_order_can_be_edited(): void
-    {
-        $sale = $this->createBackofficeSale(2, 100.0, 'paid');
-        $sale->update(['channel' => 'pos', 'completed_at' => now()]);
-
-        $this->getJson('/api/v1/sales?per_page=5')
-            ->assertOk();
-
-        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
-            'items' => [
-                ['id' => $sale->items->first()->id, 'quantity' => 3],
-            ],
-        ])
-            ->assertOk()
-            ->assertJsonPath('order_total', 150.0);
-    }
-
-    public function test_completed_backoffice_order_exposes_can_edit_lines_on_index(): void
+    public function test_completed_backoffice_order_exposes_can_edit_lines_false_on_index(): void
     {
         $sale = $this->createBackofficeSale(1, 50.0, 'completed');
+
+        $this->getJson('/api/v1/sales?per_page=50&order_source=backoffice')
+            ->assertOk()
+            ->assertJsonFragment([
+                'id' => $sale->id,
+                'can_edit_lines' => false,
+            ]);
+    }
+
+    public function test_booked_backoffice_order_exposes_can_edit_lines_on_index(): void
+    {
+        $sale = $this->createBackofficeSale(1, 50.0, 'booked');
 
         $this->getJson('/api/v1/sales?per_page=50&order_source=backoffice')
             ->assertOk()
@@ -163,7 +185,7 @@ class BackofficeOrderLineEditTest extends TestCase
             ->count());
     }
 
-    protected function createBackofficeSale(float $qty, float $amount, string $status = 'held'): Sale
+    protected function createBackofficeSale(float $qty, float $amount, string $status = 'booked'): Sale
     {
         $product = \App\Models\Product::query()->firstOrFail();
 

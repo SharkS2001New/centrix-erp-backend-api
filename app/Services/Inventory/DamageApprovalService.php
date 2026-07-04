@@ -8,9 +8,11 @@ use App\Models\Damage;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
+use App\Services\Erp\CapabilityGate;
 use App\Services\Notifications\ActionRequestService;
 use App\Services\Notifications\NotificationActionUrlBuilder;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 class DamageApprovalService
@@ -22,15 +24,39 @@ class DamageApprovalService
         protected UserAccessService $access,
     ) {}
 
-    public function canApprove(User $user): bool
+    public function approvalEnabled(CapabilityGate $gate): bool
+    {
+        $settings = $gate->moduleSettings('inventory');
+
+        return ! empty($settings['damage_write_off_approval_enabled']);
+    }
+
+    public function canDirectWriteOff(User $user): bool
     {
         return (bool) $user->is_admin
             || $this->permissions->hasPermission($user, 'inventory.manage');
     }
 
-    /** @param  array<string, mixed>  $data */
-    public function requestCreate(User $requester, array $data): ActionRequest
+    public function canApprove(User $user): bool
     {
+        return $this->canDirectWriteOff($user);
+    }
+
+    /** @param  array<string, mixed>  $data */
+    public function requestCreate(User $requester, array $data, CapabilityGate $gate): ActionRequest
+    {
+        if (! $this->approvalEnabled($gate)) {
+            throw ValidationException::withMessages([
+                'authorization' => 'Damage write-off approval is not enabled.',
+            ]);
+        }
+
+        if ($this->canDirectWriteOff($requester)) {
+            throw ValidationException::withMessages([
+                'authorization' => 'You can record damage write-offs directly.',
+            ]);
+        }
+
         $this->access->assertBranchAccess($requester, (int) $data['branch_id']);
         $qty = rtrim(rtrim(number_format((float) $data['quantity'], 4, '.', ''), '0'), '.');
         $requesterName = $requester->full_name ?: $requester->username;

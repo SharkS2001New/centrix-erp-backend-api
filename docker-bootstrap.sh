@@ -1,6 +1,11 @@
 #!/bin/sh
-# Database migrations, public storage link, and writable dirs.
+# Database migrations, permission registry sync, public storage link, and writable dirs.
 # Used by docker-entrypoint.sh on every container start and by the Helm pre-upgrade Job.
+#
+# Env toggles (all default to "run on start"):
+#   RUN_MIGRATIONS_ON_START=false          — skip php artisan migrate --force
+#   RUN_PERMISSIONS_SYNC_ON_START=false    — skip php artisan erp:permissions-sync
+#   RUN_STORAGE_LINK_ON_START=false        — skip php artisan storage:link --force
 set -e
 
 mkdir -p resources/views
@@ -19,10 +24,19 @@ chmod -R ug+rwx storage bootstrap/cache 2>/dev/null || true
 chmod -R ug+rwx storage/app/private/backups 2>/dev/null || true
 
 if [ "${RUN_MIGRATIONS_ON_START:-true}" != "false" ]; then
+  echo "[bootstrap] Pending migrations:"
+  php artisan migrate:status --pending 2>/dev/null || true
   echo "[bootstrap] Running database migrations..."
   php artisan migrate --force
 else
   echo "[bootstrap] Skipping migrations (RUN_MIGRATIONS_ON_START=false)."
+fi
+
+if [ "${RUN_PERMISSIONS_SYNC_ON_START:-true}" != "false" ]; then
+  echo "[bootstrap] Syncing permission registry..."
+  php artisan erp:permissions-sync
+else
+  echo "[bootstrap] Skipping permission sync (RUN_PERMISSIONS_SYNC_ON_START=false)."
 fi
 
 if [ "${RUN_STORAGE_LINK_ON_START:-true}" != "false" ]; then

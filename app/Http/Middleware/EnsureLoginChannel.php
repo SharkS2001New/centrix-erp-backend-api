@@ -2,6 +2,7 @@
 
 namespace App\Http\Middleware;
 
+use App\Models\User;
 use App\Services\Auth\UserLoginChannelService;
 use Closure;
 use Illuminate\Http\Request;
@@ -31,6 +32,20 @@ class EnsureLoginChannel
         }
 
         $loginChannel = (string) ($accessToken->login_channel ?? UserLoginChannelService::BACKOFFICE);
+
+        if ($loginChannel === UserLoginChannelService::MOBILE) {
+            /** @var User|null $user */
+            $user = $accessToken->tokenable;
+            if (! $user instanceof User || ! $this->channels->mobileTokenCanAccessPath($user, $request->path())) {
+                return response()->json([
+                    'message' => 'This mobile session is not authorized for this part of the system.',
+                    'code' => 'login_channel_forbidden',
+                ], 403);
+            }
+
+            return $next($request);
+        }
+
         if ($this->channels->tokenCanAccessPath($loginChannel, $request->path())) {
             return $next($request);
         }
