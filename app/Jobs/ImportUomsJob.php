@@ -130,6 +130,7 @@ class ImportUomsJob implements ShouldBeUnique, ShouldQueue
             'small_packaging_label' => trim((string) ($row['small_packaging_label'] ?? 'piece')) ?: 'piece',
             'middle_packaging_label' => $middleLabel !== '' ? $middleLabel : null,
             'middle_factor' => $middleFactor !== '' ? (float) $middleFactor : null,
+            'uses_small_packaging' => $this->parseBool($row['uses_small_packaging'] ?? true, true),
             'conversion_factor' => (float) ($row['conversion_factor'] ?? 1) ?: 1,
             'uom_type' => trim((string) ($row['uom_type'] ?? 'piece')) ?: 'piece',
             'is_active' => $this->parseBool($row['is_active'] ?? true, true),

@@ -12,8 +12,12 @@ class Uom extends Model
     public $timestamps = false;
     protected $fillable = [
         'conversion_factor', 'full_name', 'measure_name', 'small_packaging_label',
-        'middle_packaging_label', 'middle_factor', 'uom_type', 'is_base_unit', 'is_active',
+        'middle_packaging_label', 'middle_factor', 'uses_small_packaging', 'uom_type', 'is_base_unit', 'is_active',
         'organization_id', 'created_by', 'deleted_by', 'deleted_at',
     ];
-    protected $casts = ['is_active' => 'boolean', 'deleted_at' => 'datetime'];
+    protected $casts = [
+        'is_active' => 'boolean',
+        'uses_small_packaging' => 'boolean',
+        'deleted_at' => 'datetime',
+    ];
 }

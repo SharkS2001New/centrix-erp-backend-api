@@ -67,6 +67,10 @@ class SaleLineQuantityDisplayService
             return 'units';
         }
 
+        if ($this->usesSmallPackaging($uom) === false) {
+            return $this->fullPackageLabel($uom);
+        }
+
         if ($isRetailLine) {
             return $this->smallPackagingLabel($uom);
         }
@@ -112,6 +116,11 @@ class SaleLineQuantityDisplayService
         $middle = trim((string) ($uom->middle_packaging_label ?? ''));
 
         return $middle !== '' ? $middle : 'pack';
+    }
+
+    protected function usesSmallPackaging(Uom $uom): bool
+    {
+        return ($uom->uses_small_packaging ?? true) !== false;
     }
 
     protected function formatDisplayQty(float $qty): string

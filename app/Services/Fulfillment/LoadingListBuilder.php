@@ -13,6 +13,7 @@ use App\Models\SaleItem;
 use App\Models\Uom;
 use App\Models\User;
 use App\Services\Erp\ErpContext;
+use App\Services\Inventory\StockUomDisplayService;
 use App\Services\Sales\RouteOrderScope;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\Collection;
@@ -20,7 +21,10 @@ use InvalidArgumentException;
 
 class LoadingListBuilder
 {
-    public function __construct(protected ErpContext $erp) {}
+    public function __construct(
+        protected ErpContext $erp,
+        protected StockUomDisplayService $stockUom,
+    ) {}
 
     /** @return array<int, int> */
     public function eligibleSaleIdsForTrip(DispatchTrip $trip): array
@@ -545,35 +549,6 @@ class LoadingListBuilder
     /** @return array{quantity_label: string, pack_breakdown: string} */
     protected function buildPackaging(float $qty, ?Uom $uom): array
     {
-        $smallLabel = $uom?->small_packaging_label ?: ($uom?->measure_name ?: 'units');
-        $smallLabel = ucfirst(strtolower(trim($smallLabel)));
-        $qtyFormatted = number_format($qty, 0, '.', ',');
-
-        if (! $uom || $uom->conversion_factor <= 1) {
-            return [
-                'quantity_label' => "{$qtyFormatted} {$smallLabel}",
-                'pack_breakdown' => '',
-            ];
-        }
-
-        $unitsPerPack = (float) $uom->conversion_factor;
-        $numPacks = (int) round($qty / $unitsPerPack);
-        if ($numPacks <= 0) {
-            $numPacks = 1;
-        }
-
-        $middleLabel = $uom->middle_packaging_label ?: 'Packs';
-        $packBreakdown = sprintf(
-            '%s %s x %d %s',
-            number_format($unitsPerPack, 0, '.', ''),
-            $smallLabel,
-            $numPacks,
-            ucfirst(strtolower($middleLabel)),
-        );
-
-        return [
-            'quantity_label' => "{$qtyFormatted} {$smallLabel}",
-            'pack_breakdown' => $packBreakdown,
-        ];
+        return $this->stockUom->fulfillmentQuantityLabels($qty, $uom);
     }
 }
