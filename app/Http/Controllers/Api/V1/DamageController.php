@@ -19,6 +19,12 @@ class DamageController extends BaseResourceController
         return Damage::class;
     }
 
+    protected function baseQuery(Request $request)
+    {
+        return parent::baseQuery($request)
+            ->with(['product:product_code,product_name,unit_id']);
+    }
+
     public function store(Request $request)
     {
         $data = $this->validateDamagePayload($request);

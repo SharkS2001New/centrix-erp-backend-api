@@ -50,14 +50,8 @@ class PriceHistoryController extends BaseResourceController
         }
 
         if ($request->filled('category_id')) {
-            $categoryId = (int) $request->input('category_id');
-            $query->whereHas('product', function ($product) use ($categoryId) {
-                $product->whereIn('subcategory_id', function ($sub) use ($categoryId) {
-                    $sub->select('id')
-                        ->from('sub_categories')
-                        ->where('category_id', $categoryId);
-                });
-            });
+            $subcategoryId = (int) $request->input('category_id');
+            $query->whereHas('product', fn ($product) => $product->where('subcategory_id', $subcategoryId));
         }
 
         if ($q = trim((string) $request->input('q', ''))) {

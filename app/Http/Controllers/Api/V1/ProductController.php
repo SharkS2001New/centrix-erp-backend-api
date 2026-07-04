@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\PriceHistory;
 use App\Models\Product;
-use App\Models\SubCategory;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\OpeningStockService;
@@ -194,14 +193,7 @@ class ProductController extends BaseResourceController
                 continue;
             }
             if ($col === 'category_id') {
-                $subIds = SubCategory::query()
-                    ->where('category_id', (int) $val)
-                    ->pluck('id');
-                if ($subIds->isEmpty()) {
-                    $query->whereRaw('0 = 1');
-                } else {
-                    $query->whereIn('subcategory_id', $subIds);
-                }
+                $query->where('subcategory_id', (int) $val);
                 continue;
             }
             if (in_array($col, $this->filterableColumns(), true)) {

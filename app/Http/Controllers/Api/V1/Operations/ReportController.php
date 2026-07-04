@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Services\Auth\UserAccessService;
+use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Erp\ErpContext;
@@ -1204,38 +1205,14 @@ class ReportController extends Controller
 
     public function returns(Request $request)
     {
-        $q = \App\Models\ReturnRecord::query();
-        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
-        if ($orgId) {
-            $q->whereIn('branch_id', $this->organizationBranchIds($orgId));
-        }
         $filters = $this->filters($request);
-        foreach (['branch_id', 'return_type'] as $col) {
-            if (! empty($filters[$col])) {
-                $q->where($col, $filters[$col]);
-            }
-        }
-        if ($request->filled('product_code')) {
-            $q->where('product_code', $request->input('product_code'));
-        }
-        if ($search = trim((string) $request->input('q', ''))) {
-            $q->where(function ($inner) use ($search) {
-                $inner->where('product_code', 'like', "%{$search}%")
-                    ->orWhereIn('product_code', function ($sub) use ($search) {
-                        $sub->select('product_code')
-                            ->from('products')
-                            ->where('product_name', 'like', "%{$search}%");
-                    });
-            });
-        }
-        if ($request->filled('from_date')) {
-            $q->where('created_at', '>=', $request->input('from_date'));
-        }
-        if ($request->filled('to_date')) {
-            $q->where('created_at', '<=', $request->input('to_date'));
+        if (empty($filters['date_column'])) {
+            $filters['date_column'] = 'return_date';
         }
 
-        return response()->json($q->orderByDesc('id')->paginate(min((int) $request->input('per_page', 50), 200)));
+        return response()->json($this->reportFromView('v_customer_returns_detail', $filters, [
+            'branch_id',
+        ]));
     }
 
     protected function filters(Request $request): array
@@ -1414,21 +1391,11 @@ class ReportController extends Controller
             });
         }
 
-        if ($request->filled('category_id')) {
-            $q->whereIn('product_code', function ($sub) use ($request) {
+        if ($subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) {
+            $q->whereIn('product_code', function ($sub) use ($subcategoryId) {
                 $sub->select('p.product_code')
                     ->from('products as p')
-                    ->join('sub_categories as sc', 'sc.id', '=', 'p.subcategory_id')
-                    ->where('sc.category_id', (int) $request->input('category_id'))
-                    ->whereNull('p.deleted_at');
-            });
-        }
-
-        if ($request->filled('subcategory_id')) {
-            $q->whereIn('product_code', function ($sub) use ($request) {
-                $sub->select('p.product_code')
-                    ->from('products as p')
-                    ->where('p.subcategory_id', (int) $request->input('subcategory_id'))
+                    ->where('p.subcategory_id', $subcategoryId)
                     ->whereNull('p.deleted_at');
             });
         }
@@ -1557,6 +1524,10 @@ class ReportController extends Controller
                 $branchQuery->where('p.branch_id', $filters['branch_id'])
                     ->orWhereNull('p.branch_id');
             });
+        }
+
+        if ($subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) {
+            $query->where('p.subcategory_id', $subcategoryId);
         }
 
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);

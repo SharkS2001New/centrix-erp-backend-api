@@ -63,12 +63,12 @@ class SystemIssueReportController extends Controller
             'reported_by_user' => (bool) ($data['reported_by_user'] ?? false),
         ]);
 
-        app(AdminNotificationService::class)->notifyAdmins($user, [
+        app(AdminNotificationService::class)->notifySuperAdmins($user, [
             'type' => 'alert',
             'severity' => $data['kind'] === 'error' ? 'danger' : 'warning',
             'title' => 'System issue reported',
             'message' => "{$user->full_name} reported {$data['kind']}: {$data['message']}",
-            'action_url' => '/admin/system-issues',
+            'action_url' => '/platform/system-issues',
         ]);
 
         return response()->json($report, 201);

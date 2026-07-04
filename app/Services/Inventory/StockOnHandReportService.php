@@ -3,6 +3,7 @@
 namespace App\Services\Inventory;
 
 use App\Services\Auth\UserAccessService;
+use App\Services\Catalog\ProductCatalogFilterService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -80,18 +81,8 @@ class StockOnHandReportService
             });
         }
 
-        if ($request->filled('category_id')) {
-            $query->whereIn('p.product_code', function ($sub) use ($request) {
-                $sub->select('p2.product_code')
-                    ->from('products as p2')
-                    ->join('sub_categories as sc', 'sc.id', '=', 'p2.subcategory_id')
-                    ->where('sc.category_id', (int) $request->input('category_id'))
-                    ->whereNull('p2.deleted_at');
-            });
-        }
-
-        if ($request->filled('subcategory_id')) {
-            $query->where('p.subcategory_id', (int) $request->input('subcategory_id'));
+        if ($subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) {
+            $query->where('p.subcategory_id', $subcategoryId);
         }
 
         if ($location = (string) $request->input('location', '')) {

@@ -20,6 +20,7 @@ use App\Services\Sales\OrderCancellationRequestService;
 use App\Services\Sales\SaleCancellationService;
 use App\Services\Fulfillment\AutoTripAssignmentService;
 use App\Services\Fulfillment\FulfillmentNotificationService;
+use App\Services\Fulfillment\LoadingListBuilder;
 use App\Services\Fulfillment\PodService;
 use App\Services\Notifications\AdminNotificationService;
 use Illuminate\Http\Request;
@@ -31,7 +32,35 @@ class OrderWorkflowController extends Controller
     use HandlesBranchScope;
     use HandlesInventory;
 
-    public function __construct(protected ErpContext $erp) {}
+    public function __construct(
+        protected ErpContext $erp,
+        protected LoadingListBuilder $loadingListBuilder,
+    ) {}
+
+    public function loadWeightStatus(Request $request, int $saleId)
+    {
+        $sale = $this->findScopedSale($saleId, $request->user());
+
+        return response()->json($this->loadingListBuilder->saleWeightStatus($sale));
+    }
+
+    public function updateOrderProductWeights(Request $request, int $saleId)
+    {
+        $sale = $this->findScopedSale($saleId, $request->user());
+
+        $entries = $request->input('weights');
+        if (! is_array($entries) || $entries === []) {
+            $entries = $request->input('products');
+        }
+
+        if (! is_array($entries) || $entries === []) {
+            throw new InvalidArgumentException('Provide product weights to save.');
+        }
+
+        return response()->json(
+            $this->loadingListBuilder->updateSaleProductWeights($sale, $entries, $request->user()),
+        );
+    }
 
     public function transition(Request $request, int $saleId)
     {
@@ -99,7 +128,7 @@ class OrderWorkflowController extends Controller
 
         $assignOnStatus = (string) ($distributionSettings['assign_on_status'] ?? 'processed');
         if ($distributionEnabled && $status === $assignOnStatus && ! empty($distributionSettings['require_weight_on_load'])) {
-            $this->assertLoadWeight($sale);
+            $this->loadingListBuilder->assertSaleHasLoadWeight($sale);
         }
 
         if ($distributionEnabled && empty($meta['driver_id']) && ! empty($distributionSettings['auto_assign_driver'])) {
@@ -239,7 +268,7 @@ class OrderWorkflowController extends Controller
 
         if ($distributionEnabled && in_array($toStatus, ['processed', 'delivered', 'completed'], true)) {
             if ($toStatus === $assignOnStatus && ! empty($distributionSettings['require_weight_on_load'])) {
-                $this->assertLoadWeight($sale);
+                $this->loadingListBuilder->assertSaleHasLoadWeight($sale);
             }
 
             if (empty($meta['driver_id']) && ! empty($distributionSettings['auto_assign_driver'])) {
@@ -363,31 +392,6 @@ class OrderWorkflowController extends Controller
         }
 
         return $query->orderBy('id')->first();
-    }
-
-    protected function assertLoadWeight(Sale $sale): void
-    {
-        $items = $sale->items ?? SaleItem::where('sale_id', $sale->id)->get();
-        if ($items->isEmpty()) {
-            throw new InvalidArgumentException('Cannot load an order with no line items.');
-        }
-
-        $codes = $items->pluck('product_code')->unique()->values()->all();
-        $weights = Product::query()
-            ->whereIn('product_code', $codes)
-            ->pluck('product_weight', 'product_code');
-
-        $totalWeight = 0.0;
-        foreach ($items as $item) {
-            $weight = (float) ($weights[$item->product_code] ?? 0);
-            $totalWeight += $weight * (float) $item->quantity;
-        }
-
-        if ($totalWeight <= 0) {
-            throw new InvalidArgumentException(
-                'Load weight is required. Ensure products have weights configured before processing for delivery.',
-            );
-        }
     }
 
     protected function deductSaleStockIfNeeded(Sale $sale, User $user): void

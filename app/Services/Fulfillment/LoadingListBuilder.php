@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\Uom;
+use App\Models\User;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\RouteOrderScope;
 use Illuminate\Support\Facades\Schema;
@@ -195,6 +196,62 @@ class LoadingListBuilder
         ];
     }
 
+    /**
+     * Persist kg-per-unit weights for products on an order.
+     *
+     * @param  array<int|string, mixed>  $entries
+     * @return array{
+     *     ready: bool,
+     *     total_weight_kg: float,
+     *     missing_products: array<int, array{product_code: string, product_name: string, quantity: float, product_weight: float|null}>
+     * }
+     */
+    public function updateSaleProductWeights(Sale $sale, array $entries, User $user): array
+    {
+        $orderCodes = SaleItem::query()
+            ->where('sale_id', $sale->id)
+            ->pluck('product_code')
+            ->map(fn ($code) => (string) $code)
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($orderCodes === []) {
+            throw new InvalidArgumentException('Cannot set weights on an order with no line items.');
+        }
+
+        $normalized = $this->normalizeWeightEntries($entries);
+        if ($normalized === []) {
+            throw new InvalidArgumentException('Provide at least one product weight with a product code.');
+        }
+
+        foreach ($normalized as $entry) {
+            $code = $entry['product_code'];
+            if (! in_array($code, $orderCodes, true)) {
+                throw new InvalidArgumentException("Product {$code} is not on this order.");
+            }
+
+            $product = Product::query()
+                ->withTrashed()
+                ->where('product_code', $code)
+                ->where('organization_id', $sale->organization_id)
+                ->first();
+
+            if (! $product) {
+                throw new InvalidArgumentException("Product {$code} was not found in the catalog.");
+            }
+
+            $product->update([
+                'product_weight' => $entry['product_weight'],
+                'updated_by' => $user->id,
+            ]);
+        }
+
+        $sale->unsetRelation('items');
+
+        return $this->saleWeightStatus($sale->fresh(['items']));
+    }
+
     public function assertSaleHasLoadWeight(Sale $sale): void
     {
         $items = $sale->relationLoaded('items')
@@ -313,6 +370,51 @@ class LoadingListBuilder
         }
 
         return $loadingList->fresh(['lines', 'route', 'trip']);
+    }
+
+    /**
+     * @param  array<int|string, mixed>  $entries
+     * @return array<int, array{product_code: string, product_weight: float}>
+     */
+    protected function normalizeWeightEntries(array $entries): array
+    {
+        $normalized = [];
+
+        foreach ($entries as $key => $entry) {
+            if (! is_array($entry)) {
+                if (is_string($key) && $key !== '' && is_numeric($entry)) {
+                    $normalized[] = [
+                        'product_code' => (string) $key,
+                        'product_weight' => max(0, (float) $entry),
+                    ];
+                }
+
+                continue;
+            }
+
+            $code = trim((string) (
+                $entry['product_code']
+                ?? $entry['productCode']
+                ?? $entry['code']
+                ?? (is_string($key) && ! is_numeric($key) ? $key : '')
+            ));
+
+            $weight = $entry['product_weight']
+                ?? $entry['productWeight']
+                ?? $entry['weight']
+                ?? null;
+
+            if ($code === '' || $weight === null || $weight === '') {
+                continue;
+            }
+
+            $normalized[] = [
+                'product_code' => $code,
+                'product_weight' => max(0, (float) $weight),
+            ];
+        }
+
+        return $normalized;
     }
 
     /** @param  Collection<int, SaleItem>  $items */

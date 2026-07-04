@@ -5,7 +5,6 @@ namespace App\Services\Background;
 use App\Models\BackgroundTask;
 use App\Models\User;
 use App\Services\Erp\ErpContext;
-use App\Services\Notifications\InAppNotificationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -147,7 +146,6 @@ class BackgroundTaskService
             'result' => $result,
             'finished_at' => now(),
         ]);
-        $this->notifyTaskOwner($task->fresh(), 'success', 'Background task completed', 'Your background task has completed successfully.');
     }
 
     public function markFailed(BackgroundTask $task, string $message): void
@@ -161,7 +159,6 @@ class BackgroundTaskService
             'error_message' => $message,
             'finished_at' => now(),
         ]);
-        $this->notifyTaskOwner($task->fresh(), 'danger', 'Background task failed', $message);
     }
 
     public function findForUser(string $id, User $user): ?BackgroundTask
@@ -288,26 +285,5 @@ class BackgroundTaskService
     {
         return $task === null
             || in_array($task->fresh()?->status ?? $task->status, ['completed', 'failed', 'cancelled'], true);
-    }
-
-    protected function notifyTaskOwner(?BackgroundTask $task, string $severity, string $title, string $message): void
-    {
-        if (! $task || ! $task->user_id) {
-            return;
-        }
-
-        $user = User::query()->find((int) $task->user_id);
-        if (! $user) {
-            return;
-        }
-
-        app(InAppNotificationService::class)->createForUser($user, [
-            'organization_id' => (int) $task->organization_id,
-            'type' => 'info',
-            'severity' => $severity,
-            'title' => $title,
-            'message' => $message,
-            'action_url' => '/tasks',
-        ]);
     }
 }

@@ -16,15 +16,36 @@ class ProductCatalogFilterServiceTest extends TestCase
             $this->markTestSkipped('No subcategories in database.');
         }
 
-        $otherCategoryId = SubCategory::query()
-            ->where('category_id', '!=', $subCategory->category_id)
-            ->value('category_id');
+        $otherSubCategory = SubCategory::query()
+            ->where('id', '!=', $subCategory->id)
+            ->first();
 
         $query = Product::query()->whereNull('deleted_at');
         ProductCatalogFilterService::applyTaxonomyFilters(
             $query,
-            $otherCategoryId ? (int) $otherCategoryId : (int) $subCategory->category_id,
+            $otherSubCategory ? (int) $otherSubCategory->id : (int) $subCategory->id,
             (int) $subCategory->id,
+            null,
+        );
+
+        $this->assertSame(
+            Product::query()->whereNull('deleted_at')->where('subcategory_id', $subCategory->id)->count(),
+            $query->count(),
+        );
+    }
+
+    public function test_category_id_param_filters_by_subcategory(): void
+    {
+        $subCategory = SubCategory::query()->first();
+        if ($subCategory === null) {
+            $this->markTestSkipped('No subcategories in database.');
+        }
+
+        $query = Product::query()->whereNull('deleted_at');
+        ProductCatalogFilterService::applyTaxonomyFilters(
+            $query,
+            (int) $subCategory->id,
+            null,
             null,
         );
 
