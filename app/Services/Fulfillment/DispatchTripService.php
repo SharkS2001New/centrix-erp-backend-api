@@ -2,12 +2,14 @@
 
 namespace App\Services\Fulfillment;
 
+use App\Http\Controllers\Api\V1\Operations\OrderWorkflowController;
 use App\Models\DispatchTrip;
 use App\Models\Organization;
 use App\Models\RouteSchedule;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\OrderWorkflowService;
 use App\Services\Sales\RouteOrderScope;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -457,6 +459,8 @@ class DispatchTripService
             throw new InvalidArgumentException($reconciliation['blockers'][0]);
         }
 
+        $this->finalizeDeliveredOrdersOnTripClose($trip, $user);
+
         $trip->update([
             'status' => 'completed',
             'completed_at' => now(),
@@ -605,5 +609,36 @@ class DispatchTripService
             ->where('is_active', true)
             ->with(['defaultDriver', 'defaultVehicle'])
             ->first();
+    }
+
+    protected function finalizeDeliveredOrdersOnTripClose(DispatchTrip $trip, User $user): void
+    {
+        $trip->load('sales');
+        $gate = $this->erp->gateForUser($user);
+        $workflow = OrderWorkflowService::forGate($gate);
+        $workflowController = app(OrderWorkflowController::class);
+
+        foreach ($trip->sales as $sale) {
+            if ((string) $sale->status !== 'delivered') {
+                continue;
+            }
+
+            if ($sale->is_credit_sale) {
+                $channel = $workflow->normalizeSalesChannel((string) ($sale->channel ?: 'backend'));
+                $sale->update([
+                    'status' => $workflow->pickEnabledStatus('completed', $workflow->forChannel($channel)),
+                    'completed_at' => $sale->completed_at ?? now(),
+                ]);
+
+                continue;
+            }
+
+            $workflowController->transitionSaleForUser(
+                $sale,
+                'completed',
+                $user,
+                ['trip_close_finalized' => true],
+            );
+        }
     }
 }

@@ -32,36 +32,97 @@ class LpoModuleService
 
     public function mapListRow(LpoMst $lpo, ?int $organizationId = null): array
     {
-        $status = LpoStatus::query()->find($lpo->lpo_status_code);
-        $creator = $lpo->created_by ? User::query()->find($lpo->created_by) : null;
-        $statusCode = (int) ($lpo->lpo_status_code ?? 0);
-        $orderDate = $lpo->created_at ?? $lpo->sent_at;
-        $canEdit = $statusCode < self::STATUS_AWAITING_RECEIVE;
-        $paymentsTotal = $this->paymentsTotal((int) $lpo->lpo_no);
-        $netAmount = (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0);
+        return $this->mapListRows(collect([$lpo]), $organizationId)[0];
+    }
 
-        return [
-            'lpo_no' => (int) $lpo->lpo_no,
-            'po_number' => $this->formatPoNumber((int) $lpo->lpo_no, $orderDate),
-            'supplier_id' => (int) $lpo->supplier_id,
-            'supplier_name' => $lpo->supplier?->supplier_name,
-            'reference_number' => $lpo->reference_number,
-            'order_date' => $orderDate,
-            'created_at' => $lpo->created_at,
-            'due_date' => $lpo->due_date,
-            'lpo_status_code' => $statusCode,
-            'status_name' => $status?->status_name,
-            'cleared_flag' => (int) ($lpo->cleared_flag ?? 0),
-            'total_amount' => (float) ($lpo->total_amount ?? 0),
-            'vat_amount' => (float) ($lpo->vat_amount ?? 0),
-            'net_amount' => (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0),
-            'created_by_name' => $creator?->full_name ?? $creator?->username,
-            'can_edit' => $canEdit,
-            'can_delete' => $canEdit,
-            'amount_paid' => round($paymentsTotal, 2),
-            'balance_due' => round(max(0, $netAmount - $paymentsTotal), 2),
-            'workflow_actions' => app(LpoWorkflowService::class)->workflowActions($lpo, $organizationId),
-        ];
+    /**
+     * @param  Collection<int, LpoMst>  $lpos
+     * @return list<array<string, mixed>>
+     */
+    public function mapListRows(Collection $lpos, ?int $organizationId = null): array
+    {
+        if ($lpos->isEmpty()) {
+            return [];
+        }
+
+        $statusCodes = $lpos->pluck('lpo_status_code')->filter()->unique()->values()->all();
+        $statuses = LpoStatus::query()
+            ->whereIn('status_code', $statusCodes)
+            ->get()
+            ->keyBy('status_code');
+
+        $creatorIds = $lpos->pluck('created_by')->filter()->unique()->values()->all();
+        $creators = $creatorIds === []
+            ? collect()
+            : User::query()->whereIn('id', $creatorIds)->get()->keyBy('id');
+
+        $lpoNos = $lpos->pluck('lpo_no')->map(fn ($no) => (int) $no)->all();
+        $paymentsByLpo = $this->paymentsTotalsByLpo($lpoNos);
+
+        $supplierIds = $lpos->pluck('supplier_id')->filter()->unique()->values()->all();
+        $suppliers = $supplierIds === []
+            ? collect()
+            : \App\Models\Supplier::query()->whereIn('id', $supplierIds)->get()->keyBy('id');
+
+        $workflow = app(LpoWorkflowService::class);
+
+        return $lpos->map(function (LpoMst $lpo) use (
+            $statuses,
+            $creators,
+            $paymentsByLpo,
+            $suppliers,
+            $workflow,
+            $organizationId,
+        ) {
+            $status = $statuses->get((int) ($lpo->lpo_status_code ?? 0));
+            $creator = $lpo->created_by ? $creators->get($lpo->created_by) : null;
+            $statusCode = (int) ($lpo->lpo_status_code ?? 0);
+            $orderDate = $lpo->created_at ?? $lpo->sent_at;
+            $canEdit = $statusCode < self::STATUS_AWAITING_RECEIVE;
+            $lpoNo = (int) $lpo->lpo_no;
+            $paymentsTotal = (float) ($paymentsByLpo[$lpoNo] ?? 0);
+            $netAmount = (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0);
+            $supplier = $lpo->supplier ?? $suppliers->get($lpo->supplier_id);
+
+            return [
+                'lpo_no' => $lpoNo,
+                'po_number' => $this->formatPoNumber($lpoNo, $orderDate),
+                'supplier_id' => (int) $lpo->supplier_id,
+                'supplier_name' => $supplier?->supplier_name,
+                'reference_number' => $lpo->reference_number,
+                'order_date' => $orderDate,
+                'created_at' => $lpo->created_at,
+                'due_date' => $lpo->due_date,
+                'lpo_status_code' => $statusCode,
+                'status_name' => $status?->status_name,
+                'cleared_flag' => (int) ($lpo->cleared_flag ?? 0),
+                'total_amount' => (float) ($lpo->total_amount ?? 0),
+                'vat_amount' => (float) ($lpo->vat_amount ?? 0),
+                'net_amount' => (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0),
+                'created_by_name' => $creator?->full_name ?? $creator?->username,
+                'can_edit' => $canEdit,
+                'can_delete' => $canEdit,
+                'amount_paid' => round($paymentsTotal, 2),
+                'balance_due' => round(max(0, $netAmount - $paymentsTotal), 2),
+                'workflow_actions' => $workflow->workflowActions($lpo, $organizationId, $supplier),
+            ];
+        })->values()->all();
+    }
+
+    /** @param  list<int>  $lpoNos */
+    protected function paymentsTotalsByLpo(array $lpoNos): array
+    {
+        if ($lpoNos === [] || ! Schema::hasTable('supplier_payments')) {
+            return [];
+        }
+
+        return DB::table('supplier_payments')
+            ->whereIn('lpo_no', $lpoNos)
+            ->groupBy('lpo_no')
+            ->selectRaw('lpo_no, COALESCE(SUM(amount_paid), 0) AS total')
+            ->pluck('total', 'lpo_no')
+            ->map(fn ($total) => (float) $total)
+            ->all();
     }
 
     public function summary(int $lpoNo, ?int $organizationId = null): array

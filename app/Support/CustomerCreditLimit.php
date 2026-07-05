@@ -18,6 +18,12 @@ class CustomerCreditLimit
             ->value('total');
     }
 
+    /** Fast path for display / bot prompts — uses denormalized customer balance. */
+    public static function displayOutstanding(Customer $customer): float
+    {
+        return (float) ($customer->current_balance ?? 0);
+    }
+
     /**
      * @throws InvalidArgumentException
      */

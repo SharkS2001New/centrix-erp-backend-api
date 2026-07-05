@@ -36,7 +36,9 @@ class ProcessAccountingExportsJob implements ShouldQueue
             $provider = $task->payload['provider'] ?? null;
             $provider = is_string($provider) && $provider !== '' ? $provider : null;
 
-            $result = $exports->processPending($organizationId, $provider);
+            $result = ! empty($task->payload['retry_failed'])
+                ? $exports->retryFailed($organizationId, $provider)
+                : $exports->processPending($organizationId, $provider);
             $tasks->markCompleted($task, $result);
         } catch (\Throwable $e) {
             Log::warning('ProcessAccountingExportsJob failed', [

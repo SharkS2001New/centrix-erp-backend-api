@@ -121,6 +121,8 @@ class OrganizationCache
             'erp.capabilities' => 'Per-user ERP capabilities (/erp/capabilities), org-scoped generation version',
             'erp.profiles' => 'Deployment profile definitions (global, long-lived)',
             'accounting.quickbooks_oauth_state' => 'QuickBooks OAuth CSRF state (short-lived, per org)',
+            'reports.dashboard' => 'Report dashboard KPIs and charts (org-scoped, 2–5 min TTL)',
+            'customers.summary' => 'Customer hub summary counts (org-scoped, ~2 min TTL)',
         ];
     }
 }

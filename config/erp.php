@@ -186,6 +186,9 @@ return [
         'ai' => [
             'enable_ai',
         ],
+        'whatsapp' => [
+            'enable_whatsapp_orders',
+        ],
         'admin' => [
             'enable_advanced_data_import',
             'advanced_data_import_pages',
@@ -517,6 +520,10 @@ return [
             'model' => '',
             'api_key' => '',
             'base_url' => '',
+        ],
+        'whatsapp' => [
+            'enable_whatsapp_orders' => false,
+            'enabled' => false,
         ],
         'admin' => [
             'enable_advanced_data_import' => false,

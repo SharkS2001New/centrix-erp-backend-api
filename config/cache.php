@@ -7,6 +7,12 @@ return [
 
     'organization_ttl' => (int) env('CACHE_ORGANIZATION_TTL', 3600),
 
+    'reports_dashboard_ttl' => (int) env('CACHE_REPORTS_DASHBOARD_TTL', 180),
+
+    'hub_summary_ttl' => (int) env('CACHE_HUB_SUMMARY_TTL', 120),
+
+    'reports_eod_ttl' => (int) env('CACHE_REPORTS_EOD_TTL', 120),
+
     'stores' => [
         'array' => [
             'driver' => 'array',

@@ -66,7 +66,7 @@ class ModuleScopedPermissionsTest extends TestCase
         $gate = app(ErpContext::class)->gateForUser($admin);
         $map = app(UserPermissionService::class)->permissionMapForUser($admin, $gate);
 
-        $this->assertTrue($map['sales.order_queue_all.view'] ?? false);
+        $this->assertTrue($map['sales.orders.view'] ?? false);
         $this->assertTrue($map['inventory.stock.view'] ?? false);
         $this->assertFalse($map['accounting.chart_of_accounts.view'] ?? false);
     }
@@ -89,7 +89,7 @@ class ModuleScopedPermissionsTest extends TestCase
 
         $role = \App\Models\Role::query()->firstOrFail();
         $accountingPerm = Permission::where('permission_code', 'accounting.chart_of_accounts.view')->firstOrFail();
-        $salesPerm = Permission::where('permission_code', 'sales.order_queue_all.view')->firstOrFail();
+        $salesPerm = Permission::where('permission_code', 'sales.orders.view')->firstOrFail();
 
         DB::table('role_permissions')->insert([
             ['role_id' => $role->id, 'permission_id' => $accountingPerm->id],

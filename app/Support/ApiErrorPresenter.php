@@ -9,7 +9,7 @@ class ApiErrorPresenter
 {
     public static function shouldExposeDetail(?object $user): bool
     {
-        return (bool) ($user?->is_super_admin || $user?->is_admin);
+        return (bool) ($user?->is_super_admin);
     }
 
     public static function moduleLabelForRequest(Request $request): string
@@ -50,7 +50,6 @@ class ApiErrorPresenter
             'reports' => 'Reports',
             'users' => 'Users',
             'branches' => 'Branches',
-            'notifications' => 'Notifications',
             'erp' => 'Settings',
             default => ucwords(str_replace(['-', '_'], ' ', $first)),
         };

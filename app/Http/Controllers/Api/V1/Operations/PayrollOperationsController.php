@@ -15,7 +15,10 @@ use App\Services\Payroll\KenyaStatutoryReference;
 use App\Models\PayPeriod;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollEarningsService;
+use App\Services\Payroll\PayrollAutoProcessService;
 use App\Services\Payroll\PayrollRunScheduleService;
+use App\Services\Background\BackgroundTaskService;
+use App\Jobs\ProcessPayrollAutoJob;
 use App\Services\Notifications\ActionRequestService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -25,8 +28,10 @@ class PayrollOperationsController extends Controller
     public function __construct(
         protected KenyaStatutoryCalculator $calculator,
         protected PayrollEarningsService $earnings,
+        protected PayrollAutoProcessService $autoProcess,
         protected PayrollCycleSettlementService $settlements,
         protected ErpContext $erp,
+        protected BackgroundTaskService $tasks,
     ) {}
 
     /** GET /payroll/kenya-statutory — formulas and rates for UI */
@@ -222,42 +227,30 @@ class PayrollOperationsController extends Controller
 
         $departmentId = $options['department_id'] ?? null;
 
-        $employees = Employee::query()
+        $employeeQuery = Employee::query()
             ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->when($departmentId, fn ($q) => $q->where('department_id', $departmentId))
             ->where('employment_status', 'active')
             ->where('is_active', true)
-            ->where('base_salary', '>', 0)
-            ->orderBy('full_name')
-            ->get();
+            ->where('base_salary', '>', 0);
 
-        $lines = [];
-        $skipped = [];
+        if (! $request->boolean('sync') && (clone $employeeQuery)->count() > 15) {
+            $task = $this->tasks->create('payroll_process_auto', $request->user(), [
+                'run_id' => (int) $runId,
+                'options' => $options,
+            ]);
+            ProcessPayrollAutoJob::dispatch($task->id);
 
-        foreach ($employees as $employee) {
-            if (! $employee->shift_id) {
-                $skipped[] = [
-                    'employee_id' => $employee->id,
-                    'name' => $employee->full_name,
-                    'reason' => 'No work shift assigned',
-                ];
-
-                continue;
-            }
-
-            $built = $this->earnings->buildLineInput($employee, $period, $earningsOptions);
-            if ($built === null) {
-                $skipped[] = [
-                    'employee_id' => $employee->id,
-                    'name' => $employee->full_name,
-                    'reason' => 'No scheduled work days in pay period',
-                ];
-
-                continue;
-            }
-
-            $lines[] = $built;
+            return response()->json([
+                'message' => 'Payroll auto-process queued.',
+                'task_id' => $task->id,
+                'queued' => true,
+            ], 202);
         }
+
+        $built = $this->autoProcess->buildLines($run, $orgId, $options);
+        $lines = $built['lines'];
+        $skipped = $built['skipped'];
 
         if ($lines === []) {
             return response()->json([

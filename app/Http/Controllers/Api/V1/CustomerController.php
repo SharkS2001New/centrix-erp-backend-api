@@ -6,7 +6,9 @@ use App\Models\Sale;
 use App\Services\Customers\CustomerNumberAllocator;
 use App\Services\Customers\CustomerRoutePolicy;
 use App\Services\Customers\CustomerUniquenessValidator;
-use App\Services\Erp\ErpContext;
+use App\Services\Auth\UserAccessService;
+use App\Services\Cache\OrganizationCache;
+use App\Support\SqlLikeSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -66,14 +68,7 @@ class CustomerController extends BaseResourceController
         }
 
         if ($q = trim((string) $request->input('q', ''))) {
-            $query->where(function ($inner) use ($q) {
-                $inner->where('customer_name', 'like', "%{$q}%")
-                    ->orWhere('phone_number', 'like', "%{$q}%")
-                    ->orWhere('additional_phone', 'like', "%{$q}%")
-                    ->orWhere('customer_num', 'like', "%{$q}%")
-                    ->orWhere('town', 'like', "%{$q}%")
-                    ->orWhere('kra_pin', 'like', "%{$q}%");
-            });
+            SqlLikeSearch::applyCustomerSearch($query, $q);
         }
 
         $perPage = min((int) $request->input('per_page', 25), 100);
@@ -85,18 +80,44 @@ class CustomerController extends BaseResourceController
     /** GET /customers/summary */
     public function summary(Request $request)
     {
-        $query = $this->baseQuery($request)->whereNull('deleted_at');
-        $now = now();
+        $user = $request->user();
+        $orgId = $this->access()->organizationId($user, $request);
+        $ttl = max(60, min(300, (int) config('cache.hub_summary_ttl', 120)));
 
-        return response()->json([
-            'active' => (clone $query)->count(),
-            'new_this_month' => (clone $query)
-                ->whereMonth('created_at', $now->month)
-                ->whereYear('created_at', $now->year)
-                ->count(),
-            'on_routes' => (clone $query)->whereNotNull('route_id')->count(),
-            'outstanding_balance' => (float) (clone $query)->sum('current_balance'),
-        ]);
+        $build = function () use ($request, $user) {
+            $query = $this->baseQuery($request)->whereNull('deleted_at');
+            $now = now();
+
+            $row = (clone $query)->selectRaw(
+                'COUNT(*) AS active,
+                 SUM(CASE WHEN MONTH(created_at) = ? AND YEAR(created_at) = ? THEN 1 ELSE 0 END) AS new_this_month,
+                 SUM(CASE WHEN route_id IS NOT NULL THEN 1 ELSE 0 END) AS on_routes,
+                 COALESCE(SUM(current_balance), 0) AS outstanding_balance',
+                [$now->month, $now->year],
+            )->first();
+
+            return [
+                'active' => (int) ($row->active ?? 0),
+                'new_this_month' => (int) ($row->new_this_month ?? 0),
+                'on_routes' => (int) ($row->on_routes ?? 0),
+                'outstanding_balance' => (float) ($row->outstanding_balance ?? 0),
+            ];
+        };
+
+        if ($orgId) {
+            $branchKey = $this->access()->branchId($user) ?? 'all';
+
+            return response()->json(
+                OrganizationCache::remember(
+                    $orgId,
+                    'customers.summary:'.$branchKey,
+                    $ttl,
+                    $build,
+                ),
+            );
+        }
+
+        return response()->json($build());
     }
 
     /** GET /customers/{customerNum}/sales — orders with line items */

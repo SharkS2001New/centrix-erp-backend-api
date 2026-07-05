@@ -7,9 +7,55 @@ use App\Models\EmployeeLeaveDay;
 use App\Models\OrganizationHoliday;
 use App\Models\WorkShift;
 use Carbon\Carbon;
+use Illuminate\Support\Collection;
 
 class AttendanceDayPolicy
 {
+    /** @var array<int, array<string, OrganizationHoliday>> */
+    protected array $holidayDatesByOrg = [];
+
+    /** @var array<int, WorkShift> */
+    protected array $shiftCache = [];
+
+    /**
+     * @param  Collection<int, Employee>  $employees
+     */
+    public function primeScheduleContext(Collection $employees, string $start, string $end): void
+    {
+        $this->clearScheduleContext();
+
+        $orgIds = $employees->pluck('organization_id')->filter()->unique()->values()->all();
+        if ($orgIds !== []) {
+            $holidays = OrganizationHoliday::query()
+                ->whereIn('organization_id', $orgIds)
+                ->where('is_active', true)
+                ->whereDate('holiday_date', '>=', $start)
+                ->whereDate('holiday_date', '<=', $end)
+                ->get();
+
+            foreach ($holidays as $holiday) {
+                $orgId = (int) $holiday->organization_id;
+                $date = $holiday->holiday_date instanceof Carbon
+                    ? $holiday->holiday_date->toDateString()
+                    : (string) $holiday->holiday_date;
+                $this->holidayDatesByOrg[$orgId][$date] = $holiday;
+            }
+        }
+
+        $shiftIds = $employees->pluck('shift_id')->filter()->unique()->values()->all();
+        if ($shiftIds !== []) {
+            foreach (WorkShift::query()->whereIn('id', $shiftIds)->get() as $shift) {
+                $this->shiftCache[(int) $shift->id] = $shift;
+            }
+        }
+    }
+
+    public function clearScheduleContext(): void
+    {
+        $this->holidayDatesByOrg = [];
+        $this->shiftCache = [];
+    }
+
     /**
      * Whether the employee is normally scheduled to work on this date (ignores approved leave).
      */
@@ -31,14 +77,17 @@ class AttendanceDayPolicy
         $day = Carbon::parse($date);
         $dow = (int) $day->dayOfWeek;
 
-        $holiday = OrganizationHoliday::query()
-            ->where('organization_id', $employee->organization_id)
-            ->where('is_active', true)
-            ->whereDate('holiday_date', $date)
-            ->first();
+        $holiday = $this->holidayDatesByOrg[(int) $employee->organization_id][$date] ?? null;
+        if ($holiday === null) {
+            $holiday = OrganizationHoliday::query()
+                ->where('organization_id', $employee->organization_id)
+                ->where('is_active', true)
+                ->whereDate('holiday_date', $date)
+                ->first();
+        }
 
         $shift = $employee->shift_id
-            ? WorkShift::find($employee->shift_id)
+            ? ($this->shiftCache[(int) $employee->shift_id] ?? WorkShift::find($employee->shift_id))
             : null;
 
         $isWeekend = $dow === Carbon::SATURDAY || $dow === Carbon::SUNDAY;
@@ -113,14 +162,17 @@ class AttendanceDayPolicy
             ];
         }
 
-        $holiday = OrganizationHoliday::query()
-            ->where('organization_id', $employee->organization_id)
-            ->where('is_active', true)
-            ->whereDate('holiday_date', $date)
-            ->first();
+        $holiday = $this->holidayDatesByOrg[(int) $employee->organization_id][$date] ?? null;
+        if ($holiday === null) {
+            $holiday = OrganizationHoliday::query()
+                ->where('organization_id', $employee->organization_id)
+                ->where('is_active', true)
+                ->whereDate('holiday_date', $date)
+                ->first();
+        }
 
         $shift = $employee->shift_id
-            ? WorkShift::find($employee->shift_id)
+            ? ($this->shiftCache[(int) $employee->shift_id] ?? WorkShift::find($employee->shift_id))
             : null;
 
         $isWeekend = $dow === Carbon::SATURDAY || $dow === Carbon::SUNDAY;

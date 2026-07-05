@@ -3,8 +3,8 @@
 namespace App\Services\Inventory;
 
 use App\Models\SystemSetting;
-use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
+use App\Support\StockReportScope;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -23,53 +23,24 @@ class LowStockReportService
             ? (float) $system->global_low_stock_threshold
             : null;
         $perPage = min((int) $request->input('per_page', 50), 200);
-
-        $branchId = $request->filled('branch_id')
-            ? (int) $request->input('branch_id')
-            : null;
-
-        if ($branchId === null && $request->user()) {
-            $branchId = app(UserAccessService::class)->branchId($request->user());
-        }
-
-        $branchIds = $branchId
-            ? [$branchId]
-            : DB::table('branches')
-                ->where('organization_id', $organizationId)
-                ->pluck('id')
-                ->map(fn ($id) => (int) $id)
-                ->all();
-
-        if ($branchIds === []) {
-            return [
-                'data' => [],
-                'total' => 0,
-                'per_page' => $perPage,
-                'current_page' => 1,
-                'last_page' => 1,
-            ];
-        }
+        $branchId = StockReportScope::resolveBranchId($request, $organizationId);
 
         $totalSql = '(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))';
 
-        $query = DB::table('products as p')
-            ->join('branches as br', function ($join) use ($organizationId, $branchIds) {
-                $join->where('br.organization_id', '=', $organizationId)
-                    ->whereIn('br.id', $branchIds);
+        $query = DB::table('current_stock as cs')
+            ->join('products as p', function ($join) use ($organizationId) {
+                $join->on('p.product_code', '=', 'cs.product_code')
+                    ->where('p.organization_id', '=', $organizationId)
+                    ->whereNull('p.deleted_at');
             })
-            ->leftJoin('current_stock as cs', function ($join) {
-                $join->on('cs.product_code', '=', 'p.product_code')
-                    ->on('cs.branch_id', '=', 'br.id');
-            })
-            ->where('p.organization_id', $organizationId)
-            ->whereNull('p.deleted_at')
+            ->where('cs.branch_id', $branchId)
             ->when($request->filled('product_code'), fn ($q) => $q->where('p.product_code', $request->input('product_code')))
             ->when(
                 ($subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) !== null,
                 fn ($q) => $q->where('p.subcategory_id', $subcategoryId),
             )
             ->select([
-                'br.id as branch_id',
+                DB::raw("{$branchId} as branch_id"),
                 'p.product_code',
                 'p.product_name',
                 DB::raw('COALESCE(cs.shop_quantity, 0) as shop_quantity'),

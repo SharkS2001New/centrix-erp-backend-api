@@ -36,11 +36,11 @@ class LegacyOrderService
         $query = $this->baseQuery($user);
 
         if (! empty($filters['from_date'])) {
-            $query->whereDate(DB::raw('COALESCE(completed_at, created_at)'), '>=', $filters['from_date']);
+            $query->where('effective_sale_date', '>=', $filters['from_date']);
         }
 
         if (! empty($filters['to_date'])) {
-            $query->whereDate(DB::raw('COALESCE(completed_at, created_at)'), '<=', $filters['to_date']);
+            $query->where('effective_sale_date', '<=', $filters['to_date']);
         }
 
         if (isset($filters['min_order_total']) && $filters['min_order_total'] !== '') {

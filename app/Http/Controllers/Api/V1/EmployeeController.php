@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Employee;
 use App\Models\PayrollLine;
 use App\Services\Auth\UserLoginService;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -72,26 +73,50 @@ class EmployeeController extends BaseResourceController
     /** GET /employees/summary */
     public function summary(Request $request)
     {
-        $query = Employee::query();
         $user = $request->user();
-        if ($user) {
-            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
-            $this->access()->scopeBranchIfLimited($query, $user);
+        $orgId = $user ? $this->access()->organizationId($user, $request) : null;
+        $ttl = max(60, min(300, (int) config('cache.hub_summary_ttl', 120)));
+
+        $build = function () use ($request, $user) {
+            $query = Employee::query();
+            if ($user) {
+                $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
+                $this->access()->scopeBranchIfLimited($query, $user);
+            }
+
+            $row = (clone $query)->selectRaw(
+                'COUNT(*) AS total,
+                 SUM(CASE WHEN is_active != 0 OR is_active IS NULL THEN 1 ELSE 0 END) AS active,
+                 COALESCE(SUM(CASE WHEN is_active != 0 OR is_active IS NULL THEN base_salary ELSE 0 END), 0) AS payroll_cost',
+            )->first();
+
+            $departmentQuery = \App\Models\Department::query()->where('is_active', '!=', false);
+            if ($user) {
+                $this->access()->scopeOrganization($departmentQuery, $user, 'organization_id', $request);
+            }
+
+            return [
+                'total' => (int) ($row->total ?? 0),
+                'active' => (int) ($row->active ?? 0),
+                'departments' => $departmentQuery->count(),
+                'payroll_cost' => (float) ($row->payroll_cost ?? 0),
+            ];
+        };
+
+        if ($orgId) {
+            $branchKey = $this->access()->branchId($user) ?? 'all';
+
+            return response()->json(
+                OrganizationCache::remember(
+                    $orgId,
+                    'employees.summary:'.$branchKey,
+                    $ttl,
+                    $build,
+                ),
+            );
         }
 
-        $activeQuery = (clone $query)->where('is_active', '!=', false);
-
-        $departmentQuery = \App\Models\Department::query()->where('is_active', '!=', false);
-        if ($user) {
-            $this->access()->scopeOrganization($departmentQuery, $user, 'organization_id', $request);
-        }
-
-        return response()->json([
-            'total' => (clone $query)->count(),
-            'active' => $activeQuery->count(),
-            'departments' => $departmentQuery->count(),
-            'payroll_cost' => (float) $activeQuery->sum('base_salary'),
-        ]);
+        return response()->json($build());
     }
 
     public function show(Request $request, string $id)

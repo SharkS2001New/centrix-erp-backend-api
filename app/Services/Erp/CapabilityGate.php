@@ -348,6 +348,13 @@ class CapabilityGate
         return (bool) ($ai['enable_ai'] ?? true);
     }
 
+    public function whatsappPlatformEnabled(): bool
+    {
+        $whatsapp = $this->moduleSettings('whatsapp');
+
+        return (bool) ($whatsapp['enable_whatsapp_orders'] ?? false);
+    }
+
     public function advancedDataImportPlatformEnabled(): bool
     {
         $admin = $this->moduleSettings('admin');
@@ -580,6 +587,7 @@ class CapabilityGate
             'platform_mpesa_stk_enabled' => $this->mpesaStkPlatformEnabled(),
             'platform_kra_integration_enabled' => $this->kraIntegrationPlatformEnabled(),
             'platform_ai_enabled' => $this->aiPlatformEnabled(),
+            'platform_whatsapp_enabled' => $this->whatsappPlatformEnabled(),
             'platform_advanced_data_import_enabled' => $this->advancedDataImportPlatformEnabled(),
             'advanced_data_import_pages' => $this->advancedDataImportPagesEnabled(),
             'modules' => $this->allModules(),
@@ -590,6 +598,9 @@ class CapabilityGate
             'ai_assistant' => $this->organization
                 ? AiSettingsResolver::clientCapabilities($this)
                 : ['enabled' => false, 'available' => false],
+            'whatsapp_orders' => $this->organization
+                ? \App\Services\WhatsApp\WhatsAppSettingsResolver::clientCapabilities($this)
+                : ['platform_enabled' => false, 'enabled' => false, 'configured' => false],
             'allow_negative_stock' => (bool) ($system?->allow_below_stock ?? false),
             'stock_alert_mode' => $system?->stock_alert_mode ?? 'per_product',
             'global_low_stock_threshold' => $system?->global_low_stock_threshold,
@@ -623,6 +634,10 @@ class CapabilityGate
     {
         if (! $this->aiPlatformEnabled()) {
             unset($moduleSettings['ai']);
+        }
+
+        if (! $this->whatsappPlatformEnabled()) {
+            unset($moduleSettings['whatsapp']);
         }
 
         if (isset($moduleSettings['finance']) && is_array($moduleSettings['finance'])) {

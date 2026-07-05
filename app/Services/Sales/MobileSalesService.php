@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Erp\ErpContext;
+use App\Support\SqlLikeSearch;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Validation\ValidationException;
@@ -96,29 +97,25 @@ class MobileSalesService
         }
 
         $query = $this->mobileSalesQuery($user, $allChannels)
+            ->with('customer')
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')
             ->orderByDesc('id');
 
         if ($q = trim((string) ($filters['q'] ?? ''))) {
-            $query->where(function (Builder $sub) use ($q) {
-                $sub->where('order_num', 'like', "%{$q}%")
-                    ->orWhere('customer_name_override', 'like', "%{$q}%")
-                    ->orWhereHas('customer', function (Builder $customer) use ($q) {
-                        $customer->where('customer_name', 'like', "%{$q}%");
-                    });
-            });
+            SqlLikeSearch::applySalesOrderSearch($query, $q, includeCustomerRelation: true);
         }
 
         $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
         $page = $query->paginate($perPage);
+        $gate = $this->erp->gateForUser($user);
 
         return [
             'data' => collect($page->items())
                 ->map(fn (Sale $sale) => array_merge(
                     $this->presentOrderSummary($sale),
-                    ['can_edit' => $this->canRestoreSaleToCart($sale, $user)],
+                    ['can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate)],
                 ))
                 ->values()
                 ->all(),
@@ -271,6 +268,18 @@ class MobileSalesService
         Carbon $to,
         bool $allChannels = false,
     ): array {
+        $daily = $this->dailyTrendWithCounts($user, $monthStart, $to, $allChannels);
+
+        return $this->weeklyBucketsFromDaily($daily, $monthStart, $to);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $daily
+     * @return list<array<string, mixed>>
+     */
+    protected function weeklyBucketsFromDaily(array $daily, Carbon $monthStart, Carbon $to): array
+    {
+        $dailyByDate = collect($daily)->keyBy('create_date');
         $buckets = [];
         $cursor = $monthStart->copy();
 
@@ -280,19 +289,21 @@ class MobileSalesService
                 $bucketEnd = $to->copy();
             }
 
-            $stats = $this->mobileSalesQuery($user, $allChannels)
-                ->whereDate('created_at', '>=', $cursor->toDateString())
-                ->whereDate('created_at', '<=', $bucketEnd->toDateString())
-                ->where('status', '!=', 'cancelled')
-                ->selectRaw('COUNT(*) as order_count')
-                ->selectRaw('COALESCE(ROUND(SUM(order_total), 2), 0) as total_amount')
-                ->first();
+            $orderCount = 0;
+            $totalAmount = 0.0;
+            for ($day = $cursor->copy(); $day->lte($bucketEnd); $day->addDay()) {
+                $row = $dailyByDate->get($day->toDateString());
+                if ($row) {
+                    $orderCount += (int) ($row['order_count'] ?? 0);
+                    $totalAmount += (float) ($row['total_amount'] ?? 0);
+                }
+            }
 
             $buckets[] = [
                 'create_date' => $cursor->toDateString(),
                 'label' => $cursor->format('j').'-'.$bucketEnd->format('j M'),
-                'order_count' => (int) ($stats->order_count ?? 0),
-                'total_amount' => (float) ($stats->total_amount ?? 0),
+                'order_count' => $orderCount,
+                'total_amount' => round($totalAmount, 2),
             ];
 
             $cursor = $bucketEnd->copy()->addDay();
@@ -308,6 +319,8 @@ class MobileSalesService
             ->where('archived', 0)
             ->whereNull('deleted_at')
             ->where('cashier_id', $user->id);
+
+        CentrixSalesScope::excludeLegacyMaterialized($query, 'sales');
 
         if (! $allChannels) {
             $query->where('channel', 'mobile');
@@ -380,13 +393,14 @@ class MobileSalesService
 
         $monthStart = now()->startOfMonth();
         $today = now()->startOfDay();
+        $dailySales = $this->dailyTrendWithCounts($user, $monthStart, $today, $allChannels);
 
         return [
             'month_label' => $monthStart->format('F Y'),
             'from_date' => $monthStart->toDateString(),
             'to_date' => $today->toDateString(),
-            'daily_sales' => $this->dailyTrendWithCounts($user, $monthStart, $today, $allChannels),
-            'weekly_sales' => $this->weeklyBucketsInMonth($user, $monthStart, $today, $allChannels),
+            'daily_sales' => $dailySales,
+            'weekly_sales' => $this->weeklyBucketsFromDaily($dailySales, $monthStart, $today),
         ];
     }
 

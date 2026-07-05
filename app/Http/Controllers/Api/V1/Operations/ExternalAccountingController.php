@@ -183,8 +183,19 @@ class ExternalAccountingController extends Controller
     public function retryFailedExports(Request $request)
     {
         $provider = $request->input('provider', 'quickbooks');
-        $result = $this->exports->retryFailed((int) $request->user()->organization_id, $provider);
 
-        return response()->json($result);
+        $task = app(\App\Services\Background\BackgroundTaskService::class)->create(
+            'accounting_export',
+            $request->user(),
+            ['provider' => $provider, 'retry_failed' => true],
+        );
+
+        \App\Jobs\ProcessAccountingExportsJob::dispatch($task->id);
+
+        return response()->json([
+            'message' => 'Failed export retry queued.',
+            'task_id' => $task->id,
+            'queued' => true,
+        ], 202);
     }
 }

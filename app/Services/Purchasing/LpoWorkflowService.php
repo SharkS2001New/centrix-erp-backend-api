@@ -24,7 +24,7 @@ class LpoWorkflowService
     ) {}
 
     /** @return list<string> */
-    public function workflowActions(LpoMst $lpo, ?int $organizationId = null): array
+    public function workflowActions(LpoMst $lpo, ?int $organizationId = null, ?Supplier $supplier = null): array
     {
         $settings = ProcurementSettingsResolver::forOrganizationId($organizationId);
         $status = (int) ($lpo->lpo_status_code ?? 0);
@@ -39,7 +39,7 @@ class LpoWorkflowService
         }
 
         if ($status === self::STATUS_AWAITING_SEND) {
-            $supplier = Supplier::find($lpo->supplier_id);
+            $supplier ??= Supplier::find($lpo->supplier_id);
             if ($supplier?->email) {
                 $actions[] = 'send_email';
             }

@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Services\Auth\UserAccessService;
 use App\Services\Inventory\BranchStockService;
 use Tests\TestCase;
 
@@ -45,5 +46,18 @@ class BranchStockServiceTest extends TestCase
         $this->assertSame('store', $result['sales_stock_location']);
         $this->assertSame(71.0, (float) $result['stock_in_shop']);
         $this->assertSame(71.0, (float) $result['stock_in_store']);
+    }
+
+    public function test_active_reserved_qty_map_returns_empty_for_no_product_codes(): void
+    {
+        $service = new class(app(UserAccessService::class)) extends BranchStockService
+        {
+            public function reservedMap(array $codes, int $branchId): array
+            {
+                return $this->activeReservedQtyMap($codes, $branchId);
+            }
+        };
+
+        $this->assertSame([], $service->reservedMap([], 1));
     }
 }

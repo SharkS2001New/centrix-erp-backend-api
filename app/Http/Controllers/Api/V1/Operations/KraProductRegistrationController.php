@@ -60,7 +60,14 @@ class KraProductRegistrationController extends Controller
             ]);
         }
 
-        if ($request->boolean('sync')) {
+        $productCount = (clone $query)->count();
+        if ($request->boolean('sync') && $productCount > 10) {
+            throw ValidationException::withMessages([
+                'sync' => 'Synchronous registration is limited to 10 products. Omit sync to queue the job.',
+            ]);
+        }
+
+        if ($request->boolean('sync') && $productCount <= 10) {
             return $this->registerSynchronously($request, $finance, $hasCodes, $registerAll);
         }
 

@@ -35,6 +35,12 @@ class OrganizationPlatformConfigService
     }
 
     /** @return list<string> */
+    public function platformControlledWhatsappKeys(): array
+    {
+        return config('erp.platform_controlled.whatsapp', []);
+    }
+
+    /** @return list<string> */
     public function platformControlledInventoryKeys(): array
     {
         return config('erp.platform_controlled.inventory', []);
@@ -119,6 +125,17 @@ class OrganizationPlatformConfigService
         }
         $moduleSettings['ai'] = $currentAi;
 
+        $currentWhatsapp = is_array($moduleSettings['whatsapp'] ?? null) ? $moduleSettings['whatsapp'] : [];
+        foreach ($this->platformControlledWhatsappKeys() as $key) {
+            if (array_key_exists($key, $salesPlatform)) {
+                $currentWhatsapp[$key] = (bool) $salesPlatform[$key];
+            }
+        }
+        if (array_key_exists('enable_whatsapp_orders', $salesPlatform) && ! $salesPlatform['enable_whatsapp_orders']) {
+            $currentWhatsapp['enabled'] = false;
+        }
+        $moduleSettings['whatsapp'] = $currentWhatsapp;
+
         $currentAdmin = is_array($moduleSettings['admin'] ?? null) ? $moduleSettings['admin'] : [];
         foreach ($this->platformControlledAdminKeys() as $key) {
             if (! array_key_exists($key, $salesPlatform)) {
@@ -175,6 +192,7 @@ class OrganizationPlatformConfigService
             'enable_mpesa_stk' => true,
             'enable_kra_integration' => true,
             'enable_ai' => true,
+            'enable_whatsapp_orders' => false,
             'enable_advanced_data_import' => false,
             'advanced_data_import_pages' => AdvancedDataImportPageRegistry::defaultEnabledMap(),
             'stock_deduct_on' => [
@@ -204,6 +222,7 @@ class OrganizationPlatformConfigService
         $inventory = $gate->moduleSettings('inventory');
         $finance = $gate->moduleSettings('finance');
         $ai = $gate->moduleSettings('ai');
+        $whatsapp = $gate->moduleSettings('whatsapp');
         $admin = $gate->moduleSettings('admin');
         $workflow = OrderWorkflowService::forGate($gate)->config();
         $importPages = AdvancedDataImportPageRegistry::resolveEnabledMap(
@@ -220,6 +239,7 @@ class OrganizationPlatformConfigService
             'enable_mpesa_stk' => (bool) ($finance['enable_mpesa_stk'] ?? true),
             'enable_kra_integration' => (bool) ($finance['enable_kra_integration'] ?? true),
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
+            'enable_whatsapp_orders' => (bool) ($whatsapp['enable_whatsapp_orders'] ?? false),
             'enable_advanced_data_import' => (bool) ($admin['enable_advanced_data_import'] ?? false),
             'advanced_data_import_pages' => $importPages,
             'stock_deduct_on' => $this->normalizeStockDeductOn(
@@ -389,6 +409,32 @@ class OrganizationPlatformConfigService
 
         if (! $gate->aiPlatformEnabled()) {
             unset($data['enabled'], $data['api_key'], $data['model'], $data['base_url'], $data['provider']);
+        }
+
+        return $data;
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    public function filterOrgManagerWhatsappPayload(array $data, CapabilityGate $gate): array
+    {
+        foreach ($this->platformControlledWhatsappKeys() as $key) {
+            unset($data[$key]);
+        }
+
+        if (! $gate->whatsappPlatformEnabled()) {
+            unset(
+                $data['enabled'],
+                $data['display_phone'],
+                $data['phone_number_id'],
+                $data['waba_id'],
+                $data['access_token'],
+                $data['bot_user_id'],
+                $data['branch_id'],
+                $data['graph_api_version'],
+            );
         }
 
         return $data;

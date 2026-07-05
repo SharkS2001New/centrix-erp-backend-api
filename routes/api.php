@@ -116,6 +116,9 @@ use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\VatController;
 use App\Http\Controllers\Api\V1\VehicleController;
 use App\Http\Controllers\Api\V1\VoucherController;
+use App\Http\Controllers\Api\V1\WhatsAppWebhookController;
+use App\Http\Controllers\Api\V1\WhatsAppSettingsController;
+use App\Http\Controllers\Api\V1\PlatformWhatsAppController;
 use App\Http\Controllers\Api\V1\WorkShiftController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
@@ -153,6 +156,11 @@ Route::prefix('v1')->group(function () {
     });
     Route::get('accounting/quickbooks/callback', [ExternalAccountingController::class, 'quickBooksCallback'])
         ->middleware('throttle:auth-org-preview');
+
+    Route::prefix('webhooks')->middleware('throttle:api')->group(function () {
+        Route::get('whatsapp', [WhatsAppWebhookController::class, 'verify']);
+        Route::post('whatsapp', [WhatsAppWebhookController::class, 'handle']);
+    });
 
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
@@ -207,6 +215,10 @@ Route::prefix('v1')->group(function () {
         Route::get('erp/settings/ai', [AiSettingsController::class, 'show'])
             ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/ai', [AiSettingsController::class, 'update'])
+            ->middleware(['erp.permission:admin.manage']);
+        Route::get('erp/settings/whatsapp', [WhatsAppSettingsController::class, 'show'])
+            ->middleware(['erp.permission:admin.manage']);
+        Route::patch('erp/settings/whatsapp', [WhatsAppSettingsController::class, 'update'])
             ->middleware(['erp.permission:admin.manage']);
         Route::get('erp/settings/general', [ErpSettingsController::class, 'general'])
             ->middleware(['erp.permission:admin.manage']);
@@ -326,6 +338,13 @@ Route::prefix('v1')->group(function () {
                 Route::post('chat', [PlatformAiTrainingController::class, 'chat']);
             });
 
+        Route::prefix('admin/whatsapp')
+            ->middleware(['erp.super_admin'])
+            ->group(function () {
+                Route::get('settings', [PlatformWhatsAppController::class, 'show']);
+                Route::patch('settings', [PlatformWhatsAppController::class, 'update']);
+            });
+
         Route::get('admin/organizations/{organization}/cache', [PlatformOrganizationCacheController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/{organization}/cache/clear', [PlatformOrganizationCacheController::class, 'clear'])
@@ -344,6 +363,8 @@ Route::prefix('v1')->group(function () {
                 Route::patch('finance', [ErpSettingsController::class, 'updateFinance']);
                 Route::get('ai', [AiSettingsController::class, 'show']);
                 Route::patch('ai', [AiSettingsController::class, 'update']);
+                Route::get('whatsapp', [WhatsAppSettingsController::class, 'show']);
+                Route::patch('whatsapp', [WhatsAppSettingsController::class, 'update']);
                 Route::get('general', [ErpSettingsController::class, 'general']);
                 Route::patch('general', [ErpSettingsController::class, 'updateGeneral']);
                 Route::get('notifications', [ErpSettingsController::class, 'notifications']);

@@ -167,7 +167,7 @@ class TripReconciliationService
             ],
         ];
 
-        $blockers = $this->blockers($trip, $settings, $lineCount, $loadingLocked, $orderCount, $resolvedCount, $podPendingCount, $outstandingCash);
+        $blockers = $this->blockers($trip, $settings, $lineCount, $loadingLocked, $orderCount, $resolvedCount, $podPendingCount, $outstandingCash, $orders);
 
         return [
             'trip' => [
@@ -229,6 +229,7 @@ class TripReconciliationService
 
     /**
      * @param  array<string, mixed>  $settings
+     * @param  list<array<string, mixed>>  $orders
      * @return list<string>
      */
     protected function blockers(
@@ -240,6 +241,7 @@ class TripReconciliationService
         int $resolvedCount,
         int $podPendingCount,
         float $outstandingCash,
+        array $orders = [],
     ): array {
         if ($trip->status !== 'in_transit') {
             return ['Trip must be in transit before closing.'];
@@ -253,6 +255,10 @@ class TripReconciliationService
 
         if ($orderCount > 0 && $resolvedCount < $orderCount) {
             $blockers[] = 'All stops must be fully delivered, partially delivered with a return, or cancelled with a return before closing the trip.';
+        }
+
+        if ($this->unpaidResolvedOrderCount($orders) > 0) {
+            $blockers[] = 'All delivered orders must be fully paid before closing the trip.';
         }
 
         if (! empty($settings['require_pod_on_delivered']) && $podPendingCount > 0) {
@@ -275,6 +281,32 @@ class TripReconciliationService
         }
 
         return $blockers;
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $orders
+     */
+    protected function unpaidResolvedOrderCount(array $orders): int
+    {
+        $unpaid = 0;
+
+        foreach ($orders as $order) {
+            if (empty($order['is_resolved']) || ! empty($order['is_failed_delivery'])) {
+                continue;
+            }
+
+            if (! empty($order['is_credit_sale'])) {
+                continue;
+            }
+
+            $balanceDue = (float) ($order['balance_due'] ?? 0);
+            $returnAmount = (float) ($order['return_amount'] ?? 0);
+            if ($balanceDue - $returnAmount > 0.01) {
+                $unpaid++;
+            }
+        }
+
+        return $unpaid;
     }
 
     /**

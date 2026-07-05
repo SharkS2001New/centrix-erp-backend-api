@@ -17,6 +17,10 @@ Schedule::command('erp:expire-stale-orders')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/expire-stale-orders.log'));
 
+Schedule::command('erp:backfill-sale-routes')
+    ->hourly()
+    ->withoutOverlapping();
+
 Schedule::command('erp:recover-stale-background-tasks')
     ->everyFiveMinutes()
     ->withoutOverlapping();

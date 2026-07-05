@@ -3,7 +3,6 @@
 namespace App\Services\Erp;
 
 use App\Models\Permission;
-use App\Support\SalesOrderQueuePermissions;
 
 class PermissionMatrixService
 {
@@ -44,7 +43,6 @@ class PermissionMatrixService
         self::ensureRegistryPermissions();
         self::ensureCapabilityCodes();
         self::remapLegacyPermissionAssignments();
-        self::remapLegacySalesOrderViewPermissions();
     }
 
     public static function ensureRegistryPermissions(): void
@@ -168,20 +166,7 @@ class PermissionMatrixService
                 continue;
             }
             $features = [];
-            $orderQueueLabels = $moduleKey === 'sales' && $gate !== null
-                ? SalesOrderQueuePermissions::labelsForGate($gate)
-                : [];
-            $activeOrderQueueKeys = $moduleKey === 'sales' && $gate !== null
-                ? SalesOrderQueuePermissions::activeFeatureKeys($gate)
-                : null;
-
             foreach ($groupDef['features'] as $featureKey => $featureDef) {
-                if ($activeOrderQueueKeys !== null && str_starts_with($featureKey, 'order_queue_')) {
-                    if (! in_array($featureKey, $activeOrderQueueKeys, true)) {
-                        continue;
-                    }
-                }
-
                 $permissions = [];
                 foreach ($featureDef['actions'] as $action) {
                     $code = "{$moduleKey}.{$featureKey}.{$action}";
@@ -201,7 +186,7 @@ class PermissionMatrixService
                 }
                 $features[] = [
                     'key' => $featureKey,
-                    'label' => $orderQueueLabels[$featureKey] ?? $featureDef['label'],
+                    'label' => $featureDef['label'],
                     'permissions' => $permissions,
                 ];
             }
@@ -304,49 +289,5 @@ class PermissionMatrixService
                 ->where('permission_id', $fromId)
                 ->update(['permission_id' => $toId]);
         }
-    }
-
-    /** Grant granular order-queue view permissions to roles that still have sales.orders.view. */
-    public static function remapLegacySalesOrderViewPermissions(): void
-    {
-        $legacy = Permission::query()->where('permission_code', 'sales.orders.view')->first();
-        if (! $legacy) {
-            return;
-        }
-
-        $targetIds = Permission::query()
-            ->whereIn('permission_code', SalesOrderQueuePermissions::allViewPermissionCodes())
-            ->pluck('id', 'permission_code');
-
-        if ($targetIds->isEmpty()) {
-            return;
-        }
-
-        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
-            ->where('permission_id', $legacy->id)
-            ->pluck('role_id');
-
-        foreach ($roleIds as $roleId) {
-            foreach ($targetIds as $permissionId) {
-                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
-                    'role_id' => $roleId,
-                    'permission_id' => $permissionId,
-                ]);
-            }
-        }
-
-        \Illuminate\Support\Facades\DB::table('user_permission_overrides')
-            ->where('permission_id', $legacy->id)
-            ->where('effect', 'grant')
-            ->get()
-            ->each(function ($override) use ($targetIds) {
-                foreach ($targetIds as $permissionId) {
-                    \Illuminate\Support\Facades\DB::table('user_permission_overrides')->insertOrIgnore([
-                        'user_id' => $override->user_id,
-                        'permission_id' => $permissionId,
-                        'effect' => 'grant',
-                    ]);
-                }
-            });
     }
 }
