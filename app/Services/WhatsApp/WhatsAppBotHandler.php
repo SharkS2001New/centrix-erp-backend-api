@@ -3,10 +3,13 @@
 namespace App\Services\WhatsApp;
 
 use App\Models\Customer;
+use App\Models\Organization;
+use App\Models\Product;
 use App\Models\User;
 use App\Models\WhatsappConversation;
 use App\Models\WhatsappMessageLog;
 use App\Services\Customers\CustomerPhoneLookup;
+use App\Services\Erp\CapabilityGate;
 use App\Services\Inventory\StockUomDisplayService;
 use App\Support\PhoneNumber;
 use InvalidArgumentException;
@@ -27,11 +30,15 @@ class WhatsAppBotHandler
 
     public const STATE_TRACK = 'track';
 
+    public const STATE_SEARCH_RESULTS = 'search_results';
+
     public const STATE_UNKNOWN = 'unknown';
 
     public function __construct(
         protected CustomerPhoneLookup $customerLookup,
         protected WhatsAppOrderService $orders,
+        protected WhatsAppProductCatalogService $catalog,
+        protected WhatsAppHandoffService $handoffs,
         protected StockUomDisplayService $stockUom,
         protected MetaWhatsAppClient $whatsapp,
         protected WhatsAppConfigResolver $configResolver,
@@ -68,6 +75,7 @@ class WhatsAppBotHandler
             $conversation,
             $customer,
             $this->normalizeInput($text),
+            $text,
         );
 
         $this->persistConversation($conversation, $customer);
@@ -82,6 +90,7 @@ class WhatsAppBotHandler
         WhatsappConversation $conversation,
         ?Customer $customer,
         string $input,
+        string $rawText = '',
     ): string {
         if ($this->isGlobalCommand($input, ['MENU', 'HI', 'HELLO', 'START'])) {
             $conversation->state = $customer ? self::STATE_MAIN_MENU : self::STATE_UNKNOWN;
@@ -107,41 +116,55 @@ class WhatsAppBotHandler
         }
 
         return match ($conversation->state) {
-            self::STATE_MAIN_MENU => $this->handleMainMenu($conversation, $customer, $input, $botUser),
-            self::STATE_BROWSE => $this->handleBrowse($conversation, $customer, $input),
+            self::STATE_MAIN_MENU => $this->handleMainMenu($config, $conversation, $customer, $input, $rawText, $botUser),
+            self::STATE_BROWSE => $this->handleBrowse($config, $conversation, $customer, $input, $botUser),
+            self::STATE_SEARCH_RESULTS => $this->handleSearchResults($config, $conversation, $customer, $input, $botUser),
             self::STATE_ENTER_QTY => $this->handleEnterQty($conversation, $customer, $input),
-            self::STATE_CART => $this->handleCart($conversation, $customer, $input),
-            self::STATE_REVIEW => $this->handleReview($conversation, $customer, $input, $botUser),
-            self::STATE_REPEAT_CONFIRM => $this->handleRepeatConfirm($conversation, $customer, $input, $botUser),
+            self::STATE_CART => $this->handleCart($config, $conversation, $customer, $input, $botUser),
+            self::STATE_REVIEW => $this->handleReview($config, $conversation, $customer, $input, $botUser),
+            self::STATE_REPEAT_CONFIRM => $this->handleRepeatConfirm($config, $conversation, $customer, $input, $botUser),
             self::STATE_TRACK => $this->handleTrack($conversation, $customer, $input),
-            default => $this->handleMainMenu($conversation, $customer, $input, $botUser),
+            default => $this->handleMainMenu($config, $conversation, $customer, $input, $rawText, $botUser),
         };
     }
 
     protected function handleMainMenu(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        string $input,
+        string $rawText,
+        User $botUser,
+    ): string {
+        return match ($input) {
+            '1' => $this->startBrowse($config, $conversation, $customer, $botUser),
+            '2' => $this->startRepeatLastOrder($conversation, $customer),
+            '3' => $this->startTrackOrders($conversation, $customer),
+            '4', 'HUMAN', 'HELP' => $this->requestHandoff($config, $conversation, $customer, $botUser, $rawText),
+            default => $this->tryHandleProductText($config, $conversation, $customer, $input, $botUser)
+                ?? $this->mainMenuMessage($customer),
+        };
+    }
+
+    protected function handleBrowse(
+        ResolvedWhatsAppConfig $config,
         WhatsappConversation $conversation,
         Customer $customer,
         string $input,
         User $botUser,
     ): string {
-        return match ($input) {
-            '1' => $this->startBrowse($conversation, $customer),
-            '2' => $this->startRepeatLastOrder($conversation, $customer),
-            '3' => $this->startTrackOrders($conversation, $customer),
-            '4', 'HUMAN', 'HELP' => $this->handoffMessage(),
-            default => $this->mainMenuMessage($customer),
-        };
-    }
+        if ($input === 'NEXT' || $input === 'MORE') {
+            $page = (int) ($conversation->payload['browse_page'] ?? 1) + 1;
 
-    protected function handleBrowse(
-        WhatsappConversation $conversation,
-        Customer $customer,
-        string $input,
-    ): string {
+            return $this->startBrowse($config, $conversation, $customer, $botUser, $page);
+        }
+
         if ($input === '0') {
             $cart = $this->cartLines($conversation);
             if ($cart === []) {
-                return $this->startBrowse($conversation, $customer);
+                $conversation->state = self::STATE_MAIN_MENU;
+
+                return $this->mainMenuMessage($customer);
             }
             $conversation->state = self::STATE_CART;
 
@@ -150,26 +173,60 @@ class WhatsAppBotHandler
 
         $products = collect($conversation->payload['browse_products'] ?? []);
         $index = (int) $input;
-        if ($index < 1 || $index > $products->count()) {
-            return "Please reply with a product number from the list.\n\n".$this->browseMessage($conversation, $customer);
+        if ($index >= 1 && $index <= $products->count()) {
+            $product = $products[$index - 1];
+
+            return $this->beginQuantityForProduct($conversation, $product);
         }
 
-        $product = $products[$index - 1];
-        $conversation->payload = array_merge($conversation->payload ?? [], [
-            'pending_product_code' => $product['product_code'],
-            'pending_product_name' => $product['product_name'],
-            'pending_uom' => $product['uom_snapshot'] ?? null,
-        ]);
-        $conversation->state = self::STATE_ENTER_QTY;
+        $searchReply = $this->tryHandleProductText($config, $conversation, $customer, $input, $botUser);
+        if ($searchReply !== null) {
+            return $searchReply;
+        }
 
-        $uom = is_array($product['uom_snapshot'] ?? null)
-            ? (object) $product['uom_snapshot']
-            : null;
-        $label = $uom
-            ? ($this->stockUom->formatMixedStockDisplay(1, $this->uomFromSnapshot($uom))['parts'][0]['label'] ?? 'units')
-            : 'units';
+        return "Reply with a product number, type a product name to search, or NEXT for more.\n\n"
+            .$this->browseMessage($conversation, $customer);
+    }
 
-        return "How many *{$label}* of *{$product['product_name']}*?\n\nReply with a number, or CANCEL to go back.";
+    protected function handleSearchResults(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        string $input,
+        User $botUser,
+    ): string {
+        if ($input === 'NEXT' || $input === 'MORE') {
+            $page = (int) ($conversation->payload['search_page'] ?? 1) + 1;
+            $term = (string) ($conversation->payload['search_term'] ?? '');
+
+            return $this->showSearchResults($config, $conversation, $customer, $botUser, $term, $page);
+        }
+
+        if ($input === '0') {
+            $conversation->state = self::STATE_MAIN_MENU;
+
+            return $this->mainMenuMessage($customer);
+        }
+
+        $products = collect($conversation->payload['search_results'] ?? []);
+        $index = (int) $input;
+        if ($index >= 1 && $index <= $products->count()) {
+            $product = $products[$index - 1];
+            $presetQty = $conversation->payload['search_preset_qty'] ?? null;
+            if ($presetQty !== null && (float) $presetQty > 0) {
+                return $this->addProductToCart($conversation, $product, (float) $presetQty);
+            }
+
+            return $this->beginQuantityForProduct($conversation, $product);
+        }
+
+        $searchReply = $this->tryHandleProductText($config, $conversation, $customer, $input, $botUser);
+        if ($searchReply !== null) {
+            return $searchReply;
+        }
+
+        return "Pick a number from the list, type another name to search, or NEXT for more.\n\n"
+            .$this->searchResultsMessage($conversation);
     }
 
     protected function handleEnterQty(
@@ -212,19 +269,34 @@ class WhatsAppBotHandler
     }
 
     protected function handleCart(
+        ResolvedWhatsAppConfig $config,
         WhatsappConversation $conversation,
         Customer $customer,
         string $input,
+        User $botUser,
     ): string {
+        if (preg_match('/^R(\d+)$/', $input, $matches)) {
+            return $this->removeCartLine($conversation, $customer, (int) $matches[1]);
+        }
+
+        if (preg_match('/^E(\d+)\s+(\d+(?:\.\d+)?)$/', $input, $matches)) {
+            return $this->editCartLine($conversation, $customer, (int) $matches[1], (float) $matches[2]);
+        }
+
+        if ($searchReply = $this->tryHandleProductText($config, $conversation, $customer, $input, $botUser)) {
+            return $searchReply;
+        }
+
         return match ($input) {
-            '1' => $this->startBrowse($conversation, $customer),
-            '2' => $this->startReview($conversation, $customer),
+            '1' => $this->startBrowse($config, $conversation, $customer, $botUser),
+            '2' => $this->startReview($config, $conversation, $customer, $botUser),
             '3' => $this->clearCart($conversation, $customer),
             default => $this->cartMessage($conversation),
         };
     }
 
     protected function handleReview(
+        ResolvedWhatsAppConfig $config,
         WhatsappConversation $conversation,
         Customer $customer,
         string $input,
@@ -236,7 +308,7 @@ class WhatsAppBotHandler
                 'notes' => $notes,
             ]);
 
-            return "Noted ✅\n\n".$this->reviewMessage($conversation, $customer);
+            return "Noted ✅\n\n".$this->reviewMessage($config, $conversation, $customer, $botUser);
         }
 
         if ($input === 'EDIT') {
@@ -246,7 +318,19 @@ class WhatsAppBotHandler
         }
 
         if ($input !== 'CONFIRM') {
-            return $this->reviewMessage($conversation, $customer);
+            return $this->reviewMessage($config, $conversation, $customer, $botUser);
+        }
+
+        $preview = $this->orders->previewCart(
+            $customer,
+            $botUser,
+            $this->gateForConfig($config),
+            $this->cartLines($conversation),
+        );
+        if ($preview['stock_warnings'] !== []) {
+            return "⚠️ Stock issue:\n• ".implode("\n• ", $preview['stock_warnings'])
+                ."\n\nAdjust your cart (reply *EDIT*) or confirm if your branch will fulfil partial stock.\n\n"
+                .$this->reviewMessage($config, $conversation, $customer, $botUser);
         }
 
         try {
@@ -272,16 +356,32 @@ class WhatsAppBotHandler
                 .'Status: '.ucfirst(str_replace('_', ' ', (string) ($result['status'] ?? 'received')))."\n\n"
                 .$this->mainMenuMessage($customer);
         } catch (InvalidArgumentException $e) {
-            return "Could not place order: {$e->getMessage()}\n\n".$this->reviewMessage($conversation, $customer);
+            $this->orders->logOrderFailure(
+                $config->organizationId,
+                $conversation->id,
+                $conversation->phone,
+                $e->getMessage(),
+                $this->cartLines($conversation),
+            );
+
+            return "Could not place order: {$e->getMessage()}\n\n".$this->reviewMessage($config, $conversation, $customer, $botUser);
         } catch (\Throwable $e) {
             report($e);
+            $this->orders->logOrderFailure(
+                $config->organizationId,
+                $conversation->id,
+                $conversation->phone,
+                $e->getMessage(),
+                $this->cartLines($conversation),
+            );
 
             return "Something went wrong placing your order. Please try again or reply *4* to talk to our team.\n\n"
-                .$this->reviewMessage($conversation, $customer);
+                .$this->reviewMessage($config, $conversation, $customer, $botUser);
         }
     }
 
     protected function handleRepeatConfirm(
+        ResolvedWhatsAppConfig $config,
         WhatsappConversation $conversation,
         Customer $customer,
         string $input,
@@ -321,6 +421,13 @@ class WhatsAppBotHandler
                 .$this->mainMenuMessage($customer);
         } catch (\Throwable $e) {
             report($e);
+            $this->orders->logOrderFailure(
+                $config->organizationId,
+                $conversation->id,
+                $conversation->phone,
+                $e->getMessage(),
+                $this->cartLines($conversation),
+            );
 
             return 'Could not repeat your order. Reply *4* for help, or *MENU* to start over.';
         }
@@ -340,35 +447,26 @@ class WhatsAppBotHandler
         return $this->trackOrdersMessage($customer);
     }
 
-    protected function startBrowse(WhatsappConversation $conversation, Customer $customer): string
-    {
-        $products = $this->orders->quickListProducts($customer)->values()->all();
+    protected function startBrowse(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        User $botUser,
+        int $page = 1,
+    ): string {
+        $gate = $this->gateForConfig($config);
+        $result = $this->catalog->browseInStock($customer, $botUser, $gate, $page);
         $conversation->payload = array_merge($conversation->payload ?? [], [
-            'browse_products' => array_map(function (array $row) {
-                $uom = $row['uom'];
-
-                return [
-                    'product_code' => $row['product_code'],
-                    'product_name' => $row['product_name'],
-                    'unit_price' => $row['unit_price'],
-                    'uom_snapshot' => $uom ? $uom->only([
-                        'conversion_factor',
-                        'full_name',
-                        'small_packaging_label',
-                        'middle_packaging_label',
-                        'middle_factor',
-                        'uses_small_packaging',
-                        'uom_type',
-                    ]) : null,
-                ];
-            }, $products),
+            'browse_products' => $result['items'],
+            'browse_page' => $result['page'],
+            'browse_has_more' => $result['has_more'],
         ]);
         $conversation->state = self::STATE_BROWSE;
 
-        if ($products === []) {
+        if ($result['items'] === []) {
             $conversation->state = self::STATE_MAIN_MENU;
 
-            return "No previous orders found to suggest products.\n\n".$this->mainMenuMessage($customer);
+            return "No in-stock products are available right now.\n\n".$this->mainMenuMessage($customer);
         }
 
         return $this->browseMessage($conversation, $customer);
@@ -399,14 +497,18 @@ class WhatsAppBotHandler
         return $body;
     }
 
-    protected function startReview(WhatsappConversation $conversation, Customer $customer): string
-    {
+    protected function startReview(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        User $botUser,
+    ): string {
         if ($this->cartLines($conversation) === []) {
             return "Your cart is empty. Reply *1* to add items.\n\n".$this->mainMenuMessage($customer);
         }
         $conversation->state = self::STATE_REVIEW;
 
-        return $this->reviewMessage($conversation, $customer);
+        return $this->reviewMessage($config, $conversation, $customer, $botUser);
     }
 
     protected function startTrackOrders(WhatsappConversation $conversation, Customer $customer): string
@@ -439,7 +541,7 @@ class WhatsAppBotHandler
             ."2️⃣ Repeat last order\n"
             ."3️⃣ Track my orders\n"
             ."4️⃣ Talk to someone\n\n"
-            .'Reply with a number.';
+            ."Reply with a number, or type a product name (e.g. *2 halisi*).";
     }
 
     protected function browseMessage(WhatsappConversation $conversation, Customer $customer): string
@@ -449,14 +551,18 @@ class WhatsAppBotHandler
             return $this->startBrowse($conversation, $customer);
         }
 
-        $lines = ["Choose a product:\n"];
+        $lines = ["Choose a product (in stock only):\n"];
         foreach ($products->values() as $index => $product) {
             $price = $this->orders->formatMoney((float) $product['unit_price']);
-            $lines[] = ($index + 1).". {$product['product_name']} — {$price}";
+            $stock = $product['available_display'] ?? '';
+            $lines[] = ($index + 1).". {$product['product_name']} — {$price}".($stock ? " ({$stock})" : '');
         }
         $cartCount = count($this->cartLines($conversation));
         $lines[] = "\n0️⃣ ".($cartCount > 0 ? "Review cart ({$cartCount} items)" : 'Back to menu');
-        $lines[] = "\nReply with item number.";
+        if ($conversation->payload['browse_has_more'] ?? false) {
+            $lines[] = '➡️ Reply *NEXT* for more products';
+        }
+        $lines[] = "\nReply with item number, or type a product name to search.";
 
         return implode("\n", $lines);
     }
@@ -469,22 +575,44 @@ class WhatsAppBotHandler
         }
 
         $lines = ["🛒 *Your cart*\n"];
-        foreach ($cart as $item) {
-            $lines[] = '• '.($item['display'] ?? '').' '.$item['product_name'];
+        foreach ($cart as $index => $item) {
+            $n = $index + 1;
+            $lines[] = "{$n}. ".($item['display'] ?? '').' '.$item['product_name'];
         }
-        $lines[] = "\n1️⃣ Add another item";
+        $lines[] = "\n*Edit cart:*";
+        $lines[] = '• *R1*, *R2*… remove a line';
+        $lines[] = '• *E1 5*, *E2 10*… change quantity (packaging units)';
+        $lines[] = '• Type a product name to add more';
+        $lines[] = "\n1️⃣ Browse products";
         $lines[] = '2️⃣ Review & place order';
         $lines[] = '3️⃣ Clear cart';
 
         return implode("\n", $lines);
     }
 
-    protected function reviewMessage(WhatsappConversation $conversation, Customer $customer): string
-    {
-        $cart = $this->cartLines($conversation);
+    protected function reviewMessage(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        User $botUser,
+    ): string {
+        $preview = $this->orders->previewCart(
+            $customer,
+            $botUser,
+            $this->gateForConfig($config),
+            $this->cartLines($conversation),
+        );
         $lines = ["📋 *Order summary*\n", "Customer: *{$customer->customer_name}*\n"];
-        foreach ($cart as $item) {
-            $lines[] = '• '.($item['display'] ?? '').' '.$item['product_name'];
+        foreach ($preview['lines'] as $item) {
+            $lines[] = '• '.($item['display'] ?? '').' '.$item['product_name']
+                .' — '.$this->orders->formatMoney((float) $item['line_total']);
+        }
+        $lines[] = "\n*Estimated total: ".$this->orders->formatMoney((float) $preview['estimated_total']).'*';
+        if ($preview['stock_warnings'] !== []) {
+            $lines[] = "\n⚠️ Stock warnings:";
+            foreach ($preview['stock_warnings'] as $warning) {
+                $lines[] = '• '.$warning;
+            }
         }
         $notes = trim((string) ($conversation->payload['notes'] ?? ''));
         if ($notes !== '') {
@@ -523,9 +651,217 @@ class WhatsAppBotHandler
 
     protected function handoffMessage(): string
     {
-        return "A team member will assist you during business hours.\n\n"
+        return "Thanks — our team has been notified and will assist you during business hours.\n\n"
             .'For urgent orders, please call your sales rep.\n\n'
             .'Reply *MENU* to return to ordering.';
+    }
+
+    protected function requestHandoff(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        User $botUser,
+        string $rawMessage,
+    ): string {
+        $this->handoffs->requestHandoff($config, $conversation, $customer, $botUser, trim($rawMessage) ?: null);
+        $conversation->state = self::STATE_MAIN_MENU;
+
+        return $this->handoffMessage();
+    }
+
+    protected function tryHandleProductText(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        string $input,
+        User $botUser,
+    ): ?string {
+        if ($this->isReservedCommand($input)) {
+            return null;
+        }
+
+        $parsed = $this->catalog->parseProductQuery($input);
+        if (! $parsed || strlen($parsed['term']) < 2) {
+            return null;
+        }
+
+        return $this->showSearchResults(
+            $config,
+            $conversation,
+            $customer,
+            $botUser,
+            $parsed['term'],
+            1,
+            $parsed['qty'],
+        );
+    }
+
+    protected function showSearchResults(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        User $botUser,
+        string $term,
+        int $page,
+        ?float $presetQty = null,
+    ): string {
+        $gate = $this->gateForConfig($config);
+        $result = $this->catalog->searchInStock($customer, $botUser, $gate, $term, $page);
+
+        if ($result['total'] === 0) {
+            return "No in-stock products matched *{$term}*.\n\nTry another name or reply *1* to browse.\n\n"
+                .$this->mainMenuMessage($customer);
+        }
+
+        if ($result['total'] === 1 && $presetQty !== null && $presetQty > 0) {
+            return $this->addProductToCart($conversation, $result['items'][0], $presetQty);
+        }
+
+        if ($result['total'] === 1 && $presetQty === null) {
+            return $this->beginQuantityForProduct($conversation, $result['items'][0]);
+        }
+
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'search_results' => $result['items'],
+            'search_term' => $term,
+            'search_page' => $result['page'],
+            'search_has_more' => $result['has_more'],
+            'search_preset_qty' => $presetQty,
+        ]);
+        $conversation->state = self::STATE_SEARCH_RESULTS;
+
+        return $this->searchResultsMessage($conversation);
+    }
+
+    protected function searchResultsMessage(WhatsappConversation $conversation): string
+    {
+        $term = (string) ($conversation->payload['search_term'] ?? '');
+        $products = collect($conversation->payload['search_results'] ?? []);
+        $lines = ["Results for *{$term}* (in stock):\n"];
+        foreach ($products->values() as $index => $product) {
+            $price = $this->orders->formatMoney((float) $product['unit_price']);
+            $stock = $product['available_display'] ?? '';
+            $lines[] = ($index + 1).". {$product['product_name']} — {$price}".($stock ? " ({$stock})" : '');
+        }
+        if ($conversation->payload['search_has_more'] ?? false) {
+            $lines[] = "\n➡️ Reply *NEXT* for more matches";
+        }
+        $lines[] = "\n0️⃣ Back to menu";
+        $lines[] = 'Reply with item number.';
+
+        return implode("\n", $lines);
+    }
+
+    /** @param  array<string, mixed>  $product */
+    protected function beginQuantityForProduct(WhatsappConversation $conversation, array $product): string
+    {
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'pending_product_code' => $product['product_code'],
+            'pending_product_name' => $product['product_name'],
+            'pending_uom' => $product['uom_snapshot'] ?? null,
+        ]);
+        $conversation->state = self::STATE_ENTER_QTY;
+
+        $uom = $this->uomFromSnapshot($product['uom_snapshot'] ?? null);
+        $label = $uom
+            ? ($this->stockUom->formatMixedStockDisplay(1, $uom)['parts'][0]['label'] ?? 'units')
+            : 'units';
+
+        return "How many *{$label}* of *{$product['product_name']}*?\n\nReply with a number, or CANCEL to go back.";
+    }
+
+    /** @param  array<string, mixed>  $product */
+    protected function addProductToCart(WhatsappConversation $conversation, array $product, float $displayQty): string
+    {
+        $uom = $this->uomFromSnapshot($product['uom_snapshot'] ?? null);
+        $factor = max(1.0, (float) ($uom->conversion_factor ?? 1));
+        $usesSmall = ($uom->uses_small_packaging ?? true) !== false;
+        $baseQty = $usesSmall && $factor > 1 ? $displayQty * $factor : $displayQty;
+        $code = (string) $product['product_code'];
+        $name = (string) $product['product_name'];
+
+        $cart = $this->cartLines($conversation);
+        $cart[] = [
+            'product_code' => $code,
+            'product_name' => $name,
+            'quantity' => $baseQty,
+            'display' => $this->stockUom->formatMixedStockDisplay($baseQty, $uom)['text'],
+            'line_total' => null,
+        ];
+        $conversation->payload = array_merge($conversation->payload ?? [], ['cart' => $cart]);
+        $conversation->state = self::STATE_CART;
+
+        return "Added ✅\n*{$name}* — ".$this->stockUom->formatMixedStockDisplay($baseQty, $uom)['text']."\n\n".$this->cartMessage($conversation);
+    }
+
+    protected function removeCartLine(WhatsappConversation $conversation, Customer $customer, int $lineNumber): string
+    {
+        $cart = $this->cartLines($conversation);
+        if ($lineNumber < 1 || $lineNumber > count($cart)) {
+            return "Invalid line number.\n\n".$this->cartMessage($conversation);
+        }
+        array_splice($cart, $lineNumber - 1, 1);
+        $conversation->payload = array_merge($conversation->payload ?? [], ['cart' => $cart]);
+        if ($cart === []) {
+            $conversation->state = self::STATE_MAIN_MENU;
+
+            return "Cart is empty.\n\n".$this->mainMenuMessage($customer);
+        }
+
+        return "Removed line {$lineNumber}.\n\n".$this->cartMessage($conversation);
+    }
+
+    protected function editCartLine(
+        WhatsappConversation $conversation,
+        Customer $customer,
+        int $lineNumber,
+        float $displayQty,
+    ): string {
+        if ($displayQty <= 0) {
+            return $this->removeCartLine($conversation, $customer, $lineNumber);
+        }
+
+        $cart = $this->cartLines($conversation);
+        if ($lineNumber < 1 || $lineNumber > count($cart)) {
+            return "Invalid line number.\n\n".$this->cartMessage($conversation);
+        }
+
+        $line = $cart[$lineNumber - 1];
+        $product = Product::query()
+            ->with('unit')
+            ->where('organization_id', $conversation->organization_id)
+            ->where('product_code', $line['product_code'] ?? '')
+            ->first();
+        $uom = $product?->unit;
+        $factor = max(1.0, (float) ($uom?->conversion_factor ?? 1));
+        $usesSmall = ($uom?->uses_small_packaging ?? true) !== false;
+        $baseQty = $usesSmall && $factor > 1 ? $displayQty * $factor : $displayQty;
+
+        $cart[$lineNumber - 1]['quantity'] = $baseQty;
+        $cart[$lineNumber - 1]['display'] = $this->stockUom->formatMixedStockDisplay($baseQty, $uom)['text'];
+        $conversation->payload = array_merge($conversation->payload ?? [], ['cart' => $cart]);
+
+        return "Updated line {$lineNumber}.\n\n".$this->cartMessage($conversation);
+    }
+
+    protected function gateForConfig(ResolvedWhatsAppConfig $config): CapabilityGate
+    {
+        $org = Organization::query()->find($config->organizationId);
+
+        return (new CapabilityGate)->forOrganization($org);
+    }
+
+    protected function isReservedCommand(string $input): bool
+    {
+        if (in_array($input, ['1', '2', '3', '4', '0', 'CONFIRM', 'EDIT', 'CANCEL', 'MENU', 'HELP', 'HUMAN', 'NEXT', 'MORE', 'START', 'HI', 'HELLO'], true)) {
+            return true;
+        }
+
+        if (str_starts_with($input, 'NOTES:')) {
+            return true;
+        }
+
+        return (bool) (preg_match('/^R\d+$/', $input) || preg_match('/^E\d+\s+\d/', $input));
     }
 
     /** @return list<array<string, mixed>> */

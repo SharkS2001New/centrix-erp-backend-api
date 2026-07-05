@@ -116,6 +116,7 @@ use App\Http\Controllers\Api\V1\UserController;
 use App\Http\Controllers\Api\V1\VatController;
 use App\Http\Controllers\Api\V1\VehicleController;
 use App\Http\Controllers\Api\V1\VoucherController;
+use App\Http\Controllers\Api\V1\WhatsappAdminController;
 use App\Http\Controllers\Api\V1\WhatsAppWebhookController;
 use App\Http\Controllers\Api\V1\WhatsAppSettingsController;
 use App\Http\Controllers\Api\V1\PlatformWhatsAppController;
@@ -220,6 +221,18 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/whatsapp', [WhatsAppSettingsController::class, 'update'])
             ->middleware(['erp.permission:admin.manage']);
+        Route::get('erp/whatsapp/conversations', [WhatsappAdminController::class, 'conversations'])
+            ->middleware(['erp.permission:sales.orders.view']);
+        Route::get('erp/whatsapp/conversations/{conversation}', [WhatsappAdminController::class, 'showConversation'])
+            ->middleware(['erp.permission:sales.orders.view'])
+            ->whereNumber('conversation');
+        Route::get('erp/whatsapp/handoffs', [WhatsappAdminController::class, 'handoffs'])
+            ->middleware(['erp.permission:sales.orders.view']);
+        Route::post('erp/whatsapp/handoffs/{handoff}/resolve', [WhatsappAdminController::class, 'resolveHandoff'])
+            ->middleware(['erp.permission:sales.orders.view'])
+            ->whereNumber('handoff');
+        Route::get('erp/whatsapp/failures', [WhatsappAdminController::class, 'failures'])
+            ->middleware(['erp.permission:sales.orders.view']);
         Route::get('erp/settings/general', [ErpSettingsController::class, 'general'])
             ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/general', [ErpSettingsController::class, 'updateGeneral'])

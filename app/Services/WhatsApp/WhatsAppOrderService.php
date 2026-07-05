@@ -12,6 +12,9 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Ai\AiFormRequestHelper;
+use App\Services\Erp\CapabilityGate;
+use App\Services\Inventory\BranchStockService;
+use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Inventory\StockUomDisplayService;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Collection;
@@ -21,6 +24,7 @@ class WhatsAppOrderService
 {
     public function __construct(
         protected StockUomDisplayService $stockUom,
+        protected BranchStockService $branchStock,
     ) {}
 
     public function lastSaleForCustomer(Customer $customer): ?Sale
@@ -231,5 +235,114 @@ class WhatsAppOrderService
                 'created_at' => optional($sale->created_at)->toDateString() ?? '',
             ])
             ->all();
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $cartLines
+     * @return array{
+     *   lines: list<array<string, mixed>>,
+     *   estimated_total: float,
+     *   stock_warnings: list<string>
+     * }
+     */
+    public function previewCart(
+        Customer $customer,
+        User $botUser,
+        CapabilityGate $gate,
+        array $cartLines,
+    ): array {
+        $branchId = $customer->branch_id ? (int) $customer->branch_id : ($botUser->branch_id ? (int) $botUser->branch_id : null);
+        $inventory = $gate->moduleSettings('inventory');
+        $sales = $gate->moduleSettings('sales');
+        $lines = [];
+        $total = 0.0;
+        $warnings = [];
+
+        foreach ($cartLines as $line) {
+            $code = (string) ($line['product_code'] ?? '');
+            $baseQty = (float) ($line['quantity'] ?? 0);
+            if ($code === '' || $baseQty <= 0) {
+                continue;
+            }
+
+            $product = Product::query()
+                ->with('unit')
+                ->where('organization_id', $customer->organization_id)
+                ->where('product_code', $code)
+                ->whereNull('deleted_at')
+                ->first();
+
+            if (! $product) {
+                $warnings[] = "Product {$code} is no longer available.";
+
+                continue;
+            }
+
+            $unitPrice = (float) $product->unit_price;
+            $lineTotal = round($unitPrice * $baseQty, 2);
+            $display = $line['display'] ?? $this->stockUom->formatMixedStockDisplay($baseQty, $product->unit)['text'];
+            $payload = $product->toArray();
+            if ($branchId) {
+                $payload = $this->branchStock->overlayPayload($payload, $branchId);
+                $payload = $this->branchStock->applySalesConsumerStock(
+                    $payload,
+                    SaleStockLocationResolver::forLine(
+                        'backend',
+                        $inventory,
+                        $sales,
+                        $product,
+                        (bool) $product->sell_on_retail,
+                    ),
+                    ! empty($sales['retail_shop_wholesale_store_stock']),
+                );
+            }
+
+            $available = (float) ($payload['stock_in_shop'] ?? 0);
+            if ($branchId && isset($payload['stock_available_shop'])) {
+                $available = (float) $payload['stock_available_shop'];
+            }
+
+            if ($available < $baseQty) {
+                $warnings[] = "{$product->product_name}: only ".$this->stockUom->formatMixedStockDisplay($available, $product->unit)['text'].' in stock.';
+            }
+
+            $lines[] = [
+                'product_code' => $code,
+                'product_name' => (string) $product->product_name,
+                'quantity' => $baseQty,
+                'display' => $display,
+                'unit_price' => $unitPrice,
+                'line_total' => $lineTotal,
+            ];
+            $total += $lineTotal;
+        }
+
+        return [
+            'lines' => $lines,
+            'estimated_total' => round($total, 2),
+            'stock_warnings' => $warnings,
+        ];
+    }
+
+    public function logOrderFailure(
+        int $organizationId,
+        ?int $conversationId,
+        string $phone,
+        string $error,
+        array $cartLines = [],
+    ): void {
+        \App\Models\WhatsappMessageLog::query()->create([
+            'organization_id' => $organizationId,
+            'conversation_id' => $conversationId,
+            'direction' => 'system',
+            'from_phone' => $phone,
+            'body' => $error,
+            'meta' => [
+                'event' => 'order_failed',
+                'error' => $error,
+                'cart' => $cartLines,
+            ],
+            'created_at' => now(),
+        ]);
     }
 }
