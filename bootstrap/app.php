@@ -153,6 +153,11 @@ return Application::configure(basePath: dirname(__DIR__))
             report($e);
 
             $payload = \App\Support\ApiErrorPresenter::userMessage($e, $request, $request->user());
+            $issueReport = app(\App\Services\SystemIssues\SystemIssueReporter::class)
+                ->reportException($e, $request, $request->user());
+            if ($issueReport) {
+                $payload['issue_report_id'] = $issueReport->id;
+            }
 
             return response()->json($payload, 500);
         });

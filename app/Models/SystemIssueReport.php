@@ -21,6 +21,7 @@ class SystemIssueReport extends Model
         'fingerprint',
         'status',
         'message',
+        'technical_detail',
         'user_notes',
         'page_url',
         'api_path',

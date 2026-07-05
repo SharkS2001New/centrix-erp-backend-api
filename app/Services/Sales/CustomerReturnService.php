@@ -30,6 +30,7 @@ class CustomerReturnService
         protected ReturnJournalService $returnJournal,
         protected UserPermissionService $permissions,
         protected ReturnProofService $proofService,
+        protected CustomerReturnNumberAllocator $returnNumbers,
     ) {}
 
     public function withActionFlags(CustomerReturn $return, User $user): CustomerReturn
@@ -52,19 +53,22 @@ class CustomerReturnService
         return $return;
     }
 
+    /** @deprecated Use CustomerReturnNumberAllocator inside a transaction. */
     public function nextReturnNo(int $organizationId): string
     {
-        $last = CustomerReturn::query()
-            ->where('organization_id', $organizationId)
-            ->orderByDesc('id')
-            ->value('return_no');
+        return $this->returnNumbers->formatReturnNo(
+            $this->returnNumbers->nextForOrganization($organizationId),
+        );
+    }
 
-        $next = 1;
-        if (is_string($last) && preg_match('/(\d+)$/', $last, $matches)) {
-            $next = ((int) $matches[1]) + 1;
-        }
+    protected function allocateReturnDocument(int $organizationId): array
+    {
+        $sequence = $this->returnNumbers->nextForOrganization($organizationId);
 
-        return 'RET-' . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+        return [
+            'return_seq' => $sequence,
+            'return_no' => $this->returnNumbers->formatReturnNo($sequence),
+        ];
     }
 
     /** @param  array<string, mixed>  $data */
@@ -75,8 +79,10 @@ class CustomerReturnService
             $lines = $this->normalizeLines($data['lines'] ?? [], $saleId);
             $total = round(array_sum(array_column($lines, 'amount')), 2);
 
+            $document = $this->allocateReturnDocument((int) $user->organization_id);
+
             $return = CustomerReturn::create([
-                'return_no' => $this->nextReturnNo((int) $user->organization_id),
+                ...$document,
                 'organization_id' => $user->organization_id,
                 'branch_id' => (int) ($data['branch_id'] ?? $user->branch_id),
                 'sale_id' => $saleId,
@@ -292,28 +298,32 @@ class CustomerReturnService
 
         $total = round(array_sum(array_column($linePayloads, 'amount')), 2);
 
-        $return = CustomerReturn::create([
-            'return_no' => $this->nextReturnNo((int) $user->organization_id),
-            'organization_id' => $user->organization_id,
-            'branch_id' => $sale->branch_id ?? $user->branch_id,
-            'sale_id' => $sale->id,
-            'customer_num' => $sale->customer_num,
-            'return_date' => now()->toDateString(),
-            'refund_method' => $sale->payment_method_code ?: 'CASH',
-            'reason' => 'POS order edit void',
-            'notes' => 'Automatic fiscal void before POS order edit.',
-            'status' => 'approved',
-            'total_amount' => $total,
-            'stock_location' => $this->inferDefaultReturnStockLocation((int) $sale->id, $user, $linePayloads),
-            'returned_by' => $user->id,
-            'approved_by' => $user->id,
-            'approved_at' => now(),
-            'return_kind' => 'pos_edit',
-        ]);
+        DB::transaction(function () use ($user, $sale, $linePayloads, $total, $finance) {
+            $document = $this->allocateReturnDocument((int) $user->organization_id);
 
-        $this->syncLines($return, $linePayloads);
-        $return = $return->fresh(['lines', 'sale', 'customer']);
-        $this->creditNoteService->createForReturn($return, $user, $finance);
+            $return = CustomerReturn::create([
+                ...$document,
+                'organization_id' => $user->organization_id,
+                'branch_id' => $sale->branch_id ?? $user->branch_id,
+                'sale_id' => $sale->id,
+                'customer_num' => $sale->customer_num,
+                'return_date' => now()->toDateString(),
+                'refund_method' => $sale->payment_method_code ?: 'CASH',
+                'reason' => 'POS order edit void',
+                'notes' => 'Automatic fiscal void before POS order edit.',
+                'status' => 'approved',
+                'total_amount' => $total,
+                'stock_location' => $this->inferDefaultReturnStockLocation((int) $sale->id, $user, $linePayloads),
+                'returned_by' => $user->id,
+                'approved_by' => $user->id,
+                'approved_at' => now(),
+                'return_kind' => 'pos_edit',
+            ]);
+
+            $this->syncLines($return, $linePayloads);
+            $return = $return->fresh(['lines', 'sale', 'customer']);
+            $this->creditNoteService->createForReturn($return, $user, $finance);
+        });
     }
 
     public function reject(CustomerReturn $return, User $user, ?string $reason = null): CustomerReturn

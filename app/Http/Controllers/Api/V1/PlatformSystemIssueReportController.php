@@ -65,6 +65,7 @@ class PlatformSystemIssueReportController extends Controller
         if ($q = trim((string) $request->input('q', ''))) {
             $query->where(function ($inner) use ($q) {
                 $inner->where('message', 'like', "%{$q}%")
+                    ->orWhere('technical_detail', 'like', "%{$q}%")
                     ->orWhere('user_notes', 'like', "%{$q}%")
                     ->orWhere('page_url', 'like', "%{$q}%")
                     ->orWhere('api_path', 'like', "%{$q}%")

@@ -105,4 +105,20 @@ class SystemIssueReportTest extends TestCase
             ->assertJsonPath('data.0.is_high_priority', true)
             ->assertJsonPath('data.0.occurrence_count', 3);
     }
+
+    public function test_client_cannot_submit_generic_server_error_duplicate(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/system-issue-reports', [
+            'kind' => 'error',
+            'message' => 'An error occurred in Sub Categories. Please report this to your system administrator.',
+            'api_path' => '/sub-categories/103',
+            'http_method' => 'DELETE',
+            'http_status' => 500,
+        ])
+            ->assertStatus(202)
+            ->assertJsonPath('skipped', true);
+    }
 }

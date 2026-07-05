@@ -20,6 +20,7 @@ class LegacyReturnService
         protected CustomerReturnService $customerReturnService,
         protected CreditNoteService $creditNoteService,
         protected LegacyOrderService $legacyOrders,
+        protected CustomerReturnNumberAllocator $returnNumbers,
     ) {}
 
     public function baseQuery(User $user): Builder
@@ -97,9 +98,11 @@ class LegacyReturnService
                     'legacy',
                 );
             $total = round(array_sum(array_column($lines, 'amount')), 2);
+            $sequence = $this->returnNumbers->nextForOrganization((int) $user->organization_id);
 
             $return = CustomerReturn::create([
-                'return_no' => $this->nextLegacyReturnNo((int) $user->organization_id),
+                'return_no' => $this->formatLegacyReturnNo($sequence),
+                'return_seq' => $sequence,
                 'organization_id' => $user->organization_id,
                 'branch_id' => (int) ($data['branch_id'] ?? $sale->branch_id ?? $user->branch_id),
                 'sale_id' => $sale->id,
@@ -299,18 +302,14 @@ class LegacyReturnService
 
     public function nextLegacyReturnNo(int $organizationId): string
     {
-        $last = CustomerReturn::query()
-            ->where('organization_id', $organizationId)
-            ->where('return_kind', 'legacy')
-            ->orderByDesc('id')
-            ->value('return_no');
+        return $this->formatLegacyReturnNo(
+            $this->returnNumbers->nextForOrganization($organizationId),
+        );
+    }
 
-        $next = 1;
-        if (is_string($last) && preg_match('/(\d+)$/', $last, $matches)) {
-            $next = ((int) $matches[1]) + 1;
-        }
-
-        return 'LRET-' . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+    protected function formatLegacyReturnNo(int $sequence): string
+    {
+        return 'LRET-' . str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
     }
 
     /** @return list<array<string, mixed>> */

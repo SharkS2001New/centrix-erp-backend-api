@@ -7,8 +7,11 @@ use App\Models\AuditLog;
 use App\Models\User;
 use App\Services\Audit\AuditLogger;
 use App\Services\Auth\UserAccessService;
+use App\Support\ReferentialIntegrityMessage;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 abstract class BaseResourceController extends Controller
 {
@@ -265,7 +268,18 @@ abstract class BaseResourceController extends Controller
             );
         }
 
-        $model->delete();
+        try {
+            $model->delete();
+        } catch (QueryException $e) {
+            $message = ReferentialIntegrityMessage::forDelete($e);
+            if ($message !== null) {
+                throw ValidationException::withMessages([
+                    'record' => [$message],
+                ]);
+            }
+
+            throw $e;
+        }
 
         return response()->json(null, 204);
     }

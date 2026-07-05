@@ -122,6 +122,38 @@ class TenantCatalogReferenceDataTest extends TestCase
         $this->assertFalse($subNames->contains('Org B Sub'));
     }
 
+    public function test_cannot_delete_sub_category_used_by_products(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $product = Product::query()->where('organization_id', $admin->organization_id)->firstOrFail();
+        $subCategory = SubCategory::query()->findOrFail($product->subcategory_id);
+
+        $this->deleteJson("/api/v1/sub-categories/{$subCategory->id}")
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['subcategory']);
+
+        $this->assertDatabaseHas('sub_categories', ['id' => $subCategory->id]);
+    }
+
+    public function test_cannot_delete_category_with_sub_categories(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $subCategory = SubCategory::query()
+            ->where('organization_id', $admin->organization_id)
+            ->firstOrFail();
+        $category = Category::query()->findOrFail($subCategory->category_id);
+
+        $this->deleteJson("/api/v1/categories/{$category->id}")
+            ->assertUnprocessable()
+            ->assertJsonValidationErrors(['category']);
+
+        $this->assertDatabaseHas('categories', ['id' => $category->id]);
+    }
+
     public function test_subcategories_can_be_searched_by_name(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

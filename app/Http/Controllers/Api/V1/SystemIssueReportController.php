@@ -31,6 +31,18 @@ class SystemIssueReportController extends Controller
 
         $user = $request->user();
 
+        if (
+            ($data['kind'] ?? '') === 'error'
+            && (int) ($data['http_status'] ?? 0) >= 500
+            && empty($data['reported_by_user'])
+            && empty($data['context']['technical_detail'] ?? null)
+        ) {
+            return response()->json([
+                'message' => 'Server errors are logged automatically with technical details.',
+                'skipped' => true,
+            ], 202);
+        }
+
         if (! empty($data['report_id'])) {
             $existing = SystemIssueReport::query()->find($data['report_id']);
             if ($existing && (int) $existing->user_id === (int) $user->id) {
@@ -43,17 +55,23 @@ class SystemIssueReportController extends Controller
             }
         }
 
+        $technicalDetail = trim((string) ($data['context']['technical_detail'] ?? ''));
+        $logMessage = $technicalDetail !== ''
+            ? mb_substr(strtok($technicalDetail, "\n"), 0, 500)
+            : (string) $data['message'];
+
         $report = SystemIssueReport::create([
             'organization_id' => $user->organization_id,
             'user_id' => $user->id,
             'kind' => $data['kind'],
             'fingerprint' => SystemIssueFingerprint::forReport(
                 $data['kind'],
-                $data['message'],
+                $logMessage,
                 $data['api_path'] ?? null,
             ),
             'status' => 'open',
-            'message' => $data['message'],
+            'message' => $logMessage,
+            'technical_detail' => $technicalDetail !== '' ? $technicalDetail : null,
             'user_notes' => $data['user_notes'] ?? null,
             'page_url' => $data['page_url'] ?? null,
             'api_path' => $data['api_path'] ?? null,

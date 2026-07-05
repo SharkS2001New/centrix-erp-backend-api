@@ -14,6 +14,7 @@ class CustomerReturn extends Model
 
     protected $fillable = [
         'return_no',
+        'return_seq',
         'organization_id',
         'branch_id',
         'sale_id',
