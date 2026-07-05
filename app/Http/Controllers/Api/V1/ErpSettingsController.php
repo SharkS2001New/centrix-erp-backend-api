@@ -816,6 +816,22 @@ class ErpSettingsController extends Controller
             'order_placed_email_template' => 'sometimes|nullable|string|max:500',
             'debtor_payment_sms_template' => 'sometimes|nullable|string|max:500',
             'debtor_payment_email_template' => 'sometimes|nullable|string|max:500',
+            'notify_on_approval_request' => 'sometimes|boolean',
+            'notify_on_approval_outcome' => 'sometimes|boolean',
+            'approval_request_email_subject' => 'sometimes|nullable|string|max:200',
+            'approval_request_email_template' => 'sometimes|nullable|string|max:2000',
+            'approval_outcome_email_subject' => 'sometimes|nullable|string|max:200',
+            'approval_outcome_email_template' => 'sometimes|nullable|string|max:2000',
+            'in_app_notify_on_trip_activity' => 'sometimes|boolean',
+            'in_app_notify_on_whatsapp_handoff' => 'sometimes|boolean',
+            'in_app_notify_on_order_status_change' => 'sometimes|boolean',
+            'in_app_notify_on_fiscal_period_change' => 'sometimes|boolean',
+            'in_app_notify_on_stock_receipt' => 'sometimes|boolean',
+            'in_app_notify_on_stock_transfer' => 'sometimes|boolean',
+            'in_app_notify_on_bank_reconciliation' => 'sometimes|boolean',
+            'in_app_notify_on_year_end_close' => 'sometimes|boolean',
+            'in_app_notify_on_approval_request' => 'sometimes|boolean',
+            'in_app_notify_on_approval_outcome' => 'sometimes|boolean',
         ]);
 
         $current = $gate->moduleSettings('notifications');

@@ -5,6 +5,7 @@ namespace App\Services\Notifications;
 use App\Models\ActionRequest;
 use App\Models\ApprovalAction;
 use App\Models\InAppNotification;
+use App\Models\Organization;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\Contracts\ActionRequestHandler;
@@ -120,17 +121,19 @@ class ActionRequestService
             $actionUrl = $data['action_url'] ?? null;
 
             $recipients = $this->resolveApprovers($requester, $request);
-            foreach ($recipients as $recipient) {
-                $this->notifications->createForUser($recipient, [
-                    'organization_id' => $requester->organization_id,
-                    'action_request_id' => $request->id,
-                    'type' => 'approval',
-                    'severity' => $severity,
-                    'title' => (string) $data['title'],
-                    'message' => $message,
-                    'action_url' => $actionUrl,
-                    'created_by' => $requester->id,
-                ]);
+            if ($this->inAppApprovalRequestEnabled($requester)) {
+                foreach ($recipients as $recipient) {
+                    $this->notifications->createForUser($recipient, [
+                        'organization_id' => $requester->organization_id,
+                        'action_request_id' => $request->id,
+                        'type' => 'approval',
+                        'severity' => $severity,
+                        'title' => (string) $data['title'],
+                        'message' => $message,
+                        'action_url' => $actionUrl,
+                        'created_by' => $requester->id,
+                    ]);
+                }
             }
 
             return $request->fresh(['requester']);
@@ -280,6 +283,10 @@ class ActionRequestService
         }
 
         $approved = $outcome === 'approved';
+        if (! $this->inAppApprovalOutcomeEnabled($requester)) {
+            return;
+        }
+
         $this->notifications->createForUser($requester, [
             'organization_id' => $request->organization_id,
             'type' => 'info',
@@ -291,5 +298,35 @@ class ActionRequestService
             'action_url' => $request->payload['action_url'] ?? null,
             'created_by' => $actor->id,
         ]);
+    }
+
+    protected function inAppApprovalRequestEnabled(User $user): bool
+    {
+        $organization = Organization::query()->find((int) $user->organization_id);
+        if (! $organization) {
+            return false;
+        }
+
+        $settings = NotificationSettingsResolver::forOrganization($organization);
+
+        return NotificationSettingsResolver::inAppEventEnabled(
+            $settings,
+            InAppNotificationEvents::APPROVAL_REQUEST,
+        );
+    }
+
+    protected function inAppApprovalOutcomeEnabled(User $user): bool
+    {
+        $organization = Organization::query()->find((int) $user->organization_id);
+        if (! $organization) {
+            return false;
+        }
+
+        $settings = NotificationSettingsResolver::forOrganization($organization);
+
+        return NotificationSettingsResolver::inAppEventEnabled(
+            $settings,
+            InAppNotificationEvents::APPROVAL_OUTCOME,
+        );
     }
 }

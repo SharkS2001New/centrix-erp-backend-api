@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\FiscalPeriod;
 use App\Services\Accounting\FiscalPeriodService;
 use App\Services\Notifications\AdminNotificationService;
+use App\Services\Notifications\InAppNotificationEvents;
 use Illuminate\Http\Request;
 
 class FiscalPeriodController extends Controller
@@ -53,7 +54,7 @@ class FiscalPeriodController extends Controller
             'title' => 'Fiscal period closed',
             'message' => ($request->user()->full_name ?: $request->user()->username)." closed fiscal period {$closed->period_name}.",
             'action_url' => '/accounting/fiscal-periods',
-        ]);
+        ], InAppNotificationEvents::FISCAL_PERIOD_CHANGE);
 
         return response()->json($closed);
     }
@@ -69,7 +70,7 @@ class FiscalPeriodController extends Controller
             'title' => 'Fiscal period reopened',
             'message' => ($request->user()->full_name ?: $request->user()->username)." reopened fiscal period {$reopened->period_name}.",
             'action_url' => '/accounting/fiscal-periods',
-        ]);
+        ], InAppNotificationEvents::FISCAL_PERIOD_CHANGE);
 
         return response()->json($reopened);
     }

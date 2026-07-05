@@ -13,6 +13,7 @@ class TripReconciliationService
     public function __construct(
         protected DispatchTripService $trips,
         protected TripFinancialSummaryService $financials,
+        protected TripCodService $tripCod,
     ) {}
 
     /** @return array<string, mixed> */
@@ -35,15 +36,16 @@ class TripReconciliationService
         $resolvedCount = 0;
         $podPendingCount = 0;
         $expectedFromOrders = 0.0;
-        $returnAmounts = $this->returnAmountsBySale(
+        $returnAmounts = $this->tripCod->returnAmountsBySale(
             $trip->sales->pluck('id')->map(fn ($id) => (int) $id)->all(),
         );
+
         $returnNumbers = $this->returnNumbersBySale(
             $trip->sales->pluck('id')->map(fn ($id) => (int) $id)->all(),
         );
 
         foreach ($trip->sales as $sale) {
-            $balance = max(0, round((float) $sale->order_total - (float) $sale->amount_paid, 2));
+            $balance = $this->tripCod->balanceDue($sale);
             $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
             $isDelivered = in_array((string) $sale->status, self::DELIVERED_STATUSES, true);
             $isCancelled = (string) $sale->status === 'cancelled';
@@ -51,7 +53,7 @@ class TripReconciliationService
             $returnAmount = round((float) ($returnAmounts[(int) $sale->id] ?? 0), 2);
             $returnNo = $meta['driver_return_no'] ?? $returnNumbers[(int) $sale->id] ?? null;
             $hasReturn = $returnAmount > 0.01 || $returnNo !== null;
-            $isFailed = ($deliveryOutcome === 'failed' || $isCancelled) && ! $isDelivered;
+            $isFailed = $this->tripCod->isFailedDelivery($sale);
             $isPartial = $deliveryOutcome === 'partial';
             $isFullDelivered = $isDelivered && ! $isPartial;
             $isResolved = $isFullDelivered
@@ -75,7 +77,7 @@ class TripReconciliationService
                 $podPendingCount++;
             }
 
-            if (! empty($settings['enable_cod_reconciliation'])) {
+            if (! empty($settings['enable_cod_reconciliation']) && ! $this->tripCod->isCreditSale($sale)) {
                 $expectedFromOrders += $isFailed ? 0 : max(0, $balance - $returnAmount);
             }
 

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Services\Accounting\BankReconciliationService;
 use App\Services\Notifications\AdminNotificationService;
+use App\Services\Notifications\InAppNotificationEvents;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 
@@ -163,7 +164,7 @@ class BankReconciliationController extends Controller
                 'title' => 'Bank reconciliation completed',
                 'message' => ($request->user()->full_name ?: $request->user()->username)." completed bank reconciliation #{$reconciliationId}.",
                 'action_url' => "/accounting/bank-reconciliation/{$reconciliationId}",
-            ]);
+            ], InAppNotificationEvents::BANK_RECONCILIATION);
         } catch (InvalidArgumentException $e) {
             return response()->json(['message' => $e->getMessage()], 422);
         }

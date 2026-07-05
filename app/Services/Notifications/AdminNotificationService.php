@@ -2,6 +2,7 @@
 
 namespace App\Services\Notifications;
 
+use App\Models\Organization;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use Illuminate\Support\Collection;
@@ -14,8 +15,12 @@ class AdminNotificationService
     ) {}
 
     /** @param  array<string, mixed>  $data */
-    public function notifyPermission(User $actor, string $permission, array $data): int
+    public function notifyPermission(User $actor, string $permission, array $data, ?string $eventKey = null): int
     {
+        if ($eventKey !== null && ! $this->organizationEventEnabled($actor, $eventKey)) {
+            return 0;
+        }
+
         $recipients = $this->permissions
             ->usersWithPermission((int) $actor->organization_id, $permission)
             ->filter(fn (User $user) => (int) $user->id !== (int) $actor->id)
@@ -29,16 +34,24 @@ class AdminNotificationService
     }
 
     /** @param  array<string, mixed>  $data */
-    public function notifyAdmins(User $actor, array $data): int
+    public function notifyAdmins(User $actor, array $data, ?string $eventKey = null): int
     {
+        if ($eventKey !== null && ! $this->organizationEventEnabled($actor, $eventKey)) {
+            return 0;
+        }
+
         $recipients = $this->adminRecipients($actor);
 
         return $this->notifyMany($actor, $recipients, $data);
     }
 
     /** @param  array<string, mixed>  $data */
-    public function notifySuperAdmins(User $actor, array $data): int
+    public function notifySuperAdmins(User $actor, array $data, ?string $eventKey = null): int
     {
+        if ($eventKey !== null && ! NotificationSettingsResolver::platformInAppEventEnabled($eventKey)) {
+            return 0;
+        }
+
         $recipients = User::query()
             ->where('is_super_admin', true)
             ->where('is_active', true)
@@ -94,5 +107,17 @@ class AdminNotificationService
         }
 
         return $count;
+    }
+
+    protected function organizationEventEnabled(User $actor, string $eventKey): bool
+    {
+        $organization = Organization::query()->find((int) $actor->organization_id);
+        if (! $organization) {
+            return false;
+        }
+
+        $settings = NotificationSettingsResolver::forOrganization($organization);
+
+        return NotificationSettingsResolver::inAppEventEnabled($settings, $eventKey);
     }
 }

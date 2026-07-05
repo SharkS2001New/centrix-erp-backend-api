@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Services\Accounting\YearEndCloseService;
 use App\Services\Notifications\AdminNotificationService;
+use App\Services\Notifications\InAppNotificationEvents;
 use Illuminate\Http\Request;
 
 class YearEndCloseController extends Controller
@@ -27,7 +28,7 @@ class YearEndCloseController extends Controller
             'title' => 'Year-end close completed',
             'message' => ($request->user()->full_name ?: $request->user()->username)." completed year-end close for {$data['year']}.",
             'action_url' => '/accounting/fiscal-periods',
-        ]);
+        ], InAppNotificationEvents::YEAR_END_CLOSE);
 
         return response()->json([
             'entry' => $result['entry'],

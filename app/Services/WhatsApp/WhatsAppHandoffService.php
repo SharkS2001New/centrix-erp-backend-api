@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Models\WhatsappConversation;
 use App\Models\WhatsappHandoff;
 use App\Services\Notifications\AdminNotificationService;
+use App\Services\Notifications\InAppNotificationEvents;
 
 class WhatsAppHandoffService
 {
@@ -41,7 +42,7 @@ class WhatsAppHandoffService
             'title' => 'WhatsApp customer needs help',
             'message' => $message,
             'action_url' => '/sales/whatsapp?handoff='.$handoff->id,
-        ]);
+        ], InAppNotificationEvents::WHATSAPP_HANDOFF);
 
         return $handoff;
     }

@@ -172,6 +172,10 @@ class NotificationSettingsResolver
         $out['notify_on_debtor_payment'] = (bool) ($out['notify_on_debtor_payment'] ?? false);
         $out['notify_on_approval_request'] = (bool) ($out['notify_on_approval_request'] ?? false);
         $out['notify_on_approval_outcome'] = (bool) ($out['notify_on_approval_outcome'] ?? false);
+        foreach (InAppNotificationEvents::organizationEvents() as $event) {
+            $key = InAppNotificationEvents::settingKey($event);
+            $out[$key] = (bool) ($out[$key] ?? self::defaults()[$key] ?? false);
+        }
         $out['order_placed_scope'] = in_array($out['order_placed_scope'] ?? '', ['all', 'debtors', 'route_orders'], true)
             ? $out['order_placed_scope']
             : 'all';
@@ -208,6 +212,22 @@ class NotificationSettingsResolver
         }
 
         return $out;
+    }
+
+    /** @param  array<string, mixed>  $settings */
+    public static function inAppEventEnabled(array $settings, string $event): bool
+    {
+        $key = InAppNotificationEvents::settingKey($event);
+
+        return (bool) ($settings[$key] ?? self::defaults()[$key] ?? false);
+    }
+
+    public static function platformInAppEventEnabled(string $event): bool
+    {
+        $key = InAppNotificationEvents::settingKey($event);
+        $defaults = config('erp.platform_notifications', []);
+
+        return (bool) ($defaults[$key] ?? false);
     }
 
     public static function renderTemplate(string $template, array $vars): string

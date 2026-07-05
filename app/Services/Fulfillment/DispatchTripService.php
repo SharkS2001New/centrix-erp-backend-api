@@ -22,6 +22,7 @@ class DispatchTripService
         protected TripStockService $tripStock,
         protected TripCapacityValidator $capacityValidator,
         protected FulfillmentNotificationService $notifications,
+        protected TripCodService $tripCod,
         protected ErpContext $erp,
     ) {}
 
@@ -335,9 +336,10 @@ class DispatchTripService
             $this->syncTripRoutesFromSales($trip->fresh());
         });
 
-        $this->syncTripLists($trip->fresh());
+        $fresh = $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
+        $this->refreshExpectedCash($fresh, $user);
 
-        return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
+        return $fresh->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
     }
 
     /** Mark every processed stop on an in-transit trip as delivered. */
@@ -380,7 +382,10 @@ class DispatchTripService
             );
         }
 
-        return $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
+        $fresh = $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
+        $this->refreshExpectedCash($fresh, $user);
+
+        return $fresh->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
     }
 
     /** @param  array<string, mixed>  $data */
@@ -584,18 +589,69 @@ class DispatchTripService
     /** @param  array<string, mixed>  $settings */
     public function computeExpectedCash(DispatchTrip $trip, array $settings): float
     {
-        if (empty($settings['enable_cod_reconciliation'])) {
-            return 0.0;
+        $trip->loadMissing('sales');
+
+        if (in_array($trip->status, ['in_transit', 'completed'], true)) {
+            return $this->tripCod->outstandingFromTrip($trip, $settings);
+        }
+
+        return $this->tripCod->expectedAtDepart($trip->sales, $settings);
+    }
+
+  /** @return array<string, mixed> */
+    public function cashSummary(DispatchTrip $trip, ?User $user): array
+    {
+        if (! $user) {
+            return [
+                'enabled' => false,
+                'expected_from_orders' => null,
+                'outstanding_from_orders' => null,
+            ];
+        }
+
+        $settings = $this->erp->gateForUser($user)->distributionSettings();
+        $enabled = ! empty($settings['enable_cod_reconciliation']);
+        if (! $enabled) {
+            return [
+                'enabled' => false,
+                'expected_from_orders' => 0.0,
+                'outstanding_from_orders' => 0.0,
+            ];
         }
 
         $trip->loadMissing('sales');
-        $total = 0.0;
-        foreach ($trip->sales as $sale) {
-            $balance = max(0, (float) $sale->order_total - (float) $sale->amount_paid);
-            $total += $balance;
+        $outstanding = $this->tripCod->outstandingFromTrip($trip, $settings);
+        $atDepart = $this->tripCod->expectedAtDepart($trip->sales, $settings);
+
+        return [
+            'enabled' => true,
+            'expected_from_orders' => in_array($trip->status, ['in_transit', 'completed'], true)
+                ? $outstanding
+                : $atDepart,
+            'outstanding_from_orders' => $outstanding,
+            'expected_at_depart' => $atDepart,
+        ];
+    }
+
+    public function refreshExpectedCash(DispatchTrip $trip, ?User $user = null): void
+    {
+        if (! in_array($trip->status, ['in_transit', 'completed'], true)) {
+            return;
         }
 
-        return round($total, 2);
+        $settings = $user
+            ? $this->erp->gateForUser($user)->distributionSettings()
+            : ($trip->branch?->organization_id
+                ? $this->erp->gateForOrganization(Organization::findOrFail($trip->branch->organization_id))->distributionSettings()
+                : []);
+
+        if (empty($settings['enable_cod_reconciliation'])) {
+            return;
+        }
+
+        $trip->update([
+            'expected_cash' => $this->computeExpectedCash($trip, $settings),
+        ]);
     }
 
     public function resolveSchedule(int $branchId, int $routeId, string $date): ?RouteSchedule

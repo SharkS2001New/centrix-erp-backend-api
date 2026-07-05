@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Models\SystemIssueReport;
 use App\Services\Notifications\AdminNotificationService;
+use App\Services\Notifications\InAppNotificationEvents;
 use App\Services\SystemIssues\SystemIssueDigestService;
 use App\Services\SystemIssues\SystemIssueFingerprint;
 use Illuminate\Http\Request;
@@ -69,7 +70,7 @@ class SystemIssueReportController extends Controller
             'title' => 'System issue reported',
             'message' => "{$user->full_name} reported {$data['kind']}: {$data['message']}",
             'action_url' => '/platform/system-issues',
-        ]);
+        ], InAppNotificationEvents::SYSTEM_ISSUE);
 
         return response()->json($report, 201);
     }

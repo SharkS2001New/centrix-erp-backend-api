@@ -23,6 +23,7 @@ use App\Services\Fulfillment\FulfillmentNotificationService;
 use App\Services\Fulfillment\LoadingListBuilder;
 use App\Services\Fulfillment\PodService;
 use App\Services\Notifications\AdminNotificationService;
+use App\Services\Notifications\InAppNotificationEvents;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -344,7 +345,7 @@ class OrderWorkflowController extends Controller
             'title' => 'Order status changed',
             'message' => "Order #{$sale->order_num} moved from {$from} to {$to} by ".($user->full_name ?: $user->username).'.',
             'action_url' => "/sales/orders/{$sale->id}",
-        ]);
+        ], InAppNotificationEvents::ORDER_STATUS_CHANGE);
 
         if ($to !== 'delivered') {
             return;

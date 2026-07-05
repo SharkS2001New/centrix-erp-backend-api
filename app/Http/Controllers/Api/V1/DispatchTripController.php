@@ -9,6 +9,7 @@ use App\Services\Fulfillment\DispatchTripService;
 use App\Services\Fulfillment\TripFinancialSummaryService;
 use App\Services\Fulfillment\TripStockService;
 use App\Services\Notifications\AdminNotificationService;
+use App\Services\Notifications\InAppNotificationEvents;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 
@@ -63,12 +64,12 @@ class DispatchTripController extends BaseResourceController
         $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
 
         return response()->json(
-            $this->presentTrip($trip->load(['route', 'routes', 'driver', 'vehicle', 'crewMembers', 'sales', 'loadingList.lines'])),
+            $this->presentTrip($trip->load(['route', 'routes', 'driver', 'vehicle', 'crewMembers', 'sales', 'loadingList.lines']), null, $request->user()),
         );
     }
 
     /** @return array<string, mixed> */
-    protected function presentTrip(DispatchTrip $trip, ?array $financialSummary = null): array
+    protected function presentTrip(DispatchTrip $trip, ?array $financialSummary = null, ?\App\Models\User $user = null): array
     {
         $payload = $trip->toArray();
         $payload['route_ids'] = $trip->routeIdList();
@@ -92,6 +93,9 @@ class DispatchTripController extends BaseResourceController
             ?? ($trip->relationLoaded('sales')
                 ? $this->financials->summarizeForTrip($trip)
                 : $this->financials->emptySummary());
+        $payload['cash_summary'] = $trip->relationLoaded('sales')
+            ? $this->trips->cashSummary($trip, $user)
+            : null;
 
         return $payload;
     }
@@ -442,6 +446,6 @@ class DispatchTripController extends BaseResourceController
             'title' => $title,
             'message' => ($user->full_name ?: $user->username)." {$verb} trip {$trip->trip_code}.",
             'action_url' => "/fulfillment/trips/{$trip->id}",
-        ]);
+        ], InAppNotificationEvents::TRIP_ACTIVITY);
     }
 }
