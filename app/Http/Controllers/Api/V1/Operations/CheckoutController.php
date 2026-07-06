@@ -35,6 +35,7 @@ use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
 use App\Services\Notifications\CustomerNotificationService;
+use App\Services\Sales\DiscountApprovalService;
 use App\Services\Sales\MobileCheckoutLocationService;
 use App\Services\Sales\MobileCheckoutSettings;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
@@ -55,10 +56,11 @@ class CheckoutController extends Controller
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
-        app(\App\Services\Sales\DiscountApprovalService::class)->assertCartCanCheckout($cart, $request->user());
         $sale = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
 
-        app(AutoTripAssignmentService::class)->tryAssignSale($sale, $request->user());
+        if ($sale->status !== 'pending_approval') {
+            app(AutoTripAssignmentService::class)->tryAssignSale($sale, $request->user());
+        }
 
         $sale = $sale->fresh(['items', 'payments.paymentMethod']);
         $labels = config('erp.order_status_labels', []);
@@ -159,7 +161,8 @@ class CheckoutController extends Controller
                 if ($discountVoucher && $discountVoucher->voucher_kind === 'discount') {
                     $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
                 }
-            } elseif (! empty($salesSettings['enable_order_discount'])) {
+            } elseif (! empty($salesSettings['enable_order_discount'])
+                || app(DiscountApprovalService::class)->discountApprovalEnabled($salesSettings)) {
                 $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
             }
             $total = max(0, $lineNet - $orderDiscount);
@@ -263,6 +266,12 @@ class CheckoutController extends Controller
 
             if ($orderStatus === 'cancelled') {
                 throw new InvalidArgumentException('Checkout cannot create a cancelled order.');
+            }
+
+            $discountApproval = app(DiscountApprovalService::class);
+            $pendingDiscountApproval = $discountApproval->checkoutRequiresPendingApproval($cart, $user, $gate);
+            if ($pendingDiscountApproval) {
+                $orderStatus = 'pending_approval';
             }
 
             $floatSessionId = FloatSessionValidator::forUser($user)->resolveForCheckout($cart, $user, $input);
@@ -468,7 +477,7 @@ class CheckoutController extends Controller
                 SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
             }
 
-            if ($workflow->isTerminalStatus((string) $sale->status, (string) $cart->channel)) {
+            if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel)) {
                 $this->awardLoyaltyPointsForCompletedSale(
                     (int) $sale->organization_id,
                     $customerNum ? (int) $customerNum : null,
@@ -478,7 +487,11 @@ class CheckoutController extends Controller
                 );
             }
 
-            app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
+            if ($orderStatus !== 'pending_approval') {
+                app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
+            } else {
+                $discountApproval->attachCheckoutToSale($sale, $cart, $user);
+            }
 
             $this->releaseCartReservations($cart->id);
             CartLine::where('cart_id', $cart->id)->delete();
@@ -491,7 +504,7 @@ class CheckoutController extends Controller
                 ? (bool) $input['submit_kra']
                 : null;
 
-            $submitKra = KraFiscalPolicy::shouldFiscalizeSale(
+            $submitKra = $orderStatus !== 'pending_approval' && KraFiscalPolicy::shouldFiscalizeSale(
                 $finance,
                 (float) $sale->order_total,
                 $explicitSubmit,
@@ -508,11 +521,13 @@ class CheckoutController extends Controller
                 $sale->setRelation('kraResponse', $kraResponse);
             }
 
-            app(SaleJournalService::class)->postIfEnabled($sale, $user, $gate);
+            if ($orderStatus !== 'pending_approval') {
+                app(SaleJournalService::class)->postIfEnabled($sale, $user, $gate);
 
-            $organization = Organization::find($user->organization_id);
-            if ($organization) {
-                app(CustomerNotificationService::class)->notifyOrderPlaced($sale, $organization);
+                $organization = Organization::find($user->organization_id);
+                if ($organization) {
+                    app(CustomerNotificationService::class)->notifyOrderPlaced($sale, $organization);
+                }
             }
 
             return $sale;

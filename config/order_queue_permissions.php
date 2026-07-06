@@ -27,6 +27,16 @@ return [
         'terminal' => true,
         'requires_setting' => 'order_expiry_enabled',
     ],
+    'pending_approval' => [
+        'label' => 'Pending approval',
+        'terminal' => true,
+        'requires_setting' => 'discount_approval_enabled',
+    ],
+    'editable' => [
+        'label' => 'Editable',
+        'terminal' => true,
+        'requires_setting' => 'discount_approval_enabled',
+    ],
     'mobile' => [
         'label' => 'Mobile orders',
         'mobile_channel' => true,

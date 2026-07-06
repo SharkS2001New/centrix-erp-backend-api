@@ -2,6 +2,7 @@
 
 namespace App\Services\Accounting;
 
+use App\Models\Customer;
 use App\Models\CustomerInvoice;
 use App\Models\Sale;
 use App\Models\User;
@@ -77,5 +78,46 @@ class CustomerInvoiceService
         }
 
         return 0;
+    }
+
+    public function voidForCancelledSale(Sale $sale, User $user): void
+    {
+        if (! $sale->customer_num) {
+            return;
+        }
+
+        $invoices = CustomerInvoice::query()
+            ->where('sale_id', $sale->id)
+            ->whereNull('deleted_at')
+            ->get();
+
+        if ($invoices->isEmpty()) {
+            return;
+        }
+
+        foreach ($invoices as $invoice) {
+            $invoice->update([
+                'deleted_at' => now(),
+                'deleted_by' => $user->id,
+            ]);
+        }
+
+        $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
+    }
+
+    protected function refreshCustomerBalance(int $organizationId, int $customerNum): void
+    {
+        $balance = CustomerInvoice::query()
+            ->where('organization_id', $organizationId)
+            ->where('customer_num', $customerNum)
+            ->whereIn('payment_status', [0, 1])
+            ->whereNull('deleted_at')
+            ->selectRaw('COALESCE(SUM(invoice_total - amount_paid), 0) as balance')
+            ->value('balance');
+
+        Customer::query()
+            ->where('organization_id', $organizationId)
+            ->where('customer_num', $customerNum)
+            ->update(['current_balance' => round((float) $balance, 2)]);
     }
 }

@@ -29,5 +29,7 @@ class SalesOrderQueuePermissionsTest extends TestCase
 
         $this->assertCount(count(SalesOrderQueuePermissions::definitions()), $codes);
         $this->assertContains('sales.order_queue_mobile.view', $codes);
+        $this->assertContains('sales.order_queue_pending_approval.view', $codes);
+        $this->assertContains('sales.order_queue_editable.view', $codes);
     }
 }

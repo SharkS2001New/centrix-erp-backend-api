@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\OrderWorkflowService;
 use App\Support\SqlLikeSearch;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -143,7 +144,7 @@ class MobileSalesService
             $this->presentOrderSummary($sale),
             [
                 'can_edit' => $this->canRestoreSaleToCart($sale, $user),
-                'can_cancel' => $this->canRestoreSaleToCart($sale, $user),
+                'can_cancel' => $this->canCancelSale($sale, $user),
                 'items' => $sale->items->map(function ($item) {
                     $product = $item->product;
                     $isRetail = (bool) $item->on_wholesale_retail;
@@ -373,6 +374,20 @@ class MobileSalesService
             $sale,
             $user,
             $this->erp->gateForUser($user),
+        );
+    }
+
+    public function canCancelSale(Sale $sale, User $user): bool
+    {
+        if (! $sale->created_at?->isSameDay(now())) {
+            return false;
+        }
+
+        $gate = $this->erp->gateForUser($user);
+
+        return OrderWorkflowService::forGate($gate)->isCancellableStatus(
+            (string) $sale->status,
+            $sale->channel,
         );
     }
 

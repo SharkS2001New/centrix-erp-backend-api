@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\TemporaryCart;
 use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
@@ -50,6 +51,8 @@ class SaleCancellationService
                 'cancelled_by' => $user->id,
                 'stock_balanced' => 0,
             ]);
+
+            app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
 
             app(ReferenceJournalReversalService::class)->reverseIfEnabled(
                 'sale',

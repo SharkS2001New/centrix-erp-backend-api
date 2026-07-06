@@ -112,6 +112,8 @@ class OrderWorkflowServiceTest extends TestCase
 
         $this->assertSame(['expired'], $service->statusesForQueueFilter('expired', 'backend'));
         $this->assertSame(['cancelled'], $service->statusesForQueueFilter('cancelled', 'backend'));
+        $this->assertSame(['pending_approval'], $service->statusesForQueueFilter('pending_approval', 'backend'));
+        $this->assertSame(['editable'], $service->statusesForQueueFilter('editable', 'backend'));
     }
 
     public function test_cancel_transition_only_allowed_for_early_pipeline_statuses(): void
@@ -123,9 +125,11 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($service->canTransition('booked', 'cancelled', 'backend'));
         $this->assertTrue($service->canTransition('pending', 'cancelled', 'backend'));
         $this->assertTrue($service->canTransition('unpaid', 'cancelled', 'backend'));
+        $this->assertTrue($service->canTransition('processed', 'cancelled', 'backend'));
         $this->assertFalse($service->canTransition('pending_payment', 'cancelled', 'backend'));
         $this->assertFalse($service->canTransition('paid', 'cancelled', 'backend'));
-        $this->assertFalse($service->canTransition('processed', 'cancelled', 'backend'));
+        $this->assertFalse($service->canTransition('delivered', 'cancelled', 'backend'));
+        $this->assertFalse($service->canTransition('completed', 'cancelled', 'backend'));
     }
 
     public function test_cancel_transition_respects_disabled_setting(): void

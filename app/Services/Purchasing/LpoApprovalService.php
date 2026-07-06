@@ -26,6 +26,15 @@ class LpoApprovalService
             || $this->permissions->hasPermission($user, 'purchasing.manage');
     }
 
+    public function assertCanApprove(User $user): void
+    {
+        if (! $this->canApprove($user)) {
+            throw ValidationException::withMessages([
+                'action' => ['You do not have permission to approve LPOs.'],
+            ]);
+        }
+    }
+
     public function requestApproval(User $requester, LpoMst $lpo): ActionRequest
     {
         if ((int) $lpo->lpo_status_code !== LpoWorkflowService::STATUS_AWAITING_APPROVAL) {

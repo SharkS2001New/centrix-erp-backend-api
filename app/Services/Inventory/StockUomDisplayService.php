@@ -29,9 +29,11 @@ class StockUomDisplayService
     public function fulfillmentQuantityLabels(float $baseQty, ?Uom $uom): array
     {
         $display = $this->formatMixedStockDisplay($baseQty, $uom);
+        $smallLabel = $this->smallPackagingLabel($uom);
+        $baseText = $this->formatDisplayQty($baseQty).' '.$smallLabel;
 
         return [
-            'quantity_label' => $display['text'],
+            'quantity_label' => $baseText,
             'pack_breakdown' => $display['text'],
         ];
     }

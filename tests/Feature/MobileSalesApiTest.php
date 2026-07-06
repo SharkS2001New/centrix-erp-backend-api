@@ -411,7 +411,7 @@ class MobileSalesApiTest extends TestCase
         $this->assertEquals(0, (float) ($sale['amount_paid'] ?? -1));
     }
 
-    public function test_mobile_paid_order_can_be_restored_to_cart_for_editing(): void
+    public function test_mobile_paid_order_cannot_be_restored_to_cart_for_editing(): void
     {
         $user = $this->makeMobileUser();
         $product = \App\Models\Product::firstOrFail();
@@ -444,19 +444,16 @@ class MobileSalesApiTest extends TestCase
 
         $this->assertEquals('paid', $sale['status'] ?? null);
 
-        $restored = $this->withToken($token)
+        $this->withToken($token)
             ->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
                 'replace' => true,
             ])
-            ->assertOk()
-            ->json();
+            ->assertStatus(422);
 
-        $this->assertEquals('mobile', $restored['channel'] ?? null);
-        $this->assertCount(1, $restored['lines'] ?? []);
-        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
+        $this->assertEquals('paid', Sale::find($sale['id'])->status);
     }
 
-    public function test_mobile_paid_order_can_be_cancelled_with_stock_restore(): void
+    public function test_mobile_paid_order_cannot_be_cancelled(): void
     {
         $user = $this->makeMobileUser();
         $product = \App\Models\Product::firstOrFail();
@@ -489,11 +486,9 @@ class MobileSalesApiTest extends TestCase
 
         $this->withToken($token)
             ->postJson("/api/v1/sales/orders/{$sale['id']}/cancel")
-            ->assertOk()
-            ->assertJsonPath('cancelled', true)
-            ->assertJsonPath('status', 'cancelled');
+            ->assertStatus(422);
 
-        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
+        $this->assertEquals('paid', Sale::find($sale['id'])->status);
     }
 
     public function test_mobile_session_can_list_and_create_customers(): void

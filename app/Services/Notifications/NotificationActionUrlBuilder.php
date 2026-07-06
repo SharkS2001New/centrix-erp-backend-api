@@ -12,7 +12,7 @@ class NotificationActionUrlBuilder
             'supplier_return' => '/suppliers/returns?return_id='.$referenceId,
             'journal_entry' => '/accounting/journal-entries/'.$referenceId,
             'order_cancel' => '/sales/orders/'.$referenceId,
-            'discount' => '/pos',
+            'discount' => self::discountActionUrl($referenceId, $payload),
             'stock_adjustment' => '/inventory/adjustments',
             'stock_transfer' => '/inventory/transfers',
             'lpo' => '/suppliers/lpos/'.$referenceId,
@@ -37,5 +37,32 @@ class NotificationActionUrlBuilder
         }
 
         return $base.(str_starts_with($path, '/') ? $path : '/'.$path);
+    }
+
+    /** @param  array<string, mixed>|null  $payload */
+    public static function discountActionUrl(int $referenceId, ?array $payload = null): string
+    {
+        if ($referenceId > 0 && (($payload['sale_id'] ?? null) || ($payload['order_num'] ?? null))) {
+            $channel = strtolower((string) ($payload['channel'] ?? ''));
+
+            return $channel === 'mobile'
+                ? '/sales/orders/queues/mobile'
+                : '/sales/orders/queues/pending-approval';
+        }
+
+        return self::discountCartUrl($payload);
+    }
+
+    /** @param  array<string, mixed>|null  $payload */
+    public static function discountCartUrl(?array $payload = null): string
+    {
+        $channel = strtolower((string) ($payload['channel'] ?? ''));
+        $source = strtolower((string) ($payload['order_source'] ?? ''));
+
+        if (in_array($channel, ['backend', 'backoffice'], true) || $source === 'backoffice') {
+            return '/sales/pos';
+        }
+
+        return '/pos';
     }
 }

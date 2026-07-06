@@ -83,6 +83,13 @@ trait HandlesCartAccess
             return $lineArray;
         })->values()->all();
 
+        if ($user) {
+            $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
+            $pending = $discounts->pendingRequestForCart($cart, $user);
+            $payload['discount_approval_pending'] = $pending !== null;
+            $payload['discount_approval_request'] = $discounts->presentPendingRequest($pending);
+        }
+
         return $payload;
     }
 }

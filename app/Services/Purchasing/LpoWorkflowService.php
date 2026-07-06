@@ -31,10 +31,11 @@ class LpoWorkflowService
         $actions = [];
 
         if ($status === self::STATUS_AWAITING_CHECK) {
-            $actions[] = 'mark_checked';
+            $actions[] = 'submit_for_approval';
         }
 
         if ($status === self::STATUS_AWAITING_APPROVAL && $settings['require_lpo_approval']) {
+            $actions[] = 'submit_for_approval';
             $actions[] = 'approve';
         }
 
@@ -58,8 +59,17 @@ class LpoWorkflowService
         return DB::transaction(function () use ($lpo, $action, $user, $organization, $settings, $status) {
             $lpo = LpoMst::query()->where('lpo_no', $lpo->lpo_no)->lockForUpdate()->firstOrFail();
 
+            if (in_array($action, ['approve', 'mark_checked'], true)) {
+                app(LpoApprovalService::class)->assertCanApprove($user);
+            }
+
+            if ($action === 'submit_for_approval') {
+                $this->assertCanSubmitForApproval($user);
+            }
+
             match ($action) {
                 'mark_checked' => $this->markChecked($lpo, $settings, $user),
+                'submit_for_approval' => $this->submitForApproval($lpo, $settings, $user),
                 'approve' => $this->approve($lpo, $settings, $status),
                 'mark_sent' => $this->markSent($lpo, $settings, $organization, $user, $status),
                 default => throw ValidationException::withMessages([
@@ -68,7 +78,11 @@ class LpoWorkflowService
             };
 
             $fresh = $lpo->fresh();
-            if ($action === 'mark_checked' && (int) $fresh->lpo_status_code === self::STATUS_AWAITING_APPROVAL) {
+            if (
+                in_array($action, ['mark_checked', 'submit_for_approval'], true)
+                && (int) $fresh->lpo_status_code === self::STATUS_AWAITING_APPROVAL
+                && $settings['require_lpo_approval']
+            ) {
                 app(LpoApprovalService::class)->requestApproval($user, $fresh);
             }
             if ($action === 'approve') {
@@ -98,6 +112,49 @@ class LpoWorkflowService
                 ? self::STATUS_AWAITING_APPROVAL
                 : self::STATUS_AWAITING_SEND,
             'created_by' => $lpo->created_by ?? $user->id,
+        ]);
+    }
+
+    protected function submitForApproval(LpoMst $lpo, array $settings, User $user): void
+    {
+        $status = (int) $lpo->lpo_status_code;
+
+        if ($status === self::STATUS_AWAITING_CHECK) {
+            $this->markChecked($lpo, $settings, $user);
+
+            return;
+        }
+
+        if ($status === self::STATUS_AWAITING_APPROVAL) {
+            if (! $settings['require_lpo_approval']) {
+                throw ValidationException::withMessages([
+                    'action' => ['LPO approval is not required for this organization.'],
+                ]);
+            }
+
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'action' => ['This LPO cannot be submitted for approval in its current status.'],
+        ]);
+    }
+
+    protected function assertCanSubmitForApproval(User $user): void
+    {
+        if ($user->is_admin) {
+            return;
+        }
+
+        $permissions = app(\App\Services\Auth\UserPermissionService::class);
+        foreach (['purchasing.lpo.create', 'purchasing.lpo.edit', 'purchasing.manage'] as $code) {
+            if ($permissions->hasPermission($user, $code)) {
+                return;
+            }
+        }
+
+        throw ValidationException::withMessages([
+            'action' => ['You do not have permission to submit LPOs for approval.'],
         ]);
     }
 

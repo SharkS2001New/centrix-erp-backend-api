@@ -33,11 +33,11 @@ class DiscountApprovalActionRequestHandler implements ActionRequestHandler
 
     public function approve(ActionRequest $request, User $user): void
     {
-        $this->discounts->applyFromActionRequest($request);
+        $this->discounts->approveFromActionRequest($request, $user);
     }
 
     public function reject(ActionRequest $request, User $user, ?string $reason): void
     {
-        // No domain changes — requester keeps the cart without the discount.
+        $this->discounts->rejectFromActionRequest($request, $user, $reason);
     }
 }

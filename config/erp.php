@@ -221,15 +221,15 @@ return [
     */
     'workflows' => [
         'pos' => [
-            'statuses' => ['draft', 'held', 'booked', 'unpaid', 'pending_payment', 'paid', 'delivered', 'completed', 'cancelled', 'expired'],
+            'statuses' => ['draft', 'held', 'booked', 'unpaid', 'pending_payment', 'paid', 'delivered', 'completed', 'cancelled', 'expired', 'pending_approval', 'editable'],
             'pay_on_complete' => true,
         ],
         'mobile' => [
-            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled', 'expired'],
+            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled', 'expired', 'pending_approval', 'editable'],
             'payment_statuses' => ['unpaid', 'partial', 'paid'],
         ],
         'backend' => [
-            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled', 'expired'],
+            'statuses' => ['draft', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed', 'cancelled', 'expired', 'pending_approval', 'editable'],
             'payment_statuses' => ['unpaid', 'partial', 'paid'],
             'credit_allowed' => true,
         ],
@@ -248,6 +248,8 @@ return [
         'completed' => 'Completed',
         'cancelled' => 'Cancelled',
         'expired' => 'Expired',
+        'pending_approval' => 'Pending approval',
+        'editable' => 'Editable',
     ],
 
     'default_order_workflow' => [

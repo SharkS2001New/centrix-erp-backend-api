@@ -4,11 +4,14 @@ namespace App\Services\Erp;
 
 class OrderWorkflowService
 {
-    /** Statuses staff may cancel via workflow transition (before partial/full payment). */
-    public const CANCELLABLE_ORDER_STATUSES = ['booked', 'pending', 'unpaid'];
+    /** Statuses staff may cancel before delivery / full settlement. */
+    public const CANCELLABLE_ORDER_STATUSES = ['booked', 'pending', 'unpaid', 'processed', 'pending_approval', 'editable'];
+
+    /** Terminal or settled statuses that must never be cancelled. */
+    public const NON_CANCELLABLE_ORDER_STATUSES = ['paid', 'delivered', 'completed', 'pending_payment'];
 
     /** Statuses that allow backoffice line-quantity edits (Edit Order). */
-    public const EDITABLE_LINE_STATUSES = ['booked', 'pending'];
+    public const EDITABLE_LINE_STATUSES = ['booked', 'pending', 'editable'];
 
     /** @var list<string> */
     public const ALL_STATUSES = [
@@ -24,6 +27,8 @@ class OrderWorkflowService
         'completed',
         'cancelled',
         'expired',
+        'pending_approval',
+        'editable',
     ];
 
     public function __construct(protected CapabilityGate $gate) {}
@@ -72,7 +77,7 @@ class OrderWorkflowService
         $enabled = $this->enabledStatuses($config);
         $statuses = array_values(array_unique(array_merge(
             array_intersect($channelStatuses, $enabled),
-            array_intersect(['draft', 'held', 'cancelled', 'expired'], $channelStatuses),
+            array_intersect(['draft', 'held', 'cancelled', 'expired', 'pending_approval', 'editable'], $channelStatuses),
         )));
 
         $pipeline = $this->pipelineSteps($config, $statuses);
@@ -156,9 +161,18 @@ class OrderWorkflowService
             return false;
         }
 
+        if (in_array($status, self::NON_CANCELLABLE_ORDER_STATUSES, true)) {
+            return false;
+        }
+
         $aligned = $this->alignStatusToPipeline($status, $channel);
 
-        return in_array($aligned, self::CANCELLABLE_ORDER_STATUSES, true);
+        if (in_array($aligned, self::NON_CANCELLABLE_ORDER_STATUSES, true)) {
+            return false;
+        }
+
+        return in_array($status, self::CANCELLABLE_ORDER_STATUSES, true)
+            || in_array($aligned, self::CANCELLABLE_ORDER_STATUSES, true);
     }
 
     public function canTransition(string $from, string $to, ?string $channel = null): bool
@@ -170,6 +184,14 @@ class OrderWorkflowService
         if ($to === 'expired') {
             return ! in_array($from, ['cancelled', 'expired'], true)
                 && ! $this->isTerminalStatus($from, $channel);
+        }
+
+        if ($from === 'pending_approval' && in_array($to, ['booked', 'editable', 'cancelled'], true)) {
+            return true;
+        }
+
+        if ($from === 'editable' && in_array($to, ['pending_approval', 'cancelled'], true)) {
+            return true;
         }
 
         return in_array($to, $this->allowedTransitions($from, $channel), true);
@@ -285,6 +307,14 @@ class OrderWorkflowService
 
         if ($queueStatus === 'expired') {
             return ['expired'];
+        }
+
+        if ($queueStatus === 'pending_approval') {
+            return ['pending_approval'];
+        }
+
+        if ($queueStatus === 'editable') {
+            return ['editable'];
         }
 
         $matches = [$queueStatus];

@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ActionRequest;
 use App\Models\LpoMst;
 use App\Models\LpoStatus;
 use App\Models\LpoSupplierInvoice;
@@ -65,6 +66,7 @@ class LpoModuleService
             : \App\Models\Supplier::query()->whereIn('id', $supplierIds)->get()->keyBy('id');
 
         $workflow = app(LpoWorkflowService::class);
+        $pendingApprovals = $this->pendingApprovalLpoNos($lpoNos, $organizationId);
 
         return $lpos->map(function (LpoMst $lpo) use (
             $statuses,
@@ -73,6 +75,7 @@ class LpoModuleService
             $suppliers,
             $workflow,
             $organizationId,
+            $pendingApprovals,
         ) {
             $status = $statuses->get((int) ($lpo->lpo_status_code ?? 0));
             $creator = $lpo->created_by ? $creators->get($lpo->created_by) : null;
@@ -105,8 +108,29 @@ class LpoModuleService
                 'amount_paid' => round($paymentsTotal, 2),
                 'balance_due' => round(max(0, $netAmount - $paymentsTotal), 2),
                 'workflow_actions' => $workflow->workflowActions($lpo, $organizationId, $supplier),
+                'approval_pending' => isset($pendingApprovals[$lpoNo]),
             ];
         })->values()->all();
+    }
+
+    /** @param  list<int>  $lpoNos
+     * @return array<int, true>
+     */
+    protected function pendingApprovalLpoNos(array $lpoNos, ?int $organizationId): array
+    {
+        if ($lpoNos === [] || ! $organizationId) {
+            return [];
+        }
+
+        return ActionRequest::query()
+            ->where('organization_id', $organizationId)
+            ->where('type', 'lpo_approval')
+            ->where('reference_type', 'lpo_mst')
+            ->whereIn('reference_id', $lpoNos)
+            ->where('status', 'pending')
+            ->pluck('reference_id')
+            ->mapWithKeys(fn ($id) => [(int) $id => true])
+            ->all();
     }
 
     /** @param  list<int>  $lpoNos */
@@ -199,6 +223,13 @@ class LpoModuleService
             'balance_due' => round($payableBalance, 2),
             'workflow_actions' => app(\App\Services\Purchasing\LpoWorkflowService::class)
                 ->workflowActions($lpo, $organizationId),
+            'approval_pending' => ActionRequest::query()
+                ->where('organization_id', $organizationId)
+                ->where('type', 'lpo_approval')
+                ->where('reference_type', 'lpo_mst')
+                ->where('reference_id', $lpoNo)
+                ->where('status', 'pending')
+                ->exists(),
             'supplier_email' => $lpo->supplier?->email,
             'supplier_phone' => $lpo->supplier?->phone ?? $lpo->supplier?->alternate_phone,
             'default_receive_location' => $defaultReceiveLocation,

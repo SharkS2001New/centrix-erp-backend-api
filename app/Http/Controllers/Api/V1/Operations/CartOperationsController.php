@@ -18,6 +18,7 @@ use App\Models\Sale;
 use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Models\Voucher;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
@@ -28,6 +29,7 @@ use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
 use App\Support\SalesCheckoutSettings;
 use App\Services\Sales\PosOrderEditService;
+use App\Services\Sales\SaleCancellationService;
 use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
@@ -248,6 +250,7 @@ class CartOperationsController extends Controller
             ]);
 
             $this->reverseSaleJournalIfPosted($sale, $user);
+            app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
 
             return $cart->fresh('lines');
         });
@@ -539,6 +542,7 @@ class CartOperationsController extends Controller
             ]);
 
             $this->reverseSaleJournalIfPosted($sale, $user);
+            app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
         });
 
         return response()->json($sale->fresh());
@@ -550,20 +554,16 @@ class CartOperationsController extends Controller
         $user = $request->user();
         $sale = $this->findScopedSale($saleId, $user)->load('items');
 
-        $this->assertSaleRestorableToCart($sale, $user);
+        if (($sale->channel ?? '') === 'mobile' && ! $sale->created_at?->isSameDay(now())) {
+            throw new InvalidArgumentException(
+                'Mobile orders from previous dates cannot be edited, cancelled, or returned.',
+            );
+        }
 
-        DB::transaction(function () use ($sale, $user) {
-            $this->restoreCancelledSaleStock($sale, $user);
+        $gate = $this->erp->gateForUser($user);
+        app(SaleCancellationService::class)->cancelSale($sale, $user, $gate);
 
-            $sale->update([
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-                'cancelled_by' => $user->id,
-                'stock_balanced' => 0,
-            ]);
-
-            $this->reverseSaleJournalIfPosted($sale, $user);
-        });
+        $sale = $sale->fresh();
 
         return response()->json([
             'cancelled' => true,

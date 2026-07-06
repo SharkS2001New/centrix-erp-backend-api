@@ -50,7 +50,6 @@ class LoadingListBuilderTest extends TestCase
         $line = $lines[0];
         $this->assertSame('Mumias White Sugar 50kg', $line['product_name']);
         $this->assertStringContainsString('30', $line['quantity_label']);
-        $this->assertSame($line['quantity_label'], $line['pack_breakdown']);
     }
 
     public function test_aggregate_lines_uses_pack_label_when_uom_has_conversion(): void
@@ -99,7 +98,7 @@ class LoadingListBuilderTest extends TestCase
 
         $lines = app(LoadingListBuilder::class)->aggregateLinesFromSaleIds([$sale->id]);
 
-        $this->assertSame('2 Bag of 24', $lines[0]['quantity_label']);
+        $this->assertSame('48 units', $lines[0]['quantity_label']);
         $this->assertSame('2 Bag of 24', $lines[0]['pack_breakdown']);
     }
 

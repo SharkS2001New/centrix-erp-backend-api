@@ -162,6 +162,7 @@ class SaleController extends BaseResourceController
         }
 
         if ($request->boolean('outstanding_balance')) {
+            $query->whereNotIn('sales.status', ['cancelled', 'expired']);
             $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
         }
 
