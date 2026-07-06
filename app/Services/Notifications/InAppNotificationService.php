@@ -203,6 +203,17 @@ class InAppNotificationService
                 'payload' => $request->payload,
                 'can_approve' => app(ActionRequestService::class)->canApprove($viewer, $request),
             ];
+
+            if ($request->type === 'discount') {
+                $requestPayload = $request->payload ?? [];
+                $payload['discount_approval'] = [
+                    'scope' => $requestPayload['scope'] ?? null,
+                    'discount_amount' => $requestPayload['discount_amount'] ?? null,
+                    'discount_percent' => $requestPayload['discount_percent'] ?? null,
+                    'order_discount' => $requestPayload['order_discount'] ?? null,
+                    'lines' => $requestPayload['lines'] ?? [],
+                ];
+            }
         }
 
         return $payload;

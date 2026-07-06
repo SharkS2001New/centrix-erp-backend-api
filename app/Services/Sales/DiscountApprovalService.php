@@ -159,6 +159,98 @@ class DiscountApprovalService
         return ($discountAmount / $baseAmount) * 100;
     }
 
+    public function requiresDiscountRequestWorkflow(array $salesSettings, User $user): bool
+    {
+        return $this->discountApprovalEnabled($salesSettings)
+            && ! $this->canAutoApproveDiscount($user);
+    }
+
+    public function assertDirectManualDiscountAllowed(
+        User $user,
+        array $salesSettings,
+        float $discountAmount,
+        string $field = 'discount_given',
+    ): void {
+        if ($discountAmount <= 0.01) {
+            return;
+        }
+
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            $field => 'Manual discounts require manager approval. Submit a discount request with a reason first.',
+        ]);
+    }
+
+    public function assertCheckoutAllowed(TemporaryCart $cart, User $user, CapabilityGate $gate): void
+    {
+        $salesSettings = $gate->moduleSettings('sales');
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+            return;
+        }
+
+        if (! $this->cartHasManualDiscount($cart)) {
+            return;
+        }
+
+        if ($this->pendingRequestForCart($cart, $user) === null) {
+            throw ValidationException::withMessages([
+                'cart' => 'This cart has discounts that require manager approval. Submit a discount request with a reason before checkout.',
+            ]);
+        }
+    }
+
+    public function cartHasManualDiscount(TemporaryCart $cart): bool
+    {
+        $cart->loadMissing('lines');
+
+        if ((float) ($cart->order_discount ?? 0) > 0.01) {
+            return true;
+        }
+
+        foreach ($cart->lines as $line) {
+            if ((float) ($line->discount_given ?? 0) > 0.01) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function approvalLinesPayload(TemporaryCart $cart): array
+    {
+        $cart->loadMissing('lines');
+
+        return $cart->lines->map(fn (CartLine $line) => [
+            'product_code' => (string) $line->product_code,
+            'product_name' => (string) ($line->product_name ?: $line->product_code),
+            'unit_price' => round((float) $line->unit_price, 2),
+            'discount_given' => round((float) ($line->discount_given ?? 0), 2),
+            'amount' => round((float) $line->amount, 2),
+            'quantity' => (float) $line->quantity,
+            'uom' => $line->uom,
+        ])->values()->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function approvalLinesPayloadFromSale(Sale $sale): array
+    {
+        $sale->loadMissing(['items.product']);
+
+        return $sale->items->map(fn ($item) => [
+            'product_code' => (string) $item->product_code,
+            'product_name' => (string) ($item->product?->product_name ?? $item->product_code),
+            'unit_price' => round((float) ($item->selling_price ?? 0), 2),
+            'discount_given' => round((float) ($item->discount_given ?? 0), 2),
+            'amount' => round((float) ($item->amount ?? 0), 2),
+            'quantity' => (float) ($item->quantity ?? 0),
+            'uom' => $item->uom,
+        ])->values()->all();
+    }
+
     public function checkoutRequiresPendingApproval(TemporaryCart $cart, User $user, CapabilityGate $gate): bool
     {
         if (! $this->discountApprovalEnabled($gate->moduleSettings('sales'))) {
@@ -250,6 +342,8 @@ class DiscountApprovalService
                 'cart_id' => (int) $cart->id,
                 'channel' => (string) ($cart->channel ?? 'pos'),
                 'order_source' => (string) ($cart->order_source ?? ''),
+                'order_discount' => round((float) ($cart->order_discount ?? 0), 2),
+                'lines' => $this->approvalLinesPayload($cart),
             ],
         ]);
 
@@ -271,6 +365,8 @@ class DiscountApprovalService
         $payload['sale_id'] = (int) $sale->id;
         $payload['order_num'] = (int) $sale->order_num;
         $payload['action_url'] = $this->saleActionUrl($sale);
+        $payload['order_discount'] = round((float) ($sale->order_discount ?? 0), 2);
+        $payload['lines'] = $this->approvalLinesPayloadFromSale($sale);
 
         $pending->update([
             'reference_type' => 'sale',

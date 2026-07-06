@@ -175,6 +175,7 @@ class MobileSalesService
                         'uom' => $item->uom,
                         'unit_price' => $displayUnitPrice,
                         'unit_price_per_base' => (float) $item->selling_price,
+                        'discount_given' => round((float) ($item->discount_given ?? 0), 2),
                         'product_vat' => (float) $item->product_vat,
                         'amount' => (float) $item->amount,
                         'sell_on_retail' => (int) $item->on_wholesale_retail,
@@ -351,6 +352,7 @@ class MobileSalesService
                 ?? $sale->customer_name_override
                 ?? 'Walk-in',
             'orderTotals' => round((float) $sale->order_total, 2),
+            'order_discount' => round((float) ($sale->order_discount ?? 0), 2),
             'status' => $sale->status,
             'status_name' => $labels[$sale->status] ?? ucfirst(str_replace('_', ' ', (string) $sale->status)),
             'payment_status' => $sale->payment_status,

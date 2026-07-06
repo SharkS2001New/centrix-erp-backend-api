@@ -97,10 +97,19 @@ class CartOperationsController extends Controller
             $updates['route_id'] = $routeId;
         }
         if (array_key_exists('order_discount', $data)) {
-            $updates['order_discount'] = app(\App\Services\Sales\DiscountApprovalService::class)
-                ->allowsOrderDiscount($salesSettings)
-                ? max(0, (float) $data['order_discount'])
-                : 0;
+            $orderDiscount = max(0, (float) $data['order_discount']);
+            $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
+            if ($discountService->allowsOrderDiscount($salesSettings)) {
+                $discountService->assertDirectManualDiscountAllowed(
+                    $request->user(),
+                    $salesSettings,
+                    $orderDiscount,
+                    'order_discount',
+                );
+                $updates['order_discount'] = $orderDiscount;
+            } else {
+                $updates['order_discount'] = 0;
+            }
         }
 
         if ($updates !== []) {
@@ -689,12 +698,19 @@ class CartOperationsController extends Controller
         $onWholesaleRetailFlag = (bool) ($line['on_wholesale_retail'] ?? 0);
         $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
         $salesSettings = $gate->moduleSettings('sales');
+        $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
         $discountGiven = $this->resolveLineDiscountGiven(
             $salesSettings,
             (float) ($line['discount_given'] ?? 0),
         );
-        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
+        if (! $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             $discountGiven = 0;
+        } else {
+            $discountService->assertDirectManualDiscountAllowed(
+                $user,
+                $salesSettings,
+                $discountGiven,
+            );
         }
 
         [$unitPrice, $amount] = app(PosLinePricingService::class)->resolveLineAmounts(
@@ -790,8 +806,15 @@ class CartOperationsController extends Controller
             ? (float) $input['discount_given']
             : (float) $row->discount_given;
         $discountGiven = $this->resolveLineDiscountGiven($salesSettings, $discountGiven);
-        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
+        $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
+        if (! $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             $discountGiven = 0;
+        } elseif (array_key_exists('discount_given', $input)) {
+            $discountService->assertDirectManualDiscountAllowed(
+                $user,
+                $salesSettings,
+                $discountGiven,
+            );
         }
 
         [$unitPrice, $amount] = app(PosLinePricingService::class)->resolveLineAmounts(

@@ -65,6 +65,64 @@ class DiscountApprovalCheckoutTest extends TestCase
         return $cart;
     }
 
+    public function test_direct_line_discount_is_rejected_when_approval_required(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->salesStaff();
+        Sanctum::actingAs($staff);
+
+        $cart = $this->createCartWithLine($staff);
+        $product = Product::query()->firstOrFail();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+            'discount_given' => 25,
+        ])->assertUnprocessable()
+            ->assertJsonValidationErrors(['discount_given']);
+    }
+
+    public function test_mobile_checkout_with_pending_line_discount_creates_pending_approval_sale(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->salesStaff();
+        Sanctum::actingAs($staff);
+
+        $product = Product::query()->firstOrFail();
+
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $staff->branch_id,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $cartWithLine = $this->getJson("/api/v1/sales/carts/{$cart['id']}")->assertOk()->json();
+        $lineRef = $cartWithLine['lines'][0]['update_code'] ?? $cartWithLine['lines'][0]['id'];
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'line',
+            'line_ref' => (string) $lineRef,
+            'discount_amount' => 10,
+            'reason' => 'Customer loyalty discount',
+        ])->assertAccepted();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()
+            ->assertJsonPath('status', 'pending_approval')
+            ->json();
+
+        $this->assertDatabaseHas('sale_items', [
+            'sale_id' => $sale['id'],
+            'product_code' => $product->product_code,
+            'discount_given' => 10,
+        ]);
+    }
+
     public function test_checkout_with_pending_discount_creates_pending_approval_sale(): void
     {
         $this->enableDiscountApproval();

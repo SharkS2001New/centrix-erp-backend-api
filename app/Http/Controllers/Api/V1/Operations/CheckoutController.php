@@ -121,6 +121,8 @@ class CheckoutController extends Controller
             throw new InvalidArgumentException('Cart is empty.');
         }
 
+        app(DiscountApprovalService::class)->assertCheckoutAllowed($cart, $user, $gate);
+
         $inventorySettings = $gate->moduleSettings('inventory');
         $salesSettings = $gate->moduleSettings('sales');
         $txnType = $this->saleTransactionType($cart->channel);
