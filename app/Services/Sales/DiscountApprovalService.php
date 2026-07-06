@@ -111,6 +111,9 @@ class DiscountApprovalService
             'discount_amount' => isset($payload['discount_amount'])
                 ? round((float) $payload['discount_amount'], 2)
                 : null,
+            'line_discount_total' => isset($payload['line_discount_total'])
+                ? round((float) $payload['line_discount_total'], 2)
+                : null,
             'discount_percent' => isset($payload['discount_percent'])
                 ? round((float) $payload['discount_percent'], 2)
                 : null,
@@ -195,9 +198,16 @@ class DiscountApprovalService
             return;
         }
 
-        if ($this->pendingRequestForCart($cart, $user) === null) {
+        $pending = $this->pendingRequestForCart($cart, $user);
+        if ($pending === null) {
             throw ValidationException::withMessages([
                 'cart' => 'This cart has discounts that require manager approval. Submit a discount request with a reason before checkout.',
+            ]);
+        }
+
+        if (! $this->hasValidApprovalReason($pending->reason)) {
+            throw ValidationException::withMessages([
+                'reason' => 'A reason is required for discount approval before checkout.',
             ]);
         }
     }
@@ -253,12 +263,13 @@ class DiscountApprovalService
 
     public function checkoutRequiresPendingApproval(TemporaryCart $cart, User $user, CapabilityGate $gate): bool
     {
-        if (! $this->discountApprovalEnabled($gate->moduleSettings('sales'))) {
+        $salesSettings = $gate->moduleSettings('sales');
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return false;
         }
 
-        if ($this->canAutoApproveDiscount($user)) {
-            return false;
+        if ($this->cartHasManualDiscount($cart)) {
+            return true;
         }
 
         return $this->pendingRequestForCart($cart, $user) !== null;
@@ -292,17 +303,15 @@ class DiscountApprovalService
             throw ValidationException::withMessages(['scope' => 'Manual line discounts are not enabled.']);
         }
 
-        $baseAmount = $this->resolveDiscountBase($cart, $scope, (string) ($data['line_ref'] ?? ''), $user, $gate);
-        $percent = $this->discountPercent($discountAmount, $baseAmount);
-
         $needsApproval = $this->discountApprovalEnabled($salesSettings)
             && $discountAmount > 0.01
             && ! $this->canAutoApproveDiscount($user);
 
-        if ($needsApproval && strlen($reason) < 3) {
-            throw ValidationException::withMessages([
-                'reason' => 'A reason is required when requesting manager approval for large discounts.',
-            ]);
+        $existingPending = $this->pendingRequestForCart($cart, $user);
+        $reasonRequired = $this->discountApprovalEnabled($salesSettings) && $discountAmount > 0.01;
+
+        if ($reasonRequired) {
+            $reason = $this->resolveOrderApprovalReason($existingPending, $reason);
         }
 
         if (! $needsApproval) {
@@ -312,40 +321,14 @@ class DiscountApprovalService
             ];
         }
 
-        $this->cancelPendingCartRequests($cart, $user);
-
         $cart = $this->applyDiscount($user, $cart, $gate, $scope, $discountAmount, (string) ($data['line_ref'] ?? ''));
 
-        $requesterName = $user->full_name ?: $user->username;
-        $percentLabel = number_format($percent, 1).'%';
-        $title = $scope === 'order'
-            ? 'Order discount approval required'
-            : 'Line discount approval required';
-
-        $actionRequest = app(ActionRequestService::class)->requestApproval($user, [
-            'type' => 'discount',
-            'module' => 'sales',
-            'reference_type' => 'temporary_cart',
-            'reference_id' => (int) $cart->id,
-            'approver_permission' => 'sales.orders.approve',
-            'title' => $title,
-            'message' => "{$requesterName} requested a {$percentLabel} discount on cart #{$cart->id}.",
-            'reason' => $reason,
-            'severity' => 'warning',
-            'action_url' => $this->discountActionUrl($cart),
-            'payload' => [
-                'scope' => $scope,
-                'line_ref' => $data['line_ref'] ?? null,
-                'discount_amount' => $discountAmount,
-                'discount_percent' => round($percent, 2),
-                'action_url' => $this->discountActionUrl($cart),
-                'cart_id' => (int) $cart->id,
-                'channel' => (string) ($cart->channel ?? 'pos'),
-                'order_source' => (string) ($cart->order_source ?? ''),
-                'order_discount' => round((float) ($cart->order_discount ?? 0), 2),
-                'lines' => $this->approvalLinesPayload($cart),
-            ],
-        ]);
+        $actionRequest = $this->upsertPendingCartDiscountRequest(
+            $user,
+            $cart->fresh('lines'),
+            $reason,
+            $existingPending,
+        );
 
         return [
             'applied' => false,
@@ -354,9 +337,110 @@ class DiscountApprovalService
         ];
     }
 
+    protected function hasValidApprovalReason(?string $reason): bool
+    {
+        return strlen(trim((string) $reason)) >= 3;
+    }
+
+    protected function resolveOrderApprovalReason(?ActionRequest $existingPending, string $incoming): string
+    {
+        $existing = trim((string) ($existingPending?->reason ?? ''));
+        if ($this->hasValidApprovalReason($existing)) {
+            return $existing;
+        }
+
+        $incoming = trim($incoming);
+        if ($this->hasValidApprovalReason($incoming)) {
+            return $incoming;
+        }
+
+        throw ValidationException::withMessages([
+            'reason' => 'A reason is required once per order when applying discounts with approval enabled.',
+        ]);
+    }
+
+    /** @return array{line_discount_total: float, order_discount: float, total_discount: float, base_amount: float} */
+    protected function cartApprovalTotals(TemporaryCart $cart): array
+    {
+        $cart->loadMissing('lines');
+
+        $lineDiscount = 0.0;
+        $lineGross = 0.0;
+        foreach ($cart->lines as $line) {
+            $lineDiscount += (float) ($line->discount_given ?? 0);
+            $lineGross += (float) ($line->amount ?? 0) + (float) ($line->discount_given ?? 0);
+        }
+
+        $orderDiscount = (float) ($cart->order_discount ?? 0);
+
+        return [
+            'line_discount_total' => round($lineDiscount, 2),
+            'order_discount' => round($orderDiscount, 2),
+            'total_discount' => round($lineDiscount + $orderDiscount, 2),
+            'base_amount' => round(max(0, $lineGross), 2),
+        ];
+    }
+
+    protected function upsertPendingCartDiscountRequest(
+        User $user,
+        TemporaryCart $cart,
+        string $reason,
+        ?ActionRequest $existingPending = null,
+    ): ActionRequest {
+        $existingPending ??= $this->pendingRequestForCart($cart, $user);
+        $totals = $this->cartApprovalTotals($cart);
+        $percent = $this->discountPercent($totals['total_discount'], max(0.01, $totals['base_amount']));
+        $requesterName = $user->full_name ?: $user->username;
+        $percentLabel = number_format($percent, 1).'%';
+        $title = 'Discount approval required';
+        $message = "{$requesterName} requested order discounts totalling {$percentLabel} on cart #{$cart->id}.";
+
+        $payload = [
+            'scope' => 'order',
+            'line_ref' => null,
+            'discount_amount' => $totals['total_discount'],
+            'line_discount_total' => $totals['line_discount_total'],
+            'discount_percent' => round($percent, 2),
+            'action_url' => $this->discountActionUrl($cart),
+            'cart_id' => (int) $cart->id,
+            'channel' => (string) ($cart->channel ?? 'pos'),
+            'order_source' => (string) ($cart->order_source ?? ''),
+            'order_discount' => $totals['order_discount'],
+            'lines' => $this->approvalLinesPayload($cart),
+        ];
+
+        if ($existingPending !== null) {
+            $existingPending->update([
+                'reason' => $reason,
+                'title' => $title,
+                'message' => $message,
+                'payload' => $payload,
+            ]);
+
+            return $existingPending->fresh();
+        }
+
+        return app(ActionRequestService::class)->requestApproval($user, [
+            'type' => 'discount',
+            'module' => 'sales',
+            'reference_type' => 'temporary_cart',
+            'reference_id' => (int) $cart->id,
+            'approver_permission' => 'sales.orders.approve',
+            'title' => $title,
+            'message' => $message,
+            'reason' => $reason,
+            'severity' => 'warning',
+            'action_url' => $this->discountActionUrl($cart),
+            'payload' => $payload,
+        ]);
+    }
+
     public function attachCheckoutToSale(Sale $sale, TemporaryCart $cart, User $user): void
     {
         $pending = $this->pendingRequestForCart($cart, $user);
+        if ($pending === null) {
+            $pending = $this->ensureSaleDiscountApprovalRequest($sale, $cart, $user);
+        }
         if ($pending === null) {
             return;
         }
@@ -388,6 +472,72 @@ class DiscountApprovalService
             'discount_percent' => $payload['discount_percent'] ?? null,
         ];
         $sale->update(['fulfillment_meta' => $meta]);
+    }
+
+    protected function ensureSaleDiscountApprovalRequest(
+        Sale $sale,
+        TemporaryCart $cart,
+        User $user,
+    ): ?ActionRequest {
+        if ($sale->status !== 'pending_approval') {
+            return null;
+        }
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
+        $salesSettings = $gate->moduleSettings('sales');
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+            return null;
+        }
+
+        if (! $this->cartHasManualDiscount($cart) && (float) ($sale->order_discount ?? 0) <= 0.01) {
+            $sale->loadMissing('items');
+            $hasLineDiscount = $sale->items->contains(
+                fn ($item) => (float) ($item->discount_given ?? 0) > 0.01,
+            );
+            if (! $hasLineDiscount) {
+                return null;
+            }
+        }
+
+        $lineDiscountTotal = (float) CartLine::query()->where('cart_id', $cart->id)->sum('discount_given');
+        $orderDiscount = max((float) ($cart->order_discount ?? 0), (float) ($sale->order_discount ?? 0));
+        $totals = [
+            'line_discount_total' => round($lineDiscountTotal, 2),
+            'order_discount' => round($orderDiscount, 2),
+            'total_discount' => round($lineDiscountTotal + $orderDiscount, 2),
+        ];
+
+        $requesterName = $user->full_name ?: $user->username;
+        $existingCartPending = $this->pendingRequestForCart($cart, $user);
+        $approvalReason = trim((string) ($existingCartPending?->reason ?? ''));
+        if (! $this->hasValidApprovalReason($approvalReason)) {
+            return null;
+        }
+
+        return app(ActionRequestService::class)->requestApproval($user, [
+            'type' => 'discount',
+            'module' => 'sales',
+            'reference_type' => 'sale',
+            'reference_id' => (int) $sale->id,
+            'approver_permission' => 'sales.orders.approve',
+            'title' => 'Discount approval required',
+            'message' => "{$requesterName} requested order discounts on order #{$sale->order_num}.",
+            'reason' => $approvalReason,
+            'severity' => 'warning',
+            'action_url' => $this->saleActionUrl($sale),
+            'allow_duplicate_reference' => true,
+            'payload' => [
+                'scope' => 'order',
+                'discount_amount' => $totals['total_discount'],
+                'line_discount_total' => $totals['line_discount_total'],
+                'sale_id' => (int) $sale->id,
+                'order_num' => (int) $sale->order_num,
+                'order_discount' => $totals['order_discount'],
+                'lines' => $this->approvalLinesPayloadFromSale($sale),
+                'channel' => (string) ($sale->channel ?? 'mobile'),
+                'order_source' => (string) ($sale->order_source ?? ''),
+            ],
+        ]);
     }
 
     public function approveFromActionRequest(ActionRequest $request, User $user): void
@@ -478,17 +628,6 @@ class DiscountApprovalService
             max(0, (float) ($payload['discount_amount'] ?? 0)),
             (string) ($payload['line_ref'] ?? ''),
         );
-    }
-
-    protected function cancelPendingCartRequests(TemporaryCart $cart, User $user): void
-    {
-        ActionRequest::query()
-            ->where('organization_id', $user->organization_id)
-            ->where('type', 'discount')
-            ->where('reference_type', 'temporary_cart')
-            ->where('reference_id', $cart->id)
-            ->where('status', 'pending')
-            ->update(['status' => 'cancelled']);
     }
 
     protected function applyDiscount(

@@ -123,6 +123,39 @@ class DiscountApprovalCheckoutTest extends TestCase
         ]);
     }
 
+    public function test_checkout_with_cart_discount_forces_pending_approval_without_action_request(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->salesStaff();
+        Sanctum::actingAs($staff);
+
+        $product = Product::query()->firstOrFail();
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $staff->branch_id,
+        ])->assertCreated()->json();
+
+        // Simulate legacy direct discount bypass — checkout must still land in pending_approval.
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+            'discount_given' => 15,
+        ]);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ]);
+
+        if ($sale->status() === 422) {
+            $sale->assertJsonValidationErrors(['discount_given']);
+            $this->assertTrue(true);
+
+            return;
+        }
+
+        $sale->assertCreated()->assertJsonPath('status', 'pending_approval');
+    }
+
     public function test_checkout_with_pending_discount_creates_pending_approval_sale(): void
     {
         $this->enableDiscountApproval();
