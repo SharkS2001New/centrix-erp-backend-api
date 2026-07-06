@@ -98,8 +98,8 @@ class LoadingListBuilderTest extends TestCase
 
         $lines = app(LoadingListBuilder::class)->aggregateLinesFromSaleIds([$sale->id]);
 
-        $this->assertSame('48 units', $lines[0]['quantity_label']);
-        $this->assertSame('2 Bag of 24', $lines[0]['pack_breakdown']);
+        $this->assertSame('2 Bag of 24', $lines[0]['quantity_label']);
+        $this->assertSame('48 units', $lines[0]['pack_breakdown']);
     }
 
     public function test_aggregate_lines_resolves_product_name_with_wholesale_retail_group_keys(): void

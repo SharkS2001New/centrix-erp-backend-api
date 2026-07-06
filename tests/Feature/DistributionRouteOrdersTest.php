@@ -329,4 +329,49 @@ class DistributionRouteOrdersTest extends TestCase
             'can_complete',
         ]);
     }
+
+    public function test_order_can_be_removed_from_draft_trip_chart(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->enableDistributionModules($admin);
+        Sanctum::actingAs($admin);
+
+        $route = \App\Models\RouteModel::query()->firstOrFail();
+        $template = Sale::query()->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 95101,
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $route->id,
+            'status' => 'processed',
+            'total_vat' => 0,
+            'order_total' => 1200,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'fulfillment_meta' => ['trip_id' => 999, 'driver_id' => 2, 'vehicle_id' => 3],
+        ]);
+
+        $trip = \App\Models\DispatchTrip::create([
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'trip_code' => 'TRIP-REMOVE-001',
+            'route_id' => $route->id,
+            'scheduled_date' => now()->toDateString(),
+            'status' => 'draft',
+            'created_by' => $admin->id,
+        ]);
+        $trip->sales()->attach($sale->id, ['stop_seq' => 1]);
+
+        $res = $this->deleteJson("/api/v1/dispatch-trips/{$trip->id}/orders/{$sale->id}");
+        $res->assertOk();
+
+        $this->assertDatabaseMissing('dispatch_trip_sales', [
+            'dispatch_trip_id' => $trip->id,
+            'sale_id' => $sale->id,
+        ]);
+        $this->assertNull($sale->fresh()->fulfillment_meta);
+    }
 }

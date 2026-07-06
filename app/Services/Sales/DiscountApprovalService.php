@@ -33,6 +33,27 @@ class DiscountApprovalService
         return ! empty($salesSettings['discount_approval_enabled']);
     }
 
+    /** Manual line discounts (direct or via approval workflow). */
+    public function allowsManualLineDiscount(array $salesSettings): bool
+    {
+        return ! empty($salesSettings['allow_edit_line_discount'])
+            || $this->discountApprovalEnabled($salesSettings);
+    }
+
+    /** Order-level discounts (direct or via approval workflow). */
+    public function allowsOrderDiscount(array $salesSettings): bool
+    {
+        return ! empty($salesSettings['enable_order_discount'])
+            || $this->discountApprovalEnabled($salesSettings);
+    }
+
+    /** Whether a cart line may carry a discount amount at all. */
+    public function allowsLineDiscountAmount(array $salesSettings): bool
+    {
+        return ! empty($salesSettings['allow_discounts'])
+            || $this->discountApprovalEnabled($salesSettings);
+    }
+
     public function thresholdPercent(array $salesSettings): float
     {
         $value = (float) ($salesSettings['discount_approval_threshold_percent'] ?? 10);
@@ -163,16 +184,12 @@ class DiscountApprovalService
             throw ValidationException::withMessages(['line_ref' => 'Line reference is required for line discounts.']);
         }
 
-        if ($scope === 'order' && empty($salesSettings['enable_order_discount'])) {
-            if (! $this->discountApprovalEnabled($salesSettings)) {
-                throw ValidationException::withMessages(['scope' => 'Order discount is not enabled.']);
-            }
+        if ($scope === 'order' && ! $this->allowsOrderDiscount($salesSettings)) {
+            throw ValidationException::withMessages(['scope' => 'Order discount is not enabled.']);
         }
 
-        if ($scope === 'line' && empty($salesSettings['allow_edit_line_discount'])) {
-            if (! $this->discountApprovalEnabled($salesSettings)) {
-                throw ValidationException::withMessages(['scope' => 'Manual line discounts are not enabled.']);
-            }
+        if ($scope === 'line' && ! $this->allowsManualLineDiscount($salesSettings)) {
+            throw ValidationException::withMessages(['scope' => 'Manual line discounts are not enabled.']);
         }
 
         $baseAmount = $this->resolveDiscountBase($cart, $scope, (string) ($data['line_ref'] ?? ''), $user, $gate);

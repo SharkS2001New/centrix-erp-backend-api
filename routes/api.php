@@ -894,6 +894,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:fulfillment.manage');
             Route::post('dispatch-trips/{trip}/assign-orders', [DispatchTripController::class, 'assignOrders'])
                 ->middleware('erp.permission:fulfillment.manage');
+            Route::delete('dispatch-trips/{trip}/orders/{sale}', [DispatchTripController::class, 'removeOrder'])
+                ->middleware('erp.permission:fulfillment.manage');
             Route::get('dispatch-trips/{trip}/loading-list', [DispatchTripController::class, 'loadingList'])
                 ->middleware('erp.permission:fulfillment.view');
             Route::get('dispatch-trips/{trip}/picking-list', [DispatchTripController::class, 'pickingList'])

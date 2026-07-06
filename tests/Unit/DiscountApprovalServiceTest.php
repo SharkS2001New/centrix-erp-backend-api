@@ -23,4 +23,34 @@ class DiscountApprovalServiceTest extends TestCase
         $this->assertSame(10.0, $service->thresholdPercent(['discount_approval_threshold_percent' => 10]));
         $this->assertSame(100.0, $service->thresholdPercent(['discount_approval_threshold_percent' => 150]));
     }
+
+    public function test_approval_mode_unlocks_manual_discounts_without_base_settings(): void
+    {
+        $service = app(DiscountApprovalService::class);
+        $base = [
+            'allow_edit_line_discount' => false,
+            'enable_order_discount' => false,
+            'allow_discounts' => false,
+            'discount_approval_enabled' => true,
+        ];
+
+        $this->assertTrue($service->allowsManualLineDiscount($base));
+        $this->assertTrue($service->allowsOrderDiscount($base));
+        $this->assertTrue($service->allowsLineDiscountAmount($base));
+    }
+
+    public function test_disabled_approval_uses_base_discount_settings(): void
+    {
+        $service = app(DiscountApprovalService::class);
+        $base = [
+            'allow_edit_line_discount' => false,
+            'enable_order_discount' => false,
+            'allow_discounts' => true,
+            'discount_approval_enabled' => false,
+        ];
+
+        $this->assertFalse($service->allowsManualLineDiscount($base));
+        $this->assertFalse($service->allowsOrderDiscount($base));
+        $this->assertTrue($service->allowsLineDiscountAmount($base));
+    }
 }

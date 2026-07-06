@@ -33,8 +33,8 @@ class StockUomDisplayService
         $baseText = $this->formatDisplayQty($baseQty).' '.$smallLabel;
 
         return [
-            'quantity_label' => $baseText,
-            'pack_breakdown' => $display['text'],
+            'quantity_label' => $display['text'],
+            'pack_breakdown' => $baseText,
         ];
     }
 

@@ -100,7 +100,7 @@ class CheckoutController extends Controller
         $salesSettings = $gate->moduleSettings('sales');
         $lineNet = (float) $prepared['order_total'];
         $orderDiscount = 0.0;
-        if (! empty($salesSettings['enable_order_discount'])) {
+        if (app(DiscountApprovalService::class)->allowsOrderDiscount($salesSettings)) {
             $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
         }
 
@@ -161,8 +161,7 @@ class CheckoutController extends Controller
                 if ($discountVoucher && $discountVoucher->voucher_kind === 'discount') {
                     $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
                 }
-            } elseif (! empty($salesSettings['enable_order_discount'])
-                || app(DiscountApprovalService::class)->discountApprovalEnabled($salesSettings)) {
+            } elseif (app(DiscountApprovalService::class)->allowsOrderDiscount($salesSettings)) {
                 $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
             }
             $total = max(0, $lineNet - $orderDiscount);

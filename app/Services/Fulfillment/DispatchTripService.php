@@ -342,6 +342,44 @@ class DispatchTripService
         return $fresh->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
     }
 
+    public function removeOrder(DispatchTrip $trip, int $saleId, ?User $user = null): DispatchTrip
+    {
+        if ($trip->status !== 'draft') {
+            throw new InvalidArgumentException('Orders can only be removed while the trip is still in draft.');
+        }
+
+        $trip->load(['loadingList', 'pickingList']);
+        if ($trip->loadingList && $trip->loadingList->status !== 'open') {
+            throw new InvalidArgumentException('Locking has already started on this trip. Create a new trip assignment instead.');
+        }
+        if ($trip->pickingList && in_array($trip->pickingList->status, ['completed', 'locked'], true)) {
+            throw new InvalidArgumentException('Picking is already completed for this trip. Create a new trip assignment instead.');
+        }
+
+        if (! $trip->sales()->where('sales.id', $saleId)->exists()) {
+            throw new InvalidArgumentException('That order is not assigned to this trip.');
+        }
+
+        DB::transaction(function () use ($trip, $saleId) {
+            $trip->sales()->detach($saleId);
+
+            $sale = Sale::query()->find($saleId);
+            if (! $sale) {
+                return;
+            }
+
+            $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+            unset($meta['trip_id'], $meta['driver_id'], $meta['vehicle_id']);
+            $sale->update(['fulfillment_meta' => $meta !== [] ? $meta : null]);
+        });
+
+        $this->syncTripLists($trip->fresh());
+        $fresh = $trip->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
+        $this->refreshExpectedCash($fresh, $user);
+
+        return $fresh->fresh(['route', 'routes', 'driver', 'vehicle', 'sales', 'loadingList.lines', 'pickingList.lines']);
+    }
+
     /** Mark every processed stop on an in-transit trip as delivered. */
     public function confirmAllDelivered(DispatchTrip $trip, User $user): DispatchTrip
     {

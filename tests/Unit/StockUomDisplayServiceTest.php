@@ -49,7 +49,7 @@ class StockUomDisplayServiceTest extends TestCase
 
         $labels = app(StockUomDisplayService::class)->fulfillmentQuantityLabels(48, $uom);
 
-        $this->assertSame('48 units', $labels['quantity_label']);
-        $this->assertSame('2 Bag of 24', $labels['pack_breakdown']);
+        $this->assertSame('2 Bag of 24', $labels['quantity_label']);
+        $this->assertSame('48 units', $labels['pack_breakdown']);
     }
 }

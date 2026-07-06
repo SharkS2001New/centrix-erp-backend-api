@@ -215,6 +215,19 @@ class DispatchTripController extends BaseResourceController
         return response()->json($this->presentTrip($updated));
     }
 
+    public function removeOrder(Request $request, int $trip, int $sale)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+
+        try {
+            $updated = $this->trips->removeOrder($model, $sale, $request->user());
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($this->presentTrip($updated));
+    }
+
     public function merge(Request $request)
     {
         $data = $request->validate([

@@ -97,7 +97,8 @@ class CartOperationsController extends Controller
             $updates['route_id'] = $routeId;
         }
         if (array_key_exists('order_discount', $data)) {
-            $updates['order_discount'] = ! empty($salesSettings['enable_order_discount'])
+            $updates['order_discount'] = app(\App\Services\Sales\DiscountApprovalService::class)
+                ->allowsOrderDiscount($salesSettings)
                 ? max(0, (float) $data['order_discount'])
                 : 0;
         }
@@ -692,7 +693,7 @@ class CartOperationsController extends Controller
             $salesSettings,
             (float) ($line['discount_given'] ?? 0),
         );
-        if (empty($salesSettings['allow_edit_line_discount'])) {
+        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsManualLineDiscount($salesSettings)) {
             $discountGiven = 0;
         }
 
@@ -789,7 +790,7 @@ class CartOperationsController extends Controller
             ? (float) $input['discount_given']
             : (float) $row->discount_given;
         $discountGiven = $this->resolveLineDiscountGiven($salesSettings, $discountGiven);
-        if (empty($salesSettings['allow_edit_line_discount'])) {
+        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsManualLineDiscount($salesSettings)) {
             $discountGiven = 0;
         }
 
@@ -799,7 +800,7 @@ class CartOperationsController extends Controller
             $isRetail,
             $discountGiven,
             app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
-            array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : null,
+            array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : (float) $row->unit_price,
             SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
 
@@ -902,7 +903,7 @@ class CartOperationsController extends Controller
 
     protected function resolveLineDiscountGiven(array $salesSettings, float $amount): float
     {
-        if (empty($salesSettings['allow_discounts'])) {
+        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsLineDiscountAmount($salesSettings)) {
             return 0;
         }
 

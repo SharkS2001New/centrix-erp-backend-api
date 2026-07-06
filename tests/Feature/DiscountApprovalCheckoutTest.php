@@ -23,7 +23,8 @@ class DiscountApprovalCheckoutTest extends TestCase
         $settings = $org->module_settings ?? [];
         $settings['sales'] = array_merge($settings['sales'] ?? [], [
             'discount_approval_enabled' => true,
-            'enable_order_discount' => true,
+            'enable_order_discount' => false,
+            'allow_edit_line_discount' => false,
         ]);
         $org->update(['module_settings' => $settings]);
     }

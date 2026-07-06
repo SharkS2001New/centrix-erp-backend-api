@@ -545,6 +545,9 @@ class CapabilityGate
         if ($this->organization) {
             $sales = $this->moduleSettings('sales');
             $sales['order_workflow'] = OrderWorkflowService::forGate($this)->config();
+            $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
+            $sales['effective_allow_edit_line_discount'] = $discounts->allowsManualLineDiscount($sales);
+            $sales['effective_enable_order_discount'] = $discounts->allowsOrderDiscount($sales);
             $moduleSettings['sales'] = $sales;
 
             $moduleSettings['general'] = GeneralSettingsResolver::forGate($this);
