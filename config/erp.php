@@ -360,6 +360,7 @@ return [
             'enable_retail_pricing' => false,
             'allow_discounts' => true,
             'allow_edit_line_discount' => false,
+            'allow_pos_edit_line_discount' => false,
             'enable_order_discount' => false,
             'enable_vouchers' => false,
             'enable_redeemable_points' => false,

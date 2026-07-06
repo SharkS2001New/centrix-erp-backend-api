@@ -34,10 +34,18 @@ class DiscountApprovalService
     }
 
     /** Manual line discounts (direct or via approval workflow). */
-    public function allowsManualLineDiscount(array $salesSettings): bool
+    public function allowsManualLineDiscount(array $salesSettings, ?string $orderSource = null): bool
     {
+        if ($this->discountApprovalEnabled($salesSettings)) {
+            return true;
+        }
+
+        if ($orderSource !== null) {
+            return SalesCheckoutSettings::allowsManualLineDiscount($salesSettings, $orderSource);
+        }
+
         return ! empty($salesSettings['allow_edit_line_discount'])
-            || $this->discountApprovalEnabled($salesSettings);
+            || ! empty($salesSettings['allow_pos_edit_line_discount']);
     }
 
     /** Order-level discounts (direct or via approval workflow). */
@@ -188,7 +196,7 @@ class DiscountApprovalService
             throw ValidationException::withMessages(['scope' => 'Order discount is not enabled.']);
         }
 
-        if ($scope === 'line' && ! $this->allowsManualLineDiscount($salesSettings)) {
+        if ($scope === 'line' && ! $this->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             throw ValidationException::withMessages(['scope' => 'Manual line discounts are not enabled.']);
         }
 

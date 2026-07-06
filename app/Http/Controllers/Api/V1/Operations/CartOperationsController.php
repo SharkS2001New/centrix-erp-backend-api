@@ -693,7 +693,7 @@ class CartOperationsController extends Controller
             $salesSettings,
             (float) ($line['discount_given'] ?? 0),
         );
-        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsManualLineDiscount($salesSettings)) {
+        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             $discountGiven = 0;
         }
 
@@ -790,7 +790,7 @@ class CartOperationsController extends Controller
             ? (float) $input['discount_given']
             : (float) $row->discount_given;
         $discountGiven = $this->resolveLineDiscountGiven($salesSettings, $discountGiven);
-        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsManualLineDiscount($salesSettings)) {
+        if (! app(\App\Services\Sales\DiscountApprovalService::class)->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             $discountGiven = 0;
         }
 

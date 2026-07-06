@@ -61,6 +61,7 @@ class ErpSettingsController extends Controller
             'enable_retail_pricing',
             'allow_discounts',
             'allow_edit_line_discount',
+            'allow_pos_edit_line_discount',
             'enable_order_discount',
             'discount_approval_enabled',
             'discount_approval_threshold_percent',
