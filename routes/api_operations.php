@@ -168,6 +168,7 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware(['erp.module:accounting', 'erp.permission:accounting.view'])->prefix('accounting')->group(function () {
         Route::get('settings', [AccountingSettingsController::class, 'show']);
         Route::get('bank-accounts', [BankReconciliationController::class, 'bankAccounts']);
+        Route::get('bank-accounts/{accountId}/register', [BankReconciliationController::class, 'register']);
         Route::get('bank-reconciliations', [BankReconciliationController::class, 'index']);
         Route::get('bank-reconciliations/{reconciliationId}', [BankReconciliationController::class, 'show']);
     });
@@ -197,6 +198,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('bank-reconciliations/{reconciliationId}/statement-lines', [BankReconciliationController::class, 'importStatement']);
         Route::post('bank-reconciliations/{reconciliationId}/matches', [BankReconciliationController::class, 'applyMatch']);
         Route::delete('bank-reconciliations/{reconciliationId}/matches/{matchId}', [BankReconciliationController::class, 'removeMatch']);
+        Route::post('bank-reconciliations/{reconciliationId}/statement-lines/{statementLineId}/exclude', [BankReconciliationController::class, 'excludeStatementLine']);
+        Route::post('bank-reconciliations/{reconciliationId}/clear-book-item', [BankReconciliationController::class, 'clearBookItem']);
+        Route::post('bank-reconciliations/{reconciliationId}/adjustment', [BankReconciliationController::class, 'createAdjustment']);
         Route::post('bank-reconciliations/{reconciliationId}/complete', [BankReconciliationController::class, 'complete']);
     });
 

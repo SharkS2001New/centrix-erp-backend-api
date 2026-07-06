@@ -62,6 +62,11 @@ class SupplierPaymentTest extends TestCase
             'amount_paid' => 500,
         ]);
 
+        $this->assertDatabaseHas('journal_entries', [
+            'reference_type' => 'supplier_payment',
+            'status' => 'posted',
+        ]);
+
         $summary = $this->getJson("/api/v1/suppliers/{$supplier->id}/summary")
             ->assertOk()
             ->json();

@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Supplier;
+use App\Services\Accounting\SupplierPaymentJournalService;
+use App\Services\Erp\ErpContext;
 use App\Services\SupplierModuleService;
 use Illuminate\Http\Request;
 
@@ -10,6 +12,7 @@ class SupplierController extends BaseResourceController
 {
     public function __construct(
         protected SupplierModuleService $supplierModule,
+        protected ErpContext $erp,
     ) {}
 
     protected function modelClass(): string
@@ -112,9 +115,16 @@ class SupplierController extends BaseResourceController
     {
         $model = $this->findScopedModel($request, $supplier);
         $payment = $this->supplierModule->recordPayment($request, $model);
+        $payment->load(['paymentMethod', 'paidByUser', 'supplier']);
+
+        app(SupplierPaymentJournalService::class)->postIfEnabled(
+            $payment,
+            $request->user(),
+            $this->erp->gateForUser($request->user()),
+        );
 
         return response()->json(
-            $this->supplierModule->formatPayment($payment->load(['paymentMethod', 'paidByUser', 'supplier'])),
+            $this->supplierModule->formatPayment($payment),
             201,
         );
     }

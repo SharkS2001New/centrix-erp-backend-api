@@ -59,8 +59,9 @@ class BranchStockService
 
         $shop = (float) ($row?->shop_quantity ?? 0);
         $store = (float) ($row?->store_quantity ?? 0);
-        $reservedShop = $this->activeReservedQty($code, $branchId, 'shop');
-        $reservedStore = $this->activeReservedQty($code, $branchId, 'store');
+        $reserved = $this->activeReservedQtyMap([$code], $branchId);
+        $reservedShop = (float) ($reserved[$code]['shop'] ?? 0);
+        $reservedStore = (float) ($reserved[$code]['store'] ?? 0);
 
         $payload['stock_in_shop'] = $shop;
         $payload['stock_in_store'] = $store;
@@ -151,13 +152,15 @@ class BranchStockService
             ->get()
             ->keyBy('product_code');
 
-        return $items->map(function (array $item) use ($rows, $branchId) {
+        $reservedByCode = $this->activeReservedQtyMap($codes, $branchId);
+
+        return $items->map(function (array $item) use ($rows, $reservedByCode, $branchId) {
             $row = $rows->get($item['product_code'] ?? '');
             $shop = (float) ($row?->shop_quantity ?? 0);
             $store = (float) ($row?->store_quantity ?? 0);
             $code = (string) ($item['product_code'] ?? '');
-            $reservedShop = $code !== '' ? $this->activeReservedQty($code, $branchId, 'shop') : 0.0;
-            $reservedStore = $code !== '' ? $this->activeReservedQty($code, $branchId, 'store') : 0.0;
+            $reservedShop = (float) ($reservedByCode[$code]['shop'] ?? 0);
+            $reservedStore = (float) ($reservedByCode[$code]['store'] ?? 0);
             $item['stock_in_shop'] = $shop;
             $item['stock_in_store'] = $store;
             $item['stock_reserved_shop'] = $reservedShop;
@@ -308,15 +311,45 @@ class BranchStockService
 
     protected function activeReservedQty(string $productCode, int $branchId, string $location): float
     {
-        return (float) DB::table('stock_reservations')
+        $map = $this->activeReservedQtyMap([$productCode], $branchId);
+        $location = $location === 'store' ? 'store' : 'shop';
+
+        return (float) ($map[$productCode][$location] ?? 0);
+    }
+
+    /**
+     * @param  list<string>  $productCodes
+     * @return array<string, array{shop: float, store: float}>
+     */
+    protected function activeReservedQtyMap(array $productCodes, int $branchId): array
+    {
+        $productCodes = array_values(array_unique(array_filter($productCodes)));
+        if ($productCodes === []) {
+            return [];
+        }
+
+        $rows = DB::table('stock_reservations')
             ->whereNull('released_at')
             ->where(function ($query) {
                 $query->whereNull('expires_at')
                     ->orWhere('expires_at', '>', now());
             })
-            ->where('product_code', $productCode)
             ->where('branch_id', $branchId)
-            ->where('stock_location', $location)
-            ->sum('quantity');
+            ->whereIn('product_code', $productCodes)
+            ->groupBy('product_code', 'stock_location')
+            ->selectRaw('product_code, stock_location, COALESCE(SUM(quantity), 0) AS qty')
+            ->get();
+
+        $map = [];
+        foreach ($rows as $row) {
+            $code = (string) $row->product_code;
+            if (! isset($map[$code])) {
+                $map[$code] = ['shop' => 0.0, 'store' => 0.0];
+            }
+            $location = $row->stock_location === 'store' ? 'store' : 'shop';
+            $map[$code][$location] = (float) $row->qty;
+        }
+
+        return $map;
     }
 }

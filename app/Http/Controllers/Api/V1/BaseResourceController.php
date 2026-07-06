@@ -186,6 +186,7 @@ abstract class BaseResourceController extends Controller
                 $query->where($searchCol, 'like', "%{$q}%");
             }
         }
+        $this->applyCreatedAtDateRange($query, $request);
         $perPage = min((int) $request->input('per_page', 25), 200);
         $this->applyListOrdering(
             $request,
@@ -282,6 +283,17 @@ abstract class BaseResourceController extends Controller
         }
 
         return response()->json(null, 204);
+    }
+
+    /** @param  \Illuminate\Database\Eloquent\Builder<mixed>  $query */
+    protected function applyCreatedAtDateRange($query, Request $request): void
+    {
+        if ($request->filled('from_date')) {
+            $query->whereDate('created_at', '>=', $request->input('from_date'));
+        }
+        if ($request->filled('to_date')) {
+            $query->whereDate('created_at', '<=', $request->input('to_date'));
+        }
     }
 
     /** @param  array<string, mixed>  $data */

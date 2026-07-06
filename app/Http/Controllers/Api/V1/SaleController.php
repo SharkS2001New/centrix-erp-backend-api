@@ -65,7 +65,6 @@ class SaleController extends BaseResourceController
 
         if ($request->boolean('route_orders') || $dispatchOrders || $request->boolean('loading_list_orders')) {
             $gate = $this->erp->gateForUser($request->user());
-            app(\App\Services\Sales\SaleRouteBackfillService::class)->syncOrganization($gate->organization());
             $distributionSettings = $gate->distributionSettings();
             RouteOrderScope::applyForLoadingList(
                 $query,
@@ -114,11 +113,11 @@ class SaleController extends BaseResourceController
         }
 
         if ($request->filled('from_date')) {
-            $query->whereDate(DB::raw('COALESCE(sales.completed_at, sales.created_at)'), '>=', $request->input('from_date'));
+            $query->whereDate('sales.effective_sale_date', '>=', $request->input('from_date'));
         }
 
         if ($request->filled('to_date')) {
-            $query->whereDate(DB::raw('COALESCE(sales.completed_at, sales.created_at)'), '<=', $request->input('to_date'));
+            $query->whereDate('sales.effective_sale_date', '<=', $request->input('to_date'));
         }
 
         if ($request->filled('min_order_total')) {

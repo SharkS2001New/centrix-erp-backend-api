@@ -156,17 +156,27 @@ class BankReconciliationService
             ? $this->buildMatchSuggestions($reconciliation, $bookItems)
             : [];
 
+        $statementLines = $reconciliation->statementLines()
+            ->orderBy('sort_order')
+            ->orderBy('line_date')
+            ->get()
+            ->map(fn (BankStatementLine $line) => $this->serializeStatementLine($line))
+            ->values()
+            ->all();
+
+        $matches = $reconciliation->matches()
+            ->orderByDesc('id')
+            ->get()
+            ->map(fn (BankReconciliationMatch $match) => $this->serializeMatch($match, $statementLines, $bookItems))
+            ->values()
+            ->all();
+
         return [
             'reconciliation' => $this->serializeReconciliation($reconciliation),
-            'statement_lines' => $reconciliation->statementLines()
-                ->orderBy('sort_order')
-                ->orderBy('line_date')
-                ->get()
-                ->map(fn (BankStatementLine $line) => $this->serializeStatementLine($line))
-                ->values()
-                ->all(),
+            'statement_lines' => $statementLines,
             'book_items' => $bookItems,
             'suggestions' => $suggestions,
+            'matches' => $matches,
         ];
     }
 
@@ -284,6 +294,220 @@ class BankReconciliationService
         $this->refreshSummary($reconciliation->fresh(['chartOfAccount']));
 
         return $this->show($organizationId, $reconciliationId);
+    }
+
+    public function excludeStatementLine(int $organizationId, int $reconciliationId, int $statementLineId): BankReconciliation
+    {
+        $reconciliation = $this->findReconciliation($organizationId, $reconciliationId);
+        $this->assertEditable($reconciliation);
+
+        $line = BankStatementLine::query()
+            ->where('bank_reconciliation_id', $reconciliation->id)
+            ->where('id', $statementLineId)
+            ->firstOrFail();
+
+        if ($line->match_status === 'matched') {
+            throw new InvalidArgumentException('Matched statement lines cannot be excluded. Unmatch first.');
+        }
+
+        $line->update(['match_status' => 'excluded']);
+
+        return $this->refreshSummary($reconciliation->fresh(['chartOfAccount']));
+    }
+
+    public function clearBookItem(
+        int $organizationId,
+        int $reconciliationId,
+        int $journalEntryLineId,
+        User $user,
+    ): BankReconciliation {
+        $reconciliation = $this->findReconciliation($organizationId, $reconciliationId);
+        $this->assertEditable($reconciliation);
+
+        $journalLine = $this->findBookLine(
+            $organizationId,
+            (int) $reconciliation->chart_of_account_id,
+            $journalEntryLineId,
+        );
+
+        if (BankReconciliationMatch::query()
+            ->where('bank_reconciliation_id', $reconciliation->id)
+            ->where('journal_entry_line_id', $journalLine->id)
+            ->exists()) {
+            throw new InvalidArgumentException('Book transaction is already cleared in this reconciliation.');
+        }
+
+        $bookAmount = abs($this->signedBookAmount($journalLine));
+
+        DB::transaction(function () use ($reconciliation, $journalLine, $user, $bookAmount) {
+            BankReconciliationMatch::query()->create([
+                'bank_reconciliation_id' => $reconciliation->id,
+                'bank_statement_line_id' => null,
+                'journal_entry_line_id' => $journalLine->id,
+                'match_type' => 'manual',
+                'matched_amount' => $bookAmount,
+                'matched_by' => (int) $user->id,
+                'matched_at' => now(),
+            ]);
+        });
+
+        return $this->refreshSummary($reconciliation->fresh(['chartOfAccount']));
+    }
+
+    public function createAdjustment(
+        int $organizationId,
+        int $reconciliationId,
+        User $user,
+        ?string $description = null,
+        ?int $offsetAccountId = null,
+    ): array {
+        $reconciliation = $this->findReconciliation($organizationId, $reconciliationId);
+        $this->assertEditable($reconciliation);
+        $reconciliation = $this->refreshSummary($reconciliation);
+
+        $variance = (float) $reconciliation->variance;
+        if (abs($variance) < 0.02) {
+            throw new InvalidArgumentException('There is no variance to adjust.');
+        }
+
+        $codes = $this->posting->defaultAccountCodes();
+        $offsetAccount = $offsetAccountId
+            ? ChartOfAccount::query()
+                ->where('organization_id', $organizationId)
+                ->where('id', $offsetAccountId)
+                ->firstOrFail()
+            : $this->posting->resolveAccount($organizationId, $codes['operating_expense'] ?? '5300');
+
+        if (! $offsetAccount) {
+            throw new InvalidArgumentException('Offset account for reconciliation adjustment is not configured.');
+        }
+
+        $bankAccountId = (int) $reconciliation->chart_of_account_id;
+        $amount = abs($variance);
+        $note = $description ?: 'Bank reconciliation adjustment';
+
+        if ($variance > 0) {
+            $lines = [
+                ['account_id' => $bankAccountId, 'debit' => $amount, 'credit' => 0, 'line_notes' => $note],
+                ['account_id' => $offsetAccount->id, 'debit' => 0, 'credit' => $amount, 'line_notes' => $note],
+            ];
+        } else {
+            $lines = [
+                ['account_id' => $offsetAccount->id, 'debit' => $amount, 'credit' => 0, 'line_notes' => $note],
+                ['account_id' => $bankAccountId, 'debit' => 0, 'credit' => $amount, 'line_notes' => $note],
+            ];
+        }
+
+        DB::transaction(function () use ($organizationId, $user, $reconciliation, $lines, $note, $amount) {
+            $entry = $this->posting->createPosted(
+                orgId: $organizationId,
+                user: $user,
+                entryNumber: 'BRECON-ADJ-'.$reconciliation->id.'-'.now()->format('His'),
+                entryDate: (string) $reconciliation->period_end,
+                lines: $lines,
+                description: $note,
+                branchId: $user->branch_id ? (int) $user->branch_id : null,
+                referenceType: 'bank_reconciliation_adjustment',
+                referenceId: (int) $reconciliation->id,
+            );
+
+            $bankLine = $entry->lines()->where('account_id', (int) $reconciliation->chart_of_account_id)->firstOrFail();
+
+            BankReconciliationMatch::query()->create([
+                'bank_reconciliation_id' => $reconciliation->id,
+                'bank_statement_line_id' => null,
+                'journal_entry_line_id' => (int) $bankLine->id,
+                'match_type' => 'manual',
+                'matched_amount' => $amount,
+                'matched_by' => (int) $user->id,
+                'matched_at' => now(),
+            ]);
+        });
+
+        return $this->show($organizationId, $reconciliationId);
+    }
+
+    /**
+     * @return array{account: ChartOfAccount, from_date: string, to_date: string, opening_balance: float, closing_balance: float, lines: array<int, array<string, mixed>>}
+     */
+    public function bankRegister(
+        int $organizationId,
+        int $accountId,
+        ?string $fromDate = null,
+        ?string $toDate = null,
+    ): array {
+        $account = ChartOfAccount::query()
+            ->where('organization_id', $organizationId)
+            ->where('id', $accountId)
+            ->firstOrFail();
+
+        $toDate = $toDate ?: now()->toDateString();
+        $fromDate = $fromDate ?: date('Y-m-d', strtotime($toDate.' -90 days'));
+
+        $openingBalance = $this->glBalanceForAccount(
+            $organizationId,
+            $accountId,
+            date('Y-m-d', strtotime($fromDate.' -1 day')),
+        );
+
+        $clearedLineIds = DB::table('bank_reconciliation_matches as m')
+            ->join('bank_reconciliations as r', 'r.id', '=', 'm.bank_reconciliation_id')
+            ->where('r.organization_id', $organizationId)
+            ->where('r.status', 'completed')
+            ->pluck('m.journal_entry_line_id')
+            ->mapWithKeys(fn ($id) => [(int) $id => true])
+            ->all();
+
+        $rows = DB::table('journal_entry_lines as jel')
+            ->join('journal_entries as je', 'je.id', '=', 'jel.journal_entry_id')
+            ->where('je.organization_id', $organizationId)
+            ->where('je.status', 'posted')
+            ->where('jel.account_id', $accountId)
+            ->whereBetween('je.entry_date', [$fromDate, $toDate])
+            ->orderBy('je.entry_date')
+            ->orderBy('jel.id')
+            ->select([
+                'jel.id',
+                'jel.debit',
+                'jel.credit',
+                'jel.line_notes',
+                'je.entry_date',
+                'je.entry_number',
+                'je.description',
+                'je.reference_type',
+                'je.reference_id',
+            ])
+            ->get();
+
+        $running = $openingBalance;
+        $lines = [];
+        foreach ($rows as $row) {
+            $signed = round((float) $row->debit - (float) $row->credit, 2);
+            $running = round($running + $signed, 2);
+
+            $lines[] = [
+                'journal_entry_line_id' => (int) $row->id,
+                'entry_date' => (string) $row->entry_date,
+                'entry_number' => (string) $row->entry_number,
+                'description' => trim((string) ($row->line_notes ?: $row->description)),
+                'reference_type' => $row->reference_type,
+                'reference_id' => $row->reference_id,
+                'debit' => (float) $row->debit,
+                'credit' => (float) $row->credit,
+                'signed_amount' => $signed,
+                'running_balance' => $running,
+                'cleared' => isset($clearedLineIds[(int) $row->id]),
+            ];
+        }
+
+        return [
+            'account' => $account,
+            'from_date' => $fromDate,
+            'to_date' => $toDate,
+            'opening_balance' => round($openingBalance, 2),
+            'closing_balance' => round($running, 2),
+            'lines' => $lines,
+        ];
     }
 
     public function complete(int $organizationId, int $reconciliationId, User $user, ?string $notes = null): BankReconciliation
@@ -654,6 +878,47 @@ class BankReconciliationService
             'reference' => $line->reference,
             'amount' => (float) $line->amount,
             'match_status' => $line->match_status,
+        ];
+    }
+
+    /**
+     * @param  array<int, array<string, mixed>>  $statementLines
+     * @param  array<int, array<string, mixed>>  $bookItems
+     */
+    protected function serializeMatch(
+        BankReconciliationMatch $match,
+        array $statementLines,
+        array $bookItems,
+    ): array {
+        $statement = collect($statementLines)->firstWhere('id', (int) $match->bank_statement_line_id);
+        $book = collect($bookItems)->firstWhere('journal_entry_line_id', (int) $match->journal_entry_line_id);
+
+        if (! $book) {
+            $journalLine = JournalEntryLine::query()
+                ->with('journalEntry:id,entry_date,entry_number,description')
+                ->find($match->journal_entry_line_id);
+            if ($journalLine) {
+                $signed = round((float) $journalLine->debit - (float) $journalLine->credit, 2);
+                $book = [
+                    'journal_entry_line_id' => (int) $journalLine->id,
+                    'entry_date' => (string) $journalLine->journalEntry?->entry_date,
+                    'entry_number' => (string) $journalLine->journalEntry?->entry_number,
+                    'description' => trim((string) ($journalLine->line_notes ?: $journalLine->journalEntry?->description)),
+                    'signed_amount' => $signed,
+                    'amount' => abs($signed),
+                    'direction' => $signed >= 0 ? 'receipt' : 'payment',
+                ];
+            }
+        }
+
+        return [
+            'id' => (int) $match->id,
+            'bank_statement_line_id' => $match->bank_statement_line_id ? (int) $match->bank_statement_line_id : null,
+            'journal_entry_line_id' => (int) $match->journal_entry_line_id,
+            'match_type' => $match->match_type,
+            'matched_amount' => (float) $match->matched_amount,
+            'statement' => $statement,
+            'book' => $book,
         ];
     }
 }

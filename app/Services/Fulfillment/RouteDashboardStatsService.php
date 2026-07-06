@@ -9,17 +9,14 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\RouteOrderScope;
-use App\Services\Sales\SaleRouteBackfillService;
+use App\Support\EffectiveSaleDate;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 
 class RouteDashboardStatsService
 {
-    public function __construct(
-        protected UserAccessService $access,
-        protected SaleRouteBackfillService $routeBackfill,
-    ) {}
+    public function __construct(protected UserAccessService $access) {}
 
     /** @param  Collection<int, object>  $routes */
     public function attachStats(Collection $routes, string $period, CapabilityGate $gate, User $user): Collection
@@ -27,11 +24,6 @@ class RouteDashboardStatsService
         $routeIds = $routes->pluck('id')->map(fn ($id) => (int) $id)->filter()->values()->all();
         if ($routeIds === []) {
             return $routes;
-        }
-
-        $organization = $gate->organization();
-        if ($organization) {
-            $this->routeBackfill->syncOrganization($organization);
         }
 
         $distributionSettings = $gate->distributionSettings();
@@ -61,10 +53,7 @@ class RouteDashboardStatsService
             ->whereNull('sales.deleted_at');
 
         if ($bounds !== null) {
-            $salesQuery->whereBetween(
-                DB::raw('DATE(COALESCE(sales.completed_at, sales.created_at))'),
-                [$bounds['start'], $bounds['end']],
-            );
+            EffectiveSaleDate::applyRange($salesQuery, $bounds['start'], $bounds['end']);
         }
 
         $effectiveRoute = RouteOrderScope::effectiveRouteIdSql();

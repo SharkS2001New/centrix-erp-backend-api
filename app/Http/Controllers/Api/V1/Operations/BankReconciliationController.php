@@ -117,6 +117,81 @@ class BankReconciliationController extends Controller
         return response()->json($reconciliation);
     }
 
+    public function register(Request $request, int $accountId)
+    {
+        $data = $request->validate([
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date',
+        ]);
+
+        $orgId = (int) $request->user()->organization_id;
+        $payload = $this->reconciliations->bankRegister(
+            $orgId,
+            $accountId,
+            $data['from_date'] ?? null,
+            $data['to_date'] ?? null,
+        );
+
+        return response()->json($payload);
+    }
+
+    public function excludeStatementLine(Request $request, int $reconciliationId, int $statementLineId)
+    {
+        try {
+            $reconciliation = $this->reconciliations->excludeStatementLine(
+                (int) $request->user()->organization_id,
+                $reconciliationId,
+                $statementLineId,
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($reconciliation);
+    }
+
+    public function clearBookItem(Request $request, int $reconciliationId)
+    {
+        $data = $request->validate([
+            'journal_entry_line_id' => 'required|integer',
+        ]);
+
+        try {
+            $reconciliation = $this->reconciliations->clearBookItem(
+                (int) $request->user()->organization_id,
+                $reconciliationId,
+                (int) $data['journal_entry_line_id'],
+                $request->user(),
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($reconciliation);
+    }
+
+    public function createAdjustment(Request $request, int $reconciliationId)
+    {
+        $data = $request->validate([
+            'description' => 'nullable|string|max:255',
+            'offset_account_id' => 'nullable|integer',
+        ]);
+
+        try {
+            $payload = $this->reconciliations->createAdjustment(
+                (int) $request->user()->organization_id,
+                $reconciliationId,
+                $request->user(),
+                $data['description'] ?? null,
+                isset($data['offset_account_id']) ? (int) $data['offset_account_id'] : null,
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json($payload);
+    }
+
     public function importStatement(Request $request, int $reconciliationId)
     {
         $data = $request->validate([
