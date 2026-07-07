@@ -65,6 +65,7 @@ return [
     'sales.view' => array_merge(
         $salesOrderQueueViewAliases,
         [
+            'sales.orders.view',
             'sales.carts.view',
             'sales.vouchers.view',
             'sales.loyalty_cards.view',
@@ -325,6 +326,7 @@ return [
         'admin.payment_methods.edit',
         'admin.payment_methods.delete',
         'admin.till_printing.edit',
+        'admin.discount_approvals.approve',
     ],
     'pos.till' => [
         'pos.till_management.view',

@@ -69,6 +69,9 @@ class SaleOrderPresentationService
             'advised_discount_amount' => isset($approval['advised_discount_amount'])
                 ? round((float) $approval['advised_discount_amount'], 2)
                 : null,
+            'advised_discount_lines' => is_array($approval['advised_discount_lines'] ?? null)
+                ? $approval['advised_discount_lines']
+                : [],
             'guidance_message' => $this->discountRejectionGuidanceMessage($approval),
             'follow_up_message' => 'Your discount was not approved. Please contact the office for further follow-up.',
             'highlight' => 'discount_rejected',
@@ -80,6 +83,18 @@ class SaleOrderPresentationService
     {
         $guidance = (string) ($approval['rejection_guidance_type'] ?? 'remove_discount');
         if ($guidance === 'advised_amount') {
+            $lines = is_array($approval['advised_discount_lines'] ?? null) ? $approval['advised_discount_lines'] : [];
+            if ($lines !== []) {
+                $parts = [];
+                foreach ($lines as $line) {
+                    $name = trim((string) ($line['product_name'] ?? $line['product_code'] ?? 'Item'));
+                    $amount = round((float) ($line['advised_discount'] ?? 0), 2);
+                    $parts[] = $name.': KES '.number_format($amount, 2);
+                }
+
+                return 'Advised discounts — '.implode('; ', $parts);
+            }
+
             $amount = round((float) ($approval['advised_discount_amount'] ?? 0), 2);
 
             return 'Advised discount: KES '.number_format($amount, 2);

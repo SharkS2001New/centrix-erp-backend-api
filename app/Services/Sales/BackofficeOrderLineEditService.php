@@ -95,6 +95,17 @@ class BackofficeOrderLineEditService
         if (! $workflow->isEditableLineStatus((string) $sale->status, $channel)) {
             throw new InvalidArgumentException('Orders can only be edited while booked, pending, or editable.');
         }
+
+        if ((string) $sale->status === 'editable') {
+            $this->assertDiscountRevisionOwner($sale, $user);
+        }
+    }
+
+    protected function assertDiscountRevisionOwner(Sale $sale, User $user): void
+    {
+        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
+            throw new InvalidArgumentException('You can only revise orders you submitted for approval.');
+        }
     }
 
     public function allowsLineDiscountEdit(CapabilityGate $gate): bool
@@ -215,11 +226,11 @@ class BackofficeOrderLineEditService
             if ($wasEditable && $lineChanged) {
                 $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
                 $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
-                $advisedApplied = $this->discounts->saleMatchesAdvisedDiscount($sale->fresh(['items']));
+                $advisedApplied = $this->discounts->saleMatchesApproverGuidance($sale->fresh(['items']));
                 if ($advisedApplied) {
                     $approval['advised_discount_applied'] = true;
                 }
-                unset($approval['rejected_at'], $approval['rejected_by'], $approval['rejection_reason'], $approval['rejection_guidance_type'], $approval['advised_discount_amount']);
+                unset($approval['rejected_at'], $approval['rejected_by'], $approval['rejection_reason'], $approval['rejection_guidance_type'], $approval['advised_discount_amount'], $approval['advised_discount_lines']);
                 $meta['discount_approval'] = $approval;
 
                 $gate = app(ErpContext::class)->gateForUser($user);

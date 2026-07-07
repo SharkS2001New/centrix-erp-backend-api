@@ -19,6 +19,54 @@ class RbacRegistryTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    public function test_sales_orders_view_is_in_registry(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $this->assertContains('sales.orders.view', PermissionMatrixService::allRegistryCodes());
+    }
+
+    public function test_org_admin_capability_map_includes_enabled_module_permissions(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::query()->findOrFail((int) $admin->organization_id);
+        $org->update([
+            'enabled_modules' => [
+                'sales' => true,
+                'sales.backend' => true,
+                'inventory' => true,
+                'accounting' => false,
+            ],
+        ]);
+
+        $role = Role::create([
+            'role_name' => 'Admin Shell Map',
+            'scope' => 'org',
+            'is_active' => true,
+        ]);
+
+        $shell = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'admin_shell_map_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Admin Shell Map',
+            'access_scope' => 'org',
+            'is_admin' => true,
+            'is_active' => true,
+        ]);
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($shell);
+        $map = app(UserPermissionService::class)->permissionMapForUser($shell, $gate);
+
+        $this->assertTrue($map['sales.orders.view'] ?? false);
+        $this->assertTrue($map['inventory.stock.view'] ?? false);
+        $this->assertFalse($map['accounting.chart_of_accounts.view'] ?? false);
+    }
+
     public function test_all_capability_codes_exist_in_permissions_table(): void
     {
         PermissionMatrixService::ensure();

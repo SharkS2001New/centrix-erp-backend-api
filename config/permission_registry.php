@@ -39,7 +39,7 @@ return [
             'label' => 'Sales & orders',
             'features' => [
                 'dashboard' => ['label' => 'Sales analytics', 'actions' => ['view']],
-                'orders' => ['label' => 'Order actions', 'actions' => ['create', 'edit', 'delete', 'approve']],
+                'orders' => ['label' => 'Order actions', 'actions' => ['view', 'create', 'edit', 'delete', 'approve']],
                 'discounts' => ['label' => 'Discounts', 'actions' => ['give']],
                 ...\App\Support\SalesOrderQueuePermissions::registryFeatures(),
                 'carts' => ['label' => 'Carts (read-only)', 'actions' => ['view']],
@@ -207,6 +207,7 @@ return [
                 'payment_methods' => ['label' => 'Payment methods', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'kra_responses' => ['label' => 'KRA fiscal responses', 'actions' => ['view']],
                 'till_printing' => ['label' => 'Local printing setup', 'actions' => ['view', 'edit']],
+                'discount_approvals' => ['label' => 'Discount approvals', 'actions' => ['approve']],
             ],
         ],
     ],

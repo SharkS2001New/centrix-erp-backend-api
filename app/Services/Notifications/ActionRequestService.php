@@ -297,6 +297,13 @@ class ActionRequestService
                 : collect();
         }
 
+        if ($request->type === 'discount') {
+            return $this->permissions
+                ->usersWhoCanApproveDiscountRequests((int) $requester->organization_id)
+                ->filter(fn (User $user) => (int) $user->id !== (int) $requester->id)
+                ->values();
+        }
+
         $permission = $request->approver_permission;
         if (! is_string($permission) || $permission === '') {
             return collect();

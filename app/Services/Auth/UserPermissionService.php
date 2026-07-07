@@ -154,10 +154,17 @@ class UserPermissionService
         return in_array((int) $permissionId, $this->roleAssignedPermissionIds($user), true);
     }
 
-    /** Managers who may approve discount requests submitted by other staff. */
+    /** Managers who may approve or reject sales order cancellation requests. */
     public function canApproveSalesOrders(User $user): bool
     {
         return $this->hasRoleAssignedPermission($user, 'sales.orders.approve');
+    }
+
+    /** Managers who may approve or reject discount approval requests. */
+    public function canApproveDiscountRequests(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'admin.discount_approvals.approve')
+            || $this->hasRoleAssignedPermission($user, 'sales.orders.approve');
     }
 
     /** Staff who may apply discounts directly without approval workflow or reason. */
@@ -210,10 +217,33 @@ class UserPermissionService
         $map = $this->expandLegacySalesOrderQueueView($map);
 
         if ($user->is_admin && $gate !== null) {
+            $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
             $map = $this->grantOrgAdminMobileAppPermissions($map, $gate);
         }
 
         return $map;
+    }
+
+    /**
+     * Org administrators receive every feature permission for enabled registry modules.
+     * Mirrors middleware hasPermission() module gating for the capabilities payload.
+     *
+     * @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function grantOrgAdminEnabledModulePermissions(array $map, CapabilityGate $gate): array
+    {
+        foreach (Permission::query()->get() as $permission) {
+            if (! PermissionMatrixService::isRegistryModuleEnabled((string) $permission->module, $gate)) {
+                continue;
+            }
+
+            $map[(string) $permission->permission_code] = true;
+        }
+
+        $map = $this->expandCapabilityAliases($map);
+
+        return $this->expandLegacySalesOrderQueueView($map);
     }
 
     /** Org administrators get every mobile sales/driver permission when those modules are enabled. */
@@ -315,6 +345,17 @@ class UserPermissionService
                 ]);
             }
         });
+    }
+
+    /** @return Collection<int, User> */
+    public function usersWhoCanApproveDiscountRequests(int $organizationId): Collection
+    {
+        return User::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->get()
+            ->filter(fn (User $user) => $this->canApproveDiscountRequests($user))
+            ->values();
     }
 
     /** @return Collection<int, User> */

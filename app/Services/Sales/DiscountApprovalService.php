@@ -298,11 +298,73 @@ class DiscountApprovalService
             return false;
         }
 
+        if ($this->saleMatchesApproverGuidance($sale)) {
+            return false;
+        }
+
         if ((string) $sale->status === 'editable' || $this->saleWasDiscountRejected($sale)) {
             return true;
         }
 
         return $this->saleHasManualDiscount($sale);
+    }
+
+    public function saleMatchesApproverGuidance(Sale $sale): bool
+    {
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+        if (empty($approval['rejected_at'])) {
+            return false;
+        }
+
+        $guidance = (string) ($approval['rejection_guidance_type'] ?? 'remove_discount');
+        if ($guidance === 'advised_amount') {
+            return $this->saleMatchesAdvisedDiscount($sale);
+        }
+
+        if ($guidance === 'remove_discount') {
+            return ! $this->saleHasManualDiscount($sale)
+                && abs((float) ($sale->order_discount ?? 0)) <= 0.01;
+        }
+
+        return false;
+    }
+
+    public function cartMatchesApproverGuidance(TemporaryCart $cart): bool
+    {
+        if (! $this->cartResubmitsRejectedDiscountOrder($cart)) {
+            return false;
+        }
+
+        $superseded = Sale::query()->find((int) $cart->superseded_sale_id);
+        if ($superseded === null) {
+            return false;
+        }
+
+        $meta = is_array($superseded->fulfillment_meta) ? $superseded->fulfillment_meta : [];
+        $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+        if (empty($approval['rejected_at'])) {
+            return false;
+        }
+
+        $guidance = (string) ($approval['rejection_guidance_type'] ?? 'remove_discount');
+        if ($guidance === 'advised_amount') {
+            $advisedLines = $this->saleAdvisedDiscountLines($superseded);
+            if ($advisedLines !== []) {
+                return $this->cartLineDiscountsMatchAdvised($cart, $advisedLines);
+            }
+
+            $advised = $this->saleAdvisedDiscountAmount($superseded);
+
+            return $advised !== null
+                && abs($this->cartTotalDiscountAmount($cart) - $advised) <= 0.01;
+        }
+
+        if ($guidance === 'remove_discount') {
+            return ! $this->cartHasManualDiscount($cart);
+        }
+
+        return false;
     }
 
     public function cartResubmitsRejectedDiscountOrder(TemporaryCart $cart): bool
@@ -329,6 +391,11 @@ class DiscountApprovalService
 
     public function saleAdvisedDiscountAmount(Sale $sale): ?float
     {
+        $lines = $this->saleAdvisedDiscountLines($sale);
+        if ($lines !== []) {
+            return round((float) collect($lines)->sum('advised_discount'), 2);
+        }
+
         $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
         $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
         if (($approval['rejection_guidance_type'] ?? '') !== 'advised_amount') {
@@ -339,6 +406,145 @@ class DiscountApprovalService
         }
 
         return round((float) $approval['advised_discount_amount'], 2);
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function saleAdvisedDiscountLines(Sale $sale): array
+    {
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+        if (($approval['rejection_guidance_type'] ?? '') !== 'advised_amount') {
+            return [];
+        }
+
+        $stored = $approval['advised_discount_lines'] ?? null;
+        if (! is_array($stored) || $stored === []) {
+            return [];
+        }
+
+        return $this->normalizeStoredAdvisedDiscountLines($stored);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $sourceLines
+     * @param  list<array<string, mixed>>  $inputLines
+     * @return list<array<string, mixed>>
+     */
+    public function buildAdvisedDiscountLines(array $sourceLines, array $inputLines): array
+    {
+        $byCode = collect($inputLines)->keyBy(fn ($line) => (string) ($line['product_code'] ?? ''));
+        $result = [];
+
+        foreach ($sourceLines as $line) {
+            $code = (string) ($line['product_code'] ?? '');
+            if ($code === '') {
+                continue;
+            }
+
+            $input = $byCode->get($code);
+            if (! is_array($input)) {
+                continue;
+            }
+
+            $advised = round((float) ($input['advised_discount'] ?? -1), 2);
+            if ($advised < 0) {
+                continue;
+            }
+
+            $result[] = [
+                'product_code' => $code,
+                'product_name' => (string) ($line['product_name'] ?? $code),
+                'unit_price' => round((float) ($line['unit_price'] ?? $line['selling_price'] ?? 0), 2),
+                'discount_given' => round((float) ($line['discount_given'] ?? 0), 2),
+                'advised_discount' => $advised,
+            ];
+        }
+
+        return $result;
+    }
+
+    /** @param  list<array<string, mixed>>  $lines */
+    protected function normalizeStoredAdvisedDiscountLines(array $lines): array
+    {
+        $normalized = [];
+        foreach ($lines as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $code = (string) ($line['product_code'] ?? '');
+            if ($code === '') {
+                continue;
+            }
+            $normalized[] = [
+                'product_code' => $code,
+                'product_name' => (string) ($line['product_name'] ?? $code),
+                'unit_price' => round((float) ($line['unit_price'] ?? 0), 2),
+                'discount_given' => round((float) ($line['discount_given'] ?? 0), 2),
+                'advised_discount' => round((float) ($line['advised_discount'] ?? 0), 2),
+            ];
+        }
+
+        return $normalized;
+    }
+
+    /** @param  list<array<string, mixed>>  $advisedLines */
+    protected function saleLineDiscountsMatchAdvised(Sale $sale, array $advisedLines): bool
+    {
+        $sale->loadMissing('items');
+        if (abs((float) ($sale->order_discount ?? 0)) > 0.01) {
+            return false;
+        }
+
+        $advisedByCode = collect($advisedLines)->keyBy(fn ($line) => (string) ($line['product_code'] ?? ''));
+
+        foreach ($sale->items as $item) {
+            $code = (string) $item->product_code;
+            $discount = round((float) ($item->discount_given ?? 0), 2);
+            $advised = $advisedByCode->get($code);
+
+            if ($advised !== null) {
+                if (abs($discount - (float) $advised['advised_discount']) > 0.01) {
+                    return false;
+                }
+                continue;
+            }
+
+            if ($discount > 0.01) {
+                return false;
+            }
+        }
+
+        return $advisedByCode->isNotEmpty();
+    }
+
+    /** @param  list<array<string, mixed>>  $advisedLines */
+    protected function cartLineDiscountsMatchAdvised(TemporaryCart $cart, array $advisedLines): bool
+    {
+        $cart->loadMissing('lines');
+        if (abs((float) ($cart->order_discount ?? 0)) > 0.01) {
+            return false;
+        }
+
+        $advisedByCode = collect($advisedLines)->keyBy(fn ($line) => (string) ($line['product_code'] ?? ''));
+
+        foreach ($cart->lines as $line) {
+            $code = (string) $line->product_code;
+            $discount = round((float) ($line->discount_given ?? 0), 2);
+            $advised = $advisedByCode->get($code);
+
+            if ($advised !== null) {
+                if (abs($discount - (float) $advised['advised_discount']) > 0.01) {
+                    return false;
+                }
+                continue;
+            }
+
+            if ($discount > 0.01) {
+                return false;
+            }
+        }
+
+        return $advisedByCode->isNotEmpty();
     }
 
     public function saleTotalDiscountAmount(Sale $sale): float
@@ -353,6 +559,11 @@ class DiscountApprovalService
     public function saleMatchesAdvisedDiscount(Sale $sale, ?Sale $rejectionSource = null): bool
     {
         $source = $rejectionSource ?? $sale;
+        $advisedLines = $this->saleAdvisedDiscountLines($source);
+        if ($advisedLines !== []) {
+            return $this->saleLineDiscountsMatchAdvised($sale, $advisedLines);
+        }
+
         $advised = $this->saleAdvisedDiscountAmount($source);
         if ($advised === null) {
             return false;
@@ -372,21 +583,7 @@ class DiscountApprovalService
 
     public function cartMatchesAdvisedDiscount(TemporaryCart $cart): bool
     {
-        if (! $this->cartResubmitsRejectedDiscountOrder($cart)) {
-            return false;
-        }
-
-        $superseded = Sale::query()->find((int) $cart->superseded_sale_id);
-        if ($superseded === null) {
-            return false;
-        }
-
-        $advised = $this->saleAdvisedDiscountAmount($superseded);
-        if ($advised === null) {
-            return false;
-        }
-
-        return abs($this->cartTotalDiscountAmount($cart) - $advised) <= 0.01;
+        return $this->cartMatchesApproverGuidance($cart);
     }
 
     /** @return array{reason: string, message: string, advised_discount_applied: bool} */
@@ -485,7 +682,7 @@ class DiscountApprovalService
             'module' => 'sales',
             'reference_type' => 'sale',
             'reference_id' => (int) $sale->id,
-            'approver_permission' => 'sales.orders.approve',
+            'approver_permission' => 'admin.discount_approvals.approve',
             'title' => 'Discount approval required',
             'message' => $presentation['message'],
             'reason' => $presentation['reason'],
@@ -610,6 +807,10 @@ class DiscountApprovalService
     {
         $salesSettings = $gate->moduleSettings('sales');
         if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+            return false;
+        }
+
+        if ($this->cartMatchesApproverGuidance($cart)) {
             return false;
         }
 
@@ -791,7 +992,7 @@ class DiscountApprovalService
             'module' => 'sales',
             'reference_type' => 'temporary_cart',
             'reference_id' => (int) $cart->id,
-            'approver_permission' => 'sales.orders.approve',
+            'approver_permission' => 'admin.discount_approvals.approve',
             'title' => $title,
             'message' => $message,
             'reason' => $reason,
@@ -934,7 +1135,7 @@ class DiscountApprovalService
             'module' => 'sales',
             'reference_type' => 'sale',
             'reference_id' => (int) $sale->id,
-            'approver_permission' => 'sales.orders.approve',
+            'approver_permission' => 'admin.discount_approvals.approve',
             'title' => 'Discount approval required',
             'message' => $presentation['message'],
             'reason' => $presentation['reason'],
@@ -992,13 +1193,32 @@ class DiscountApprovalService
         }
 
         $advisedAmount = null;
+        $advisedLines = [];
         if ($guidance === 'advised_amount') {
-            $advisedAmount = round((float) ($options['advised_discount_amount'] ?? -1), 2);
-            if ($advisedAmount < 0) {
+            $sourceLines = is_array($request->payload['lines'] ?? null) ? $request->payload['lines'] : [];
+            $inputLines = is_array($options['advised_discount_lines'] ?? null) ? $options['advised_discount_lines'] : [];
+            $advisedLines = $this->buildAdvisedDiscountLines($sourceLines, $inputLines);
+
+            if ($advisedLines === []) {
+                $legacyAmount = round((float) ($options['advised_discount_amount'] ?? -1), 2);
+                if ($legacyAmount >= 0 && $sourceLines !== []) {
+                    $firstDiscounted = collect($sourceLines)->first(
+                        fn ($line) => round((float) ($line['discount_given'] ?? 0), 2) > 0.01,
+                    ) ?? $sourceLines[0];
+                    $advisedLines = $this->buildAdvisedDiscountLines($sourceLines, [[
+                        'product_code' => (string) ($firstDiscounted['product_code'] ?? ''),
+                        'advised_discount' => $legacyAmount,
+                    ]]);
+                }
+            }
+
+            if ($advisedLines === []) {
                 throw ValidationException::withMessages([
-                    'advised_discount_amount' => 'Enter the advised discount amount.',
+                    'advised_discount_lines' => 'Enter the advised discount for each item.',
                 ]);
             }
+
+            $advisedAmount = round((float) collect($advisedLines)->sum('advised_discount'), 2);
         }
 
         $meta = $sale->fulfillment_meta ?? [];
@@ -1008,6 +1228,7 @@ class DiscountApprovalService
             'rejection_reason' => $reason,
             'rejection_guidance_type' => $guidance,
             'advised_discount_amount' => $advisedAmount,
+            'advised_discount_lines' => $advisedLines !== [] ? $advisedLines : null,
         ]);
 
         $sale->update([

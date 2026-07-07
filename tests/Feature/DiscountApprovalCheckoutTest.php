@@ -326,7 +326,56 @@ class DiscountApprovalCheckoutTest extends TestCase
         $this->assertSame(10.0, (float) ($approval['advised_discount_amount'] ?? 0));
     }
 
-    public function test_resubmitting_with_advised_discount_uses_confirmation_message(): void
+    public function test_rejecting_discount_stores_per_line_advised_amounts(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->salesStaff();
+        Sanctum::actingAs($staff);
+
+        $product = Product::query()->firstOrFail();
+        $cart = $this->createCartWithLine($staff);
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'order',
+            'discount_amount' => 30,
+            'reason' => 'Needs review',
+        ])->assertAccepted();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $requestId = ActionRequest::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $sale['id'])
+            ->value('id');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/action-requests/{$requestId}/reject", [
+            'reason' => 'Discount too high',
+            'discount_guidance' => 'advised_amount',
+            'advised_discount_lines' => [
+                ['product_code' => $product->product_code, 'advised_discount' => 10],
+            ],
+        ])->assertOk();
+
+        $saleModel = Sale::query()->findOrFail($sale['id']);
+        $approval = $saleModel->fulfillment_meta['discount_approval'] ?? [];
+        $lines = $approval['advised_discount_lines'] ?? [];
+        $this->assertCount(1, $lines);
+        $this->assertSame($product->product_code, $lines[0]['product_code'] ?? null);
+        $this->assertSame(10.0, (float) ($lines[0]['advised_discount'] ?? 0));
+
+        Sanctum::actingAs($staff);
+        $this->getJson("/api/v1/mobile/orders/{$sale['id']}")
+            ->assertOk()
+            ->assertJsonPath('discount_rejection.advised_discount_lines.0.product_code', $product->product_code)
+            ->assertJsonPath('discount_rejection.advised_discount_lines.0.advised_discount', 10);
+    }
+
+    public function test_resubmitting_with_advised_discount_books_order_directly(): void
     {
         $this->enableDiscountApproval();
         $staff = $this->salesStaff();
@@ -372,28 +421,73 @@ class DiscountApprovalCheckoutTest extends TestCase
 
         $resubmitted = $this->postJson("/api/v1/sales/carts/{$editCart['id']}/checkout", [
             'save_only' => true,
+        ])->assertCreated()
+            ->assertJsonPath('status', 'booked')
+            ->json();
+
+        $this->assertDatabaseMissing('action_requests', [
+            'reference_type' => 'sale',
+            'reference_id' => $resubmitted['id'],
+            'status' => 'pending',
+        ]);
+    }
+
+    public function test_resubmitting_with_different_discount_requires_second_approval(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->salesStaff();
+        Sanctum::actingAs($staff);
+
+        $cart = $this->createCartWithLine($staff);
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'order',
+            'discount_amount' => 30,
+            'reason' => 'Needs review',
+        ])->assertAccepted();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $requestId = ActionRequest::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $sale['id'])
+            ->value('id');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/action-requests/{$requestId}/reject", [
+            'reason' => 'Discount too high',
+            'discount_guidance' => 'advised_amount',
+            'advised_discount_amount' => 10,
+        ])->assertOk();
+
+        Sanctum::actingAs($staff);
+
+        $editCart = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$editCart['id']}/discount-requests", [
+            'scope' => 'order',
+            'discount_amount' => 15,
+            'defer_approval' => true,
+        ])->assertOk();
+
+        $resubmitted = $this->postJson("/api/v1/sales/carts/{$editCart['id']}/checkout", [
+            'save_only' => true,
             'discount_approval_reason' => 'Staff follow-up note',
         ])->assertCreated()
             ->assertJsonPath('status', 'pending_approval')
             ->json();
 
-        $confirmation = 'Order has been edited to apply the requested discount. Please check and confirm.';
-
         $this->assertDatabaseHas('action_requests', [
             'reference_type' => 'sale',
             'reference_id' => $resubmitted['id'],
             'status' => 'pending',
-            'reason' => $confirmation,
         ]);
-
-        $pendingRequest = ActionRequest::query()
-            ->where('reference_type', 'sale')
-            ->where('reference_id', $resubmitted['id'])
-            ->where('status', 'pending')
-            ->firstOrFail();
-
-        $this->assertTrue((bool) ($pendingRequest->payload['advised_discount_applied'] ?? false));
-        $this->assertStringContainsString('requested discount', strtolower((string) $pendingRequest->message));
     }
 
     public function test_approving_discount_notifies_requester(): void
@@ -621,5 +715,71 @@ class DiscountApprovalCheckoutTest extends TestCase
         $this->assertNotEmpty($list);
         $this->assertSame('approval_outcome', $list[0]['type']);
         $this->assertStringContainsString('rejected', strtolower($list[0]['message']));
+    }
+
+    public function test_only_submitter_can_edit_discount_rejected_order(): void
+    {
+        $this->enableDiscountApproval();
+        $submitter = $this->salesStaff();
+        $otherStaff = $this->salesStaff();
+        Sanctum::actingAs($submitter);
+
+        $cart = $this->createCartWithLine($submitter);
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'order',
+            'discount_amount' => 30,
+            'reason' => 'Needs review',
+        ])->assertAccepted();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $requestId = ActionRequest::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $sale['id'])
+            ->value('id');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/action-requests/{$requestId}/reject", [
+            'reason' => 'Discount too high',
+            'discount_guidance' => 'advised_amount',
+            'advised_discount_amount' => 10,
+        ])->assertOk();
+
+        $saleModel = Sale::query()->with('items')->findOrFail($sale['id']);
+        $itemId = (int) $saleModel->items->first()->id;
+
+        Sanctum::actingAs($otherStaff);
+
+        $this->getJson("/api/v1/sales/orders/{$sale['id']}")
+            ->assertOk()
+            ->assertJsonPath('can_edit_lines', false);
+
+        $this->patchJson("/api/v1/sales/orders/{$sale['id']}/line-quantities", [
+            'items' => [
+                ['id' => $itemId, 'quantity' => 1, 'discount_given' => 10],
+            ],
+        ])
+            ->assertStatus(422)
+            ->assertJsonFragment([
+                'message' => 'You can only revise orders you submitted for approval.',
+            ]);
+
+        Sanctum::actingAs($submitter);
+
+        $this->getJson("/api/v1/sales/orders/{$sale['id']}")
+            ->assertOk()
+            ->assertJsonPath('can_edit_lines', true);
+
+        $this->patchJson("/api/v1/sales/orders/{$sale['id']}/line-quantities", [
+            'items' => [
+                ['id' => $itemId, 'quantity' => 1, 'discount_given' => 10],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('status', 'booked');
     }
 }

@@ -49,11 +49,12 @@ class PermissionAliasTest extends TestCase
         $service = app(UserPermissionService::class);
         $this->assertTrue($service->hasPermission($user->fresh(), 'sales.manage'));
         $this->assertFalse($service->canApproveSalesOrders($user->fresh()));
+        $this->assertFalse($service->canApproveDiscountRequests($user->fresh()));
         $this->assertFalse(app(\App\Services\Sales\DiscountApprovalService::class)
             ->canAutoApproveDiscount($user->fresh()));
     }
 
-    public function test_sales_orders_approve_does_not_grant_direct_discount(): void
+    public function test_sales_orders_approve_grants_legacy_discount_approval(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         PermissionMatrixService::ensure();
@@ -86,9 +87,44 @@ class PermissionAliasTest extends TestCase
 
         $service = app(UserPermissionService::class);
         $this->assertTrue($service->canApproveSalesOrders($user->fresh()));
+        $this->assertTrue($service->canApproveDiscountRequests($user->fresh()));
         $this->assertFalse($service->canGiveDiscountDirectly($user->fresh()));
         $this->assertFalse(app(\App\Services\Sales\DiscountApprovalService::class)
             ->canAutoApproveDiscount($user->fresh()));
+    }
+
+    public function test_admin_discount_approvals_permission_grants_discount_approval(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        PermissionMatrixService::ensure();
+
+        $role = Role::create([
+            'role_name' => 'Discount Approver',
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $approveId = (int) Permission::where('permission_code', 'admin.discount_approvals.approve')->value('id');
+        $this->assertNotNull($approveId);
+
+        DB::table('role_permissions')->insert([
+            ['role_id' => $role->id, 'permission_id' => $approveId],
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'discount_approver',
+            'password' => Hash::make('password'),
+            'full_name' => 'Discount Approver',
+            'access_scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $service = app(UserPermissionService::class);
+        $this->assertTrue($service->canApproveDiscountRequests($user->fresh()));
+        $this->assertFalse($service->canApproveSalesOrders($user->fresh()));
     }
 
     public function test_sales_discounts_give_allows_direct_discount_without_approval(): void
@@ -122,6 +158,7 @@ class PermissionAliasTest extends TestCase
 
         $service = app(UserPermissionService::class);
         $this->assertFalse($service->canApproveSalesOrders($user->fresh()));
+        $this->assertFalse($service->canApproveDiscountRequests($user->fresh()));
         $this->assertTrue($service->canGiveDiscountDirectly($user->fresh()));
         $this->assertTrue(app(\App\Services\Sales\DiscountApprovalService::class)
             ->canAutoApproveDiscount($user->fresh()));
@@ -187,6 +224,7 @@ class PermissionAliasTest extends TestCase
 
         $service = app(UserPermissionService::class);
         $this->assertFalse($service->canApproveSalesOrders($user->fresh()));
+        $this->assertFalse($service->canApproveDiscountRequests($user->fresh()));
         $this->assertFalse($service->canGiveDiscountDirectly($user->fresh()));
     }
 
@@ -194,7 +232,7 @@ class PermissionAliasTest extends TestCase
     {
         PermissionMatrixService::ensure();
 
-        $approveId = (int) Permission::where('permission_code', 'sales.orders.approve')->value('id');
+        $approveId = (int) Permission::where('permission_code', 'admin.discount_approvals.approve')->value('id');
         $this->assertNotNull($approveId);
 
         $adminRole = Role::query()->where('role_name', 'Administrator')->first();

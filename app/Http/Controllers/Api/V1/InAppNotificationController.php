@@ -126,15 +126,29 @@ class InAppNotificationController extends Controller
         ];
         if ($actionRequest->type === 'discount') {
             $rules['discount_guidance'] = 'required|in:remove_discount,advised_amount';
-            $rules['advised_discount_amount'] = 'required_if:discount_guidance,advised_amount|nullable|numeric|min:0';
+            $rules['advised_discount_lines'] = 'required_if:discount_guidance,advised_amount|nullable|array|min:1';
+            $rules['advised_discount_lines.*.product_code'] = 'required_with:advised_discount_lines|string|max:50';
+            $rules['advised_discount_lines.*.advised_discount'] = 'required_with:advised_discount_lines|numeric|min:0';
+            $rules['advised_discount_amount'] = 'nullable|numeric|min:0';
         }
 
         $data = $request->validate($rules);
 
         $options = [];
         if ($actionRequest->type === 'discount') {
+            $advisedLines = ($data['discount_guidance'] ?? '') === 'advised_amount'
+                ? collect($data['advised_discount_lines'] ?? [])
+                    ->map(fn ($line) => [
+                        'product_code' => (string) ($line['product_code'] ?? ''),
+                        'advised_discount' => round((float) ($line['advised_discount'] ?? 0), 2),
+                    ])
+                    ->values()
+                    ->all()
+                : [];
+
             $options = [
                 'discount_guidance' => (string) $data['discount_guidance'],
+                'advised_discount_lines' => $advisedLines,
                 'advised_discount_amount' => ($data['discount_guidance'] ?? '') === 'advised_amount'
                     ? round((float) ($data['advised_discount_amount'] ?? 0), 2)
                     : null,
