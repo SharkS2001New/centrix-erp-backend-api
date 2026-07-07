@@ -190,7 +190,7 @@ class OrderWorkflowService
             return true;
         }
 
-        if ($from === 'editable' && in_array($to, ['pending_approval', 'booked', 'cancelled'], true)) {
+        if ($from === 'editable' && in_array($to, ['pending_approval', 'cancelled'], true)) {
             return true;
         }
 

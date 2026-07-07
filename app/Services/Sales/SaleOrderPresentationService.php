@@ -110,6 +110,7 @@ class SaleOrderPresentationService
         $sale->setAttribute('total_discount', $this->totalDiscount($sale));
         $sale->setAttribute('action_request', $this->presentActionRequest($pendingRequest, $user));
         $sale->setAttribute('discount_approval_reason', $this->discountApprovalReason($sale, $pendingRequest));
+        $sale->setAttribute('advised_discount_applied', $this->advisedDiscountApplied($sale, $pendingRequest));
         $rejection = $this->discountRejectionPresentation($sale);
         $sale->setAttribute('discount_rejection', $rejection);
         $sale->setAttribute('discount_rejected', $rejection !== null);
@@ -128,6 +129,18 @@ class SaleOrderPresentationService
         $stored = trim((string) (($meta['discount_approval']['reason'] ?? '') ?: ''));
 
         return $stored !== '' ? $stored : null;
+    }
+
+    protected function advisedDiscountApplied(Sale $sale, ?ActionRequest $pendingRequest): bool
+    {
+        if (! empty($pendingRequest?->payload['advised_discount_applied'])) {
+            return true;
+        }
+
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+
+        return ! empty($approval['advised_discount_applied']);
     }
 
     /** @param  Collection<int, Sale>  $sales

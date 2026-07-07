@@ -614,7 +614,11 @@ class CartOperationsController extends Controller
 
     protected function assertSaleRestorableToCart(Sale $sale, User $user): void
     {
-        if (($sale->channel ?? '') === 'mobile' && ! $sale->created_at?->isSameDay(now())) {
+        if (
+            ($sale->channel ?? '') === 'mobile'
+            && (string) $sale->status !== 'editable'
+            && ! $sale->created_at?->isSameDay(now())
+        ) {
             throw new InvalidArgumentException(
                 'Mobile orders from previous dates cannot be edited, cancelled, or returned.',
             );

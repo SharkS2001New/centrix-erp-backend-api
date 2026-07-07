@@ -274,13 +274,121 @@ class DiscountApprovalService
         return $this->saleHasManualDiscount($sale);
     }
 
+    public function saleWasDiscountRejected(Sale $sale): bool
+    {
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+
+        return ! empty($approval['rejected_at']);
+    }
+
+    public function requiresDiscountResubmitApproval(Sale $sale, User $user, CapabilityGate $gate): bool
+    {
+        $salesSettings = $gate->moduleSettings('sales');
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+            return false;
+        }
+
+        if ((string) $sale->status === 'editable' || $this->saleWasDiscountRejected($sale)) {
+            return true;
+        }
+
+        return $this->saleHasManualDiscount($sale);
+    }
+
+    public function cartResubmitsRejectedDiscountOrder(TemporaryCart $cart): bool
+    {
+        if (! $cart->superseded_sale_id) {
+            return false;
+        }
+
+        $superseded = Sale::query()->find((int) $cart->superseded_sale_id);
+
+        return $superseded !== null && $this->saleWasDiscountRejected($superseded);
+    }
+
+    public function advisedDiscountAppliedApprovalReason(): string
+    {
+        return 'An update has been made to this order and the advised discount has been applied. Please confirm and approve.';
+    }
+
+    public function saleAdvisedDiscountAmount(Sale $sale): ?float
+    {
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+        if (($approval['rejection_guidance_type'] ?? '') !== 'advised_amount') {
+            return null;
+        }
+        if (! isset($approval['advised_discount_amount'])) {
+            return null;
+        }
+
+        return round((float) $approval['advised_discount_amount'], 2);
+    }
+
+    public function saleTotalDiscountAmount(Sale $sale): float
+    {
+        $sale->loadMissing('items');
+        $lineDiscount = round((float) $sale->items->sum('discount_given'), 2);
+        $orderDiscount = round((float) ($sale->order_discount ?? 0), 2);
+
+        return round($lineDiscount + $orderDiscount, 2);
+    }
+
+    public function saleMatchesAdvisedDiscount(Sale $sale, ?Sale $rejectionSource = null): bool
+    {
+        $source = $rejectionSource ?? $sale;
+        $advised = $this->saleAdvisedDiscountAmount($source);
+        if ($advised === null) {
+            return false;
+        }
+
+        return abs($this->saleTotalDiscountAmount($sale) - $advised) <= 0.01;
+    }
+
+    /** @return array{reason: string, message: string, advised_discount_applied: bool} */
+    protected function buildResubmitApprovalPresentation(
+        Sale $sale,
+        User $user,
+        bool $resubmit,
+        ?Sale $rejectionSource,
+        string $defaultReason,
+        string $defaultMessage,
+    ): array {
+        $advisedApplied = $resubmit
+            && $rejectionSource !== null
+            && $this->saleMatchesAdvisedDiscount($sale, $rejectionSource);
+
+        if (! $advisedApplied) {
+            return [
+                'reason' => $defaultReason,
+                'message' => $defaultMessage,
+                'advised_discount_applied' => false,
+            ];
+        }
+
+        $requesterName = $user->full_name ?: $user->username;
+
+        return [
+            'reason' => $this->advisedDiscountAppliedApprovalReason(),
+            'message' => "{$requesterName} updated order #{$sale->order_num} with the advised discount. Please confirm and approve.",
+            'advised_discount_applied' => true,
+        ];
+    }
+
     public function resubmitSaleForApproval(
         Sale $sale,
         User $user,
         CapabilityGate $gate,
         ?string $reason = null,
+        bool $fromEditableSave = false,
     ): ?ActionRequest {
-        if (! $this->saleRequiresPendingApproval($sale, $user, $gate)) {
+        $salesSettings = $gate->moduleSettings('sales');
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+            return null;
+        }
+
+        if (! $fromEditableSave && ! $this->requiresDiscountResubmitApproval($sale, $user, $gate)) {
             return null;
         }
 
@@ -308,6 +416,24 @@ class DiscountApprovalService
         ];
 
         $requesterName = $user->full_name ?: $user->username;
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $approvalMeta = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+        $advisedApplied = ! empty($approvalMeta['advised_discount_applied'])
+            || $this->saleMatchesAdvisedDiscount($sale);
+
+        if ($advisedApplied) {
+            $presentation = [
+                'reason' => $this->advisedDiscountAppliedApprovalReason(),
+                'message' => "{$requesterName} updated order #{$sale->order_num} with the advised discount. Please confirm and approve.",
+                'advised_discount_applied' => true,
+            ];
+        } else {
+            $presentation = [
+                'reason' => $approvalReason,
+                'message' => "{$requesterName} resubmitted order #{$sale->order_num} for discount approval.",
+                'advised_discount_applied' => false,
+            ];
+        }
 
         $request = app(ActionRequestService::class)->requestApproval($user, [
             'type' => 'discount',
@@ -316,8 +442,8 @@ class DiscountApprovalService
             'reference_id' => (int) $sale->id,
             'approver_permission' => 'sales.orders.approve',
             'title' => 'Discount approval required',
-            'message' => "{$requesterName} resubmitted order #{$sale->order_num} for discount approval.",
-            'reason' => $approvalReason,
+            'message' => $presentation['message'],
+            'reason' => $presentation['reason'],
             'severity' => 'warning',
             'action_url' => $this->saleActionUrl($sale),
             'allow_duplicate_reference' => true,
@@ -331,15 +457,16 @@ class DiscountApprovalService
                 'lines' => $this->approvalLinesPayloadFromSale($sale),
                 'channel' => (string) ($sale->channel ?? 'mobile'),
                 'order_source' => (string) ($sale->order_source ?? ''),
+                'advised_discount_applied' => $presentation['advised_discount_applied'],
             ],
         ]);
 
-        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
-        $meta['discount_approval'] = array_merge($meta['discount_approval'] ?? [], [
+        $meta['discount_approval'] = array_merge($approvalMeta, [
             'action_request_id' => (int) $request->id,
             'scope' => 'order',
             'discount_amount' => $totals['total_discount'],
             'discount_percent' => null,
+            'advised_discount_applied' => $presentation['advised_discount_applied'],
         ]);
         $sale->update(['fulfillment_meta' => $meta]);
 
@@ -412,6 +539,10 @@ class DiscountApprovalService
         }
 
         if ($this->cartHasManualDiscount($cart)) {
+            return true;
+        }
+
+        if ($this->cartResubmitsRejectedDiscountOrder($cart)) {
             return true;
         }
 
@@ -634,6 +765,7 @@ class DiscountApprovalService
             'scope' => $payload['scope'] ?? null,
             'discount_amount' => $payload['discount_amount'] ?? null,
             'discount_percent' => $payload['discount_percent'] ?? null,
+            'advised_discount_applied' => ! empty($payload['advised_discount_applied']),
         ];
         $sale->update(['fulfillment_meta' => $meta]);
     }
@@ -654,7 +786,9 @@ class DiscountApprovalService
             return null;
         }
 
-        if (! $this->cartHasManualDiscount($cart) && (float) ($sale->order_discount ?? 0) <= 0.01) {
+        $resubmit = $this->cartResubmitsRejectedDiscountOrder($cart);
+
+        if (! $resubmit && ! $this->cartHasManualDiscount($cart) && (float) ($sale->order_discount ?? 0) <= 0.01) {
             $sale->loadMissing('items');
             $hasLineDiscount = $sale->items->contains(
                 fn ($item) => (float) ($item->discount_given ?? 0) > 0.01,
@@ -679,6 +813,38 @@ class DiscountApprovalService
             $approvalReason = trim((string) ($checkoutReason ?? ''));
         }
         if (! $this->hasValidApprovalReason($approvalReason)) {
+            $approvalReason = $resubmit
+                ? 'Resubmitted after discount revision'
+                : '';
+        }
+        if (! $resubmit && ! $this->hasValidApprovalReason($approvalReason)) {
+            return null;
+        }
+
+        $rejectionSource = $resubmit && $cart->superseded_sale_id
+            ? Sale::query()->find((int) $cart->superseded_sale_id)
+            : null;
+
+        $defaultMessage = $resubmit
+            ? "{$requesterName} resubmitted order #{$sale->order_num} for approval."
+            : "{$requesterName} requested order discounts on order #{$sale->order_num}.";
+
+        $presentation = $resubmit
+            ? $this->buildResubmitApprovalPresentation(
+                $sale,
+                $user,
+                true,
+                $rejectionSource,
+                $approvalReason,
+                $defaultMessage,
+            )
+            : [
+                'reason' => $approvalReason,
+                'message' => $defaultMessage,
+                'advised_discount_applied' => false,
+            ];
+
+        if (! $presentation['advised_discount_applied'] && ! $this->hasValidApprovalReason($presentation['reason'])) {
             return null;
         }
 
@@ -689,8 +855,8 @@ class DiscountApprovalService
             'reference_id' => (int) $sale->id,
             'approver_permission' => 'sales.orders.approve',
             'title' => 'Discount approval required',
-            'message' => "{$requesterName} requested order discounts on order #{$sale->order_num}.",
-            'reason' => $approvalReason,
+            'message' => $presentation['message'],
+            'reason' => $presentation['reason'],
             'severity' => 'warning',
             'action_url' => $this->saleActionUrl($sale),
             'allow_duplicate_reference' => true,
@@ -704,6 +870,7 @@ class DiscountApprovalService
                 'lines' => $this->approvalLinesPayloadFromSale($sale),
                 'channel' => (string) ($sale->channel ?? 'mobile'),
                 'order_source' => (string) ($sale->order_source ?? ''),
+                'advised_discount_applied' => $presentation['advised_discount_applied'],
             ],
         ]);
     }

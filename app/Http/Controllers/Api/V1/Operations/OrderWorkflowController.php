@@ -185,6 +185,12 @@ class OrderWorkflowController extends Controller
             );
         }
 
+        if ($from === 'editable' && $toStatus === 'booked') {
+            throw new InvalidArgumentException(
+                'Editable orders must be resubmitted for approval before they can be booked.',
+            );
+        }
+
         if (! $workflow->canTransition($from, $toStatus, $sale->channel)) {
             $allowed = array_values(array_filter(
                 $workflow->allowedTransitions($from, $sale->channel),

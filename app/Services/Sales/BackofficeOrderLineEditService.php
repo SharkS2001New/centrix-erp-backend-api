@@ -214,11 +214,15 @@ class BackofficeOrderLineEditService
             if ($wasEditable && $lineChanged) {
                 $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
                 $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+                $advisedApplied = $this->discounts->saleMatchesAdvisedDiscount($sale->fresh(['items']));
+                if ($advisedApplied) {
+                    $approval['advised_discount_applied'] = true;
+                }
                 unset($approval['rejected_at'], $approval['rejected_by'], $approval['rejection_reason'], $approval['rejection_guidance_type'], $approval['advised_discount_amount']);
                 $meta['discount_approval'] = $approval;
 
                 $gate = app(ErpContext::class)->gateForUser($user);
-                $updates['status'] = $this->discounts->saleRequiresPendingApproval($sale, $user, $gate)
+                $updates['status'] = $this->discounts->requiresDiscountResubmitApproval($sale, $user, $gate)
                     ? 'pending_approval'
                     : 'booked';
                 $updates['fulfillment_meta'] = $meta;
@@ -235,7 +239,12 @@ class BackofficeOrderLineEditService
                 );
             } elseif (($updates['status'] ?? null) === 'pending_approval' && $wasEditable) {
                 $gate = app(ErpContext::class)->gateForUser($user);
-                $this->discounts->resubmitSaleForApproval($sale->fresh(['items']), $user, $gate);
+                $this->discounts->resubmitSaleForApproval(
+                    $sale->fresh(['items']),
+                    $user,
+                    $gate,
+                    fromEditableSave: true,
+                );
             }
 
             if ($qtyChanged && ! $sale->stock_balanced) {

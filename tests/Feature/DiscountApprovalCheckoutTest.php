@@ -326,6 +326,76 @@ class DiscountApprovalCheckoutTest extends TestCase
         $this->assertSame(10.0, (float) ($approval['advised_discount_amount'] ?? 0));
     }
 
+    public function test_resubmitting_with_advised_discount_uses_confirmation_message(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->salesStaff();
+        Sanctum::actingAs($staff);
+
+        $cart = $this->createCartWithLine($staff);
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'order',
+            'discount_amount' => 30,
+            'reason' => 'Needs review',
+        ])->assertAccepted();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $requestId = ActionRequest::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $sale['id'])
+            ->value('id');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/action-requests/{$requestId}/reject", [
+            'reason' => 'Discount too high',
+            'discount_guidance' => 'advised_amount',
+            'advised_discount_amount' => 10,
+        ])->assertOk();
+
+        Sanctum::actingAs($staff);
+
+        $editCart = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$editCart['id']}/discount-requests", [
+            'scope' => 'order',
+            'discount_amount' => 10,
+            'defer_approval' => true,
+        ])->assertOk();
+
+        $resubmitted = $this->postJson("/api/v1/sales/carts/{$editCart['id']}/checkout", [
+            'save_only' => true,
+            'discount_approval_reason' => 'Staff follow-up note',
+        ])->assertCreated()
+            ->assertJsonPath('status', 'pending_approval')
+            ->json();
+
+        $confirmation = 'An update has been made to this order and the advised discount has been applied. Please confirm and approve.';
+
+        $this->assertDatabaseHas('action_requests', [
+            'reference_type' => 'sale',
+            'reference_id' => $resubmitted['id'],
+            'status' => 'pending',
+            'reason' => $confirmation,
+        ]);
+
+        $pendingRequest = ActionRequest::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $resubmitted['id'])
+            ->where('status', 'pending')
+            ->firstOrFail();
+
+        $this->assertTrue((bool) ($pendingRequest->payload['advised_discount_applied'] ?? false));
+        $this->assertStringContainsString('advised discount', strtolower((string) $pendingRequest->message));
+    }
+
     public function test_approving_discount_notifies_requester(): void
     {
         $this->enableDiscountApproval();
