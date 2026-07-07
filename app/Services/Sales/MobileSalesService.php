@@ -204,6 +204,7 @@ class MobileSalesService
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')
+            ->whereNotIn('status', ['pending_approval', 'editable'])
             ->orderByDesc('id')
             ->limit(20)
             ->get()

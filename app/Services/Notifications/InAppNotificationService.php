@@ -229,6 +229,7 @@ class InAppNotificationService
                     'order_discount' => $requestPayload['order_discount'] ?? null,
                     'lines' => $requestPayload['lines'] ?? [],
                     'advised_discount_applied' => ! empty($requestPayload['advised_discount_applied']),
+                    'discount_revision_submitted' => ! empty($requestPayload['discount_revision_submitted']),
                 ];
             }
 

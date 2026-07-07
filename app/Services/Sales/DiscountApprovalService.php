@@ -324,7 +324,7 @@ class DiscountApprovalService
 
     public function advisedDiscountAppliedApprovalReason(): string
     {
-        return 'An update has been made to this order and the advised discount has been applied. Please confirm and approve.';
+        return 'Order has been edited to apply the requested discount. Please check and confirm.';
     }
 
     public function saleAdvisedDiscountAmount(Sale $sale): ?float
@@ -416,7 +416,7 @@ class DiscountApprovalService
 
         return [
             'reason' => $this->advisedDiscountAppliedApprovalReason(),
-            'message' => "{$requesterName} updated order #{$sale->order_num} with the advised discount. Please confirm and approve.",
+            'message' => "{$requesterName} edited order #{$sale->order_num} to apply the requested discount. Please check and confirm.",
             'advised_discount_applied' => true,
         ];
     }
@@ -469,7 +469,7 @@ class DiscountApprovalService
         if ($advisedApplied) {
             $presentation = [
                 'reason' => $this->advisedDiscountAppliedApprovalReason(),
-                'message' => "{$requesterName} updated order #{$sale->order_num} with the advised discount. Please confirm and approve.",
+                'message' => "{$requesterName} edited order #{$sale->order_num} to apply the requested discount. Please check and confirm.",
                 'advised_discount_applied' => true,
             ];
         } else {
@@ -503,6 +503,7 @@ class DiscountApprovalService
                 'channel' => (string) ($sale->channel ?? 'mobile'),
                 'order_source' => (string) ($sale->order_source ?? ''),
                 'advised_discount_applied' => $presentation['advised_discount_applied'],
+                'discount_revision_submitted' => $fromEditableSave,
             ],
         ]);
 
@@ -522,29 +523,24 @@ class DiscountApprovalService
     public function approvalLinesPayload(TemporaryCart $cart): array
     {
         $cart->loadMissing('lines');
-        $display = app(SaleLineQuantityDisplayService::class);
 
-        return $cart->lines->map(function (CartLine $line) use ($display) {
+        return $cart->lines->map(function (CartLine $line) {
             $product = Product::query()->find($line->product_code);
             $isRetail = $product
                 ? (bool) $product->sell_on_retail && (bool) $line->on_wholesale_retail
                 : (bool) $line->on_wholesale_retail;
-            $qty = (float) $line->quantity;
-            $amount = (float) $line->amount;
-            $displayUnitPrice = $product
-                ? $display->displayUnitPrice($qty, $amount, $product, $isRetail)
-                : (float) $line->unit_price;
 
-            return [
-                'product_code' => (string) $line->product_code,
-                'product_name' => (string) ($line->product_name ?: $line->product_code),
-                'unit_price' => round($displayUnitPrice, 2),
-                'selling_price' => round((float) $line->unit_price, 2),
-                'discount_given' => round((float) ($line->discount_given ?? 0), 2),
-                'amount' => round($amount, 2),
-                'quantity' => $qty,
-                'uom' => $line->uom,
-            ];
+            return $this->presentApprovalLinePayload(
+                (string) $line->product_code,
+                (string) ($line->product_name ?: $line->product_code),
+                (float) $line->quantity,
+                (float) $line->amount,
+                (float) $line->unit_price,
+                (float) ($line->discount_given ?? 0),
+                $line->uom,
+                $isRetail,
+                $product,
+            );
         })->values()->all();
     }
 
@@ -552,28 +548,62 @@ class DiscountApprovalService
     public function approvalLinesPayloadFromSale(Sale $sale): array
     {
         $sale->loadMissing(['items.product']);
-        $display = app(SaleLineQuantityDisplayService::class);
 
-        return $sale->items->map(function ($item) use ($display) {
+        return $sale->items->map(function ($item) {
             $product = $item->product;
             $isRetail = (bool) $item->on_wholesale_retail;
-            $qty = (float) ($item->quantity ?? 0);
-            $amount = (float) ($item->amount ?? 0);
-            $displayUnitPrice = $product
-                ? $display->displayUnitPrice($qty, $amount, $product, $isRetail)
-                : (float) ($item->selling_price ?? 0);
 
-            return [
-                'product_code' => (string) $item->product_code,
-                'product_name' => (string) ($product?->product_name ?? $item->product_code),
-                'unit_price' => round($displayUnitPrice, 2),
-                'selling_price' => round((float) ($item->selling_price ?? 0), 2),
-                'discount_given' => round((float) ($item->discount_given ?? 0), 2),
-                'amount' => round($amount, 2),
-                'quantity' => $qty,
-                'uom' => $item->uom,
-            ];
+            return $this->presentApprovalLinePayload(
+                (string) $item->product_code,
+                (string) ($product?->product_name ?? $item->product_code),
+                (float) ($item->quantity ?? 0),
+                (float) ($item->amount ?? 0),
+                (float) ($item->selling_price ?? 0),
+                (float) ($item->discount_given ?? 0),
+                $item->uom,
+                $isRetail,
+                $product,
+            );
         })->values()->all();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function presentApprovalLinePayload(
+        string $productCode,
+        string $productName,
+        float $baseQty,
+        float $amount,
+        float $unitPriceStored,
+        float $discountGiven,
+        ?string $uom,
+        bool $isRetail,
+        ?Product $product,
+    ): array {
+        $display = app(SaleLineQuantityDisplayService::class);
+        $displayUnitPrice = $product
+            ? $display->displayUnitPrice($baseQty, $amount, $product, $isRetail)
+            : $unitPriceStored;
+        $qtyDisp = $product
+            ? $display->formatLineQtyDisplay($baseQty, $product, $isRetail, $uom)
+            : trim($baseQty.' '.trim((string) ($uom ?? '')));
+
+        return [
+            'product_code' => $productCode,
+            'product_name' => $productName,
+            'unit_price' => round($displayUnitPrice, 2),
+            'selling_price' => round($unitPriceStored, 2),
+            'discount_given' => round($discountGiven, 2),
+            'amount' => round($amount, 2),
+            'quantity' => $baseQty,
+            'display_quantity' => $product
+                ? $display->entryQtyFromBase($baseQty, $product, $isRetail)
+                : $baseQty,
+            'qty_disp' => $qtyDisp,
+            'uom' => $uom,
+            'on_wholesale_retail' => $isRetail ? 1 : 0,
+        ];
     }
 
     public function checkoutRequiresPendingApproval(TemporaryCart $cart, User $user, CapabilityGate $gate): bool
@@ -922,6 +952,7 @@ class DiscountApprovalService
                 'channel' => (string) ($sale->channel ?? 'mobile'),
                 'order_source' => (string) ($sale->order_source ?? ''),
                 'advised_discount_applied' => $presentation['advised_discount_applied'],
+                'discount_revision_submitted' => $resubmit && (int) ($cart->superseded_sale_id ?? 0) > 0,
             ],
         ]);
     }

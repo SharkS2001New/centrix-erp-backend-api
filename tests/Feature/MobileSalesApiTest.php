@@ -756,6 +756,65 @@ class MobileSalesApiTest extends TestCase
             ]);
     }
 
+    public function test_mobile_dashboard_recent_orders_exclude_workflow_queue_statuses(): void
+    {
+        $rep = $this->makeMobileUser(['username' => 'mobile_recent_'.uniqid()]);
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+
+        Sale::create([
+            'order_num' => 95001,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 10,
+            'order_total' => 100,
+            'payment_status' => 'paid',
+            'amount_paid' => 100,
+        ]);
+
+        Sale::create([
+            'order_num' => 95002,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'pending_approval',
+            'total_vat' => 20,
+            'order_total' => 200,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        Sale::create([
+            'order_num' => 95003,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'editable',
+            'total_vat' => 30,
+            'order_total' => 300,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        $token = $this->loginMobile($rep);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/dashboard')
+            ->assertOk()
+            ->assertJsonCount(1, 'recent_orders')
+            ->assertJsonPath('recent_orders.0.order_no', 95001);
+    }
+
     protected function setMobileCheckoutMode(User $user, string $mode): void
     {
         $org = $user->organization()->firstOrFail();

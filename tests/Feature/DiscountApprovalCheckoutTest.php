@@ -377,7 +377,7 @@ class DiscountApprovalCheckoutTest extends TestCase
             ->assertJsonPath('status', 'pending_approval')
             ->json();
 
-        $confirmation = 'An update has been made to this order and the advised discount has been applied. Please confirm and approve.';
+        $confirmation = 'Order has been edited to apply the requested discount. Please check and confirm.';
 
         $this->assertDatabaseHas('action_requests', [
             'reference_type' => 'sale',
@@ -393,7 +393,7 @@ class DiscountApprovalCheckoutTest extends TestCase
             ->firstOrFail();
 
         $this->assertTrue((bool) ($pendingRequest->payload['advised_discount_applied'] ?? false));
-        $this->assertStringContainsString('advised discount', strtolower((string) $pendingRequest->message));
+        $this->assertStringContainsString('requested discount', strtolower((string) $pendingRequest->message));
     }
 
     public function test_approving_discount_notifies_requester(): void
