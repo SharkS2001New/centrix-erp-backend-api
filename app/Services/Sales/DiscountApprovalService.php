@@ -191,8 +191,13 @@ class DiscountApprovalService
         array $salesSettings,
         float $discountAmount,
         string $field = 'discount_given',
+        ?TemporaryCart $cart = null,
     ): void {
         if ($discountAmount <= 0.01) {
+            return;
+        }
+
+        if ($cart !== null && $this->cartIsOrderEditSession($cart)) {
             return;
         }
 
@@ -313,7 +318,8 @@ class DiscountApprovalService
 
     public function cartIsOrderEditSession(TemporaryCart $cart): bool
     {
-        return (int) ($cart->superseded_sale_id ?? 0) > 0;
+        return (int) ($cart->superseded_sale_id ?? 0) > 0
+            || (int) ($cart->held_order_num ?? 0) > 0;
     }
 
     public function advisedDiscountAppliedApprovalReason(): string

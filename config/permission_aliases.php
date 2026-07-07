@@ -15,6 +15,7 @@ return [
         'mobile_sales.dashboard.view',
         'mobile_sales.orders.view',
         'mobile_sales.orders.create',
+        'mobile_sales.orders.edit',
         'mobile_sales.customers.view',
         'mobile_sales.customers.create',
         'mobile_sales.customers.edit',

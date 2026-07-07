@@ -96,6 +96,29 @@ class MobileSalesController extends Controller
         );
     }
 
+    /** PATCH /mobile/orders/{saleId}/editable-lines — revise discounts on rejected editable orders. */
+    public function updateEditableLines(Request $request, int $saleId)
+    {
+        $data = $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.id' => 'required|integer',
+            'items.*.quantity' => 'required|numeric|min:0.0001',
+            'items.*.discount_given' => 'sometimes|numeric|min:0',
+            'all_channels' => 'nullable|boolean',
+        ]);
+
+        $allChannels = filter_var($data['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        return response()->json(
+            $this->mobileSales->updateEditableOrderLines(
+                $request->user(),
+                $saleId,
+                $data['items'],
+                $allChannels,
+            ),
+        );
+    }
+
     /** POST /mobile/orders/{saleId}/returns — line or full-order return with stock restore. */
     public function storeReturn(Request $request, int $saleId)
     {

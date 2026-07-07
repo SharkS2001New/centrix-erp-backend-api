@@ -405,6 +405,39 @@ class MobileSalesService
         );
     }
 
+    /**
+     * @param  list<array{id: int, quantity: float|int|string, discount_given?: float|int|string|null}>  $items
+     * @return array<string, mixed>
+     */
+    public function updateEditableOrderLines(
+        User $user,
+        int $saleId,
+        array $items,
+        bool $allChannels = false,
+    ): array {
+        if ($allChannels && ! $this->mobileScope->canUseAllChannels($user)) {
+            $allChannels = false;
+        }
+
+        $sale = $this->mobileSalesQuery($user, $allChannels)->findOrFail($saleId);
+
+        if ((string) $sale->status !== 'editable') {
+            throw ValidationException::withMessages([
+                'status' => 'Only orders returned for discount revision can be edited here.',
+            ]);
+        }
+
+        $gate = $this->erp->gateForUser($user);
+        $updated = app(BackofficeOrderLineEditService::class)->updateLineQuantities(
+            $sale,
+            $user,
+            $items,
+            $gate,
+        );
+
+        return $this->showOrder($user, (int) $updated->id, $allChannels);
+    }
+
     public function canCancelSale(Sale $sale, User $user): bool
     {
         if (! $sale->created_at?->isSameDay(now())) {

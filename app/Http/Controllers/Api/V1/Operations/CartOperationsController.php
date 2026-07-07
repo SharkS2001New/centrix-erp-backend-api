@@ -237,6 +237,7 @@ class CartOperationsController extends Controller
                 'held_order_num' => $heldOrderNum,
                 'superseded_sale_id' => (int) $sale->id,
             ]);
+            $cart->refresh();
 
             foreach ($sale->items as $item) {
                 $this->addCartLine($cart, [
@@ -247,7 +248,7 @@ class CartOperationsController extends Controller
                     'product_vat' => $item->product_vat,
                     'discount_given' => $item->discount_given,
                     'on_wholesale_retail' => $item->on_wholesale_retail,
-                ], $user, $gate);
+                ], $user, $gate, allowRestoredOrderDiscounts: true);
             }
 
             $meta = array_merge($sale->fulfillment_meta ?? [], [
@@ -714,8 +715,13 @@ class CartOperationsController extends Controller
         return $cart;
     }
 
-    protected function addCartLine(TemporaryCart $cart, array $line, User $user, CapabilityGate $gate): CartLine
-    {
+    protected function addCartLine(
+        TemporaryCart $cart,
+        array $line,
+        User $user,
+        CapabilityGate $gate,
+        bool $allowRestoredOrderDiscounts = false,
+    ): CartLine {
         $product = $this->findProductForCart($cart, (string) $line['product_code'], $user);
         $qty = (float) ($line['quantity'] ?? 1);
         $onWholesaleRetailFlag = (bool) ($line['on_wholesale_retail'] ?? 0);
@@ -728,11 +734,13 @@ class CartOperationsController extends Controller
         );
         if (! $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             $discountGiven = 0;
-        } elseif (! $discountService->cartIsOrderEditSession($cart)) {
+        } elseif (! $allowRestoredOrderDiscounts && ! $discountService->cartIsOrderEditSession($cart)) {
             $discountService->assertDirectManualDiscountAllowed(
                 $user,
                 $salesSettings,
                 $discountGiven,
+                'discount_given',
+                $cart,
             );
         }
 
@@ -838,6 +846,8 @@ class CartOperationsController extends Controller
                 $user,
                 $salesSettings,
                 $discountGiven,
+                'discount_given',
+                $cart,
             );
         }
 
