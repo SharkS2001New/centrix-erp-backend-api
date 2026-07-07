@@ -190,8 +190,42 @@ class UserPermissionService
     public function permissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
         $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
+        $map = $this->expandLegacySalesOrderQueueView($map);
 
-        return $this->expandLegacySalesOrderQueueView($map);
+        if ($user->is_admin && $gate !== null) {
+            $map = $this->grantOrgAdminMobileAppPermissions($map, $gate);
+        }
+
+        return $map;
+    }
+
+    /** Org administrators get every mobile sales/driver permission when those modules are enabled. */
+    /** @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function grantOrgAdminMobileAppPermissions(array $map, CapabilityGate $gate): array
+    {
+        $aliases = config('permission_aliases', []);
+
+        if ($gate->mobileSalesEnabled()) {
+            foreach (['sales.create', 'mobile.access'] as $capability) {
+                foreach ($aliases[$capability] ?? [] as $code) {
+                    if (is_string($code) && str_starts_with($code, 'mobile_sales.')) {
+                        $map[$code] = true;
+                    }
+                }
+            }
+        }
+
+        if ($gate->driverMobileEnabled()) {
+            foreach ($aliases['driver.mobile'] ?? [] as $code) {
+                if (is_string($code) && str_starts_with($code, 'mobile_driver.')) {
+                    $map[$code] = true;
+                }
+            }
+        }
+
+        return $map;
     }
 
     /** @param  array<string, bool>  $map

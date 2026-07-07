@@ -71,6 +71,26 @@ class ModuleScopedPermissionsTest extends TestCase
         $this->assertFalse($map['accounting.chart_of_accounts.view'] ?? false);
     }
 
+    public function test_org_admin_capability_map_includes_mobile_sales_permissions(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::query()->findOrFail((int) $admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'enable_mobile_orders' => true,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $gate = app(ErpContext::class)->gateForUser($admin);
+        $map = app(UserPermissionService::class)->permissionMapForUser($admin, $gate);
+
+        $this->assertTrue($map['mobile_sales.dashboard.view'] ?? false);
+        $this->assertTrue($map['mobile_sales.orders.view'] ?? false);
+        $this->assertTrue($map['mobile_sales.orders.create'] ?? false);
+    }
+
     public function test_role_sync_strips_permissions_for_disabled_modules(): void
     {
         PermissionMatrixService::ensure();
