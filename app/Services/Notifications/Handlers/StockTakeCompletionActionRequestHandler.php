@@ -26,7 +26,7 @@ class StockTakeCompletionActionRequestHandler implements ActionRequestHandler
         $this->stockTakes->approve($request, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         // Variances are not posted on reject.
     }

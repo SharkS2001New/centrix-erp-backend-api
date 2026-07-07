@@ -578,7 +578,7 @@ class DiscountApprovalService
         $this->applyFromActionRequest($request);
     }
 
-    public function rejectFromActionRequest(ActionRequest $request, User $user, ?string $reason): void
+    public function rejectFromActionRequest(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         if ($request->reference_type !== 'sale') {
             return;
@@ -592,11 +592,30 @@ class DiscountApprovalService
             return;
         }
 
+        $guidance = (string) ($options['discount_guidance'] ?? 'remove_discount');
+        if (! in_array($guidance, ['remove_discount', 'advised_amount'], true)) {
+            throw ValidationException::withMessages([
+                'discount_guidance' => 'Choose whether to remove the discount or advise an amount.',
+            ]);
+        }
+
+        $advisedAmount = null;
+        if ($guidance === 'advised_amount') {
+            $advisedAmount = round((float) ($options['advised_discount_amount'] ?? -1), 2);
+            if ($advisedAmount < 0) {
+                throw ValidationException::withMessages([
+                    'advised_discount_amount' => 'Enter the advised discount amount.',
+                ]);
+            }
+        }
+
         $meta = $sale->fulfillment_meta ?? [];
         $meta['discount_approval'] = array_merge($meta['discount_approval'] ?? [], [
             'rejected_at' => now()->toIso8601String(),
             'rejected_by' => (int) $user->id,
             'rejection_reason' => $reason,
+            'rejection_guidance_type' => $guidance,
+            'advised_discount_amount' => $advisedAmount,
         ]);
 
         $sale->update([

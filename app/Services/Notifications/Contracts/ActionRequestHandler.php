@@ -13,5 +13,5 @@ interface ActionRequestHandler
 
     public function approve(ActionRequest $request, User $user): void;
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void;
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void;
 }

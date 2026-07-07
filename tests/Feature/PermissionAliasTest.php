@@ -162,6 +162,52 @@ class PermissionAliasTest extends TestCase
         $this->assertTrue($service->permissionMapForUser($user->fresh())['sales.manage']);
     }
 
+    public function test_is_admin_without_approve_permission_cannot_approve_discounts(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        PermissionMatrixService::ensure();
+
+        $role = Role::create([
+            'role_name' => 'Admin Shell',
+            'scope' => 'org',
+            'is_active' => true,
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'admin_shell',
+            'password' => Hash::make('password'),
+            'full_name' => 'Admin Shell',
+            'access_scope' => 'org',
+            'is_admin' => true,
+            'is_active' => true,
+        ]);
+
+        $service = app(UserPermissionService::class);
+        $this->assertFalse($service->canApproveSalesOrders($user->fresh()));
+        $this->assertFalse($service->canGiveDiscountDirectly($user->fresh()));
+    }
+
+    public function test_administrator_role_receives_discount_approve_on_sync(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $approveId = (int) Permission::where('permission_code', 'sales.orders.approve')->value('id');
+        $this->assertNotNull($approveId);
+
+        $adminRole = Role::query()->where('role_name', 'Administrator')->first();
+        $this->assertNotNull($adminRole);
+
+        $this->assertTrue(
+            DB::table('role_permissions')
+                ->where('role_id', $adminRole->id)
+                ->where('permission_id', $approveId)
+                ->exists()
+        );
+    }
+
     public function test_catalogue_product_edit_satisfies_products_manage(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

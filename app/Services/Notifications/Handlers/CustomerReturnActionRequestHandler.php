@@ -39,7 +39,7 @@ class CustomerReturnActionRequestHandler implements ActionRequestHandler
         $this->returns->approve($return, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         $return = CustomerReturn::query()
             ->where('organization_id', $request->organization_id)

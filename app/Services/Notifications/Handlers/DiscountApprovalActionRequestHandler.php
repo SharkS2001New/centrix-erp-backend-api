@@ -34,8 +34,8 @@ class DiscountApprovalActionRequestHandler implements ActionRequestHandler
         $this->discounts->approveFromActionRequest($request, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
-        $this->discounts->rejectFromActionRequest($request, $user, $reason);
+        $this->discounts->rejectFromActionRequest($request, $user, $reason, $options);
     }
 }

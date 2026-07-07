@@ -213,7 +213,7 @@ class BackofficeOrderLineEditService
             if ($wasEditable && $lineChanged) {
                 $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
                 $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
-                unset($approval['rejected_at'], $approval['rejected_by'], $approval['rejection_reason']);
+                unset($approval['rejected_at'], $approval['rejected_by'], $approval['rejection_reason'], $approval['rejection_guidance_type'], $approval['advised_discount_amount']);
                 $meta['discount_approval'] = $approval;
                 $updates['status'] = 'booked';
                 $updates['fulfillment_meta'] = $meta;

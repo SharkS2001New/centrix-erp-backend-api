@@ -28,7 +28,7 @@ class LpoApprovalActionRequestHandler implements ActionRequestHandler
         $this->lpos->approve($request, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         $this->lpos->reject($request, $user, $reason);
     }

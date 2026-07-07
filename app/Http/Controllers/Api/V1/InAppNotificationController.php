@@ -117,15 +117,31 @@ class InAppNotificationController extends Controller
 
     public function rejectActionRequest(Request $request, string $id)
     {
-        $data = $request->validate([
-            'reason' => 'required|string|min:3',
-        ]);
-
         $actionRequest = ActionRequest::query()
             ->where('organization_id', $request->user()->organization_id)
             ->findOrFail((int) $id);
 
-        $resolved = $this->actionRequests->reject($actionRequest, $request->user(), $data['reason']);
+        $rules = [
+            'reason' => 'required|string|min:3',
+        ];
+        if ($actionRequest->type === 'discount') {
+            $rules['discount_guidance'] = 'required|in:remove_discount,advised_amount';
+            $rules['advised_discount_amount'] = 'required_if:discount_guidance,advised_amount|nullable|numeric|min:0';
+        }
+
+        $data = $request->validate($rules);
+
+        $options = [];
+        if ($actionRequest->type === 'discount') {
+            $options = [
+                'discount_guidance' => (string) $data['discount_guidance'],
+                'advised_discount_amount' => ($data['discount_guidance'] ?? '') === 'advised_amount'
+                    ? round((float) ($data['advised_discount_amount'] ?? 0), 2)
+                    : null,
+            ];
+        }
+
+        $resolved = $this->actionRequests->reject($actionRequest, $request->user(), $data['reason'], $options);
 
         return response()->json([
             'data' => [

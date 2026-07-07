@@ -28,7 +28,7 @@ class StockTransferActionRequestHandler implements ActionRequestHandler
         $this->transfers->applyFromActionRequest($request, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         // No stock movement on reject.
     }

@@ -26,7 +26,7 @@ class DamageWriteOffActionRequestHandler implements ActionRequestHandler
         $this->damages->approve($request, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         // No stock deduction on reject.
     }

@@ -21,10 +21,13 @@ class InAppNotificationMailDelivery
         }
 
         $settings = NotificationSettingsResolver::forOrganization($organization);
-        $isApproval = $notification->type === 'approval';
-        $enabled = $isApproval
-            ? ! empty($settings['notify_on_approval_request'])
-            : ! empty($settings['notify_on_approval_outcome']);
+        $isApprovalRequest = $notification->type === 'approval';
+        $isApprovalOutcome = in_array($notification->type, ['approval_outcome', 'info'], true);
+        $enabled = match (true) {
+            $isApprovalRequest => ! empty($settings['notify_on_approval_request']),
+            $isApprovalOutcome => ! empty($settings['notify_on_approval_outcome']),
+            default => false,
+        };
 
         if (! $enabled || empty($settings['email_enabled'])) {
             return;
@@ -38,7 +41,7 @@ class InAppNotificationMailDelivery
             'organization_name' => trim((string) ($organization->org_name ?? '')),
         ];
 
-        if ($isApproval) {
+        if ($isApprovalRequest) {
             $subjectTemplate = (string) ($settings['approval_request_email_subject'] ?? '');
             $bodyTemplate = (string) ($settings['approval_request_email_template'] ?? '');
         } else {

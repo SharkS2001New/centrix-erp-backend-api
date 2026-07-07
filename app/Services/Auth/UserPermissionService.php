@@ -53,6 +53,22 @@ class UserPermissionService
     }
 
     /** @return list<int> */
+    public function roleAssignedPermissionIds(User $user): array
+    {
+        $roleIds = collect($this->rolePermissionIds($user->role_id));
+        $grants = collect($this->grantIds((int) $user->id));
+        $denies = collect($this->denyIds((int) $user->id));
+
+        return $roleIds
+            ->merge($grants)
+            ->diff($denies)
+            ->unique()
+            ->values()
+            ->map(fn ($id) => (int) $id)
+            ->all();
+    }
+
+    /** @return list<int> */
     public function effectivePermissionIds(User $user): array
     {
         if ($user->is_admin) {
@@ -122,21 +138,32 @@ class UserPermissionService
   /** Whether the user holds a feature permission on their role/overrides (no capability aliases). */
     public function hasAssignedPermission(User $user, string $permissionCode): bool
     {
-        return $this->hasDirectPermission($user, $permissionCode);
+        return $this->hasRoleAssignedPermission($user, $permissionCode);
+    }
+
+    public function hasRoleAssignedPermission(User $user, string $permissionCode): bool
+    {
+        $permissionId = Permission::query()
+            ->where('permission_code', $permissionCode)
+            ->value('id');
+
+        if (! $permissionId) {
+            return false;
+        }
+
+        return in_array((int) $permissionId, $this->roleAssignedPermissionIds($user), true);
     }
 
     /** Managers who may approve discount requests submitted by other staff. */
     public function canApproveSalesOrders(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->hasDirectPermission($user, 'sales.orders.approve');
+        return $this->hasRoleAssignedPermission($user, 'sales.orders.approve');
     }
 
     /** Staff who may apply discounts directly without approval workflow or reason. */
     public function canGiveDiscountDirectly(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->hasDirectPermission($user, 'sales.discounts.give');
+        return $this->hasRoleAssignedPermission($user, 'sales.discounts.give');
     }
 
     protected function hasDirectPermission(User $user, string $permissionCode): bool
@@ -155,32 +182,22 @@ class UserPermissionService
     /** @return array<string, bool> Feature permission codes assigned to the user (no capability alias expansion). */
     public function directPermissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
-        if ($user->is_admin) {
-            $permissions = Permission::query()->get();
-            if ($gate !== null) {
-                $permissions = $permissions->filter(
-                    fn (Permission $permission) => PermissionMatrixService::isRegistryModuleEnabled(
-                        (string) $permission->module,
-                        $gate,
-                    ),
-                );
-            }
+        $permissions = Permission::query()
+            ->whereIn('id', $this->roleAssignedPermissionIds($user))
+            ->get();
 
-            $map = [];
-            foreach ($permissions as $permission) {
-                $map[(string) $permission->permission_code] = true;
-            }
-
-            return $map;
+        if ($gate !== null) {
+            $permissions = $permissions->filter(
+                fn (Permission $permission) => PermissionMatrixService::isRegistryModuleEnabled(
+                    (string) $permission->module,
+                    $gate,
+                ),
+            );
         }
 
-        $codes = Permission::query()
-            ->whereIn('id', $this->effectivePermissionIds($user))
-            ->pluck('permission_code');
-
         $map = [];
-        foreach ($codes as $code) {
-            $map[$code] = true;
+        foreach ($permissions as $permission) {
+            $map[(string) $permission->permission_code] = true;
         }
 
         return $map;
@@ -303,11 +320,17 @@ class UserPermissionService
     /** @return Collection<int, User> */
     public function usersWithPermission(int $organizationId, string $permissionCode): Collection
     {
+        return $this->usersWithAssignedPermission($organizationId, $permissionCode);
+    }
+
+    /** @return Collection<int, User> */
+    public function usersWithAssignedPermission(int $organizationId, string $permissionCode): Collection
+    {
         return User::query()
             ->where('organization_id', $organizationId)
             ->where('is_active', true)
             ->get()
-            ->filter(fn (User $user) => $this->hasPermission($user, $permissionCode))
+            ->filter(fn (User $user) => $this->hasRoleAssignedPermission($user, $permissionCode))
             ->values();
     }
 

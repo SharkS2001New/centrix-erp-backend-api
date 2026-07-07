@@ -40,7 +40,7 @@ class SupplierReturnActionRequestHandler implements ActionRequestHandler
         $this->returns->approve($doc, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         $doc = SupplierReturnDocument::query()
             ->where('organization_id', $request->organization_id)

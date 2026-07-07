@@ -6,9 +6,11 @@ use App\Models\ActionRequest;
 use App\Models\ApprovalAction;
 use App\Models\InAppNotification;
 use App\Models\Organization;
+use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\Contracts\ActionRequestHandler;
+use App\Services\Sales\SaleOrderPresentationService;
 use App\Services\Notifications\Handlers\CustomerReturnActionRequestHandler;
 use App\Services\Notifications\Handlers\CashAdvanceActionRequestHandler;
 use App\Services\Notifications\Handlers\DamageWriteOffActionRequestHandler;
@@ -145,9 +147,15 @@ class ActionRequestService
         return $this->resolve($request, $approver, 'approved', fn (ActionRequestHandler $handler) => $handler->approve($request, $approver));
     }
 
-    public function reject(ActionRequest $request, User $approver, ?string $reason = null): ActionRequest
+    public function reject(ActionRequest $request, User $approver, ?string $reason = null, array $options = []): ActionRequest
     {
-        return $this->resolve($request, $approver, 'rejected', fn (ActionRequestHandler $handler) => $handler->reject($request, $approver, $reason), $reason);
+        return $this->resolve(
+            $request,
+            $approver,
+            'rejected',
+            fn (ActionRequestHandler $handler) => $handler->reject($request, $approver, $reason, $options),
+            $reason,
+        );
     }
 
     public function markResolvedFromDomain(
@@ -282,33 +290,67 @@ class ActionRequestService
             return;
         }
 
-        $approved = $outcome === 'approved';
-        if (! $this->inAppApprovalOutcomeEnabled($requester)) {
+        if (! $this->shouldNotifyRequesterOfOutcome($request, $requester)) {
             return;
         }
 
+        $approved = $outcome === 'approved';
         $message = $approved
             ? "Your request \"{$request->title}\" was approved by {$actor->full_name}."
             : "Your request \"{$request->title}\" was rejected by {$actor->full_name}.";
 
-        if ($request->type === 'discount' && ! $approved) {
+        if ($request->type === 'discount') {
             $orderNum = (int) (($request->payload ?? [])['order_num'] ?? 0);
             $orderLabel = $orderNum > 0 ? "order #{$orderNum}" : 'your order';
-            $message = "Your discount on {$orderLabel} was rejected. Please contact the office for further follow-up.";
-            if ($comment) {
-                $message .= " Reason: {$comment}";
+
+            if ($approved) {
+                $message = "Your discount on {$orderLabel} was approved by {$actor->full_name}.";
+            } else {
+                $message = "Your discount on {$orderLabel} was rejected. Please contact the office for further follow-up.";
+                if ($comment) {
+                    $message .= " Reason: {$comment}";
+                }
+                $sale = $request->reference_type === 'sale'
+                    ? Sale::query()->find((int) $request->reference_id)
+                    : null;
+                $approvalMeta = is_array($sale?->fulfillment_meta['discount_approval'] ?? null)
+                    ? $sale->fulfillment_meta['discount_approval']
+                    : [];
+                $guidance = app(SaleOrderPresentationService::class)->discountRejectionGuidanceMessage($approvalMeta);
+                if ($guidance !== '') {
+                    $message .= " {$guidance}.";
+                }
             }
+        } elseif (! $approved && $comment) {
+            $message .= " Reason: {$comment}";
         }
+
+        $title = match (true) {
+            $request->type === 'discount' && $approved => 'Discount approved',
+            $request->type === 'discount' => 'Discount rejected',
+            $approved => 'Request approved',
+            default => 'Request rejected',
+        };
 
         $this->notifications->createForUser($requester, [
             'organization_id' => $request->organization_id,
-            'type' => 'info',
+            'action_request_id' => (int) $request->id,
+            'type' => 'approval_outcome',
             'severity' => $approved ? 'success' : 'danger',
-            'title' => $approved ? 'Request approved' : 'Request rejected',
+            'title' => $title,
             'message' => $message,
             'action_url' => $request->payload['action_url'] ?? null,
             'created_by' => $actor->id,
         ]);
+    }
+
+    protected function shouldNotifyRequesterOfOutcome(ActionRequest $request, User $requester): bool
+    {
+        if ($request->type === 'discount') {
+            return true;
+        }
+
+        return $this->inAppApprovalOutcomeEnabled($requester);
     }
 
     protected function inAppApprovalRequestEnabled(User $user): bool

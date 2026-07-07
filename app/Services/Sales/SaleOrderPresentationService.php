@@ -65,9 +65,27 @@ class SaleOrderPresentationService
             'rejected' => true,
             'rejected_at' => $approval['rejected_at'] ?? null,
             'rejection_reason' => $approval['rejection_reason'] ?? null,
+            'rejection_guidance_type' => $approval['rejection_guidance_type'] ?? 'remove_discount',
+            'advised_discount_amount' => isset($approval['advised_discount_amount'])
+                ? round((float) $approval['advised_discount_amount'], 2)
+                : null,
+            'guidance_message' => $this->discountRejectionGuidanceMessage($approval),
             'follow_up_message' => 'Your discount was not approved. Please contact the office for further follow-up.',
             'highlight' => 'discount_rejected',
         ];
+    }
+
+    /** @param  array<string, mixed>  $approval */
+    public function discountRejectionGuidanceMessage(array $approval): string
+    {
+        $guidance = (string) ($approval['rejection_guidance_type'] ?? 'remove_discount');
+        if ($guidance === 'advised_amount') {
+            $amount = round((float) ($approval['advised_discount_amount'] ?? 0), 2);
+
+            return 'Advised discount: KES '.number_format($amount, 2);
+        }
+
+        return 'Remove all discounts from this order';
     }
 
     /** @return array<string, mixed>|null */

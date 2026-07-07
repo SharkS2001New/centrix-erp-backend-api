@@ -33,7 +33,7 @@ class LeaveActionRequestHandler implements ActionRequestHandler
         $this->leave->approve($leave, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         $leave = EmployeeLeaveDay::query()
             ->where('organization_id', $request->organization_id)

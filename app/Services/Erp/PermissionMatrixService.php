@@ -44,6 +44,7 @@ class PermissionMatrixService
         self::ensureCapabilityCodes();
         self::remapLegacyPermissionAssignments();
         self::ensureDiscountGiveForAdminRoles();
+        self::ensureSalesOrderApproveForAdminRoles();
     }
 
     public static function ensureRegistryPermissions(): void
@@ -311,6 +312,29 @@ class PermissionMatrixService
             \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
                 'role_id' => $roleId,
                 'permission_id' => $giveId,
+            ]);
+        }
+    }
+
+    /** Org administrators should be able to approve discount requests. */
+    public static function ensureSalesOrderApproveForAdminRoles(): void
+    {
+        $approveId = Permission::query()
+            ->where('permission_code', 'sales.orders.approve')
+            ->value('id');
+
+        if (! $approveId) {
+            return;
+        }
+
+        $roleIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Administrator', 'Admin'])
+            ->pluck('id');
+
+        foreach ($roleIds as $roleId) {
+            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                'role_id' => $roleId,
+                'permission_id' => $approveId,
             ]);
         }
     }

@@ -315,8 +315,117 @@ class DiscountApprovalCheckoutTest extends TestCase
 
         $this->postJson("/api/v1/action-requests/{$requestId}/reject", [
             'reason' => 'Discount too high',
+            'discount_guidance' => 'advised_amount',
+            'advised_discount_amount' => 10,
         ])->assertOk();
 
-        $this->assertSame('editable', Sale::query()->findOrFail($sale['id'])->status);
+        $sale = Sale::query()->findOrFail($sale['id']);
+        $this->assertSame('editable', $sale->status);
+        $approval = $sale->fulfillment_meta['discount_approval'] ?? [];
+        $this->assertSame('advised_amount', $approval['rejection_guidance_type'] ?? null);
+        $this->assertSame(10.0, (float) ($approval['advised_discount_amount'] ?? 0));
+    }
+
+    public function test_approving_discount_notifies_requester(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->salesStaff();
+        Sanctum::actingAs($staff);
+
+        $cart = $this->createCartWithLine($staff);
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'order',
+            'discount_amount' => 25,
+            'reason' => 'Promotional offer',
+        ])->assertAccepted();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $requestId = ActionRequest::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $sale['id'])
+            ->value('id');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/action-requests/{$requestId}/approve")
+            ->assertOk();
+
+        $this->assertDatabaseHas('in_app_notifications', [
+            'user_id' => $staff->id,
+            'type' => 'approval_outcome',
+            'is_read' => false,
+        ]);
+
+        Sanctum::actingAs($staff);
+
+        $this->getJson('/api/v1/notifications/unread-count')
+            ->assertOk()
+            ->assertJsonPath('count', 1);
+
+        $list = $this->getJson('/api/v1/notifications')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertNotEmpty($list);
+        $this->assertSame('approval_outcome', $list[0]['type']);
+        $this->assertStringContainsString('discount', strtolower($list[0]['message']));
+        $this->assertStringContainsString('approved', strtolower($list[0]['message']));
+    }
+
+    public function test_rejecting_discount_notifies_requester(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->salesStaff();
+        Sanctum::actingAs($staff);
+
+        $cart = $this->createCartWithLine($staff);
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'order',
+            'discount_amount' => 30,
+            'reason' => 'Needs review',
+        ])->assertAccepted();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $requestId = ActionRequest::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $sale['id'])
+            ->value('id');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson("/api/v1/action-requests/{$requestId}/reject", [
+            'reason' => 'Discount too high',
+            'discount_guidance' => 'remove_discount',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('in_app_notifications', [
+            'user_id' => $staff->id,
+            'type' => 'approval_outcome',
+            'is_read' => false,
+        ]);
+
+        Sanctum::actingAs($staff);
+
+        $this->getJson('/api/v1/notifications/unread-count')
+            ->assertOk()
+            ->assertJsonPath('count', 1);
+
+        $list = $this->getJson('/api/v1/notifications')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertNotEmpty($list);
+        $this->assertSame('approval_outcome', $list[0]['type']);
+        $this->assertStringContainsString('rejected', strtolower($list[0]['message']));
     }
 }

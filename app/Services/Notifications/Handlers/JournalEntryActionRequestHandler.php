@@ -28,7 +28,7 @@ class JournalEntryActionRequestHandler implements ActionRequestHandler
         $this->journals->postFromActionRequest($request, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         // Draft remains editable.
     }

@@ -26,7 +26,7 @@ class PayrollRunActionRequestHandler implements ActionRequestHandler
         $this->payroll->approve($request, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         $this->payroll->reject($request, $user, $reason);
     }

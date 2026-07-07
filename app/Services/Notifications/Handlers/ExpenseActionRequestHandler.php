@@ -26,7 +26,7 @@ class ExpenseActionRequestHandler implements ActionRequestHandler
         $this->expenses->apply($request, $user);
     }
 
-    public function reject(ActionRequest $request, User $user, ?string $reason): void
+    public function reject(ActionRequest $request, User $user, ?string $reason, array $options = []): void
     {
         // No accounting movement on reject.
     }
