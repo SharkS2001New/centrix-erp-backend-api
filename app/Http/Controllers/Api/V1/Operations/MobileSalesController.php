@@ -64,6 +64,7 @@ class MobileSalesController extends Controller
         $filters = $request->validate([
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date',
+            'status' => 'nullable|in:pending_approval,editable',
             'q' => 'nullable|string|max:200',
             'per_page' => 'nullable|integer|min:1|max:200',
             'all_channels' => 'nullable|boolean',

@@ -53,6 +53,15 @@ class NotificationActionUrlBuilder
         return self::discountCartUrl($payload);
     }
 
+    public static function discountEditableActionUrl(?array $payload = null): string
+    {
+        $channel = strtolower((string) ($payload['channel'] ?? ''));
+
+        return $channel === 'mobile'
+            ? '/mobile/orders?status=editable'
+            : '/sales/orders/queues/editable';
+    }
+
     /** @param  array<string, mixed>|null  $payload */
     public static function discountCartUrl(?array $payload = null): string
     {

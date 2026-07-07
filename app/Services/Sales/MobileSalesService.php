@@ -67,13 +67,13 @@ class MobileSalesService
 
         return [
             'mobile_context' => $this->mobileScope->mobileContext($user),
-            'summary' => [
+            'summary' => array_merge([
                 'NoofOrders' => (int) ($summaryRow->order_count ?? 0),
                 'vatTotals' => (float) ($summaryRow->vat_total ?? 0),
                 'orderTotals' => (float) ($summaryRow->order_total ?? 0),
                 'noofPaidOrders' => (int) ($summaryRow->paid_count ?? 0),
                 'noofCustomers' => (int) $customerCount->count(),
-            ],
+            ], $this->workflowQueueCounts($user, $allChannels)),
             'recent_orders' => $this->recentOrders($user, $from, $to, $allChannels),
             'weekly_sales' => $this->trendSales($user, $to->copy()->subDays(6), $to, $allChannels),
             'monthly_sales' => $this->trendSales($user, $to->copy()->subDays(29), $to, $allChannels),
@@ -98,11 +98,22 @@ class MobileSalesService
         }
 
         $query = $this->mobileSalesQuery($user, $allChannels)
-            ->with('customer')
-            ->whereDate('created_at', '>=', $from->toDateString())
-            ->whereDate('created_at', '<=', $to->toDateString())
-            ->where('status', '!=', 'cancelled')
-            ->orderByDesc('id');
+            ->with('customer');
+
+        $workflowStatus = in_array((string) ($filters['status'] ?? ''), ['pending_approval', 'editable'], true)
+            ? (string) $filters['status']
+            : null;
+
+        if ($workflowStatus) {
+            $query->where('status', $workflowStatus);
+        } else {
+            $query
+                ->whereDate('created_at', '>=', $from->toDateString())
+                ->whereDate('created_at', '<=', $to->toDateString())
+                ->where('status', '!=', 'cancelled');
+        }
+
+        $query->orderByDesc('id');
 
         if ($q = trim((string) ($filters['q'] ?? ''))) {
             SqlLikeSearch::applySalesOrderSearch($query, $q, includeCustomerRelation: true);
@@ -339,6 +350,17 @@ class MobileSalesService
         return $query;
     }
 
+    /** @return array{pending_approval_count: int, editable_count: int} */
+    protected function workflowQueueCounts(User $user, bool $allChannels = false): array
+    {
+        $base = $this->mobileSalesQuery($user, $allChannels);
+
+        return [
+            'pending_approval_count' => (int) (clone $base)->where('status', 'pending_approval')->count(),
+            'editable_count' => (int) (clone $base)->where('status', 'editable')->count(),
+        ];
+    }
+
     /** @return array<string, mixed> */
     protected function presentOrderSummary(Sale $sale): array
     {
@@ -348,6 +370,7 @@ class MobileSalesService
         return [
             'id' => $sale->id,
             'order_no' => (int) $sale->order_num,
+            'customer_num' => $sale->customer_num ? (int) $sale->customer_num : null,
             'customer_name' => $sale->customer?->customer_name
                 ?? $sale->customer_name_override
                 ?? 'Walk-in',
@@ -371,7 +394,7 @@ class MobileSalesService
 
     public function canRestoreSaleToCart(Sale $sale, User $user): bool
     {
-        if (! $sale->created_at?->isSameDay(now())) {
+        if ((string) $sale->status !== 'editable' && ! $sale->created_at?->isSameDay(now())) {
             return false;
         }
 

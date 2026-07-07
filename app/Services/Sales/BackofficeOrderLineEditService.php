@@ -10,6 +10,7 @@ use App\Models\SaleItem;
 use App\Models\User;
 use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Sales\DiscountApprovalService;
@@ -215,7 +216,11 @@ class BackofficeOrderLineEditService
                 $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
                 unset($approval['rejected_at'], $approval['rejected_by'], $approval['rejection_reason'], $approval['rejection_guidance_type'], $approval['advised_discount_amount']);
                 $meta['discount_approval'] = $approval;
-                $updates['status'] = 'booked';
+
+                $gate = app(ErpContext::class)->gateForUser($user);
+                $updates['status'] = $this->discounts->saleRequiresPendingApproval($sale, $user, $gate)
+                    ? 'pending_approval'
+                    : 'booked';
                 $updates['fulfillment_meta'] = $meta;
             }
 
@@ -228,6 +233,9 @@ class BackofficeOrderLineEditService
                     $orderTotal,
                     $amountPaid,
                 );
+            } elseif (($updates['status'] ?? null) === 'pending_approval' && $wasEditable) {
+                $gate = app(ErpContext::class)->gateForUser($user);
+                $this->discounts->resubmitSaleForApproval($sale->fresh(['items']), $user, $gate);
             }
 
             if ($qtyChanged && ! $sale->stock_balanced) {

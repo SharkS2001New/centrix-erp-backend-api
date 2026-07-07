@@ -143,10 +143,27 @@ class DiscountApprovalService
         $channel = strtolower((string) ($sale->channel ?: 'backend'));
 
         if ($channel === 'mobile') {
+            if ((string) $sale->status === 'editable') {
+                return '/mobile/orders?status=editable';
+            }
+
             return '/sales/orders/queues/mobile';
         }
 
+        if ((string) $sale->status === 'editable') {
+            return '/sales/orders/queues/editable';
+        }
+
         return '/sales/orders/queues/pending-approval';
+    }
+
+    public function saleEditableActionUrl(Sale $sale): string
+    {
+        $channel = strtolower((string) ($sale->channel ?: 'backend'));
+
+        return $channel === 'mobile'
+            ? '/mobile/orders?status=editable'
+            : '/sales/orders/queues/editable';
     }
 
     public function canAutoApproveDiscount(User $user): bool
@@ -232,6 +249,101 @@ class DiscountApprovalService
         }
 
         return false;
+    }
+
+    public function saleHasManualDiscount(Sale $sale): bool
+    {
+        if ((float) ($sale->order_discount ?? 0) > 0.01) {
+            return true;
+        }
+
+        $sale->loadMissing('items');
+
+        return $sale->items->contains(
+            fn ($item) => (float) ($item->discount_given ?? 0) > 0.01,
+        );
+    }
+
+    public function saleRequiresPendingApproval(Sale $sale, User $user, CapabilityGate $gate): bool
+    {
+        $salesSettings = $gate->moduleSettings('sales');
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+            return false;
+        }
+
+        return $this->saleHasManualDiscount($sale);
+    }
+
+    public function resubmitSaleForApproval(
+        Sale $sale,
+        User $user,
+        CapabilityGate $gate,
+        ?string $reason = null,
+    ): ?ActionRequest {
+        if (! $this->saleRequiresPendingApproval($sale, $user, $gate)) {
+            return null;
+        }
+
+        $approvalReason = trim((string) $reason);
+        if (! $this->hasValidApprovalReason($approvalReason)) {
+            $lastRequest = ActionRequest::query()
+                ->where('organization_id', $sale->organization_id)
+                ->where('reference_type', 'sale')
+                ->where('reference_id', $sale->id)
+                ->where('type', 'discount')
+                ->orderByDesc('id')
+                ->first();
+            $approvalReason = trim((string) ($lastRequest?->reason ?? ''));
+        }
+        if (! $this->hasValidApprovalReason($approvalReason)) {
+            $approvalReason = 'Resubmitted after discount revision';
+        }
+
+        $lineDiscountTotal = round((float) $sale->items->sum('discount_given'), 2);
+        $orderDiscount = round((float) ($sale->order_discount ?? 0), 2);
+        $totals = [
+            'line_discount_total' => $lineDiscountTotal,
+            'order_discount' => $orderDiscount,
+            'total_discount' => round($lineDiscountTotal + $orderDiscount, 2),
+        ];
+
+        $requesterName = $user->full_name ?: $user->username;
+
+        $request = app(ActionRequestService::class)->requestApproval($user, [
+            'type' => 'discount',
+            'module' => 'sales',
+            'reference_type' => 'sale',
+            'reference_id' => (int) $sale->id,
+            'approver_permission' => 'sales.orders.approve',
+            'title' => 'Discount approval required',
+            'message' => "{$requesterName} resubmitted order #{$sale->order_num} for discount approval.",
+            'reason' => $approvalReason,
+            'severity' => 'warning',
+            'action_url' => $this->saleActionUrl($sale),
+            'allow_duplicate_reference' => true,
+            'payload' => [
+                'scope' => 'order',
+                'discount_amount' => $totals['total_discount'],
+                'line_discount_total' => $totals['line_discount_total'],
+                'sale_id' => (int) $sale->id,
+                'order_num' => (int) $sale->order_num,
+                'order_discount' => $totals['order_discount'],
+                'lines' => $this->approvalLinesPayloadFromSale($sale),
+                'channel' => (string) ($sale->channel ?? 'mobile'),
+                'order_source' => (string) ($sale->order_source ?? ''),
+            ],
+        ]);
+
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $meta['discount_approval'] = array_merge($meta['discount_approval'] ?? [], [
+            'action_request_id' => (int) $request->id,
+            'scope' => 'order',
+            'discount_amount' => $totals['total_discount'],
+            'discount_percent' => null,
+        ]);
+        $sale->update(['fulfillment_meta' => $meta]);
+
+        return $request;
     }
 
     /** @return list<array<string, mixed>> */

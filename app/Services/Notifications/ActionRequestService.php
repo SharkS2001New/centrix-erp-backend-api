@@ -375,7 +375,7 @@ class ActionRequestService
             if ($approved) {
                 $message = "Your discount on {$orderLabel} was approved by {$actor->full_name}.";
             } else {
-                $message = "Your discount on {$orderLabel} was rejected. Please contact the office for further follow-up.";
+                $message = "Your discount on {$orderLabel} was rejected. Edit the order and resubmit for approval.";
                 if ($comment) {
                     $message .= " Reason: {$comment}";
                 }
@@ -425,7 +425,13 @@ class ActionRequestService
             'severity' => $approved ? 'success' : 'danger',
             'title' => $title,
             'message' => $message,
-            'action_url' => $request->payload['action_url'] ?? null,
+            'action_url' => $approved
+                ? ($request->payload['action_url'] ?? null)
+                : ($request->type === 'discount' && $request->reference_type === 'sale'
+                    ? app(\App\Services\Sales\DiscountApprovalService::class)->saleEditableActionUrl(
+                        Sale::query()->findOrFail((int) $request->reference_id),
+                    )
+                    : ($request->payload['action_url'] ?? null)),
             'created_by' => $actor->id,
         ]);
     }
