@@ -17,6 +17,7 @@ return [
     'sales' => ['sales.backend', 'sales.dashboard', 'sales.pos'],
     'mobile_sales' => ['sales.mobile'],
     'mobile_driver' => ['distribution', 'sales.mobile'],
+    'mobile_manager' => ['sales.backend'],
     'pos' => ['sales.pos'],
     'payments' => ['payments', 'accounting'],
     'inventory' => ['inventory'],

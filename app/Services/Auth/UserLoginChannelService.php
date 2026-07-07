@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Mobile\ManagerAppModuleAccessService;
 use App\Services\Mobile\MobileAppModuleAccessService;
 use Illuminate\Validation\ValidationException;
 
@@ -16,11 +17,14 @@ class UserLoginChannelService
 
     public const MOBILE = 'mobile';
 
+    public const MANAGER = 'manager';
+
     /** @var list<string> */
     public const ALL = [
         self::BACKOFFICE,
         self::POS,
         self::MOBILE,
+        self::MANAGER,
     ];
 
     /** @return list<string> */
@@ -111,6 +115,10 @@ class UserLoginChannelService
             return $this->isPosAllowedPath($path);
         }
 
+        if ($tokenChannel === self::MANAGER) {
+            return $this->isManagerAllowedPath($path);
+        }
+
         return $this->isMobileAllowedPath($path);
     }
 
@@ -162,6 +170,29 @@ class UserLoginChannelService
         return $salesOk || $driverOk;
     }
 
+    public function managerTokenCanAccessPath(User $user, string $path): bool
+    {
+        $path = $this->normalizeApiPath($path);
+
+        if ($this->isSharedAuthPath($path)) {
+            return true;
+        }
+
+        if (! $this->isManagerAllowedPath($path)) {
+            return false;
+        }
+
+        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+        if (! $organization) {
+            return false;
+        }
+
+        $gate = app(CapabilityGate::class)->forOrganization($organization);
+        $module = app(ManagerAppModuleAccessService::class)->capabilitiesForUser($user, $gate);
+
+        return (bool) ($module['accessible'] ?? false);
+    }
+
     /** @param  list<string>  $channels */
     public function syncLegacyMobileFlag(array $channels): bool
     {
@@ -174,6 +205,7 @@ class UserLoginChannelService
             self::BACKOFFICE => 'CentrixERP',
             self::POS => 'POS',
             self::MOBILE => 'CentrixMobileapp',
+            self::MANAGER => 'Centrix Manager',
             default => $channel,
         };
     }
@@ -244,6 +276,27 @@ class UserLoginChannelService
             'vats',
             'retail-package-settings',
             'payments/',
+        ];
+
+        return $this->pathMatchesAny($path, $prefixes);
+    }
+
+    protected function isManagerAllowedPath(string $path): bool
+    {
+        if ($this->isSharedAuthPath($path)) {
+            return true;
+        }
+
+        $prefixes = [
+            'manager/',
+            'notifications',
+            'action-requests/',
+            'reports/',
+            'background-tasks/',
+            'users',
+            'roles',
+            'branches',
+            'auth/',
         ];
 
         return $this->pathMatchesAny($path, $prefixes);

@@ -10,6 +10,7 @@ use App\Models\BranchStockTransfer;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
+use App\Services\Audit\OperationalAuditService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Services\Notifications\InAppNotificationEvents;
 use Illuminate\Support\Facades\DB;
@@ -46,6 +47,15 @@ class BranchStockTransferController extends Controller
         $data = $request->validated();
         $user = $request->user();
         $result = $this->transferBetweenBranches($data, $user);
+        app(OperationalAuditService::class)->logStockMovement($user, 'branch_transfer', [
+            'transfer_id' => (int) $result->id,
+            'product_code' => (string) $result->product_code,
+            'from_branch_id' => (int) $result->from_branch_id,
+            'to_branch_id' => (int) $result->to_branch_id,
+            'from_location' => (string) $result->from_location,
+            'to_location' => (string) $result->to_location,
+            'quantity' => (float) $result->quantity,
+        ]);
         app(AdminNotificationService::class)->notifyPermission($user, 'inventory.manage', [
             'type' => 'info',
             'severity' => 'warning',

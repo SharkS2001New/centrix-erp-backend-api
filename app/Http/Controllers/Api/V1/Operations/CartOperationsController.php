@@ -24,12 +24,12 @@ use App\Services\Kra\SalesVatCalculator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
-use App\Services\Sales\OrderSourceResolver;
+use App\Services\Sales\OrderCancellationRequestService;
+use App\Services\Sales\SaleCancellationService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
 use App\Support\SalesCheckoutSettings;
 use App\Services\Sales\PosOrderEditService;
-use App\Services\Sales\SaleCancellationService;
 use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
@@ -591,6 +591,18 @@ class CartOperationsController extends Controller
         }
 
         $gate = $this->erp->gateForUser($user);
+        $cancellations = app(SaleCancellationService::class);
+        $cancellationRequests = app(OrderCancellationRequestService::class);
+
+        if (
+            $cancellations->cancellationApprovalEnabled($gate)
+            && ! $cancellationRequests->canDirectCancel($user)
+        ) {
+            throw new InvalidArgumentException(
+                'Order cancellation requires manager approval. Submit a cancellation request instead.',
+            );
+        }
+
         app(SaleCancellationService::class)->cancelSale($sale, $user, $gate);
 
         $sale = $sale->fresh();

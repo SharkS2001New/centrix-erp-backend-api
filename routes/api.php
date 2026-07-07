@@ -120,9 +120,19 @@ use App\Http\Controllers\Api\V1\WhatsappAdminController;
 use App\Http\Controllers\Api\V1\WhatsAppWebhookController;
 use App\Http\Controllers\Api\V1\WhatsAppSettingsController;
 use App\Http\Controllers\Api\V1\PlatformWhatsAppController;
+use App\Http\Controllers\Api\V1\PlatformFcmPushController;
 use App\Http\Controllers\Api\V1\WorkShiftController;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Broadcast;
 use Illuminate\Support\Facades\Route;
+
+Broadcast::routes([
+    'middleware' => [
+        \App\Http\Middleware\AuthenticateApiTokenCookie::class,
+        'auth:sanctum',
+    ],
+    'prefix' => 'v1',
+]);
 
 Route::prefix('v1')->group(function () {
     Route::get('health', [AuthController::class, 'health']);
@@ -183,6 +193,7 @@ Route::prefix('v1')->group(function () {
         Route::post('notifications/{id}/dismiss', [InAppNotificationController::class, 'dismiss']);
         Route::post('action-requests/{id}/approve', [InAppNotificationController::class, 'approveActionRequest']);
         Route::post('action-requests/{id}/reject', [InAppNotificationController::class, 'rejectActionRequest']);
+        Route::post('action-requests/{id}/remind', [InAppNotificationController::class, 'remindActionRequest']);
 
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
         Route::get('erp/organization/profile', [OrganizationController::class, 'currentProfile'])
@@ -356,6 +367,14 @@ Route::prefix('v1')->group(function () {
             ->group(function () {
                 Route::get('settings', [PlatformWhatsAppController::class, 'show']);
                 Route::patch('settings', [PlatformWhatsAppController::class, 'update']);
+            });
+
+        Route::prefix('admin/push')
+            ->middleware(['erp.super_admin'])
+            ->group(function () {
+                Route::get('settings', [PlatformFcmPushController::class, 'show']);
+                Route::patch('settings', [PlatformFcmPushController::class, 'update']);
+                Route::post('test', [PlatformFcmPushController::class, 'test']);
             });
 
         Route::get('admin/organizations/{organization}/cache', [PlatformOrganizationCacheController::class, 'show'])

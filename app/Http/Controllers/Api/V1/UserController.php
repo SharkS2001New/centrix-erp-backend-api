@@ -12,6 +12,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserDeletionService;
 use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserLoginChannelPolicy;
+use App\Services\Auth\UserManagerLoginValidator;
 use App\Services\Auth\UserMobileLoginValidator;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Auth\UserLoginService;
@@ -42,7 +43,7 @@ class UserController extends BaseResourceController
         $rules['password'] = PasswordPolicy::validationRules($orgId ?: null, confirmed: false);
         $rules['access_scope'] = 'required|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
-        $rules['login_channels.*'] = 'in:backoffice,pos,mobile';
+        $rules['login_channels.*'] = 'in:backoffice,pos,mobile,manager';
         $rules['assigned_route_id'] = 'nullable|integer|exists:routes,id';
         $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
@@ -56,6 +57,12 @@ class UserController extends BaseResourceController
             $data['login_channels'],
         );
         app(UserMobileLoginValidator::class)->assertMobileChannelAllowedForUser(
+            $organization,
+            $data['login_channels'],
+            isset($data['role_id']) ? (int) $data['role_id'] : null,
+            (bool) ($data['is_admin'] ?? false),
+        );
+        app(UserManagerLoginValidator::class)->assertManagerChannelAllowedForUser(
             $organization,
             $data['login_channels'],
             isset($data['role_id']) ? (int) $data['role_id'] : null,
@@ -94,7 +101,7 @@ class UserController extends BaseResourceController
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $rules['access_scope'] = 'sometimes|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
-        $rules['login_channels.*'] = 'in:backoffice,pos,mobile';
+        $rules['login_channels.*'] = 'in:backoffice,pos,mobile,manager';
         $rules['assigned_route_id'] = 'nullable|integer|exists:routes,id';
         $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
@@ -113,10 +120,22 @@ class UserController extends BaseResourceController
                 (int) ($data['role_id'] ?? $model->role_id),
                 (bool) ($data['is_admin'] ?? $model->is_admin),
             );
+            app(UserManagerLoginValidator::class)->assertManagerChannelAllowedForUser(
+                Organization::findOrFail((int) $model->organization_id),
+                $data['login_channels'],
+                (int) ($data['role_id'] ?? $model->role_id),
+                (bool) ($data['is_admin'] ?? $model->is_admin),
+            );
             $data = $this->normalizeLoginChannels($data);
         }
         if (array_key_exists('role_id', $data) && ! array_key_exists('login_channels', $data)) {
             app(UserMobileLoginValidator::class)->assertMobileChannelAllowedForUser(
+                Organization::findOrFail((int) $model->organization_id),
+                $model->login_channels ?? [],
+                (int) $data['role_id'],
+                (bool) ($data['is_admin'] ?? $model->is_admin),
+            );
+            app(UserManagerLoginValidator::class)->assertManagerChannelAllowedForUser(
                 Organization::findOrFail((int) $model->organization_id),
                 $model->login_channels ?? [],
                 (int) $data['role_id'],

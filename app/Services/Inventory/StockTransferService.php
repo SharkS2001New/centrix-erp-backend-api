@@ -67,6 +67,14 @@ class StockTransferService
                 'moved_by' => $user->id,
             ]);
 
+            app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($user, 'transfer', [
+                'product_code' => $productCode,
+                'branch_id' => $branchId,
+                'quantity' => $quantity,
+                'from_location' => $from,
+                'to_location' => $to,
+            ]);
+
             return ['out' => $out, 'in' => $in];
         });
     }

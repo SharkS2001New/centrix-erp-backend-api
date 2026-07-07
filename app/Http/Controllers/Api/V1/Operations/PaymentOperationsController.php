@@ -132,6 +132,13 @@ class PaymentOperationsController extends Controller
             $sale = $sale->fresh();
             app(TripAutoCloseService::class)->tryAutoCloseTripsForSale($sale, $user);
 
+            app(\App\Services\Audit\OperationalAuditService::class)->logSalePayment(
+                $user,
+                $sale,
+                $amount,
+                isset($payment['payment_method_id']) ? (int) $payment['payment_method_id'] : null,
+            );
+
             if ($collectsReceivable) {
                 $gate = $this->erp->gateForUser($user);
                 app(CustomerPaymentJournalService::class)->postIfEnabled(

@@ -167,6 +167,123 @@ class UserPermissionService
             || $this->hasRoleAssignedPermission($user, 'sales.orders.approve');
     }
 
+    /** True when the user holds any role-assigned permission that expands to the capability alias. */
+    public function hasAssignedCapability(User $user, string $capability): bool
+    {
+        foreach (config('permission_aliases', [])[$capability] ?? [] as $code) {
+            if ($this->hasRoleAssignedPermission($user, (string) $code)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public function canApproveLeaveRequests(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'hr.leave.approve')
+            || $this->hasAssignedCapability($user, 'hr.manage');
+    }
+
+    public function canApprovePayrollRuns(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'hr.payroll.approve')
+            || $this->hasAssignedCapability($user, 'hr.manage');
+    }
+
+    public function canApproveCashAdvances(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'hr.cash_advances.approve')
+            || $this->hasAssignedCapability($user, 'hr.manage');
+    }
+
+    public function canApproveOrderCancellations(User $user): bool
+    {
+        return $this->canApproveSalesOrders($user)
+            || $this->hasAssignedCapability($user, 'sales.manage');
+    }
+
+    public function canDirectCancelOrders(User $user): bool
+    {
+        return (bool) $user->is_admin
+            || $this->hasPermission($user, 'sales.manage');
+    }
+
+    public function canApproveSupplierReturns(User $user): bool
+    {
+        return $this->hasAssignedCapability($user, 'purchasing.manage');
+    }
+
+    public function canApproveCustomerReturns(User $user): bool
+    {
+        return $this->hasAssignedCapability($user, 'sales.manage');
+    }
+
+    public function canApproveInventoryOperations(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'inventory.manage')
+            || $this->hasRoleAssignedPermission($user, 'inventory.stock_take.approve');
+    }
+
+    public function canApproveStockTakeCompletions(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'inventory.stock_take.approve')
+            || $this->hasRoleAssignedPermission($user, 'inventory.manage');
+    }
+
+    public function canApproveJournalEntries(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'accounting.journal_entries.approve')
+            || $this->hasRoleAssignedPermission($user, 'accounting.manage');
+    }
+
+    public function canApproveExpenses(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'accounting.manage');
+    }
+
+    public function canApproveLpoRequests(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'purchasing.lpo.approve')
+            || $this->hasAssignedCapability($user, 'purchasing.manage');
+    }
+
+    public function canDirectInventoryAction(User $user): bool
+    {
+        return (bool) $user->is_admin || $this->hasRoleAssignedPermission($user, 'inventory.manage');
+    }
+
+    /** Direct inventory manage (role-assigned capability), not create-only alias children. */
+    public function canDirectManageInventory(User $user): bool
+    {
+        return (bool) $user->is_admin
+            || $this->hasRoleAssignedPermission($user, 'inventory.manage')
+            || $this->hasRoleAssignedPermission($user, 'inventory.stock_take.approve');
+    }
+
+    /** Explicit approval rights for UI and API (no capability-alias expansion). */
+    /** @return array<string, bool> */
+    public function approvalCapabilitiesForUser(User $user): array
+    {
+        return [
+            'discount_requests' => $this->canApproveDiscountRequests($user),
+            'sales_orders' => $this->canApproveSalesOrders($user),
+            'order_cancellations' => $this->canApproveOrderCancellations($user),
+            'leave_requests' => $this->canApproveLeaveRequests($user),
+            'payroll_runs' => $this->canApprovePayrollRuns($user),
+            'cash_advances' => $this->canApproveCashAdvances($user),
+            'supplier_returns' => $this->canApproveSupplierReturns($user),
+            'customer_returns' => $this->canApproveCustomerReturns($user),
+            'inventory_operations' => $this->canApproveInventoryOperations($user),
+            'stock_take_completions' => $this->canApproveStockTakeCompletions($user),
+            'journal_entries' => $this->canApproveJournalEntries($user),
+            'expenses' => $this->canApproveExpenses($user),
+            'lpo_requests' => $this->canApproveLpoRequests($user),
+            'direct_cancel_orders' => $this->canDirectCancelOrders($user),
+            'direct_inventory_actions' => $this->canDirectInventoryAction($user),
+        ];
+    }
+
     /** Staff who may apply discounts directly without approval workflow or reason. */
     public function canGiveDiscountDirectly(User $user): bool
     {

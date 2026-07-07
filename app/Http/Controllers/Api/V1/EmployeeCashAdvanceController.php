@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Employee;
 use App\Models\EmployeeCashAdvance;
+use App\Models\User;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Hr\CashAdvanceApprovalService;
 use App\Services\Notifications\ActionRequestService;
@@ -32,8 +33,18 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $paginator = $query->orderByDesc('advance_date')->paginate($perPage);
+        $viewer = $request->user();
+        $paginator->getCollection()->transform(fn (EmployeeCashAdvance $advance) => $this->advanceWithMeta($advance, $viewer));
 
-        return response()->json($query->orderByDesc('advance_date')->paginate($perPage));
+        return response()->json($paginator);
+    }
+
+    public function show(string $id)
+    {
+        $advance = $this->findScoped($id)->load('employee');
+
+        return response()->json($this->advanceWithMeta($advance, request()->user()));
     }
 
     public function store(Request $request)
@@ -59,7 +70,24 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             app(CashAdvanceApprovalService::class)->requestApproval($request->user(), $advance);
         }
 
-        return response()->json($advance, 201);
+        return response()->json($this->advanceWithMeta($advance, $request->user()), 201);
+    }
+
+    protected function advanceWithMeta(EmployeeCashAdvance $advance, ?User $viewer): EmployeeCashAdvance
+    {
+        if ($viewer && $advance->status === 'pending') {
+            $advance->setAttribute(
+                'action_request',
+                app(ActionRequestService::class)->presentPendingFor(
+                    $viewer,
+                    'cash_advance',
+                    'employee_cash_advance',
+                    (int) $advance->id,
+                ),
+            );
+        }
+
+        return $advance;
     }
 
     /** POST /employee-cash-advances/{id}/approve */

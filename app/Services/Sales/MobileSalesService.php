@@ -127,7 +127,10 @@ class MobileSalesService
             'data' => collect($page->items())
                 ->map(fn (Sale $sale) => array_merge(
                     $this->presentOrderSummary($sale),
-                    ['can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate)],
+                    [
+                        'can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
+                        ...$this->cancellationCapabilities($sale, $user),
+                    ],
                 ))
                 ->values()
                 ->all(),
@@ -155,7 +158,7 @@ class MobileSalesService
             $this->presentOrderSummary($sale),
             [
                 'can_edit' => $this->canRestoreSaleToCart($sale, $user),
-                'can_cancel' => $this->canCancelSale($sale, $user),
+                ...$this->cancellationCapabilities($sale, $user),
                 'items' => $sale->items->map(function ($item) {
                     $product = $item->product;
                     $isRetail = (bool) $item->on_wholesale_retail;
@@ -439,7 +442,43 @@ class MobileSalesService
         return $this->showOrder($user, (int) $updated->id, $allChannels);
     }
 
+    /** @return array{can_cancel: bool, can_direct_cancel: bool, can_request_cancellation: bool} */
+    public function cancellationCapabilities(Sale $sale, User $user): array
+    {
+        if (! $this->isSaleCancellableByWorkflow($sale, $user)) {
+            return [
+                'can_cancel' => false,
+                'can_direct_cancel' => false,
+                'can_request_cancellation' => false,
+            ];
+        }
+
+        $gate = $this->erp->gateForUser($user);
+        $cancellations = app(SaleCancellationService::class);
+
+        if (! $cancellations->cancellationApprovalEnabled($gate)) {
+            return [
+                'can_cancel' => true,
+                'can_direct_cancel' => true,
+                'can_request_cancellation' => false,
+            ];
+        }
+
+        $canDirect = app(OrderCancellationRequestService::class)->canDirectCancel($user);
+
+        return [
+            'can_cancel' => true,
+            'can_direct_cancel' => $canDirect,
+            'can_request_cancellation' => ! $canDirect,
+        ];
+    }
+
     public function canCancelSale(Sale $sale, User $user): bool
+    {
+        return $this->cancellationCapabilities($sale, $user)['can_cancel'];
+    }
+
+    protected function isSaleCancellableByWorkflow(Sale $sale, User $user): bool
     {
         if (! $sale->created_at?->isSameDay(now())) {
             return false;

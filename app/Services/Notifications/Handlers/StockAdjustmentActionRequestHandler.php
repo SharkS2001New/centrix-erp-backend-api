@@ -20,7 +20,7 @@ class StockAdjustmentActionRequestHandler implements ActionRequestHandler
 
     public function canApprove(User $user, ActionRequest $request): bool
     {
-        return $this->adjustments->canDirectAdjust($user);
+        return $this->adjustments->canApprove($user);
     }
 
     public function approve(ActionRequest $request, User $user): void

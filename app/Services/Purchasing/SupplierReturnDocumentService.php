@@ -14,6 +14,7 @@ use App\Models\SupplierReturnDocumentLine;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Returns\ReturnProofService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
@@ -335,6 +336,14 @@ class SupplierReturnDocumentService
                 || ($doc->status === 'approved' && $this->canApprove($user)),
             'can_approve' => $doc->status === 'pending_approval' && $this->canApprove($user),
             'can_reject' => in_array($doc->status, ['pending_approval', 'approved'], true) && $this->canApprove($user),
+            'action_request' => $doc->status === 'pending_approval' && $user
+                ? app(ActionRequestService::class)->presentPendingFor(
+                    $user,
+                    'supplier_return',
+                    'supplier_return_document',
+                    (int) $doc->id,
+                )
+                : null,
             'lines' => $doc->lines->map(fn (SupplierReturnDocumentLine $line) => [
                 'id' => (int) $line->id,
                 'product_code' => $line->product_code,
@@ -585,8 +594,7 @@ class SupplierReturnDocumentService
 
     protected function canApprove(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'purchasing.manage');
+        return $this->permissions->canApproveSupplierReturns($user);
     }
 
     protected function createApprovalRequest(User $user, SupplierReturnDocument $doc): void

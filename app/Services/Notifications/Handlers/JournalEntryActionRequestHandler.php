@@ -20,7 +20,7 @@ class JournalEntryActionRequestHandler implements ActionRequestHandler
 
     public function canApprove(User $user, ActionRequest $request): bool
     {
-        return $this->journals->canDirectPost($user);
+        return $this->journals->canApprove($user);
     }
 
     public function approve(ActionRequest $request, User $user): void

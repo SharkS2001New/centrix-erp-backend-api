@@ -27,8 +27,7 @@ class SupplierReturnActionRequestHandler implements ActionRequestHandler
             return false;
         }
 
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'purchasing.manage');
+        return $this->permissions->canApproveSupplierReturns($user);
     }
 
     public function approve(ActionRequest $request, User $user): void

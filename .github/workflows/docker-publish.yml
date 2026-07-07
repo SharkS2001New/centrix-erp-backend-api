@@ -75,7 +75,8 @@ jobs:
           for file in \
             pitchpredk3ssetup/centrix-erp-backend-api/values.yaml \
             pitchpredk3ssetup/centrix-erp-scheduler/values.yaml \
-            pitchpredk3ssetup/centrix-erp-queue-worker/values.yaml
+            pitchpredk3ssetup/centrix-erp-queue-worker/values.yaml \
+            pitchpredk3ssetup/centrix-erp-reverb/values.yaml
           do
             sed -i '/^[[:space:]]*tag:/d' "$file"
             sed -i "/pullPolicy:/a\\  tag: ${TAG}" "$file"
@@ -89,7 +90,7 @@ jobs:
           cd pitchpredk3ssetup
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml centrix-erp-queue-worker/values.yaml
+          git add centrix-erp-backend-api/values.yaml centrix-erp-scheduler/values.yaml centrix-erp-queue-worker/values.yaml centrix-erp-reverb/values.yaml
           if git diff --staged --quiet; then
             echo "No tag changes to commit."
             exit 0

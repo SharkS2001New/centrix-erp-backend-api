@@ -20,7 +20,7 @@ class StockTransferActionRequestHandler implements ActionRequestHandler
 
     public function canApprove(User $user, ActionRequest $request): bool
     {
-        return $this->transfers->canDirectTransfer($user);
+        return $this->transfers->canApprove($user);
     }
 
     public function approve(ActionRequest $request, User $user): void

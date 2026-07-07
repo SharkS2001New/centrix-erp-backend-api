@@ -68,6 +68,14 @@ class StockOperationsController extends Controller
             'created_by' => $user->id,
         ], $allowBelowStock);
 
+        app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($user, 'adjustment', [
+            'product_code' => $data['product_code'],
+            'branch_id' => (int) $data['branch_id'],
+            'stock_location' => $data['stock_location'] ?? 'shop',
+            'quantity_change' => (float) $data['quantity_change'],
+            'transaction_id' => (int) $txn->id,
+        ]);
+
         return response()->json($txn, 201);
     }
 

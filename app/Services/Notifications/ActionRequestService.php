@@ -9,6 +9,7 @@ use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\TemporaryCart;
 use App\Models\User;
+use App\Services\Audit\AuditLogger;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\Contracts\ActionRequestHandler;
 use App\Services\Sales\SaleOrderPresentationService;
@@ -38,6 +39,7 @@ class ActionRequestService
     public function __construct(
         protected InAppNotificationService $notifications,
         protected UserPermissionService $permissions,
+        protected AuditLogger $audit,
         SupplierReturnActionRequestHandler $supplierReturnHandler,
         DiscountApprovalActionRequestHandler $discountHandler,
         OrderCancellationActionRequestHandler $orderCancelHandler,
@@ -118,6 +120,20 @@ class ActionRequestService
                 'action' => 'requested',
                 'comment' => $data['reason'] ?? null,
             ]);
+
+            $this->audit->log(
+                $requester,
+                'approval_requested',
+                'action_requests',
+                (int) $request->id,
+                null,
+                [
+                    'type' => $type,
+                    'reference_type' => (string) $data['reference_type'],
+                    'reference_id' => (int) $data['reference_id'],
+                    'title' => (string) $data['title'],
+                ],
+            );
 
             $message = (string) ($data['message'] ?? $data['title']);
             $severity = (string) ($data['severity'] ?? 'warning');
@@ -282,6 +298,123 @@ class ActionRequestService
         return $handler->canApprove($user, $request);
     }
 
+    public function canRemind(User $actor, ActionRequest $request): bool
+    {
+        if ((int) $actor->organization_id !== (int) $request->organization_id) {
+            return false;
+        }
+
+        if (! $request->isPending()) {
+            return false;
+        }
+
+        return (int) $request->requested_by === (int) $actor->id || (bool) $actor->is_admin;
+    }
+
+    /** @return array<string, mixed>|null */
+    public function presentForViewer(?ActionRequest $request, ?User $viewer): ?array
+    {
+        if ($request === null || $viewer === null) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $request->id,
+            'type' => $request->type,
+            'status' => $request->status,
+            'reason' => $request->reason,
+            'payload' => $request->payload,
+            'can_approve' => $this->canApprove($viewer, $request),
+            'can_remind' => $this->canRemind($viewer, $request),
+        ];
+    }
+
+    /** @return array<string, mixed>|null */
+    public function presentPendingFor(
+        User $viewer,
+        string $type,
+        string $referenceType,
+        int $referenceId,
+    ): ?array {
+        $request = ActionRequest::query()
+            ->where('organization_id', $viewer->organization_id)
+            ->where('type', $type)
+            ->where('reference_type', $referenceType)
+            ->where('reference_id', $referenceId)
+            ->where('status', 'pending')
+            ->first();
+
+        return $this->presentForViewer($request, $viewer);
+    }
+
+    public function sendReminder(ActionRequest $request, User $actor): ActionRequest
+    {
+        if ((int) $actor->organization_id !== (int) $request->organization_id) {
+            throw ValidationException::withMessages(['action_request' => 'Action request not found.']);
+        }
+
+        if (! $request->isPending()) {
+            throw ValidationException::withMessages(['status' => 'This request has already been resolved.']);
+        }
+
+        if (! $this->canRemind($actor, $request)) {
+            throw ValidationException::withMessages(['action_request' => 'You cannot send a reminder for this request.']);
+        }
+
+        $requester = User::query()->findOrFail((int) $request->requested_by);
+        $recipients = $this->resolveApprovers($requester, $request);
+        if ($recipients->isEmpty()) {
+            throw ValidationException::withMessages(['approvers' => 'No approvers are available to notify.']);
+        }
+
+        return DB::transaction(function () use ($request, $actor, $requester, $recipients) {
+            ApprovalAction::query()->create([
+                'organization_id' => $request->organization_id,
+                'action_request_id' => $request->id,
+                'user_id' => $actor->id,
+                'action' => 'reminded',
+                'comment' => null,
+            ]);
+
+            $payload = $request->payload ?? [];
+            $detail = trim((string) ($payload['message'] ?? ''));
+            if ($detail === '') {
+                $detail = (string) $request->title;
+            }
+            $actorName = $actor->full_name ?: $actor->username;
+            $message = "{$actorName} sent an approval reminder — {$detail}";
+
+            $this->audit->log(
+                $actor,
+                'approval_reminded',
+                'action_requests',
+                (int) $request->id,
+                null,
+                [
+                    'type' => $request->type,
+                    'recipient_count' => $recipients->count(),
+                ],
+            );
+
+            if ($this->inAppApprovalRequestEnabled($requester)) {
+                foreach ($recipients as $recipient) {
+                    $this->notifications->createForUser($recipient, [
+                        'organization_id' => $request->organization_id,
+                        'action_request_id' => (int) $request->id,
+                        'type' => 'approval',
+                        'severity' => 'warning',
+                        'title' => 'Approval reminder',
+                        'message' => $message,
+                        'action_url' => $payload['action_url'] ?? null,
+                        'created_by' => $actor->id,
+                    ]);
+                }
+            }
+
+            return $request->fresh(['requester']);
+        });
+    }
+
     /** @return Collection<int, User> */
     protected function resolveApprovers(User $requester, ActionRequest $request): Collection
     {
@@ -351,6 +484,21 @@ class ActionRequestService
                 'action' => $outcome,
                 'comment' => $comment,
             ]);
+
+            $this->audit->log(
+                $approver,
+                'approval_'.$outcome,
+                'action_requests',
+                (int) $request->id,
+                ['status' => 'pending', 'type' => $request->type],
+                [
+                    'status' => $outcome,
+                    'type' => $request->type,
+                    'reference_type' => $request->reference_type,
+                    'reference_id' => (int) $request->reference_id,
+                    'comment' => $comment,
+                ],
+            );
 
             $this->notifications->resolveForActionRequest($request);
             $this->notifyRequesterOfOutcome($request->fresh(), $outcome, $approver, $comment);

@@ -12,6 +12,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\WorkspaceResolver;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
+use App\Services\Mobile\ManagerAppModuleAccessService;
 use App\Services\Mobile\MobileAppModuleAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -80,6 +81,9 @@ class ErpCapabilitiesController extends Controller
             'permissions' => $user
                 ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
                 : [],
+            'approval_permissions' => $user
+                ? app(UserPermissionService::class)->approvalCapabilitiesForUser($user)
+                : [],
             'allow_org_provisioning' => (bool) $user?->is_super_admin
                 && config('erp.allow_org_provisioning'),
             'workspaces' => app(WorkspaceResolver::class)->availableForUser($user, $gate),
@@ -105,6 +109,10 @@ class ErpCapabilitiesController extends Controller
         $payload['allow_org_provisioning'] = (bool) $user->is_super_admin
             && config('erp.allow_org_provisioning');
         $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
+
+        $permissions = app(UserPermissionService::class);
+        $payload['permissions'] = $permissions->permissionMapForUser($user, $gate);
+        $payload['approval_permissions'] = $permissions->approvalCapabilitiesForUser($user);
 
         $payload['platform_mpesa_stk_enabled'] = $gate->mpesaStkPlatformEnabled();
         $payload['platform_kra_integration_enabled'] = $gate->kraIntegrationPlatformEnabled();
@@ -134,6 +142,9 @@ class ErpCapabilitiesController extends Controller
         }
 
         $payload['mobile_app'] = app(MobileAppModuleAccessService::class)
+            ->capabilitiesForUser($user, $gate);
+
+        $payload['manager_app'] = app(ManagerAppModuleAccessService::class)
             ->capabilitiesForUser($user, $gate);
 
         return $payload;

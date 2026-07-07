@@ -541,6 +541,8 @@ class CheckoutController extends Controller
                 }
             }
 
+            app(\App\Services\Audit\OperationalAuditService::class)->logSaleCheckout($user, $sale);
+
             return $sale;
         });
     }

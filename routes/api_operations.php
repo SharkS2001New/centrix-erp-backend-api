@@ -36,9 +36,47 @@ use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\MobileDriverController;
 use App\Http\Controllers\Api\V1\Operations\MobileDriverAttendanceController;
+use App\Http\Controllers\Api\V1\Operations\MobileManagerAdminController;
+use App\Http\Controllers\Api\V1\Operations\MobileManagerController;
 use App\Http\Controllers\Api\V1\Operations\MobileSalesController;
 
 Route::middleware('auth:sanctum')->group(function () {
+
+    // ---- Centrix Manager app ----
+    Route::middleware(['erp.manager_app', 'erp.permission:mobile_manager.app.access'])->prefix('manager')->group(function () {
+        Route::get('dashboard', [MobileManagerController::class, 'dashboard'])
+            ->middleware('erp.permission:mobile_manager.dashboard.view|mobile_manager.approvals.view');
+        Route::get('branches', [MobileManagerController::class, 'branches']);
+        Route::get('reports/catalog', [MobileManagerController::class, 'reportsCatalog'])
+            ->middleware('erp.permission:mobile_manager.reports.view');
+        Route::post('device-tokens', [MobileManagerController::class, 'registerDeviceToken']);
+        Route::delete('device-tokens', [MobileManagerController::class, 'unregisterDeviceToken']);
+
+        Route::prefix('admin')->group(function () {
+            Route::get('users', [MobileManagerAdminController::class, 'indexUsers'])
+                ->middleware('erp.permission:mobile_manager.users.view');
+            Route::get('users/{user}', [MobileManagerAdminController::class, 'showUser'])
+                ->middleware('erp.permission:mobile_manager.users.view');
+            Route::post('users', [MobileManagerAdminController::class, 'storeUser'])
+                ->middleware('erp.permission:mobile_manager.users.create');
+            Route::match(['put', 'patch'], 'users/{user}', [MobileManagerAdminController::class, 'updateUser'])
+                ->middleware('erp.permission:mobile_manager.users.edit');
+            Route::delete('users/{user}', [MobileManagerAdminController::class, 'destroyUser'])
+                ->middleware('erp.permission:mobile_manager.users.delete');
+
+            Route::get('roles', [MobileManagerAdminController::class, 'indexRoles'])
+                ->middleware('erp.permission:mobile_manager.roles.view');
+            Route::get('roles/permission-matrix', [MobileManagerAdminController::class, 'permissionMatrix'])
+                ->middleware('erp.permission:mobile_manager.roles.view');
+            Route::get('roles/{role}/permissions', [MobileManagerAdminController::class, 'rolePermissions'])
+                ->middleware('erp.permission:mobile_manager.roles.view');
+            Route::put('roles/{role}/permissions', [MobileManagerAdminController::class, 'syncRolePermissions'])
+                ->middleware('erp.permission:mobile_manager.roles.edit');
+
+            Route::get('branches', [MobileManagerAdminController::class, 'branches'])
+                ->middleware('erp.permission:mobile_manager.users.view|mobile_manager.users.create|mobile_manager.users.edit|mobile_manager.roles.view');
+        });
+    });
 
     // ---- Mobile field sales ----
     Route::middleware(['erp.module:sales.mobile', 'erp.mobile_sales', 'erp.permission:sales.create'])->prefix('mobile')->group(function () {
@@ -59,6 +97,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('attendance/suspend', [MobileAttendanceController::class, 'suspend']);
         Route::post('attendance/resume', [MobileAttendanceController::class, 'resume']);
         Route::post('attendance/sign-out', [MobileAttendanceController::class, 'signOut']);
+        Route::post('device-tokens', [MobileSalesController::class, 'registerDeviceToken']);
+        Route::delete('device-tokens', [MobileSalesController::class, 'unregisterDeviceToken']);
     });
 
     Route::middleware(['erp.module:sales.mobile', 'erp.module:distribution', 'erp.mobile_driver', 'erp.permission:driver.mobile'])->prefix('mobile/driver')->group(function () {

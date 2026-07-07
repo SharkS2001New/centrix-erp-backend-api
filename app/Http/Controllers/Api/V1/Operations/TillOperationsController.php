@@ -8,6 +8,7 @@ use App\Models\Expense;
 use App\Models\Till;
 use App\Models\TillFloatSession;
 use App\Services\Accounting\ExpenseJournalService;
+use App\Services\Audit\OperationalAuditService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\TillSessionAuthorization;
@@ -287,6 +288,14 @@ class TillOperationsController extends Controller
 
         $gate = app(ErpContext::class)->gateForUser($request->user());
         app(ExpenseJournalService::class)->postIfEnabled($expense, $request->user(), $gate);
+        app(OperationalAuditService::class)->logTillExpense($request->user(), (int) $expense->id, [
+            'branch_id' => (int) $session->branch_id,
+            'float_session_id' => (int) $session->id,
+            'expense_group_id' => (int) $data['expense_group_id'],
+            'expense_amount' => (float) $data['expense_amount'],
+            'payment_method_id' => (int) $data['payment_method_id'],
+            'description' => $data['description'] ?? null,
+        ]);
 
         return response()->json($expense, 201);
     }

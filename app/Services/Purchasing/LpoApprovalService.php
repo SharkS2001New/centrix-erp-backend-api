@@ -21,7 +21,7 @@ class LpoApprovalService
 
     public function canApprove(User $user): bool
     {
-        return $this->permissions->hasRoleAssignedPermission($user, 'purchasing.lpo.approve');
+        return $this->permissions->canApproveLpoRequests($user);
     }
 
     public function assertCanApprove(User $user): void

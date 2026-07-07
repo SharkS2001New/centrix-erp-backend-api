@@ -21,9 +21,7 @@ class LeaveApprovalService
 
     public function canApprove(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'hr.manage')
-            || $this->permissions->hasPermission($user, 'hr.leave.approve');
+        return $this->permissions->canApproveLeaveRequests($user);
     }
 
     public function notifyOnCreate(User $requester, EmployeeLeaveDay $leave): void

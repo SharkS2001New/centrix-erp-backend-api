@@ -4,7 +4,9 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\PayPeriod;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
+use App\Models\User;
 use App\Services\Hr\HrPayrollSettingsResolver;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Payroll\PayrollRunApprovalService;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollRunScheduleService;
@@ -37,7 +39,8 @@ class PayrollRunController extends BaseResourceController
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         $paginator = $query->orderByDesc('run_date')->orderByDesc('id')->paginate($perPage);
-        $paginator->getCollection()->transform(fn (PayrollRun $run) => $this->runWithMeta($run));
+        $viewer = $request->user();
+        $paginator->getCollection()->transform(fn (PayrollRun $run) => $this->runWithMeta($run, $viewer));
 
         return response()->json($paginator);
     }
@@ -65,7 +68,7 @@ class PayrollRunController extends BaseResourceController
             app(PayrollRunApprovalService::class)->requestApproval($request->user(), $run->fresh('payPeriod'));
         }
 
-        return response()->json($this->runWithMeta($run->load('payPeriod')), 201);
+        return response()->json($this->runWithMeta($run->load('payPeriod'), $request->user()), 201);
     }
 
     public function show(Request $request, string $id)
@@ -79,7 +82,7 @@ class PayrollRunController extends BaseResourceController
             ->withCount('lines as employee_count')
             ->findOrFail($id);
 
-        return response()->json($this->runWithMeta($run));
+        return response()->json($this->runWithMeta($run, $request->user()));
     }
 
     /**
@@ -122,12 +125,24 @@ class PayrollRunController extends BaseResourceController
         });
     }
 
-    protected function runWithMeta(PayrollRun $run): PayrollRun
+    protected function runWithMeta(PayrollRun $run, ?User $viewer = null): PayrollRun
     {
         $meta = $run->deleteMeta();
         $run->setAttribute('can_delete', $meta['can_delete']);
         $run->setAttribute('delete_locked_after', $meta['delete_locked_after']);
         $run->setAttribute('delete_lock_minutes', $meta['delete_lock_minutes']);
+
+        if ($viewer && $run->status === 'pending_approval') {
+            $run->setAttribute(
+                'action_request',
+                app(ActionRequestService::class)->presentPendingFor(
+                    $viewer,
+                    'payroll_run',
+                    'payroll_run',
+                    (int) $run->id,
+                ),
+            );
+        }
 
         return $run;
     }

@@ -11,6 +11,7 @@ return [
     'order' => [
         'pos',
         'mobile',
+        'manager',
         'backoffice',
         'accounting',
         'hr',
@@ -29,6 +30,12 @@ return [
             'description' => 'Separate permissions for field sales reps and driver delivery users.',
             'standalone' => true,
             'registry_modules' => ['mobile_sales', 'mobile_driver'],
+        ],
+        'manager' => [
+            'label' => 'Manager application',
+            'description' => 'Centrix Manager app for approvals, reports, and mobile administration.',
+            'standalone' => true,
+            'registry_modules' => ['mobile_manager'],
         ],
         'backoffice' => [
             'label' => 'Backoffice',

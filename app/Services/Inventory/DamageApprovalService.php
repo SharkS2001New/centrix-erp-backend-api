@@ -33,13 +33,12 @@ class DamageApprovalService
 
     public function canDirectWriteOff(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'inventory.manage');
+        return $this->permissions->canDirectManageInventory($user);
     }
 
     public function canApprove(User $user): bool
     {
-        return $this->canDirectWriteOff($user);
+        return $this->permissions->canApproveInventoryOperations($user);
     }
 
     /** @param  array<string, mixed>  $data */
@@ -94,7 +93,7 @@ class DamageApprovalService
         $this->access->assertBranchAccess($requester, (int) $data['branch_id']);
         $allowBelowStock = $this->organizationAllowsBelowStock($requester->organization_id);
 
-        return DB::transaction(function () use ($data, $requester, $allowBelowStock) {
+        return DB::transaction(function () use ($data, $requester, $allowBelowStock, $approver, $request) {
             $damage = Damage::create([
                 ...$data,
                 'reported_by' => $requester->id,
@@ -111,6 +110,15 @@ class DamageApprovalService
                 'notes' => $damage->reason ?: 'Stock damage / write-off',
                 'created_by' => $requester->id,
             ], $allowBelowStock);
+
+            app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($approver, 'damage_approved', [
+                'damage_id' => (int) $damage->id,
+                'product_code' => (string) $damage->product_code,
+                'branch_id' => (int) $damage->branch_id,
+                'stock_location' => (string) $damage->stock_location,
+                'quantity' => (float) $damage->quantity,
+                'action_request_id' => (int) $request->id,
+            ]);
 
             return $damage->fresh();
         });

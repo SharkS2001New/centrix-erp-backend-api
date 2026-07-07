@@ -30,8 +30,12 @@ class JournalEntryApprovalService
     public function canDirectPost(User $user): bool
     {
         return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'accounting.manage')
-            || $this->permissions->hasPermission($user, 'accounting.journal_entries.approve');
+            || $this->permissions->canApproveJournalEntries($user);
+    }
+
+    public function canApprove(User $user): bool
+    {
+        return $this->permissions->canApproveJournalEntries($user);
     }
 
     public function requestPost(User $user, JournalEntry $entry): ActionRequest

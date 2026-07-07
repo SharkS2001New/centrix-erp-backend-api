@@ -23,8 +23,7 @@ class OrderCancellationRequestService
 
     public function canDirectCancel(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'sales.manage');
+        return $this->permissions->canDirectCancelOrders($user);
     }
 
     public function canApproveCancellation(User $user, ActionRequest $request): bool
@@ -33,9 +32,7 @@ class OrderCancellationRequestService
             return false;
         }
 
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'sales.manage')
-            || $this->permissions->hasPermission($user, 'sales.orders.approve');
+        return $this->permissions->canApproveOrderCancellations($user);
     }
 
     public function requestCancellation(User $user, Sale $sale, string $reason, CapabilityGate $gate): ActionRequest

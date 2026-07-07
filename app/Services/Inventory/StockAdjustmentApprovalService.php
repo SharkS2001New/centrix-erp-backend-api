@@ -31,8 +31,12 @@ class StockAdjustmentApprovalService
 
     public function canDirectAdjust(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'inventory.manage');
+        return $this->permissions->canDirectManageInventory($user);
+    }
+
+    public function canApprove(User $user): bool
+    {
+        return $this->permissions->canApproveInventoryOperations($user);
     }
 
     /** @param  array<string, mixed>  $data */
@@ -89,7 +93,7 @@ class StockAdjustmentApprovalService
 
         $allowBelowStock = $this->organizationAllowsBelowStock($approver->organization_id);
 
-        return $this->postStockLedger([
+        $txn = $this->postStockLedger([
             'branch_id' => (int) $payload['branch_id'],
             'product_code' => (string) $payload['product_code'],
             'stock_location' => (string) $payload['stock_location'],
@@ -99,5 +103,16 @@ class StockAdjustmentApprovalService
             'reference_type' => 'adjustment',
             'created_by' => (int) $request->requested_by,
         ], $allowBelowStock);
+
+        app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($approver, 'adjustment_approved', [
+            'product_code' => (string) $payload['product_code'],
+            'branch_id' => (int) $payload['branch_id'],
+            'stock_location' => (string) $payload['stock_location'],
+            'quantity_change' => (float) $payload['quantity_change'],
+            'action_request_id' => (int) $request->id,
+            'transaction_id' => (int) $txn->id,
+        ]);
+
+        return $txn;
     }
 }

@@ -26,8 +26,7 @@ class ExpenseApprovalService
 
     public function canApprove(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'accounting.manage');
+        return $this->permissions->canApproveExpenses($user);
     }
 
     /** @param  array<string, mixed>  $data */

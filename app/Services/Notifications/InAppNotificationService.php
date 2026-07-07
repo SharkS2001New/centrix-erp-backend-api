@@ -5,6 +5,7 @@ namespace App\Services\Notifications;
 use App\Models\ActionRequest;
 use App\Models\InAppNotification;
 use App\Models\User;
+use App\Services\Mobile\FcmPushNotificationService;
 use App\Services\Notifications\ActionRequestService;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Collection;
@@ -30,6 +31,12 @@ class InAppNotificationService
 
         app(InAppNotificationMailDelivery::class)->deliver($notification, $recipient);
 
+        if (in_array($data['type'] ?? '', ['approval', 'approval_outcome'], true)) {
+            app(FcmPushNotificationService::class)->notifyInAppNotification($notification, $recipient);
+        }
+
+        app(RealtimeNotificationBroadcaster::class)->notifyCreated($notification, $recipient);
+
         return $notification;
     }
 
@@ -38,6 +45,15 @@ class InAppNotificationService
         return $this->visibleQuery($user)
             ->where('is_read', false)
             ->whereNull('resolved_at')
+            ->count();
+    }
+
+    public function pendingApprovalsCount(User $user): int
+    {
+        return $this->visibleQuery($user)
+            ->where('type', 'approval')
+            ->whereNull('resolved_at')
+            ->whereHas('actionRequest', fn ($q) => $q->where('status', 'pending'))
             ->count();
     }
 
@@ -218,6 +234,7 @@ class InAppNotificationService
                 'reason' => $request->reason,
                 'payload' => $request->payload,
                 'can_approve' => app(ActionRequestService::class)->canApprove($viewer, $request),
+                'can_remind' => app(ActionRequestService::class)->canRemind($viewer, $request),
             ];
 
             if ($request->type === 'discount') {

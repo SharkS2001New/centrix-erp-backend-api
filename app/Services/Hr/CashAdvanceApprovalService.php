@@ -16,9 +16,7 @@ class CashAdvanceApprovalService
 
     public function canApprove(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'hr.cash_advances.approve')
-            || $this->permissions->hasPermission($user, 'hr.manage');
+        return $this->permissions->canApproveCashAdvances($user);
     }
 
     public function requestApproval(User $requester, EmployeeCashAdvance $advance): ActionRequest

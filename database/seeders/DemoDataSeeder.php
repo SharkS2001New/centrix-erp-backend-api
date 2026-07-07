@@ -136,7 +136,7 @@ class DemoDataSeeder extends Seeder
             'is_admin' => 1,
             'is_super_admin' => 0,
             'access_scope' => 'org',
-            'login_channels' => ['backoffice', 'pos', 'mobile'],
+            'login_channels' => ['backoffice', 'pos', 'mobile', 'manager'],
             'is_active' => true,
         ]);
 

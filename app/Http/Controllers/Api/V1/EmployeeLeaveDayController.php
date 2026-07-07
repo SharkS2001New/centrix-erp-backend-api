@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Employee;
 use App\Models\EmployeeLeaveDay;
+use App\Models\User;
 use App\Services\Attendance\LeaveBalanceService;
 use App\Services\Attendance\LeaveRequestCalculator;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -35,8 +37,35 @@ class EmployeeLeaveDayController extends HrOrgResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $paginator = $query->orderByDesc('start_date')->paginate($perPage);
+        $viewer = $request->user();
+        $paginator->getCollection()->transform(fn (EmployeeLeaveDay $leave) => $this->leaveWithMeta($leave, $viewer));
 
-        return response()->json($query->orderByDesc('start_date')->paginate($perPage));
+        return response()->json($paginator);
+    }
+
+    public function show(string $id)
+    {
+        $leave = $this->findScoped($id)->load('employee');
+
+        return response()->json($this->leaveWithMeta($leave, request()->user()));
+    }
+
+    protected function leaveWithMeta(EmployeeLeaveDay $leave, ?User $viewer): EmployeeLeaveDay
+    {
+        if ($viewer && $leave->approval_status === 'pending') {
+            $leave->setAttribute(
+                'action_request',
+                app(ActionRequestService::class)->presentPendingFor(
+                    $viewer,
+                    'leave_request',
+                    'employee_leave_day',
+                    (int) $leave->id,
+                ),
+            );
+        }
+
+        return $leave;
     }
 
     /** GET /employees/{employee}/leave-balances */
@@ -142,7 +171,7 @@ class EmployeeLeaveDayController extends HrOrgResourceController
             app(\App\Services\Hr\LeaveApprovalService::class)->notifyOnCreate($request->user(), $row);
         }
 
-        return response()->json($row, 201);
+        return response()->json($this->leaveWithMeta($row, $request->user()), 201);
     }
 
     public function approve(string $id)

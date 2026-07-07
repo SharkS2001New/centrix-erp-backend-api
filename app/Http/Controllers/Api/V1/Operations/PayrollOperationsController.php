@@ -375,11 +375,7 @@ class PayrollOperationsController extends Controller
 
     protected function assertPayrollApprovalPermission($user, int $orgId): void
     {
-        if ($user?->is_admin) {
-            return;
-        }
-
-        if (! app(UserPermissionService::class)->hasPermission($user, 'hr.payroll.approve')) {
+        if (! app(UserPermissionService::class)->canApprovePayrollRuns($user)) {
             abort(403, 'You do not have permission to approve payroll runs.');
         }
     }

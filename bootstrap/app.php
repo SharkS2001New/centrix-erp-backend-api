@@ -11,6 +11,7 @@ return Application::configure(basePath: dirname(__DIR__))
         web: __DIR__.'/../routes/web.php',
         api: __DIR__.'/../routes/api.php',
         commands: __DIR__.'/../routes/console.php',
+        channels: __DIR__.'/../routes/channels.php',
         health: '/up',
         apiPrefix: 'api',
     )
@@ -43,6 +44,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.report_module' => \App\Http\Middleware\EnsureReportModule::class,
             'erp.permission' => \App\Http\Middleware\EnsurePermission::class,
             'erp.mobile_sales' => \App\Http\Middleware\EnsureMobileSalesAppEnabled::class,
+            'erp.manager_app' => \App\Http\Middleware\EnsureManagerAppEnabled::class,
             'erp.mobile_driver' => \App\Http\Middleware\EnsureMobileDriverAppEnabled::class,
             'erp.admin' => \App\Http\Middleware\EnsureAdmin::class,
             'erp.super_admin' => \App\Http\Middleware\EnsureSuperAdmin::class,

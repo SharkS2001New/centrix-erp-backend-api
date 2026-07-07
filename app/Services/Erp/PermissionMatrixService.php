@@ -73,6 +73,7 @@ class PermissionMatrixService
             'sales.manage' => 'sales',
             'sales.view' => 'sales',
             'mobile.access' => 'mobile_sales',
+            'manager.access' => 'mobile_manager',
             'driver.mobile' => 'mobile_driver',
             'payments.manage' => 'payments',
             'payments.view' => 'payments',
@@ -130,6 +131,9 @@ class PermissionMatrixService
         }
         if ($registryModule === 'mobile_driver') {
             return $gate->driverMobileEnabled();
+        }
+        if ($registryModule === 'mobile_manager') {
+            return $gate->managerAppEnabled();
         }
 
         $erpKeys = self::erpModuleMap()[$registryModule] ?? [$registryModule];

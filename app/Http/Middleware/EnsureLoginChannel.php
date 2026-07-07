@@ -46,6 +46,19 @@ class EnsureLoginChannel
             return $next($request);
         }
 
+        if ($loginChannel === UserLoginChannelService::MANAGER) {
+            /** @var User|null $user */
+            $user = $accessToken->tokenable;
+            if (! $user instanceof User || ! $this->channels->managerTokenCanAccessPath($user, $request->path())) {
+                return response()->json([
+                    'message' => 'This manager session is not authorized for this part of the system.',
+                    'code' => 'login_channel_forbidden',
+                ], 403);
+            }
+
+            return $next($request);
+        }
+
         if ($this->channels->tokenCanAccessPath($loginChannel, $request->path())) {
             return $next($request);
         }

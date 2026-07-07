@@ -18,9 +18,7 @@ class StockTakeApprovalService
 
     public function canApprove(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'inventory.stock_take.approve')
-            || $this->permissions->hasPermission($user, 'inventory.manage');
+        return $this->permissions->canApproveStockTakeCompletions($user);
     }
 
     public function requestCompletion(User $requester, StockTakeSession $session): ActionRequest

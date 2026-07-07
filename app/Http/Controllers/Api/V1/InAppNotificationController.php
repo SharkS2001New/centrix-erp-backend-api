@@ -18,8 +18,11 @@ class InAppNotificationController extends Controller
 
     public function unreadCount(Request $request)
     {
+        $user = $request->user();
+
         return response()->json([
-            'count' => $this->notifications->unreadCount($request->user()),
+            'count' => $this->notifications->unreadCount($user),
+            'pending_approvals_count' => $this->notifications->pendingApprovalsCount($user),
         ]);
     }
 
@@ -162,6 +165,24 @@ class InAppNotificationController extends Controller
                 'id' => (int) $resolved->id,
                 'status' => $resolved->status,
                 'resolved_at' => $resolved->resolved_at?->toIso8601String(),
+            ],
+        ]);
+    }
+
+    public function remindActionRequest(Request $request, string $id)
+    {
+        $actionRequest = ActionRequest::query()
+            ->where('organization_id', $request->user()->organization_id)
+            ->findOrFail((int) $id);
+
+        $resolved = $this->actionRequests->sendReminder($actionRequest, $request->user());
+
+        return response()->json([
+            'message' => 'Approval reminder sent.',
+            'data' => [
+                'id' => (int) $resolved->id,
+                'status' => $resolved->status,
+                'can_remind' => $this->actionRequests->canRemind($request->user(), $resolved),
             ],
         ]);
     }

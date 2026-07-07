@@ -186,14 +186,7 @@ class LpoModuleService
             return null;
         }
 
-        return [
-            'id' => (int) $request->id,
-            'type' => $request->type,
-            'status' => $request->status,
-            'reason' => $request->reason,
-            'payload' => $request->payload,
-            'can_approve' => app(ActionRequestService::class)->canApprove($viewer, $request),
-        ];
+        return app(ActionRequestService::class)->presentForViewer($request, $viewer);
     }
 
     /** @param  list<int>  $lpoNos

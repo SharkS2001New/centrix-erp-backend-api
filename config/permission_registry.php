@@ -73,6 +73,18 @@ return [
                 'cash' => ['label' => 'Cash collection', 'actions' => ['view', 'create']],
             ],
         ],
+        'mobile_manager' => [
+            'label' => 'Manager app',
+            'features' => [
+                'app' => ['label' => 'App access', 'actions' => ['access']],
+                'dashboard' => ['label' => 'Executive dashboard', 'actions' => ['view']],
+                'approvals' => ['label' => 'Approvals inbox', 'actions' => ['view', 'approve', 'reject']],
+                'notifications' => ['label' => 'Notifications', 'actions' => ['view', 'manage']],
+                'reports' => ['label' => 'Reports hub', 'actions' => ['view']],
+                'users' => ['label' => 'Users', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'roles' => ['label' => 'Roles & permissions', 'actions' => ['view', 'edit']],
+            ],
+        ],
         'pos' => [
             'label' => 'External POS',
             'features' => [

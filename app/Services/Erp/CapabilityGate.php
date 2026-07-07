@@ -254,6 +254,9 @@ class CapabilityGate
         if ($this->mobileSalesEnabled()) {
             $channels[] = \App\Services\Auth\UserLoginChannelService::MOBILE;
         }
+        if ($this->managerAppEnabled()) {
+            $channels[] = \App\Services\Auth\UserLoginChannelService::MANAGER;
+        }
 
         return $channels !== []
             ? $channels
@@ -280,6 +283,18 @@ class CapabilityGate
         $sales = $this->moduleSettings('sales');
 
         return (bool) ($sales['enable_mobile_orders'] ?? true);
+    }
+
+    /** Centrix Manager app for approvals, reports, and mobile administration. */
+    public function managerAppEnabled(): bool
+    {
+        if (! $this->enabled('sales.backend')) {
+            return false;
+        }
+
+        $sales = $this->moduleSettings('sales');
+
+        return (bool) ($sales['enable_manager_app'] ?? true);
     }
 
     /** Driver delivery module on the mobile app (requires mobile sales + distribution). */

@@ -84,6 +84,8 @@ class StockTransferApprovalTest extends TestCase
         $product = Product::query()->firstOrFail();
         $this->seedStoreStock($clerk, $product->product_code, 10);
 
+        $this->assertFalse(app(\App\Services\Inventory\StockTransferApprovalService::class)->canDirectTransfer($clerk));
+
         $this->postJson('/api/v1/inventory/transfer', [
             'branch_id' => $clerk->branch_id,
             'product_code' => $product->product_code,

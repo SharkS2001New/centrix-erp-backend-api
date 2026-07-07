@@ -18,8 +18,7 @@ class CustomerReturnApprovalService
 
     public function canApprove(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'sales.manage');
+        return $this->permissions->canApproveCustomerReturns($user);
     }
 
     public function notifyOnCreate(User $requester, CustomerReturn $return): void

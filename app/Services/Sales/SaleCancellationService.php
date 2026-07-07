@@ -13,6 +13,7 @@ use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Audit\AuditLogger;
 use App\Services\Notifications\ActionRequestService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -66,6 +67,15 @@ class SaleCancellationService
                 $sale->fresh(),
                 $user,
                 'Order was cancelled.',
+            );
+
+            app(AuditLogger::class)->log(
+                $user,
+                'cancel',
+                'sales',
+                (int) $sale->id,
+                ['status' => $from],
+                ['status' => 'cancelled', 'cancelled_by' => $user->id],
             );
         });
 

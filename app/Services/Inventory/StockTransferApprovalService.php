@@ -33,8 +33,12 @@ class StockTransferApprovalService
 
     public function canDirectTransfer(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'inventory.manage');
+        return $this->permissions->canDirectManageInventory($user);
+    }
+
+    public function canApprove(User $user): bool
+    {
+        return $this->permissions->canApproveInventoryOperations($user);
     }
 
     public function requiresApproval(CapabilityGate $gate, User $user, string $from, string $to): bool

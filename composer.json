@@ -9,6 +9,7 @@
         "guzzlehttp/guzzle": "^7.12.1",
         "guzzlehttp/psr7": "^2.12.1",
         "laravel/framework": "^12.61.1",
+        "laravel/reverb": "^1.10",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
         "openspout/openspout": "^4.28",

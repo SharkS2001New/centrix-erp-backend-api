@@ -110,14 +110,7 @@ class SaleOrderPresentationService
             return null;
         }
 
-        return [
-            'id' => (int) $request->id,
-            'type' => $request->type,
-            'status' => $request->status,
-            'reason' => $request->reason,
-            'payload' => $request->payload,
-            'can_approve' => $this->actionRequests->canApprove($viewer, $request),
-        ];
+        return app(ActionRequestService::class)->presentForViewer($request, $viewer);
     }
 
     protected function applyPresentationAttributes(Sale $sale, User $user, ?ActionRequest $pendingRequest): Sale

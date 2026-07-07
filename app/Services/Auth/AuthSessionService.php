@@ -328,6 +328,12 @@ class AuthSessionService
             return;
         }
 
+        if ($loginChannel === UserLoginChannelService::MANAGER) {
+            app(UserManagerLoginValidator::class)->assertCanLoginViaManager($user);
+
+            return;
+        }
+
         if ($loginChannel !== UserLoginChannelService::POS) {
             return;
         }
@@ -357,6 +363,7 @@ class AuthSessionService
         $message = match ($loginChannel) {
             UserLoginChannelService::POS => 'External POS is not enabled for this organization.',
             UserLoginChannelService::MOBILE => 'Mobile app access is not enabled for this organization.',
+            UserLoginChannelService::MANAGER => 'Centrix Manager app access is not enabled for this organization.',
             UserLoginChannelService::BACKOFFICE => 'Backoffice sales is not enabled for this organization.',
             default => sprintf('%s is not enabled for this organization.', $label),
         };

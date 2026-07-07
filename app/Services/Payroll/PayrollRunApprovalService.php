@@ -18,9 +18,7 @@ class PayrollRunApprovalService
 
     public function canApprove(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'hr.payroll.approve')
-            || $this->permissions->hasPermission($user, 'hr.manage');
+        return $this->permissions->canApprovePayrollRuns($user);
     }
 
     public function requestApproval(User $requester, PayrollRun $run): ActionRequest

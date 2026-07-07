@@ -7,6 +7,7 @@
 .phpunit.result.cache
 storage/*.key
 storage/app/private/google-drive-service-account.json
+storage/app/private/firebase/
 storage/app/private/backups/
 storage/logs/*
 !storage/logs/.gitkeep

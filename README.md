@@ -37,6 +37,36 @@ php artisan migrate:fresh --seed
 php artisan serve
 ```
 
+## Testing
+
+Feature and unit tests use MySQL database `pos_erp_test` (see `phpunit.xml`). Each feature test class reloads schema + demo seed via `RefreshesErpDatabase`.
+
+**Local setup**
+
+```bash
+# MySQL 8.0+ — adjust user/password to match phpunit.xml / .env
+mysql -uroot -proot -e "CREATE DATABASE IF NOT EXISTS pos_erp_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+
+composer install
+cp .env.example .env
+php artisan key:generate
+
+# Run full suite (CI runs the same command)
+php artisan test
+
+# Single file or filter
+php artisan test --filter=DiscountApprovalCheckoutTest
+php artisan test tests/Feature/ApprovalCapabilitiesTest.php
+```
+
+If PHPUnit stops with memory errors, `phpunit.xml` sets `memory_limit=512M`. You can override:
+
+```bash
+php -d memory_limit=512M artisan test
+```
+
+**CI** (`.github/workflows/ci.yml`): `composer audit`, then `php artisan test` against a MySQL 8 service container (`root` / `root`, database `pos_erp_test`).
+
 ## Capabilities (per tenant)
 
 After login:

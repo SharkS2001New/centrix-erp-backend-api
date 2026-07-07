@@ -2,7 +2,9 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\ActionRequest;
 use App\Models\JournalEntry;
+use App\Services\Notifications\ActionRequestService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -45,6 +47,19 @@ class JournalEntryController extends BaseResourceController
             ->where('organization_id', $request->user()->organization_id)
             ->where($this->routeKeyColumn(), $id)
             ->firstOrFail();
+
+        $pendingRequest = ActionRequest::query()
+            ->where('organization_id', $request->user()->organization_id)
+            ->where('type', 'journal_entry')
+            ->where('reference_type', 'journal_entry')
+            ->where('reference_id', (int) $entry->id)
+            ->where('status', 'pending')
+            ->first();
+
+        $entry->setAttribute(
+            'action_request',
+            app(ActionRequestService::class)->presentForViewer($pendingRequest, $request->user()),
+        );
 
         return response()->json($entry);
     }
