@@ -131,6 +131,7 @@ class CartOperationsController extends Controller
             'line_ref' => 'nullable|string',
             'discount_amount' => 'required|numeric|min:0',
             'reason' => 'nullable|string|max:500',
+            'defer_approval' => 'nullable|boolean',
         ]);
 
         $result = app(\App\Services\Sales\DiscountApprovalService::class)->applyOrRequest(
@@ -144,6 +145,10 @@ class CartOperationsController extends Controller
             'applied' => $result['applied'],
             'cart' => $this->presentCart($result['cart'], $user, includeNextOrderNum: false),
         ];
+
+        if (! empty($result['deferred_approval'])) {
+            $payload['deferred_approval'] = true;
+        }
 
         if (! $result['applied']) {
             $payload['pending_approval'] = true;
@@ -184,7 +189,9 @@ class CartOperationsController extends Controller
 
     public function clear(int $cartId)
     {
-        $this->clearCart($this->findOwnedCart($cartId, request()->user()));
+        $user = request()->user();
+        $cart = $this->findOwnedCart($cartId, $user);
+        $this->clearCart($cart, $user);
 
         return response()->json(['ok' => true]);
     }
@@ -216,7 +223,7 @@ class CartOperationsController extends Controller
 
         $cart = DB::transaction(function () use ($cart, $sale, $user, $gate) {
             if ($cart->lines()->exists()) {
-                $this->clearCart($cart);
+                $this->clearCart($cart, $user);
             }
 
             app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
@@ -261,6 +268,12 @@ class CartOperationsController extends Controller
 
             $this->reverseSaleJournalIfPosted($sale, $user);
             app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
+
+            app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForSale(
+                $sale->fresh(),
+                $user,
+                'Order superseded for editing.',
+            );
 
             return $cart->fresh('lines');
         });
@@ -553,6 +566,12 @@ class CartOperationsController extends Controller
 
             $this->reverseSaleJournalIfPosted($sale, $user);
             app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
+
+            app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForSale(
+                $sale->fresh(),
+                $user,
+                'Held order was cancelled.',
+            );
         });
 
         return response()->json($sale->fresh());
@@ -884,8 +903,17 @@ class CartOperationsController extends Controller
         $cart->increment('update_no');
     }
 
-    protected function clearCart(TemporaryCart $cart): void
+    protected function clearCart(TemporaryCart $cart, ?User $user = null): void
     {
+        $user ??= request()->user();
+        if ($user) {
+            app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForCart(
+                $cart,
+                $user,
+                'Cart was cleared.',
+            );
+        }
+
         $this->releaseCartReservations($cart->id);
         CartLine::where('cart_id', $cart->id)->delete();
         $cart->update([

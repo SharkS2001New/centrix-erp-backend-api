@@ -377,6 +377,130 @@ class DiscountApprovalCheckoutTest extends TestCase
         $this->assertStringContainsString('approved', strtolower($list[0]['message']));
     }
 
+    public function test_deferred_line_discount_creates_approval_request_on_checkout_only(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->mobileSalesRepUser();
+        Sanctum::actingAs($staff);
+
+        $product = Product::query()->firstOrFail();
+
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $staff->branch_id,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $cartWithLine = $this->getJson("/api/v1/sales/carts/{$cart['id']}")->assertOk()->json();
+        $lineRef = $cartWithLine['lines'][0]['update_code'] ?? $cartWithLine['lines'][0]['id'];
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'line',
+            'line_ref' => (string) $lineRef,
+            'discount_amount' => 10,
+            'defer_approval' => true,
+        ])->assertOk()
+            ->assertJsonPath('applied', true)
+            ->assertJsonPath('deferred_approval', true)
+            ->assertJsonMissingPath('pending_approval');
+
+        $this->assertDatabaseMissing('action_requests', [
+            'reference_type' => 'temporary_cart',
+            'reference_id' => $cart['id'],
+            'status' => 'pending',
+        ]);
+
+        $this->getJson("/api/v1/sales/carts/{$cart['id']}")
+            ->assertOk()
+            ->assertJsonPath('discount_approval_pending', false);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+            'discount_approval_reason' => 'Customer loyalty discount',
+        ])->assertCreated()
+            ->assertJsonPath('status', 'pending_approval')
+            ->json();
+
+        $this->assertDatabaseHas('action_requests', [
+            'reference_type' => 'sale',
+            'reference_id' => $sale['id'],
+            'status' => 'pending',
+            'reason' => 'Customer loyalty discount',
+        ]);
+    }
+
+    public function test_cancelling_pending_approval_order_withdraws_discount_request_and_notifications(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->mobileSalesRepUser();
+        Sanctum::actingAs($staff);
+
+        $product = Product::query()->firstOrFail();
+
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $staff->branch_id,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $cartWithLine = $this->getJson("/api/v1/sales/carts/{$cart['id']}")->assertOk()->json();
+        $lineRef = $cartWithLine['lines'][0]['update_code'] ?? $cartWithLine['lines'][0]['id'];
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'line',
+            'line_ref' => (string) $lineRef,
+            'discount_amount' => 10,
+            'defer_approval' => true,
+        ])->assertOk();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+            'discount_approval_reason' => 'Customer loyalty discount',
+        ])->assertCreated()
+            ->assertJsonPath('status', 'pending_approval')
+            ->json();
+
+        $requestId = ActionRequest::query()
+            ->where('reference_type', 'sale')
+            ->where('reference_id', $sale['id'])
+            ->where('type', 'discount')
+            ->value('id');
+
+        $this->assertNotNull($requestId);
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/notifications/all?bucket=pending_approvals')
+            ->assertOk()
+            ->assertJsonPath('data.0.action_request.id', (int) $requestId);
+
+        Sanctum::actingAs($staff);
+
+        $this->postJson("/api/v1/sales/orders/{$sale['id']}/cancel")
+            ->assertOk()
+            ->assertJsonPath('status', 'cancelled');
+
+        $this->assertDatabaseHas('action_requests', [
+            'id' => $requestId,
+            'status' => 'cancelled',
+        ]);
+
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/notifications/all?bucket=pending_approvals')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+    }
+
     public function test_rejecting_discount_notifies_requester(): void
     {
         $this->enableDiscountApproval();

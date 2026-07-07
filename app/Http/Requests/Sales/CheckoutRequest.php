@@ -32,6 +32,7 @@ class CheckoutRequest extends FormRequest
             'offline_order' => 'nullable|boolean',
             'checkout_latitude' => 'nullable|numeric|between:-90,90',
             'checkout_longitude' => 'nullable|numeric|between:-180,180',
+            'discount_approval_reason' => 'nullable|string|max:500',
         ];
     }
 }

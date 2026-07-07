@@ -21,9 +21,7 @@ class LpoApprovalService
 
     public function canApprove(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'purchasing.lpo.approve')
-            || $this->permissions->hasPermission($user, 'purchasing.manage');
+        return $this->permissions->hasRoleAssignedPermission($user, 'purchasing.lpo.approve');
     }
 
     public function assertCanApprove(User $user): void
@@ -57,7 +55,6 @@ class LpoApprovalService
             'approver_permission' => 'purchasing.lpo.approve',
             'title' => 'LPO approval required',
             'message' => "{$requesterName} submitted {$poNumber} for {$supplier} for approval.",
-            'reason' => $lpo->terms ?: $lpo->instructions,
             'severity' => 'warning',
             'action_url' => $actionUrl,
             'payload' => [

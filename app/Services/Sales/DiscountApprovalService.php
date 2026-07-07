@@ -188,8 +188,12 @@ class DiscountApprovalService
         ]);
     }
 
-    public function assertCheckoutAllowed(TemporaryCart $cart, User $user, CapabilityGate $gate): void
-    {
+    public function assertCheckoutAllowed(
+        TemporaryCart $cart,
+        User $user,
+        CapabilityGate $gate,
+        ?string $checkoutReason = null,
+    ): void {
         $salesSettings = $gate->moduleSettings('sales');
         if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return;
@@ -200,17 +204,17 @@ class DiscountApprovalService
         }
 
         $pending = $this->pendingRequestForCart($cart, $user);
-        if ($pending === null) {
-            throw ValidationException::withMessages([
-                'cart' => 'This cart has discounts that require manager approval. Submit a discount request with a reason before checkout.',
-            ]);
+        if ($pending !== null && $this->hasValidApprovalReason($pending->reason)) {
+            return;
         }
 
-        if (! $this->hasValidApprovalReason($pending->reason)) {
-            throw ValidationException::withMessages([
-                'reason' => 'A reason is required for discount approval before checkout.',
-            ]);
+        if ($this->hasValidApprovalReason($checkoutReason)) {
+            return;
         }
+
+        throw ValidationException::withMessages([
+            'discount_approval_reason' => 'A reason is required for discount approval before checkout.',
+        ]);
     }
 
     public function cartHasManualDiscount(TemporaryCart $cart): bool
@@ -334,8 +338,10 @@ class DiscountApprovalService
             && $discountAmount > 0.01
             && ! $this->canAutoApproveDiscount($user);
 
+        $deferApproval = ! empty($data['defer_approval']);
+
         $existingPending = $this->pendingRequestForCart($cart, $user);
-        $reasonRequired = $needsApproval;
+        $reasonRequired = $needsApproval && ! $deferApproval;
 
         if ($reasonRequired) {
             $reason = $this->resolveOrderApprovalReason($existingPending, $reason);
@@ -345,6 +351,21 @@ class DiscountApprovalService
             return [
                 'applied' => true,
                 'cart' => $this->applyDiscount($user, $cart, $gate, $scope, $discountAmount, (string) ($data['line_ref'] ?? '')),
+            ];
+        }
+
+        if ($deferApproval) {
+            return [
+                'applied' => true,
+                'deferred_approval' => true,
+                'cart' => $this->applyDiscount(
+                    $user,
+                    $cart,
+                    $gate,
+                    $scope,
+                    $discountAmount,
+                    (string) ($data['line_ref'] ?? ''),
+                )->fresh('lines'),
             ];
         }
 
@@ -462,11 +483,15 @@ class DiscountApprovalService
         ]);
     }
 
-    public function attachCheckoutToSale(Sale $sale, TemporaryCart $cart, User $user): void
-    {
+    public function attachCheckoutToSale(
+        Sale $sale,
+        TemporaryCart $cart,
+        User $user,
+        ?string $checkoutReason = null,
+    ): void {
         $pending = $this->pendingRequestForCart($cart, $user);
         if ($pending === null) {
-            $pending = $this->ensureSaleDiscountApprovalRequest($sale, $cart, $user);
+            $pending = $this->ensureSaleDiscountApprovalRequest($sale, $cart, $user, $checkoutReason);
         }
         if ($pending === null) {
             return;
@@ -505,6 +530,7 @@ class DiscountApprovalService
         Sale $sale,
         TemporaryCart $cart,
         User $user,
+        ?string $checkoutReason = null,
     ): ?ActionRequest {
         if ($sale->status !== 'pending_approval') {
             return null;
@@ -537,6 +563,9 @@ class DiscountApprovalService
         $requesterName = $user->full_name ?: $user->username;
         $existingCartPending = $this->pendingRequestForCart($cart, $user);
         $approvalReason = trim((string) ($existingCartPending?->reason ?? ''));
+        if (! $this->hasValidApprovalReason($approvalReason)) {
+            $approvalReason = trim((string) ($checkoutReason ?? ''));
+        }
         if (! $this->hasValidApprovalReason($approvalReason)) {
             return null;
         }
@@ -589,7 +618,9 @@ class DiscountApprovalService
             ->findOrFail((int) $request->reference_id);
 
         if ($sale->status !== 'pending_approval') {
-            return;
+            throw ValidationException::withMessages([
+                'status' => 'This order is no longer awaiting discount approval.',
+            ]);
         }
 
         $guidance = (string) ($options['discount_guidance'] ?? 'remove_discount');
@@ -632,7 +663,9 @@ class DiscountApprovalService
             ->findOrFail($saleId);
 
         if ($sale->status !== 'pending_approval') {
-            return;
+            throw ValidationException::withMessages([
+                'status' => 'This order is no longer awaiting discount approval.',
+            ]);
         }
 
         app(\App\Http\Controllers\Api\V1\Operations\OrderWorkflowController::class)

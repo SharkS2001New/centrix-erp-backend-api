@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Notifications\ActionRequestService;
 use Illuminate\Support\Facades\DB;
 
 class OrderExpiryService
@@ -87,6 +88,12 @@ class OrderExpiryService
                 (int) $sale->id,
                 $actor,
                 $gate,
+            );
+
+            app(ActionRequestService::class)->cancelAllPendingForSale(
+                $sale->fresh(),
+                $actor,
+                'Order expired.',
             );
         });
 

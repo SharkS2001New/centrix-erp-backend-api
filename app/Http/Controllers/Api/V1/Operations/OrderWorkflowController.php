@@ -252,6 +252,12 @@ class OrderWorkflowController extends Controller
                     $user,
                     $gate,
                 );
+
+                app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForSale(
+                    $sale->fresh(),
+                    $user,
+                    'Order expired.',
+                );
             });
 
             $sale = $sale->fresh();

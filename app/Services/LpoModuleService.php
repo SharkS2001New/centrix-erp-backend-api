@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ApprovalAction;
 use App\Models\ActionRequest;
 use App\Models\LpoMst;
 use App\Models\LpoStatus;
@@ -12,6 +13,7 @@ use App\Models\SupplierReturn;
 use App\Models\SupplierReturnDocument;
 use App\Models\Uom;
 use App\Models\User;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Purchasing\LpoWorkflowService;
 use App\Services\Purchasing\SupplierReturnDocumentService;
 use Illuminate\Support\Collection;
@@ -31,16 +33,16 @@ class LpoModuleService
         return sprintf('LPO-%d-%04d', $year, $lpoNo);
     }
 
-    public function mapListRow(LpoMst $lpo, ?int $organizationId = null): array
+    public function mapListRow(LpoMst $lpo, ?int $organizationId = null, ?User $viewer = null): array
     {
-        return $this->mapListRows(collect([$lpo]), $organizationId)[0];
+        return $this->mapListRows(collect([$lpo]), $organizationId, $viewer)[0];
     }
 
     /**
      * @param  Collection<int, LpoMst>  $lpos
      * @return list<array<string, mixed>>
      */
-    public function mapListRows(Collection $lpos, ?int $organizationId = null): array
+    public function mapListRows(Collection $lpos, ?int $organizationId = null, ?User $viewer = null): array
     {
         if ($lpos->isEmpty()) {
             return [];
@@ -66,7 +68,8 @@ class LpoModuleService
             : \App\Models\Supplier::query()->whereIn('id', $supplierIds)->get()->keyBy('id');
 
         $workflow = app(LpoWorkflowService::class);
-        $pendingApprovals = $this->pendingApprovalLpoNos($lpoNos, $organizationId);
+        $pendingApprovals = $this->pendingApprovalRequestsForLpos($lpoNos, $organizationId);
+        $lastRejections = $this->lastRejectedApprovalsForLpos($lpoNos, $organizationId);
 
         return $lpos->map(function (LpoMst $lpo) use (
             $statuses,
@@ -76,6 +79,8 @@ class LpoModuleService
             $workflow,
             $organizationId,
             $pendingApprovals,
+            $lastRejections,
+            $viewer,
         ) {
             $status = $statuses->get((int) ($lpo->lpo_status_code ?? 0));
             $creator = $lpo->created_by ? $creators->get($lpo->created_by) : null;
@@ -86,6 +91,7 @@ class LpoModuleService
             $paymentsTotal = (float) ($paymentsByLpo[$lpoNo] ?? 0);
             $netAmount = (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0);
             $supplier = $lpo->supplier ?? $suppliers->get($lpo->supplier_id);
+            $pendingRequest = $pendingApprovals->get($lpoNo);
 
             return [
                 'lpo_no' => $lpoNo,
@@ -108,9 +114,86 @@ class LpoModuleService
                 'amount_paid' => round($paymentsTotal, 2),
                 'balance_due' => round(max(0, $netAmount - $paymentsTotal), 2),
                 'workflow_actions' => $workflow->workflowActions($lpo, $organizationId, $supplier),
-                'approval_pending' => isset($pendingApprovals[$lpoNo]),
+                'approval_pending' => $pendingRequest !== null,
+                'action_request' => $this->presentActionRequest($pendingRequest, $viewer),
+                'approval_rejection' => $lastRejections[$lpoNo] ?? null,
             ];
         })->values()->all();
+    }
+
+    /** @param  list<int>  $lpoNos
+     * @return Collection<int, ActionRequest>
+     */
+    protected function pendingApprovalRequestsForLpos(array $lpoNos, ?int $organizationId): Collection
+    {
+        if ($lpoNos === [] || ! $organizationId) {
+            return collect();
+        }
+
+        return ActionRequest::query()
+            ->where('organization_id', $organizationId)
+            ->where('type', 'lpo_approval')
+            ->where('reference_type', 'lpo_mst')
+            ->whereIn('reference_id', $lpoNos)
+            ->where('status', 'pending')
+            ->get()
+            ->keyBy(fn (ActionRequest $request) => (int) $request->reference_id);
+    }
+
+    /** @param  list<int>  $lpoNos
+     * @return array<int, array<string, mixed>>
+     */
+    protected function lastRejectedApprovalsForLpos(array $lpoNos, ?int $organizationId): array
+    {
+        if ($lpoNos === [] || ! $organizationId) {
+            return [];
+        }
+
+        $requests = ActionRequest::query()
+            ->where('organization_id', $organizationId)
+            ->where('type', 'lpo_approval')
+            ->where('reference_type', 'lpo_mst')
+            ->whereIn('reference_id', $lpoNos)
+            ->where('status', 'rejected')
+            ->orderByDesc('resolved_at')
+            ->get()
+            ->unique(fn (ActionRequest $request) => (int) $request->reference_id);
+
+        $out = [];
+        foreach ($requests as $request) {
+            $lpoNo = (int) $request->reference_id;
+            $comment = ApprovalAction::query()
+                ->where('action_request_id', $request->id)
+                ->where('action', 'rejected')
+                ->orderByDesc('id')
+                ->value('comment');
+
+            $out[$lpoNo] = [
+                'rejected' => true,
+                'reason' => trim((string) ($comment ?? '')),
+                'rejected_at' => $request->resolved_at?->toIso8601String(),
+                'po_number' => (string) (($request->payload ?? [])['po_number'] ?? ''),
+            ];
+        }
+
+        return $out;
+    }
+
+    /** @return array<string, mixed>|null */
+    public function presentActionRequest(?ActionRequest $request, ?User $viewer): ?array
+    {
+        if ($request === null || $viewer === null) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $request->id,
+            'type' => $request->type,
+            'status' => $request->status,
+            'reason' => $request->reason,
+            'payload' => $request->payload,
+            'can_approve' => app(ActionRequestService::class)->canApprove($viewer, $request),
+        ];
     }
 
     /** @param  list<int>  $lpoNos
@@ -149,7 +232,7 @@ class LpoModuleService
             ->all();
     }
 
-    public function summary(int $lpoNo, ?int $organizationId = null): array
+    public function summary(int $lpoNo, ?int $organizationId = null, ?User $viewer = null): array
     {
         $lpo = LpoMst::query()
             ->with('supplier')
@@ -181,6 +264,16 @@ class LpoModuleService
 
         $itemsFullyReturned = $lineRows->isNotEmpty()
             && $lineRows->every(fn (array $line) => ($line['receive_status'] ?? '') === 'fully_returned');
+
+        $pendingRequest = ActionRequest::query()
+            ->where('organization_id', $organizationId)
+            ->where('type', 'lpo_approval')
+            ->where('reference_type', 'lpo_mst')
+            ->where('reference_id', $lpoNo)
+            ->where('status', 'pending')
+            ->first();
+
+        $lastRejections = $this->lastRejectedApprovalsForLpos([$lpoNo], $organizationId);
 
         $lpoPayload = [
             'lpo_no' => (int) $lpo->lpo_no,
@@ -223,13 +316,9 @@ class LpoModuleService
             'balance_due' => round($payableBalance, 2),
             'workflow_actions' => app(\App\Services\Purchasing\LpoWorkflowService::class)
                 ->workflowActions($lpo, $organizationId),
-            'approval_pending' => ActionRequest::query()
-                ->where('organization_id', $organizationId)
-                ->where('type', 'lpo_approval')
-                ->where('reference_type', 'lpo_mst')
-                ->where('reference_id', $lpoNo)
-                ->where('status', 'pending')
-                ->exists(),
+            'approval_pending' => $pendingRequest !== null,
+            'action_request' => $this->presentActionRequest($pendingRequest, $viewer),
+            'approval_rejection' => $lastRejections[$lpoNo] ?? null,
             'supplier_email' => $lpo->supplier?->email,
             'supplier_phone' => $lpo->supplier?->phone ?? $lpo->supplier?->alternate_phone,
             'default_receive_location' => $defaultReceiveLocation,

@@ -36,6 +36,7 @@ return [
                 'purchasing.lpo.view',
                 'purchasing.lpo.create',
                 'purchasing.lpo.edit',
+                'purchasing.lpo.approve',
                 'purchasing.suppliers.view',
                 'purchasing.supplier_payments.view',
                 'purchasing.supplier_payments.create',

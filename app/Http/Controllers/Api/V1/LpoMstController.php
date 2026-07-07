@@ -1,6 +1,7 @@
 <?php
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\ActionRequest;
 use App\Models\LpoMst;
 use App\Models\LpoStatus;
 use App\Models\LpoTxn;
@@ -68,11 +69,29 @@ class LpoMstController extends BaseResourceController
             });
         }
 
-        $perPage = min((int) $request->input('per_page', 25), 200);
         $orgId = (int) ($request->user()?->organization_id ?? 0);
 
+        if ($request->boolean('approval_pending')) {
+            $pendingLpoNos = ActionRequest::query()
+                ->where('organization_id', $orgId)
+                ->where('type', 'lpo_approval')
+                ->where('reference_type', 'lpo_mst')
+                ->where('status', 'pending')
+                ->pluck('reference_id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            if ($pendingLpoNos === []) {
+                $query->whereRaw('1 = 0');
+            } else {
+                $query->whereIn('lpo_no', $pendingLpoNos);
+            }
+        }
+
+        $perPage = min((int) $request->input('per_page', 25), 200);
+
         $paginator = $query->with('supplier')->orderByDesc('lpo_no')->paginate($perPage);
-        $mapped = $this->lpoModule->mapListRows($paginator->getCollection(), $orgId);
+        $mapped = $this->lpoModule->mapListRows($paginator->getCollection(), $orgId, $request->user());
         $paginator->setCollection(collect($mapped));
 
         return response()->json($paginator);
@@ -105,7 +124,7 @@ class LpoMstController extends BaseResourceController
     {
         $orgId = (int) ($request->user()?->organization_id ?? 0);
 
-        return response()->json($this->lpoModule->summary((int) $lpoNo, $orgId));
+        return response()->json($this->lpoModule->summary((int) $lpoNo, $orgId, $request->user()));
     }
 
     public function show(Request $request, string $id)
@@ -209,7 +228,7 @@ class LpoMstController extends BaseResourceController
             }
         });
 
-        return response()->json($this->lpoModule->summary((int) $lpoNo, (int) $request->user()->organization_id));
+        return response()->json($this->lpoModule->summary((int) $lpoNo, (int) $request->user()->organization_id, $request->user()));
     }
 
     public function workflow(Request $request, string $lpoNo)
@@ -222,7 +241,7 @@ class LpoMstController extends BaseResourceController
         $org = Organization::findOrFail($request->user()->organization_id);
         $updated = $this->workflow->applyAction($lpo, $data['action'], $request->user(), $org);
 
-        return response()->json($this->lpoModule->summary((int) $updated->lpo_no, (int) $org->id));
+        return response()->json($this->lpoModule->summary((int) $updated->lpo_no, (int) $org->id, $request->user()));
     }
 
     public function update(Request $request, string $id)

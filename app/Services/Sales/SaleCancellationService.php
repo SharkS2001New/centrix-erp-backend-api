@@ -13,6 +13,7 @@ use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Notifications\ActionRequestService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -59,6 +60,12 @@ class SaleCancellationService
                 (int) $sale->id,
                 $user,
                 $gate,
+            );
+
+            app(ActionRequestService::class)->cancelAllPendingForSale(
+                $sale->fresh(),
+                $user,
+                'Order was cancelled.',
             );
         });
 

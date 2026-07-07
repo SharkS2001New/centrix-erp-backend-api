@@ -15,7 +15,7 @@ class NotificationActionUrlBuilder
             'discount' => self::discountActionUrl($referenceId, $payload),
             'stock_adjustment' => '/inventory/adjustments',
             'stock_transfer' => '/inventory/transfers',
-            'lpo' => '/suppliers/lpos/'.$referenceId,
+            'lpo' => '/lpo/'.$referenceId,
             'payroll_run' => '/hr/payroll/runs/'.$referenceId,
             'cash_advance' => '/hr/cash-advances?advance_id='.$referenceId,
             'expense' => $referenceId > 0 ? '/accounting/expenses?expense_id='.$referenceId : '/accounting/expenses',

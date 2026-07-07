@@ -45,6 +45,7 @@ class PermissionMatrixService
         self::remapLegacyPermissionAssignments();
         self::ensureDiscountGiveForAdminRoles();
         self::ensureSalesOrderApproveForAdminRoles();
+        self::ensureLpoApproveForAdminRoles();
     }
 
     public static function ensureRegistryPermissions(): void
@@ -321,6 +322,29 @@ class PermissionMatrixService
     {
         $approveId = Permission::query()
             ->where('permission_code', 'sales.orders.approve')
+            ->value('id');
+
+        if (! $approveId) {
+            return;
+        }
+
+        $roleIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Administrator', 'Admin'])
+            ->pluck('id');
+
+        foreach ($roleIds as $roleId) {
+            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                'role_id' => $roleId,
+                'permission_id' => $approveId,
+            ]);
+        }
+    }
+
+    /** Org administrators should be able to approve LPO requests. */
+    public static function ensureLpoApproveForAdminRoles(): void
+    {
+        $approveId = Permission::query()
+            ->where('permission_code', 'purchasing.lpo.approve')
             ->value('id');
 
         if (! $approveId) {

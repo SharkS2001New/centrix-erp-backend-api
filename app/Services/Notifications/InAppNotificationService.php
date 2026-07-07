@@ -230,6 +230,15 @@ class InAppNotificationService
                     'lines' => $requestPayload['lines'] ?? [],
                 ];
             }
+
+            if ($request->type === 'lpo_approval') {
+                $requestPayload = $request->payload ?? [];
+                $payload['lpo_approval'] = [
+                    'po_number' => $requestPayload['po_number'] ?? null,
+                    'supplier_name' => $requestPayload['supplier_name'] ?? null,
+                    'net_amount' => $requestPayload['net_amount'] ?? null,
+                ];
+            }
         }
 
         return $payload;

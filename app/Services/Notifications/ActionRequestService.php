@@ -7,6 +7,7 @@ use App\Models\ApprovalAction;
 use App\Models\InAppNotification;
 use App\Models\Organization;
 use App\Models\Sale;
+use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\Contracts\ActionRequestHandler;
@@ -198,6 +199,74 @@ class ActionRequestService
         });
     }
 
+    /** Withdraw pending approval requests when the referenced sale is cancelled. */
+    public function cancelAllPendingForSale(Sale $sale, User $actor, ?string $comment = null): void
+    {
+        $this->cancelAllPendingForReference(
+            $actor,
+            'sale',
+            (int) $sale->id,
+            $comment,
+        );
+    }
+
+    /** Withdraw pending cart discount requests when the cart is abandoned or cleared. */
+    public function cancelAllPendingForCart(TemporaryCart $cart, User $actor, ?string $comment = null): void
+    {
+        $this->cancelAllPendingForReference(
+            $actor,
+            'temporary_cart',
+            (int) $cart->id,
+            $comment,
+        );
+    }
+
+    protected function cancelAllPendingForReference(
+        User $actor,
+        string $referenceType,
+        int $referenceId,
+        ?string $comment = null,
+    ): void {
+        $requests = ActionRequest::query()
+            ->where('organization_id', (int) $actor->organization_id)
+            ->where('reference_type', $referenceType)
+            ->where('reference_id', $referenceId)
+            ->where('status', 'pending')
+            ->get();
+
+        foreach ($requests as $request) {
+            $this->cancelPendingRequest($request, $actor, $comment);
+        }
+    }
+
+    protected function cancelPendingRequest(
+        ActionRequest $request,
+        User $actor,
+        ?string $comment = null,
+    ): void {
+        if (! $request->isPending()) {
+            return;
+        }
+
+        DB::transaction(function () use ($request, $actor, $comment) {
+            $request->update([
+                'status' => 'cancelled',
+                'resolved_by' => $actor->id,
+                'resolved_at' => now(),
+            ]);
+
+            ApprovalAction::query()->create([
+                'organization_id' => $request->organization_id,
+                'action_request_id' => $request->id,
+                'user_id' => $actor->id,
+                'action' => 'cancelled',
+                'comment' => $comment,
+            ]);
+
+            $this->notifications->resolveForActionRequest($request);
+        });
+    }
+
     public function handlerFor(ActionRequest $request): ?ActionRequestHandler
     {
         return $this->handlers->get($request->type);
@@ -321,6 +390,21 @@ class ActionRequestService
                     $message .= " {$guidance}.";
                 }
             }
+        } elseif ($request->type === 'lpo_approval') {
+            $payload = $request->payload ?? [];
+            $poNumber = trim((string) ($payload['po_number'] ?? ''));
+            $supplier = trim((string) ($payload['supplier_name'] ?? ''));
+            $poLabel = $poNumber !== '' ? $poNumber : 'your purchase order';
+            $supplierLabel = $supplier !== '' ? " for {$supplier}" : '';
+
+            if ($approved) {
+                $message = "{$poLabel}{$supplierLabel} was approved by {$actor->full_name}. You can now send it to the supplier.";
+            } else {
+                $message = "{$poLabel}{$supplierLabel} was rejected. Revise the order and submit again for approval.";
+                if ($comment) {
+                    $message .= " Reason: {$comment}";
+                }
+            }
         } elseif (! $approved && $comment) {
             $message .= " Reason: {$comment}";
         }
@@ -328,6 +412,8 @@ class ActionRequestService
         $title = match (true) {
             $request->type === 'discount' && $approved => 'Discount approved',
             $request->type === 'discount' => 'Discount rejected',
+            $request->type === 'lpo_approval' && $approved => 'LPO approved',
+            $request->type === 'lpo_approval' => 'LPO rejected',
             $approved => 'Request approved',
             default => 'Request rejected',
         };
@@ -346,7 +432,7 @@ class ActionRequestService
 
     protected function shouldNotifyRequesterOfOutcome(ActionRequest $request, User $requester): bool
     {
-        if ($request->type === 'discount') {
+        if (in_array($request->type, ['discount', 'lpo_approval'], true)) {
             return true;
         }
 

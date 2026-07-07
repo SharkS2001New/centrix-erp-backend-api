@@ -121,7 +121,12 @@ class CheckoutController extends Controller
             throw new InvalidArgumentException('Cart is empty.');
         }
 
-        app(DiscountApprovalService::class)->assertCheckoutAllowed($cart, $user, $gate);
+        app(DiscountApprovalService::class)->assertCheckoutAllowed(
+            $cart,
+            $user,
+            $gate,
+            isset($input['discount_approval_reason']) ? (string) $input['discount_approval_reason'] : null,
+        );
 
         $inventorySettings = $gate->moduleSettings('inventory');
         $salesSettings = $gate->moduleSettings('sales');
@@ -491,7 +496,12 @@ class CheckoutController extends Controller
             if ($orderStatus !== 'pending_approval') {
                 app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
             } else {
-                $discountApproval->attachCheckoutToSale($sale, $cart, $user);
+                $discountApproval->attachCheckoutToSale(
+                    $sale,
+                    $cart,
+                    $user,
+                    isset($input['discount_approval_reason']) ? (string) $input['discount_approval_reason'] : null,
+                );
             }
 
             $this->releaseCartReservations($cart->id);
