@@ -15,6 +15,7 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Sales\DiscountApprovalService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 class BackofficeOrderLineEditService
@@ -239,12 +240,17 @@ class BackofficeOrderLineEditService
                 );
             } elseif (($updates['status'] ?? null) === 'pending_approval' && $wasEditable) {
                 $gate = app(ErpContext::class)->gateForUser($user);
-                $this->discounts->resubmitSaleForApproval(
+                $request = $this->discounts->resubmitSaleForApproval(
                     $sale->fresh(['items']),
                     $user,
                     $gate,
                     fromEditableSave: true,
                 );
+                if ($request === null) {
+                    throw ValidationException::withMessages([
+                        'discount_approval' => 'Could not submit this order for discount approval.',
+                    ]);
+                }
             }
 
             if ($qtyChanged && ! $sale->stock_balanced) {

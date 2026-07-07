@@ -216,6 +216,10 @@ class DiscountApprovalService
             return;
         }
 
+        if ($this->cartResubmitsRejectedDiscountOrder($cart)) {
+            return;
+        }
+
         if (! $this->cartHasManualDiscount($cart)) {
             return;
         }
@@ -346,6 +350,34 @@ class DiscountApprovalService
         return abs($this->saleTotalDiscountAmount($sale) - $advised) <= 0.01;
     }
 
+    public function cartTotalDiscountAmount(TemporaryCart $cart): float
+    {
+        $cart->loadMissing('lines');
+        $lineDiscount = round((float) $cart->lines->sum('discount_given'), 2);
+        $orderDiscount = round((float) ($cart->order_discount ?? 0), 2);
+
+        return round($lineDiscount + $orderDiscount, 2);
+    }
+
+    public function cartMatchesAdvisedDiscount(TemporaryCart $cart): bool
+    {
+        if (! $this->cartResubmitsRejectedDiscountOrder($cart)) {
+            return false;
+        }
+
+        $superseded = Sale::query()->find((int) $cart->superseded_sale_id);
+        if ($superseded === null) {
+            return false;
+        }
+
+        $advised = $this->saleAdvisedDiscountAmount($superseded);
+        if ($advised === null) {
+            return false;
+        }
+
+        return abs($this->cartTotalDiscountAmount($cart) - $advised) <= 0.01;
+    }
+
     /** @return array{reason: string, message: string, advised_discount_applied: bool} */
     protected function buildResubmitApprovalPresentation(
         Sale $sale,
@@ -354,10 +386,12 @@ class DiscountApprovalService
         ?Sale $rejectionSource,
         string $defaultReason,
         string $defaultMessage,
+        ?TemporaryCart $cart = null,
     ): array {
         $advisedApplied = $resubmit
             && $rejectionSource !== null
-            && $this->saleMatchesAdvisedDiscount($sale, $rejectionSource);
+            && ($this->saleMatchesAdvisedDiscount($sale, $rejectionSource)
+                || ($cart !== null && $this->cartMatchesAdvisedDiscount($cart)));
 
         if (! $advisedApplied) {
             return [
@@ -732,12 +766,17 @@ class DiscountApprovalService
         User $user,
         ?string $checkoutReason = null,
     ): void {
-        $pending = $this->pendingRequestForCart($cart, $user);
+        $resubmit = $this->cartResubmitsRejectedDiscountOrder($cart);
+        $pending = $resubmit
+            ? null
+            : $this->pendingRequestForCart($cart, $user);
         if ($pending === null) {
             $pending = $this->ensureSaleDiscountApprovalRequest($sale, $cart, $user, $checkoutReason);
         }
         if ($pending === null) {
-            return;
+            throw ValidationException::withMessages([
+                'discount_approval' => 'Could not submit this order for discount approval.',
+            ]);
         }
 
         $payload = $pending->payload ?? [];
@@ -837,6 +876,7 @@ class DiscountApprovalService
                 $rejectionSource,
                 $approvalReason,
                 $defaultMessage,
+                $cart,
             )
             : [
                 'reason' => $approvalReason,

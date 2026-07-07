@@ -58,7 +58,6 @@ return [
             'description' => 'POS checkout, till sessions, and end-of-day reporting.',
             'requires_modules' => ['sales.pos'],
             'permissions' => [
-                'dashboard.overview.view',
                 'pos.terminal.view',
                 'pos.checkout.create',
                 'pos.till_management.view',

@@ -88,6 +88,8 @@ trait HandlesCartAccess
             $pending = $discounts->pendingRequestForCart($cart, $user);
             $payload['discount_approval_pending'] = $pending !== null;
             $payload['discount_approval_request'] = $discounts->presentPendingRequest($pending);
+            $payload['discount_resubmit'] = $discounts->cartResubmitsRejectedDiscountOrder($cart);
+            $payload['advised_discount_ready'] = $discounts->cartMatchesAdvisedDiscount($cart);
         }
 
         return $payload;
