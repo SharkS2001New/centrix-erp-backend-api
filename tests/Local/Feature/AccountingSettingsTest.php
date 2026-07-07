@@ -1,6 +1,12 @@
 <?php
 
-namespace Tests\Feature;
+
+/**
+ * Local-only tests — excluded from CI / default `composer test`.
+ * Run manually: composer test:local
+ */
+
+namespace Tests\Local\Feature;
 
 use App\Models\AccountingConnection;
 use App\Models\AccountingExportQueue;

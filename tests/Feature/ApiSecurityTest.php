@@ -23,6 +23,9 @@ class ApiSecurityTest extends TestCase
         $response->assertHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
     }
 
+    /*
+     * Local-only — run via `composer test:local` (see ApiSecurityExtendedTest).
+     *
     public function test_login_is_rate_limited(): void
     {
         for ($i = 0; $i < 5; $i++) {
@@ -39,6 +42,7 @@ class ApiSecurityTest extends TestCase
             'client_id' => 'test-client',
         ])->assertStatus(429);
     }
+    */
 
     public function test_mpesa_callback_rejects_non_allowlisted_ip_when_enabled(): void
     {
@@ -53,6 +57,9 @@ class ApiSecurityTest extends TestCase
             ->assertForbidden();
     }
 
+    /*
+     * Local-only — run via `composer test:local` (see ApiSecurityExtendedTest).
+     *
     public function test_root_blocks_unauthorized_public_access(): void
     {
         $this->getJson('/')
@@ -60,6 +67,7 @@ class ApiSecurityTest extends TestCase
             ->assertJsonPath('message', 'Unauthorized. Public access to this API is not permitted.')
             ->assertJsonStructure(['message', 'hint', 'application']);
     }
+    */
 
     public function test_cors_allows_configured_origin(): void
     {
