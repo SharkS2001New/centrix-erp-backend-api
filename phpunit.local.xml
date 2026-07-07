@@ -5,19 +5,10 @@
          colors="true"
 >
     <testsuites>
-        <!-- CI / default suite. Local-only tests live in tests/Local (see phpunit.local.xml). -->
-        <testsuite name="Unit">
-            <directory>tests/Unit</directory>
-        </testsuite>
-        <testsuite name="Feature">
-            <directory>tests/Feature</directory>
+        <testsuite name="Local">
+            <directory>tests/Local</directory>
         </testsuite>
     </testsuites>
-    <source>
-        <include>
-            <directory>app</directory>
-        </include>
-    </source>
     <php>
         <ini name="memory_limit" value="512M"/>
         <env name="APP_ENV" value="testing"/>

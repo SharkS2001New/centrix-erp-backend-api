@@ -74,4 +74,4 @@ jobs:
           DB_DATABASE_LOCAL: pos_erp_test
           DB_USERNAME_LOCAL: root
           DB_PASSWORD_LOCAL: root
-        run: php artisan test
+        run: composer test

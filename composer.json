@@ -37,10 +37,10 @@
     },
     "scripts": {
         "postman": "php artisan postman:generate",
-        "test": "php artisan test",
+        "test": "php artisan test tests/Unit tests/Feature",
         "test:unit": "php artisan test tests/Unit",
         "test:feature": "php artisan test tests/Feature",
-        "test:local": "php artisan test tests/Local",
+        "test:local": "php artisan test --configuration=phpunit.local.xml",
         "audit": "composer audit",
         "dev": "APP_ENV=local APP_DEBUG=true php artisan serve",
         "post-autoload-dump": [
