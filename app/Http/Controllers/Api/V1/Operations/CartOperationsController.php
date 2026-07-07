@@ -728,7 +728,7 @@ class CartOperationsController extends Controller
         );
         if (! $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             $discountGiven = 0;
-        } else {
+        } elseif (! $discountService->cartIsOrderEditSession($cart)) {
             $discountService->assertDirectManualDiscountAllowed(
                 $user,
                 $salesSettings,
@@ -832,7 +832,8 @@ class CartOperationsController extends Controller
         $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
         if (! $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             $discountGiven = 0;
-        } elseif (array_key_exists('discount_given', $input)) {
+        } elseif (array_key_exists('discount_given', $input)
+            && ! $discountService->cartIsOrderEditSession($cart)) {
             $discountService->assertDirectManualDiscountAllowed(
                 $user,
                 $salesSettings,

@@ -20,7 +20,7 @@ class PermissionMatrixService
     /** @return list<string> */
     public static function actions(): array
     {
-        return ['view', 'create', 'edit', 'delete', 'approve', 'deliver'];
+        return ['view', 'create', 'edit', 'delete', 'approve', 'give', 'deliver'];
     }
 
     /** @return list<string> */

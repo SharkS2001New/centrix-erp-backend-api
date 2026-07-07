@@ -311,6 +311,11 @@ class DiscountApprovalService
         return $superseded !== null && $this->saleWasDiscountRejected($superseded);
     }
 
+    public function cartIsOrderEditSession(TemporaryCart $cart): bool
+    {
+        return (int) ($cart->superseded_sale_id ?? 0) > 0;
+    }
+
     public function advisedDiscountAppliedApprovalReason(): string
     {
         return 'An update has been made to this order and the advised discount has been applied. Please confirm and approve.';
