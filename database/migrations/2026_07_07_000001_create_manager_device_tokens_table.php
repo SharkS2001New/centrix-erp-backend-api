@@ -8,6 +8,10 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::hasTable('manager_device_tokens') || Schema::hasTable('user_device_tokens')) {
+            return;
+        }
+
         Schema::create('manager_device_tokens', function (Blueprint $table) {
             $table->id();
             $table->foreignId('user_id')->constrained()->cascadeOnDelete();
