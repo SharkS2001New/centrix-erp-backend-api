@@ -10,6 +10,9 @@ on:
       - master
       - main
 
+# Production Docker builds (docker-publish.yml) never run PHPUnit.
+# Tests are local-only: composer test | composer test:local
+
 jobs:
   audit:
     runs-on: ubuntu-latest
@@ -28,50 +31,3 @@ jobs:
 
       - name: Composer security audit
         run: composer audit
-
-  test:
-    runs-on: ubuntu-latest
-    needs: audit
-    timeout-minutes: 90
-    services:
-      mysql:
-        image: mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: pos_erp_test
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -p$$MYSQL_ROOT_PASSWORD"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=5
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
-
-      - name: Set up PHP
-        uses: shivammathur/setup-php@v2
-        with:
-          php-version: "8.4"
-          extensions: bcmath, gd, intl, pdo_mysql
-          coverage: none
-          ini-values: memory_limit=512M
-
-      - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist
-
-      - name: Prepare application
-        run: |
-          cp .env.example .env
-          php artisan key:generate
-
-      - name: Run tests
-        env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_DATABASE_LOCAL: pos_erp_test
-          DB_USERNAME_LOCAL: root
-          DB_PASSWORD_LOCAL: root
-        run: composer test
