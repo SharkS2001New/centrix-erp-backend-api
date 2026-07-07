@@ -3,17 +3,16 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
-use App\Services\WhatsApp\WhatsAppBotHandler;
-use App\Services\WhatsApp\WhatsAppConfigResolver;
+use App\Jobs\ProcessWhatsAppInboundMessageJob;
 use App\Services\WhatsApp\WhatsAppSettingsResolver;
+use App\Services\WhatsApp\WhatsAppWebhookSignatureValidator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 
 class WhatsAppWebhookController extends Controller
 {
     public function __construct(
-        protected WhatsAppConfigResolver $configResolver,
-        protected WhatsAppBotHandler $botHandler,
+        protected WhatsAppWebhookSignatureValidator $signatureValidator,
     ) {}
 
     /** Meta webhook verification (GET). */
@@ -35,6 +34,14 @@ class WhatsAppWebhookController extends Controller
     /** Meta WhatsApp Cloud API inbound messages (POST). */
     public function handle(Request $request)
     {
+        if (! $this->signatureValidator->isValid($request)) {
+            Log::warning('whatsapp.invalid_signature', [
+                'configured' => $this->signatureValidator->isConfigured(),
+            ]);
+
+            return response('Invalid signature', 403);
+        }
+
         $payload = $request->all();
         if (! is_array($payload)) {
             return response()->json(['ok' => true]);
@@ -44,10 +51,7 @@ class WhatsAppWebhookController extends Controller
             foreach ($entry['changes'] ?? [] as $change) {
                 $value = $change['value'] ?? [];
                 $phoneNumberId = (string) ($value['metadata']['phone_number_id'] ?? '');
-                $config = $this->configResolver->resolveForPhoneNumberId($phoneNumberId);
-                if (! $config) {
-                    Log::warning('whatsapp.unconfigured_phone', ['phone_number_id' => $phoneNumberId]);
-
+                if ($phoneNumberId === '') {
                     continue;
                 }
 
@@ -64,15 +68,12 @@ class WhatsAppWebhookController extends Controller
                         continue;
                     }
 
-                    try {
-                        $this->botHandler->handleInbound($config, $from, $text, $messageId ?: null);
-                    } catch (\Throwable $e) {
-                        report($e);
-                        Log::error('whatsapp.handler_failed', [
-                            'from' => $from,
-                            'message' => $e->getMessage(),
-                        ]);
-                    }
+                    ProcessWhatsAppInboundMessageJob::dispatch(
+                        $phoneNumberId,
+                        $from,
+                        $text,
+                        $messageId !== '' ? $messageId : null,
+                    );
                 }
             }
         }

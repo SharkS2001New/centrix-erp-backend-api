@@ -91,20 +91,22 @@ trait HandlesMpesaPayments
         string $source = 'c2b',
         ?int $organizationId = null,
         ?int $stkRequestId = null,
+        array $metadata = [],
     ): MpesaIncomingPayment {
         $displayPhone = $this->displayMpesaPhone($phone);
 
         return MpesaIncomingPayment::firstOrCreate(
             ['transaction_id' => $transactionId],
-            [
+            array_merge([
                 'organization_id' => $organizationId,
                 'phone_number' => $displayPhone,
                 'amount' => $amount,
                 'source' => $source,
                 'status' => 'available',
+                'reconciliation_status' => 'unmatched',
                 'stk_request_id' => $stkRequestId,
                 'received_at' => now(),
-            ],
+            ], $metadata),
         );
     }
 

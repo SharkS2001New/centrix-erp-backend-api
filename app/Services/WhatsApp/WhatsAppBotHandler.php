@@ -12,6 +12,7 @@ use App\Services\Customers\CustomerPhoneLookup;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Inventory\StockUomDisplayService;
 use App\Support\PhoneNumber;
+use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
 class WhatsAppBotHandler
@@ -29,6 +30,8 @@ class WhatsAppBotHandler
     public const STATE_REPEAT_CONFIRM = 'repeat_confirm';
 
     public const STATE_TRACK = 'track';
+
+    public const STATE_HANDOFF = 'handoff';
 
     public const STATE_SEARCH_RESULTS = 'search_results';
 
@@ -62,6 +65,15 @@ class WhatsAppBotHandler
 
         $botUser = $this->configResolver->botUser($config);
         if (! $botUser) {
+            Log::warning('whatsapp.missing_bot_user', [
+                'organization_id' => $config->organizationId,
+            ]);
+            $this->whatsapp->sendText(
+                $config,
+                PhoneNumber::toE164($fromPhone) ?? $fromPhone,
+                'Ordering is temporarily unavailable. Please contact the office for help.',
+            );
+
             return;
         }
 
@@ -80,8 +92,20 @@ class WhatsAppBotHandler
 
         $this->persistConversation($conversation, $customer);
         $this->logMessage($config, $conversation, 'in', $normalizedPhone, $text, $providerMessageId);
-        $this->whatsapp->sendText($config, PhoneNumber::toE164($fromPhone) ?? $fromPhone, $reply);
-        $this->logMessage($config, $conversation, 'out', null, $reply, null);
+        $sent = $this->whatsapp->sendText($config, PhoneNumber::toE164($fromPhone) ?? $fromPhone, $reply);
+        if ($sent) {
+            $this->logMessage($config, $conversation, 'out', null, $reply, null);
+        } else {
+            $this->logMessage(
+                $config,
+                $conversation,
+                'system',
+                $normalizedPhone,
+                'Outbound WhatsApp reply failed.',
+                null,
+                ['event' => 'send_failed'],
+            );
+        }
     }
 
     protected function dispatch(
@@ -124,6 +148,7 @@ class WhatsAppBotHandler
             self::STATE_REVIEW => $this->handleReview($config, $conversation, $customer, $input, $botUser),
             self::STATE_REPEAT_CONFIRM => $this->handleRepeatConfirm($config, $conversation, $customer, $input, $botUser),
             self::STATE_TRACK => $this->handleTrack($conversation, $customer, $input),
+            self::STATE_HANDOFF => $this->handleHandoffState($config, $conversation, $customer, $input),
             default => $this->handleMainMenu($config, $conversation, $customer, $input, $rawText, $botUser),
         };
     }
@@ -185,7 +210,7 @@ class WhatsAppBotHandler
         }
 
         return "Reply with a product number, type a product name to search, or NEXT for more.\n\n"
-            .$this->browseMessage($conversation, $customer);
+            .$this->browseMessage($config, $conversation, $customer, $botUser);
     }
 
     protected function handleSearchResults(
@@ -347,7 +372,10 @@ class WhatsAppBotHandler
                 $lines,
                 $conversation->payload['notes'] ?? null,
             );
-            $conversation->payload = [];
+            $conversation->payload = [
+                'last_sale_id' => $result['sale_id'],
+                'last_order_num' => $result['order_num'],
+            ];
             $conversation->state = self::STATE_MAIN_MENU;
 
             return "✅ *Order placed successfully*\n\n"
@@ -469,7 +497,7 @@ class WhatsAppBotHandler
             return "No in-stock products are available right now.\n\n".$this->mainMenuMessage($customer);
         }
 
-        return $this->browseMessage($conversation, $customer);
+        return $this->browseMessage($config, $conversation, $customer, $botUser);
     }
 
     protected function startRepeatLastOrder(WhatsappConversation $conversation, Customer $customer): string
@@ -544,11 +572,15 @@ class WhatsAppBotHandler
             ."Reply with a number, or type a product name (e.g. *2 halisi*).";
     }
 
-    protected function browseMessage(WhatsappConversation $conversation, Customer $customer): string
-    {
+    protected function browseMessage(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        User $botUser,
+    ): string {
         $products = collect($conversation->payload['browse_products'] ?? []);
         if ($products->isEmpty()) {
-            return $this->startBrowse($conversation, $customer);
+            return $this->startBrowse($config, $conversation, $customer, $botUser);
         }
 
         $lines = ["Choose a product (in stock only):\n"];
@@ -664,9 +696,34 @@ class WhatsAppBotHandler
         string $rawMessage,
     ): string {
         $this->handoffs->requestHandoff($config, $conversation, $customer, $botUser, trim($rawMessage) ?: null);
-        $conversation->state = self::STATE_MAIN_MENU;
 
         return $this->handoffMessage();
+    }
+
+    protected function handleHandoffState(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        Customer $customer,
+        string $input,
+    ): string {
+        if ($this->handoffs->hasOpenHandoff($config->organizationId, (int) $conversation->id)) {
+            if ($this->isGlobalCommand($input, ['MENU', 'HI', 'HELLO', 'START'])) {
+                return "Our team is still handling your request. Please wait for them to follow up, or call your sales rep.\n\n"
+                    .$this->handoffWaitingMessage();
+            }
+
+            return $this->handoffWaitingMessage();
+        }
+
+        $conversation->state = self::STATE_MAIN_MENU;
+
+        return "Your request has been resolved.\n\n".$this->mainMenuMessage($customer);
+    }
+
+    protected function handoffWaitingMessage(): string
+    {
+        return "Your message was sent to our team. Someone will assist you during business hours.\n\n"
+            .'Reply *MENU* after your request is resolved to place a new order.';
     }
 
     protected function tryHandleProductText(
@@ -874,7 +931,7 @@ class WhatsAppBotHandler
 
     protected function loadConversation(ResolvedWhatsAppConfig $config, string $phone): WhatsappConversation
     {
-        return WhatsappConversation::query()->firstOrCreate(
+        $conversation = WhatsappConversation::query()->firstOrCreate(
             [
                 'organization_id' => $config->organizationId,
                 'phone' => $phone,
@@ -886,6 +943,18 @@ class WhatsAppBotHandler
                 'expires_at' => now()->addHours((int) config('whatsapp.conversation_ttl_hours', 24)),
             ],
         );
+
+        if ($conversation->expires_at !== null && $conversation->expires_at->isPast()) {
+            $conversation->state = self::STATE_MAIN_MENU;
+            $conversation->payload = array_intersect_key(
+                $conversation->payload ?? [],
+                array_flip(['last_sale_id', 'last_order_num']),
+            );
+            $conversation->expires_at = now()->addHours((int) config('whatsapp.conversation_ttl_hours', 24));
+            $conversation->save();
+        }
+
+        return $conversation;
     }
 
     protected function resolveCustomer(
@@ -929,6 +998,7 @@ class WhatsAppBotHandler
         ?string $fromPhone,
         ?string $body,
         ?string $providerMessageId,
+        ?array $meta = null,
     ): void {
         if ($direction === 'in' && $providerMessageId) {
             try {
@@ -955,6 +1025,7 @@ class WhatsAppBotHandler
             'direction' => $direction,
             'from_phone' => $fromPhone,
             'body' => $body,
+            'meta' => $meta,
             'created_at' => now(),
         ]);
     }

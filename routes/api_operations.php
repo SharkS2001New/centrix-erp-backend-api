@@ -30,6 +30,7 @@ use App\Http\Controllers\Api\V1\MobileFieldAttendanceController;
 use App\Http\Controllers\Api\V1\MobileDriverAttendanceAdminController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
+use App\Http\Controllers\Api\V1\Operations\MpesaReconciliationController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 use App\Http\Controllers\Api\V1\Operations\KraProductRegistrationController;
 use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
@@ -212,6 +213,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('bank-accounts/{accountId}/register', [BankReconciliationController::class, 'register']);
         Route::get('bank-reconciliations', [BankReconciliationController::class, 'index']);
         Route::get('bank-reconciliations/{reconciliationId}', [BankReconciliationController::class, 'show']);
+        Route::get('mpesa-reconciliation', [MpesaReconciliationController::class, 'index']);
+        Route::get('mpesa-reconciliation/{paymentId}', [MpesaReconciliationController::class, 'show']);
     });
 
     Route::middleware(['erp.module:accounting', 'erp.permission:accounting.manage'])->prefix('accounting')->group(function () {
@@ -243,6 +246,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('bank-reconciliations/{reconciliationId}/clear-book-item', [BankReconciliationController::class, 'clearBookItem']);
         Route::post('bank-reconciliations/{reconciliationId}/adjustment', [BankReconciliationController::class, 'createAdjustment']);
         Route::post('bank-reconciliations/{reconciliationId}/complete', [BankReconciliationController::class, 'complete']);
+        Route::post('mpesa-reconciliation/{paymentId}/apply', [MpesaReconciliationController::class, 'apply']);
+        Route::post('mpesa-reconciliation/{paymentId}/ignore', [MpesaReconciliationController::class, 'ignore']);
     });
 
     // ---- HR / Attendance (clock device) ----

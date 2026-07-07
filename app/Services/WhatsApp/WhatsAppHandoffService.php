@@ -31,6 +31,12 @@ class WhatsAppHandoffService
             'customer_message' => $customerMessage,
         ]);
 
+        $conversation->state = 'handoff';
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'handoff_id' => (int) $handoff->id,
+        ]);
+        $conversation->save();
+
         $message = "Customer *{$customer->customer_name}* ({$conversation->phone}) asked to speak with someone on WhatsApp.";
         if ($customerMessage) {
             $message .= ' Last message: "'.mb_substr($customerMessage, 0, 200).'".';
@@ -55,6 +61,24 @@ class WhatsAppHandoffService
             'resolved_by' => $resolver->id,
         ]);
 
+        if ($handoff->conversation_id) {
+            WhatsappConversation::query()
+                ->where('id', $handoff->conversation_id)
+                ->where('state', 'handoff')
+                ->update([
+                    'state' => 'main_menu',
+                ]);
+        }
+
         return $handoff->fresh(['customer', 'conversation']);
+    }
+
+    public function hasOpenHandoff(int $organizationId, int $conversationId): bool
+    {
+        return WhatsappHandoff::query()
+            ->where('organization_id', $organizationId)
+            ->where('conversation_id', $conversationId)
+            ->where('status', 'open')
+            ->exists();
     }
 }

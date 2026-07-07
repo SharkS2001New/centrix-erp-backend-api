@@ -57,6 +57,9 @@ class MpesaSettingsResolver
         $out = array_merge(self::defaults(), $mpesa);
         $out['env'] = in_array($out['env'] ?? 'sandbox', ['sandbox', 'live'], true) ? $out['env'] : 'sandbox';
         $out['enable_stk_push'] = filter_var($out['enable_stk_push'] ?? true, FILTER_VALIDATE_BOOLEAN);
+        $out['enable_c2b_reconciliation'] = filter_var($out['enable_c2b_reconciliation'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $out['auto_apply_order_reference'] = filter_var($out['auto_apply_order_reference'] ?? true, FILTER_VALIDATE_BOOLEAN);
+        $out['payment_account_hint'] = trim((string) ($out['payment_account_hint'] ?? 'Enter your order number (e.g. S12)'));
         foreach (['consumer_key', 'consumer_secret', 'shortcode', 'till_number', 'child_storecode', 'passkey', 'stk_callback_url', 'c2b_confirmation_url', 'c2b_validation_url'] as $key) {
             $out[$key] = trim((string) ($out[$key] ?? ''));
         }
@@ -94,9 +97,51 @@ class MpesaSettingsResolver
             'validation_url' => $config['c2b_validation_url'] ?? '',
             'stk_callback_url' => $config['stk_callback_url'] ?? '',
             'stk_push_enabled' => self::isStkPushEnabled($config),
+            'c2b_reconciliation_enabled' => self::isC2bReconciliationEnabled($config),
+            'auto_apply_order_reference' => self::isAutoApplyOrderReferenceEnabled($config),
+            'payment_account_hint' => self::paymentAccountHint($config),
             'ready' => $ready,
             'issues' => $issues,
         ];
+    }
+
+    /** @param  array<string, mixed>  $config */
+    public static function isC2bReconciliationEnabled(array $config): bool
+    {
+        return filter_var($config['enable_c2b_reconciliation'] ?? false, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    public static function isC2bReconciliationEnabledForOrganization(Organization $organization): bool
+    {
+        return self::isC2bReconciliationEnabled(self::forOrganization($organization));
+    }
+
+    /** @param  array<string, mixed>  $config */
+    public static function isAutoApplyOrderReferenceEnabled(array $config): bool
+    {
+        if (! self::isC2bReconciliationEnabled($config)) {
+            return false;
+        }
+
+        return filter_var($config['auto_apply_order_reference'] ?? true, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    public static function isAutoApplyOrderReferenceEnabledForOrganization(Organization $organization): bool
+    {
+        return self::isAutoApplyOrderReferenceEnabled(self::forOrganization($organization));
+    }
+
+    /** @param  array<string, mixed>  $config */
+    public static function paymentAccountHint(array $config): string
+    {
+        $hint = trim((string) ($config['payment_account_hint'] ?? ''));
+
+        return $hint !== '' ? $hint : 'Enter your order number (e.g. S12)';
+    }
+
+    public static function paymentAccountHintForOrganization(Organization $organization): string
+    {
+        return self::paymentAccountHint(self::forOrganization($organization));
     }
 
     /** @param  array<string, mixed>  $config */

@@ -42,7 +42,9 @@ class WhatsappAdminController extends Controller
             });
         }
 
-        return response()->json($query->paginate($perPage));
+        return response()->json(
+            $query->paginate($perPage)->through(fn (WhatsappConversation $row) => $this->presentConversation($row)),
+        );
     }
 
     public function showConversation(Request $request, int $conversation)
@@ -59,7 +61,7 @@ class WhatsappAdminController extends Controller
             ->findOrFail($conversation);
 
         return response()->json([
-            'conversation' => $row,
+            'conversation' => $this->presentConversation($row),
             'messages' => $row->messageLogs,
         ]);
     }
@@ -82,7 +84,9 @@ class WhatsappAdminController extends Controller
             $query->where('status', $status);
         }
 
-        return response()->json($query->paginate($perPage));
+        return response()->json(
+            $query->paginate($perPage)->through(fn (WhatsappHandoff $row) => $this->presentHandoff($row)),
+        );
     }
 
     public function resolveHandoff(Request $request, int $handoff)
@@ -119,7 +123,31 @@ class WhatsappAdminController extends Controller
                 ->where('meta->event', 'order_failed')
                 ->with(['conversation.customer:customer_num,customer_name'])
                 ->orderByDesc('created_at')
-                ->paginate($perPage),
+                ->paginate($perPage)
+                ->through(fn (WhatsappMessageLog $row) => $this->presentFailure($row)),
         );
+    }
+
+    protected function presentConversation(WhatsappConversation $row): WhatsappConversation
+    {
+        $payload = is_array($row->payload) ? $row->payload : [];
+        $row->setAttribute('last_sale_id', isset($payload['last_sale_id']) ? (int) $payload['last_sale_id'] : null);
+        $row->setAttribute('last_order_num', isset($payload['last_order_num']) ? (int) $payload['last_order_num'] : null);
+
+        return $row;
+    }
+
+    protected function presentHandoff(WhatsappHandoff $row): WhatsappHandoff
+    {
+        $row->setAttribute('conversation_id', $row->conversation_id ? (int) $row->conversation_id : null);
+
+        return $row;
+    }
+
+    protected function presentFailure(WhatsappMessageLog $row): WhatsappMessageLog
+    {
+        $row->setAttribute('conversation_id', $row->conversation_id ? (int) $row->conversation_id : null);
+
+        return $row;
     }
 }

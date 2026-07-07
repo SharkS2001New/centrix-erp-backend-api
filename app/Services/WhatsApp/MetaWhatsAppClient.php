@@ -7,11 +7,11 @@ use Illuminate\Support\Facades\Log;
 
 class MetaWhatsAppClient
 {
-    public function sendText(ResolvedWhatsAppConfig $config, string $toE164, string $body): void
+    public function sendText(ResolvedWhatsAppConfig $config, string $toE164, string $body): bool
     {
         $message = trim($body);
         if ($message === '') {
-            return;
+            return true;
         }
 
         if ($config->accessToken === '' || ! $config->phoneNumberId) {
@@ -20,7 +20,7 @@ class MetaWhatsAppClient
                 'body' => $message,
             ]);
 
-            return;
+            return true;
         }
 
         $version = $config->graphApiVersion;
@@ -44,6 +44,10 @@ class MetaWhatsAppClient
                 'status' => $response->status(),
                 'body' => $response->json() ?? $response->body(),
             ]);
+
+            return false;
         }
+
+        return true;
     }
 }

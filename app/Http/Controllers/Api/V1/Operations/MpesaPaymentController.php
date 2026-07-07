@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartAccess;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesMpesaPayments;
 use App\Http\Controllers\Controller;
+use App\Jobs\ProcessMpesaIncomingMatchJob;
 use App\Models\Branch;
 use App\Models\MpesaIncomingPayment;
 use App\Models\MpesaPaymentSkip;
@@ -13,6 +14,7 @@ use App\Models\MpesaStkRequest;
 use App\Models\Organization;
 use App\Models\TemporaryCart;
 use App\Services\Erp\ErpContext;
+use App\Services\Mpesa\MpesaPaymentReferenceParser;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\MpesaService;
 use Illuminate\Http\Request;
@@ -381,13 +383,29 @@ class MpesaPaymentController extends Controller
             ]);
         }
 
+        $billRefNumber = trim((string) ($payload['BillRefNumber'] ?? $payload['bill_ref_number'] ?? ''));
+        $payerName = trim((string) ($payload['FirstName'] ?? $payload['first_name'] ?? ''));
+        $businessShortCode = trim((string) ($payload['BusinessShortCode'] ?? $payload['business_short_code'] ?? ''));
+
+        $parsed = app(MpesaPaymentReferenceParser::class)->parse($billRefNumber);
+
         $payment = $this->recordIncomingMpesaPayment(
             $transactionId,
             $phone,
             $amount,
             'c2b',
             $organizationId,
+            null,
+            array_filter([
+                'bill_ref_number' => $billRefNumber !== '' ? $billRefNumber : null,
+                'payer_name' => $payerName !== '' ? $payerName : null,
+                'business_short_code' => $businessShortCode !== '' ? $businessShortCode : null,
+                'parsed_order_num' => $parsed['order_num'] ?? null,
+                'parsed_customer_num' => $parsed['customer_num'] ?? null,
+            ], fn ($value) => $value !== null),
         );
+
+        ProcessMpesaIncomingMatchJob::dispatch($payment->id);
 
         Log::info('M-Pesa C2B payment stored for check payment', [
             'payment_id' => $payment->id,
@@ -428,6 +446,8 @@ class MpesaPaymentController extends Controller
             'transaction_id' => $payment->transaction_id,
             'phone_number' => $payment->phone_number,
             'amount' => (int) $payment->amount,
+            'bill_ref_number' => $payment->bill_ref_number,
+            'payer_name' => $payment->payer_name,
             'source' => $payment->source,
             'received_at' => $payment->received_at?->toIso8601String(),
             'status' => $payment->status,

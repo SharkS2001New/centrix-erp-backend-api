@@ -11,11 +11,13 @@ class MpesaC2bConfirmationTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    protected Organization $organization;
+
     protected function setUp(): void
     {
         parent::setUp();
-        $org = Organization::query()->orderBy('id')->firstOrFail();
-        $settings = $org->module_settings ?? [];
+        $this->organization = Organization::query()->orderBy('id')->firstOrFail();
+        $settings = $this->organization->module_settings ?? [];
         $settings['finance'] = array_merge($settings['finance'] ?? [], [
             'mpesa' => array_merge(config('erp.module_settings_defaults.finance.mpesa', []), [
                 'env' => 'live',
@@ -23,7 +25,7 @@ class MpesaC2bConfirmationTest extends TestCase
                 'till_number' => '6563610',
             ]),
         ]);
-        $org->update(['module_settings' => $settings]);
+        $this->organization->update(['module_settings' => $settings]);
     }
 
     public function test_c2b_confirmation_stores_incoming_payment_for_check_payment(): void
@@ -50,7 +52,7 @@ class MpesaC2bConfirmationTest extends TestCase
         $this->assertSame(250, (int) $payment->amount);
         $this->assertSame('c2b', $payment->source);
         $this->assertSame('available', $payment->status);
-        $this->assertSame((int) $org->id, (int) $payment->organization_id);
+        $this->assertSame((int) $this->organization->id, (int) $payment->organization_id);
     }
 
     public function test_c2b_confirmation_is_idempotent_for_duplicate_trans_id(): void
