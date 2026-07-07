@@ -22,6 +22,7 @@ class BackofficeOrderLineEditController extends Controller
             'items' => 'required|array|min:1',
             'items.*.id' => 'required|integer',
             'items.*.quantity' => 'required|numeric|min:0.0001',
+            'items.*.discount_given' => 'sometimes|numeric|min:0',
         ]);
 
         $user = $request->user();

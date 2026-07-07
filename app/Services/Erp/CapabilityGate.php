@@ -548,6 +548,8 @@ class CapabilityGate
             $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
             $sales['effective_allow_edit_line_discount'] = $discounts->allowsManualLineDiscount($sales);
             $sales['effective_enable_order_discount'] = $discounts->allowsOrderDiscount($sales);
+            $sales['effective_allow_discounts'] = $discounts->allowsLineDiscountAmount($sales);
+            $sales['discount_for_approval_mode'] = $discounts->discountApprovalEnabled($sales);
             $moduleSettings['sales'] = $sales;
 
             $moduleSettings['general'] = GeneralSettingsResolver::forGate($this);

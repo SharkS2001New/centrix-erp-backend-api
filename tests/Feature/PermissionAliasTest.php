@@ -16,6 +16,43 @@ class PermissionAliasTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    public function test_sales_orders_edit_does_not_grant_discount_approval(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        PermissionMatrixService::ensure();
+
+        $role = Role::create([
+            'role_name' => 'Sales Editor',
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $editId = (int) Permission::where('permission_code', 'sales.orders.edit')->value('id');
+        $this->assertNotNull($editId);
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $editId,
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'sales_editor',
+            'password' => Hash::make('password'),
+            'full_name' => 'Sales Editor',
+            'access_scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $service = app(UserPermissionService::class);
+        $this->assertTrue($service->hasPermission($user->fresh(), 'sales.manage'));
+        $this->assertFalse($service->canApproveSalesOrders($user->fresh()));
+        $this->assertFalse(app(\App\Services\Sales\DiscountApprovalService::class)
+            ->canAutoApproveDiscount($user->fresh()));
+    }
+
     public function test_feature_edit_permission_satisfies_route_capability(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

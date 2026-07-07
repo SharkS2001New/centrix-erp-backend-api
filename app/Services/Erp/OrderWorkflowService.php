@@ -190,7 +190,7 @@ class OrderWorkflowService
             return true;
         }
 
-        if ($from === 'editable' && in_array($to, ['pending_approval', 'cancelled'], true)) {
+        if ($from === 'editable' && in_array($to, ['pending_approval', 'booked', 'cancelled'], true)) {
             return true;
         }
 
@@ -285,8 +285,12 @@ class OrderWorkflowService
 
     public function isEditableLineStatus(string $status, ?string $channel = null): bool
     {
-        if (in_array($status, ['cancelled', 'expired', 'held', 'draft'], true)) {
+        if (in_array($status, ['cancelled', 'expired', 'held', 'draft', 'pending_approval'], true)) {
             return false;
+        }
+
+        if (in_array($status, self::EDITABLE_LINE_STATUSES, true)) {
+            return true;
         }
 
         $aligned = $this->alignStatusToPipeline($status, $channel);

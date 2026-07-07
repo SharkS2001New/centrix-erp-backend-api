@@ -148,9 +148,7 @@ class DiscountApprovalService
 
     public function canAutoApproveDiscount(User $user): bool
     {
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'sales.manage')
-            || $this->permissions->hasPermission($user, 'sales.orders.approve');
+        return $this->permissions->canApproveSalesOrders($user);
     }
 
     public function discountPercent(float $discountAmount, float $baseAmount): float
@@ -233,32 +231,58 @@ class DiscountApprovalService
     public function approvalLinesPayload(TemporaryCart $cart): array
     {
         $cart->loadMissing('lines');
+        $display = app(SaleLineQuantityDisplayService::class);
 
-        return $cart->lines->map(fn (CartLine $line) => [
-            'product_code' => (string) $line->product_code,
-            'product_name' => (string) ($line->product_name ?: $line->product_code),
-            'unit_price' => round((float) $line->unit_price, 2),
-            'discount_given' => round((float) ($line->discount_given ?? 0), 2),
-            'amount' => round((float) $line->amount, 2),
-            'quantity' => (float) $line->quantity,
-            'uom' => $line->uom,
-        ])->values()->all();
+        return $cart->lines->map(function (CartLine $line) use ($display) {
+            $product = Product::query()->find($line->product_code);
+            $isRetail = $product
+                ? (bool) $product->sell_on_retail && (bool) $line->on_wholesale_retail
+                : (bool) $line->on_wholesale_retail;
+            $qty = (float) $line->quantity;
+            $amount = (float) $line->amount;
+            $displayUnitPrice = $product
+                ? $display->displayUnitPrice($qty, $amount, $product, $isRetail)
+                : (float) $line->unit_price;
+
+            return [
+                'product_code' => (string) $line->product_code,
+                'product_name' => (string) ($line->product_name ?: $line->product_code),
+                'unit_price' => round($displayUnitPrice, 2),
+                'selling_price' => round((float) $line->unit_price, 2),
+                'discount_given' => round((float) ($line->discount_given ?? 0), 2),
+                'amount' => round($amount, 2),
+                'quantity' => $qty,
+                'uom' => $line->uom,
+            ];
+        })->values()->all();
     }
 
     /** @return list<array<string, mixed>> */
     public function approvalLinesPayloadFromSale(Sale $sale): array
     {
         $sale->loadMissing(['items.product']);
+        $display = app(SaleLineQuantityDisplayService::class);
 
-        return $sale->items->map(fn ($item) => [
-            'product_code' => (string) $item->product_code,
-            'product_name' => (string) ($item->product?->product_name ?? $item->product_code),
-            'unit_price' => round((float) ($item->selling_price ?? 0), 2),
-            'discount_given' => round((float) ($item->discount_given ?? 0), 2),
-            'amount' => round((float) ($item->amount ?? 0), 2),
-            'quantity' => (float) ($item->quantity ?? 0),
-            'uom' => $item->uom,
-        ])->values()->all();
+        return $sale->items->map(function ($item) use ($display) {
+            $product = $item->product;
+            $isRetail = (bool) $item->on_wholesale_retail;
+            $qty = (float) ($item->quantity ?? 0);
+            $amount = (float) ($item->amount ?? 0);
+            $displayUnitPrice = $product
+                ? $display->displayUnitPrice($qty, $amount, $product, $isRetail)
+                : (float) ($item->selling_price ?? 0);
+
+            return [
+                'product_code' => (string) $item->product_code,
+                'product_name' => (string) ($product?->product_name ?? $item->product_code),
+                'unit_price' => round($displayUnitPrice, 2),
+                'selling_price' => round((float) ($item->selling_price ?? 0), 2),
+                'discount_given' => round((float) ($item->discount_given ?? 0), 2),
+                'amount' => round($amount, 2),
+                'quantity' => $qty,
+                'uom' => $item->uom,
+            ];
+        })->values()->all();
     }
 
     public function checkoutRequiresPendingApproval(TemporaryCart $cart, User $user, CapabilityGate $gate): bool

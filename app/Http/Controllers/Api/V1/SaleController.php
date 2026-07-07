@@ -10,7 +10,7 @@ use App\Support\SalesOrderQueuePermissions;
 use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\PosOrderEditService;
-use App\Services\Sales\RouteOrderScope;
+use App\Services\Sales\SaleOrderPresentationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -189,6 +189,10 @@ class SaleController extends BaseResourceController
         $paginator = $query->orderByDesc('sales.id')->paginate($perPage);
         $editService = app(PosOrderEditService::class);
         $lineEditService = app(BackofficeOrderLineEditService::class);
+        $presentation = app(SaleOrderPresentationService::class);
+        $paginator->setCollection(
+            $presentation->enrichCollection($paginator->getCollection(), $request->user(), $gate)
+        );
         $paginator->getCollection()->transform(function (Sale $sale) use ($workflow, $editService, $lineEditService, $request, $gate) {
             $channel = $sale->channel ?: 'backend';
             $sale->setAttribute(
@@ -220,6 +224,7 @@ class SaleController extends BaseResourceController
         if (! SalesOrderQueuePermissions::userCanViewSale($request->user(), $sale, $gate, $permissions)) {
             abort(403, 'You do not have permission to view this order.');
         }
+        $sale = app(SaleOrderPresentationService::class)->enrichSale($sale, $request->user(), $gate);
         $channel = $sale->channel ?: 'backend';
         $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
         $editService = app(PosOrderEditService::class);

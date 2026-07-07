@@ -287,14 +287,25 @@ class ActionRequestService
             return;
         }
 
+        $message = $approved
+            ? "Your request \"{$request->title}\" was approved by {$actor->full_name}."
+            : "Your request \"{$request->title}\" was rejected by {$actor->full_name}.";
+
+        if ($request->type === 'discount' && ! $approved) {
+            $orderNum = (int) (($request->payload ?? [])['order_num'] ?? 0);
+            $orderLabel = $orderNum > 0 ? "order #{$orderNum}" : 'your order';
+            $message = "Your discount on {$orderLabel} was rejected. Please contact the office for further follow-up.";
+            if ($comment) {
+                $message .= " Reason: {$comment}";
+            }
+        }
+
         $this->notifications->createForUser($requester, [
             'organization_id' => $request->organization_id,
             'type' => 'info',
             'severity' => $approved ? 'success' : 'danger',
             'title' => $approved ? 'Request approved' : 'Request rejected',
-            'message' => $approved
-                ? "Your request \"{$request->title}\" was approved by {$actor->full_name}."
-                : "Your request \"{$request->title}\" was rejected by {$actor->full_name}.",
+            'message' => $message,
             'action_url' => $request->payload['action_url'] ?? null,
             'created_by' => $actor->id,
         ]);

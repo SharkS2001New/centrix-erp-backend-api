@@ -353,6 +353,7 @@ class MobileSalesService
                 ?? 'Walk-in',
             'orderTotals' => round((float) $sale->order_total, 2),
             'order_discount' => round((float) ($sale->order_discount ?? 0), 2),
+            'total_discount' => app(SaleOrderPresentationService::class)->totalDiscount($sale),
             'status' => $sale->status,
             'status_name' => $labels[$sale->status] ?? ucfirst(str_replace('_', ' ', (string) $sale->status)),
             'payment_status' => $sale->payment_status,
@@ -363,6 +364,8 @@ class MobileSalesService
             'route_markup_message' => ($sale->fulfillment_meta ?? [])['route_markup']['message'] ?? null,
             'order_connectivity' => $sale->mobileOrderConnectivity(),
             'is_offline_order' => $sale->isOfflineMobileOrder(),
+            'discount_rejected' => (bool) (app(SaleOrderPresentationService::class)->discountRejectionPresentation($sale)),
+            'discount_rejection' => app(SaleOrderPresentationService::class)->discountRejectionPresentation($sale),
         ];
     }
 

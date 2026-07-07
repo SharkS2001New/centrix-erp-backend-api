@@ -52,7 +52,7 @@ class BackofficeOrderLineEditTest extends TestCase
         ])
             ->assertStatus(422)
             ->assertJsonFragment([
-                'message' => 'Orders can only be edited while booked or pending.',
+                'message' => 'Orders can only be edited while booked, pending, or editable.',
             ]);
     }
 

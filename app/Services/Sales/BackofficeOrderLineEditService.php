@@ -8,8 +8,11 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Kra\SalesVatCalculator;
+use App\Services\Sales\DiscountApprovalService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -18,8 +21,17 @@ class BackofficeOrderLineEditService
     use HandlesInventory;
     use HandlesPricing;
 
+    public function __construct(
+        protected PosLinePricingService $pricing,
+        protected DiscountApprovalService $discounts,
+    ) {}
+
     public function isBackofficeOrder(Sale $sale): bool
     {
+        if ((string) $sale->status === 'editable') {
+            return true;
+        }
+
         $source = strtolower((string) ($sale->order_source ?? ''));
         if (in_array($source, ['pos', 'mobile'], true)) {
             return false;
@@ -65,7 +77,7 @@ class BackofficeOrderLineEditService
         }
 
         if (! $this->isBackofficeOrder($sale)) {
-            throw new InvalidArgumentException('Only backoffice orders support quantity edits.');
+            throw new InvalidArgumentException('Only backoffice or editable discount orders support line edits.');
         }
 
         if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
@@ -79,24 +91,35 @@ class BackofficeOrderLineEditService
         $workflow = OrderWorkflowService::forGate($gate);
         $channel = (string) ($sale->channel ?: 'backend');
         if (! $workflow->isEditableLineStatus((string) $sale->status, $channel)) {
-            throw new InvalidArgumentException('Orders can only be edited while booked or pending.');
+            throw new InvalidArgumentException('Orders can only be edited while booked, pending, or editable.');
         }
     }
 
+    public function allowsLineDiscountEdit(CapabilityGate $gate): bool
+    {
+        $salesSettings = $gate->moduleSettings('sales');
+
+        return $this->discounts->allowsManualLineDiscount($salesSettings)
+            || $this->discounts->discountApprovalEnabled($salesSettings);
+    }
+
     /**
-     * @param  list<array{id: int, quantity: float|int|string}>  $items
+     * @param  list<array{id: int, quantity: float|int|string, discount_given?: float|int|string|null}>  $items
      */
     public function updateLineQuantities(Sale $sale, User $user, array $items, CapabilityGate $gate): Sale
     {
         $this->assertLineEditAllowed($sale, $user, $gate);
+        $wasEditable = (string) $sale->status === 'editable';
+        $allowDiscountEdit = $this->allowsLineDiscountEdit($gate);
 
-        return DB::transaction(function () use ($sale, $user, $items, $gate) {
+        return DB::transaction(function () use ($sale, $user, $items, $gate, $wasEditable, $allowDiscountEdit) {
             $sale = Sale::with('items')->lockForUpdate()->findOrFail($sale->id);
             $itemsById = $sale->items->keyBy('id');
             $salesSettings = $gate->moduleSettings('sales');
             $inventorySettings = $gate->moduleSettings('inventory');
             $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
             $qtyChanged = false;
+            $lineChanged = false;
 
             foreach ($items as $row) {
                 $itemId = (int) $row['id'];
@@ -108,24 +131,69 @@ class BackofficeOrderLineEditService
                 }
 
                 $oldQty = (float) $saleItem->quantity;
-                if (abs($newQty - $oldQty) < 0.0001) {
-                    continue;
-                }
+                $newDiscount = array_key_exists('discount_given', $row)
+                    ? max(0, (float) $row['discount_given'])
+                    : (float) ($saleItem->discount_given ?? 0);
 
-                $qtyChanged = true;
+                if (! $allowDiscountEdit && array_key_exists('discount_given', $row)) {
+                    $newDiscount = (float) ($saleItem->discount_given ?? 0);
+                }
 
                 if ($newQty <= 0) {
                     throw new InvalidArgumentException('Quantity must be greater than zero.');
                 }
 
-                $saleItem->update([
-                    'quantity' => $newQty,
-                    'amount' => $this->scaleByQtyRatio((float) $saleItem->amount, $newQty, $oldQty),
-                    'product_vat' => $this->scaleByQtyRatio((float) ($saleItem->product_vat ?? 0), $newQty, $oldQty),
-                    'discount_given' => $this->scaleByQtyRatio((float) ($saleItem->discount_given ?? 0), $newQty, $oldQty),
-                ]);
+                $itemQtyChanged = abs($newQty - $oldQty) >= 0.0001;
+                $discountChanged = abs($newDiscount - (float) ($saleItem->discount_given ?? 0)) >= 0.01;
 
-                if ($sale->stock_balanced) {
+                if (! $itemQtyChanged && ! $discountChanged) {
+                    continue;
+                }
+
+                $lineChanged = true;
+                $qtyChanged = $qtyChanged || $itemQtyChanged;
+
+                if ($discountChanged && ! $itemQtyChanged) {
+                    $product = Product::query()->find($saleItem->product_code);
+                    if (! $product) {
+                        throw new InvalidArgumentException("Product [{$saleItem->product_code}] was not found.");
+                    }
+
+                    $isRetail = (bool) $saleItem->on_wholesale_retail;
+                    [$unitPrice, $amount] = $this->pricing->resolveLineAmounts(
+                        $product,
+                        $newQty,
+                        $isRetail,
+                        $newDiscount,
+                        $sale->route_id ? (int) $sale->route_id : null,
+                        (float) $saleItem->selling_price,
+                        false,
+                    );
+                    $product->loadMissing('vat');
+                    $productVat = SalesVatCalculator::vatFromInclusiveGross(
+                        max(0, $amount),
+                        SalesVatCalculator::vatRateFromProduct($product),
+                    );
+
+                    $saleItem->update([
+                        'quantity' => $newQty,
+                        'selling_price' => $unitPrice,
+                        'amount' => $amount,
+                        'product_vat' => $productVat,
+                        'discount_given' => $newDiscount,
+                    ]);
+                } else {
+                    $saleItem->update([
+                        'quantity' => $newQty,
+                        'amount' => $this->scaleByQtyRatio((float) $saleItem->amount, $newQty, $oldQty),
+                        'product_vat' => $this->scaleByQtyRatio((float) ($saleItem->product_vat ?? 0), $newQty, $oldQty),
+                        'discount_given' => $discountChanged
+                            ? $newDiscount
+                            : $this->scaleByQtyRatio((float) ($saleItem->discount_given ?? 0), $newQty, $oldQty),
+                    ]);
+                }
+
+                if ($sale->stock_balanced && $itemQtyChanged) {
                     $this->adjustStockForQtyChange($sale, $saleItem, $oldQty, $newQty, $user, $gate, $salesSettings, $inventorySettings, $allowBelowStock);
                 }
             }
@@ -135,12 +203,32 @@ class BackofficeOrderLineEditService
             $totalVat = round((float) $sale->items->sum('product_vat'), 2);
             $amountPaid = min((float) ($sale->amount_paid ?? 0), $orderTotal);
 
-            $sale->update([
+            $updates = [
                 'order_total' => $orderTotal,
                 'total_vat' => $totalVat,
                 'amount_paid' => $amountPaid,
                 'payment_status' => $this->derivePaymentStatus($orderTotal, $amountPaid),
-            ]);
+            ];
+
+            if ($wasEditable && $lineChanged) {
+                $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+                $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
+                unset($approval['rejected_at'], $approval['rejected_by'], $approval['rejection_reason']);
+                $meta['discount_approval'] = $approval;
+                $updates['status'] = 'booked';
+                $updates['fulfillment_meta'] = $meta;
+            }
+
+            $sale->update($updates);
+
+            if (($updates['status'] ?? null) === 'booked') {
+                app(CustomerInvoiceService::class)->ensureForSale(
+                    $sale->fresh(),
+                    $user,
+                    $orderTotal,
+                    $amountPaid,
+                );
+            }
 
             if ($qtyChanged && ! $sale->stock_balanced) {
                 $workflow = app(OrderWorkflowService::class);

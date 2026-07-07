@@ -4,7 +4,9 @@ namespace Tests\Feature;
 
 use App\Models\ActionRequest;
 use App\Models\Organization;
+use App\Models\Permission;
 use App\Models\Product;
+use App\Models\Role;
 use App\Models\Sale;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -31,13 +33,42 @@ class DiscountApprovalCheckoutTest extends TestCase
 
     protected function salesStaff(): User
     {
+        return $this->mobileSalesRepUser();
+    }
+
+    protected function mobileSalesRepUser(): User
+    {
         $admin = User::where('username', 'admin')->firstOrFail();
-        $roleId = (int) (DB::table('roles')->where('role_name', 'Cashier')->value('id') ?? $admin->role_id);
+
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'Discount Test Mobile Rep'],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $permissionCodes = [
+            'sales.orders.create',
+            'sales.orders.edit',
+            'mobile_sales.orders.create',
+            'mobile_sales.orders.edit',
+        ];
+        $permissionIds = Permission::query()
+            ->whereIn('permission_code', $permissionCodes)
+            ->pluck('id')
+            ->all();
+        $this->assertNotEmpty($permissionIds);
+
+        DB::table('role_permissions')->where('role_id', $role->id)->delete();
+        foreach ($permissionIds as $permissionId) {
+            DB::table('role_permissions')->insert([
+                'role_id' => $role->id,
+                'permission_id' => (int) $permissionId,
+            ]);
+        }
 
         return User::query()->create([
             'organization_id' => $admin->organization_id,
             'branch_id' => $admin->branch_id,
-            'role_id' => $roleId,
+            'role_id' => $role->id,
             'username' => 'discount_staff_'.uniqid(),
             'email' => null,
             'password' => $admin->password,
@@ -80,6 +111,40 @@ class DiscountApprovalCheckoutTest extends TestCase
             'discount_given' => 25,
         ])->assertUnprocessable()
             ->assertJsonValidationErrors(['discount_given']);
+    }
+
+    public function test_mobile_rep_with_order_edit_permission_requires_pending_approval(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->mobileSalesRepUser();
+        Sanctum::actingAs($staff);
+
+        $product = Product::query()->firstOrFail();
+
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $staff->branch_id,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $cartWithLine = $this->getJson("/api/v1/sales/carts/{$cart['id']}")->assertOk()->json();
+        $lineRef = $cartWithLine['lines'][0]['update_code'] ?? $cartWithLine['lines'][0]['id'];
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'line',
+            'line_ref' => (string) $lineRef,
+            'discount_amount' => 10,
+            'reason' => 'Customer loyalty discount',
+        ])->assertAccepted();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()
+            ->assertJsonPath('status', 'pending_approval');
     }
 
     public function test_mobile_checkout_with_pending_line_discount_creates_pending_approval_sale(): void

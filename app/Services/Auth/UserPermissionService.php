@@ -119,6 +119,19 @@ class UserPermissionService
         return false;
     }
 
+  /** Whether the user holds a feature permission on their role/overrides (no capability aliases). */
+    public function hasAssignedPermission(User $user, string $permissionCode): bool
+    {
+        return $this->hasDirectPermission($user, $permissionCode);
+    }
+
+    /** Managers who may approve discount requests or self-apply discounts without workflow. */
+    public function canApproveSalesOrders(User $user): bool
+    {
+        return (bool) $user->is_admin
+            || $this->hasDirectPermission($user, 'sales.orders.approve');
+    }
+
     protected function hasDirectPermission(User $user, string $permissionCode): bool
     {
         $permissionId = Permission::query()

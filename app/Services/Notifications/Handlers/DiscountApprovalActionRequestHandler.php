@@ -26,9 +26,7 @@ class DiscountApprovalActionRequestHandler implements ActionRequestHandler
             return false;
         }
 
-        return (bool) $user->is_admin
-            || $this->permissions->hasPermission($user, 'sales.manage')
-            || $this->permissions->hasPermission($user, 'sales.orders.approve');
+        return $this->permissions->canApproveSalesOrders($user);
     }
 
     public function approve(ActionRequest $request, User $user): void
