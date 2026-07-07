@@ -635,11 +635,12 @@ class DemoDataSeeder extends Seeder
 
     protected function truncateDemoTables(): void
     {
-        $skip = [
-            'migrations',
-            'payment_methods',
-            'lpo_statuses',
-        ];
+        $skip = ['migrations'];
+
+        if (! app()->environment('testing')) {
+            $skip[] = 'payment_methods';
+            $skip[] = 'lpo_statuses';
+        }
 
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
 

@@ -38,6 +38,8 @@
     "scripts": {
         "postman": "php artisan postman:generate",
         "test": "php artisan test",
+        "test:unit": "php artisan test tests/Unit",
+        "test:feature": "php artisan test tests/Feature",
         "audit": "composer audit",
         "dev": "APP_ENV=local APP_DEBUG=true php artisan serve",
         "post-autoload-dump": [
