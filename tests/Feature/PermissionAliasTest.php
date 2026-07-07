@@ -53,6 +53,80 @@ class PermissionAliasTest extends TestCase
             ->canAutoApproveDiscount($user->fresh()));
     }
 
+    public function test_sales_orders_approve_does_not_grant_direct_discount(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        PermissionMatrixService::ensure();
+
+        $role = Role::create([
+            'role_name' => 'Sales Approver',
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $approveId = (int) Permission::where('permission_code', 'sales.orders.approve')->value('id');
+        $giveId = (int) Permission::where('permission_code', 'sales.discounts.give')->value('id');
+        $this->assertNotNull($approveId);
+        $this->assertNotNull($giveId);
+
+        DB::table('role_permissions')->insert([
+            ['role_id' => $role->id, 'permission_id' => $approveId],
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'sales_approver_only',
+            'password' => Hash::make('password'),
+            'full_name' => 'Sales Approver Only',
+            'access_scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $service = app(UserPermissionService::class);
+        $this->assertTrue($service->canApproveSalesOrders($user->fresh()));
+        $this->assertFalse($service->canGiveDiscountDirectly($user->fresh()));
+        $this->assertFalse(app(\App\Services\Sales\DiscountApprovalService::class)
+            ->canAutoApproveDiscount($user->fresh()));
+    }
+
+    public function test_sales_discounts_give_allows_direct_discount_without_approval(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        PermissionMatrixService::ensure();
+
+        $role = Role::create([
+            'role_name' => 'Discount Manager',
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $giveId = (int) Permission::where('permission_code', 'sales.discounts.give')->value('id');
+        $this->assertNotNull($giveId);
+
+        DB::table('role_permissions')->insert([
+            ['role_id' => $role->id, 'permission_id' => $giveId],
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'discount_manager',
+            'password' => Hash::make('password'),
+            'full_name' => 'Discount Manager',
+            'access_scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $service = app(UserPermissionService::class);
+        $this->assertFalse($service->canApproveSalesOrders($user->fresh()));
+        $this->assertTrue($service->canGiveDiscountDirectly($user->fresh()));
+        $this->assertTrue(app(\App\Services\Sales\DiscountApprovalService::class)
+            ->canAutoApproveDiscount($user->fresh()));
+    }
+
     public function test_feature_edit_permission_satisfies_route_capability(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

@@ -48,11 +48,14 @@ class DiscountApprovalService
             || ! empty($salesSettings['allow_pos_edit_line_discount']);
     }
 
-    /** Order-level discounts (direct or via approval workflow). */
-    public function allowsOrderDiscount(array $salesSettings): bool
+    /** Order-level discounts — disabled for staff in discount-for-approval mode. */
+    public function allowsOrderDiscount(array $salesSettings, ?User $user = null): bool
     {
-        return ! empty($salesSettings['enable_order_discount'])
-            || $this->discountApprovalEnabled($salesSettings);
+        if ($user !== null && $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+            return false;
+        }
+
+        return ! empty($salesSettings['enable_order_discount']);
     }
 
     /** Whether a cart line may carry a discount amount at all. */
@@ -148,7 +151,7 @@ class DiscountApprovalService
 
     public function canAutoApproveDiscount(User $user): bool
     {
-        return $this->permissions->canApproveSalesOrders($user);
+        return $this->permissions->canGiveDiscountDirectly($user);
     }
 
     public function discountPercent(float $discountAmount, float $baseAmount): float
@@ -319,7 +322,7 @@ class DiscountApprovalService
             throw ValidationException::withMessages(['line_ref' => 'Line reference is required for line discounts.']);
         }
 
-        if ($scope === 'order' && ! $this->allowsOrderDiscount($salesSettings)) {
+        if ($scope === 'order' && ! $this->allowsOrderDiscount($salesSettings, $user)) {
             throw ValidationException::withMessages(['scope' => 'Order discount is not enabled.']);
         }
 
@@ -332,7 +335,7 @@ class DiscountApprovalService
             && ! $this->canAutoApproveDiscount($user);
 
         $existingPending = $this->pendingRequestForCart($cart, $user);
-        $reasonRequired = $this->discountApprovalEnabled($salesSettings) && $discountAmount > 0.01;
+        $reasonRequired = $needsApproval;
 
         if ($reasonRequired) {
             $reason = $this->resolveOrderApprovalReason($existingPending, $reason);

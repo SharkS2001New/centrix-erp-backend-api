@@ -44,7 +44,7 @@ class InAppNotificationService
     /** @return Collection<int, array<string, mixed>> */
     public function listRecent(User $user, int $limit = 20): Collection
     {
-        return $this->visibleQuery($user)
+        return $this->activeQuery($user)
             ->with(['actionRequest.requester', 'creator'])
             ->orderByDesc('created_at')
             ->limit(min($limit, 50))
@@ -67,6 +67,8 @@ class InAppNotificationService
             $query->where('is_read', false)->whereNull('resolved_at');
         } elseif ($bucket === 'read') {
             $query->where('is_read', true);
+        } elseif ($bucket === '') {
+            $query->whereNull('resolved_at');
         }
 
         $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 100);
@@ -162,9 +164,23 @@ class InAppNotificationService
             ->whereNull('resolved_at')
             ->update([
                 'resolved_at' => now(),
+                'dismissed_at' => now(),
                 'is_read' => true,
                 'read_at' => now(),
             ]);
+    }
+
+    protected function activeQuery(User $user)
+    {
+        return $this->visibleQuery($user)
+            ->whereNull('resolved_at')
+            ->where(function ($query) {
+                $query->where('is_read', false)
+                    ->orWhere(function ($pendingApproval) {
+                        $pendingApproval->where('type', 'approval')
+                            ->whereHas('actionRequest', fn ($actionRequest) => $actionRequest->where('status', 'pending'));
+                    });
+            });
     }
 
     /** @return array<string, mixed> */

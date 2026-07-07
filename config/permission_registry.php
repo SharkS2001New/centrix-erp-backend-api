@@ -40,6 +40,7 @@ return [
             'features' => [
                 'dashboard' => ['label' => 'Sales analytics', 'actions' => ['view']],
                 'orders' => ['label' => 'Order actions', 'actions' => ['create', 'edit', 'delete', 'approve']],
+                'discounts' => ['label' => 'Discounts', 'actions' => ['give']],
                 ...\App\Support\SalesOrderQueuePermissions::registryFeatures(),
                 'carts' => ['label' => 'Carts (read-only)', 'actions' => ['view']],
                 'vouchers' => ['label' => 'Vouchers', 'actions' => ['view', 'create', 'edit', 'delete']],

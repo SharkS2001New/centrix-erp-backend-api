@@ -10,6 +10,7 @@ use App\Support\SalesOrderQueuePermissions;
 use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\PosOrderEditService;
+use App\Services\Sales\RouteOrderScope;
 use App\Services\Sales\SaleOrderPresentationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;

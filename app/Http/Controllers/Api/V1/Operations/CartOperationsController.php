@@ -99,7 +99,7 @@ class CartOperationsController extends Controller
         if (array_key_exists('order_discount', $data)) {
             $orderDiscount = max(0, (float) $data['order_discount']);
             $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
-            if ($discountService->allowsOrderDiscount($salesSettings)) {
+            if ($discountService->allowsOrderDiscount($salesSettings, $request->user())) {
                 $discountService->assertDirectManualDiscountAllowed(
                     $request->user(),
                     $salesSettings,

@@ -186,7 +186,7 @@ class ActionRequestService
             ]);
 
             $this->notifications->resolveForActionRequest($request);
-            $this->notifyRequesterOfOutcome($request, $outcome, $actor);
+            $this->notifyRequesterOfOutcome($request, $outcome, $actor, $comment);
         });
     }
 
@@ -269,13 +269,13 @@ class ActionRequestService
             ]);
 
             $this->notifications->resolveForActionRequest($request);
-            $this->notifyRequesterOfOutcome($request->fresh(), $outcome, $approver);
+            $this->notifyRequesterOfOutcome($request->fresh(), $outcome, $approver, $comment);
 
             return $request->fresh(['requester', 'approvalActions']);
         });
     }
 
-    protected function notifyRequesterOfOutcome(ActionRequest $request, string $outcome, User $actor): void
+    protected function notifyRequesterOfOutcome(ActionRequest $request, string $outcome, User $actor, ?string $comment = null): void
     {
         $requester = User::query()->find((int) $request->requested_by);
         if ($requester === null || (int) $requester->id === (int) $actor->id) {

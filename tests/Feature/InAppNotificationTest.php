@@ -219,6 +219,130 @@ class InAppNotificationTest extends TestCase
         $this->getJson('/api/v1/notifications/unread-count')
             ->assertOk()
             ->assertJsonPath('count', 0);
+
+        $this->getJson('/api/v1/notifications')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+    }
+
+    public function test_read_notification_is_hidden_from_bell_list(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $approverId = DB::table('users')->insertGetId([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'purchasing_mgr_read_test',
+            'email' => 'purchasing_mgr_read_test@example.test',
+            'password' => $admin->password,
+            'full_name' => 'Purchasing Manager Read Test',
+            'is_admin' => 1,
+            'is_active' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $approver = User::query()->findOrFail($approverId);
+
+        Sanctum::actingAs($admin);
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $productCode = DB::table('products')->value('product_code');
+
+        $this->postJson('/api/v1/supplier-return-documents', [
+            'supplier_id' => $supplier->id,
+            'branch_id' => $admin->branch_id,
+            'source_type' => 'manual',
+            'reason_scope' => 'order',
+            'return_reason' => 'Damaged packaging on delivery',
+            'lines' => [
+                [
+                    'product_code' => $productCode,
+                    'quantity' => 2,
+                    'package_type' => 'pieces',
+                    'stock_location' => 'store',
+                ],
+            ],
+        ])->assertCreated();
+
+        Sanctum::actingAs($approver);
+
+        $notificationId = (int) DB::table('in_app_notifications')
+            ->where('user_id', $approver->id)
+            ->where('type', 'approval')
+            ->value('id');
+
+        $this->postJson("/api/v1/notifications/{$notificationId}/read")
+            ->assertOk();
+
+        $this->getJson('/api/v1/notifications')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
+
+        $this->getJson('/api/v1/notifications/all?bucket=pending_approvals')
+            ->assertOk()
+            ->assertJsonCount(1, 'data');
+    }
+
+    public function test_resolved_approval_notification_is_removed_from_all_buckets(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $approverId = DB::table('users')->insertGetId([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'purchasing_mgr_bucket_test',
+            'email' => 'purchasing_mgr_bucket_test@example.test',
+            'password' => $admin->password,
+            'full_name' => 'Purchasing Manager Bucket Test',
+            'is_admin' => 1,
+            'is_active' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $approver = User::query()->findOrFail($approverId);
+
+        Sanctum::actingAs($admin);
+
+        $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $productCode = DB::table('products')->value('product_code');
+
+        DB::table('current_stock')->updateOrInsert(
+            ['product_code' => $productCode, 'branch_id' => $admin->branch_id],
+            ['shop_quantity' => 0, 'store_quantity' => 20],
+        );
+
+        $docId = $this->postJson('/api/v1/supplier-return-documents', [
+            'supplier_id' => $supplier->id,
+            'branch_id' => $admin->branch_id,
+            'source_type' => 'manual',
+            'reason_scope' => 'order',
+            'return_reason' => 'Supplier sent wrong batch',
+            'lines' => [
+                [
+                    'product_code' => $productCode,
+                    'quantity' => 2,
+                    'package_type' => 'pieces',
+                    'stock_location' => 'store',
+                ],
+            ],
+        ])->assertCreated()->json('data.id');
+
+        $actionRequestId = (int) DB::table('action_requests')
+            ->where('reference_id', $docId)
+            ->value('id');
+
+        Sanctum::actingAs($approver);
+
+        $this->postJson("/api/v1/action-requests/{$actionRequestId}/approve")
+            ->assertOk();
+
+        $this->getJson('/api/v1/notifications/all')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this->getJson('/api/v1/notifications/all?bucket=pending_approvals')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
     }
 
     public function test_customer_return_creates_approval_notification_for_other_approvers(): void

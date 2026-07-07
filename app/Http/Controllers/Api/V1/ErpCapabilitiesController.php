@@ -72,7 +72,7 @@ class ErpCapabilitiesController extends Controller
         $gate = $this->erp->gateForUser($request->user());
         $user = $request->user();
 
-        return array_merge($gate->toArray(), [
+        return array_merge($gate->toArray($user), [
             'is_super_admin' => (bool) $user?->is_super_admin,
             'is_admin' => (bool) $user?->is_admin,
             'access_scope' => $user?->access_scope ?? 'org',

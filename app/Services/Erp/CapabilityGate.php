@@ -4,6 +4,7 @@ namespace App\Services\Erp;
 
 use App\Models\Organization;
 use App\Models\SystemSetting;
+use App\Models\User;
 use App\Services\Ai\AiSettingsResolver;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\GeneralSettingsResolver;
@@ -526,7 +527,7 @@ class CapabilityGate
     }
 
     /** @return array<string, mixed> */
-    public function toArray(): array
+    public function toArray(?User $user = null): array
     {
         $profile = $this->organization?->deployment_profile ?? 'wholesale_retail';
         $profileConfig = config("erp.profiles.{$profile}", []);
@@ -547,9 +548,11 @@ class CapabilityGate
             $sales['order_workflow'] = OrderWorkflowService::forGate($this)->config();
             $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
             $sales['effective_allow_edit_line_discount'] = $discounts->allowsManualLineDiscount($sales);
-            $sales['effective_enable_order_discount'] = $discounts->allowsOrderDiscount($sales);
+            $sales['effective_enable_order_discount'] = $discounts->allowsOrderDiscount($sales, $user);
             $sales['effective_allow_discounts'] = $discounts->allowsLineDiscountAmount($sales);
-            $sales['discount_for_approval_mode'] = $discounts->discountApprovalEnabled($sales);
+            $sales['discount_for_approval_mode'] = $user !== null
+                ? $discounts->requiresDiscountRequestWorkflow($sales, $user)
+                : $discounts->discountApprovalEnabled($sales);
             $moduleSettings['sales'] = $sales;
 
             $moduleSettings['general'] = GeneralSettingsResolver::forGate($this);

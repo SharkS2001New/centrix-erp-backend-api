@@ -43,6 +43,7 @@ class PermissionMatrixService
         self::ensureRegistryPermissions();
         self::ensureCapabilityCodes();
         self::remapLegacyPermissionAssignments();
+        self::ensureDiscountGiveForAdminRoles();
     }
 
     public static function ensureRegistryPermissions(): void
@@ -288,6 +289,29 @@ class PermissionMatrixService
             \Illuminate\Support\Facades\DB::table('user_permission_overrides')
                 ->where('permission_id', $fromId)
                 ->update(['permission_id' => $toId]);
+        }
+    }
+
+    /** Org administrators should always be able to give discounts directly. */
+    public static function ensureDiscountGiveForAdminRoles(): void
+    {
+        $giveId = Permission::query()
+            ->where('permission_code', 'sales.discounts.give')
+            ->value('id');
+
+        if (! $giveId) {
+            return;
+        }
+
+        $roleIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Administrator', 'Admin'])
+            ->pluck('id');
+
+        foreach ($roleIds as $roleId) {
+            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                'role_id' => $roleId,
+                'permission_id' => $giveId,
+            ]);
         }
     }
 }

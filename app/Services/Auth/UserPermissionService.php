@@ -125,11 +125,18 @@ class UserPermissionService
         return $this->hasDirectPermission($user, $permissionCode);
     }
 
-    /** Managers who may approve discount requests or self-apply discounts without workflow. */
+    /** Managers who may approve discount requests submitted by other staff. */
     public function canApproveSalesOrders(User $user): bool
     {
         return (bool) $user->is_admin
             || $this->hasDirectPermission($user, 'sales.orders.approve');
+    }
+
+    /** Staff who may apply discounts directly without approval workflow or reason. */
+    public function canGiveDiscountDirectly(User $user): bool
+    {
+        return (bool) $user->is_admin
+            || $this->hasDirectPermission($user, 'sales.discounts.give');
     }
 
     protected function hasDirectPermission(User $user, string $permissionCode): bool

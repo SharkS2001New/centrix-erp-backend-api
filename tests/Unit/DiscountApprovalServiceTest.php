@@ -2,6 +2,7 @@
 
 namespace Tests\Unit;
 
+use App\Models\User;
 use App\Services\Sales\DiscountApprovalService;
 use Tests\TestCase;
 
@@ -35,7 +36,7 @@ class DiscountApprovalServiceTest extends TestCase
         ];
 
         $this->assertTrue($service->allowsManualLineDiscount($base));
-        $this->assertTrue($service->allowsOrderDiscount($base));
+        $this->assertFalse($service->allowsOrderDiscount($base));
         $this->assertTrue($service->allowsLineDiscountAmount($base));
     }
 
@@ -73,5 +74,27 @@ class DiscountApprovalServiceTest extends TestCase
 
         $this->assertFalse($service->allowsManualLineDiscount($base, 'backoffice'));
         $this->assertTrue($service->allowsManualLineDiscount($base, 'pos'));
+    }
+
+    public function test_order_discount_disabled_for_staff_in_approval_mode(): void
+    {
+        $this->mock(\App\Services\Auth\UserPermissionService::class, function ($mock) {
+            $mock->shouldReceive('canGiveDiscountDirectly')
+                ->andReturnUsing(fn (User $user) => (bool) $user->is_admin);
+        });
+
+        $service = app(DiscountApprovalService::class);
+        $settings = [
+            'enable_order_discount' => true,
+            'discount_approval_enabled' => true,
+        ];
+
+        $admin = new User(['is_admin' => true]);
+        $staff = new User(['is_admin' => false, 'id' => 2, 'organization_id' => 1]);
+
+        $this->assertTrue($service->requiresDiscountRequestWorkflow($settings, $staff));
+        $this->assertFalse($service->requiresDiscountRequestWorkflow($settings, $admin));
+        $this->assertTrue($service->allowsOrderDiscount($settings, $admin));
+        $this->assertFalse($service->allowsOrderDiscount($settings, $staff));
     }
 }
