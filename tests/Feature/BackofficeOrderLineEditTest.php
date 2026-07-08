@@ -231,6 +231,20 @@ class BackofficeOrderLineEditTest extends TestCase
             ->count());
     }
 
+    public function test_backoffice_line_edit_subtracts_order_discount_from_order_total(): void
+    {
+        $sale = $this->createBackofficeSale(2, 200.0);
+        $sale->update(['order_discount' => 30]);
+
+        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
+            'items' => [
+                ['id' => $sale->items->first()->id, 'quantity' => 4],
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('order_total', 370.0);
+    }
+
     protected function createBackofficeSale(float $qty, float $amount, string $status = 'booked'): Sale
     {
         $product = \App\Models\Product::query()->firstOrFail();

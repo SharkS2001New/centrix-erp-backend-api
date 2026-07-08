@@ -227,8 +227,15 @@ class CartOperationsController extends Controller
                 $this->clearCart($cart, $user);
             }
 
+            $hadReservations = ! $sale->stock_balanced
+                && $this->saleHasActiveReservations((int) $sale->id);
+
             app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
-            $this->restoreCancelledSaleStock($sale, $user);
+            if ($sale->stock_balanced) {
+                $this->reverseSaleStockDeductions($sale, $user);
+            } elseif (! $hadReservations) {
+                $this->releaseSaleReservations((int) $sale->id);
+            }
 
             $heldOrderNum = (int) $sale->order_num;
 
@@ -249,7 +256,11 @@ class CartOperationsController extends Controller
                     'product_vat' => $item->product_vat,
                     'discount_given' => $item->discount_given,
                     'on_wholesale_retail' => $item->on_wholesale_retail,
-                ], $user, $gate, allowRestoredOrderDiscounts: true);
+                ], $user, $gate, allowRestoredOrderDiscounts: true, skipStockReserve: $hadReservations);
+            }
+
+            if ($hadReservations) {
+                $this->transferSaleReservationsToCart((int) $sale->id, (int) $cart->id);
             }
 
             $meta = array_merge($sale->fulfillment_meta ?? [], [
@@ -734,6 +745,7 @@ class CartOperationsController extends Controller
         User $user,
         CapabilityGate $gate,
         bool $allowRestoredOrderDiscounts = false,
+        bool $skipStockReserve = false,
     ): CartLine {
         $product = $this->findProductForCart($cart, (string) $line['product_code'], $user);
         $qty = (float) ($line['quantity'] ?? 1);
@@ -802,7 +814,7 @@ class CartOperationsController extends Controller
             'update_code' => $this->generateLineUpdateCode(),
         ]);
 
-        if ($settings['reserve_stock_on_cart'] ?? true) {
+        if (($settings['reserve_stock_on_cart'] ?? true) && ! $skipStockReserve) {
             $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
             $this->reserveStock(
                 (int) $cart->branch_id,

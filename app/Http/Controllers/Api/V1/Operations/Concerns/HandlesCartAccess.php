@@ -90,6 +90,7 @@ trait HandlesCartAccess
             $payload['discount_approval_request'] = $discounts->presentPendingRequest($pending);
             $payload['discount_resubmit'] = $discounts->cartResubmitsRejectedDiscountOrder($cart);
             $payload['advised_discount_ready'] = $discounts->cartMatchesAdvisedDiscount($cart);
+            $payload['cart_has_manual_discount'] = $discounts->cartHasManualDiscount($cart);
             if ($payload['discount_resubmit'] && (int) ($cart->superseded_sale_id ?? 0) > 0) {
                 $superseded = \App\Models\Sale::query()->find((int) $cart->superseded_sale_id);
                 if ($superseded !== null) {

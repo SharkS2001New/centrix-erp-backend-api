@@ -333,6 +333,17 @@ trait HandlesInventory
             ]);
     }
 
+    protected function transferSaleReservationsToCart(int $saleId, int $cartId): void
+    {
+        StockReservation::where('sale_id', $saleId)
+            ->whereNull('released_at')
+            ->update([
+                'sale_id' => null,
+                'cart_id' => $cartId,
+                'expires_at' => null,
+            ]);
+    }
+
     protected function releaseSaleReservations(int $saleId): void
     {
         StockReservation::where('sale_id', $saleId)

@@ -847,6 +847,50 @@ class MobileSalesApiTest extends TestCase
         ], $overrides));
     }
 
+    public function test_mobile_orders_list_includes_line_discount_in_total_discount(): void
+    {
+        $rep = $this->makeMobileUser(['username' => 'mobile_disc_'.uniqid()]);
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+        $product = \App\Models\Product::query()->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 96001,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 10,
+            'order_total' => 90,
+            'order_discount' => 10,
+            'payment_status' => 'paid',
+            'amount_paid' => 90,
+        ]);
+
+        \App\Models\SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => 1,
+            'uom' => $product->uom,
+            'selling_price' => 100,
+            'discount_given' => 25,
+            'product_vat' => 10,
+            'amount' => 75,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $token = $this->loginMobile($rep);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders')
+            ->assertOk()
+            ->assertJsonPath('data.0.total_discount', 35.0);
+    }
+
     protected function loginMobile(User $user): string
     {
         return $this->postJson('/api/v1/auth/login', [
