@@ -9,6 +9,7 @@ use App\Models\EmployeeAttendance;
 use App\Models\EmployeeClockSession;
 use App\Models\EmployeeFaceProfile;
 use App\Models\Organization;
+use App\Support\UploadedImageProcessor;
 use App\Support\AttendanceHours;
 use App\Support\AttendanceSchema;
 use Carbon\Carbon;
@@ -515,9 +516,9 @@ class CompanyMobileAttendanceService
             $this->trimDeviceId($data['device_identifier'] ?? null),
         );
 
-        $photoPath = $photo->store(
+        $photoPath = app(UploadedImageProcessor::class)->storePublicImagePath(
+            $photo,
             "company-mobile-attendance/{$employee->organization_id}/{$employee->id}/{$action}",
-            'public',
         );
 
         return [

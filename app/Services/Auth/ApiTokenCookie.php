@@ -20,7 +20,17 @@ class ApiTokenCookie
 
         $channel = (string) ($request->input('login_channel') ?? $request->header('X-Login-Channel', 'backoffice'));
 
-        return $channel !== UserLoginChannelService::MOBILE;
+        return ! self::channelUsesBearerTokenInBody($channel);
+    }
+
+    /** Native mobile apps keep the Sanctum token in the JSON body (not HttpOnly cookies). */
+    public static function channelUsesBearerTokenInBody(string $channel): bool
+    {
+        return in_array(
+            strtolower(trim($channel)),
+            [UserLoginChannelService::MOBILE, UserLoginChannelService::MANAGER],
+            true,
+        );
     }
 
     public static function attach(string $plainTextToken): Cookie

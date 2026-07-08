@@ -7,6 +7,7 @@ use App\Models\MobileDriverAttendanceSession;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Erp\CapabilityGate;
+use App\Support\UploadedImageProcessor;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -337,9 +338,9 @@ class MobileDriverAttendanceService
 
     protected function storePhoto(UploadedFile $photo, User $user, string $kind): string
     {
-        $path = $photo->store(
+        $path = app(UploadedImageProcessor::class)->storePublicImagePath(
+            $photo,
             "mobile-driver-attendance/{$user->organization_id}/{$user->id}/{$kind}",
-            'public',
         );
 
         if (! is_string($path) || $path === '') {

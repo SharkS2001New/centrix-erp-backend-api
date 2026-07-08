@@ -4,6 +4,7 @@ namespace App\Services\Attendance;
 
 use App\Models\Employee;
 use App\Models\EmployeeFaceProfile;
+use App\Support\UploadedImageProcessor;
 use Illuminate\Http\UploadedFile;
 use InvalidArgumentException;
 
@@ -75,9 +76,9 @@ class EmployeeFaceVerificationService
         UploadedFile $photo,
         ?string $deviceIdentifier = null,
     ): EmployeeFaceProfile {
-        $path = $photo->store(
+        $path = app(UploadedImageProcessor::class)->storePublicImagePath(
+            $photo,
             "employee-face-profiles/{$employee->organization_id}/{$employee->id}",
-            'public',
         );
 
         return EmployeeFaceProfile::query()->updateOrCreate(

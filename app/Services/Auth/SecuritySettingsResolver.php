@@ -53,9 +53,12 @@ class SecuritySettingsResolver
 
     public static function tokenExpirationMinutesForChannel(string $loginChannel): ?int
     {
-        $channel = in_array($loginChannel, ['backoffice', 'pos', 'mobile'], true)
-            ? $loginChannel
-            : UserLoginChannelService::BACKOFFICE;
+        $channel = match ($loginChannel) {
+            UserLoginChannelService::MOBILE, UserLoginChannelService::MANAGER => UserLoginChannelService::MOBILE,
+            UserLoginChannelService::POS => UserLoginChannelService::POS,
+            UserLoginChannelService::BACKOFFICE => UserLoginChannelService::BACKOFFICE,
+            default => UserLoginChannelService::BACKOFFICE,
+        };
 
         $byChannel = config('security.token_expiration_minutes_by_channel', []);
         $minutes = (int) ($byChannel[$channel] ?? config('security.sanctum_token_expiration_minutes', 60 * 24));

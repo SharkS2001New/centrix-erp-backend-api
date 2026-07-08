@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Attendance\FieldRepAttendanceHrSync;
 use App\Services\Auth\UserAccessService;
 use App\Services\Erp\CapabilityGate;
+use App\Support\UploadedImageProcessor;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
@@ -669,9 +670,9 @@ class MobileFieldAttendanceService
     protected function storePhoto(UploadedFile $photo, User $user, string $kind): string
     {
         try {
-            $path = $photo->store(
+            $path = app(UploadedImageProcessor::class)->storePublicImagePath(
+                $photo,
                 "mobile-attendance/{$user->organization_id}/{$user->id}/{$kind}",
-                'public',
             );
         } catch (\Throwable $exception) {
             throw new InvalidArgumentException(

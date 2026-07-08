@@ -89,7 +89,7 @@ return [
 
     /*
     | HttpOnly cookie auth for web clients (see WEB_COOKIE_AUTH).
-    | Mobile keeps Bearer tokens in the JSON login response.
+    | Mobile and Centrix Manager native apps keep Bearer tokens in the JSON login response.
     */
     'api_token_cookie' => [
         'enabled' => filter_var(env('WEB_COOKIE_AUTH', false), FILTER_VALIDATE_BOOL),

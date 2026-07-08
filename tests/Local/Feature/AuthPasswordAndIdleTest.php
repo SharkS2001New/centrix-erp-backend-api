@@ -89,6 +89,7 @@ class AuthPasswordAndIdleTest extends TestCase
 
         $this->assertSame(60, SecuritySettingsResolver::tokenExpirationMinutesForChannel('backoffice'));
         $this->assertSame(1440, SecuritySettingsResolver::tokenExpirationMinutesForChannel('mobile'));
+        $this->assertSame(1440, SecuritySettingsResolver::tokenExpirationMinutesForChannel('manager'));
     }
 
     public function test_forgot_and_reset_password(): void

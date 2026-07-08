@@ -75,6 +75,11 @@ class UploadedImageProcessor
         ];
     }
 
+    public function storePublicImagePath(UploadedFile $file, string $directory): string
+    {
+        return $this->storePublicImage($file, $directory)['path'];
+    }
+
     /** @return \GdImage|null */
     protected function readImage(UploadedFile $file): ?\GdImage
     {

@@ -67,6 +67,30 @@ class WebCookieAuthTest extends TestCase
         $this->assertNotEmpty($response->json('token'));
     }
 
+    public function test_manager_login_keeps_bearer_token_in_body(): void
+    {
+        $user = User::query()->where('username', 'admin')->first();
+        $this->assertNotNull($user);
+
+        $response = $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'DEMO',
+            'username' => $user->username,
+            'password' => 'password',
+            'client_id' => 'MANAGER_COOKIE_TEST',
+            'login_channel' => 'manager',
+        ]);
+
+        $response->assertOk()
+            ->assertJsonStructure(['token', 'user', 'organization']);
+
+        $this->assertNotEmpty($response->json('token'));
+
+        $cookie = collect($response->headers->getCookies())
+            ->first(fn ($c) => $c->getName() === 'centrix_api_token');
+
+        $this->assertNull($cookie);
+    }
+
     public function test_api_accepts_auth_from_http_only_cookie(): void
     {
         $user = User::query()->where('username', 'admin')->first();
