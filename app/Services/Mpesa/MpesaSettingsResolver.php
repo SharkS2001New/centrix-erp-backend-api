@@ -57,7 +57,7 @@ class MpesaSettingsResolver
         $out = array_merge(self::defaults(), $mpesa);
         $out['env'] = in_array($out['env'] ?? 'sandbox', ['sandbox', 'live'], true) ? $out['env'] : 'sandbox';
         $out['enable_stk_push'] = filter_var($out['enable_stk_push'] ?? true, FILTER_VALIDATE_BOOLEAN);
-        $out['enable_c2b_reconciliation'] = filter_var($out['enable_c2b_reconciliation'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $out['enable_c2b_reconciliation'] = filter_var($out['enable_c2b_reconciliation'] ?? true, FILTER_VALIDATE_BOOLEAN);
         $out['auto_apply_order_reference'] = filter_var($out['auto_apply_order_reference'] ?? true, FILTER_VALIDATE_BOOLEAN);
         $out['payment_account_hint'] = trim((string) ($out['payment_account_hint'] ?? 'Enter your order number (e.g. S12)'));
         foreach (['consumer_key', 'consumer_secret', 'shortcode', 'till_number', 'child_storecode', 'passkey', 'stk_callback_url', 'c2b_confirmation_url', 'c2b_validation_url'] as $key) {
@@ -108,7 +108,7 @@ class MpesaSettingsResolver
     /** @param  array<string, mixed>  $config */
     public static function isC2bReconciliationEnabled(array $config): bool
     {
-        return filter_var($config['enable_c2b_reconciliation'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        return filter_var($config['enable_c2b_reconciliation'] ?? true, FILTER_VALIDATE_BOOLEAN);
     }
 
     public static function isC2bReconciliationEnabledForOrganization(Organization $organization): bool

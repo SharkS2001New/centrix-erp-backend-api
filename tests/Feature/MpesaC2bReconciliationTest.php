@@ -88,7 +88,7 @@ class MpesaC2bReconciliationTest extends TestCase
         $this->assertSame(500.0, (float) $sale->amount_paid);
     }
 
-    public function test_reconciliation_index_requires_feature_enabled(): void
+    public function test_reconciliation_index_reports_disabled_state(): void
     {
         $user = User::query()->where('organization_id', $this->organization->id)->firstOrFail();
         $settings = $this->organization->module_settings;
@@ -97,7 +97,10 @@ class MpesaC2bReconciliationTest extends TestCase
 
         $this->actingAs($user, 'sanctum')
             ->getJson('/api/v1/accounting/mpesa-reconciliation')
-            ->assertStatus(422);
+            ->assertOk()
+            ->assertJsonPath('enabled', false)
+            ->assertJsonPath('payments', [])
+            ->assertJsonPath('summary.count', 0);
     }
 
     public function test_accountant_can_manually_apply_unmatched_payment(): void

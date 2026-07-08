@@ -24,7 +24,14 @@ class MpesaReconciliationController extends Controller
     {
         $user = $request->user();
         $organizationId = (int) (app(UserAccessService::class)->organizationId($user, $request) ?? $user->organization_id ?? 0);
-        $this->assertReconciliationEnabled($organizationId);
+        if ($organizationId <= 0) {
+            abort(403, 'Your account is not linked to an organization.');
+        }
+
+        $organization = Organization::findOrFail($organizationId);
+        if (! MpesaSettingsResolver::isC2bReconciliationEnabledForOrganization($organization)) {
+            return response()->json($this->disabledPayload($organization));
+        }
 
         $payments = MpesaIncomingPayment::query()
             ->where('organization_id', $organizationId)
@@ -139,8 +146,25 @@ class MpesaReconciliationController extends Controller
 
         $organization = Organization::find($organizationId);
         if (! $organization || ! MpesaSettingsResolver::isC2bReconciliationEnabledForOrganization($organization)) {
-            abort(422, 'M-Pesa payment reconciliation is disabled. Enable it under Admin → Settings → Finance → M-Pesa payments.');
+            abort(409, 'M-Pesa payment reconciliation is not enabled for this organization.');
         }
+    }
+
+    /** @return array<string, mixed> */
+    protected function disabledPayload(Organization $organization): array
+    {
+        return [
+            'enabled' => false,
+            'payments' => [],
+            'summary' => [
+                'count' => 0,
+                'total_amount' => 0,
+            ],
+            'settings' => [
+                'payment_account_hint' => MpesaSettingsResolver::paymentAccountHintForOrganization($organization),
+            ],
+            'message' => 'M-Pesa paybill / till reconciliation is turned off. Enable it under Admin → Settings → Finance → M-Pesa payments.',
+        ];
     }
 
     protected function findPayment(int $paymentId, int $organizationId): MpesaIncomingPayment

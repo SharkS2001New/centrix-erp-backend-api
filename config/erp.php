@@ -498,7 +498,7 @@ return [
             'accounting_sync_direction' => 'export',
             'mpesa' => [
                 'enable_stk_push' => true,
-                'enable_c2b_reconciliation' => false,
+                'enable_c2b_reconciliation' => true,
                 'auto_apply_order_reference' => true,
                 'payment_account_hint' => 'Enter your order number (e.g. S12)',
                 'env' => 'sandbox',
