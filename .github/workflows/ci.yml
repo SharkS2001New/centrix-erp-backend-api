@@ -69,9 +69,9 @@ jobs:
 
       - name: Run tests
         env:
-          DB_HOST: 127.0.0.1
-          DB_PORT: 3306
-          DB_DATABASE_LOCAL: pos_erp_test
-          DB_USERNAME_LOCAL: root
-          DB_PASSWORD_LOCAL: root
+          DB_HOST_TEST: 127.0.0.1
+          DB_PORT_TEST: 3306
+          DB_DATABASE_TEST: pos_erp_test
+          DB_USERNAME_TEST: root
+          DB_PASSWORD_TEST: root
         run: php artisan test

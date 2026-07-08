@@ -32,6 +32,7 @@ use App\Services\Sales\PosLinePricingService;
 use App\Support\SalesCheckoutSettings;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Auth\UserLoginChannelService;
+use App\Support\TenantRouteRules;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
@@ -83,8 +84,9 @@ class CartOperationsController extends Controller
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
         $salesSettings = $gate->moduleSettings('sales');
+        $orgId = (int) ($this->userAccess()->organizationId($request->user(), $request) ?? 0);
         $data = $request->validate([
-            'route_id' => 'nullable|integer|exists:routes,id',
+            'route_id' => TenantRouteRules::nullable($orgId ?: null),
             'order_discount' => 'sometimes|numeric|min:0',
         ]);
 

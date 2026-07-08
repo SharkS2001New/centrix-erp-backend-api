@@ -10,6 +10,7 @@ use App\Services\Fulfillment\TripFinancialSummaryService;
 use App\Services\Fulfillment\TripStockService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Services\Notifications\InAppNotificationEvents;
+use App\Support\TenantRouteRules;
 use Illuminate\Http\Request;
 use InvalidArgumentException;
 
@@ -62,9 +63,11 @@ class DispatchTripController extends BaseResourceController
     public function show(Request $request, string $id)
     {
         $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
+        $trip->load(['route', 'routes', 'driver', 'vehicle', 'crewMembers', 'sales', 'loadingList.lines']);
+        $summary = $this->financials->summarizeForTrip($trip);
 
         return response()->json(
-            $this->presentTrip($trip->load(['route', 'routes', 'driver', 'vehicle', 'crewMembers', 'sales', 'loadingList.lines']), null, $request->user()),
+            $this->presentTrip($trip, $summary, $request->user()),
         );
     }
 
@@ -102,11 +105,12 @@ class DispatchTripController extends BaseResourceController
 
     public function store(Request $request)
     {
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $data = $request->validate([
             'branch_id' => 'nullable|integer|exists:branches,id',
-            'route_id' => 'nullable|integer|exists:routes,id',
+            'route_id' => TenantRouteRules::nullable($orgId ?: null),
             'route_ids' => 'sometimes|array|min:1',
-            'route_ids.*' => 'integer|exists:routes,id',
+            'route_ids.*' => TenantRouteRules::each($orgId ?: null),
             'driver_id' => 'required|integer|exists:drivers,id',
             'vehicle_id' => 'required|integer|exists:vehicles,id',
             'scheduled_date' => 'required|date',
@@ -130,10 +134,11 @@ class DispatchTripController extends BaseResourceController
     public function update(Request $request, string $id)
     {
         $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $data = $request->validate([
-            'route_id' => 'sometimes|nullable|integer|exists:routes,id',
+            'route_id' => array_merge(['sometimes'], TenantRouteRules::nullable($orgId ?: null)),
             'route_ids' => 'sometimes|array|min:1',
-            'route_ids.*' => 'integer|exists:routes,id',
+            'route_ids.*' => TenantRouteRules::each($orgId ?: null),
             'driver_id' => 'sometimes|nullable|integer|exists:drivers,id',
             'vehicle_id' => 'sometimes|nullable|integer|exists:vehicles,id',
             'scheduled_date' => 'sometimes|date',

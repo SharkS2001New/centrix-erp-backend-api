@@ -178,7 +178,7 @@ class UserLoginChannelService
             return true;
         }
 
-        if (! $this->isManagerAllowedPath($path)) {
+        if ($this->isManagerDeniedPath($path)) {
             return false;
         }
 
@@ -297,9 +297,24 @@ class UserLoginChannelService
             'roles',
             'branches',
             'auth/',
+            'dispatch-trips',
+            'customers',
+            'products',
+            'catalogue/',
+            'current-stock',
+            'routes',
+            'drivers',
+            'vehicles',
+            'sales/',
+            'payments/',
         ];
 
         return $this->pathMatchesAny($path, $prefixes);
+    }
+
+    protected function isManagerDeniedPath(string $path): bool
+    {
+        return str_starts_with($path, 'admin/');
     }
 
     protected function isSharedAuthPath(string $path): bool

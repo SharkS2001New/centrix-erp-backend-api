@@ -674,11 +674,13 @@ class MobileSalesApiTest extends TestCase
         $route = \App\Models\RouteModel::query()->where('is_active', true)->firstOrFail();
         $otherRoute = \App\Models\RouteModel::query()
             ->where('is_active', true)
+            ->where('organization_id', $route->organization_id)
             ->where('id', '!=', $route->id)
             ->first();
 
         if (! $otherRoute) {
             $otherRoute = \App\Models\RouteModel::create([
+                'organization_id' => $route->organization_id,
                 'route_name' => 'Test Route '.uniqid(),
                 'route_markup_price' => 0,
                 'direction' => 'north',
@@ -698,6 +700,93 @@ class MobileSalesApiTest extends TestCase
             ->assertJsonPath('assigned_route_id', $route->id)
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $route->id);
+    }
+
+    public function test_mobile_routes_list_is_scoped_to_user_organization(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $orgA = \App\Models\Organization::findOrFail($admin->organization_id);
+
+        $orgB = \App\Models\Organization::create([
+            'company_code' => 'RT'.substr(uniqid(), -4),
+            'org_name' => 'Routes Isolation Tenant',
+            'org_email' => 'routes-isolate@example.com',
+            'primary_tel' => '0700000101',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+            'enabled_modules' => $orgA->enabled_modules,
+            'module_settings' => $orgA->module_settings,
+        ]);
+
+        $routeA = \App\Models\RouteModel::query()
+            ->where('organization_id', $orgA->id)
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        $routeB = \App\Models\RouteModel::create([
+            'organization_id' => $orgB->id,
+            'route_name' => 'Other Org Route '.uniqid(),
+            'route_markup_price' => 0,
+            'direction' => 'east',
+            'is_active' => true,
+        ]);
+
+        $user = $this->makeMobileUser([
+            'assigned_route_id' => null,
+        ]);
+        $token = $this->loginMobile($user);
+
+        $ids = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/mobile/routes')
+                ->assertOk()
+                ->json('data'),
+        )->pluck('id')->all();
+
+        $this->assertContains($routeA->id, $ids);
+        $this->assertNotContains($routeB->id, $ids);
+    }
+
+    public function test_mobile_user_cannot_patch_cart_with_route_from_other_organization(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $orgA = \App\Models\Organization::findOrFail($admin->organization_id);
+
+        $orgB = \App\Models\Organization::create([
+            'company_code' => 'RC'.substr(uniqid(), -4),
+            'org_name' => 'Route Cart Isolation Tenant',
+            'org_email' => 'route-cart@example.com',
+            'primary_tel' => '0700000102',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+            'enabled_modules' => $orgA->enabled_modules,
+            'module_settings' => $orgA->module_settings,
+        ]);
+
+        $otherRoute = \App\Models\RouteModel::create([
+            'organization_id' => $orgB->id,
+            'route_name' => 'Foreign Route '.uniqid(),
+            'route_markup_price' => 0,
+            'direction' => 'west',
+            'is_active' => true,
+        ]);
+
+        $user = $this->makeMobileUser(['assigned_route_id' => null]);
+        $token = $this->loginMobile($user);
+
+        $cart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->withToken($token)
+            ->patchJson("/api/v1/sales/carts/{$cart['id']}", [
+                'route_id' => $otherRoute->id,
+            ])
+            ->assertStatus(422);
     }
 
     public function test_organization_preview_returns_org_name(): void

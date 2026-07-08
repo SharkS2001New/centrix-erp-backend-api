@@ -51,6 +51,9 @@ class DemoDataSeeder extends Seeder
 
         $this->truncateDemoTables();
 
+        $enabledModules = config('erp.deployment_profiles.wholesale_retail.modules', []);
+        $enabledModules['distribution'] = true;
+
         $org = Organization::create([
             'company_code' => 'DEMO',
             'org_name' => 'Demo Wholesalers Ltd',
@@ -60,13 +63,24 @@ class DemoDataSeeder extends Seeder
             'org_pin' => 'P051234567Z',
             'vat_regno' => '0123456789',
             'deployment_profile' => 'wholesale_retail',
+            'enabled_modules' => $enabledModules,
             'module_settings' => [
                 'security' => [
                     'screen_lock_minutes' => 5,
                     'session_idle_minutes' => 60,
                 ],
-                'sales' => ['auto_assign_truck' => true, 'auto_assign_driver' => true],
+                'sales' => [
+                    'auto_assign_truck' => true,
+                    'auto_assign_driver' => true,
+                    'enable_order_discount' => true,
+                    'discount_approval_enabled' => true,
+                ],
                 'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
+                'distribution' => [
+                    'enable_distribution_ops' => true,
+                    'enable_cod_reconciliation' => true,
+                    'require_trip_cash_settlement' => true,
+                ],
                 'finance' => [
                     'mpesa' => [
                         'env' => 'sandbox',
@@ -305,6 +319,39 @@ class DemoDataSeeder extends Seeder
             'branch_id' => $hq->id,
             'shop_quantity' => 2500,
             'store_quantity' => 5000,
+        ]);
+
+        $subFlour = SubCategory::create([
+            'category_id' => $cat->id,
+            'subcategory_name' => 'Flour',
+            'organization_id' => $org->id,
+            'created_by' => $admin->id,
+        ]);
+
+        $flour = Product::create([
+            'product_code' => '6161100100016',
+            'product_name' => 'Premium Baking Flour 50kg',
+            'subcategory_id' => $subFlour->id,
+            'unit_id' => $uomKg->id,
+            'unit_price' => 4500,
+            'last_cost_price' => 3800,
+            'stock_in_shop' => 800,
+            'stock_in_store' => 1200,
+            'supplier_id' => $sup->id,
+            'sell_on_retail' => 1,
+            'vat_id' => $vatStd->id,
+            'organization_id' => $org->id,
+            'reorder_point' => 200,
+            'low_stock_alert_enabled' => true,
+            'created_by' => $admin->id,
+            'updated_by' => $admin->id,
+        ]);
+
+        CurrentStock::create([
+            'product_code' => $flour->product_code,
+            'branch_id' => $hq->id,
+            'shop_quantity' => 800,
+            'store_quantity' => 1200,
         ]);
 
         $route = RouteModel::create([
@@ -641,6 +688,7 @@ class DemoDataSeeder extends Seeder
     protected function truncateDemoTables(): void
     {
         $skip = ['migrations'];
+        $database = DB::getDatabaseName();
 
         if (! app()->environment('testing')) {
             $skip[] = 'payment_methods';
@@ -649,14 +697,17 @@ class DemoDataSeeder extends Seeder
 
         DB::statement('SET FOREIGN_KEY_CHECKS=0');
 
-        $tables = collect(DB::select('SHOW TABLES'))
-            ->map(fn ($row) => array_values((array) $row)[0])
-            ->reject(fn (string $table) => in_array($table, $skip, true));
+        $tables = DB::select(
+            'SELECT table_name AS name FROM information_schema.tables WHERE table_schema = ? AND table_type = ?',
+            [$database, 'BASE TABLE'],
+        );
 
-        foreach ($tables as $table) {
-            if (Schema::hasTable($table)) {
-                DB::table($table)->truncate();
+        foreach ($tables as $row) {
+            $table = (string) ($row->name ?? '');
+            if ($table === '' || in_array($table, $skip, true)) {
+                continue;
             }
+            DB::table($table)->truncate();
         }
 
         DB::statement('SET FOREIGN_KEY_CHECKS=1');

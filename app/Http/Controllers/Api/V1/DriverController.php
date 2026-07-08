@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Driver;
 use App\Models\Employee;
 use App\Models\Sale;
+use App\Support\TenantRouteRules;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
@@ -73,6 +74,7 @@ class DriverController extends BaseResourceController
 
     protected function validatedDriver(Request $request, ?Driver $existing = null): array
     {
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $data = $request->validate([
             'branch_id' => $existing ? 'sometimes|integer|exists:branches,id' : 'required|integer|exists:branches,id',
             'user_id' => [
@@ -88,7 +90,7 @@ class DriverController extends BaseResourceController
                 Rule::unique('drivers', 'employee_id')->ignore($existing?->id),
             ],
             'default_vehicle_id' => 'nullable|integer|exists:vehicles,id',
-            'default_route_id' => 'nullable|integer|exists:routes,id',
+            'default_route_id' => TenantRouteRules::nullable($orgId ?: null),
             'driver_code' => ($existing ? 'sometimes|' : '').'required|string|max:45',
             'full_name' => ($existing ? 'sometimes|' : '').'required|string|max:200',
             'phone' => 'nullable|string|max:45',

@@ -131,12 +131,7 @@ class MobileCustomerService
     protected function scopedQuery(User $user)
     {
         $query = Customer::query()
-            ->where('customers.organization_id', (int) $user->organization_id)
             ->whereNull('customers.deleted_at');
-
-        if (! $user->is_admin && $user->access_scope === 'branch') {
-            $query->where('customers.branch_id', (int) $user->branch_id);
-        }
 
         $this->mobileScope->applyCustomerScope($query, $user);
 

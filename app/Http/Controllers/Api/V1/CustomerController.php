@@ -10,6 +10,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Erp\ErpContext;
 use App\Services\Cache\OrganizationCache;
 use App\Support\SqlLikeSearch;
+use App\Support\TenantRouteRules;
 use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -147,7 +148,7 @@ class CustomerController extends BaseResourceController
             fn (string $field) => $field !== 'customer_num',
         ));
         $data = $this->normalizeCustomerPayload($request->validate(
-            $this->customerRules($fields),
+            $this->customerRules($fields, request: $request),
         ));
         $gate = $this->erp->gateForUser($user);
         $data = $this->customerRoutePolicy->applyDistributionCustomerRules($data, $gate);
@@ -176,7 +177,7 @@ class CustomerController extends BaseResourceController
     {
         $customer = $this->findScopedModel($request, $id);
         $data = $this->normalizeCustomerPayload($request->validate(
-            $this->customerRules($this->fillableFields(), partial: true),
+            $this->customerRules($this->fillableFields(), partial: true, request: $request),
         ));
         $gate = $this->erp->gateForUser($request->user());
         $data = $this->customerRoutePolicy->applyDistributionCustomerRules($data, $gate, $customer);
@@ -248,17 +249,29 @@ class CustomerController extends BaseResourceController
         return response()->json($model->fresh());
     }
 
-    protected function customerRules(array $fields, bool $partial = false): array
+    protected function customerRules(array $fields, bool $partial = false, ?Request $request = null): array
     {
         $prefix = $partial ? 'sometimes|' : '';
 
         $rules = [];
         foreach ($fields as $field) {
+            if ($field === 'route_id') {
+                continue;
+            }
             $rules[$field] = $prefix.'nullable';
         }
 
         $rules['latitude'] = ($partial ? 'sometimes|' : '').'nullable|numeric|between:-90,90';
         $rules['longitude'] = ($partial ? 'sometimes|' : '').'nullable|numeric|between:-180,180';
+
+        if (in_array('route_id', $fields, true)) {
+            $orgId = $request
+                ? (int) ($this->access()->organizationId($request->user(), $request) ?? 0)
+                : 0;
+            $rules['route_id'] = $partial
+                ? array_merge(['sometimes'], TenantRouteRules::nullable($orgId ?: null))
+                : TenantRouteRules::nullable($orgId ?: null);
+        }
 
         return $rules;
     }

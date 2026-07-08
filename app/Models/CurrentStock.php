@@ -12,4 +12,13 @@ class CurrentStock extends Model
     public $incrementing = false;
     public $timestamps = false;
     protected $fillable = ['product_code', 'branch_id', 'shop_quantity', 'store_quantity'];
+
+    #[\Override]
+    protected function setKeysForSaveQuery($query)
+    {
+        $query->where('product_code', $this->getAttribute('product_code'))
+            ->where('branch_id', $this->getAttribute('branch_id'));
+
+        return $query;
+    }
 }

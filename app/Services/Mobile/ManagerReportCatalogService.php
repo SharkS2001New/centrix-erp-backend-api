@@ -293,6 +293,10 @@ class ManagerReportCatalogService
             return true;
         }
 
+        if ($this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate)) {
+            return true;
+        }
+
         $permission = self::PERMISSION_BY_KEY[$key] ?? 'reports.hub.view';
 
         return $this->permissions->hasPermission($user, $permission, $gate);

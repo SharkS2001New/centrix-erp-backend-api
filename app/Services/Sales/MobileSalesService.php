@@ -345,12 +345,6 @@ class MobileSalesService
 
         $this->mobileScope->applySaleScope($query, $user);
 
-        if ($user->organization_id) {
-            $query->where('organization_id', $user->organization_id);
-        }
-
-        $this->access->scopeBranchIfLimited($query, $user);
-
         return $query;
     }
 

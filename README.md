@@ -39,19 +39,19 @@ php artisan serve
 
 ## Testing
 
-Feature and unit tests use MySQL database `pos_erp_test` (see `phpunit.xml`). Each feature test class reloads schema + demo seed via `RefreshesErpDatabase`.
+Feature and unit tests use MySQL database `pos_erp_test` by default (`DB_DATABASE_TEST` in `.env`). Each feature test class reloads schema + demo seed via `RefreshesErpDatabase`.
 
 **Local setup**
 
 ```bash
-# MySQL 8.0+ — adjust user/password to match phpunit.xml / .env
-mysql -uroot -proot -e "CREATE DATABASE IF NOT EXISTS pos_erp_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+# MySQL 8.0+ — create the test database (credentials from .env DB_*_TEST)
+mysql -u"$DB_USERNAME_TEST" -p -e "CREATE DATABASE IF NOT EXISTS pos_erp_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 
 composer install
-cp .env.example .env
+cp .env.example .env   # set DB_*_TEST (or DB_*_LOCAL for host/user if TEST vars omitted)
 php artisan key:generate
 
-# Run full suite (CI runs the same command)
+# Run full suite (CI runs the same command; CI injects root/root via workflow env)
 php artisan test
 
 # Single file or filter

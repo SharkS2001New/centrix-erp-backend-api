@@ -41,9 +41,15 @@ class ManagerAppModuleAccessService
             return;
         }
 
-        if (! $this->permissions->hasPermission($user, 'mobile_manager.reports.view', $gate)) {
-            abort(403, 'You do not have permission to view reports in Centrix Manager.');
+        if ($this->permissions->hasPermission($user, 'mobile_manager.reports.view', $gate)) {
+            return;
         }
+
+        if ($this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate)) {
+            return;
+        }
+
+        abort(403, 'You do not have permission to view reports in Centrix Manager.');
     }
 
     /**

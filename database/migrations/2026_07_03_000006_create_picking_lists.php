@@ -17,9 +17,9 @@ return new class extends Migration
         if (! Schema::hasTable('picking_lists')) {
             Schema::create('picking_lists', function (Blueprint $table) {
                 $table->id();
-                $table->unsignedInteger('branch_id');
+                $table->integer('branch_id');
                 $table->unsignedBigInteger('trip_id');
-                $table->unsignedInteger('route_id')->nullable();
+                $table->integer('route_id')->nullable();
                 $table->date('list_date');
                 $table->string('list_number', 50);
                 $table->enum('status', ['open', 'completed', 'locked'])->default('open');

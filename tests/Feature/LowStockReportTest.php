@@ -101,6 +101,21 @@ class LowStockReportTest extends TestCase
         $this->assertNotContains($product->product_code, $codes);
     }
 
+    public function test_items_currently_in_stock_alias_matches_stock_on_hand(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $query = 'branch_id='.$admin->branch_id.'&per_page=5';
+
+        $alias = $this->getJson('/api/v1/reports/items-currently-in-stock?'.$query);
+        $canonical = $this->getJson('/api/v1/reports/stock-on-hand?'.$query);
+
+        $alias->assertOk();
+        $canonical->assertOk();
+        $this->assertSame($canonical->json('data'), $alias->json('data'));
+    }
+
     public function test_price_list_report_returns_paginated_org_scoped_rows(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

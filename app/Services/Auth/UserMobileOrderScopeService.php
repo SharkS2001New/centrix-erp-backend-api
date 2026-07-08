@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Models\Customer;
 use App\Models\RouteModel;
 use App\Models\User;
+use App\Services\Fulfillment\RouteAccessService;
 use Illuminate\Support\Collection;
 use App\Services\Auth\UserLoginChannelService;
 use Illuminate\Database\Eloquent\Builder;
@@ -17,6 +18,11 @@ use InvalidArgumentException;
  */
 class UserMobileOrderScopeService
 {
+    public function __construct(
+        protected UserAccessService $access,
+        protected RouteAccessService $routes,
+    ) {}
+
     public const ROUTE_ONLY = 'route_only';
 
     /** @deprecated Kept for DB compatibility; mobile users are always route-only. */
@@ -86,6 +92,8 @@ class UserMobileOrderScopeService
             ->where('is_active', true)
             ->orderBy('route_name');
 
+        $this->routes->scopeOrganization($query, $user);
+
         if ($this->isRouteSelectionLocked($user)) {
             $query->where('id', (int) $user->assigned_route_id);
         }
@@ -101,6 +109,9 @@ class UserMobileOrderScopeService
         }
 
         $query->whereNotNull('route_id');
+        $this->access->scopeOrganization($query, $user, 'sales.organization_id');
+        $this->access->scopeBranchIfLimited($query, $user, 'sales.branch_id');
+
         if ($user->assigned_route_id) {
             $query->where('route_id', (int) $user->assigned_route_id);
         }
@@ -114,6 +125,9 @@ class UserMobileOrderScopeService
         }
 
         $query->where('customers.customer_type', 'route');
+        $this->access->scopeOrganization($query, $user, 'customers.organization_id');
+        $this->access->scopeBranchIfLimited($query, $user, 'customers.branch_id');
+
         if ($user->assigned_route_id) {
             $query->where('customers.route_id', (int) $user->assigned_route_id);
         }
@@ -152,6 +166,8 @@ class UserMobileOrderScopeService
         ) {
             throw new InvalidArgumentException('This user is assigned to a different route.');
         }
+
+        $this->routes->assertAccessible($user, (int) $routeId);
     }
 
     /** @param  array<string, mixed>  $payload */
@@ -186,6 +202,8 @@ class UserMobileOrderScopeService
                 'route_id' => ['This user can only manage customers on their assigned route.'],
             ]);
         }
+
+        $this->routes->assertAccessible($user, (int) $routeId, 'route_id');
     }
 
     public function assertCheckoutRoute(User $user, string $channel, ?int $routeId): void
@@ -204,6 +222,8 @@ class UserMobileOrderScopeService
         ) {
             throw new InvalidArgumentException('This user is assigned to a different route.');
         }
+
+        $this->routes->assertAccessible($user, (int) $routeId);
     }
 
     /** @param  array<string, mixed>  $data */

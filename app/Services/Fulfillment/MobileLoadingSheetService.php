@@ -5,6 +5,8 @@ namespace App\Services\Fulfillment;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Auth\UserAccessService;
+use App\Services\Fulfillment\RouteAccessService;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -13,7 +15,11 @@ class MobileLoadingSheetService
 {
     private const EXCLUDED_STATUSES = ['draft', 'held', 'cancelled', 'expired'];
 
-    public function __construct(protected LoadingListBuilder $loadingListBuilder) {}
+    public function __construct(
+        protected LoadingListBuilder $loadingListBuilder,
+        protected UserAccessService $access,
+        protected RouteAccessService $routes,
+    ) {}
 
     public function assertAvailable(bool $distributionEnabled, bool $mobileOrdersEnabled): void
     {
@@ -39,6 +45,8 @@ class MobileLoadingSheetService
         if ($user->branch_id) {
             $query->where('branch_id', $user->branch_id);
         }
+
+        $this->access->scopeOrganization($query, $user, 'sales.organization_id');
 
         return $query;
     }
@@ -77,9 +85,10 @@ class MobileLoadingSheetService
             ->limit(200)
             ->get();
 
-        $routeNames = RouteModel::query()
-            ->whereIn('id', $rows->pluck('route_id')->filter()->unique()->all())
-            ->pluck('route_name', 'id');
+        $routeNamesQuery = RouteModel::query()
+            ->whereIn('id', $rows->pluck('route_id')->filter()->unique()->all());
+        $this->routes->scopeOrganization($routeNamesQuery, $user);
+        $routeNames = $routeNamesQuery->pluck('route_name', 'id');
 
         return $rows->map(function ($row) use ($routeNames) {
             return [
@@ -111,7 +120,7 @@ class MobileLoadingSheetService
             ->orderBy('order_num')
             ->get();
 
-        $route = RouteModel::query()->find($routeId);
+        $route = $this->routes->findForUser($user, $routeId);
         $saleIds = $sales->pluck('id')->all();
         $orders = $this->loadingListBuilder->aggregateOrdersFromSaleIds($saleIds);
         $totalAmount = round(array_sum(array_column($orders, 'subtotal')), 2);

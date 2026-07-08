@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Models\RouteSchedule;
+use App\Support\TenantRouteRules;
 use Illuminate\Http\Request;
 
 class RouteScheduleController extends BaseResourceController
@@ -40,9 +41,10 @@ class RouteScheduleController extends BaseResourceController
 
     public function store(Request $request)
     {
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $data = $request->validate([
             'branch_id' => 'nullable|integer|exists:branches,id',
-            'route_id' => 'required|integer|exists:routes,id',
+            'route_id' => TenantRouteRules::required($orgId ?: null),
             'day_of_week' => 'required|integer|min:0|max:6',
             'default_driver_id' => 'nullable|integer|exists:drivers,id',
             'default_vehicle_id' => 'nullable|integer|exists:vehicles,id',

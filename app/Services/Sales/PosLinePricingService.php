@@ -19,6 +19,7 @@ class PosLinePricingService
         float $baseQty,
         bool $isRetailLine,
         ?int $routeId = null,
+        ?int $organizationId = null,
     ): float {
         if ($baseQty <= 0) {
             return 0.0;
@@ -53,6 +54,7 @@ class PosLinePricingService
             $packQty,
             $isRetailLine,
             $routeId,
+            $organizationId,
         ), 2);
     }
 
@@ -65,6 +67,7 @@ class PosLinePricingService
         ?int $routeId,
         ?float $clientUnitPricePerBase,
         bool $trustClientUnitPrice,
+        ?int $organizationId = null,
     ): array {
         if ($trustClientUnitPrice && $clientUnitPricePerBase !== null && $clientUnitPricePerBase > 0) {
             $amount = round($clientUnitPricePerBase * $baseQty, 2);
@@ -72,7 +75,7 @@ class PosLinePricingService
             return [$clientUnitPricePerBase, $amount];
         }
 
-        $beforeDiscount = $this->lineTotalBeforeDiscount($product, $baseQty, $isRetailLine, $routeId);
+        $beforeDiscount = $this->lineTotalBeforeDiscount($product, $baseQty, $isRetailLine, $routeId, $organizationId);
         $amount = round(max(0, $beforeDiscount - max(0, $discountGiven)), 2);
         $unitPrice = $baseQty > 0 ? round($amount / $baseQty, 4) : 0.0;
 
@@ -256,12 +259,17 @@ class PosLinePricingService
         float $packQty,
         bool $isRetailLine,
         ?int $routeId,
+        ?int $organizationId = null,
     ): float {
         if (! $routeId) {
             return $lineAmount;
         }
 
-        $route = RouteModel::find($routeId);
+        $routeQuery = RouteModel::query()->where('id', $routeId);
+        if ($organizationId !== null) {
+            $routeQuery->where('organization_id', $organizationId);
+        }
+        $route = $routeQuery->first();
         if (! $route) {
             return $lineAmount;
         }

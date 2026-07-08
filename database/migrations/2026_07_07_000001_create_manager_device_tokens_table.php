@@ -14,12 +14,13 @@ return new class extends Migration
 
         Schema::create('manager_device_tokens', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
+            $table->integer('user_id');
             $table->string('token', 512);
             $table->string('platform', 20)->nullable();
             $table->timestamp('last_seen_at')->nullable();
             $table->timestamps();
 
+            $table->foreign('user_id')->references('id')->on('users')->cascadeOnDelete();
             $table->unique(['user_id', 'token']);
             $table->index('user_id');
         });

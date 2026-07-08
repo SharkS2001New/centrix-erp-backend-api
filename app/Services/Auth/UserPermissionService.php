@@ -132,6 +132,10 @@ class UserPermissionService
             }
         }
 
+        if ($gate !== null && $this->managerSessionGrantsPermission($user, $permissionCode, $gate)) {
+            return true;
+        }
+
         return false;
     }
 
@@ -338,6 +342,10 @@ class UserPermissionService
             $map = $this->grantOrgAdminMobileAppPermissions($map, $gate);
         }
 
+        if ($gate !== null) {
+            $map = $this->grantManagerAppBundlePermissions($map, $gate);
+        }
+
         return $map;
     }
 
@@ -361,6 +369,150 @@ class UserPermissionService
         $map = $this->expandCapabilityAliases($map);
 
         return $this->expandLegacySalesOrderQueueView($map);
+    }
+
+    /** @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function grantManagerAppBundlePermissions(array $map, CapabilityGate $gate): array
+    {
+        if (! ($map['mobile_manager.app.access'] ?? false) || ! $gate->managerAppEnabled()) {
+            return $map;
+        }
+
+        foreach (Permission::query()->where('module', 'mobile_manager')->pluck('permission_code') as $code) {
+            $map[(string) $code] = true;
+        }
+
+        $aliases = config('permission_aliases', []);
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('reports', $gate)) {
+            foreach ($aliases['reports.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        if ($gate->distributionOpsEnabled()) {
+            foreach ($aliases['fulfillment.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('catalogue', $gate)) {
+            foreach ($aliases['catalogue.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+            foreach ($aliases['products.manage'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        if ($gate->enabled('customers_suppliers')) {
+            foreach ($aliases['customers.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        if ($gate->enabled('sales.backend')) {
+            foreach ($aliases['sales.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('inventory', $gate)) {
+            foreach ($aliases['inventory.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('accounting', $gate)) {
+            foreach ($aliases['accounting.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('hr', $gate)) {
+            foreach ($aliases['hr.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('purchasing', $gate)) {
+            foreach ($aliases['purchasing.view'] ?? [] as $code) {
+                $map[(string) $code] = true;
+            }
+        }
+
+        $map = $this->expandCapabilityAliases($map);
+
+        return $this->expandLegacySalesOrderQueueView($map);
+    }
+
+    protected function managerSessionGrantsPermission(
+        User $user,
+        string $permissionCode,
+        CapabilityGate $gate,
+    ): bool {
+        if (! $gate->managerAppEnabled() || ! $this->hasDirectPermission($user, 'mobile_manager.app.access')) {
+            return false;
+        }
+
+        if (str_starts_with($permissionCode, 'mobile_manager.')) {
+            return true;
+        }
+
+        if (
+            str_starts_with($permissionCode, 'reports.')
+            && PermissionMatrixService::isRegistryModuleEnabled('reports', $gate)
+        ) {
+            return true;
+        }
+
+        if ($gate->distributionOpsEnabled() && $this->permissionInAliasGroup($permissionCode, 'fulfillment.view')) {
+            return true;
+        }
+
+        if (
+            PermissionMatrixService::isRegistryModuleEnabled('catalogue', $gate)
+            && (
+                $this->permissionInAliasGroup($permissionCode, 'catalogue.view')
+                || $this->permissionInAliasGroup($permissionCode, 'products.manage')
+            )
+        ) {
+            return true;
+        }
+
+        if ($gate->enabled('customers_suppliers') && $this->permissionInAliasGroup($permissionCode, 'customers.view')) {
+            return true;
+        }
+
+        if ($gate->enabled('sales.backend') && $this->permissionInAliasGroup($permissionCode, 'sales.view')) {
+            return true;
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('inventory', $gate) && $this->permissionInAliasGroup($permissionCode, 'inventory.view')) {
+            return true;
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('accounting', $gate) && $this->permissionInAliasGroup($permissionCode, 'accounting.view')) {
+            return true;
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('hr', $gate) && $this->permissionInAliasGroup($permissionCode, 'hr.view')) {
+            return true;
+        }
+
+        if (PermissionMatrixService::isRegistryModuleEnabled('purchasing', $gate) && $this->permissionInAliasGroup($permissionCode, 'purchasing.view')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /** @param  list<string>  $codes */
+    protected function permissionInAliasGroup(string $permissionCode, string $aliasKey): bool
+    {
+        return in_array($permissionCode, config('permission_aliases')[$aliasKey] ?? [], true);
     }
 
     /** Org administrators get every mobile sales/driver permission when those modules are enabled. */

@@ -15,6 +15,7 @@ use App\Services\Auth\UserLoginChannelPolicy;
 use App\Services\Auth\UserManagerLoginValidator;
 use App\Services\Auth\UserMobileLoginValidator;
 use App\Services\Auth\UserMobileOrderScopeService;
+use App\Services\Fulfillment\RouteAccessService;
 use App\Services\Auth\UserLoginService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Auth\UsernameValidator;
@@ -44,7 +45,7 @@ class UserController extends BaseResourceController
         $rules['access_scope'] = 'required|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile,manager';
-        $rules['assigned_route_id'] = 'nullable|integer|exists:routes,id';
+        $rules['assigned_route_id'] = app(RouteAccessService::class)->validationNullable($request->user(), $request);
         $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         $data = $this->access()->validateAccessScope($data, (bool) ($data['is_admin'] ?? false));
@@ -98,11 +99,12 @@ class UserController extends BaseResourceController
     public function update(Request $request, string $id, ?string $nestedId = null)
     {
         $model = $this->findOrgUser($this->resolveResourceId($id, $nestedId));
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? $model->organization_id ?? 0);
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
         $rules['access_scope'] = 'sometimes|in:org,branch';
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile,manager';
-        $rules['assigned_route_id'] = 'nullable|integer|exists:routes,id';
+        $rules['assigned_route_id'] = app(RouteAccessService::class)->validationNullable($request->user(), $request);
         $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         if (isset($data['access_scope']) || array_key_exists('branch_id', $data)) {

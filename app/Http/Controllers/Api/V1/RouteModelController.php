@@ -63,6 +63,12 @@ class RouteModelController extends BaseResourceController
         return Schema::hasColumn('routes', 'organization_id');
     }
 
+    /** Routes are org-wide master data; branch context lives on customers, sales, and schedules. */
+    protected function scopesByBranch(): bool
+    {
+        return false;
+    }
+
     protected function routesScopedByOrganization(): bool
     {
         return $this->scopesByOrganization();
@@ -144,9 +150,16 @@ class RouteModelController extends BaseResourceController
         $route = $this->findScopedModel($request, $id);
 
         DB::transaction(function () use ($route) {
-            Customer::where('route_id', $route->id)->update(['route_id' => null]);
+            $orgId = (int) $route->organization_id;
+            Customer::query()
+                ->where('route_id', $route->id)
+                ->where('organization_id', $orgId)
+                ->update(['route_id' => null]);
             TemporaryCart::where('route_id', $route->id)->update(['route_id' => null]);
-            Sale::where('route_id', $route->id)->update(['route_id' => null]);
+            Sale::query()
+                ->where('route_id', $route->id)
+                ->where('organization_id', $orgId)
+                ->update(['route_id' => null]);
             Driver::where('default_route_id', $route->id)->update(['default_route_id' => null]);
             $route->delete();
         });

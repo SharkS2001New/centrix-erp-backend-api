@@ -7,12 +7,16 @@ use App\Models\Product;
 use App\Models\RouteModel;
 use App\Models\TemporaryCart;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Fulfillment\RouteAccessService;
 use App\Services\Kra\SalesVatCalculator;
 use Illuminate\Support\Collection;
 
 class MobileRouteMarkupCheckoutService
 {
-    public function __construct(protected PosLinePricingService $pricing) {}
+    public function __construct(
+        protected PosLinePricingService $pricing,
+        protected RouteAccessService $routes,
+    ) {}
 
     /**
      * Mobile carts are priced without route markup until checkout.
@@ -31,13 +35,15 @@ class MobileRouteMarkupCheckoutService
     /**
      * @param  array<string, mixed>  $salesSettings
      */
-    public function shouldApplyAtCheckout(array $salesSettings, ?int $routeId): bool
+    public function shouldApplyAtCheckout(array $salesSettings, ?int $routeId, ?int $organizationId = null): bool
     {
         if (empty($salesSettings['add_route_markup_prices']) || ! $routeId) {
             return false;
         }
 
-        $route = RouteModel::query()->find($routeId);
+        $route = $organizationId
+            ? $this->routes->findForOrganization($organizationId, (int) $routeId)
+            : RouteModel::query()->find($routeId);
         if (! $route) {
             return false;
         }
@@ -61,8 +67,9 @@ class MobileRouteMarkupCheckoutService
         CapabilityGate $gate,
     ): array {
         $salesSettings = $gate->moduleSettings('sales');
+        $organizationId = (int) ($gate->organization()?->id ?? 0) ?: null;
 
-        if (! $this->shouldApplyAtCheckout($salesSettings, $routeId)) {
+        if (! $this->shouldApplyAtCheckout($salesSettings, $routeId, $organizationId)) {
             return [
                 'lines' => $lines,
                 'order_total' => round((float) $lines->sum('amount'), 2),
@@ -71,7 +78,13 @@ class MobileRouteMarkupCheckoutService
             ];
         }
 
-        $route = RouteModel::query()->findOrFail($routeId);
+        $route = $organizationId
+            ? $this->routes->findForOrganization($organizationId, (int) $routeId)
+            : RouteModel::query()->find($routeId);
+        if (! $route) {
+            throw new \InvalidArgumentException('The selected route is not available for this organization.');
+        }
+
         $repriced = $lines->map(function (CartLine $line) use ($routeId) {
             $product = Product::query()->find($line->product_code);
             if (! $product) {

@@ -22,11 +22,14 @@ class MobileManagerService
     public function dashboard(User $user, CapabilityGate $gate, array $filters = []): array
     {
         $canDashboard = $user->is_admin
-            || $this->permissions->hasPermission($user, 'mobile_manager.dashboard.view', $gate);
+            || $this->permissions->hasPermission($user, 'mobile_manager.dashboard.view', $gate)
+            || $this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate);
         $canApprovals = $user->is_admin
-            || $this->permissions->hasPermission($user, 'mobile_manager.approvals.view', $gate);
+            || $this->permissions->hasPermission($user, 'mobile_manager.approvals.view', $gate)
+            || $this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate);
         $canReports = $user->is_admin
-            || $this->permissions->hasPermission($user, 'mobile_manager.reports.view', $gate);
+            || $this->permissions->hasPermission($user, 'mobile_manager.reports.view', $gate)
+            || $this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate);
 
         $payload = [
             'pending_approval_count' => $canApprovals
@@ -37,7 +40,10 @@ class MobileManagerService
             'reports_dashboard' => null,
         ];
 
-        if ($canDashboard && $canReports && $this->permissions->hasPermission($user, 'reports.hub.view', $gate)) {
+        if ($canDashboard && $canReports && (
+            $this->permissions->hasPermission($user, 'reports.hub.view', $gate)
+            || $this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate)
+        )) {
             $reportsRequest = Request::create('/api/v1/reports/dashboard', 'GET', array_filter([
                 'from_date' => $filters['from_date'] ?? null,
                 'to_date' => $filters['to_date'] ?? null,
