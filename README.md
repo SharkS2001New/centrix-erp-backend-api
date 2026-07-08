@@ -67,7 +67,7 @@ If PHPUnit stops with memory errors, `phpunit.xml` sets `memory_limit=512M`. You
 php -d memory_limit=512M artisan test
 ```
 
-**CI** (`.github/workflows/ci.yml`): `composer audit`, then `php artisan test` against a MySQL 8 service container (`root` / `root`, database `pos_erp_test`).
+**CI** (`.github/workflows/ci.yml`): `composer audit` only — PHPUnit is **not** run in GitHub Actions.
 
 **Docker image build** (`Dockerfile`, `.github/workflows/docker-publish.yml`): builds and pushes only — **no tests run**. The image uses `composer install --no-dev`, excludes `tests/` and PHPUnit config via `.dockerignore`, and sets `APP_ENV=production`.
 
