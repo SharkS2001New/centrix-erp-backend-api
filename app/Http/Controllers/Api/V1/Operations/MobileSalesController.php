@@ -4,9 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Services\Auth\UserMobileOrderScopeService;
-use App\Models\UserDeviceToken;
 use App\Services\Customers\MobileCustomerService;
-use App\Services\Mobile\UserDeviceTokenService;
 use App\Services\Sales\MobileSalesService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -17,7 +15,6 @@ class MobileSalesController extends Controller
         protected MobileSalesService $mobileSales,
         protected MobileCustomerService $mobileCustomers,
         protected UserMobileOrderScopeService $mobileScope,
-        protected UserDeviceTokenService $deviceTokens,
     ) {}
 
     /** GET /mobile/dashboard — rep-scoped KPIs and charts for the mobile app. */
@@ -96,29 +93,6 @@ class MobileSalesController extends Controller
 
         return response()->json(
             $this->mobileSales->showOrder($request->user(), $saleId, $allChannels),
-        );
-    }
-
-    /** PATCH /mobile/orders/{saleId}/editable-lines — revise discounts on rejected editable orders. */
-    public function updateEditableLines(Request $request, int $saleId)
-    {
-        $data = $request->validate([
-            'items' => 'required|array|min:1',
-            'items.*.id' => 'required|integer',
-            'items.*.quantity' => 'required|numeric|min:0.0001',
-            'items.*.discount_given' => 'sometimes|numeric|min:0',
-            'all_channels' => 'nullable|boolean',
-        ]);
-
-        $allChannels = filter_var($data['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
-
-        return response()->json(
-            $this->mobileSales->updateEditableOrderLines(
-                $request->user(),
-                $saleId,
-                $data['items'],
-                $allChannels,
-            ),
         );
     }
 
@@ -237,42 +211,5 @@ class MobileSalesController extends Controller
         return response()->json(
             $this->mobileCustomers->update($request->user(), $customerNum, $data),
         );
-    }
-
-    /** POST /mobile/device-tokens — register FCM token for field sales app. */
-    public function registerDeviceToken(Request $request)
-    {
-        $data = $request->validate([
-            'token' => ['required', 'string', 'max:512'],
-            'platform' => ['nullable', 'string', 'max:20'],
-        ]);
-
-        $record = $this->deviceTokens->register(
-            $request->user(),
-            $data['token'],
-            UserDeviceToken::CHANNEL_MOBILE_SALES,
-            $data['platform'] ?? null,
-        );
-
-        return response()->json([
-            'message' => 'Device token registered.',
-            'id' => $record->id,
-        ]);
-    }
-
-    /** DELETE /mobile/device-tokens */
-    public function unregisterDeviceToken(Request $request)
-    {
-        $data = $request->validate([
-            'token' => ['required', 'string', 'max:512'],
-        ]);
-
-        $this->deviceTokens->unregister(
-            $request->user(),
-            $data['token'],
-            UserDeviceToken::CHANNEL_MOBILE_SALES,
-        );
-
-        return response()->json(['message' => 'Device token removed.']);
     }
 }

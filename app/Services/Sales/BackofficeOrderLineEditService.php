@@ -212,12 +212,7 @@ class BackofficeOrderLineEditService
             }
 
             $sale->refresh()->load('items');
-            $lineNet = round((float) $sale->items->sum('amount'), 2);
-            $orderDiscount = min(
-                max(0, (float) ($sale->order_discount ?? 0)),
-                $lineNet,
-            );
-            $orderTotal = max(0, round($lineNet - $orderDiscount, 2));
+            $orderTotal = round((float) $sale->items->sum('amount'), 2);
             $totalVat = round((float) $sale->items->sum('product_vat'), 2);
             $amountPaid = min((float) ($sale->amount_paid ?? 0), $orderTotal);
 

@@ -54,7 +54,7 @@ class CustomerInvoiceService
         }
 
         return CustomerInvoice::create([
-            'invoice_number' => 'AR-'.$sale->order_num,
+            'invoice_number' => $this->allocateInvoiceNumber($sale),
             'sale_id' => $sale->id,
             'customer_num' => $sale->customer_num,
             'branch_id' => $sale->branch_id,
@@ -97,6 +97,7 @@ class CustomerInvoiceService
 
         foreach ($invoices as $invoice) {
             $invoice->update([
+                'invoice_number' => $this->voidedInvoiceNumber($invoice),
                 'deleted_at' => now(),
                 'deleted_by' => $user->id,
             ]);
@@ -119,5 +120,46 @@ class CustomerInvoiceService
             ->where('organization_id', $organizationId)
             ->where('customer_num', $customerNum)
             ->update(['current_balance' => round((float) $balance, 2)]);
+    }
+
+    /**
+     * Pick a unique AR invoice number for the sale. Reuses AR-{order_num} when possible.
+     * Voided invoices keep their row but release the number (see voidedInvoiceNumber).
+     */
+    protected function allocateInvoiceNumber(Sale $sale): string
+    {
+        $number = 'AR-'.$sale->order_num;
+        $orgId = (int) $sale->organization_id;
+
+        $existing = CustomerInvoice::query()
+            ->where('organization_id', $orgId)
+            ->where('invoice_number', $number)
+            ->first();
+
+        if (! $existing) {
+            return $number;
+        }
+
+        if ($existing->deleted_at !== null) {
+            $existing->update(['invoice_number' => $this->voidedInvoiceNumber($existing)]);
+
+            return $number;
+        }
+
+        if ((int) $existing->sale_id === (int) $sale->id) {
+            return $number;
+        }
+
+        return 'AR-'.$sale->order_num.'-S'.$sale->id;
+    }
+
+    protected function voidedInvoiceNumber(CustomerInvoice $invoice): string
+    {
+        $base = (string) $invoice->invoice_number;
+        if (str_contains($base, '-VOID-')) {
+            return $base;
+        }
+
+        return $base.'-VOID-'.$invoice->id;
     }
 }

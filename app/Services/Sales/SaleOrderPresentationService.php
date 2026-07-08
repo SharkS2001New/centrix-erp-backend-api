@@ -43,8 +43,6 @@ class SaleOrderPresentationService
         $lineDiscount = 0.0;
         if ($sale->relationLoaded('items')) {
             $lineDiscount = (float) $sale->items->sum(fn ($item) => (float) ($item->discount_given ?? 0));
-        } elseif (isset($sale->line_discount_sum)) {
-            $lineDiscount = (float) $sale->line_discount_sum;
         }
 
         return round($lineDiscount + (float) ($sale->order_discount ?? 0), 2);

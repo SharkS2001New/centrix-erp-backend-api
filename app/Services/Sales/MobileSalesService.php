@@ -98,8 +98,7 @@ class MobileSalesService
         }
 
         $query = $this->mobileSalesQuery($user, $allChannels)
-            ->with('customer')
-            ->withSum('items as line_discount_sum', 'discount_given');
+            ->with('customer');
 
         $workflowStatus = in_array((string) ($filters['status'] ?? ''), ['pending_approval', 'editable'], true)
             ? (string) $filters['status']
@@ -205,7 +204,6 @@ class MobileSalesService
     {
         return $this->mobileSalesQuery($user, $allChannels)
             ->with(['customer', 'cashier'])
-            ->withSum('items as line_discount_sum', 'discount_given')
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')

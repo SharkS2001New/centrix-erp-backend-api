@@ -5,7 +5,6 @@
          colors="true"
 >
     <testsuites>
-        <!-- CI / default suite. Local-only tests live in tests/Local (see phpunit.local.xml). -->
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>
