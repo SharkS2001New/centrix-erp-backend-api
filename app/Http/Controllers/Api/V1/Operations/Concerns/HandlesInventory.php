@@ -120,7 +120,13 @@ trait HandlesInventory
             return;
         }
 
-        Product::where('product_code', $productCode)->update([
+        $orgId = DB::table('branches')->where('id', $branchId)->value('organization_id');
+        $query = Product::where('product_code', $productCode);
+        if ($orgId) {
+            $query->where('organization_id', $orgId);
+        }
+
+        $query->update([
             'stock_in_shop' => $row->shop_quantity,
             'stock_in_store' => $row->store_quantity,
         ]);

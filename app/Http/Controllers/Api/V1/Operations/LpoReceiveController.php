@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Inventory\StockReceiveRequest;
 use App\Models\LpoTxn;
+use App\Models\Product;
 use App\Models\StockReceipt;
 use App\Models\User;
 use App\Services\Accounting\PurchaseReceiveJournalService;
@@ -63,6 +64,14 @@ class LpoReceiveController extends Controller
                 'unit_cost' => $data['cost_price'] ?? null,
                 'created_by' => $user->id,
             ]);
+
+            // Keep valuation / COGS / stock-take journals aligned with latest purchase cost.
+            if (array_key_exists('cost_price', $data) && $data['cost_price'] !== null) {
+                Product::query()
+                    ->where('organization_id', $user->organization_id)
+                    ->where('product_code', $data['product_code'])
+                    ->update(['last_cost_price' => (float) $data['cost_price']]);
+            }
 
             if (! empty($data['lpo_txn_id'])) {
                 $txn = LpoTxn::find($data['lpo_txn_id']);

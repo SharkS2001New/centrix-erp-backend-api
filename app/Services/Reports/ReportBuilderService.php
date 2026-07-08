@@ -1198,8 +1198,26 @@ class ReportBuilderService
     ): void {
         $alwaysJoin = array_flip($source['always_join'] ?? []);
         $leftJoins = array_flip(array_merge($source['left_joins'] ?? [], $extraLeftJoins));
+        $joins = $source['joins'] ?? [];
 
-        foreach ($source['joins'] ?? [] as $joinKey => $joinDef) {
+        $joinKeys = array_keys($joins);
+        if (! empty($source['join_order']) && is_array($source['join_order'])) {
+            $ordered = [];
+            foreach ($source['join_order'] as $key) {
+                if (isset($joins[$key])) {
+                    $ordered[] = $key;
+                }
+            }
+            foreach ($joinKeys as $key) {
+                if (! in_array($key, $ordered, true)) {
+                    $ordered[] = $key;
+                }
+            }
+            $joinKeys = $ordered;
+        }
+
+        foreach ($joinKeys as $joinKey) {
+            $joinDef = $joins[$joinKey];
             if (! isset($requiredJoins[$joinKey]) && ! isset($alwaysJoin[$joinKey])) {
                 continue;
             }
@@ -1211,7 +1229,19 @@ class ReportBuilderService
                 $joinedAliases[$alias] = true;
             }
             $method = isset($leftJoins[$joinKey]) ? 'leftJoin' : 'join';
-            $query->{$method}($joinDef[0], $joinDef[1], $joinDef[2], $joinDef[3]);
+            $extraConditions = $joinDef[4] ?? null;
+            if (is_array($extraConditions) && $extraConditions !== [] && isset($extraConditions[0]) && is_array($extraConditions[0])) {
+                $query->{$method}($joinDef[0], function ($join) use ($joinDef, $extraConditions) {
+                    $join->on($joinDef[1], $joinDef[2], $joinDef[3]);
+                    foreach ($extraConditions as $condition) {
+                        if (count($condition) >= 3) {
+                            $join->on($condition[0], $condition[1], $condition[2]);
+                        }
+                    }
+                });
+            } else {
+                $query->{$method}($joinDef[0], $joinDef[1], $joinDef[2], $joinDef[3]);
+            }
         }
     }
 

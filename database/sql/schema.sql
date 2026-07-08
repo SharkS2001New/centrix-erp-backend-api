@@ -2102,6 +2102,7 @@ GROUP BY DATE(s.completed_at), s.branch_id, s.cashier_id, s.channel;
 DROP VIEW IF EXISTS v_stock_valuation;
 CREATE VIEW v_stock_valuation AS
 SELECT
+    b.organization_id,
     cs.branch_id,
     p.product_code,
     p.product_name,
@@ -2113,7 +2114,8 @@ SELECT
     (cs.shop_quantity + cs.store_quantity) * COALESCE(p.last_cost_price, 0) AS cost_value,
     (cs.shop_quantity + cs.store_quantity) * p.unit_price AS retail_value
 FROM current_stock cs
-JOIN products p ON cs.product_code = p.product_code
+JOIN branches b ON b.id = cs.branch_id
+JOIN products p ON cs.product_code = p.product_code AND p.organization_id = b.organization_id
 WHERE p.deleted_at IS NULL;
 
 DROP VIEW IF EXISTS v_daily_sales;

@@ -435,6 +435,8 @@ class OrderWorkflowController extends Controller
                     (bool) $item->on_wholesale_retail,
                 );
 
+            $unitCost = max(0, (float) ($product?->last_cost_price ?? 0));
+
             $this->postStockLedger([
                 'branch_id' => $sale->branch_id,
                 'product_code' => $item->product_code,
@@ -443,6 +445,7 @@ class OrderWorkflowController extends Controller
                 'reference_type' => 'sale',
                 'reference_id' => $sale->id,
                 'quantity_change' => -abs((float) $item->quantity),
+                'unit_cost' => $unitCost > 0 ? $unitCost : null,
                 'created_by' => $user->id,
             ], $allowBelowStock);
         }

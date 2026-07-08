@@ -97,6 +97,8 @@ class TripStockService
                     (bool) $item->on_wholesale_retail,
                 );
 
+            $unitCost = max(0, (float) ($product?->last_cost_price ?? 0));
+
             $this->postStockLedger([
                 'branch_id' => $sale->branch_id,
                 'product_code' => $item->product_code,
@@ -105,6 +107,7 @@ class TripStockService
                 'reference_type' => 'dispatch_trip',
                 'reference_id' => $sale->id,
                 'quantity_change' => -abs((float) $item->quantity),
+                'unit_cost' => $unitCost > 0 ? $unitCost : null,
                 'created_by' => $user->id,
             ], $allowBelowStock);
         }
@@ -165,6 +168,7 @@ class TripStockService
                 'quantity_change' => $change,
                 'quantity_before' => $before,
                 'quantity_after' => $after,
+                'unit_cost' => $data['unit_cost'] ?? null,
                 'created_by' => $data['created_by'],
             ]);
 
@@ -173,7 +177,12 @@ class TripStockService
                 ->where('branch_id', $branchId)
                 ->first();
             if ($row) {
-                Product::query()->where('product_code', $productCode)->update([
+                $orgId = DB::table('branches')->where('id', $branchId)->value('organization_id');
+                $productQuery = Product::query()->where('product_code', $productCode);
+                if ($orgId) {
+                    $productQuery->where('organization_id', $orgId);
+                }
+                $productQuery->update([
                     'stock_in_shop' => $row->shop_quantity,
                     'stock_in_store' => $row->store_quantity,
                 ]);

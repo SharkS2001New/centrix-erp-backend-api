@@ -69,7 +69,10 @@ class StockTakeJournalService
                 continue;
             }
 
-            $product = Product::query()->find($line->product_code);
+            $product = Product::query()
+                ->where('organization_id', $orgId)
+                ->where('product_code', $line->product_code)
+                ->first();
             $unitCost = max(0, (float) ($product?->last_cost_price ?? 0));
             $amount = round(abs($variance) * $unitCost, 2);
             if ($amount <= 0) {

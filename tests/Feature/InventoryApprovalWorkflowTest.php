@@ -89,6 +89,11 @@ class InventoryApprovalWorkflowTest extends TestCase
             'started_by' => $clerk->id,
         ]);
 
+        CurrentStock::query()->updateOrCreate(
+            ['product_code' => $product->product_code, 'branch_id' => $clerk->branch_id],
+            ['shop_quantity' => 10, 'store_quantity' => 0],
+        );
+
         StockTakeLine::create([
             'session_id' => $session->id,
             'product_code' => $product->product_code,

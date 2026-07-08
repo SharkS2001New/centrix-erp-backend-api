@@ -220,13 +220,30 @@ class StockTakeOperationsController extends Controller
         }
 
         return DB::transaction(function () use ($session, $user) {
-            $lines = StockTakeLine::where('session_id', $session->id)->get();
+            $lines = StockTakeLine::where('session_id', $session->id)->lockForUpdate()->get();
+            $orgId = (int) ($user->organization_id
+                ?? DB::table('branches')->where('id', $session->branch_id)->value('organization_id'));
 
             foreach ($lines as $line) {
-                $variance = (float) $line->counted_quantity - (float) $line->system_quantity;
+                // Apply against live on-hand so completion leaves counted qty, even if stock moved after snapshot.
+                $liveQty = $this->stockOnHand(
+                    (string) $line->product_code,
+                    (int) $session->branch_id,
+                    (string) $line->stock_location,
+                );
+                $variance = (float) $line->counted_quantity - $liveQty;
+
+                $line->system_quantity = $liveQty;
+                $line->save();
+
                 if (abs($variance) < 0.0001) {
                     continue;
                 }
+
+                $unitCost = max(0, (float) (Product::query()
+                    ->where('organization_id', $orgId)
+                    ->where('product_code', $line->product_code)
+                    ->value('last_cost_price') ?? 0));
 
                 $this->postStockLedger([
                     'branch_id' => $session->branch_id,
@@ -236,9 +253,10 @@ class StockTakeOperationsController extends Controller
                     'reference_type' => 'stock_take_session',
                     'reference_id' => $session->id,
                     'quantity_change' => $variance,
+                    'unit_cost' => $unitCost > 0 ? $unitCost : null,
                     'created_by' => $user->id,
                     'notes' => 'Stock take variance',
-                ]);
+                ], true);
             }
 
             $session->update([

@@ -248,6 +248,7 @@ class DemoDataSeeder extends Seeder
             'subcategory_id' => $sub->id,
             'unit_id' => $uomKg->id,
             'unit_price' => 6000,
+            'last_cost_price' => 5100,
             'stock_in_shop' => 2500,
             'stock_in_store' => 5000,
             'supplier_id' => $sup->id,

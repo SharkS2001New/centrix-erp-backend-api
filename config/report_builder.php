@@ -258,9 +258,16 @@ return [
                 ['p.deleted_at', '=', null],
             ],
             'joins' => [
-                'products' => ['products as p', 'p.product_code', '=', 'cs.product_code'],
+                'products' => [
+                    'products as p',
+                    'p.product_code',
+                    '=',
+                    'cs.product_code',
+                    [['p.organization_id', '=', 'b.organization_id']],
+                ],
                 'branches' => ['branches as b', 'b.id', '=', 'cs.branch_id'],
             ],
+            'join_order' => ['branches', 'products'],
             'fields' => [
                 'product_code' => [
                     'label' => 'Product code',

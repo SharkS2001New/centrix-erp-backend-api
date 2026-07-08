@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\ChartOfAccount;
+use App\Models\CurrentStock;
 use App\Models\JournalEntry;
 use App\Models\JournalEntryLine;
 use App\Models\Product;
@@ -124,6 +125,12 @@ class AccountingCompletionTest extends TestCase
             'stock_location' => 'shop',
             'started_by' => $this->user->id,
         ]);
+
+        // Live on-hand must match system_quantity so completion variance = counted - live.
+        CurrentStock::query()->updateOrCreate(
+            ['product_code' => $this->productCode, 'branch_id' => $this->user->branch_id],
+            ['shop_quantity' => 10, 'store_quantity' => 0],
+        );
 
         StockTakeLine::create([
             'session_id' => $session->id,

@@ -258,10 +258,11 @@ class ReportController extends Controller
 
         $prevReceivables = max(0, $receivables - $creditIssued + $paymentsCollected);
 
+        // Inventory value = on-hand qty × cost (not retail/unit price). Zero qty ⇒ zero value.
         $inventoryValue = (float) DB::table('v_stock_valuation')
-            ->when($orgId, fn ($q) => $this->scopeOrganizationBranches($q, $orgId))
+            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
-            ->sum('retail_value');
+            ->sum('cost_value');
 
         $receiptValue = (float) DB::table('stock_receipts')
             ->whereDate('created_at', '>=', $from->toDateString())

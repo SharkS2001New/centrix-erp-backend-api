@@ -25,11 +25,11 @@ class SaleCogsCalculator
     protected function unitCostForItem(SaleItem $item, int $saleId): float
     {
         $txnCost = DB::table('inventory_transactions')
-            ->where('reference_type', 'sale')
             ->where('reference_id', $saleId)
             ->where('product_code', $item->product_code)
             ->where('quantity_change', '<', 0)
             ->whereNotNull('unit_cost')
+            ->whereIn('reference_type', ['sale', 'dispatch_trip', 'sale_line_edit'])
             ->orderByDesc('id')
             ->value('unit_cost');
 
