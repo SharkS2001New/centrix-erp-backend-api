@@ -44,7 +44,7 @@ class SaleCancellationService
             throw new InvalidArgumentException('Order cancellation is disabled for this organization.');
         }
 
-        DB::transaction(function () use ($sale, $user, $gate) {
+        DB::transaction(function () use ($sale, $user, $gate, $from) {
             $this->restoreCancelledSaleStock($sale, $user);
 
             $sale->update([
