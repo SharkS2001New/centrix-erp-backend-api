@@ -53,6 +53,7 @@ use App\Http\Controllers\Api\V1\LpoSupplierInvoiceController;
 use App\Http\Controllers\Api\V1\LpoTxnController;
 use App\Http\Controllers\Api\V1\MobileFieldAttendanceController;
 use App\Http\Controllers\Api\V1\MobileLoadingSheetController;
+use App\Http\Controllers\Api\V1\MobilePickingSheetController;
 use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\ExternalAccountingController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
@@ -665,6 +666,10 @@ Route::prefix('v1')->group(function () {
             Route::get('sales/mobile-loading-sheets', [MobileLoadingSheetController::class, 'index'])
                 ->middleware('erp.permission:sales.view');
             Route::get('sales/mobile-loading-sheets/detail', [MobileLoadingSheetController::class, 'show'])
+                ->middleware('erp.permission:sales.view');
+            Route::get('sales/mobile-picking-sheets', [MobilePickingSheetController::class, 'index'])
+                ->middleware('erp.permission:sales.view');
+            Route::get('sales/mobile-picking-sheets/detail', [MobilePickingSheetController::class, 'show'])
                 ->middleware('erp.permission:sales.view');
             Route::get('sales/mobile-field-attendance', [MobileFieldAttendanceController::class, 'index'])
                 ->middleware('erp.permission:sales.view');
