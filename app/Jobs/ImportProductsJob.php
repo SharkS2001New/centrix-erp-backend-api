@@ -7,11 +7,13 @@ use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Product;
+use App\Services\Inventory\OpeningStockService;
 use App\Models\SubCategory;
 use App\Models\Supplier;
 use App\Models\Uom;
 use App\Models\User;
 use App\Models\Vat;
+use Illuminate\Support\Facades\DB;
 use App\Services\Background\BackgroundTaskService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -100,7 +102,19 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
                     $body['organization_id'] = $organizationId;
                     $body['created_by'] = (int) $user->id;
 
-                    Product::create($body);
+                    unset($body['stock_in_shop'], $body['stock_in_store']);
+                    $openingShop = (float) ($row['stock_in_shop'] ?? 0);
+                    $openingStore = (float) ($row['stock_in_store'] ?? 0);
+                    $openingBranchId = $this->resolveOpeningBranchId($row, $user, $organizationId);
+
+                    $product = Product::create($body);
+                    if ($openingBranchId > 0 && ($openingShop > 0 || $openingStore > 0)) {
+                        app(OpeningStockService::class)->applyOnProductCreate($user, $product->product_code, (int) $product->id, [
+                            'branch_id' => $openingBranchId,
+                            'shop_quantity' => $openingShop,
+                            'store_quantity' => $openingStore,
+                        ]);
+                    }
                     if ($codeKey !== '') {
                         $seenCodes[$codeKey] = true;
                     }
@@ -149,8 +163,6 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
             'discount_percentage',
             'discount_value',
             'product_weight',
-            'stock_in_shop',
-            'stock_in_store',
             'reorder_point',
             'supplier_id',
             'vat_id',
@@ -168,6 +180,24 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
         }
 
         return $body;
+    }
+
+    /** @param  array<string, mixed>  $row */
+    protected function resolveOpeningBranchId(array $row, User $user, int $organizationId): int
+    {
+        $fromRow = (int) ($row['branch_id'] ?? 0);
+        if ($fromRow > 0) {
+            return $fromRow;
+        }
+
+        if ($user->branch_id) {
+            return (int) $user->branch_id;
+        }
+
+        return (int) (DB::table('branches')
+            ->where('organization_id', $organizationId)
+            ->orderBy('id')
+            ->value('id') ?? 0);
     }
 
     /** @param  array<string, mixed>  $body

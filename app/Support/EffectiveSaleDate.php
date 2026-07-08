@@ -61,6 +61,16 @@ class EffectiveSaleDate
         }
     }
 
+    /** SQL expression for grouping sales by calendar day in metrics queries. */
+    public static function daySqlExpression(string $alias = 'sales'): string
+    {
+        if (self::columnExists()) {
+            return "{$alias}.effective_sale_date";
+        }
+
+        return "DATE(COALESCE({$alias}.completed_at, {$alias}.created_at))";
+    }
+
     /**
      * @param  EloquentBuilder<mixed>|QueryBuilder  $query
      */

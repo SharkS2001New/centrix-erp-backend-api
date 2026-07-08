@@ -186,6 +186,7 @@ return [
         'stock-movement' => 'inventory.reports',
         'stock-chain' => 'inventory.reports',
         'stock-valuation' => 'inventory.reports',
+        'inventory-valuation-summary' => 'inventory.reports',
         'stock-reservations' => 'inventory.reports',
         'stock-receipts' => 'inventory.reports',
         'stock-transfers' => 'inventory.reports',

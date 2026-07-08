@@ -374,6 +374,31 @@ class OrderWorkflowService
     }
 
     /**
+     * Sale statuses included in revenue KPIs and dashboard charts across all channels.
+     *
+     * @return list<string>
+     */
+    public function metricSaleStatuses(): array
+    {
+        $statuses = ['completed'];
+
+        foreach (['pos', 'mobile', 'backend'] as $channel) {
+            $statuses = array_merge($statuses, $this->checkoutCompleteStatuses($channel));
+            $terminal = $this->lastPipelineStatus($channel);
+            if ($terminal !== null && $terminal !== '') {
+                $statuses = array_merge($statuses, $this->statusesForQueueFilter($terminal, $channel));
+            }
+        }
+
+        $exclude = ['cancelled', 'expired', 'held', 'draft', 'pending_approval', 'editable'];
+
+        return array_values(array_unique(array_filter(
+            $statuses,
+            static fn (string $status) => $status !== '' && ! in_array($status, $exclude, true),
+        )));
+    }
+
+    /**
      * Statuses an order may have to be restored back into a cart for editing.
      *
      * @return list<string>

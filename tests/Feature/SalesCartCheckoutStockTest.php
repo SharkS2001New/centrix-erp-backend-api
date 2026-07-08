@@ -284,6 +284,43 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEquals($before + 1, $this->availableStore());
     }
 
+    public function test_held_order_keeps_stock_reserved_until_cancelled(): void
+    {
+        $before = $this->availableShop();
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 3,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'held',
+            'pay_now' => 0,
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $this->assertSame('held', $sale['status']);
+        $this->assertDatabaseHas('stock_reservations', [
+            'sale_id' => $sale['id'],
+            'product_code' => $this->productCode,
+            'released_at' => null,
+        ]);
+        $this->assertEquals($before - 3, $this->availableShop());
+
+        $this->postJson("/api/v1/sales/orders/{$sale['id']}/cancel-held")->assertOk();
+
+        $this->assertEquals(0, StockReservation::query()
+            ->where('sale_id', $sale['id'])
+            ->whereNull('released_at')
+            ->count());
+        $this->assertEquals($before, $this->availableShop());
+    }
+
     public function test_hold_order_can_be_restored_to_cart(): void
     {
         $cartId = $this->postJson('/api/v1/sales/carts', [

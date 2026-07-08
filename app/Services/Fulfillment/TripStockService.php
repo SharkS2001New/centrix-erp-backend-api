@@ -2,21 +2,19 @@
 
 namespace App\Services\Fulfillment;
 
-use App\Models\CurrentStock;
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\DispatchTrip;
-use App\Models\InventoryTransaction;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
-use App\Models\SystemSetting;
 use App\Models\User;
 use App\Services\Erp\ErpContext;
 use App\Services\Inventory\SaleStockLocationResolver;
-use Illuminate\Support\Facades\DB;
-use InvalidArgumentException;
 
 class TripStockService
 {
+    use HandlesInventory;
+
     public function __construct(protected ErpContext $erp) {}
 
     public function deductTripStockIfNeeded(DispatchTrip $trip, User $user, string $when): void
@@ -100,9 +98,7 @@ class TripStockService
                     (bool) $item->on_wholesale_retail,
                 );
 
-            $unitCost = max(0, (float) ($product?->last_cost_price ?? 0));
-
-            $this->postStockLedger([
+            $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $sale->branch_id,
                 'product_code' => $item->product_code,
                 'stock_location' => $location,
@@ -110,9 +106,8 @@ class TripStockService
                 'reference_type' => 'dispatch_trip',
                 'reference_id' => $sale->id,
                 'quantity_change' => -abs((float) $item->quantity),
-                'unit_cost' => $unitCost > 0 ? $unitCost : null,
                 'created_by' => $user->id,
-            ], $allowBelowStock);
+            ], (int) $user->organization_id), $allowBelowStock);
         }
 
         $sale->update(['stock_balanced' => 1]);
@@ -120,97 +115,5 @@ class TripStockService
             ->where('sale_id', $sale->id)
             ->whereNull('released_at')
             ->update(['released_at' => now()]);
-    }
-
-    protected function saleTransactionType(string $channel): string
-    {
-        return match ($channel) {
-            'pos' => 'POS_SALE',
-            'mobile' => 'MOBILE_SALE',
-            'backend' => 'BACKEND_SALE',
-            default => 'POS_SALE',
-        };
-    }
-
-    protected function organizationAllowsBelowStock(?int $organizationId): bool
-    {
-        if (! $organizationId) {
-            return false;
-        }
-
-        $system = SystemSetting::query()
-            ->where('organization_id', $organizationId)
-            ->orderBy('id')
-            ->first();
-
-        return (bool) ($system?->allow_below_stock ?? false);
-    }
-
-    protected function postStockLedger(array $data, bool $allowBelowStock = false): InventoryTransaction
-    {
-        $branchId = (int) $data['branch_id'];
-        $productCode = (string) $data['product_code'];
-        $location = $data['stock_location'] ?? 'shop';
-        $change = (float) $data['quantity_change'];
-
-        $before = $this->stockOnHand($productCode, $branchId, $location);
-        $after = $before + $change;
-
-        if (! $allowBelowStock && $after < -0.0001) {
-            throw new InvalidArgumentException("Insufficient stock at {$location} for {$productCode}.");
-        }
-
-        return DB::transaction(function () use ($data, $branchId, $productCode, $location, $change, $before, $after) {
-            $txn = InventoryTransaction::create([
-                'branch_id' => $branchId,
-                'product_code' => $productCode,
-                'stock_location' => $location,
-                'transaction_type' => $data['transaction_type'],
-                'reference_type' => $data['reference_type'] ?? null,
-                'reference_id' => $data['reference_id'] ?? null,
-                'quantity_change' => $change,
-                'quantity_before' => $before,
-                'quantity_after' => $after,
-                'unit_cost' => $data['unit_cost'] ?? null,
-                'created_by' => $data['created_by'],
-            ]);
-
-            $row = CurrentStock::query()
-                ->where('product_code', $productCode)
-                ->where('branch_id', $branchId)
-                ->first();
-            if ($row) {
-                $orgId = DB::table('branches')->where('id', $branchId)->value('organization_id');
-                $productQuery = Product::query()->where('product_code', $productCode);
-                if ($orgId) {
-                    $productQuery->where('organization_id', $orgId);
-                }
-                $productQuery->where(function ($q) use ($branchId) {
-                    $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
-                });
-                $productQuery->update([
-                    'stock_in_shop' => $row->shop_quantity,
-                    'stock_in_store' => $row->store_quantity,
-                ]);
-            }
-
-            return $txn;
-        });
-    }
-
-    protected function stockOnHand(string $productCode, int $branchId, string $location = 'shop'): float
-    {
-        $row = CurrentStock::query()
-            ->where('product_code', $productCode)
-            ->where('branch_id', $branchId)
-            ->first();
-
-        if (! $row) {
-            return 0.0;
-        }
-
-        return $location === 'store'
-            ? (float) $row->store_quantity
-            : (float) $row->shop_quantity;
     }
 }

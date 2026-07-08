@@ -38,7 +38,24 @@ class BranchStockService
             return $requested;
         }
 
-        return $user->branch_id ? (int) $user->branch_id : null;
+        if ($user->branch_id) {
+            return (int) $user->branch_id;
+        }
+
+        $orgId = $this->access->organizationId($user, $request);
+        if ($orgId) {
+            $branchIds = DB::table('branches')
+                ->where('organization_id', $orgId)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+
+            if (count($branchIds) === 1) {
+                return $branchIds[0];
+            }
+        }
+
+        return null;
     }
 
     /**

@@ -7,11 +7,15 @@ use App\Models\Customer;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
+use App\Services\Inventory\StockValuationService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\OrderWorkflowService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Support\AppTimezone;
+use App\Support\EffectiveSaleDate;
+use App\Support\SalesChannelLabels;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -192,17 +196,23 @@ class ReportController extends Controller
         $to = $period['to'];
         $prevFrom = $period['prev_from'];
         $prevTo = $period['prev_to'];
-        $branchId = $data['branch_id'] ?? null;
+        $branchId = $this->resolveReportBranchId($request, $data['branch_id'] ?? null);
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
+        $dayExpr = EffectiveSaleDate::daySqlExpression();
 
-        $salesBase = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($branchId, $orgId) {
+        $salesBase = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($branchId, $orgId, $metricStatuses) {
             $query = DB::table('sales')
-                ->where('status', 'completed')
+                ->whereIn('status', $metricStatuses)
                 ->where('archived', 0)
-                ->whereDate('completed_at', '>=', $start->toDateString())
-                ->whereDate('completed_at', '<=', $end->toDateString())
                 ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
                 ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+
+            EffectiveSaleDate::applyFromToDateFilter(
+                $query,
+                $start->toDateString(),
+                $end->toDateString(),
+            );
 
             return CentrixSalesScope::excludeLegacyMaterialized($query);
         };
@@ -258,11 +268,11 @@ class ReportController extends Controller
 
         $prevReceivables = max(0, $receivables - $creditIssued + $paymentsCollected);
 
-        // Inventory value = on-hand qty × cost (not retail/unit price). Zero qty ⇒ zero value.
-        $inventoryValue = (float) DB::table('v_stock_valuation')
-            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
-            ->sum('cost_value');
+        // Inventory value = on-hand qty × effective unit cost (not retail price).
+        $inventorySummary = app(StockValuationService::class)->summarize($orgId, $branchId);
+        $shopInventoryValue = $inventorySummary['shop_value'];
+        $storeInventoryValue = $inventorySummary['store_value'];
+        $inventoryValue = $inventorySummary['value'];
 
         $receiptValue = (float) DB::table('stock_receipts')
             ->whereDate('created_at', '>=', $from->toDateString())
@@ -283,14 +293,14 @@ class ReportController extends Controller
         $prevInventory = max(0, $inventoryValue - $receiptValue + $prevReceiptValue);
 
         $dailyCurrent = $salesBase($from, $to)
-            ->selectRaw('DATE(completed_at) as day, SUM(order_total) as total')
+            ->selectRaw("{$dayExpr} as day, SUM(order_total) as total")
             ->groupBy('day')
             ->orderBy('day')
             ->get()
             ->keyBy('day');
 
         $dailyPrevious = $salesBase($prevFrom, $prevTo)
-            ->selectRaw('DATE(completed_at) as day, SUM(order_total) as total')
+            ->selectRaw("{$dayExpr} as day, SUM(order_total) as total")
             ->groupBy('day')
             ->orderBy('day')
             ->get()
@@ -349,13 +359,7 @@ class ReportController extends Controller
             ->orderByDesc('revenue')
             ->get();
 
-        $channelTotal = (float) $channelRows->sum('revenue');
-        $salesByChannel = $channelRows->map(fn ($row) => [
-            'channel' => $row->channel ?: 'other',
-            'revenue' => (float) $row->revenue,
-            'orders' => (int) $row->orders,
-            'share_pct' => $channelTotal > 0 ? round(((float) $row->revenue / $channelTotal) * 100, 1) : 0,
-        ])->values()->all();
+        $salesByChannel = $this->aggregateSalesByChannel($channelRows);
 
         $payload = [
             'period' => [
@@ -379,6 +383,8 @@ class ReportController extends Controller
                 ],
                 'inventory_value' => [
                     'value' => $inventoryValue,
+                    'shop_value' => $shopInventoryValue,
+                    'store_value' => $storeInventoryValue,
                     'change_pct' => $this->pctChange($inventoryValue, $prevInventory),
                 ],
             ],
@@ -397,6 +403,34 @@ class ReportController extends Controller
         }
 
         return round((($current - $previous) / abs($previous)) * 100, 1);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, object{channel: ?string, revenue: mixed, orders: mixed}>  $channelRows
+     * @return list<array{channel: string, channel_label: string, revenue: float, orders: int, share_pct: float}>
+     */
+    protected function aggregateSalesByChannel($channelRows): array
+    {
+        $grouped = [];
+        foreach ($channelRows as $row) {
+            $key = SalesChannelLabels::metricKey($row->channel);
+            if (! isset($grouped[$key])) {
+                $grouped[$key] = ['channel' => $key, 'revenue' => 0.0, 'orders' => 0];
+            }
+            $grouped[$key]['revenue'] += (float) $row->revenue;
+            $grouped[$key]['orders'] += (int) $row->orders;
+        }
+
+        $rows = collect($grouped)->sortByDesc('revenue')->values();
+        $total = (float) $rows->sum('revenue');
+
+        return $rows->map(fn ($row) => [
+            'channel' => $row['channel'],
+            'channel_label' => SalesChannelLabels::label($row['channel']),
+            'revenue' => $row['revenue'],
+            'orders' => $row['orders'],
+            'share_pct' => $total > 0 ? round(($row['revenue'] / $total) * 100, 1) : 0,
+        ])->all();
     }
 
     public function salesByProduct(Request $request)
@@ -632,6 +666,31 @@ class ReportController extends Controller
             'v_stock_valuation',
             ['branch_id', 'product_code'],
         ));
+    }
+
+    public function inventoryValuationSummary(Request $request)
+    {
+        $data = $request->validate([
+            'branch_id' => 'nullable|integer',
+        ]);
+
+        $access = app(UserAccessService::class);
+        $orgId = $access->organizationId($request->user(), $request);
+        if (! $orgId) {
+            return response()->json([
+                'shop_value' => 0,
+                'store_value' => 0,
+                'value' => 0,
+                'branch_id' => null,
+            ]);
+        }
+
+        $branchId = $this->resolveReportBranchId($request, $data['branch_id'] ?? null);
+        if ($branchId !== null) {
+            $access->assertBranchInOrganization($request->user(), $branchId, $request);
+        }
+
+        return response()->json(app(StockValuationService::class)->summarize($orgId, $branchId));
     }
 
     public function stockReservations(Request $request)
@@ -1745,5 +1804,20 @@ class ReportController extends Controller
         }
 
         return $cache[$key];
+    }
+
+    protected function resolveReportBranchId(Request $request, ?int $requestedBranchId = null): ?int
+    {
+        $access = app(UserAccessService::class);
+        $limitedBranch = $access->branchId($request->user());
+        if ($limitedBranch !== null) {
+            if ($requestedBranchId !== null && (int) $requestedBranchId !== $limitedBranch) {
+                abort(403, 'You can only view reports for your assigned branch.');
+            }
+
+            return $limitedBranch;
+        }
+
+        return $requestedBranchId !== null ? (int) $requestedBranchId : null;
     }
 }

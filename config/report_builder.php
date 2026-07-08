@@ -309,7 +309,21 @@ return [
                 ],
                 'cost_value' => [
                     'label' => 'Cost value',
-                    'expr' => '(cs.shop_quantity + cs.store_quantity) * COALESCE(p.last_cost_price, 0)',
+                    'expr' => '(cs.shop_quantity + cs.store_quantity) * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
+                    'type' => 'money',
+                    'aggregates' => ['sum'],
+                    'requires_join' => 'products',
+                ],
+                'shop_cost_value' => [
+                    'label' => 'Shop cost value',
+                    'expr' => 'cs.shop_quantity * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
+                    'type' => 'money',
+                    'aggregates' => ['sum'],
+                    'requires_join' => 'products',
+                ],
+                'store_cost_value' => [
+                    'label' => 'Store cost value',
+                    'expr' => 'cs.store_quantity * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
                     'type' => 'money',
                     'aggregates' => ['sum'],
                     'requires_join' => 'products',

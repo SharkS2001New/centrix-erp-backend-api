@@ -35,7 +35,8 @@ class StockTransferService
             : "Transfer in from {$from}";
 
         return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $to, $user, $outNote, $inNote) {
-            $out = $this->postStockLedger([
+            $orgId = (int) $user->organization_id;
+            $out = $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $branchId,
                 'product_code' => $productCode,
                 'stock_location' => $from,
@@ -44,9 +45,9 @@ class StockTransferService
                 'quantity_change' => -abs($quantity),
                 'created_by' => $user->id,
                 'notes' => $outNote,
-            ]);
+            ], $orgId));
 
-            $in = $this->postStockLedger([
+            $in = $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $branchId,
                 'product_code' => $productCode,
                 'stock_location' => $to,
@@ -56,7 +57,7 @@ class StockTransferService
                 'quantity_change' => abs($quantity),
                 'created_by' => $user->id,
                 'notes' => $inNote,
-            ]);
+            ], $orgId));
 
             StockMovementHistory::create([
                 'product_code' => $productCode,

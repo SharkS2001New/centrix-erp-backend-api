@@ -354,6 +354,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('stock-movement', [ReportController::class, 'stockMovement']);
             Route::get('stock-chain', [ReportController::class, 'stockChain']);
             Route::get('stock-valuation', [ReportController::class, 'stockValuation']);
+            Route::get('inventory-valuation-summary', [ReportController::class, 'inventoryValuationSummary']);
             Route::get('stock-reservations', [ReportController::class, 'stockReservations']);
             Route::get('stock-receipts', [ReportController::class, 'stockReceipts']);
             Route::get('stock-transfers', [ReportController::class, 'stockTransfers']);

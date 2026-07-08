@@ -532,6 +532,22 @@ class CapabilityGate
         return $workflow->shouldHaveStockReserved($orderStatus, $channel);
     }
 
+    /**
+     * Transfer cart holds to the sale (or create sale holds) instead of releasing at checkout.
+     * Includes held/pending orders so stock stays soft-allocated until cancel or deduct.
+     */
+    public function shouldHoldStockOnCheckout(
+        OrderWorkflowService $workflow,
+        string $orderStatus,
+        string $channel,
+    ): bool {
+        if (in_array($orderStatus, ['held', 'pending_approval'], true)) {
+            return true;
+        }
+
+        return $this->shouldReserveStockOnCheckout($workflow, $orderStatus, $channel);
+    }
+
     /** @deprecated Use shouldReserveStockOnTransition or shouldReserveStockOnCheckout */
     public function shouldReserveStockForOrder(
         OrderWorkflowService $workflow,

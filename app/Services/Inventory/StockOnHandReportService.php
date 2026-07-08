@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\DB;
 
 class StockOnHandReportService
 {
+    public function __construct(protected StockValuationService $valuation) {}
+
     /** @return array<string, mixed> */
     public function paginate(Request $request, int $organizationId): array
     {
@@ -41,6 +43,7 @@ class StockOnHandReportService
         }
 
         $totalSql = '(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))';
+        $unitCostSql = $this->valuation->effectiveUnitCostExpression('p', 'br');
 
         $query = DB::table('products as p')
             ->join('uoms as u', 'u.id', '=', 'p.unit_id')
@@ -61,6 +64,8 @@ class StockOnHandReportService
                 'p.product_code',
                 'p.product_name',
                 'p.unit_price as wholesale_price',
+                'p.last_cost_price',
+                DB::raw("({$unitCostSql}) as effective_unit_cost"),
                 'u.full_name as uom_name',
                 'u.conversion_factor',
                 DB::raw('COALESCE(cs.shop_quantity, 0) as shop_quantity'),

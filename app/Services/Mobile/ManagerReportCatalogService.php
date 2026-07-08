@@ -32,8 +32,47 @@ class ManagerReportCatalogService
     ];
 
     /** @var list<string> */
+    private const FINANCE_REPORT_KEYS = [
+        'profit-loss', 'profit-loss-gl', 'trial-balance', 'balance-sheet',
+        'cash-flow', 'general-ledger', 'accounts-payable', 'expenses',
+        'journal-register', 'subledger-reconciliation', 'accounts-receivable',
+        'invoice-payments', 'credit-outstanding',
+    ];
+
+    /** @var list<string> */
+    private const HR_REPORT_KEYS = [
+        'leave-balance', 'payroll-summary', 'statutory-deductions', 'bank-transfer',
+        'staff-turnover', 'headcount', 'contract-expiry', 'hr-dashboard-kpi',
+    ];
+
+    /** @var list<string> */
+    private const INVENTORY_REPORT_KEYS = [
+        'items-currently-in-stock', 'low-stock', 'stock-movement', 'stock-chain',
+        'stock-valuation', 'stock-reservations', 'stock-transfers',
+        'branch-stock-transfers', 'returns', 'price-list', 'stock-on-hand',
+        'damages',
+    ];
+
+    /** @var list<string> */
+    private const PURCHASES_REPORT_KEYS = [
+        'open-lpo', 'purchases-by-supplier', 'stock-receipts', 'supplier-returns',
+    ];
+
+    /** @var list<string> */
+    private const SALES_REPORT_KEYS = [
+        'sales-by-product', 'sales-by-supplier', 'sales-by-user', 'sales-by-customer',
+        'sales-by-channel', 'daily-sales', 'sales-pipeline', 'category-sales',
+    ];
+
+    /** @var list<string> */
     private const MULTI_BRANCH_REPORT_KEYS = [
         'branch-stock-transfers',
+    ];
+
+    /** @var list<string> */
+    private const CUSTOMER_REPORT_KEYS = [
+        'customer-statement', 'ar-aging', 'credit-outstanding', 'top-debtors',
+        'accounts-receivable', 'invoice-payments',
     ];
 
     /** @var list<string> */
@@ -285,6 +324,39 @@ class ManagerReportCatalogService
             return false;
         }
 
+        if (in_array($key, self::FINANCE_REPORT_KEYS, true) && ! $gate->enabled('accounting')) {
+            return false;
+        }
+
+        if (in_array($key, self::HR_REPORT_KEYS, true) && ! $gate->enabled('hr_payroll')) {
+            return false;
+        }
+
+        if (in_array($key, self::INVENTORY_REPORT_KEYS, true) && ! $gate->enabled('inventory')) {
+            return false;
+        }
+
+        if (in_array($key, ['open-lpo', 'purchases-by-supplier', 'supplier-returns'], true)
+            && ! $gate->enabled('customers_suppliers')) {
+            return false;
+        }
+
+        if (in_array($key, self::CUSTOMER_REPORT_KEYS, true) && ! $gate->enabled('customers_suppliers')) {
+            return false;
+        }
+
+        if (in_array($key, self::SALES_REPORT_KEYS, true) && ! $gate->enabled('sales.backend')) {
+            return false;
+        }
+
+        if ($key === 'kra-receipts' && ! $gate->enabled('accounting')) {
+            return false;
+        }
+
+        if ($key === 'audit-trail' && ! $gate->enabled('admin')) {
+            return false;
+        }
+
         return true;
     }
 
@@ -302,8 +374,8 @@ class ManagerReportCatalogService
             $mobileParams = [
                 [
                     'key' => 'customer_num',
-                    'label' => 'Customer account',
-                    'type' => 'customer_num',
+                    'label' => 'Customer',
+                    'type' => 'customer_search',
                     'required' => true,
                 ],
             ];

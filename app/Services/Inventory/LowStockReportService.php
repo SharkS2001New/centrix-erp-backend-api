@@ -27,13 +27,18 @@ class LowStockReportService
 
         $totalSql = '(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))';
 
-        $query = DB::table('current_stock as cs')
-            ->join('products as p', function ($join) use ($organizationId) {
-                $join->on('p.product_code', '=', 'cs.product_code')
-                    ->where('p.organization_id', '=', $organizationId)
-                    ->whereNull('p.deleted_at');
+        $query = DB::table('products as p')
+            ->join('uoms as u', 'u.id', '=', 'p.unit_id')
+            ->join('branches as br', function ($join) use ($organizationId, $branchId) {
+                $join->where('br.organization_id', '=', $organizationId)
+                    ->where('br.id', '=', $branchId);
             })
-            ->where('cs.branch_id', $branchId)
+            ->leftJoin('current_stock as cs', function ($join) {
+                $join->on('cs.product_code', '=', 'p.product_code')
+                    ->on('cs.branch_id', '=', 'br.id');
+            })
+            ->where('p.organization_id', $organizationId)
+            ->whereNull('p.deleted_at')
             ->when($request->filled('product_code'), fn ($q) => $q->where('p.product_code', $request->input('product_code')))
             ->when(
                 ($subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) !== null,
@@ -43,6 +48,7 @@ class LowStockReportService
                 DB::raw("{$branchId} as branch_id"),
                 'p.product_code',
                 'p.product_name',
+                'u.full_name as uom_name',
                 DB::raw('COALESCE(cs.shop_quantity, 0) as shop_quantity'),
                 DB::raw('COALESCE(cs.store_quantity, 0) as store_quantity'),
                 DB::raw("{$totalSql} as total_quantity"),
@@ -74,7 +80,7 @@ class LowStockReportService
             });
         });
 
-        $paginator = $query->orderBy('p.product_code')->paginate($perPage);
+        $paginator = $query->orderBy('p.product_name')->paginate($perPage);
 
         $paginator->getCollection()->transform(function ($row) use ($mode, $globalThreshold) {
             $total = (float) ($row->total_quantity ?? 0);
@@ -99,6 +105,7 @@ class LowStockReportService
                 'branch_id' => (int) $row->branch_id,
                 'product_code' => $row->product_code,
                 'product_name' => $row->product_name,
+                'uom_name' => $row->uom_name,
                 'shop_quantity' => (float) $row->shop_quantity,
                 'store_quantity' => (float) $row->store_quantity,
                 'total_quantity' => $total,

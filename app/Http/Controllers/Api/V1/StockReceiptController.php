@@ -1,31 +1,53 @@
 <?php
+
 namespace App\Http\Controllers\Api\V1;
 
-use App\Models\StockReceipt;
+use App\Http\Requests\Inventory\StockReceiveRequest;
+use App\Services\Accounting\PurchaseReceiveJournalService;
 use App\Services\Audit\OperationalAuditService;
+use App\Services\Erp\ErpContext;
+use App\Services\Inventory\StockReceiveService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Services\Notifications\InAppNotificationEvents;
 use Illuminate\Http\Request;
 
 class StockReceiptController extends BaseResourceController
 {
+    public function __construct(
+        protected StockReceiveService $receives,
+        protected ErpContext $erp,
+    ) {}
+
     protected function modelClass(): string
     {
-        return StockReceipt::class;
+        return \App\Models\StockReceipt::class;
     }
 
     public function store(Request $request)
     {
-        $response = parent::store($request);
-        $receipt = $response->getData();
-        $user = $request->user();
+        $receiveRequest = StockReceiveRequest::createFrom($request);
+        $receiveRequest->setContainer(app())->setRedirector(app('redirect'));
+        $receiveRequest->validateResolved();
 
-        if ($user && $receipt) {
+        $data = $receiveRequest->validated();
+        if (empty($data['stock_location'])) {
+            $orgId = (int) ($request->user()?->organization_id ?? 0);
+            $procurement = \App\Services\Purchasing\ProcurementSettingsResolver::forOrganizationId($orgId);
+            $data['stock_location'] = $procurement['default_receive_location'] ?? 'store';
+        }
+
+        $receipt = $this->receives->receive($data, $request->user());
+
+        $gate = $this->erp->gateForUser($request->user());
+        app(PurchaseReceiveJournalService::class)->postIfEnabled($receipt, $request->user(), $gate);
+
+        $user = $request->user();
+        if ($user) {
             app(OperationalAuditService::class)->logStockMovement($user, 'receipt', [
-                'receipt_id' => (int) ($receipt->id ?? 0),
-                'product_code' => (string) ($receipt->product_code ?? ''),
-                'branch_id' => (int) ($receipt->branch_id ?? 0),
-                'units_received' => (float) ($receipt->units_received ?? 0),
+                'receipt_id' => (int) $receipt->id,
+                'product_code' => (string) $receipt->product_code,
+                'branch_id' => (int) $receipt->branch_id,
+                'units_received' => (float) $receipt->units_received,
                 'stock_location' => (string) ($receipt->stock_location ?? 'store'),
             ]);
 
@@ -39,6 +61,6 @@ class StockReceiptController extends BaseResourceController
             ], InAppNotificationEvents::STOCK_RECEIPT);
         }
 
-        return $response;
+        return response()->json($receipt, 201);
     }
 }

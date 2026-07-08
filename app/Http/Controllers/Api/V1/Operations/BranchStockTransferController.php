@@ -90,7 +90,8 @@ class BranchStockTransferController extends Controller
         app(UserAccessService::class)->assertBranchAccess($user, $toBranchId, 'You do not have access to the destination branch.');
 
         $allowBelowStock = $this->organizationAllowsBelowStock((int) $user->organization_id);
-        $unitCost = max(0, (float) (Product::query()->find($productCode)?->last_cost_price ?? 0));
+        $unitCost = app(\App\Services\Inventory\StockValuationService::class)
+            ->effectiveUnitCostForProduct((int) $user->organization_id, $productCode);
 
         return DB::transaction(function () use (
             $user,

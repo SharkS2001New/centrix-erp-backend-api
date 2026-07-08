@@ -10,7 +10,9 @@ use App\Models\SaleItem;
 use App\Models\StockReservation;
 use App\Models\User;
 use App\Models\SystemSetting;
+use App\Services\Inventory\ProductStockDenormService;
 use App\Services\Inventory\SaleStockLocationResolver;
+use App\Services\Inventory\StockValuationService;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -112,28 +114,7 @@ trait HandlesInventory
 
     protected function syncProductStockTotals(string $productCode, int $branchId): void
     {
-        $row = CurrentStock::where('product_code', $productCode)
-            ->where('branch_id', $branchId)
-            ->first();
-
-        if (! $row) {
-            return;
-        }
-
-        $orgId = DB::table('branches')->where('id', $branchId)->value('organization_id');
-        $query = Product::where('product_code', $productCode);
-        if ($orgId) {
-            $query->where('organization_id', $orgId);
-        }
-        // Branch-scoped products only denormalize stock for their home branch.
-        $query->where(function ($q) use ($branchId) {
-            $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
-        });
-
-        $query->update([
-            'stock_in_shop' => $row->shop_quantity,
-            'stock_in_store' => $row->store_quantity,
-        ]);
+        app(ProductStockDenormService::class)->syncFromCurrentStock($productCode, $branchId);
     }
 
     protected function reverseSaleStockDeductions(Sale $sale, User $user): void
@@ -241,6 +222,7 @@ trait HandlesInventory
         ?int $saleId = null,
     ): StockReservation {
         if (! $allowBelowStock) {
+            $this->releaseExpiredReservations($cartId);
             $available = $this->stockNetAvailable($productCode, $branchId, $location);
             if ($quantity > $available) {
                 throw new InvalidArgumentException(
@@ -306,8 +288,14 @@ trait HandlesInventory
 
     protected function productUnitCost(?int $orgId, string $productCode): ?float
     {
-        $product = $this->orgProduct($orgId, $productCode);
-        $cost = max(0, (float) ($product?->last_cost_price ?? 0));
+        if (! $orgId) {
+            $product = Product::query()->find($productCode);
+            $cost = max(0, (float) ($product?->last_cost_price ?? 0));
+
+            return $cost > 0 ? $cost : null;
+        }
+
+        $cost = app(StockValuationService::class)->effectiveUnitCostForProduct($orgId, $productCode);
 
         return $cost > 0 ? $cost : null;
     }
@@ -411,9 +399,22 @@ trait HandlesInventory
 
     protected function releaseLineReservation(int $cartLineId): void
     {
+        $line = \App\Models\CartLine::query()->find($cartLineId);
+
         StockReservation::where('cart_line_id', $cartLineId)
             ->whereNull('released_at')
             ->update(['released_at' => now()]);
+
+        // Orphan cart holds (e.g. before bind after restore-to-cart) for this line's SKU.
+        if ($line) {
+            StockReservation::query()
+                ->where('cart_id', $line->cart_id)
+                ->where('product_code', $line->product_code)
+                ->whereNull('cart_line_id')
+                ->whereNull('released_at')
+                ->where('quantity', (float) $line->quantity)
+                ->update(['released_at' => now()]);
+        }
     }
 
     /**
