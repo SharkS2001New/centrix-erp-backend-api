@@ -42,12 +42,17 @@ ENV LOG_CHANNEL=stderr
 ENV REDIS_CLIENT=phpredis
 ENV CACHE_STORE=redis
 ENV SESSION_DRIVER=redis
+# Image build is production-only — PHPUnit/tests never run here (local dev + CI only).
+ENV APP_ENV=production
+ENV APP_DEBUG=false
 
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 COPY . /var/www/html
 WORKDIR /var/www/html
 RUN git config --global --add safe.directory /var/www/html || true
+# --no-dev: excludes phpunit and tests/ (see .dockerignore). No test scripts in composer.json.
 RUN composer install --no-dev --optimize-autoloader --no-interaction \
+    && test ! -e vendor/bin/phpunit \
     && php -m | grep -qi redis \
     && composer show predis/predis >/dev/null
 

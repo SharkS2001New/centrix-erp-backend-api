@@ -18,6 +18,8 @@ storage/framework/testing/**
 !storage/framework/testing/.gitkeep
 storage/app/private/backups
 tests
+phpunit.xml
+phpunit.local.xml
 .phpunit.result.cache
 docker-compose*.yml
 README.md
