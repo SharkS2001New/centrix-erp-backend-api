@@ -39,19 +39,21 @@ php artisan serve
 
 ## Testing
 
-Feature and unit tests use MySQL database `pos_erp_test` by default (`DB_DATABASE_TEST` in `.env`). Each feature test class reloads schema + demo seed via `RefreshesErpDatabase`.
+**Tests always run locally** — `php artisan test` sets `APP_ENV=testing`, connects to MySQL on `127.0.0.1`, and uses database **`pos_erp_test` only**. Your `.env` `DB_*_LOCAL` credentials (host/user/password) are reused; production (`DB_*_PRODUCTION`, `centrix_erp`) and local dev data (`pos_erp`) are **blocked** at bootstrap.
+
+Each feature test class reloads schema + demo seed via `RefreshesErpDatabase`.
 
 **Local setup**
 
 ```bash
-# MySQL 8.0+ — create the test database (credentials from .env DB_*_TEST)
-mysql -u"$DB_USERNAME_TEST" -p -e "CREATE DATABASE IF NOT EXISTS pos_erp_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+# MySQL 8.0+ — create the test database (uses your .env DB_*_LOCAL user)
+mysql -u"$DB_USERNAME_LOCAL" -p -e "CREATE DATABASE IF NOT EXISTS pos_erp_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 
 composer install
-cp .env.example .env   # set DB_*_TEST (or DB_*_LOCAL for host/user if TEST vars omitted)
+cp .env.example .env   # set DB_*_LOCAL for your machine; optional DB_*_TEST overrides
 php artisan key:generate
 
-# Run full suite (CI runs the same command; CI injects root/root via workflow env)
+# Run full suite (never touches production or pos_erp dev DB)
 php artisan test
 
 # Single file or filter

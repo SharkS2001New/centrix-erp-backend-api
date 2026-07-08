@@ -2,6 +2,7 @@
 
 namespace Tests\Concerns;
 
+use App\Support\EnvironmentSettings;
 use Database\Seeders\DemoDataSeeder;
 use Illuminate\Contracts\Console\Kernel;
 use Illuminate\Foundation\Testing\RefreshDatabase;
@@ -22,6 +23,8 @@ trait RefreshesErpDatabase
 
     public function refreshDatabase(): void
     {
+        EnvironmentSettings::guardTestingDatabaseIsolated(DB::getDatabaseName());
+
         if (! RefreshDatabaseState::$migrated) {
             $this->dropAllViews();
             $this->artisan('migrate:fresh', $this->migrateFreshUsing());
