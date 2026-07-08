@@ -25,6 +25,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
 use App\Services\Sales\OrderCancellationRequestService;
+use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\SaleCancellationService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
@@ -681,7 +682,7 @@ class CartOperationsController extends Controller
         $gate = $this->erp->gateForUser($user);
         $token = $user->currentAccessToken();
         $channel = $this->resolveCartChannel((string) ($input['channel'] ?? 'pos'), $gate, $input, $token);
-        $orderSource = app(OrderSourceResolver::class)->defaultForCart($input, $token);
+        $orderSource = app(\App\Services\Sales\OrderSourceResolver::class)->defaultForCart($input, $token);
 
         $branchId = $this->userAccess()->resolveBranchId($user, $input['branch_id'] ?? null);
         $routeId = app(UserMobileOrderScopeService::class)->resolveCartRouteId(
