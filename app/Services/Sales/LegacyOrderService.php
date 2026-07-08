@@ -8,6 +8,7 @@ use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
+use App\Support\EffectiveSaleDate;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
@@ -35,13 +36,12 @@ class LegacyOrderService
     {
         $query = $this->baseQuery($user);
 
-        if (! empty($filters['from_date'])) {
-            $query->where('effective_sale_date', '>=', $filters['from_date']);
-        }
-
-        if (! empty($filters['to_date'])) {
-            $query->where('effective_sale_date', '<=', $filters['to_date']);
-        }
+        EffectiveSaleDate::applyFromToDateFilter(
+            $query,
+            ! empty($filters['from_date']) ? (string) $filters['from_date'] : null,
+            ! empty($filters['to_date']) ? (string) $filters['to_date'] : null,
+            'sales',
+        );
 
         if (isset($filters['min_order_total']) && $filters['min_order_total'] !== '') {
             $query->where('order_total', '>=', (float) $filters['min_order_total']);

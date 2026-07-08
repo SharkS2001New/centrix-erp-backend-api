@@ -463,6 +463,7 @@ class DemoDataSeeder extends Seeder
         AuditLog::insert([
             [
                 'user_id' => $admin->id,
+                'organization_id' => $org->id,
                 'branch_id' => $hq->id,
                 'action' => 'create',
                 'table_name' => 'products',
@@ -475,6 +476,7 @@ class DemoDataSeeder extends Seeder
             ],
             [
                 'user_id' => $admin->id,
+                'organization_id' => $org->id,
                 'branch_id' => $hq->id,
                 'action' => 'update',
                 'table_name' => 'products',
@@ -487,6 +489,7 @@ class DemoDataSeeder extends Seeder
             ],
             [
                 'user_id' => $cashier->id,
+                'organization_id' => $org->id,
                 'branch_id' => $hq->id,
                 'action' => 'create',
                 'table_name' => 'sales',
@@ -499,6 +502,7 @@ class DemoDataSeeder extends Seeder
             ],
             [
                 'user_id' => $admin->id,
+                'organization_id' => $org->id,
                 'branch_id' => $hq->id,
                 'action' => 'update',
                 'table_name' => 'users',

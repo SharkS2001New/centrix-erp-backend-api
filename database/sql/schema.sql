@@ -1286,7 +1286,7 @@ CREATE TABLE route_schedules (
 
 DROP TABLE IF EXISTS dispatch_trips;
 CREATE TABLE dispatch_trips (
-    id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
+    id                  BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
     branch_id           INT           NOT NULL,
     trip_code           VARCHAR(50)   NOT NULL,
     route_id            INT           NULL,
@@ -1323,8 +1323,8 @@ CREATE TABLE dispatch_trips (
 
 DROP TABLE IF EXISTS dispatch_trip_sales;
 CREATE TABLE dispatch_trip_sales (
-    id              BIGINT        PRIMARY KEY AUTO_INCREMENT,
-    trip_id         BIGINT        NOT NULL,
+    id              BIGINT UNSIGNED PRIMARY KEY AUTO_INCREMENT,
+    trip_id         BIGINT UNSIGNED NOT NULL,
     sale_id         BIGINT        NOT NULL,
     stop_seq        SMALLINT UNSIGNED NOT NULL DEFAULT 1,
     FOREIGN KEY (trip_id) REFERENCES dispatch_trips(id) ON DELETE CASCADE,

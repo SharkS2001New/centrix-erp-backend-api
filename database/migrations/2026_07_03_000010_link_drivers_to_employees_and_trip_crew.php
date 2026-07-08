@@ -44,9 +44,16 @@ return new class extends Migration
         }
 
         if (! Schema::hasTable('dispatch_trip_crew')) {
-            Schema::create('dispatch_trip_crew', function (Blueprint $table) {
+            $tripIdUnsigned = $this->dispatchTripsIdIsUnsigned();
+
+            Schema::create('dispatch_trip_crew', function (Blueprint $table) use ($tripIdUnsigned) {
                 $table->id();
-                $table->unsignedBigInteger('trip_id');
+                if ($tripIdUnsigned) {
+                    $table->unsignedBigInteger('trip_id');
+                } else {
+                    // schema.sql defines dispatch_trips.id as signed BIGINT
+                    $table->bigInteger('trip_id');
+                }
                 $table->integer('employee_id');
                 $table->string('role', 40)->default('turn_boy');
                 $table->timestamps();
@@ -127,5 +134,22 @@ return new class extends Migration
             ->where('constraint_name', $constraint)
             ->where('constraint_type', 'FOREIGN KEY')
             ->exists();
+    }
+
+    /** Match dispatch_trips.id type (unsigned from Laravel migrations, signed from schema.sql). */
+    protected function dispatchTripsIdIsUnsigned(): bool
+    {
+        if (! Schema::hasTable('dispatch_trips')) {
+            return true;
+        }
+
+        $database = DB::getDatabaseName();
+        $columnType = DB::table('information_schema.columns')
+            ->where('table_schema', $database)
+            ->where('table_name', 'dispatch_trips')
+            ->where('column_name', 'id')
+            ->value('column_type');
+
+        return $columnType !== null && str_contains(strtolower((string) $columnType), 'unsigned');
     }
 };

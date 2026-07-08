@@ -12,6 +12,7 @@ use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\RouteOrderScope;
 use App\Services\Sales\SaleOrderPresentationService;
+use App\Support\EffectiveSaleDate;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -113,13 +114,11 @@ class SaleController extends BaseResourceController
             $query->where('sales.channel', $request->input('channel'));
         }
 
-        if ($request->filled('from_date')) {
-            $query->whereDate('sales.effective_sale_date', '>=', $request->input('from_date'));
-        }
-
-        if ($request->filled('to_date')) {
-            $query->whereDate('sales.effective_sale_date', '<=', $request->input('to_date'));
-        }
+        EffectiveSaleDate::applyFromToDateFilter(
+            $query,
+            $request->filled('from_date') ? (string) $request->input('from_date') : null,
+            $request->filled('to_date') ? (string) $request->input('to_date') : null,
+        );
 
         if ($request->filled('min_order_total')) {
             $query->where('sales.order_total', '>=', (float) $request->input('min_order_total'));

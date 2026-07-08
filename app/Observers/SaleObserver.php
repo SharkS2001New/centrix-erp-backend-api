@@ -14,10 +14,12 @@ class SaleObserver
 {
     public function saving(Sale $sale): void
     {
-        $sale->effective_sale_date = EffectiveSaleDate::resolve(
-            $sale->completed_at ? \Carbon\Carbon::parse($sale->completed_at) : null,
-            $sale->created_at ? \Carbon\Carbon::parse($sale->created_at) : null,
-        );
+        if (EffectiveSaleDate::columnExists()) {
+            $sale->effective_sale_date = EffectiveSaleDate::resolve(
+                $sale->completed_at ? \Carbon\Carbon::parse($sale->completed_at) : null,
+                $sale->created_at ? \Carbon\Carbon::parse($sale->created_at) : null,
+            );
+        }
 
         if ($sale->route_id || ! $sale->customer_num || ! $sale->organization_id) {
             return;
