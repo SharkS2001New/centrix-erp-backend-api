@@ -16,6 +16,7 @@ class WorkspaceSessionLabel
         return match ($loginChannel) {
             'pos' => (string) config('erp_workspaces.pos.label', 'External POS'),
             'mobile' => 'Mobile',
+            'manager' => 'Centrix Manager',
             default => (string) config('erp_workspaces.backoffice.label', 'Backoffice'),
         };
     }
