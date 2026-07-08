@@ -33,7 +33,7 @@ class OpeningStockService
                 continue;
             }
 
-            $this->postStockLedger([
+            $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $branchId,
                 'product_code' => $productCode,
                 'stock_location' => $location,
@@ -43,7 +43,7 @@ class OpeningStockService
                 'reference_id' => $productId,
                 'notes' => 'Opening stock on product create',
                 'created_by' => $user->id,
-            ], $allowBelowStock);
+            ], (int) $user->organization_id), $allowBelowStock);
         }
     }
 }

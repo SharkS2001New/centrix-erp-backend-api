@@ -33,7 +33,7 @@ class ReturnOperationsController extends Controller
                 'is_mobile' => $data['return_type'] === 'MOBILE' ? 1 : 0,
             ]);
 
-            $this->postStockLedger([
+            $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $data['branch_id'],
                 'product_code' => $data['product_code'],
                 'stock_location' => $data['stock_location'] ?? 'shop',
@@ -42,7 +42,7 @@ class ReturnOperationsController extends Controller
                 'reference_id' => $return->id,
                 'quantity_change' => abs((float) $data['quantity']),
                 'created_by' => $request->user()->id,
-            ]);
+            ], (int) $request->user()->organization_id));
 
             return response()->json($return, 201);
         });

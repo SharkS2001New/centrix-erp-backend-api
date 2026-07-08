@@ -419,7 +419,7 @@ class OrderWorkflowController extends Controller
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
 
         foreach ($sale->items ?? SaleItem::where('sale_id', $sale->id)->get() as $item) {
-            $product = Product::query()->find($item->product_code);
+            $product = $this->orgProduct((int) $user->organization_id, (string) $item->product_code);
             $location = $product
                 ? $this->resolveSaleLineStockLocation(
                     (string) $sale->channel,

@@ -12,6 +12,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\WorkspaceResolver;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
+use App\Services\Mobile\ManagerAppModuleAccessService;
 use App\Services\Mobile\MobileAppModuleAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
@@ -141,6 +142,9 @@ class ErpCapabilitiesController extends Controller
         }
 
         $payload['mobile_app'] = app(MobileAppModuleAccessService::class)
+            ->capabilitiesForUser($user, $gate);
+
+        $payload['manager_app'] = app(ManagerAppModuleAccessService::class)
             ->capabilitiesForUser($user, $gate);
 
         return $payload;

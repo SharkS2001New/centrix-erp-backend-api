@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\Damage;
 use App\Models\User;
+use App\Services\Accounting\InventoryMovementJournalService;
 use App\Services\Audit\OperationalAuditService;
 use App\Services\Erp\ErpContext;
 use App\Services\Inventory\DamageApprovalService;
@@ -200,8 +201,7 @@ class DamageController extends BaseResourceController
         }
 
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
-
-        $this->postStockLedger([
+        $ledgerData = $this->withProductUnitCost([
             'branch_id' => (int) $damage->branch_id,
             'product_code' => (string) $damage->product_code,
             'stock_location' => (string) $damage->stock_location,
@@ -211,7 +211,23 @@ class DamageController extends BaseResourceController
             'quantity_change' => -abs($qty),
             'notes' => $damage->reason ?: 'Stock damage / write-off',
             'created_by' => $user->id,
-        ], $allowBelowStock);
+        ], (int) $user->organization_id);
+
+        $this->postStockLedger($ledgerData, $allowBelowStock);
+
+        $gate = app(ErpContext::class)->gateForUser($user);
+        $this->postInventoryMovementJournal(
+            $user,
+            $gate,
+            InventoryMovementJournalService::MOVEMENT_SHRINKAGE,
+            $qty,
+            isset($ledgerData['unit_cost']) ? (float) $ledgerData['unit_cost'] : null,
+            'DMG-'.$damage->id,
+            'Damage write-off #'.$damage->id,
+            (int) $damage->branch_id,
+            'damage',
+            (int) $damage->id,
+        );
     }
 
     protected function reverseDamageDeduction(Damage $damage, User $user): void
@@ -222,6 +238,15 @@ class DamageController extends BaseResourceController
         }
 
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+        $unitCost = \App\Models\InventoryTransaction::query()
+            ->where('reference_type', 'damage')
+            ->where('reference_id', $damage->id)
+            ->where('quantity_change', '<', 0)
+            ->orderByDesc('id')
+            ->value('unit_cost');
+        $unitCost = ($unitCost !== null && (float) $unitCost > 0)
+            ? (float) $unitCost
+            : $this->productUnitCost((int) $user->organization_id, (string) $damage->product_code);
 
         $this->postStockLedger([
             'branch_id' => (int) $damage->branch_id,
@@ -231,8 +256,23 @@ class DamageController extends BaseResourceController
             'reference_type' => 'damage_reversal',
             'reference_id' => $damage->id,
             'quantity_change' => abs($qty),
+            'unit_cost' => $unitCost > 0 ? $unitCost : null,
             'notes' => 'Damage record reversed or updated',
             'created_by' => $user->id,
         ], $allowBelowStock);
+
+        $gate = app(ErpContext::class)->gateForUser($user);
+        $this->postInventoryMovementJournal(
+            $user,
+            $gate,
+            InventoryMovementJournalService::MOVEMENT_INCREASE,
+            $qty,
+            $unitCost > 0 ? $unitCost : null,
+            'DMG-REV-'.$damage->id.'-'.now()->timestamp,
+            'Damage reversal #'.$damage->id,
+            (int) $damage->branch_id,
+            'damage_reversal',
+            (int) $damage->id,
+        );
     }
 }

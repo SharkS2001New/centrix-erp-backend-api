@@ -6,7 +6,6 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\CreditNote;
 use App\Models\CustomerReturn;
 use App\Models\CustomerReturnLine;
-use App\Models\InventoryTransaction;
 use App\Models\Organization;
 use App\Models\ReturnRecord;
 use App\Models\Sale;
@@ -189,6 +188,12 @@ class CustomerReturnService
                     continue;
                 }
 
+                $unitCost = $this->resolveReturnUnitCost(
+                    $return->sale_id ? (int) $return->sale_id : null,
+                    (string) $line->product_code,
+                    (int) $user->organization_id,
+                );
+
                 $this->postStockLedger([
                     'branch_id' => $return->branch_id,
                     'product_code' => $line->product_code,
@@ -197,6 +202,7 @@ class CustomerReturnService
                     'reference_type' => 'customer_return',
                     'reference_id' => $return->id,
                     'quantity_change' => abs((float) $line->return_qty),
+                    'unit_cost' => $unitCost,
                     'created_by' => $user->id,
                 ]);
 
@@ -688,6 +694,11 @@ class CustomerReturnService
                 'reference_type' => 'customer_return_reversal',
                 'reference_id' => $return->id,
                 'quantity_change' => -abs((float) $line->return_qty),
+                'unit_cost' => $this->resolveReturnUnitCost(
+                    $return->sale_id ? (int) $return->sale_id : null,
+                    (string) $line->product_code,
+                    (int) $user->organization_id,
+                ),
                 'created_by' => $user->id,
             ], true);
         }
@@ -707,30 +718,17 @@ class CustomerReturnService
             if ($sale) {
                 $sale->loadMissing('items');
                 $gate = $this->capabilityGateForUser($user);
-                if ($gate) {
-                    $inventory = $gate->moduleSettings('inventory');
-                    $sales = $gate->moduleSettings('sales');
-                    $saleItem = $line->sale_item_id
-                        ? $sale->items->firstWhere('id', (int) $line->sale_item_id)
-                        : null;
-                    $saleItem ??= $sale->items->firstWhere('product_code', $line->product_code);
+                $saleItem = $line->sale_item_id
+                    ? $sale->items->firstWhere('id', (int) $line->sale_item_id)
+                    : null;
+                $saleItem ??= $sale->items->firstWhere('product_code', $line->product_code);
 
-                    if ($saleItem) {
-                        return $this->saleLineStockLocation(
-                            (string) $sale->channel,
-                            $inventory,
-                            $sales,
-                            (bool) $saleItem->on_wholesale_retail,
-                        );
-                    }
+                if ($saleItem && $gate) {
+                    return $this->resolveReturnStockLocationForSaleLine($sale, $saleItem, $user, $gate);
                 }
 
-                $ledgerLocation = InventoryTransaction::query()
-                    ->where('reference_type', 'sale')
-                    ->where('reference_id', $sale->id)
-                    ->where('product_code', $line->product_code)
-                    ->where('quantity_change', '<', 0)
-                    ->value('stock_location');
+                $ledgerLocation = $this->originalSaleDeductionTxn((int) $sale->id, (string) $line->product_code)
+                    ?->stock_location;
 
                 if ($ledgerLocation) {
                     return (string) $ledgerLocation;
@@ -758,8 +756,6 @@ class CustomerReturnService
             return 'shop';
         }
 
-        $inventory = $gate->moduleSettings('inventory');
-        $sales = $gate->moduleSettings('sales');
         $locations = [];
 
         foreach ($lines as $lineData) {
@@ -772,12 +768,7 @@ class CustomerReturnService
             );
 
             if ($saleItem) {
-                $locations[] = $this->saleLineStockLocation(
-                    (string) $sale->channel,
-                    $inventory,
-                    $sales,
-                    (bool) $saleItem->on_wholesale_retail,
-                );
+                $locations[] = $this->resolveReturnStockLocationForSaleLine($sale, $saleItem, $user, $gate);
             }
         }
 

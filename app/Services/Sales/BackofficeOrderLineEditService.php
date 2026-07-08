@@ -294,7 +294,10 @@ class BackofficeOrderLineEditService
             return;
         }
 
-        $product = Product::query()->find($saleItem->product_code);
+        $product = Product::query()
+            ->where('organization_id', $user->organization_id)
+            ->where('product_code', $saleItem->product_code)
+            ->first();
         if (! $product) {
             return;
         }

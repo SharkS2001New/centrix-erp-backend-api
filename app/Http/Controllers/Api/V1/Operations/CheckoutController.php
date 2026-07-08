@@ -353,7 +353,7 @@ class CheckoutController extends Controller
                 && $gate->shouldDeductStockAtCheckout($workflow, $orderStatus, (string) $cart->channel);
 
             foreach ($lines as $i => $line) {
-                $product = Product::query()->find($line->product_code);
+                $product = $this->orgProduct((int) $user->organization_id, (string) $line->product_code);
                 $location = $product
                     ? $this->resolveSaleLineStockLocation(
                         (string) $cart->channel,
@@ -384,7 +384,7 @@ class CheckoutController extends Controller
                 ]);
 
                 if ($shouldDeductNow) {
-                    $unitCost = max(0, (float) (Product::query()->find($line->product_code)?->last_cost_price ?? 0));
+                    $unitCost = max(0, (float) ($product?->last_cost_price ?? 0));
                     $this->postStockLedger([
                         'branch_id' => $sale->branch_id,
                         'product_code' => $line->product_code,

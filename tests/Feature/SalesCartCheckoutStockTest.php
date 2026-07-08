@@ -215,6 +215,75 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEquals($lineTotal - 50, (float) ($sale['order_total'] ?? 0));
     }
 
+    public function test_hold_order_restore_binds_reservations_to_cart_lines(): void
+    {
+        $org = $this->user->organization;
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'order_workflow' => array_merge(config('erp.default_order_workflow', []), [
+                'steps' => [
+                    ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
+                    ['status' => 'pending', 'label' => 'Pending', 'enabled' => true],
+                    ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
+                    ['status' => 'processed', 'label' => 'Processed', 'enabled' => true],
+                ],
+                'save_status' => ['backend' => 'unpaid'],
+                'reserve_stock_on' => ['backend' => 'booked'],
+                'deduct_stock_on' => ['backend' => 'processed'],
+            ]),
+        ]);
+        $org->forceFill(['module_settings' => $settings])->save();
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'backend',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 3,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'save_only' => true,
+            'pay_now' => 0,
+            'payment_method_code' => 'CREDIT',
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseHas('stock_reservations', [
+            'sale_id' => $sale['id'],
+            'product_code' => $this->productCode,
+            'released_at' => null,
+        ]);
+
+        $cart = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+
+        $lineId = (int) ($cart['lines'][0]['id'] ?? 0);
+        $this->assertGreaterThan(0, $lineId);
+
+        $this->assertDatabaseHas('stock_reservations', [
+            'cart_id' => $cart['id'],
+            'cart_line_id' => $lineId,
+            'product_code' => $this->productCode,
+            'released_at' => null,
+        ]);
+
+        $before = $this->availableStore();
+
+        $this->patchJson("/api/v1/sales/carts/{$cart['id']}/lines/{$lineId}", [
+            'quantity' => 2,
+        ])->assertOk();
+
+        $this->assertEquals(1, StockReservation::query()
+            ->where('cart_id', $cart['id'])
+            ->where('product_code', $this->productCode)
+            ->whereNull('released_at')
+            ->count());
+        $this->assertEquals($before + 1, $this->availableStore());
+    }
+
     public function test_hold_order_can_be_restored_to_cart(): void
     {
         $cartId = $this->postJson('/api/v1/sales/carts', [

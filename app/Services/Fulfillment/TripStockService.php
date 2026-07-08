@@ -81,7 +81,10 @@ class TripStockService
 
         $items = $sale->items ?? SaleItem::query()->where('sale_id', $sale->id)->get();
         foreach ($items as $item) {
-            $product = Product::query()->find($item->product_code);
+            $product = Product::query()
+                ->where('organization_id', $user->organization_id)
+                ->where('product_code', $item->product_code)
+                ->first();
             $location = $product
                 ? SaleStockLocationResolver::forLine(
                     (string) $sale->channel,
@@ -182,6 +185,9 @@ class TripStockService
                 if ($orgId) {
                     $productQuery->where('organization_id', $orgId);
                 }
+                $productQuery->where(function ($q) use ($branchId) {
+                    $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+                });
                 $productQuery->update([
                     'stock_in_shop' => $row->shop_quantity,
                     'stock_in_store' => $row->store_quantity,

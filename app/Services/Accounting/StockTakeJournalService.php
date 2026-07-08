@@ -26,7 +26,7 @@ class StockTakeJournalService
         User $user,
         CapabilityGate $gate,
     ): JournalEntry|AccountingExportQueue|null {
-        if (! $this->helper->settingEnabled($gate, 'auto_post_purchases', true)) {
+        if (! $this->helper->settingEnabled($gate, 'auto_post_stock_adjustments', true)) {
             return null;
         }
 

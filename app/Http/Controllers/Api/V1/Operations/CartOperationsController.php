@@ -261,6 +261,7 @@ class CartOperationsController extends Controller
 
             if ($hadReservations) {
                 $this->transferSaleReservationsToCart((int) $sale->id, (int) $cart->id);
+                $this->bindCartReservationsToLines($cart->fresh('lines'), $user, $gate);
             }
 
             $meta = array_merge($sale->fulfillment_meta ?? [], [

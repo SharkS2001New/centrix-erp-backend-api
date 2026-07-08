@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\ChartOfAccount;
+use App\Models\CurrentStock;
 use App\Models\JournalEntry;
 use App\Models\Product;
 use App\Models\User;
@@ -80,6 +81,51 @@ class OperationalAutoJournalTest extends TestCase
         $this->assertDatabaseHas('journal_entries', [
             'reference_type' => 'stock_receipt',
             'reference_id' => $receipt['id'],
+            'status' => 'posted',
+        ]);
+    }
+
+    public function test_damage_write_off_posts_inventory_shrinkage_journal(): void
+    {
+        $product = Product::query()->firstOrFail();
+        $product->update(['last_cost_price' => 25]);
+
+        CurrentStock::query()->updateOrCreate(
+            ['product_code' => $product->product_code, 'branch_id' => $this->user->branch_id],
+            ['shop_quantity' => 50, 'store_quantity' => 0],
+        );
+
+        $damage = $this->postJson('/api/v1/damages', [
+            'product_code' => $product->product_code,
+            'branch_id' => $this->user->branch_id,
+            'quantity' => 4,
+            'stock_location' => 'shop',
+            'reason' => 'Broken bags',
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseHas('journal_entries', [
+            'reference_type' => 'damage',
+            'reference_id' => $damage['id'],
+            'status' => 'posted',
+        ]);
+    }
+
+    public function test_positive_stock_adjustment_posts_inventory_journal(): void
+    {
+        $product = Product::query()->firstOrFail();
+        $product->update(['last_cost_price' => 30]);
+
+        $txn = $this->postJson('/api/v1/inventory/adjust', [
+            'product_code' => $product->product_code,
+            'branch_id' => $this->user->branch_id,
+            'stock_location' => 'shop',
+            'quantity_change' => 2,
+            'notes' => 'Found extra stock',
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseHas('journal_entries', [
+            'reference_type' => 'adjustment',
+            'reference_id' => $txn['id'],
             'status' => 'posted',
         ]);
     }

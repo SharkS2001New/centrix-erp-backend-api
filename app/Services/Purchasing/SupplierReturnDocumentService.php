@@ -12,9 +12,11 @@ use App\Models\SupplierReturn;
 use App\Models\SupplierReturnDocument;
 use App\Models\SupplierReturnDocumentLine;
 use App\Models\User;
+use App\Services\Accounting\InventoryMovementJournalService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\ActionRequestService;
+use App\Services\Erp\ErpContext;
 use App\Services\Returns\ReturnProofService;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Collection;
@@ -179,6 +181,7 @@ class SupplierReturnDocumentService
 
         return DB::transaction(function () use ($doc, $user) {
             $doc->load('lines');
+            $journalTotal = 0.0;
 
             foreach ($doc->lines as $line) {
                 $deductQty = $this->resolveStockDeductQty($doc, $line);
@@ -186,7 +189,7 @@ class SupplierReturnDocumentService
                     continue;
                 }
 
-                $this->postStockLedger([
+                $ledgerData = $this->withProductUnitCost([
                     'branch_id' => $doc->branch_id,
                     'product_code' => $line->product_code,
                     'stock_location' => $line->stock_location,
@@ -196,7 +199,15 @@ class SupplierReturnDocumentService
                     'quantity_change' => -abs($deductQty),
                     'notes' => $line->reason ?: $doc->return_reason,
                     'created_by' => $user->id,
-                ], allowBelowStock: false);
+                ], (int) $user->organization_id);
+
+                $this->postStockLedger($ledgerData, allowBelowStock: false);
+
+                $unitCost = isset($ledgerData['unit_cost']) ? (float) $ledgerData['unit_cost'] : null;
+                $lineAmount = app(InventoryMovementJournalService::class)->amountFromQtyCost($deductQty, $unitCost);
+                if ($lineAmount !== null) {
+                    $journalTotal += $lineAmount;
+                }
 
                 $line->update(['stock_deduct_qty' => $deductQty]);
 
@@ -223,6 +234,19 @@ class SupplierReturnDocumentService
                 'rejected_at' => null,
                 'rejection_reason' => null,
             ]);
+
+            $gate = app(ErpContext::class)->gateForUser($user);
+            $this->postInventoryMovementJournalAmount(
+                $user,
+                $gate,
+                InventoryMovementJournalService::MOVEMENT_SUPPLIER_RETURN,
+                $journalTotal,
+                'SR-'.$doc->id,
+                'Supplier return #'.$doc->id,
+                (int) $doc->branch_id,
+                'supplier_return_document',
+                (int) $doc->id,
+            );
 
             return $doc->fresh(['lines', 'supplier', 'returnedByUser', 'approvedByUser']);
         });
@@ -521,12 +545,24 @@ class SupplierReturnDocumentService
     protected function reverseApprovedStock(SupplierReturnDocument $doc, User $user): void
     {
         $doc->load('lines');
+        $journalTotal = 0.0;
 
         foreach ($doc->lines as $line) {
             $deductQty = (float) ($line->stock_deduct_qty ?? 0);
             if ($deductQty <= 0) {
                 continue;
             }
+
+            $unitCost = InventoryTransaction::query()
+                ->where('reference_type', 'supplier_return_document')
+                ->where('reference_id', $doc->id)
+                ->where('product_code', $line->product_code)
+                ->where('quantity_change', '<', 0)
+                ->orderByDesc('id')
+                ->value('unit_cost');
+            $unitCost = ($unitCost !== null && (float) $unitCost > 0)
+                ? (float) $unitCost
+                : ($this->productUnitCost((int) $user->organization_id, (string) $line->product_code) ?? 0);
 
             $this->postStockLedger([
                 'branch_id' => $doc->branch_id,
@@ -536,9 +572,30 @@ class SupplierReturnDocumentService
                 'reference_type' => 'supplier_return_document_reversal',
                 'reference_id' => $doc->id,
                 'quantity_change' => abs($deductQty),
+                'unit_cost' => $unitCost > 0 ? $unitCost : null,
                 'notes' => 'Reversal of supplier return #'.$doc->id,
                 'created_by' => $user->id,
             ], allowBelowStock: true);
+
+            $lineAmount = app(InventoryMovementJournalService::class)->amountFromQtyCost($deductQty, $unitCost > 0 ? $unitCost : null);
+            if ($lineAmount !== null) {
+                $journalTotal += $lineAmount;
+            }
+        }
+
+        if ($journalTotal > 0) {
+            $gate = app(ErpContext::class)->gateForUser($user);
+            $this->postInventoryMovementJournalAmount(
+                $user,
+                $gate,
+                InventoryMovementJournalService::MOVEMENT_SUPPLIER_RETURN_REVERSAL,
+                $journalTotal,
+                'SR-REV-'.$doc->id.'-'.now()->timestamp,
+                'Supplier return reversal #'.$doc->id,
+                (int) $doc->branch_id,
+                'supplier_return_document_reversal',
+                (int) $doc->id,
+            );
         }
     }
 

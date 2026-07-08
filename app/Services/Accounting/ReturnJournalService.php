@@ -13,6 +13,7 @@ class ReturnJournalService
     public function __construct(
         protected AutoJournalHelper $helper,
         protected JournalPostingService $posting,
+        protected SaleCogsCalculator $cogsCalculator,
     ) {}
 
     public function postIfEnabled(CustomerReturn $return, User $user, CapabilityGate $gate): JournalEntry|AccountingExportQueue|null
@@ -80,6 +81,26 @@ class ReturnJournalService
             'credit' => $gross,
             'line_notes' => $isCredit ? 'AR credit' : 'Refund paid',
         ];
+
+        $cogsAmount = $this->cogsCalculator->totalCostForCustomerReturn($return);
+        if ($cogsAmount > 0) {
+            $cogsAccount = $this->posting->resolveAccount($orgId, $codes['cogs'] ?? '5000');
+            $inventoryAccount = $this->posting->resolveAccount($orgId, $codes['inventory'] ?? '1300');
+            if ($cogsAccount && $inventoryAccount) {
+                $lines[] = [
+                    'account_id' => $inventoryAccount->id,
+                    'debit' => $cogsAmount,
+                    'credit' => 0,
+                    'line_notes' => 'Inventory restocked on return',
+                ];
+                $lines[] = [
+                    'account_id' => $cogsAccount->id,
+                    'debit' => 0,
+                    'credit' => $cogsAmount,
+                    'line_notes' => 'COGS reversal on return',
+                ];
+            }
+        }
 
         return $this->helper->postOrQueue(
             gate: $gate,

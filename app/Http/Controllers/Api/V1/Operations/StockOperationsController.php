@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Inventory\StockAdjustRequest;
+use App\Services\Accounting\InventoryMovementJournalService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Erp\ErpContext;
 use App\Services\Inventory\StockAdjustmentApprovalService;
@@ -61,12 +62,31 @@ class StockOperationsController extends Controller
         $this->access->assertBranchAccess($user, (int) $data['branch_id']);
 
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
-        $txn = $this->postStockLedger([
+        $ledgerData = $this->withProductUnitCost([
             ...$data,
             'transaction_type' => 'ADJUSTMENT',
             'reference_type' => 'adjustment',
             'created_by' => $user->id,
-        ], $allowBelowStock);
+        ], (int) $user->organization_id);
+
+        $txn = $this->postStockLedger($ledgerData, $allowBelowStock);
+
+        $qtyChange = (float) $data['quantity_change'];
+        $movementType = $qtyChange >= 0
+            ? InventoryMovementJournalService::MOVEMENT_INCREASE
+            : InventoryMovementJournalService::MOVEMENT_SHRINKAGE;
+        $this->postInventoryMovementJournal(
+            $user,
+            $gate,
+            $movementType,
+            abs($qtyChange),
+            isset($ledgerData['unit_cost']) ? (float) $ledgerData['unit_cost'] : null,
+            'ADJ-'.$txn->id,
+            'Stock adjustment #'.$txn->id,
+            (int) $data['branch_id'],
+            'adjustment',
+            (int) $txn->id,
+        );
 
         app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($user, 'adjustment', [
             'product_code' => $data['product_code'],

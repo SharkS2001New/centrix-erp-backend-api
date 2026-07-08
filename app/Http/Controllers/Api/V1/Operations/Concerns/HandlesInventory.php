@@ -125,6 +125,10 @@ trait HandlesInventory
         if ($orgId) {
             $query->where('organization_id', $orgId);
         }
+        // Branch-scoped products only denormalize stock for their home branch.
+        $query->where(function ($q) use ($branchId) {
+            $q->whereNull('branch_id')->orWhere('branch_id', $branchId);
+        });
 
         $query->update([
             'stock_in_shop' => $row->shop_quantity,
@@ -288,6 +292,98 @@ trait HandlesInventory
         return min(15, max(0, (int) config('erp.module_settings_defaults.inventory.cart_reservation_ttl_minutes', 15)));
     }
 
+    protected function orgProduct(?int $orgId, string $productCode): ?Product
+    {
+        if (! $orgId) {
+            return Product::query()->find($productCode);
+        }
+
+        return Product::query()
+            ->where('organization_id', $orgId)
+            ->where('product_code', $productCode)
+            ->first();
+    }
+
+    protected function productUnitCost(?int $orgId, string $productCode): ?float
+    {
+        $product = $this->orgProduct($orgId, $productCode);
+        $cost = max(0, (float) ($product?->last_cost_price ?? 0));
+
+        return $cost > 0 ? $cost : null;
+    }
+
+    /** @param  array<string, mixed>  $data */
+    protected function withProductUnitCost(array $data, ?int $orgId): array
+    {
+        if (! array_key_exists('unit_cost', $data) || $data['unit_cost'] === null) {
+            $cost = $this->productUnitCost($orgId, (string) $data['product_code']);
+            if ($cost !== null) {
+                $data['unit_cost'] = $cost;
+            }
+        }
+
+        return $data;
+    }
+
+    protected function postInventoryMovementJournal(
+        User $user,
+        \App\Services\Erp\CapabilityGate $gate,
+        string $movementType,
+        float $qty,
+        ?float $unitCost,
+        string $entryNumber,
+        string $description,
+        ?int $branchId,
+        string $referenceType,
+        int $referenceId,
+    ): void {
+        $amount = app(\App\Services\Accounting\InventoryMovementJournalService::class)
+            ->amountFromQtyCost($qty, $unitCost);
+        if ($amount === null) {
+            return;
+        }
+
+        $this->postInventoryMovementJournalAmount(
+            $user,
+            $gate,
+            $movementType,
+            $amount,
+            $entryNumber,
+            $description,
+            $branchId,
+            $referenceType,
+            $referenceId,
+        );
+    }
+
+    protected function postInventoryMovementJournalAmount(
+        User $user,
+        \App\Services\Erp\CapabilityGate $gate,
+        string $movementType,
+        float $amount,
+        string $entryNumber,
+        string $description,
+        ?int $branchId,
+        string $referenceType,
+        int $referenceId,
+    ): void {
+        if ($amount <= 0) {
+            return;
+        }
+
+        app(\App\Services\Accounting\InventoryMovementJournalService::class)->postIfEnabled(
+            gate: $gate,
+            user: $user,
+            movementType: $movementType,
+            amount: $amount,
+            entryNumber: $entryNumber,
+            description: $description,
+            branchId: $branchId,
+            referenceType: $referenceType,
+            referenceId: $referenceId,
+        );
+    }
+
     protected function activeStockReservationQuery()
     {
         return DB::table('stock_reservations')
@@ -318,6 +414,122 @@ trait HandlesInventory
         StockReservation::where('cart_line_id', $cartLineId)
             ->whereNull('released_at')
             ->update(['released_at' => now()]);
+    }
+
+    /**
+     * After sale reservations move to a cart, attach each hold to its cart line so
+     * line updates/releases do not leave orphan reservations blocking stock.
+     */
+    protected function bindCartReservationsToLines(\App\Models\TemporaryCart $cart, User $user, \App\Services\Erp\CapabilityGate $gate): void
+    {
+        $cart->loadMissing('lines');
+        $inventorySettings = $gate->moduleSettings('inventory');
+        $salesSettings = $gate->moduleSettings('sales');
+
+        $unbound = StockReservation::query()
+            ->where('cart_id', $cart->id)
+            ->whereNull('cart_line_id')
+            ->whereNull('released_at')
+            ->orderBy('id')
+            ->get();
+
+        if ($unbound->isEmpty()) {
+            return;
+        }
+
+        foreach ($cart->lines as $line) {
+            $product = Product::query()
+                ->where('organization_id', $user->organization_id)
+                ->where('product_code', $line->product_code)
+                ->first();
+            if (! $product) {
+                continue;
+            }
+
+            $location = $this->resolveSaleLineStockLocation(
+                (string) $cart->channel,
+                $inventorySettings,
+                $salesSettings,
+                $product,
+                (bool) $line->on_wholesale_retail,
+            );
+
+            $match = $unbound->first(function ($reservation) use ($line, $location) {
+                return (string) $reservation->product_code === (string) $line->product_code
+                    && (string) $reservation->stock_location === $location
+                    && abs((float) $reservation->quantity - (float) $line->quantity) < 0.0001;
+            });
+
+            if ($match) {
+                $match->update(['cart_line_id' => $line->id]);
+                $unbound = $unbound->reject(fn ($r) => (int) $r->id === (int) $match->id);
+            }
+        }
+    }
+
+    protected function originalSaleDeductionTxn(int $saleId, string $productCode): ?InventoryTransaction
+    {
+        return InventoryTransaction::query()
+            ->where('reference_id', $saleId)
+            ->where('product_code', $productCode)
+            ->where('quantity_change', '<', 0)
+            ->whereIn('reference_type', ['sale', 'dispatch_trip', 'sale_line_edit'])
+            ->orderByDesc('id')
+            ->first();
+    }
+
+    protected function resolveReturnStockLocationForSaleLine(
+        Sale $sale,
+        SaleItem $saleItem,
+        User $user,
+        \App\Services\Erp\CapabilityGate $gate,
+    ): string {
+        $ledgerLocation = $this->originalSaleDeductionTxn((int) $sale->id, (string) $saleItem->product_code)
+            ?->stock_location;
+
+        if ($ledgerLocation) {
+            return (string) $ledgerLocation;
+        }
+
+        $product = Product::query()
+            ->where('organization_id', $user->organization_id)
+            ->where('product_code', $saleItem->product_code)
+            ->first();
+
+        if (! $product) {
+            return $this->saleStockLocation((string) $sale->channel, $gate->moduleSettings('inventory'));
+        }
+
+        return $this->resolveSaleLineStockLocation(
+            (string) $sale->channel,
+            $gate->moduleSettings('inventory'),
+            $gate->moduleSettings('sales'),
+            $product,
+            (bool) $saleItem->on_wholesale_retail,
+        );
+    }
+
+    protected function resolveReturnUnitCost(?int $saleId, string $productCode, ?int $orgId = null): ?float
+    {
+        if ($saleId) {
+            $txnCost = $this->originalSaleDeductionTxn($saleId, $productCode)?->unit_cost;
+            if ($txnCost !== null && (float) $txnCost > 0) {
+                return (float) $txnCost;
+            }
+        }
+
+        if (! $orgId) {
+            return null;
+        }
+
+        $lastCost = Product::query()
+            ->where('organization_id', $orgId)
+            ->where('product_code', $productCode)
+            ->value('last_cost_price');
+
+        $cost = max(0, (float) ($lastCost ?? 0));
+
+        return $cost > 0 ? $cost : null;
     }
 
     protected function releaseCartReservations(int $cartId): void
@@ -402,7 +614,10 @@ trait HandlesInventory
         $items = $sale->items ?? SaleItem::query()->where('sale_id', $sale->id)->get();
 
         foreach ($items as $item) {
-            $product = Product::query()->find($item->product_code);
+            $product = Product::query()
+                ->where('organization_id', $user->organization_id)
+                ->where('product_code', $item->product_code)
+                ->first();
             if (! $product) {
                 continue;
             }

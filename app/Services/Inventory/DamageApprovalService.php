@@ -6,9 +6,11 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\ActionRequest;
 use App\Models\Damage;
 use App\Models\User;
+use App\Services\Accounting\InventoryMovementJournalService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\ErpContext;
 use App\Services\Notifications\ActionRequestService;
 use App\Services\Notifications\NotificationActionUrlBuilder;
 use Illuminate\Support\Facades\DB;
@@ -99,7 +101,7 @@ class DamageApprovalService
                 'reported_by' => $requester->id,
             ]);
 
-            $this->postStockLedger([
+            $ledgerData = $this->withProductUnitCost([
                 'branch_id' => (int) $damage->branch_id,
                 'product_code' => (string) $damage->product_code,
                 'stock_location' => (string) $damage->stock_location,
@@ -109,7 +111,23 @@ class DamageApprovalService
                 'quantity_change' => -abs((float) $damage->quantity),
                 'notes' => $damage->reason ?: 'Stock damage / write-off',
                 'created_by' => $requester->id,
-            ], $allowBelowStock);
+            ], (int) $requester->organization_id);
+
+            $this->postStockLedger($ledgerData, $allowBelowStock);
+
+            $gate = app(ErpContext::class)->gateForUser($approver);
+            $this->postInventoryMovementJournal(
+                $approver,
+                $gate,
+                InventoryMovementJournalService::MOVEMENT_SHRINKAGE,
+                (float) $damage->quantity,
+                isset($ledgerData['unit_cost']) ? (float) $ledgerData['unit_cost'] : null,
+                'DMG-'.$damage->id,
+                'Damage write-off #'.$damage->id,
+                (int) $damage->branch_id,
+                'damage',
+                (int) $damage->id,
+            );
 
             app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($approver, 'damage_approved', [
                 'damage_id' => (int) $damage->id,

@@ -328,6 +328,7 @@ return [
             'auto_post_payments' => true,
             'auto_post_payroll' => true,
             'auto_post_returns' => true,
+            'auto_post_stock_adjustments' => true,
             'post_till_variance' => true,
             'journal_entry_approval_enabled' => false,
             'account_codes' => [

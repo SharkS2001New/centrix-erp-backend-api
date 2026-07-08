@@ -2,6 +2,8 @@
 
 namespace App\Services\Accounting;
 
+use App\Models\CustomerReturn;
+use App\Models\CustomerReturnLine;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -22,6 +24,48 @@ class SaleCogsCalculator
         return round($total, 2);
     }
 
+    public function totalCostForCustomerReturn(CustomerReturn $return): float
+    {
+        $return->loadMissing('lines');
+        $total = 0.0;
+
+        foreach ($return->lines as $line) {
+            $qty = abs((float) $line->return_qty);
+            if ($qty <= 0) {
+                continue;
+            }
+            $unitCost = $this->unitCostForReturnLine($return, $line);
+            $total += $qty * $unitCost;
+        }
+
+        return round($total, 2);
+    }
+
+    protected function unitCostForReturnLine(CustomerReturn $return, CustomerReturnLine $line): float
+    {
+        if ($return->sale_id) {
+            $txnCost = DB::table('inventory_transactions')
+                ->where('reference_id', (int) $return->sale_id)
+                ->where('product_code', $line->product_code)
+                ->where('quantity_change', '<', 0)
+                ->whereNotNull('unit_cost')
+                ->whereIn('reference_type', ['sale', 'dispatch_trip', 'sale_line_edit'])
+                ->orderByDesc('id')
+                ->value('unit_cost');
+
+            if ($txnCost !== null && (float) $txnCost > 0) {
+                return (float) $txnCost;
+            }
+        }
+
+        $product = Product::query()
+            ->where('organization_id', $return->organization_id)
+            ->where('product_code', $line->product_code)
+            ->first();
+
+        return max(0, (float) ($product?->last_cost_price ?? 0));
+    }
+
     protected function unitCostForItem(SaleItem $item, int $saleId): float
     {
         $txnCost = DB::table('inventory_transactions')
@@ -37,7 +81,14 @@ class SaleCogsCalculator
             return (float) $txnCost;
         }
 
-        $product = $item->product ?? Product::query()->find($item->product_code);
+        $product = $item->product;
+        if (! $product && $item->relationLoaded('sale') && $item->sale?->organization_id) {
+            $product = Product::query()
+                ->where('organization_id', (int) $item->sale->organization_id)
+                ->where('product_code', $item->product_code)
+                ->first();
+        }
+        $product ??= Product::query()->find($item->product_code);
 
         return max(0, (float) ($product?->last_cost_price ?? 0));
     }

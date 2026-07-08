@@ -7,9 +7,11 @@ use App\Models\ActionRequest;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
 use App\Models\User;
+use App\Services\Accounting\InventoryMovementJournalService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\ErpContext;
 use App\Services\Notifications\ActionRequestService;
 use Illuminate\Validation\ValidationException;
 
@@ -93,7 +95,7 @@ class StockAdjustmentApprovalService
 
         $allowBelowStock = $this->organizationAllowsBelowStock($approver->organization_id);
 
-        $txn = $this->postStockLedger([
+        $ledgerData = $this->withProductUnitCost([
             'branch_id' => (int) $payload['branch_id'],
             'product_code' => (string) $payload['product_code'],
             'stock_location' => (string) $payload['stock_location'],
@@ -102,7 +104,27 @@ class StockAdjustmentApprovalService
             'transaction_type' => 'ADJUSTMENT',
             'reference_type' => 'adjustment',
             'created_by' => (int) $request->requested_by,
-        ], $allowBelowStock);
+        ], (int) $approver->organization_id);
+
+        $txn = $this->postStockLedger($ledgerData, $allowBelowStock);
+
+        $qtyChange = (float) $payload['quantity_change'];
+        $movementType = $qtyChange >= 0
+            ? InventoryMovementJournalService::MOVEMENT_INCREASE
+            : InventoryMovementJournalService::MOVEMENT_SHRINKAGE;
+        $gate = app(ErpContext::class)->gateForUser($approver);
+        $this->postInventoryMovementJournal(
+            $approver,
+            $gate,
+            $movementType,
+            abs($qtyChange),
+            isset($ledgerData['unit_cost']) ? (float) $ledgerData['unit_cost'] : null,
+            'ADJ-'.$txn->id,
+            'Stock adjustment #'.$txn->id,
+            (int) $payload['branch_id'],
+            'adjustment',
+            (int) $txn->id,
+        );
 
         app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($approver, 'adjustment_approved', [
             'product_code' => (string) $payload['product_code'],
