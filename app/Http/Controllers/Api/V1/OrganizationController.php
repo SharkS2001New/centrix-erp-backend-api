@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
 use Illuminate\Support\Facades\Storage;
@@ -183,13 +184,12 @@ class OrganizationController extends BaseResourceController
             Storage::disk('public')->delete($model->logo);
         }
 
-        $file = $request->file('image');
-        $path = $file?->store('organizations/'.$model->id, 'public');
-        if (! is_string($path) || $path === '') {
-            abort(500, 'Unable to save the logo. Ensure storage/app/public is writable.');
-        }
+        $stored = app(UploadedImageProcessor::class)->storePublicImage(
+            $request->file('image'),
+            'organizations/'.$model->id,
+        );
 
-        $model->update(['logo' => $path]);
+        $model->update(['logo' => $stored['path']]);
 
         return response()->json([
             'organization' => $this->formatOrganization($model->fresh()),

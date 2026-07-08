@@ -8,7 +8,10 @@ use App\Models\Permission;
 use App\Models\Product;
 use App\Models\Role;
 use App\Models\Sale;
+use App\Models\StockReservation;
 use App\Models\User;
+use App\Services\Sales\PosLinePricingService;
+use App\Services\Sales\ProductLineDiscountService;
 use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -781,5 +784,88 @@ class DiscountApprovalCheckoutTest extends TestCase
             ],
         ])->assertOk()
             ->assertJsonPath('status', 'booked');
+    }
+
+    public function test_pending_approval_checkout_reserves_stock_on_sale(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->mobileSalesRepUser();
+        Sanctum::actingAs($staff);
+
+        $product = Product::query()->firstOrFail();
+
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $staff->branch_id,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 2,
+        ])->assertCreated();
+
+        $cartWithLine = $this->getJson("/api/v1/sales/carts/{$cart['id']}")->assertOk()->json();
+        $lineRef = $cartWithLine['lines'][0]['update_code'] ?? $cartWithLine['lines'][0]['id'];
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/discount-requests", [
+            'scope' => 'line',
+            'line_ref' => (string) $lineRef,
+            'discount_amount' => 10,
+            'reason' => 'Customer loyalty discount',
+        ])->assertAccepted();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()
+            ->assertJsonPath('status', 'pending_approval')
+            ->json();
+
+        $this->assertDatabaseHas('stock_reservations', [
+            'sale_id' => $sale['id'],
+            'product_code' => $product->product_code,
+            'released_at' => null,
+        ]);
+        $this->assertEquals(
+            0,
+            StockReservation::query()
+                ->where('cart_id', $cart['id'])
+                ->whereNull('released_at')
+                ->count(),
+        );
+    }
+
+    public function test_mobile_checkout_with_configured_product_discount_skips_pending_approval(): void
+    {
+        $this->enableDiscountApproval();
+        $staff = $this->mobileSalesRepUser();
+        Sanctum::actingAs($staff);
+
+        $product = Product::query()->firstOrFail();
+        $product->update([
+            'discount_type' => 'percentage',
+            'discount_percentage' => 10,
+        ]);
+        $product = $product->fresh();
+
+        $pricing = app(PosLinePricingService::class);
+        $discounts = app(ProductLineDiscountService::class);
+        $beforeDiscount = $pricing->lineTotalBeforeDiscount($product, 1, false, null);
+        $configuredDiscount = $discounts->computeProductLineDiscount($product, $beforeDiscount, 1);
+
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $staff->branch_id,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+            'discount_given' => $configuredDiscount,
+        ])->assertCreated();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()
+            ->assertJsonPath('status', 'unpaid');
     }
 }

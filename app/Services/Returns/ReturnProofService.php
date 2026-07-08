@@ -2,6 +2,7 @@
 
 namespace App\Services\Returns;
 
+use App\Support\UploadedImageProcessor;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
 
@@ -23,14 +24,39 @@ class ReturnProofService
     {
         $this->deleteExisting($record);
 
+        $processor = app(UploadedImageProcessor::class);
+
+        $record->forceFill(
+            $processor->isProcessableImage($file)
+                ? $this->storeOptimizedImage($processor, $file, $storageDirectory)
+                : $this->storeRawFile($file, $storageDirectory),
+        )->save();
+    }
+
+    /** @return array<string, mixed> */
+    protected function storeOptimizedImage(UploadedImageProcessor $processor, UploadedFile $file, string $storageDirectory): array
+    {
+        $stored = $processor->storePublicImage($file, trim($storageDirectory, '/'));
+
+        return [
+            'proof_file_path' => $stored['path'],
+            'proof_file_name' => $stored['file_name'],
+            'proof_file_mime_type' => $stored['mime_type'],
+            'proof_file_size' => $stored['size'],
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    protected function storeRawFile(UploadedFile $file, string $storageDirectory): array
+    {
         $path = $file->store(trim($storageDirectory, '/'), 'public');
 
-        $record->forceFill([
+        return [
             'proof_file_path' => $path,
             'proof_file_name' => $file->getClientOriginalName(),
             'proof_file_mime_type' => $file->getMimeType(),
             'proof_file_size' => $file->getSize(),
-        ])->save();
+        ];
     }
 
     public function deleteExisting(object $record): void

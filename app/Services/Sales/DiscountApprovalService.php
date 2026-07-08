@@ -12,8 +12,10 @@ use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Fulfillment\AutoTripAssignmentService;
+use App\Services\Inventory\SaleStockReservationService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Notifications\ActionRequestService;
 use App\Support\SalesCheckoutSettings;
@@ -26,6 +28,8 @@ class DiscountApprovalService
         protected UserPermissionService $permissions,
         protected PosLinePricingService $pricing,
         protected ProductCatalogScopeService $catalog,
+        protected ProductLineDiscountService $productDiscounts,
+        protected SaleStockReservationService $stockReservations,
     ) {}
 
     public function discountApprovalEnabled(array $salesSettings): bool
@@ -251,10 +255,20 @@ class DiscountApprovalService
             return true;
         }
 
+        $channel = (string) ($cart->channel ?? 'backend');
+        $bypassConfigured = in_array($channel, ['mobile', 'pos'], true);
+
         foreach ($cart->lines as $line) {
-            if ((float) ($line->discount_given ?? 0) > 0.01) {
-                return true;
+            $discountGiven = (float) ($line->discount_given ?? 0);
+            if ($discountGiven <= 0.01) {
+                continue;
             }
+
+            if ($bypassConfigured && $this->lineDiscountMatchesConfiguredProduct($cart, $line, $discountGiven)) {
+                continue;
+            }
+
+            return true;
         }
 
         return false;
@@ -268,9 +282,23 @@ class DiscountApprovalService
 
         $sale->loadMissing('items');
 
-        return $sale->items->contains(
-            fn ($item) => (float) ($item->discount_given ?? 0) > 0.01,
-        );
+        $channel = (string) ($sale->channel ?? 'backend');
+        $bypassConfigured = in_array($channel, ['mobile', 'pos'], true);
+
+        foreach ($sale->items as $item) {
+            $discountGiven = (float) ($item->discount_given ?? 0);
+            if ($discountGiven <= 0.01) {
+                continue;
+            }
+
+            if ($bypassConfigured && $this->saleItemDiscountMatchesConfiguredProduct($sale, $item, $discountGiven)) {
+                continue;
+            }
+
+            return true;
+        }
+
+        return false;
     }
 
     public function saleRequiresPendingApproval(Sale $sale, User $user, CapabilityGate $gate): bool
@@ -1263,6 +1291,9 @@ class DiscountApprovalService
         );
 
         app(AutoTripAssignmentService::class)->tryAssignSale($sale, $user);
+
+        $gate = app(ErpContext::class)->gateForUser($user);
+        $this->stockReservations->reserveIfNeeded($sale->fresh(['items']), $user, $gate);
     }
 
     public function applyFromActionRequest(ActionRequest $request): void
@@ -1406,5 +1437,83 @@ class DiscountApprovalService
     protected function isRetailLine(Product $product, bool $onWholesaleRetailFlag): bool
     {
         return (bool) $product->sell_on_retail && $onWholesaleRetailFlag;
+    }
+
+    protected function lineDiscountMatchesConfiguredProduct(
+        TemporaryCart $cart,
+        CartLine $line,
+        float $discountGiven,
+    ): bool {
+        $user = $cart->relationLoaded('user') ? $cart->user : User::query()->find($cart->user_id);
+        if ($user === null) {
+            return false;
+        }
+
+        try {
+            $product = $this->findProductForCart($cart, (string) $line->product_code, $user);
+        } catch (\Throwable) {
+            return false;
+        }
+
+        if (! $this->productDiscounts->productHasConfiguredDiscount($product)) {
+            return false;
+        }
+
+        $product->loadMissing('unit');
+        $isRetail = $this->isRetailLine($product, (bool) $line->on_wholesale_retail);
+        $salesSettings = app(ErpContext::class)->gateForUser($user)->moduleSettings('sales');
+        $routeId = app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings);
+        $beforeDiscount = $this->pricing->lineTotalBeforeDiscount(
+            $product,
+            (float) $line->quantity,
+            $isRetail,
+            $routeId,
+        );
+        $conversion = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+        $packQty = $conversion > 1 ? (float) $line->quantity / $conversion : (float) $line->quantity;
+        $configured = $this->productDiscounts->computeProductLineDiscount($product, $beforeDiscount, $packQty);
+
+        return abs($discountGiven - $configured) <= 0.02;
+    }
+
+    protected function saleItemDiscountMatchesConfiguredProduct(
+        Sale $sale,
+        $item,
+        float $discountGiven,
+    ): bool {
+        try {
+            $product = $this->catalog->findAccessibleProduct(
+                (string) $item->product_code,
+                (int) $sale->organization_id,
+                (int) ($sale->branch_id ?: 0),
+            );
+        } catch (\Throwable) {
+            return false;
+        }
+
+        if (! $this->productDiscounts->productHasConfiguredDiscount($product)) {
+            return false;
+        }
+
+        $user = $sale->relationLoaded('user') ? $sale->user : User::query()->find($sale->user_id);
+        if ($user === null) {
+            return false;
+        }
+
+        $product->loadMissing('unit');
+        $isRetail = $this->isRetailLine($product, (bool) $item->on_wholesale_retail);
+        $salesSettings = app(ErpContext::class)->gateForUser($user)->moduleSettings('sales');
+        $routeId = $sale->route_id ? (int) $sale->route_id : null;
+        $beforeDiscount = $this->pricing->lineTotalBeforeDiscount(
+            $product,
+            (float) $item->quantity,
+            $isRetail,
+            $routeId,
+        );
+        $conversion = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+        $packQty = $conversion > 1 ? (float) $item->quantity / $conversion : (float) $item->quantity;
+        $configured = $this->productDiscounts->computeProductLineDiscount($product, $beforeDiscount, $packQty);
+
+        return abs($discountGiven - $configured) <= 0.02;
     }
 }

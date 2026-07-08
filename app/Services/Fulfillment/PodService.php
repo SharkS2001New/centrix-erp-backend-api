@@ -2,6 +2,8 @@
 
 namespace App\Services\Fulfillment;
 
+use App\Support\UploadedImageProcessor;
+
 use App\Models\Organization;
 use App\Models\PodLine;
 use App\Models\PodRecord;
@@ -132,6 +134,11 @@ class PodService
     {
         if (! $file instanceof UploadedFile) {
             return null;
+        }
+
+        $processor = app(UploadedImageProcessor::class);
+        if ($processor->isProcessableImage($file)) {
+            return $processor->storePublicImage($file, "pod/{$saleId}/{$kind}")['path'];
         }
 
         return $file->store("pod/{$saleId}/{$kind}", 'public');

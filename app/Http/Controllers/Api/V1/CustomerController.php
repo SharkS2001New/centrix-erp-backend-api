@@ -10,6 +10,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Erp\ErpContext;
 use App\Services\Cache\OrganizationCache;
 use App\Support\SqlLikeSearch;
+use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
@@ -224,12 +225,12 @@ class CustomerController extends BaseResourceController
             Storage::disk('public')->delete($model->shop_image);
         }
 
-        $path = $request->file('image')->store(
+        $stored = app(UploadedImageProcessor::class)->storePublicImage(
+            $request->file('image'),
             'customers/'.$model->customer_num,
-            'public',
         );
 
-        $model->update(['shop_image' => $path]);
+        $model->update(['shop_image' => $stored['path']]);
 
         return response()->json($model->fresh());
     }

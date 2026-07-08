@@ -7,6 +7,7 @@ use App\Models\PayrollLine;
 use App\Services\Auth\UserLoginService;
 use App\Services\Cache\OrganizationCache;
 use App\Services\Hr\HrPayrollSettingsResolver;
+use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
@@ -190,8 +191,11 @@ class EmployeeController extends BaseResourceController
             Storage::disk('public')->delete($model->photo_path);
         }
 
-        $path = $request->file('image')->store('employees/'.$model->id, 'public');
-        $model->update(['photo_path' => $path]);
+        $stored = app(UploadedImageProcessor::class)->storePublicImage(
+            $request->file('image'),
+            'employees/'.$model->id,
+        );
+        $model->update(['photo_path' => $stored['path']]);
 
         return response()->json($model->fresh($this->employeeRelations()));
     }
