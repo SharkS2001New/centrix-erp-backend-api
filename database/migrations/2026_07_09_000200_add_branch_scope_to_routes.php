@@ -16,7 +16,15 @@ return new class extends Migration
 
         if (! Schema::hasColumn('routes', 'branch_id')) {
             Schema::table('routes', function (Blueprint $table) {
-                $table->unsignedBigInteger('branch_id')->nullable()->after('organization_id');
+                // branches.id is INT — must match for MySQL FK compatibility.
+                $table->integer('branch_id')->nullable()->after('organization_id');
+            });
+        } else {
+            DB::statement('ALTER TABLE routes MODIFY branch_id INT NULL');
+        }
+
+        if (! $this->indexExists('routes', 'idx_routes_org_branch')) {
+            Schema::table('routes', function (Blueprint $table) {
                 $table->index(['organization_id', 'branch_id'], 'idx_routes_org_branch');
             });
         }
@@ -116,6 +124,18 @@ return new class extends Migration
                AND constraint_name = ?
                AND constraint_type = ?',
             [$database, $table, $constraint, 'FOREIGN KEY'],
+        );
+
+        return (int) ($row->c ?? 0) > 0;
+    }
+
+    protected function indexExists(string $table, string $index): bool
+    {
+        $database = Schema::getConnection()->getDatabaseName();
+        $row = DB::selectOne(
+            'SELECT COUNT(*) AS c FROM information_schema.statistics
+             WHERE table_schema = ? AND table_name = ? AND index_name = ?',
+            [$database, $table, $index],
         );
 
         return (int) ($row->c ?? 0) > 0;
