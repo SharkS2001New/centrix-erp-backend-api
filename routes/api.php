@@ -464,7 +464,7 @@ Route::prefix('v1')->group(function () {
             Route::delete('organizations/{organization}/logo', [OrganizationController::class, 'deleteLogo'])
                 ->middleware(['erp.permission:admin.company.edit|admin.manage']);
             Route::apiResource('branches', BranchController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:admin.view|fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
             Route::get('roles/permissions/matrix', [RoleController::class, 'permissionMatrix'])
                 ->middleware('erp.permission:admin.view');
@@ -612,6 +612,8 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::middleware(['erp.module:customers_suppliers'])->group(function () {
+            Route::get('branches', [BranchController::class, 'index'])
+                ->middleware('erp.permission:fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view|admin.view');
             Route::get('supplier-payments', [SupplierPaymentController::class, 'index'])
                 ->middleware('erp.permission:purchasing.view');
 

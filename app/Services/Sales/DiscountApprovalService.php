@@ -247,7 +247,7 @@ class DiscountApprovalService
         ]);
     }
 
-    public function cartHasManualDiscount(TemporaryCart $cart): bool
+    public function cartHasManualDiscount(TemporaryCart $cart, ?User $user = null): bool
     {
         $cart->loadMissing('lines');
 
@@ -255,8 +255,19 @@ class DiscountApprovalService
             return true;
         }
 
+        $user ??= User::query()->find($cart->user_id);
+        $bypassConfiguredProduct = false;
+        if ($user !== null) {
+            $gate = app(ErpContext::class)->gateForUser($user);
+            $bypassConfiguredProduct = ! $this->requiresDiscountRequestWorkflow(
+                $gate->moduleSettings('sales'),
+                $user,
+            );
+        }
+
         $channel = (string) ($cart->channel ?? 'backend');
-        $bypassConfigured = in_array($channel, ['mobile', 'pos'], true);
+        $bypassConfigured = $bypassConfiguredProduct
+            && in_array($channel, ['mobile', 'pos'], true);
 
         foreach ($cart->lines as $line) {
             $discountGiven = (float) ($line->discount_given ?? 0);
@@ -274,7 +285,7 @@ class DiscountApprovalService
         return false;
     }
 
-    public function saleHasManualDiscount(Sale $sale): bool
+    public function saleHasManualDiscount(Sale $sale, ?User $user = null): bool
     {
         if ((float) ($sale->order_discount ?? 0) > 0.01) {
             return true;
@@ -282,8 +293,19 @@ class DiscountApprovalService
 
         $sale->loadMissing('items');
 
+        $user ??= User::query()->find($sale->cashier_id);
+        $bypassConfiguredProduct = false;
+        if ($user !== null) {
+            $gate = app(ErpContext::class)->gateForUser($user);
+            $bypassConfiguredProduct = ! $this->requiresDiscountRequestWorkflow(
+                $gate->moduleSettings('sales'),
+                $user,
+            );
+        }
+
         $channel = (string) ($sale->channel ?? 'backend');
-        $bypassConfigured = in_array($channel, ['mobile', 'pos'], true);
+        $bypassConfigured = $bypassConfiguredProduct
+            && in_array($channel, ['mobile', 'pos'], true);
 
         foreach ($sale->items as $item) {
             $discountGiven = (float) ($item->discount_given ?? 0);
