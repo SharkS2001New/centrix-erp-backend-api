@@ -27,6 +27,7 @@ RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/i
         pdo_mysql \
         gd \
         zip \
+        pcntl \
     && pecl install redis \
     && docker-php-ext-enable redis
 
@@ -54,6 +55,7 @@ RUN git config --global --add safe.directory /var/www/html || true
 RUN composer install --no-dev --optimize-autoloader --no-interaction \
     && test ! -e vendor/bin/phpunit \
     && php -m | grep -qi redis \
+    && php -m | grep -qi pcntl \
     && composer show predis/predis >/dev/null
 
 COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
