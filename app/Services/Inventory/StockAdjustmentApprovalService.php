@@ -124,6 +124,7 @@ class StockAdjustmentApprovalService
             (int) $payload['branch_id'],
             'adjustment',
             (int) $txn->id,
+            (string) $payload['product_code'],
         );
 
         app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($approver, 'adjustment_approved', [

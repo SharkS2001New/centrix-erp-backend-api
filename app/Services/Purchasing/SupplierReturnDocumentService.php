@@ -204,7 +204,11 @@ class SupplierReturnDocumentService
                 $this->postStockLedger($ledgerData, allowBelowStock: false);
 
                 $unitCost = isset($ledgerData['unit_cost']) ? (float) $ledgerData['unit_cost'] : null;
-                $lineAmount = app(InventoryMovementJournalService::class)->amountFromQtyCost($deductQty, $unitCost);
+                $factor = \App\Services\Inventory\StockCostCalculation::conversionFactorForOrganizationProduct(
+                    (int) $user->organization_id,
+                    (string) $line->product_code,
+                );
+                $lineAmount = app(InventoryMovementJournalService::class)->amountFromQtyCost($deductQty, $unitCost, $factor);
                 if ($lineAmount !== null) {
                     $journalTotal += $lineAmount;
                 }
@@ -577,7 +581,11 @@ class SupplierReturnDocumentService
                 'created_by' => $user->id,
             ], allowBelowStock: true);
 
-            $lineAmount = app(InventoryMovementJournalService::class)->amountFromQtyCost($deductQty, $unitCost > 0 ? $unitCost : null);
+            $factor = \App\Services\Inventory\StockCostCalculation::conversionFactorForOrganizationProduct(
+                (int) $user->organization_id,
+                (string) $line->product_code,
+            );
+            $lineAmount = app(InventoryMovementJournalService::class)->amountFromQtyCost($deductQty, $unitCost > 0 ? $unitCost : null, $factor);
             if ($lineAmount !== null) {
                 $journalTotal += $lineAmount;
             }

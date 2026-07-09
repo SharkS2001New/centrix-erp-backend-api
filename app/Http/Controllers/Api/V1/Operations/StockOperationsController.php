@@ -86,6 +86,7 @@ class StockOperationsController extends Controller
             (int) $data['branch_id'],
             'adjustment',
             (int) $txn->id,
+            (string) $data['product_code'],
         );
 
         app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($user, 'adjustment', [

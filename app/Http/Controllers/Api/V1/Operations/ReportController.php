@@ -274,20 +274,32 @@ class ReportController extends Controller
         $storeInventoryValue = $inventorySummary['store_value'];
         $inventoryValue = $inventorySummary['value'];
 
-        $receiptValue = (float) DB::table('stock_receipts')
-            ->whereDate('created_at', '>=', $from->toDateString())
-            ->whereDate('created_at', '<=', $to->toDateString())
-            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
-            ->selectRaw('SUM(units_received * COALESCE(cost_price, 0)) as total')
+        $receiptValueSql = 'SUM((sr.units_received / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * COALESCE(sr.cost_price, 0))';
+
+        $receiptValue = (float) DB::table('stock_receipts as sr')
+            ->join('products as p', function ($join) {
+                $join->on('p.product_code', '=', 'sr.product_code')
+                    ->on('p.organization_id', '=', 'sr.organization_id');
+            })
+            ->join('uoms as u', 'u.id', '=', 'p.unit_id')
+            ->whereDate('sr.created_at', '>=', $from->toDateString())
+            ->whereDate('sr.created_at', '<=', $to->toDateString())
+            ->when($orgId, fn ($q) => $q->where('sr.organization_id', $orgId))
+            ->when($branchId, fn ($q) => $q->where('sr.branch_id', $branchId))
+            ->selectRaw("{$receiptValueSql} as total")
             ->value('total');
 
-        $prevReceiptValue = (float) DB::table('stock_receipts')
-            ->whereDate('created_at', '>=', $prevFrom->toDateString())
-            ->whereDate('created_at', '<=', $prevTo->toDateString())
-            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
-            ->selectRaw('SUM(units_received * COALESCE(cost_price, 0)) as total')
+        $prevReceiptValue = (float) DB::table('stock_receipts as sr')
+            ->join('products as p', function ($join) {
+                $join->on('p.product_code', '=', 'sr.product_code')
+                    ->on('p.organization_id', '=', 'sr.organization_id');
+            })
+            ->join('uoms as u', 'u.id', '=', 'p.unit_id')
+            ->whereDate('sr.created_at', '>=', $prevFrom->toDateString())
+            ->whereDate('sr.created_at', '<=', $prevTo->toDateString())
+            ->when($orgId, fn ($q) => $q->where('sr.organization_id', $orgId))
+            ->when($branchId, fn ($q) => $q->where('sr.branch_id', $branchId))
+            ->selectRaw("{$receiptValueSql} as total")
             ->value('total');
 
         $prevInventory = max(0, $inventoryValue - $receiptValue + $prevReceiptValue);
@@ -654,9 +666,20 @@ class ReportController extends Controller
 
     public function stockChain(Request $request)
     {
-        return response()->json($this->reportFromView('v_stock_chain', $this->filters($request), [
-            'branch_id', 'product_code',
-        ]));
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        if (! $orgId) {
+            return response()->json([
+                'data' => [],
+                'total' => 0,
+                'per_page' => min(max((int) $request->input('per_page', 20), 1), 200),
+                'current_page' => max((int) $request->input('page', 1), 1),
+                'last_page' => 1,
+            ]);
+        }
+
+        return response()->json(
+            app(\App\Services\Inventory\StockChainReportService::class)->paginate($request, $orgId),
+        );
     }
 
     public function stockValuation(Request $request)

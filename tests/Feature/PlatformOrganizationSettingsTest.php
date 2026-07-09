@@ -49,6 +49,49 @@ class PlatformOrganizationSettingsTest extends TestCase
         $this->assertSame('USD', $org->module_settings['general']['currency'] ?? null);
     }
 
+    public function test_super_admin_can_enable_tab_workspace_and_tenant_cannot_override(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'TABORG',
+            'org_name' => 'Tab Workspace Org',
+            'org_email' => 'tab@org.com',
+            'primary_tel' => '0711000002',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'enabled_modules' => ['sales' => true, 'admin' => true],
+            'admin_username' => 'tab_admin',
+            'admin_email' => 'tab@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Tab Admin',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}/settings/general", [
+            'enable_tab_workspace' => true,
+        ])->assertOk()
+            ->assertJsonPath('general.enable_tab_workspace', true);
+
+        $orgAdmin = User::where('username', 'tab_admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $this->patchJson('/api/v1/erp/settings/general', [
+            'enable_tab_workspace' => false,
+        ])->assertOk();
+
+        $org = Organization::findOrFail($orgId);
+        $this->assertTrue($org->module_settings['general']['enable_tab_workspace'] ?? false);
+
+        $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->assertJsonPath('platform_tab_workspace_enabled', true);
+    }
+
     public function test_tenant_admin_cannot_use_platform_settings_proxy(): void
     {
         $orgAdmin = User::where('username', 'admin')->firstOrFail();

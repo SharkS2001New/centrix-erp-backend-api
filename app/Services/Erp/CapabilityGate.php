@@ -378,6 +378,13 @@ class CapabilityGate
         return (bool) ($admin['enable_advanced_data_import'] ?? false);
     }
 
+    public function tabWorkspacePlatformEnabled(): bool
+    {
+        $general = $this->moduleSettings('general');
+
+        return (bool) ($general['enable_tab_workspace'] ?? false);
+    }
+
     /** @return array<string, bool> */
     public function advancedDataImportPagesEnabled(): array
     {
@@ -628,6 +635,7 @@ class CapabilityGate
             'platform_ai_enabled' => $this->aiPlatformEnabled(),
             'platform_whatsapp_enabled' => $this->whatsappPlatformEnabled(),
             'platform_advanced_data_import_enabled' => $this->advancedDataImportPlatformEnabled(),
+            'platform_tab_workspace_enabled' => $this->tabWorkspacePlatformEnabled(),
             'advanced_data_import_pages' => $this->advancedDataImportPagesEnabled(),
             'modules' => $this->allModules(),
             'channels' => $this->allowedChannels(),

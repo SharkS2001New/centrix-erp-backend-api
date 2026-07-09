@@ -8,6 +8,7 @@ use App\Models\Product;
 use App\Models\StockTakeSession;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Inventory\StockCostCalculation;
 use Illuminate\Support\Collection;
 
 class StockTakeJournalService
@@ -70,11 +71,13 @@ class StockTakeJournalService
             }
 
             $product = Product::query()
+                ->with('unit')
                 ->where('organization_id', $orgId)
                 ->where('product_code', $line->product_code)
                 ->first();
             $unitCost = max(0, (float) ($product?->last_cost_price ?? 0));
-            $amount = round(abs($variance) * $unitCost, 2);
+            $factor = StockCostCalculation::conversionFactorForProduct($product);
+            $amount = StockCostCalculation::lineCostFromBaseQuantity(abs($variance), $unitCost, $factor);
             if ($amount <= 0) {
                 continue;
             }

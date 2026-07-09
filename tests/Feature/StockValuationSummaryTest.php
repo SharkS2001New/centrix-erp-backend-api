@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\Product;
 use App\Models\User;
+use App\Models\CurrentStock;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -72,5 +73,37 @@ class StockValuationSummaryTest extends TestCase
 
         $this->assertNotNull($row);
         $this->assertSame(80.0, (float) $row['effective_unit_cost']);
+    }
+
+    public function test_inventory_valuation_summary_uses_uom_conversion_factor(): void
+    {
+        $product = Product::query()->with('unit')->firstOrFail();
+        $branchId = (int) $this->user->branch_id;
+
+        $product->unit?->update(['conversion_factor' => 24]);
+        $product->update(['last_cost_price' => 1200]);
+
+        CurrentStock::query()->updateOrCreate(
+            [
+                'product_code' => $product->product_code,
+                'branch_id' => $branchId,
+            ],
+            [
+                'shop_quantity' => 48,
+                'store_quantity' => 0,
+            ],
+        );
+
+        $response = $this->getJson('/api/v1/reports/inventory-valuation-summary?branch_id='.$branchId)
+            ->assertOk();
+
+        $row = $this->getJson(
+            '/api/v1/reports/stock-on-hand?branch_id='.$branchId.'&product_code='.$product->product_code,
+        )->json('data.0');
+
+        $this->assertNotNull($row);
+        $this->assertSame(2400.0, (float) $row['shop_cost_value']);
+        $this->assertSame(2400.0, (float) $row['total_cost_value']);
+        $this->assertGreaterThanOrEqual(2400.0, (float) $response->json('shop_value'));
     }
 }

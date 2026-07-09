@@ -8,6 +8,7 @@ class StockValuationService
 {
     /**
      * Effective unit cost: product last cost, else latest purchase receipt, else zero.
+     * Cost is per purchase/package unit (not per base unit).
      */
     public function effectiveUnitCostExpression(string $productAlias = 'p', string $branchAlias = 'b'): string
     {
@@ -32,6 +33,17 @@ COALESCE(
     0
 )
 SQL;
+    }
+
+    public function stockCostValueSql(
+        string $quantityExpression,
+        string $productAlias = 'p',
+        string $branchAlias = 'b',
+        string $uomAlias = 'u',
+    ): string {
+        $unitCost = $this->effectiveUnitCostExpression($productAlias, $branchAlias);
+
+        return StockCostCalculation::costValueSqlExpression($quantityExpression, $unitCost, $uomAlias);
     }
 
     public function effectiveUnitCostForProduct(int $organizationId, string $productCode): float
@@ -60,7 +72,8 @@ SQL;
             ];
         }
 
-        $unitCost = $this->effectiveUnitCostExpression();
+        $shopValueSql = $this->stockCostValueSql('cs.shop_quantity');
+        $storeValueSql = $this->stockCostValueSql('cs.store_quantity');
 
         $query = DB::table('current_stock as cs')
             ->join('branches as b', 'b.id', '=', 'cs.branch_id')
@@ -68,6 +81,7 @@ SQL;
                 $join->on('p.product_code', '=', 'cs.product_code')
                     ->on('p.organization_id', '=', 'b.organization_id');
             })
+            ->join('uoms as u', 'u.id', '=', 'p.unit_id')
             ->where('b.organization_id', $organizationId)
             ->whereNull('p.deleted_at');
 
@@ -76,8 +90,8 @@ SQL;
         }
 
         $totals = $query
-            ->selectRaw("COALESCE(SUM(cs.shop_quantity * ({$unitCost})), 0) as shop_value")
-            ->selectRaw("COALESCE(SUM(cs.store_quantity * ({$unitCost})), 0) as store_value")
+            ->selectRaw("COALESCE(SUM({$shopValueSql}), 0) as shop_value")
+            ->selectRaw("COALESCE(SUM({$storeValueSql}), 0) as store_value")
             ->first();
 
         $shopValue = round((float) ($totals->shop_value ?? 0), 2);

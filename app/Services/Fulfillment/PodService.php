@@ -152,4 +152,40 @@ class PodService
 
         return PodRecord::query()->where('sale_id', $sale->id)->exists();
     }
+
+    /**
+     * @param  list<int>  $saleIds
+     * @return \Illuminate\Support\Collection<int, PodRecord>
+     */
+    public function latestBySaleIds(array $saleIds): \Illuminate\Support\Collection
+    {
+        if ($saleIds === []) {
+            return collect();
+        }
+
+        return PodRecord::query()
+            ->whereIn('sale_id', $saleIds)
+            ->orderByDesc('captured_at')
+            ->get()
+            ->unique('sale_id')
+            ->keyBy('sale_id');
+    }
+
+    /** @return array<string, mixed>|null */
+    public function presentSummary(?PodRecord $record): ?array
+    {
+        if (! $record) {
+            return null;
+        }
+
+        return [
+            'id' => (int) $record->id,
+            'recipient_name' => $record->recipient_name,
+            'captured_at' => $record->captured_at?->toIso8601String(),
+            'status' => $record->status,
+            'notes' => $record->notes,
+            'has_photo' => ! empty($record->photo_path),
+            'has_signature' => ! empty($record->signature_path),
+        ];
+    }
 }

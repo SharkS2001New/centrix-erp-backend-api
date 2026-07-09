@@ -7,6 +7,7 @@ use App\Models\JournalEntry;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Inventory\StockCostCalculation;
 
 class InventoryMovementJournalService
 {
@@ -23,9 +24,13 @@ class InventoryMovementJournalService
         protected JournalPostingService $posting,
     ) {}
 
-    public function amountFromQtyCost(float $qty, ?float $unitCost): ?float
+    public function amountFromQtyCost(float $qty, ?float $unitCost, mixed $conversionFactor = 1): ?float
     {
-        $amount = round(abs($qty) * max(0, (float) ($unitCost ?? 0)), 2);
+        $amount = StockCostCalculation::lineCostFromBaseQuantity(
+            $qty,
+            max(0, (float) ($unitCost ?? 0)),
+            $conversionFactor,
+        );
 
         return $amount > 0 ? $amount : null;
     }

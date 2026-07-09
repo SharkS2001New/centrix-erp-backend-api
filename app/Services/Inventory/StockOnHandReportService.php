@@ -44,6 +44,9 @@ class StockOnHandReportService
 
         $totalSql = '(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))';
         $unitCostSql = $this->valuation->effectiveUnitCostExpression('p', 'br');
+        $shopCostValueSql = $this->valuation->stockCostValueSql('COALESCE(cs.shop_quantity, 0)', 'p', 'br');
+        $storeCostValueSql = $this->valuation->stockCostValueSql('COALESCE(cs.store_quantity, 0)', 'p', 'br');
+        $totalCostValueSql = $this->valuation->stockCostValueSql($totalSql, 'p', 'br');
 
         $query = DB::table('products as p')
             ->join('uoms as u', 'u.id', '=', 'p.unit_id')
@@ -71,6 +74,9 @@ class StockOnHandReportService
                 DB::raw('COALESCE(cs.shop_quantity, 0) as shop_quantity'),
                 DB::raw('COALESCE(cs.store_quantity, 0) as store_quantity'),
                 DB::raw("{$totalSql} as total_base_units"),
+                DB::raw("{$shopCostValueSql} as shop_cost_value"),
+                DB::raw("{$storeCostValueSql} as store_cost_value"),
+                DB::raw("{$totalCostValueSql} as total_cost_value"),
                 'p.reorder_point',
                 'p.low_stock_alert_enabled',
                 DB::raw("CASE WHEN {$totalSql} <= COALESCE(p.reorder_point, 0) THEN 'REORDER' ELSE 'OK' END as product_alert"),

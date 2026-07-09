@@ -5,6 +5,7 @@ namespace App\Services\Fulfillment;
 use App\Models\CustomerReturn;
 use App\Models\DispatchTrip;
 use App\Models\User;
+use App\Services\Fulfillment\PodService;
 
 class TripReconciliationService
 {
@@ -14,6 +15,7 @@ class TripReconciliationService
         protected DispatchTripService $trips,
         protected TripFinancialSummaryService $financials,
         protected TripCodService $tripCod,
+        protected PodService $podService,
     ) {}
 
     /** @return array<string, mixed> */
@@ -44,6 +46,9 @@ class TripReconciliationService
             $trip->sales->pluck('id')->map(fn ($id) => (int) $id)->all(),
         );
 
+        $saleIds = $trip->sales->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $podBySale = $this->podService->latestBySaleIds($saleIds);
+
         foreach ($trip->sales as $sale) {
             $balance = $this->tripCod->balanceDue($sale);
             $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
@@ -59,7 +64,8 @@ class TripReconciliationService
             $isResolved = $isFullDelivered
                 || ($isPartial && $isDelivered && $hasReturn)
                 || ($isCancelled && $hasReturn);
-            $podCaptured = ! empty($meta['pod_captured']);
+            $podRecord = $podBySale->get($sale->id);
+            $podCaptured = ! empty($meta['pod_captured']) || $podRecord !== null;
 
             if ($isFullDelivered) {
                 $deliveredCount++;
@@ -95,6 +101,9 @@ class TripReconciliationService
                 'return_no' => $returnNo,
                 'is_credit_sale' => (bool) $sale->is_credit_sale,
                 'pod_captured' => $podCaptured,
+                'pod_record_id' => $podRecord?->id,
+                'pod_has_photo' => ! empty($podRecord?->photo_path),
+                'pod_has_signature' => ! empty($podRecord?->signature_path),
                 'is_delivered' => $isDelivered,
                 'is_full_delivered' => $isFullDelivered,
                 'is_cancelled' => $isCancelled,

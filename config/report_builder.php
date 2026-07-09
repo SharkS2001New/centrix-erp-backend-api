@@ -253,7 +253,7 @@ return [
             'org_column' => 'p.organization_id',
             'branch_column' => 'cs.branch_id',
             'default_date_column' => null,
-            'always_join' => ['products', 'branches'],
+            'always_join' => ['products', 'branches', 'uoms'],
             'base_where' => [
                 ['p.deleted_at', '=', null],
             ],
@@ -266,8 +266,9 @@ return [
                     [['p.organization_id', '=', 'b.organization_id']],
                 ],
                 'branches' => ['branches as b', 'b.id', '=', 'cs.branch_id'],
+                'uoms' => ['uoms as u', 'u.id', '=', 'p.unit_id'],
             ],
-            'join_order' => ['branches', 'products'],
+            'join_order' => ['branches', 'products', 'uoms'],
             'fields' => [
                 'product_code' => [
                     'label' => 'Product code',
@@ -309,28 +310,28 @@ return [
                 ],
                 'cost_value' => [
                     'label' => 'Cost value',
-                    'expr' => '(cs.shop_quantity + cs.store_quantity) * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
+                    'expr' => '((cs.shop_quantity + cs.store_quantity) / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
                     'type' => 'money',
                     'aggregates' => ['sum'],
                     'requires_join' => 'products',
                 ],
                 'shop_cost_value' => [
                     'label' => 'Shop cost value',
-                    'expr' => 'cs.shop_quantity * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
+                    'expr' => '(cs.shop_quantity / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
                     'type' => 'money',
                     'aggregates' => ['sum'],
                     'requires_join' => 'products',
                 ],
                 'store_cost_value' => [
                     'label' => 'Store cost value',
-                    'expr' => 'cs.store_quantity * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
+                    'expr' => '(cs.store_quantity / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * COALESCE(NULLIF(p.last_cost_price, 0), (SELECT sr.cost_price FROM stock_receipts sr WHERE sr.organization_id = b.organization_id AND sr.product_code = p.product_code AND sr.cost_price IS NOT NULL AND sr.cost_price > 0 ORDER BY sr.id DESC LIMIT 1), 0)',
                     'type' => 'money',
                     'aggregates' => ['sum'],
                     'requires_join' => 'products',
                 ],
                 'retail_value' => [
                     'label' => 'Retail value',
-                    'expr' => '(cs.shop_quantity + cs.store_quantity) * p.unit_price',
+                    'expr' => '((cs.shop_quantity + cs.store_quantity) / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * p.unit_price',
                     'type' => 'money',
                     'aggregates' => ['sum'],
                     'requires_join' => 'products',

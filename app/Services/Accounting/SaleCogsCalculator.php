@@ -7,6 +7,7 @@ use App\Models\CustomerReturnLine;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
+use App\Services\Inventory\StockCostCalculation;
 use Illuminate\Support\Facades\DB;
 
 class SaleCogsCalculator
@@ -18,7 +19,12 @@ class SaleCogsCalculator
 
         foreach ($sale->items as $item) {
             $unitCost = $this->unitCostForItem($item, (int) $sale->id);
-            $total += abs((float) $item->quantity) * $unitCost;
+            $factor = StockCostCalculation::conversionFactorForProduct($item->product);
+            $total += StockCostCalculation::lineCostFromBaseQuantity(
+                abs((float) $item->quantity),
+                $unitCost,
+                $factor,
+            );
         }
 
         return round($total, 2);
@@ -35,7 +41,13 @@ class SaleCogsCalculator
                 continue;
             }
             $unitCost = $this->unitCostForReturnLine($return, $line);
-            $total += $qty * $unitCost;
+            $product = Product::query()
+                ->with('unit')
+                ->where('organization_id', $return->organization_id)
+                ->where('product_code', $line->product_code)
+                ->first();
+            $factor = StockCostCalculation::conversionFactorForProduct($product);
+            $total += StockCostCalculation::lineCostFromBaseQuantity($qty, $unitCost, $factor);
         }
 
         return round($total, 2);

@@ -52,6 +52,25 @@ class OrganizationPlatformConfigService
         return config('erp.platform_controlled.admin', []);
     }
 
+    /** @return list<string> */
+    public function platformControlledGeneralKeys(): array
+    {
+        return config('erp.platform_controlled.general', []);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    public function filterOrgManagerGeneralPayload(array $data): array
+    {
+        foreach ($this->platformControlledGeneralKeys() as $key) {
+            unset($data[$key]);
+        }
+
+        return $data;
+    }
+
     /**
      * @param  array<string, mixed>  $salesPlatform
      */

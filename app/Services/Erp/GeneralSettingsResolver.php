@@ -115,6 +115,7 @@ class GeneralSettingsResolver
         $out['print_footer_lpo'] = self::normalizeFooterField($out['print_footer_lpo'] ?? '');
         $out['print_footer_loading_sheet'] = self::normalizeFooterField($out['print_footer_loading_sheet'] ?? '');
         $out['show_organization_on_documents'] = (bool) ($out['show_organization_on_documents'] ?? true);
+        $out['enable_tab_workspace'] = (bool) ($out['enable_tab_workspace'] ?? false);
         $out['document_header_display'] = in_array($out['document_header_display'] ?? '', ['auto', 'logo', 'name', 'logo_and_name'], true)
             ? $out['document_header_display']
             : 'auto';

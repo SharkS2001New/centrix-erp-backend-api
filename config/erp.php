@@ -197,6 +197,9 @@ return [
             'reserve_stock_on_cart',
             'cart_reservation_ttl_minutes',
         ],
+        'general' => [
+            'enable_tab_workspace',
+        ],
     ],
 
     /*
@@ -537,6 +540,7 @@ return [
             'advanced_data_import_pages' => [],
         ],
         'general' => [
+            'enable_tab_workspace' => false,
             'currency' => 'KES',
             'timezone' => 'Africa/Nairobi',
             'date_format' => 'DD/MM/YYYY',

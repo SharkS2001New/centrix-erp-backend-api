@@ -189,8 +189,9 @@ class MobileDriverService
         $driver = $this->requireDriver($user);
         $sale = $this->findDriverStop($driver, $saleId);
         $sale->load(['items.product', 'customer']);
+        $podRecord = $this->podService->latestBySaleIds([(int) $sale->id])->get($sale->id);
 
-        return $this->presentStop($sale, includeLines: true);
+        return $this->presentStop($sale, includeLines: true, podRecord: $podRecord);
     }
 
     /**
@@ -284,7 +285,10 @@ class MobileDriverService
             $sale->update(['fulfillment_meta' => $meta]);
         }
 
-        return $this->presentStop($sale->load(['items.product', 'customer']), includeLines: true);
+        $sale = $sale->fresh(['items.product', 'customer']);
+        $podRecord = $this->podService->latestBySaleIds([(int) $sale->id])->get($sale->id);
+
+        return $this->presentStop($sale->load(['items.product', 'customer']), includeLines: true, podRecord: $podRecord);
     }
 
     /** @return array<string, mixed> */
@@ -581,8 +585,11 @@ class MobileDriverService
             'sales' => fn ($q) => $q->with(['customer'])->orderBy('dispatch_trip_sales.stop_seq'),
         ]);
 
+        $saleIds = $trip->sales->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $podBySale = $this->podService->latestBySaleIds($saleIds);
+
         return $trip->sales
-            ->map(fn (Sale $sale) => $this->presentStop($sale))
+            ->map(fn (Sale $sale) => $this->presentStop($sale, podRecord: $podBySale->get($sale->id)))
             ->values()
             ->all();
     }
@@ -631,13 +638,14 @@ class MobileDriverService
     }
 
     /** @return array<string, mixed> */
-    protected function presentStop(Sale $sale, bool $includeLines = false): array
+    protected function presentStop(Sale $sale, bool $includeLines = false, ?PodRecord $podRecord = null): array
     {
         $customer = $sale->customer;
         $meta = $sale->fulfillment_meta ?? [];
         $balanceDue = max(0, (float) $sale->order_total - (float) $sale->amount_paid);
         $isDelivered = in_array((string) $sale->status, ['delivered', 'completed'], true);
         $isDeliverable = (string) $sale->status === 'processed' && ! $isDelivered;
+        $podCaptured = ! empty($meta['pod_captured']) || $podRecord !== null;
 
         $payload = [
             'sale_id' => (int) $sale->id,
@@ -658,7 +666,8 @@ class MobileDriverService
             'order_total' => (float) $sale->order_total,
             'amount_paid' => (float) $sale->amount_paid,
             'balance_due' => round($balanceDue, 2),
-            'pod_captured' => ! empty($meta['pod_captured']) || PodRecord::query()->where('sale_id', $sale->id)->exists(),
+            'pod_captured' => $podCaptured,
+            'pod_record' => $this->podService->presentSummary($podRecord),
             'trip_id' => isset($meta['trip_id']) ? (int) $meta['trip_id'] : null,
             'delivery_outcome' => $meta['driver_delivery_outcome'] ?? ($isDelivered ? 'complete' : null),
             'delivery_reason' => $meta['driver_delivery_reason'] ?? null,

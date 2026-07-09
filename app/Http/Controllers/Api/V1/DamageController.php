@@ -227,6 +227,7 @@ class DamageController extends BaseResourceController
             (int) $damage->branch_id,
             'damage',
             (int) $damage->id,
+            (string) $damage->product_code,
         );
     }
 
@@ -273,6 +274,7 @@ class DamageController extends BaseResourceController
             (int) $damage->branch_id,
             'damage_reversal',
             (int) $damage->id,
+            (string) $damage->product_code,
         );
     }
 }

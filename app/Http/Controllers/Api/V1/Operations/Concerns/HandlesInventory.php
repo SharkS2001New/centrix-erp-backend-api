@@ -324,9 +324,14 @@ trait HandlesInventory
         ?int $branchId,
         string $referenceType,
         int $referenceId,
+        string $productCode,
     ): void {
+        $factor = \App\Services\Inventory\StockCostCalculation::conversionFactorForOrganizationProduct(
+            (int) $user->organization_id,
+            $productCode,
+        );
         $amount = app(\App\Services\Accounting\InventoryMovementJournalService::class)
-            ->amountFromQtyCost($qty, $unitCost);
+            ->amountFromQtyCost($qty, $unitCost, $factor);
         if ($amount === null) {
             return;
         }

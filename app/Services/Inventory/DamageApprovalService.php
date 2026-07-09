@@ -127,6 +127,7 @@ class DamageApprovalService
                 (int) $damage->branch_id,
                 'damage',
                 (int) $damage->id,
+                (string) $damage->product_code,
             );
 
             app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($approver, 'damage_approved', [

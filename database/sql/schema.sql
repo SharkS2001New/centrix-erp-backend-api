@@ -2073,7 +2073,13 @@ SELECT
     it.product_code,
     p.product_name,
     p.unit_id,
-    MIN(CASE WHEN it.transaction_type = 'PURCHASE' THEN it.created_at END) AS first_received_at,
+    MIN(CASE WHEN it.transaction_type = 'PURCHASE' AND it.quantity_change > 0 THEN it.created_at END) AS first_received_at,
+    MIN(CASE WHEN it.transaction_type = 'ADJUSTMENT' AND it.quantity_change > 0 THEN it.created_at END) AS first_adjustment_at,
+    MIN(CASE
+        WHEN it.quantity_change > 0
+         AND it.transaction_type IN ('PURCHASE', 'ADJUSTMENT')
+        THEN it.created_at
+    END) AS first_entered_at,
     MIN(CASE WHEN it.transaction_type IN ('POS_SALE','MOBILE_SALE','BACKEND_SALE') THEN it.created_at END) AS first_sold_at,
     MAX(it.created_at) AS last_movement_at,
     SUM(CASE
@@ -2126,13 +2132,70 @@ SELECT
     cs.shop_quantity,
     cs.store_quantity,
     (cs.shop_quantity + cs.store_quantity) AS total_qty,
+    u.conversion_factor,
     p.last_cost_price,
+    COALESCE(
+        NULLIF(p.last_cost_price, 0),
+        (
+            SELECT sr.cost_price
+            FROM stock_receipts sr
+            WHERE sr.organization_id = b.organization_id
+              AND sr.product_code = p.product_code
+              AND sr.cost_price IS NOT NULL
+              AND sr.cost_price > 0
+            ORDER BY sr.id DESC
+            LIMIT 1
+        ),
+        0
+    ) AS effective_unit_cost,
     p.unit_price,
-    (cs.shop_quantity + cs.store_quantity) * COALESCE(p.last_cost_price, 0) AS cost_value,
-    (cs.shop_quantity + cs.store_quantity) * p.unit_price AS retail_value
+    (cs.shop_quantity / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * COALESCE(
+        NULLIF(p.last_cost_price, 0),
+        (
+            SELECT sr.cost_price
+            FROM stock_receipts sr
+            WHERE sr.organization_id = b.organization_id
+              AND sr.product_code = p.product_code
+              AND sr.cost_price IS NOT NULL
+              AND sr.cost_price > 0
+            ORDER BY sr.id DESC
+            LIMIT 1
+        ),
+        0
+    ) AS shop_cost_value,
+    (cs.store_quantity / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * COALESCE(
+        NULLIF(p.last_cost_price, 0),
+        (
+            SELECT sr.cost_price
+            FROM stock_receipts sr
+            WHERE sr.organization_id = b.organization_id
+              AND sr.product_code = p.product_code
+              AND sr.cost_price IS NOT NULL
+              AND sr.cost_price > 0
+            ORDER BY sr.id DESC
+            LIMIT 1
+        ),
+        0
+    ) AS store_cost_value,
+    ((cs.shop_quantity + cs.store_quantity) / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * COALESCE(
+        NULLIF(p.last_cost_price, 0),
+        (
+            SELECT sr.cost_price
+            FROM stock_receipts sr
+            WHERE sr.organization_id = b.organization_id
+              AND sr.product_code = p.product_code
+              AND sr.cost_price IS NOT NULL
+              AND sr.cost_price > 0
+            ORDER BY sr.id DESC
+            LIMIT 1
+        ),
+        0
+    ) AS cost_value,
+    ((cs.shop_quantity + cs.store_quantity) / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * p.unit_price AS retail_value
 FROM current_stock cs
 JOIN branches b ON b.id = cs.branch_id
 JOIN products p ON cs.product_code = p.product_code AND p.organization_id = b.organization_id
+JOIN uoms u ON u.id = p.unit_id
 WHERE p.deleted_at IS NULL;
 
 DROP VIEW IF EXISTS v_daily_sales;

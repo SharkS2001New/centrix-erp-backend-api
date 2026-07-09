@@ -2,7 +2,6 @@
 
 namespace App\Services\Inventory;
 
-use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -22,7 +21,7 @@ class StockChainReportService
             : null;
 
         if ($branchId === null && $request->user()) {
-            $branchId = app(UserAccessService::class)->branchId($request->user());
+            $branchId = app(\App\Services\Auth\UserAccessService::class)->branchId($request->user());
         }
 
         $branchIds = $branchId
@@ -37,26 +36,35 @@ class StockChainReportService
             return $this->emptyPage($perPage, $page);
         }
 
-        $receivedValueSql = <<<'SQL'
-SUM(CASE
-    WHEN it.transaction_type = 'PURCHASE' AND it.quantity_change > 0
-    THEN it.quantity_change * COALESCE(it.unit_cost, p.last_cost_price, 0)
-    ELSE 0
-END)
-SQL;
+        $fromDate = $request->filled('from_date') ? (string) $request->input('from_date') : null;
+        $toDate = $request->filled('to_date') ? (string) $request->input('to_date') : null;
+        $hasPeriod = $fromDate !== null || $toDate !== null;
 
-        $soldValueSql = <<<'SQL'
-SUM(CASE
-    WHEN it.transaction_type IN ('POS_SALE', 'MOBILE_SALE', 'BACKEND_SALE')
-    THEN COALESCE(
-        si.amount,
-        ABS(it.quantity_change) * COALESCE(si.selling_price, p.unit_price, 0)
-    )
-    ELSE 0
-END)
-SQL;
+        $saleTypeList = implode(', ', array_map(fn ($t) => "'{$t}'", self::SALE_TYPES));
 
-        $query = DB::table('inventory_transactions as it')
+        $lifecycleSub = DB::table('inventory_transactions as it')
+            ->join('products as p', function ($join) use ($organizationId) {
+                $join->on('p.product_code', '=', 'it.product_code')
+                    ->where('p.organization_id', '=', $organizationId)
+                    ->whereNull('p.deleted_at');
+            })
+            ->whereIn('it.branch_id', $branchIds)
+            ->groupBy('it.branch_id', 'it.product_code')
+            ->select([
+                'it.branch_id',
+                'it.product_code',
+                DB::raw("MIN(CASE WHEN it.transaction_type = 'PURCHASE' AND it.quantity_change > 0 THEN it.created_at END) AS first_received_at"),
+                DB::raw("MIN(CASE WHEN it.transaction_type = 'ADJUSTMENT' AND it.quantity_change > 0 THEN it.created_at END) AS first_adjustment_at"),
+                DB::raw("MIN(CASE
+                    WHEN it.quantity_change > 0
+                     AND it.transaction_type IN ('PURCHASE', 'ADJUSTMENT')
+                    THEN it.created_at
+                END) AS first_entered_at"),
+                DB::raw("MIN(CASE WHEN it.transaction_type IN ({$saleTypeList}) THEN it.created_at END) AS first_sold_at"),
+                DB::raw('MAX(it.created_at) AS last_movement_at'),
+            ]);
+
+        $periodTotalsSub = DB::table('inventory_transactions as it')
             ->join('products as p', function ($join) use ($organizationId) {
                 $join->on('p.product_code', '=', 'it.product_code')
                     ->where('p.organization_id', '=', $organizationId)
@@ -67,39 +75,88 @@ SQL;
                     ->on('si.product_code', '=', 'it.product_code')
                     ->where('it.reference_type', '=', 'sale');
             })
-            ->leftJoin('current_stock as cs', function ($join) {
-                $join->on('cs.product_code', '=', 'it.product_code')
-                    ->on('cs.branch_id', '=', 'it.branch_id');
-            })
             ->whereIn('it.branch_id', $branchIds)
-            ->when($request->filled('product_code'), fn ($q) => $q->where('it.product_code', $request->input('product_code')))
-            ->when($request->filled('from_date'), fn ($q) => $q->whereDate('it.created_at', '>=', $request->input('from_date')))
-            ->when($request->filled('to_date'), fn ($q) => $q->whereDate('it.created_at', '<=', $request->input('to_date')))
-            ->groupBy([
-                'it.branch_id',
-                'it.product_code',
-                'p.product_name',
-                'p.unit_id',
-                'cs.shop_quantity',
-                'cs.store_quantity',
-            ])
+            ->when($fromDate, fn ($q) => $q->whereDate('it.created_at', '>=', $fromDate))
+            ->when($toDate, fn ($q) => $q->whereDate('it.created_at', '<=', $toDate))
+            ->groupBy('it.branch_id', 'it.product_code')
             ->select([
                 'it.branch_id',
                 'it.product_code',
+                DB::raw("SUM(CASE
+                    WHEN it.transaction_type = 'PURCHASE' AND it.quantity_change > 0
+                    THEN it.quantity_change * COALESCE(it.unit_cost, p.last_cost_price, 0)
+                    ELSE 0
+                END) AS total_received"),
+                DB::raw("SUM(CASE
+                    WHEN it.transaction_type IN ({$saleTypeList})
+                    THEN COALESCE(
+                        si.amount,
+                        ABS(it.quantity_change) * COALESCE(si.selling_price, p.unit_price, 0)
+                    )
+                    ELSE 0
+                END) AS total_sold"),
+            ]);
+
+        $keysSub = DB::table('inventory_transactions as it')
+            ->join('products as p', function ($join) use ($organizationId) {
+                $join->on('p.product_code', '=', 'it.product_code')
+                    ->where('p.organization_id', '=', $organizationId)
+                    ->whereNull('p.deleted_at');
+            })
+            ->whereIn('it.branch_id', $branchIds)
+            ->when($hasPeriod, function ($q) use ($fromDate, $toDate) {
+                if ($fromDate) {
+                    $q->whereDate('it.created_at', '>=', $fromDate);
+                }
+                if ($toDate) {
+                    $q->whereDate('it.created_at', '<=', $toDate);
+                }
+            })
+            ->select('it.branch_id', 'it.product_code')
+            ->distinct();
+
+        $query = DB::query()
+            ->fromSub($keysSub, 'k')
+            ->join('products as p', function ($join) use ($organizationId) {
+                $join->on('p.product_code', '=', 'k.product_code')
+                    ->where('p.organization_id', '=', $organizationId)
+                    ->whereNull('p.deleted_at');
+            })
+            ->joinSub($lifecycleSub, 'lc', function ($join) {
+                $join->on('lc.branch_id', '=', 'k.branch_id')
+                    ->on('lc.product_code', '=', 'k.product_code');
+            })
+            ->leftJoinSub($periodTotalsSub, 'pt', function ($join) {
+                $join->on('pt.branch_id', '=', 'k.branch_id')
+                    ->on('pt.product_code', '=', 'k.product_code');
+            })
+            ->leftJoin('current_stock as cs', function ($join) {
+                $join->on('cs.product_code', '=', 'k.product_code')
+                    ->on('cs.branch_id', '=', 'k.branch_id');
+            })
+            ->select([
+                'k.branch_id',
+                'k.product_code',
                 'p.product_name',
                 'p.unit_id',
-                DB::raw("MIN(CASE WHEN it.transaction_type = 'PURCHASE' THEN it.created_at END) as first_received_at"),
-                DB::raw('MIN(CASE WHEN it.transaction_type IN (\'POS_SALE\', \'MOBILE_SALE\', \'BACKEND_SALE\') THEN it.created_at END) as first_sold_at'),
-                DB::raw('MAX(it.created_at) as last_movement_at'),
-                DB::raw("{$receivedValueSql} as total_received"),
-                DB::raw("{$soldValueSql} as total_sold"),
-                DB::raw('COALESCE(cs.shop_quantity, 0) as current_shop_stock'),
-                DB::raw('COALESCE(cs.store_quantity, 0) as current_store_stock'),
+                'lc.first_received_at',
+                'lc.first_adjustment_at',
+                'lc.first_entered_at',
+                'lc.first_sold_at',
+                'lc.last_movement_at',
+                DB::raw('COALESCE(pt.total_received, 0) AS total_received'),
+                DB::raw('COALESCE(pt.total_sold, 0) AS total_sold'),
+                DB::raw('COALESCE(cs.shop_quantity, 0) AS current_shop_stock'),
+                DB::raw('COALESCE(cs.store_quantity, 0) AS current_store_stock'),
             ]);
+
+        if ($request->filled('product_code')) {
+            $query->where('k.product_code', $request->input('product_code'));
+        }
 
         if ($search = trim((string) $request->input('q', ''))) {
             $query->where(function ($inner) use ($search) {
-                $inner->where('it.product_code', 'like', "%{$search}%")
+                $inner->where('k.product_code', 'like', "%{$search}%")
                     ->orWhere('p.product_name', 'like', "%{$search}%");
             });
         }
