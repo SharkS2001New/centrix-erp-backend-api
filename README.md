@@ -39,19 +39,20 @@ php artisan serve
 
 ## Testing
 
-Feature and unit tests use MySQL database `pos_erp_test` by default (`DB_DATABASE_TEST` in `.env`). Each feature test class reloads schema + demo seed via `RefreshesErpDatabase`.
+**Local only** — run `php artisan test` on your machine. Tests are **not** run during Docker image build or in GitHub Actions.
+
+Feature and unit tests use MySQL database `pos_erp_test` (`DB_DATABASE_TEST` in `.env` / `phpunit.xml`). Each feature test class reloads schema + demo seed via `RefreshesErpDatabase`.
 
 **Local setup**
 
 ```bash
-# MySQL 8.0+ — create the test database (credentials from .env DB_*_TEST)
-mysql -u"$DB_USERNAME_TEST" -p -e "CREATE DATABASE IF NOT EXISTS pos_erp_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
+# MySQL 8.0+ — create the test database (credentials from .env DB_*_LOCAL)
+mysql -u"$DB_USERNAME_LOCAL" -p -e "CREATE DATABASE IF NOT EXISTS pos_erp_test CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci;"
 
 composer install
-cp .env.example .env   # set DB_*_TEST (or DB_*_LOCAL for host/user if TEST vars omitted)
+cp .env.example .env   # set DB_*_LOCAL for your machine
 php artisan key:generate
 
-# Run full suite (CI runs the same command; CI injects root/root via workflow env)
 php artisan test
 
 # Single file or filter
@@ -65,7 +66,12 @@ If PHPUnit stops with memory errors, `phpunit.xml` sets `memory_limit=512M`. You
 php -d memory_limit=512M artisan test
 ```
 
-**CI** (`.github/workflows/ci.yml`): `composer audit`, then `php artisan test` against a MySQL 8 service container (`root` / `root`, database `pos_erp_test`).
+**GitHub Actions**
+
+| Workflow | Runs tests? |
+|----------|-------------|
+| `ci.yml` | No — `composer audit` only |
+| `docker-publish.yml` | No — builds/pushes image only (`composer install --no-dev`, `tests/` excluded) |
 
 ## Capabilities (per tenant)
 

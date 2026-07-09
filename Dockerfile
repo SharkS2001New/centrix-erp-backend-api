@@ -42,7 +42,7 @@ ENV LOG_CHANNEL=stderr
 ENV REDIS_CLIENT=phpredis
 ENV CACHE_STORE=redis
 ENV SESSION_DRIVER=redis
-# Image build is production-only — PHPUnit/tests never run here (local dev + CI only).
+# Image build is production-only — PHPUnit/tests never run here (local machine only).
 ENV APP_ENV=production
 ENV APP_DEBUG=false
 

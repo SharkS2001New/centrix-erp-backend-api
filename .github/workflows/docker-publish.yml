@@ -1,3 +1,4 @@
+# Docker image build and publish only — no PHPUnit, no `php artisan test`.
 name: Docker Publish
 
 on:
