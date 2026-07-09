@@ -5,6 +5,7 @@ namespace App\Services\Sales;
 use App\Models\KraResponse;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\OrderWorkflowService;
 use InvalidArgumentException;
@@ -16,6 +17,7 @@ class PosOrderEditService
 
     public function __construct(
         protected CustomerReturnService $customerReturnService,
+        protected UserPermissionService $permissions,
     ) {}
 
     public function posOrderEditEnabled(CapabilityGate $gate): bool
@@ -56,7 +58,8 @@ class PosOrderEditService
             throw new InvalidArgumentException('Legacy materialized orders cannot be edited from POS.');
         }
 
-        if ((int) $sale->cashier_id !== (int) $user->id && ! $user->is_admin) {
+        if ((int) $sale->cashier_id !== (int) $user->id
+            && ! $this->permissions->canEditOthersSalesOrders($user, $gate)) {
             throw new InvalidArgumentException('You can only re-edit your own orders.');
         }
 

@@ -91,6 +91,15 @@ class CheckoutController extends Controller
             throw new InvalidArgumentException('Cart is empty.');
         }
 
+        $user = $request->user();
+        if ((string) $cart->channel === 'mobile') {
+            app(UserMobileOrderScopeService::class)->findCheckoutCustomer(
+                $user,
+                (int) $data['customer_num'],
+                (string) $cart->channel,
+            );
+        }
+
         $routeId = $this->resolveCheckoutRouteId(
             $cart,
             (int) $data['customer_num'],
@@ -297,7 +306,11 @@ class CheckoutController extends Controller
             );
 
             $customer = $customerNum
-                ? Customer::query()->where('customer_num', (int) $customerNum)->first()
+                ? app(UserMobileOrderScopeService::class)->findCheckoutCustomer(
+                    $user,
+                    (int) $customerNum,
+                    (string) $cart->channel,
+                )
                 : null;
             $locationMeta = app(MobileCheckoutLocationService::class)->assertCheckoutLocation(
                 (string) $cart->channel,

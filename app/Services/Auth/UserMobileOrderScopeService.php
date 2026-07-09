@@ -92,7 +92,7 @@ class UserMobileOrderScopeService
             ->where('is_active', true)
             ->orderBy('route_name');
 
-        $this->routes->scopeOrganization($query, $user);
+        $this->routes->scopeForUser($query, $user);
 
         if ($this->isRouteSelectionLocked($user)) {
             $query->where('id', (int) $user->assigned_route_id);
@@ -118,7 +118,7 @@ class UserMobileOrderScopeService
     }
 
     /** @param  Builder<Customer>  $query */
-    public function applyCustomerScope(Builder $query, User $user): void
+    public function applyCustomerScope(Builder $query, User $user, ?int $routeId = null): void
     {
         if (! $this->hasMobileChannel($user)) {
             return;
@@ -130,7 +130,39 @@ class UserMobileOrderScopeService
 
         if ($user->assigned_route_id) {
             $query->where('customers.route_id', (int) $user->assigned_route_id);
+
+            return;
         }
+
+        if ($routeId !== null && $routeId > 0) {
+            $query->where('customers.route_id', $routeId);
+        }
+    }
+
+    public function findCheckoutCustomer(User $user, int $customerNum, string $channel = 'mobile'): Customer
+    {
+        $query = Customer::query()
+            ->where('customer_num', $customerNum)
+            ->whereNull('deleted_at');
+
+        if ($channel === 'mobile' && $this->hasMobileChannel($user)) {
+            $this->applyCustomerScope($query, $user);
+            $customer = $query->first();
+            if ($customer === null) {
+                throw ValidationException::withMessages([
+                    'customer_num' => [
+                        'Customer not found or not available on your route and branch.',
+                    ],
+                ]);
+            }
+
+            return $customer;
+        }
+
+        $this->access->scopeOrganization($query, $user, 'customers.organization_id');
+        $this->access->scopeBranchIfLimited($query, $user, 'customers.branch_id');
+
+        return $query->firstOrFail();
     }
 
     public function resolveCartRouteId(User $user, ?int $requestedRouteId): ?int
@@ -204,6 +236,24 @@ class UserMobileOrderScopeService
         }
 
         $this->routes->assertAccessible($user, (int) $routeId, 'route_id');
+
+        $route = $this->routes->findForUser($user, (int) $routeId);
+        $targetBranchId = (int) (
+            $payload['branch_id']
+            ?? $existing?->branch_id
+            ?? $user->branch_id
+            ?? 0
+        );
+        if (
+            $route
+            && $route->branch_id
+            && $targetBranchId > 0
+            && (int) $route->branch_id !== $targetBranchId
+        ) {
+            throw ValidationException::withMessages([
+                'route_id' => ['The selected route belongs to a different branch.'],
+            ]);
+        }
     }
 
     public function assertCheckoutRoute(User $user, string $channel, ?int $routeId): void

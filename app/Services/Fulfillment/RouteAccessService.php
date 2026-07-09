@@ -13,8 +13,8 @@ use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 /**
- * Routes are organization master data: one catalog per tenant, shared across branches.
- * Branch context applies on customers, sales, schedules, and trips — not on the route row itself.
+ * Routes are organization master data scoped by branch for branch-limited users.
+ * Customers, sales, schedules, and trips inherit org + branch + route context.
  */
 class RouteAccessService
 {

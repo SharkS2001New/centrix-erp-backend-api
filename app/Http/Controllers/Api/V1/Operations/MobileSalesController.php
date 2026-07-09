@@ -134,6 +134,7 @@ class MobileSalesController extends Controller
             'data' => $routes->map(static fn ($route) => [
                 'id' => (int) $route->id,
                 'route_name' => $route->route_name,
+                'branch_id' => $route->branch_id !== null ? (int) $route->branch_id : null,
                 'route_markup_price' => $route->route_markup_price,
             ])->values(),
             'route_selection_locked' => $this->mobileScope->isRouteSelectionLocked($request->user()),
@@ -149,6 +150,7 @@ class MobileSalesController extends Controller
         $filters = $request->validate([
             'q' => 'nullable|string|max:200',
             'per_page' => 'nullable|integer|min:1|max:200',
+            'route_id' => 'nullable|integer|min:1',
         ]);
 
         return response()->json(

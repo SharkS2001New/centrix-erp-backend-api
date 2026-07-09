@@ -23,8 +23,9 @@ class MobileCustomerService
     {
         $perPage = min((int) ($filters['per_page'] ?? 50), 200);
         $term = trim((string) ($filters['q'] ?? ''));
+        $routeId = isset($filters['route_id']) ? (int) $filters['route_id'] : null;
 
-        $query = $this->scopedQuery($user)
+        $query = $this->scopedQuery($user, $routeId)
             ->leftJoin('routes', 'customers.route_id', '=', 'routes.id')
             ->leftJoin('users', 'customers.created_by', '=', 'users.id')
             ->select([
@@ -138,12 +139,16 @@ class MobileCustomerService
         return $this->show($user, (int) $customer->customer_num);
     }
 
-    protected function scopedQuery(User $user)
+    protected function scopedQuery(User $user, ?int $routeId = null)
     {
+        if ($routeId !== null && $routeId > 0 && ! $user->assigned_route_id) {
+            $this->mobileScope->assertCartRouteId($user, $routeId);
+        }
+
         $query = Customer::query()
             ->whereNull('customers.deleted_at');
 
-        $this->mobileScope->applyCustomerScope($query, $user);
+        $this->mobileScope->applyCustomerScope($query, $user, $routeId);
 
         return $query;
     }

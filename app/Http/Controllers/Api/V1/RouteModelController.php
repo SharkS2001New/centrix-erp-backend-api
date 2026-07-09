@@ -79,9 +79,7 @@ class RouteModelController extends BaseResourceController
         $data = $this->validateRoutePayload($request);
         $user = $request->user();
         if ($user && $this->routesScopedByOrganization()) {
-            $organizationId = (int) $this->access()->organizationId($user, $request);
-            $data['organization_id'] = $organizationId;
-            $data['branch_id'] = $this->headOfficeBranchId($organizationId) ?? (int) $user->branch_id;
+            $data['organization_id'] = (int) $this->access()->organizationId($user, $request);
         }
         $model = RouteModel::create($data);
 
@@ -96,7 +94,7 @@ class RouteModelController extends BaseResourceController
     {
         $model = $this->findScopedModel($request, $id);
         $data = $this->validateRoutePayload($request, existing: $model);
-        unset($data['organization_id'], $data['branch_id']);
+        unset($data['organization_id']);
         $oldValues = $model->getAttributes();
         $model->update($data);
         $model->refresh();
@@ -119,16 +117,22 @@ class RouteModelController extends BaseResourceController
     protected function validateRoutePayload(Request $request, bool $partial = false, ?RouteModel $existing = null): array
     {
         $prefix = $partial ? 'sometimes' : 'required';
-        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? $existing?->organization_id ?? 0);
-        $branchId = $orgId > 0 ? $this->headOfficeBranchId($orgId) : null;
+        $user = $request->user();
+        $orgId = (int) ($this->access()->organizationId($user, $request) ?? $existing?->organization_id ?? 0);
+        $requestedBranchId = $request->has('branch_id')
+            ? (((int) $request->input('branch_id')) ?: null)
+            : ($existing?->branch_id ? (int) $existing->branch_id : null);
+        $branchIdForUnique = $orgId > 0
+            ? ($requestedBranchId ?? $this->headOfficeBranchId($orgId))
+            : null;
 
         $routeNameRules = ["{$prefix}", 'string', 'max:255'];
         if ($orgId > 0 && $this->routesScopedByOrganization()) {
             $routeNameRules[] = Rule::unique('routes', 'route_name')
-                ->where(function ($q) use ($orgId, $branchId) {
+                ->where(function ($q) use ($orgId, $branchIdForUnique) {
                     $q->where('organization_id', $orgId);
-                    if (Schema::hasColumn('routes', 'branch_id') && $branchId) {
-                        $q->where('branch_id', $branchId);
+                    if (Schema::hasColumn('routes', 'branch_id') && $branchIdForUnique) {
+                        $q->where('branch_id', $branchIdForUnique);
                     }
                 })
                 ->ignore($existing?->id);
@@ -143,6 +147,10 @@ class RouteModelController extends BaseResourceController
             'is_active' => 'sometimes|boolean',
         ], ReceiptPaymentDetailsResolver::validationRules());
 
+        if (Schema::hasColumn('routes', 'branch_id')) {
+            $rules['branch_id'] = ['sometimes', 'nullable', 'integer', 'exists:branches,id'];
+        }
+
         $data = $request->validate($rules);
 
         if (array_key_exists('receipt_payment_details', $data)) {
@@ -151,7 +159,40 @@ class RouteModelController extends BaseResourceController
             );
         }
 
+        if (Schema::hasColumn('routes', 'branch_id') && $orgId > 0 && $user) {
+            $data['branch_id'] = $this->resolveRouteBranchId($request, $user, $requestedBranchId, $orgId);
+        }
+
         return $data;
+    }
+
+    protected function resolveRouteBranchId(
+        Request $request,
+        \App\Models\User $user,
+        ?int $requestedBranchId,
+        int $organizationId,
+    ): ?int {
+        $access = $this->access();
+
+        if (! $access->isOrgWide($user)) {
+            $limitedBranch = $access->branchId($user) ?? ((int) $user->branch_id ?: null);
+            if ($requestedBranchId !== null && $requestedBranchId > 0 && $limitedBranch !== null && $requestedBranchId !== $limitedBranch) {
+                abort(403, 'You can only operate within your assigned branch.');
+            }
+            if ($limitedBranch !== null && $limitedBranch > 0) {
+                return $limitedBranch;
+            }
+
+            return $this->headOfficeBranchId($organizationId);
+        }
+
+        if ($requestedBranchId !== null && $requestedBranchId > 0) {
+            $access->assertBranchInOrganization($user, $requestedBranchId, $request);
+
+            return $requestedBranchId;
+        }
+
+        return $this->headOfficeBranchId($organizationId) ?? ((int) $user->branch_id ?: null);
     }
 
     protected function headOfficeBranchId(int $organizationId): ?int

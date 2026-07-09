@@ -213,6 +213,13 @@ class UserPermissionService
             || $this->hasPermission($user, 'sales.manage');
     }
 
+    /** Managers who may re-edit or revise another user's sales order. */
+    public function canEditOthersSalesOrders(User $user, ?CapabilityGate $gate = null): bool
+    {
+        return $this->hasPermission($user, 'sales.orders.edit', $gate)
+            || $this->hasPermission($user, 'sales.manage', $gate);
+    }
+
     public function canApproveSupplierReturns(User $user): bool
     {
         return $this->hasAssignedCapability($user, 'purchasing.manage');

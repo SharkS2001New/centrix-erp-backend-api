@@ -27,7 +27,10 @@ class PosOrderEditServiceTest extends TestCase
 
     public function test_completed_pos_orders_are_editable_when_pos_order_edit_enabled(): void
     {
-        $service = new PosOrderEditService(app(\App\Services\Sales\CustomerReturnService::class));
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            app(\App\Services\Auth\UserPermissionService::class),
+        );
         $gate = $this->gateWithPosOrderEdit(true);
 
         $editable = $service->editableStatusesForChannel('pos', $gate);
@@ -38,7 +41,10 @@ class PosOrderEditServiceTest extends TestCase
 
     public function test_custom_pos_workflow_uses_org_checkout_status_for_re_edit(): void
     {
-        $service = new PosOrderEditService(app(\App\Services\Sales\CustomerReturnService::class));
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            app(\App\Services\Auth\UserPermissionService::class),
+        );
         $gate = $this->gateWithPosOrderEdit(true, [
             'steps' => [
                 ['status' => 'unpaid', 'label' => 'Unpaid', 'enabled' => true],
@@ -57,7 +63,10 @@ class PosOrderEditServiceTest extends TestCase
 
     public function test_completed_pos_orders_are_not_editable_when_pos_order_edit_disabled(): void
     {
-        $service = new PosOrderEditService(app(\App\Services\Sales\CustomerReturnService::class));
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            app(\App\Services\Auth\UserPermissionService::class),
+        );
         $gate = $this->gateWithPosOrderEdit(false);
 
         $editable = $service->editableStatusesForChannel('pos', $gate);
@@ -86,7 +95,12 @@ class PosOrderEditServiceTest extends TestCase
 
     public function test_cashier_cannot_re_edit_another_cashiers_order(): void
     {
-        $service = new PosOrderEditService(app(\App\Services\Sales\CustomerReturnService::class));
+        $permissions = $this->createMock(\App\Services\Auth\UserPermissionService::class);
+        $permissions->method('canEditOthersSalesOrders')->willReturn(false);
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            $permissions,
+        );
         $gate = $this->gateWithPosOrderEdit(true);
 
         $owner = new \App\Models\User(['is_admin' => false]);
@@ -107,5 +121,31 @@ class PosOrderEditServiceTest extends TestCase
         } catch (\InvalidArgumentException $e) {
             $this->assertSame('You can only re-edit your own orders.', $e->getMessage());
         }
+    }
+
+    public function test_manager_with_order_edit_permission_can_re_edit_another_cashiers_booked_order(): void
+    {
+        $permissions = $this->createMock(\App\Services\Auth\UserPermissionService::class);
+        $permissions->method('canEditOthersSalesOrders')->willReturn(true);
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            $permissions,
+        );
+        $gate = $this->gateWithPosOrderEdit(true);
+
+        $owner = new \App\Models\User(['is_admin' => false]);
+        $owner->id = 10;
+        $manager = new \App\Models\User(['is_admin' => false]);
+        $manager->id = 30;
+
+        $sale = new \App\Models\Sale([
+            'status' => 'booked',
+            'archived' => 0,
+            'channel' => 'backend',
+            'cashier_id' => $owner->id,
+        ]);
+
+        $service->assertSaleEditable($sale, $manager, $gate);
+        $this->assertTrue($service->canRestoreSaleToCart($sale, $manager, $gate));
     }
 }

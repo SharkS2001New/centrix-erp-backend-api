@@ -5,9 +5,12 @@ namespace Tests\Feature;
 use App\Models\CurrentStock;
 use App\Models\CustomerReturn;
 use App\Models\Organization;
+use App\Models\Permission;
 use App\Models\Product;
+use App\Models\Role;
 use App\Models\Sale;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -151,6 +154,50 @@ class PosOrderEditTest extends TestCase
         ]);
     }
 
+    public function test_manager_with_order_edit_permission_can_restore_another_users_booked_order(): void
+    {
+        $cashier = $this->createSalesUser('pos_edit_cashier', [
+            'sales.orders.create',
+            'pos.checkout.create',
+            'pos.terminal.view',
+        ]);
+        $manager = $this->createSalesUser('pos_edit_manager', [
+            'sales.orders.create',
+            'sales.orders.edit',
+            'pos.checkout.create',
+            'pos.terminal.view',
+        ]);
+
+        Sanctum::actingAs($cashier);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'backend',
+            'order_source' => 'backoffice',
+            'branch_id' => $cashier->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCodeA,
+            'quantity' => 2,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $this->assertSame('booked', $sale['status']);
+        $this->assertSame($cashier->id, (int) $sale['cashier_id']);
+
+        Sanctum::actingAs($manager);
+
+        $cart = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+
+        $this->assertCount(1, $cart['lines'] ?? []);
+        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
+    }
+
     public function test_capabilities_expose_pos_order_edit_flag(): void
     {
         $this->setPosOrderEditEnabled(true);
@@ -234,5 +281,42 @@ class PosOrderEditTest extends TestCase
         return (float) CurrentStock::where('product_code', $productCode)
             ->where('branch_id', $this->user->branch_id)
             ->value('shop_quantity');
+    }
+
+    /** @param list<string> $permissionCodes */
+    protected function createSalesUser(string $username, array $permissionCodes): User
+    {
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'POS Edit Test '.md5($username)],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $permissionIds = Permission::query()
+            ->whereIn('permission_code', $permissionCodes)
+            ->pluck('id')
+            ->all();
+        $this->assertNotEmpty($permissionIds);
+
+        DB::table('role_permissions')->where('role_id', $role->id)->delete();
+        foreach ($permissionIds as $permissionId) {
+            DB::table('role_permissions')->insert([
+                'role_id' => $role->id,
+                'permission_id' => (int) $permissionId,
+            ]);
+        }
+
+        return User::query()->firstOrCreate(
+            ['username' => $username],
+            [
+                'organization_id' => $this->user->organization_id,
+                'branch_id' => $this->user->branch_id,
+                'role_id' => $role->id,
+                'email' => null,
+                'password' => $this->user->password,
+                'full_name' => $username,
+                'is_admin' => false,
+                'is_active' => true,
+            ],
+        );
     }
 }
