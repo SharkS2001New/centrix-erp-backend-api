@@ -5,6 +5,7 @@ namespace App\Services\Notifications;
 use App\Events\InAppNotificationCreated;
 use App\Models\InAppNotification;
 use App\Models\User;
+use Illuminate\Support\Facades\Broadcast;
 
 class RealtimeNotificationBroadcaster
 {
@@ -26,7 +27,7 @@ class RealtimeNotificationBroadcaster
         }
 
         try {
-            broadcast(new InAppNotificationCreated(
+            Broadcast::event(new InAppNotificationCreated(
                 $notification,
                 $this->notifications->unreadCount($recipient),
             ));

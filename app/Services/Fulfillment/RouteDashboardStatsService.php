@@ -19,8 +19,14 @@ class RouteDashboardStatsService
     public function __construct(protected UserAccessService $access) {}
 
     /** @param  Collection<int, object>  $routes */
-    public function attachStats(Collection $routes, string $period, CapabilityGate $gate, User $user): Collection
-    {
+    public function attachStats(
+        Collection $routes,
+        string $period,
+        CapabilityGate $gate,
+        User $user,
+        ?string $fromDate = null,
+        ?string $toDate = null,
+    ): Collection {
         $routeIds = $routes->pluck('id')->map(fn ($id) => (int) $id)->filter()->values()->all();
         if ($routeIds === []) {
             return $routes;
@@ -28,7 +34,9 @@ class RouteDashboardStatsService
 
         $distributionSettings = $gate->distributionSettings();
         $includeNormalOrders = RouteOrderScope::includeNormalOrders($distributionSettings);
-        $bounds = $this->periodBounds($period);
+        $bounds = $fromDate !== null && $toDate !== null
+            ? ['start' => $fromDate, 'end' => $toDate]
+            : $this->periodBounds($period);
 
         $customerCounts = Customer::query()
             ->whereIn('route_id', $routeIds)
@@ -53,7 +61,11 @@ class RouteDashboardStatsService
             ->whereNull('sales.deleted_at');
 
         if ($bounds !== null) {
-            EffectiveSaleDate::applyRange($salesQuery, $bounds['start'], $bounds['end']);
+            EffectiveSaleDate::applyFromToDateFilter(
+                $salesQuery,
+                $bounds['start'],
+                $bounds['end'],
+            );
         }
 
         $effectiveRoute = RouteOrderScope::effectiveRouteIdSql();

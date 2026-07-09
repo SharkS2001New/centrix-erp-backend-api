@@ -11,6 +11,9 @@ use InvalidArgumentException;
 
 class PosOrderEditService
 {
+    /** @var list<string> */
+    private const DIRECT_RESTORE_STATUSES = ['booked', 'pending'];
+
     public function __construct(
         protected CustomerReturnService $customerReturnService,
     ) {}
@@ -66,31 +69,11 @@ class PosOrderEditService
             return;
         }
 
-        if (in_array($status, ['held', 'draft'], true)) {
-            if (! $workflowService->isRestorableToCartStatus(
-                $status,
-                $normalized,
-                $this->allowsCheckoutReEdit($normalized, $gate),
-            )) {
-                throw new InvalidArgumentException('This order cannot be edited in its current status.');
-            }
-
+        if (in_array($status, self::DIRECT_RESTORE_STATUSES, true)) {
             return;
         }
 
-        if ($normalized === 'pos'
-            && $this->posOrderEditEnabled($gate)
-            && $workflowService->isRestorableToCartStatus(
-                $status,
-                $normalized,
-                true,
-            )) {
-            return;
-        }
-
-        if (! $workflowService->isCancellableStatus($status, $normalized)) {
-            throw new InvalidArgumentException('This order cannot be edited in its current status.');
-        }
+        throw new InvalidArgumentException('This order cannot be edited in its current status.');
     }
 
     public function canRestoreSaleToCart(Sale $sale, User $user, CapabilityGate $gate): bool

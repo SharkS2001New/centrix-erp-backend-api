@@ -46,9 +46,14 @@ class ManagerReportCatalogService
     ];
 
     /** @var list<string> */
+    private const MOBILE_EXCLUDED_REPORT_KEYS = [
+        'stock-reservations',
+    ];
+
+    /** @var list<string> */
     private const INVENTORY_REPORT_KEYS = [
         'items-currently-in-stock', 'low-stock', 'stock-movement', 'stock-chain',
-        'stock-valuation', 'stock-reservations', 'stock-transfers',
+        'stock-valuation', 'stock-transfers',
         'branch-stock-transfers', 'returns', 'price-list', 'stock-on-hand',
         'damages',
     ];
@@ -143,7 +148,7 @@ class ManagerReportCatalogService
             'description' => 'Stock levels, movement, and valuation',
             'keys' => [
                 'items-currently-in-stock', 'low-stock', 'stock-movement', 'stock-chain',
-                'stock-valuation', 'stock-reservations', 'stock-transfers',
+                'stock-valuation', 'stock-transfers',
                 'branch-stock-transfers', 'returns', 'price-list',
             ],
         ],
@@ -221,6 +226,9 @@ class ManagerReportCatalogService
 
         $visibleKeys = [];
         foreach ($byKey as $key => $item) {
+            if (in_array($key, self::MOBILE_EXCLUDED_REPORT_KEYS, true)) {
+                continue;
+            }
             if (! $this->reportVisibleForOrg($key, $gate, $multiBranch, $legacyEnabled)) {
                 continue;
             }

@@ -4,6 +4,8 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Models\Branch;
+use App\Models\Customer;
+use App\Models\Supplier;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
@@ -12,6 +14,7 @@ use App\Models\UserDeviceToken;
 use App\Services\Mobile\UserDeviceTokenService;
 use App\Services\Mobile\ManagerReportCatalogService;
 use App\Services\Sales\MobileManagerService;
+use App\Support\SqlLikeSearch;
 use Illuminate\Http\Request;
 
 class MobileManagerController extends Controller
@@ -73,6 +76,74 @@ class MobileManagerController extends Controller
         return response()->json(
             $this->reportCatalog->catalogForUser($user, $gate),
         );
+    }
+
+    /** GET /manager/customers/search — customer lookup for manager reports (e.g. statement). */
+    public function searchCustomers(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+        $this->managerApp->assertManagerAccess($user, $gate);
+
+        $q = trim((string) $request->input('q', ''));
+        if (strlen($q) < 2) {
+            return response()->json(['data' => []]);
+        }
+
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
+        abort_if($orgId <= 0, 403, 'Organization context is required.');
+
+        $query = Customer::query()
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at');
+
+        if (($user->access_scope ?? 'org') === 'branch' && $user->branch_id) {
+            $query->where('branch_id', $user->branch_id);
+        }
+
+        SqlLikeSearch::applyCustomerSearch($query, $q);
+
+        $perPage = min((int) $request->input('per_page', 20), 50);
+        $rows = $query
+            ->orderBy('customer_name')
+            ->limit($perPage)
+            ->get(['customer_num', 'customer_name', 'phone_number']);
+
+        return response()->json(['data' => $rows]);
+    }
+
+    public function searchSuppliers(Request $request)
+    {
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+        $this->managerApp->assertManagerAccess($user, $gate);
+
+        $q = trim((string) $request->input('q', ''));
+        if (strlen($q) < 2) {
+            return response()->json(['data' => []]);
+        }
+
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
+        abort_if($orgId <= 0, 403, 'Organization context is required.');
+
+        $query = Supplier::query()
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at')
+            ->where('is_active', true)
+            ->where(function ($inner) use ($q) {
+                $inner->where('supplier_name', 'like', "%{$q}%")
+                    ->orWhere('contact_person', 'like', "%{$q}%")
+                    ->orWhere('phone', 'like', "%{$q}%")
+                    ->orWhere('email', 'like', "%{$q}%");
+            });
+
+        $perPage = min((int) $request->input('per_page', 20), 50);
+        $rows = $query
+            ->orderBy('supplier_name')
+            ->limit($perPage)
+            ->get(['id', 'supplier_name', 'phone', 'contact_person']);
+
+        return response()->json(['data' => $rows]);
     }
 
     /** POST /manager/device-tokens — register FCM/APNs token for push (future server delivery). */
