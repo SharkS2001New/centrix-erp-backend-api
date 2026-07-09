@@ -540,7 +540,7 @@ return [
             'advanced_data_import_pages' => [],
         ],
         'general' => [
-            'enable_tab_workspace' => false,
+            'enable_tab_workspace' => true,
             'currency' => 'KES',
             'timezone' => 'Africa/Nairobi',
             'date_format' => 'DD/MM/YYYY',

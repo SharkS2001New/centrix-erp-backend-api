@@ -382,7 +382,7 @@ class CapabilityGate
     {
         $general = $this->moduleSettings('general');
 
-        return (bool) ($general['enable_tab_workspace'] ?? false);
+        return (bool) ($general['enable_tab_workspace'] ?? true);
     }
 
     /** @return array<string, bool> */

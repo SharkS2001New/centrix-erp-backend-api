@@ -49,7 +49,42 @@ class PlatformOrganizationSettingsTest extends TestCase
         $this->assertSame('USD', $org->module_settings['general']['currency'] ?? null);
     }
 
-    public function test_super_admin_can_enable_tab_workspace_and_tenant_cannot_override(): void
+    public function test_new_organization_has_tab_workspace_enabled_by_default(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'TABDEF',
+            'org_name' => 'Tab Default Org',
+            'org_email' => 'tabdef@org.com',
+            'primary_tel' => '0711000003',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'enabled_modules' => ['sales' => true, 'admin' => true],
+            'admin_username' => 'tabdef_admin',
+            'admin_email' => 'tabdef@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Tab Default Admin',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+
+        $this->getJson("/api/v1/admin/organizations/{$orgId}/settings/general")
+            ->assertOk()
+            ->assertJsonPath('general.enable_tab_workspace', true);
+
+        $orgAdmin = User::where('username', 'tabdef_admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->assertJsonPath('platform_tab_workspace_enabled', true);
+    }
+
+    public function test_super_admin_can_disable_tab_workspace_and_tenant_cannot_override(): void
     {
         config(['erp.allow_org_provisioning' => true]);
 
@@ -73,23 +108,23 @@ class PlatformOrganizationSettingsTest extends TestCase
         $orgId = $create->json('organization.id');
 
         $this->patchJson("/api/v1/admin/organizations/{$orgId}/settings/general", [
-            'enable_tab_workspace' => true,
+            'enable_tab_workspace' => false,
         ])->assertOk()
-            ->assertJsonPath('general.enable_tab_workspace', true);
+            ->assertJsonPath('general.enable_tab_workspace', false);
 
         $orgAdmin = User::where('username', 'tab_admin')->firstOrFail();
         Sanctum::actingAs($orgAdmin);
 
         $this->patchJson('/api/v1/erp/settings/general', [
-            'enable_tab_workspace' => false,
+            'enable_tab_workspace' => true,
         ])->assertOk();
 
         $org = Organization::findOrFail($orgId);
-        $this->assertTrue($org->module_settings['general']['enable_tab_workspace'] ?? false);
+        $this->assertFalse($org->module_settings['general']['enable_tab_workspace'] ?? true);
 
         $this->getJson('/api/v1/erp/capabilities')
             ->assertOk()
-            ->assertJsonPath('platform_tab_workspace_enabled', true);
+            ->assertJsonPath('platform_tab_workspace_enabled', false);
     }
 
     public function test_tenant_admin_cannot_use_platform_settings_proxy(): void

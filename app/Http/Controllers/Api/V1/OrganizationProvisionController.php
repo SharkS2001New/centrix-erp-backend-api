@@ -515,6 +515,7 @@ class OrganizationProvisionController extends Controller
                 'platform_kra_integration_enabled' => $gate->kraIntegrationPlatformEnabled(),
                 'platform_ai_enabled' => $gate->aiPlatformEnabled(),
                 'platform_advanced_data_import_enabled' => $gate->advancedDataImportPlatformEnabled(),
+                'platform_tab_workspace_enabled' => $gate->tabWorkspacePlatformEnabled(),
                 'ai_assistant' => AiSettingsResolver::clientCapabilities($gate),
             ]),
             'sales_platform' => $this->platformConfig->salesPlatformConfigForOrganization($org),
