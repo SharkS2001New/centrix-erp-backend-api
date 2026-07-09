@@ -283,6 +283,19 @@ return [
                     'groupable' => true,
                     'requires_join' => 'products',
                 ],
+                'uom_name' => [
+                    'label' => 'UOM',
+                    'expr' => 'u.full_name',
+                    'type' => 'string',
+                    'groupable' => true,
+                    'requires_join' => 'uoms',
+                ],
+                'conversion_factor' => [
+                    'label' => 'Conversion factor',
+                    'expr' => 'u.conversion_factor',
+                    'type' => 'number',
+                    'requires_join' => 'uoms',
+                ],
                 'branch_name' => [
                     'label' => 'Branch',
                     'expr' => 'b.branch_name',

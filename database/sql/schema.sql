@@ -2132,7 +2132,12 @@ SELECT
     cs.shop_quantity,
     cs.store_quantity,
     (cs.shop_quantity + cs.store_quantity) AS total_qty,
+    u.full_name AS uom_name,
     u.conversion_factor,
+    u.small_packaging_label,
+    u.middle_packaging_label,
+    u.middle_factor,
+    u.uom_type,
     p.last_cost_price,
     COALESCE(
         NULLIF(p.last_cost_price, 0),

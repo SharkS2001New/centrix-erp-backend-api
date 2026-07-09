@@ -652,12 +652,24 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            $q->with(['product:product_code,product_name,unit_id'])
+            $q->with([
+                'product:product_code,product_name,unit_id',
+                'product.unit:id,full_name,conversion_factor,small_packaging_label,middle_packaging_label,middle_factor,uom_type',
+            ])
                 ->orderByDesc('id')
                 ->paginate(min((int) $request->input('per_page', 50), 200))
                 ->through(function ($transaction) {
                     $payload = $transaction->toArray();
                     $payload['product_name'] = $transaction->product?->product_name;
+                    $uom = $transaction->product?->unit;
+                    if ($uom) {
+                        $payload['uom_name'] = $uom->full_name;
+                        $payload['conversion_factor'] = $uom->conversion_factor;
+                        $payload['small_packaging_label'] = $uom->small_packaging_label;
+                        $payload['middle_packaging_label'] = $uom->middle_packaging_label;
+                        $payload['middle_factor'] = $uom->middle_factor;
+                        $payload['uom_type'] = $uom->uom_type;
+                    }
 
                     return $payload;
                 }),

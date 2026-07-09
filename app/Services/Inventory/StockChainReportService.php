@@ -134,11 +134,18 @@ class StockChainReportService
                 $join->on('cs.product_code', '=', 'k.product_code')
                     ->on('cs.branch_id', '=', 'k.branch_id');
             })
+            ->join('uoms as u', 'u.id', '=', 'p.unit_id')
             ->select([
                 'k.branch_id',
                 'k.product_code',
                 'p.product_name',
                 'p.unit_id',
+                'u.full_name as uom_name',
+                'u.conversion_factor',
+                'u.small_packaging_label',
+                'u.middle_packaging_label',
+                'u.middle_factor',
+                'u.uom_type',
                 'lc.first_received_at',
                 'lc.first_adjustment_at',
                 'lc.first_entered_at',

@@ -104,9 +104,10 @@ class AppServiceProvider extends ServiceProvider
                 ? 'user:'.$request->user()->id
                 : 'ip:'.$request->ip();
 
+            // Uses the default cache store (configure Redis in production for multi-replica deployments).
             return Limit::perMinutes(
                 max(1, (int) ($api['decay_minutes'] ?? 1)),
-                max(1, (int) ($api['max_attempts'] ?? 120)),
+                max(1, (int) ($api['max_attempts'] ?? 600)),
             )->by($key);
         });
     }

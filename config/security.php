@@ -82,7 +82,8 @@ return [
             'decay_minutes' => (int) env('RATE_LIMIT_COMPANY_MOBILE_ATTENDANCE_DECAY', 1),
         ],
         'api' => [
-            'max_attempts' => (int) env('RATE_LIMIT_API', env('APP_ENV') === 'local' ? 600 : 120),
+            // ERP pages often load 5–15 endpoints at once; tab workspace + reports need headroom.
+            'max_attempts' => (int) env('RATE_LIMIT_API', env('APP_ENV') === 'local' ? 1000 : 600),
             'decay_minutes' => (int) env('RATE_LIMIT_API_DECAY', 1),
         ],
     ],
