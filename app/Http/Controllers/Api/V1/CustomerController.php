@@ -14,6 +14,7 @@ use App\Support\TenantRouteRules;
 use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Support\StoredPublicFile;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Symfony\Component\HttpFoundation\Response;
@@ -200,17 +201,11 @@ class CustomerController extends BaseResourceController
     {
         $model = $this->findScopedModel($request, $customer);
 
-        if (! $model->shop_image || ! Storage::disk('public')->exists($model->shop_image)) {
+        if (! StoredPublicFile::exists($model->shop_image)) {
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        $absolute = Storage::disk('public')->path($model->shop_image);
-        $mime = Storage::disk('public')->mimeType($model->shop_image) ?: 'image/jpeg';
-
-        return response()->file($absolute, [
-            'Content-Type' => $mime,
-            'Cache-Control' => 'private, max-age=3600',
-        ]);
+        return StoredPublicFile::response($model->shop_image, 'image/jpeg');
     }
 
     /** POST /customers/{customerNum}/shop-image — multipart shop photo */

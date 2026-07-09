@@ -7,6 +7,7 @@ use App\Http\Controllers\Controller;
 use App\Models\SupplierReturnDocument;
 use App\Services\Purchasing\SupplierReturnDocumentService;
 use App\Services\Returns\ReturnProofService;
+use App\Support\StoredPublicFile;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -153,14 +154,12 @@ class SupplierReturnDocumentController extends Controller
     public function proofFile(Request $request, string $id)
     {
         $doc = $this->service->findForUser($request->user(), (int) $id);
-        $absolute = $this->proofService->absolutePath($doc);
 
-        if ($absolute === null) {
+        if (! is_string($doc->proof_file_path ?? null) || ! StoredPublicFile::exists($doc->proof_file_path)) {
             abort(Response::HTTP_NOT_FOUND, 'Proof file not found.');
         }
 
-        return response()->file($absolute, [
-            'Content-Type' => $doc->proof_file_mime_type ?: 'application/octet-stream',
+        return StoredPublicFile::response($doc->proof_file_path, $doc->proof_file_mime_type ?: 'application/octet-stream', [
             'Content-Disposition' => 'inline; filename="'.($doc->proof_file_name ?: 'proof').'"',
         ]);
     }

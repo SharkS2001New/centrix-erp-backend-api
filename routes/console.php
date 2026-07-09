@@ -34,3 +34,13 @@ Schedule::command('erp:close-idle-mobile-rep-attendance')
     ->dailyAt('00:05')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/close-idle-mobile-rep-attendance.log'));
+
+Schedule::command('erp:warm-completed-sales-cache')
+    ->dailyAt(config('completed_sales_cache.schedule_daily_at', '01:30'))
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/warm-completed-sales-cache.log'));
+
+Schedule::command('erp:warm-completed-sales-cache --days=3')
+    ->hourly()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/warm-completed-sales-cache-hourly.log'));

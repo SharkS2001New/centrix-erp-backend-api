@@ -114,6 +114,32 @@ class OrganizationCache
         }
     }
 
+    public static function get(int $organizationId, string $key, mixed $default = null): mixed
+    {
+        if (! self::supportsTags()) {
+            return Cache::get(self::tag($organizationId).':'.$key, $default);
+        }
+
+        try {
+            return Cache::tags([self::tag($organizationId)])->get($key, $default);
+        } catch (\Throwable) {
+            return Cache::get(self::tag($organizationId).':'.$key, $default);
+        }
+    }
+
+    public static function forever(int $organizationId, string $key, mixed $value): bool
+    {
+        if (! self::supportsTags()) {
+            return Cache::forever(self::tag($organizationId).':'.$key, $value);
+        }
+
+        try {
+            return Cache::tags([self::tag($organizationId)])->forever($key, $value);
+        } catch (\Throwable) {
+            return Cache::forever(self::tag($organizationId).':'.$key, $value);
+        }
+    }
+
     /** @return list<string> */
     public static function cacheableKeys(): array
     {
@@ -123,6 +149,8 @@ class OrganizationCache
             'accounting.quickbooks_oauth_state' => 'QuickBooks OAuth CSRF state (short-lived, per org)',
             'reports.dashboard' => 'Report dashboard KPIs and charts (org-scoped, 2–5 min TTL)',
             'customers.summary' => 'Customer hub summary counts (org-scoped, ~2 min TTL)',
+            'completed_sales.detail' => 'Immutable completed sale detail payloads (org-scoped, no expiry)',
+            'completed_sales.mobile_day' => 'Per-rep daily completed sale list slices (org-scoped, no expiry)',
         ];
     }
 }

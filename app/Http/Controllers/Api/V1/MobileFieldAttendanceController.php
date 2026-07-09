@@ -7,7 +7,7 @@ use App\Services\Attendance\FieldRepHrLinkageService;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileFieldAttendanceService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use App\Support\StoredPublicFile;
 use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -176,20 +176,11 @@ class MobileFieldAttendanceController extends Controller
             ? $session->sign_in_photo_path
             : $session->sign_out_photo_path;
 
-        if (! $path || ! Storage::disk('public')->exists($path)) {
+        if (! StoredPublicFile::exists($path)) {
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        $absolute = Storage::disk('public')->path($path);
-        $mime = Storage::disk('public')->mimeType($path) ?: 'image/jpeg';
-        if (! str_starts_with($mime, 'image/')) {
-            $mime = 'image/jpeg';
-        }
-
-        return response()->file($absolute, [
-            'Content-Type' => $mime,
-            'Cache-Control' => 'private, max-age=3600',
-        ]);
+        return StoredPublicFile::response($path, 'image/jpeg');
     }
 
     /** @param  array<string, mixed>  $filters */

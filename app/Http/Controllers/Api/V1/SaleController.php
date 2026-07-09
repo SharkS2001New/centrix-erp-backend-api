@@ -12,6 +12,7 @@ use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\RouteOrderScope;
 use App\Services\Sales\SaleOrderPresentationService;
+use App\Services\Cache\CompletedSalesCacheService;
 use App\Support\EffectiveSaleDate;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -224,13 +225,23 @@ class SaleController extends BaseResourceController
         if (! SalesOrderQueuePermissions::userCanViewSale($request->user(), $sale, $gate, $permissions)) {
             abort(403, 'You do not have permission to view this order.');
         }
+
+        $cache = app(CompletedSalesCacheService::class);
+        if ($cache->isImmutableSale($sale)) {
+            $orgId = (int) ($sale->organization_id ?? 0);
+            $cached = $orgId > 0 ? $cache->getSaleDetail($orgId, (int) $sale->id, 'web') : null;
+            if (is_array($cached)) {
+                return response()->json($cache->hydrateWebSaleDetail($cached, $sale, $request->user()));
+            }
+        }
+
         $sale = app(SaleOrderPresentationService::class)->enrichSale($sale, $request->user(), $gate);
         $channel = $sale->channel ?: 'backend';
         $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
         $editService = app(PosOrderEditService::class);
         $lineEditService = app(BackofficeOrderLineEditService::class);
 
-        return response()->json(array_merge($sale->toArray(), [
+        $payload = array_merge($sale->toArray(), [
             'workflow' => $workflow,
             'workflow_status' => OrderWorkflowService::forGate($gate)->alignStatusToPipeline(
                 (string) $sale->status,
@@ -240,6 +251,17 @@ class SaleController extends BaseResourceController
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
             'order_connectivity' => $sale->mobileOrderConnectivity(),
             'is_offline_order' => $sale->isOfflineMobileOrder(),
-        ]));
+        ]);
+
+        if ($cache->isImmutableSale($sale)) {
+            $orgId = (int) ($sale->organization_id ?? 0);
+            if ($orgId > 0) {
+                $cache->putSaleDetail($orgId, (int) $sale->id, 'web', collect($payload)->except([
+                    'can_edit', 'can_edit_lines',
+                ])->all());
+            }
+        }
+
+        return response()->json($payload);
     }
 }

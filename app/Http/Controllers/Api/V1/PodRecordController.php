@@ -6,7 +6,7 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Models\PodRecord;
 use App\Services\Fulfillment\PodService;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Storage;
+use App\Support\StoredPublicFile;
 use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -114,16 +114,10 @@ class PodRecordController extends BaseResourceController
         $record = $this->findBranchScopedModel(PodRecord::class, $podRecord, $request->user());
         $path = $record->{$column};
 
-        if (! $path || ! Storage::disk('public')->exists($path)) {
+        if (! StoredPublicFile::exists($path)) {
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        $absolute = Storage::disk('public')->path($path);
-        $mime = Storage::disk('public')->mimeType($path) ?: 'image/jpeg';
-
-        return response()->file($absolute, [
-            'Content-Type' => $mime,
-            'Cache-Control' => 'private, max-age=3600',
-        ]);
+        return StoredPublicFile::response($path, 'image/jpeg');
     }
 }

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\LpoAttachment;
 use App\Models\LpoMst;
 use Illuminate\Http\Request;
+use App\Support\StoredPublicFile;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -69,14 +70,11 @@ class LpoAttachmentController extends Controller
     {
         $row = LpoAttachment::findOrFail((int) $attachment);
 
-        if (! $row->file_path || ! Storage::disk('public')->exists($row->file_path)) {
+        if (! StoredPublicFile::exists($row->file_path)) {
             abort(Response::HTTP_NOT_FOUND, 'Attachment file not found.');
         }
 
-        $absolute = Storage::disk('public')->path($row->file_path);
-
-        return response()->file($absolute, [
-            'Content-Type' => $row->mime_type ?: 'application/octet-stream',
+        return StoredPublicFile::response($row->file_path, $row->mime_type ?: 'application/octet-stream', [
             'Content-Disposition' => 'inline; filename="'.$row->file_name.'"',
         ]);
     }

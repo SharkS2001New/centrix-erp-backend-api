@@ -8,6 +8,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
+use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Support\SqlLikeSearch;
@@ -85,6 +86,33 @@ class MobileSalesService
      */
     public function listOrders(User $user, array $filters = []): array
     {
+        $cache = app(CompletedSalesCacheService::class);
+        $cachedList = $cache->getMobileListFromCache($user, $filters);
+        if ($cachedList !== null) {
+            $gate = $this->erp->gateForUser($user);
+            $saleIds = collect($cachedList['data'] ?? [])->pluck('id')->filter()->map(fn ($id) => (int) $id)->all();
+            $salesById = $saleIds === []
+                ? collect()
+                : Sale::query()->whereIn('id', $saleIds)->get()->keyBy('id');
+
+            $cachedList['data'] = collect($cachedList['data'] ?? [])
+                ->map(function (array $row) use ($user, $gate, $salesById) {
+                    $sale = $salesById->get((int) ($row['id'] ?? 0));
+                    if (! $sale) {
+                        return $row;
+                    }
+
+                    return array_merge($row, [
+                        'can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
+                        ...$this->cancellationCapabilities($sale, $user),
+                    ]);
+                })
+                ->values()
+                ->all();
+
+            return $cachedList;
+        }
+
         $from = isset($filters['from_date'])
             ? Carbon::parse($filters['from_date'])->startOfDay()
             : now()->startOfDay();
@@ -123,7 +151,7 @@ class MobileSalesService
         $page = $query->paginate($perPage);
         $gate = $this->erp->gateForUser($user);
 
-        return [
+        $result = [
             'data' => collect($page->items())
                 ->map(fn (Sale $sale) => array_merge(
                     $this->presentOrderSummary($sale),
@@ -141,6 +169,26 @@ class MobileSalesService
                 'total' => $page->total(),
             ],
         ];
+
+        if (
+            $cache->canServeMobileListFromCache($filters)
+            && $cache->isPastDate(Carbon::parse((string) $filters['from_date'])->toDateString())
+        ) {
+            $orgId = (int) ($user->organization_id ?? 0);
+            if ($orgId > 0) {
+                $date = Carbon::parse((string) $filters['from_date'])->toDateString();
+                $allChannels = filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+                $cache->putMobileDayList($orgId, (int) $user->id, $date, $allChannels, [
+                    'data' => collect($result['data'])
+                        ->map(fn (array $row) => collect($row)->except(['can_edit', 'can_cancel', 'can_direct_cancel', 'can_request_cancellation'])->all())
+                        ->values()
+                        ->all(),
+                    'meta' => $result['meta'],
+                ]);
+            }
+        }
+
+        return $result;
     }
 
     /** @return array<string, mixed> */
@@ -154,48 +202,89 @@ class MobileSalesService
             ->with(['items.product', 'cashier'])
             ->findOrFail($saleId);
 
-        return array_merge(
+        $cache = app(CompletedSalesCacheService::class);
+        if ($cache->isImmutableSale($sale)) {
+            $orgId = (int) ($user->organization_id ?? 0);
+            $cached = $orgId > 0 ? $cache->getSaleDetail($orgId, $saleId, 'mobile') : null;
+            if (is_array($cached)) {
+                return $cache->hydrateMobileOrderDetail($cached, $sale, $user);
+            }
+        }
+
+        $detail = array_merge(
             $this->presentOrderSummary($sale),
             [
                 'can_edit' => $this->canRestoreSaleToCart($sale, $user),
                 ...$this->cancellationCapabilities($sale, $user),
-                'items' => $sale->items->map(function ($item) {
-                    $product = $item->product;
-                    $isRetail = (bool) $item->on_wholesale_retail;
-                    $display = app(SaleLineQuantityDisplayService::class);
-                    $qtyDisp = $product
-                        ? $display->formatLineQtyDisplay(
-                            (float) $item->quantity,
-                            $product,
-                            $isRetail,
-                            $item->uom,
-                        )
-                        : trim((float) $item->quantity.' '.($item->uom ?? ''));
-                    $displayUnitPrice = $product
-                        ? $display->displayUnitPrice(
-                            (float) $item->quantity,
-                            (float) $item->amount,
-                            $product,
-                            $isRetail,
-                        )
-                        : (float) $item->selling_price;
-
-                    return [
-                        'sale_item_id' => (int) $item->id,
-                        'product_code' => $item->product_code,
-                        'product_name' => $product?->product_name ?? $item->product_code,
-                        'qty' => (float) $item->quantity,
-                        'qtyDisp' => $qtyDisp,
-                        'uom' => $item->uom,
-                        'unit_price' => $displayUnitPrice,
-                        'unit_price_per_base' => (float) $item->selling_price,
-                        'discount_given' => round((float) ($item->discount_given ?? 0), 2),
-                        'product_vat' => (float) $item->product_vat,
-                        'amount' => (float) $item->amount,
-                        'sell_on_retail' => (int) $item->on_wholesale_retail,
-                    ];
-                })->values()->all(),
+                'items' => $this->mapOrderItems($sale),
             ],
+        );
+
+        if ($cache->isImmutableSale($sale)) {
+            $orgId = (int) ($user->organization_id ?? 0);
+            if ($orgId > 0) {
+                $cache->putSaleDetail($orgId, $saleId, 'mobile', collect($detail)->except([
+                    'can_edit', 'can_cancel', 'can_direct_cancel', 'can_request_cancellation',
+                ])->all());
+            }
+        }
+
+        return $detail;
+    }
+
+    /** @return list<array<string, mixed>> */
+    public function mapOrderItems(Sale $sale): array
+    {
+        return $sale->items->map(function ($item) {
+            $product = $item->product;
+            $isRetail = (bool) $item->on_wholesale_retail;
+            $display = app(SaleLineQuantityDisplayService::class);
+            $qtyDisp = $product
+                ? $display->formatLineQtyDisplay(
+                    (float) $item->quantity,
+                    $product,
+                    $isRetail,
+                    $item->uom,
+                )
+                : trim((float) $item->quantity.' '.($item->uom ?? ''));
+            $displayUnitPrice = $product
+                ? $display->displayUnitPrice(
+                    (float) $item->quantity,
+                    (float) $item->amount,
+                    $product,
+                    $isRetail,
+                )
+                : (float) $item->selling_price;
+
+            return [
+                'sale_item_id' => (int) $item->id,
+                'product_code' => $item->product_code,
+                'product_name' => $product?->product_name ?? $item->product_code,
+                'qty' => (float) $item->quantity,
+                'qtyDisp' => $qtyDisp,
+                'uom' => $item->uom,
+                'unit_price' => $displayUnitPrice,
+                'unit_price_per_base' => (float) $item->selling_price,
+                'discount_given' => round((float) ($item->discount_given ?? 0), 2),
+                'product_vat' => (float) $item->product_vat,
+                'amount' => (float) $item->amount,
+                'sell_on_retail' => (int) $item->on_wholesale_retail,
+            ];
+        })->values()->all();
+    }
+
+    /** @return array<string, mixed> */
+    public function buildCachedOrderSummary(Sale $sale): array
+    {
+        return $this->presentOrderSummary($sale);
+    }
+
+    /** @return array<string, mixed> */
+    public function buildCachedOrderDetail(Sale $sale): array
+    {
+        return array_merge(
+            $this->presentOrderSummary($sale),
+            ['items' => $this->mapOrderItems($sale)],
         );
     }
 

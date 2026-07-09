@@ -12,6 +12,7 @@
         "laravel/reverb": "^1.10",
         "laravel/sanctum": "^4.0",
         "laravel/tinker": "^2.9",
+        "league/flysystem-aws-s3-v3": "^3.0",
         "openspout/openspout": "^4.28",
         "phpoffice/phpspreadsheet": "^2.3",
         "predis/predis": "^2.3"

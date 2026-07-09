@@ -57,20 +57,34 @@ class UploadedImageProcessor
         $image = $this->resizeImage($image, imagesx($image), imagesy($image));
         $filename = Str::uuid()->toString().'.jpg';
         $path = $directory.'/'.$filename;
-        $absolute = $disk->path($path);
         $disk->makeDirectory($directory);
 
-        if (! imagejpeg($image, $absolute, $this->jpegQuality)) {
+        $tmp = tempnam(sys_get_temp_dir(), 'centrix-img-');
+        if ($tmp === false) {
             imagedestroy($image);
+            throw new RuntimeException('Unable to create a temporary image file.');
+        }
+
+        if (! imagejpeg($image, $tmp, $this->jpegQuality)) {
+            imagedestroy($image);
+            @unlink($tmp);
             throw new RuntimeException('Unable to save the optimized image.');
         }
 
         imagedestroy($image);
 
+        $bytes = file_get_contents($tmp);
+        @unlink($tmp);
+        if ($bytes === false) {
+            throw new RuntimeException('Unable to read the optimized image.');
+        }
+
+        $disk->put($path, $bytes);
+
         return [
             'path' => $path,
             'mime_type' => 'image/jpeg',
-            'size' => (int) (@filesize($absolute) ?: 0),
+            'size' => strlen($bytes),
             'file_name' => preg_replace('/\.\w+$/', '.jpg', $file->getClientOriginalName()) ?: $filename,
         ];
     }

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Support\StoredPublicFile;
 use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Http\Response;
@@ -202,17 +203,11 @@ class OrganizationController extends BaseResourceController
         $model = $this->findScopedModel($request, $id);
 
         if (! Organization::logoIsStoredFile($model->logo)
-            || ! Storage::disk('public')->exists($model->logo)) {
+            || ! StoredPublicFile::exists($model->logo)) {
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        $absolute = Storage::disk('public')->path($model->logo);
-        $mime = Storage::disk('public')->mimeType($model->logo) ?: 'image/png';
-
-        return response()->file($absolute, [
-            'Content-Type' => $mime,
-            'Cache-Control' => 'private, max-age=3600',
-        ]);
+        return StoredPublicFile::response($model->logo, 'image/png');
     }
 
     /** DELETE /organizations/{id}/logo */

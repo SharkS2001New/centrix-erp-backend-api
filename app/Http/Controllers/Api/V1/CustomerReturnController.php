@@ -10,6 +10,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Notifications\ActionRequestService;
 use App\Services\Returns\ReturnProofService;
 use App\Services\Sales\CustomerReturnService;
+use App\Support\StoredPublicFile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\Response;
@@ -226,14 +227,12 @@ class CustomerReturnController extends Controller
     public function proofFile(string $id)
     {
         $return = $this->findForUser($id);
-        $absolute = $this->proofService->absolutePath($return);
 
-        if ($absolute === null) {
+        if (! is_string($return->proof_file_path ?? null) || ! StoredPublicFile::exists($return->proof_file_path)) {
             abort(Response::HTTP_NOT_FOUND, 'Proof file not found.');
         }
 
-        return response()->file($absolute, [
-            'Content-Type' => $return->proof_file_mime_type ?: 'application/octet-stream',
+        return StoredPublicFile::response($return->proof_file_path, $return->proof_file_mime_type ?: 'application/octet-stream', [
             'Content-Disposition' => 'inline; filename="'.($return->proof_file_name ?: 'proof').'"',
         ]);
     }

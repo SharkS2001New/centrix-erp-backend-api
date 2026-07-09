@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\EmployeeDocument;
 use Illuminate\Http\Request;
+use App\Support\StoredPublicFile;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -82,14 +83,11 @@ class EmployeeDocumentController extends Controller
     {
         $doc = $this->findDoc((int) $employee, (int) $document);
 
-        if (! Storage::disk('public')->exists($doc->file_path)) {
+        if (! StoredPublicFile::exists($doc->file_path)) {
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        $absolute = Storage::disk('public')->path($doc->file_path);
-
-        return response()->file($absolute, [
-            'Content-Type' => $doc->mime_type ?: 'application/octet-stream',
+        return StoredPublicFile::response($doc->file_path, $doc->mime_type ?: 'application/octet-stream', [
             'Content-Disposition' => 'inline; filename="'.$doc->file_name.'"',
         ]);
     }

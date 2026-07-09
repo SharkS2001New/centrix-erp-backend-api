@@ -5,6 +5,7 @@ namespace App\Observers;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Accounting\CustomerInvoiceService;
+use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\SaleRouteResolver;
 
@@ -52,6 +53,15 @@ class SaleObserver
         if ($sale->wasChanged(['customer_num', 'order_total', 'amount_paid', 'payment_status', 'total_vat'])) {
             $this->syncCustomerInvoice($sale);
         }
+
+        if ($sale->wasChanged(['status', 'order_total', 'amount_paid', 'payment_status', 'customer_num', 'archived', 'deleted_at'])) {
+            app(CompletedSalesCacheService::class)->invalidateForSale($sale);
+        }
+    }
+
+    public function deleted(Sale $sale): void
+    {
+        app(CompletedSalesCacheService::class)->invalidateForSale($sale);
     }
 
     protected function syncCustomerInvoice(Sale $sale): void

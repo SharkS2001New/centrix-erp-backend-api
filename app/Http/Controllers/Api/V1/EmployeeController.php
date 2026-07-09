@@ -9,6 +9,7 @@ use App\Services\Cache\OrganizationCache;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
+use App\Support\StoredPublicFile;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -165,17 +166,11 @@ class EmployeeController extends BaseResourceController
     {
         $model = Employee::findOrFail($employee);
 
-        if (! $model->photo_path || ! Storage::disk('public')->exists($model->photo_path)) {
+        if (! StoredPublicFile::exists($model->photo_path)) {
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        $absolute = Storage::disk('public')->path($model->photo_path);
-        $mime = Storage::disk('public')->mimeType($model->photo_path) ?: 'image/jpeg';
-
-        return response()->file($absolute, [
-            'Content-Type' => $mime,
-            'Cache-Control' => 'private, max-age=3600',
-        ]);
+        return StoredPublicFile::response($model->photo_path, 'image/jpeg');
     }
 
     /** POST /employees/{id}/photo */
