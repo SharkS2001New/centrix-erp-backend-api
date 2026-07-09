@@ -7,7 +7,6 @@ use App\Models\Customer;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
-use App\Services\Catalog\ProductPriceSheetService;
 use App\Services\Inventory\StockValuationService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
@@ -640,10 +639,6 @@ class ReportController extends Controller
             });
         }
 
-        if ($subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) {
-            $q->whereHas('product', fn ($product) => $product->where('subcategory_id', $subcategoryId));
-        }
-
         return response()->json(
             $q->with(['product:product_code,product_name,unit_id'])
                 ->orderByDesc('id')
@@ -659,20 +654,9 @@ class ReportController extends Controller
 
     public function stockChain(Request $request)
     {
-        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
-        if (! $orgId) {
-            return response()->json([
-                'data' => [],
-                'total' => 0,
-                'per_page' => min((int) $request->input('per_page', 25), 200),
-                'current_page' => 1,
-                'last_page' => 1,
-            ]);
-        }
-
-        return response()->json(
-            app(\App\Services\Inventory\StockChainReportService::class)->paginate($request, $orgId),
-        );
+        return response()->json($this->reportFromView('v_stock_chain', $this->filters($request), [
+            'branch_id', 'product_code',
+        ]));
     }
 
     public function stockValuation(Request $request)
@@ -1648,16 +1632,11 @@ class ReportController extends Controller
     protected function buildPriceList(Request $request, array $filters, int $page, int $perPage)
     {
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
-        $retailPricingEnabled = $this->retailPricingEnabledForOrganization($orgId);
-        $priceSheet = app(ProductPriceSheetService::class);
 
         $query = DB::table('products as p')
             ->join('uoms as u', 'p.unit_id', '=', 'u.id')
             ->leftJoin('retail_package_settings as r', 'p.product_code', '=', 'r.product_code')
-            ->leftJoin('sub_categories as sc', 'p.subcategory_id', '=', 'sc.id')
-            ->leftJoin('categories as c', 'sc.category_id', '=', 'c.id')
             ->whereNull('p.deleted_at')
-            ->where('p.unit_price', '>', 0)
             ->select([
                 'p.product_code',
                 'p.product_name',
@@ -1667,18 +1646,12 @@ class ReportController extends Controller
                 'u.uom_type',
                 'u.conversion_factor',
                 'u.measure_name',
-                'u.middle_factor',
-                'u.small_packaging_label',
                 'r.max_qty_measure',
                 'r.markup_price',
-                'r.wholesale_qty_measure',
                 'r.wholesale_markup_price',
                 'r.min_uom_measure',
                 'r.pricing_tiers',
-                DB::raw('COALESCE(sc.subcategory_name, \'Uncategorized\') as subcategory_name'),
-                DB::raw('COALESCE(c.category_name, sc.subcategory_name, \'Uncategorized\') as category_name'),
             ])
-            ->orderBy('subcategory_name')
             ->orderBy('p.product_name');
 
         if ($orgId) {
@@ -1696,68 +1669,18 @@ class ReportController extends Controller
             $query->where('p.subcategory_id', $subcategoryId);
         }
 
-        $search = trim((string) $request->input('q', ''));
-        if ($search !== '') {
-            $like = '%'.$search.'%';
-            $query->where(function ($searchQuery) use ($like) {
-                $searchQuery->where('p.product_name', 'like', $like)
-                    ->orWhere('p.product_code', 'like', $like);
-            });
-        }
-
         $paginator = $query->paginate($perPage, ['*'], 'page', $page);
-        $paginator->getCollection()->transform(function ($row) use ($priceSheet, $retailPricingEnabled) {
-            $retailPackage = [
-                'max_qty_measure' => $row->max_qty_measure,
-                'markup_price' => $row->markup_price,
-                'wholesale_qty_measure' => $row->wholesale_qty_measure,
-                'wholesale_markup_price' => $row->wholesale_markup_price,
-                'min_uom_measure' => $row->min_uom_measure,
-                'pricing_tiers' => $row->pricing_tiers,
-            ];
-            $uom = (object) [
-                'uom_type' => $row->uom_type,
-                'conversion_factor' => $row->conversion_factor,
-                'measure_name' => $row->measure_name,
-                'middle_factor' => $row->middle_factor,
-                'small_packaging_label' => $row->small_packaging_label,
-            ];
+        $paginator->getCollection()->transform(function ($row) {
+            $sell = (float) ($row->unit_price ?? 0);
+            $cost = (float) ($row->last_cost_price ?? 0);
+            $row->profit_margin_percent = $sell > 0 && $cost > 0
+                ? round((($sell - $cost) / $sell) * 100)
+                : null;
 
-            return (object) $priceSheet->buildRow(
-                $row,
-                $uom,
-                $retailPackage,
-                (string) ($row->subcategory_name ?? 'Uncategorized'),
-                (string) ($row->category_name ?? 'Uncategorized'),
-                $retailPricingEnabled,
-            );
+            return $row;
         });
 
         return $paginator;
-    }
-
-    protected function retailPricingEnabledForOrganization(?int $organizationId): bool
-    {
-        if (! $organizationId) {
-            return false;
-        }
-
-        $settings = DB::table('organizations')
-            ->where('id', $organizationId)
-            ->value('module_settings');
-
-        if (! $settings) {
-            return false;
-        }
-
-        $decoded = is_string($settings) ? json_decode($settings, true) : $settings;
-        if (! is_array($decoded)) {
-            return false;
-        }
-
-        $sales = $decoded['sales'] ?? [];
-
-        return (bool) ($sales['enable_retail_pricing'] ?? false);
     }
 
     /** @return list<int> */

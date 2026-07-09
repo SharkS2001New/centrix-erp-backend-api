@@ -63,6 +63,7 @@ class RouteOrganizationRepairService
         $stats = [
             'routes_reassigned' => 0,
             'routes_merged' => 0,
+            'routes_branch_aligned' => 0,
             'customers_repointed' => 0,
             'customers_org_aligned' => 0,
             'customers_branch_aligned' => 0,
@@ -99,6 +100,7 @@ class RouteOrganizationRepairService
                 $stats['routes_reassigned']++;
             }
 
+            $stats['routes_branch_aligned'] = $this->alignRoutesToHeadOfficeBranch();
             $stats['customers_org_aligned'] = $this->alignCustomersToRouteOrganization();
             if ($assignHeadOfficeBranch) {
                 $stats['customers_branch_aligned'] = $this->alignRouteCustomersToHeadOffice();
@@ -224,6 +226,36 @@ class RouteOrganizationRepairService
               AND r.organization_id IS NOT NULL
               AND (c.organization_id IS NULL OR c.organization_id <> r.organization_id)
         ');
+    }
+
+    protected function alignRoutesToHeadOfficeBranch(): int
+    {
+        if (! Schema::hasTable('routes') || ! Schema::hasColumn('routes', 'branch_id')) {
+            return 0;
+        }
+
+        $updated = 0;
+        $organizationIds = RouteModel::query()
+            ->whereNotNull('organization_id')
+            ->distinct()
+            ->pluck('organization_id');
+
+        foreach ($organizationIds as $organizationId) {
+            $headOfficeBranchId = $this->headOfficeBranchId((int) $organizationId);
+            if (! $headOfficeBranchId) {
+                continue;
+            }
+
+            $updated += DB::table('routes')
+                ->where('organization_id', (int) $organizationId)
+                ->where(function ($query) use ($headOfficeBranchId) {
+                    $query->whereNull('branch_id')
+                        ->orWhere('branch_id', '<>', $headOfficeBranchId);
+                })
+                ->update(['branch_id' => $headOfficeBranchId]);
+        }
+
+        return $updated;
     }
 
     protected function alignRouteCustomersToHeadOffice(): int

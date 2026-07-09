@@ -36,7 +36,6 @@ Shared query params (where columns exist): `branch_id`, `from_date`, `to_date`, 
 | `/reports/stock-movement` | Ledger transactions |
 | `/reports/stock-chain` | Receipt → sale chain |
 | `/reports/stock-valuation` | Qty × cost price |
-| `/reports/inventory-valuation-summary` | Shop/store/total stock value at effective cost |
 | `/reports/stock-reservations` | Active cart reservations |
 | `/reports/stock-receipts` | Purchase receipts |
 | `/reports/stock-transfers` | Shop ↔ store transfers |

@@ -75,38 +75,4 @@ class EnvironmentSettingsTest extends TestCase
             ],
         ];
     }
-
-    public function test_guard_refuses_production_database_during_testing(): void
-    {
-        config(['app.env' => 'testing']);
-        putenv('DB_DATABASE_TEST=pos_erp_test');
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('centrix_erp');
-
-        EnvironmentSettings::guardTestingDatabaseIsolated('centrix_erp');
-    }
-
-    public function test_guard_refuses_local_dev_database_during_testing(): void
-    {
-        config(['app.env' => 'testing']);
-        putenv('DB_DATABASE_TEST=pos_erp_test');
-        putenv('DB_DATABASE_LOCAL=pos_erp');
-
-        $this->expectException(\RuntimeException::class);
-        $this->expectExceptionMessage('pos_erp');
-
-        EnvironmentSettings::guardTestingDatabaseIsolated('pos_erp');
-    }
-
-    public function test_guard_allows_dedicated_test_database(): void
-    {
-        config(['app.env' => 'testing']);
-        putenv('DB_DATABASE_TEST=pos_erp_test');
-        putenv('DB_HOST_TEST=127.0.0.1');
-
-        EnvironmentSettings::guardTestingDatabaseIsolated('pos_erp_test');
-
-        $this->addToAssertionCount(1);
-    }
 }

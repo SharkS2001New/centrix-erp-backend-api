@@ -4,6 +4,7 @@ namespace App\Services\Customers;
 
 use App\Models\Customer;
 use App\Models\User;
+use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Facades\DB;
@@ -15,6 +16,7 @@ class MobileCustomerService
         protected CustomerUniquenessValidator $uniqueness,
         protected UserMobileOrderScopeService $mobileScope,
         protected CustomerRoutePolicy $customerRoutePolicy,
+        protected UserAccessService $access,
     ) {}
 
     public function list(User $user, array $filters): array
@@ -79,6 +81,10 @@ class MobileCustomerService
     public function store(User $user, array $data): array
     {
         $payload = $this->normalizePayload($data);
+        if (array_key_exists('branch_id', $payload) && $payload['branch_id'] !== null) {
+            $this->access->assertBranchInOrganization($user, (int) $payload['branch_id']);
+            $this->access->assertBranchAccess($user, (int) $payload['branch_id']);
+        }
         $this->mobileScope->assertCustomerPayload($user, $payload);
         $gate = app(CapabilityGate::class)->forOrganization($user->organization);
         $payload = $this->customerRoutePolicy->applyDistributionCustomerRules($payload, $gate);
@@ -112,6 +118,10 @@ class MobileCustomerService
             ->firstOrFail();
 
         $payload = $this->normalizePayload($data, partial: true);
+        if (array_key_exists('branch_id', $payload) && $payload['branch_id'] !== null) {
+            $this->access->assertBranchInOrganization($user, (int) $payload['branch_id']);
+            $this->access->assertBranchAccess($user, (int) $payload['branch_id']);
+        }
         $this->mobileScope->assertCustomerPayload($user, $payload, $customer);
         $gate = app(CapabilityGate::class)->forOrganization($user->organization);
         $payload = $this->customerRoutePolicy->applyDistributionCustomerRules($payload, $gate, $customer);
@@ -200,6 +210,13 @@ class MobileCustomerService
             $payload['route_id'] = (int) $payload['route_id'];
             if ($payload['route_id'] <= 0) {
                 $payload['route_id'] = null;
+            }
+        }
+
+        if (array_key_exists('branch_id', $payload) && $payload['branch_id'] !== null) {
+            $payload['branch_id'] = (int) $payload['branch_id'];
+            if ($payload['branch_id'] <= 0) {
+                $payload['branch_id'] = null;
             }
         }
 

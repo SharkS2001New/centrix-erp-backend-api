@@ -11,6 +11,7 @@ class RouteModel extends Model
     public $timestamps = false;
     protected $fillable = [
         'organization_id',
+        'branch_id',
         'route_name',
         'route_markup_price',
         'direction',

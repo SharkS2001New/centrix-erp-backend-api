@@ -6,6 +6,7 @@ use App\Jobs\Concerns\ProcessesImportRowOutcomes;
 use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
+use App\Models\Branch;
 use App\Models\RouteModel;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
@@ -45,6 +46,7 @@ class ImportRoutesJob implements ShouldBeUnique, ShouldQueue
             if ($organizationId <= 0) {
                 throw new \RuntimeException('Route import requires an organization context.');
             }
+            $branchId = $this->headOfficeBranchId($organizationId) ?? (int) $user->branch_id;
 
             $rows = $this->importRowsFromTask($task);
             if ($rows === []) {
@@ -91,6 +93,7 @@ class ImportRoutesJob implements ShouldBeUnique, ShouldQueue
 
                     RouteModel::create([
                         'organization_id' => $organizationId,
+                        'branch_id' => $branchId > 0 ? $branchId : null,
                         'route_name' => $routeName,
                         'direction' => trim((string) ($row['direction'] ?? '')) ?: null,
                         'route_markup_price' => (int) ($row['route_markup_price'] ?? 0),
@@ -132,5 +135,26 @@ class ImportRoutesJob implements ShouldBeUnique, ShouldQueue
         $normalized = strtolower(trim((string) $value));
 
         return in_array($normalized, ['1', 'true', 'yes', 'y'], true);
+    }
+
+    protected function headOfficeBranchId(int $organizationId): ?int
+    {
+        $branch = Branch::query()
+            ->where('organization_id', $organizationId)
+            ->where(function ($query) {
+                $query->where('branch_code', 'HQ')
+                    ->orWhere('branch_name', 'like', '%Head Office%');
+            })
+            ->orderBy('id')
+            ->first();
+
+        if (! $branch) {
+            $branch = Branch::query()
+                ->where('organization_id', $organizationId)
+                ->orderBy('id')
+                ->first();
+        }
+
+        return $branch ? (int) $branch->id : null;
     }
 }

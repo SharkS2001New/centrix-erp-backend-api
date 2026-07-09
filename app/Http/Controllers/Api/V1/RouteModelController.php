@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Customer;
 use App\Models\Driver;
+use App\Models\Branch;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\TemporaryCart;
@@ -46,15 +47,11 @@ class RouteModelController extends BaseResourceController
         if ($request->boolean('include_stats')) {
             $gate = $this->erp->gateForUser($request->user());
             $period = (string) $request->input('stats_period', 'day');
-            $fromDate = $request->input('stats_from_date');
-            $toDate = $request->input('stats_to_date');
             $collection = app(RouteDashboardStatsService::class)->attachStats(
                 $paginator->getCollection(),
                 $period,
                 $gate,
                 $request->user(),
-                is_string($fromDate) && $fromDate !== '' ? $fromDate : null,
-                is_string($toDate) && $toDate !== '' ? $toDate : null,
             );
             $paginator->setCollection($collection);
         }
@@ -67,10 +64,9 @@ class RouteModelController extends BaseResourceController
         return Schema::hasColumn('routes', 'organization_id');
     }
 
-    /** Routes are org-wide master data; branch context lives on customers, sales, and schedules. */
     protected function scopesByBranch(): bool
     {
-        return false;
+        return true;
     }
 
     protected function routesScopedByOrganization(): bool
@@ -83,7 +79,9 @@ class RouteModelController extends BaseResourceController
         $data = $this->validateRoutePayload($request);
         $user = $request->user();
         if ($user && $this->routesScopedByOrganization()) {
-            $data['organization_id'] = (int) $user->organization_id;
+            $organizationId = (int) $this->access()->organizationId($user, $request);
+            $data['organization_id'] = $organizationId;
+            $data['branch_id'] = $this->headOfficeBranchId($organizationId) ?? (int) $user->branch_id;
         }
         $model = RouteModel::create($data);
 
@@ -98,6 +96,7 @@ class RouteModelController extends BaseResourceController
     {
         $model = $this->findScopedModel($request, $id);
         $data = $this->validateRoutePayload($request, existing: $model);
+        unset($data['organization_id'], $data['branch_id']);
         $oldValues = $model->getAttributes();
         $model->update($data);
         $model->refresh();
@@ -120,12 +119,18 @@ class RouteModelController extends BaseResourceController
     protected function validateRoutePayload(Request $request, bool $partial = false, ?RouteModel $existing = null): array
     {
         $prefix = $partial ? 'sometimes' : 'required';
-        $orgId = (int) ($request->user()?->organization_id ?? $existing?->organization_id ?? 0);
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? $existing?->organization_id ?? 0);
+        $branchId = $orgId > 0 ? $this->headOfficeBranchId($orgId) : null;
 
         $routeNameRules = ["{$prefix}", 'string', 'max:255'];
         if ($orgId > 0 && $this->routesScopedByOrganization()) {
             $routeNameRules[] = Rule::unique('routes', 'route_name')
-                ->where(fn ($q) => $q->where('organization_id', $orgId))
+                ->where(function ($q) use ($orgId, $branchId) {
+                    $q->where('organization_id', $orgId);
+                    if (Schema::hasColumn('routes', 'branch_id') && $branchId) {
+                        $q->where('branch_id', $branchId);
+                    }
+                })
                 ->ignore($existing?->id);
         } else {
             $routeNameRules[] = Rule::unique('routes', 'route_name')->ignore($existing?->id);
@@ -147,6 +152,31 @@ class RouteModelController extends BaseResourceController
         }
 
         return $data;
+    }
+
+    protected function headOfficeBranchId(int $organizationId): ?int
+    {
+        if ($organizationId <= 0) {
+            return null;
+        }
+
+        $branch = Branch::query()
+            ->where('organization_id', $organizationId)
+            ->where(function ($query) {
+                $query->where('branch_code', 'HQ')
+                    ->orWhere('branch_name', 'like', '%Head Office%');
+            })
+            ->orderBy('id')
+            ->first();
+
+        if (! $branch) {
+            $branch = Branch::query()
+                ->where('organization_id', $organizationId)
+                ->orderBy('id')
+                ->first();
+        }
+
+        return $branch ? (int) $branch->id : null;
     }
 
     public function destroy(Request $request, string $id)

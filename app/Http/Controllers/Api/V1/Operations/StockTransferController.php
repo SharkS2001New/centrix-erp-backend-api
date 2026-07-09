@@ -10,6 +10,7 @@ use App\Services\Inventory\StockTransferApprovalService;
 use App\Services\Inventory\StockTransferService;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
+use InvalidArgumentException;
 
 class StockTransferController extends Controller
 {
@@ -36,15 +37,21 @@ class StockTransferController extends Controller
 
         $this->access->assertBranchAccess($user, (int) $data['branch_id']);
 
-        $result = $this->transfers->transfer(
-            (int) $data['branch_id'],
-            (string) $data['product_code'],
-            (float) $data['quantity'],
-            (string) $data['from_location'],
-            (string) $data['to_location'],
-            $user,
-            $data['notes'] ?? null,
-        );
+        try {
+            $result = $this->transfers->transfer(
+                (int) $data['branch_id'],
+                (string) $data['product_code'],
+                (float) $data['quantity'],
+                (string) $data['from_location'],
+                (string) $data['to_location'],
+                $user,
+                $data['notes'] ?? null,
+            );
+        } catch (InvalidArgumentException $e) {
+            throw ValidationException::withMessages([
+                'stock' => $e->getMessage(),
+            ]);
+        }
 
         return response()->json($result, 201);
     }

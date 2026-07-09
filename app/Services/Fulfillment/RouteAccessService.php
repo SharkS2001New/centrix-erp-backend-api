@@ -18,11 +18,28 @@ use InvalidArgumentException;
  */
 class RouteAccessService
 {
+    /** @param  Builder<RouteModel>  $query */
+    public function scopeForUser(Builder $query, User $user, ?Request $request = null): Builder
+    {
+        $this->scopeOrganization($query, $user, $request);
+        $this->access->scopeBranchIfLimited($query, $user, 'branch_id');
+
+        return $query;
+    }
+
     public function __construct(protected UserAccessService $access) {}
 
     public function organizationId(?User $user, ?Request $request = null): ?int
     {
-        return $user ? $this->access->organizationId($user, $request) : null;
+        if (! $user) {
+            return null;
+        }
+
+        // Some call sites don't pass Request explicitly (e.g. service-level checkout flow),
+        // so fall back to the current request to honor acting tenant context.
+        $request ??= request();
+
+        return $this->access->organizationId($user, $request);
     }
 
     /** @param  Builder<RouteModel>  $query */
@@ -50,12 +67,10 @@ class RouteAccessService
 
     public function findForUser(User $user, int $routeId, ?Request $request = null): ?RouteModel
     {
-        $orgId = $this->organizationId($user, $request);
-        if (! $orgId) {
-            return RouteModel::query()->find($routeId);
-        }
+        $query = RouteModel::query()->where('id', $routeId);
+        $this->scopeForUser($query, $user, $request);
 
-        return $this->findForOrganization($orgId, $routeId);
+        return $query->first();
     }
 
     /** @return Collection<int, RouteModel> */
@@ -65,7 +80,7 @@ class RouteAccessService
             ->where('is_active', true)
             ->orderBy('route_name');
 
-        $this->scopeOrganization($query, $user, $request);
+        $this->scopeForUser($query, $user, $request);
 
         return $query->get();
     }
@@ -81,7 +96,7 @@ class RouteAccessService
             return;
         }
 
-        if ($this->findForOrganization($orgId, $routeId)) {
+        if ($this->findForUser($user, $routeId, $request)) {
             return;
         }
 

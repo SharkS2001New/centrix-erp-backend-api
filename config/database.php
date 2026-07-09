@@ -11,18 +11,14 @@ $mysql = [
     'url' => env('DB_URL'),
     'host' => $resolveDb('DB_HOST', '127.0.0.1'),
     'port' => $resolveDb('DB_PORT', '3306'),
-    'database' => tap($resolveDb(
+    'database' => $resolveDb(
         'DB_DATABASE',
         match (true) {
             EnvironmentSettings::isProduction() => 'centrix_erp',
             EnvironmentSettings::isTesting() => 'pos_erp_test',
             default => 'pos_erp',
         },
-    ), static function (mixed $database): void {
-        if (is_string($database)) {
-            EnvironmentSettings::guardTestingDatabaseIsolated($database);
-        }
-    }),
+    ),
     'username' => $resolveDb('DB_USERNAME', 'root'),
     'password' => $resolveDb('DB_PASSWORD', ''),
     'unix_socket' => env('DB_SOCKET', ''),

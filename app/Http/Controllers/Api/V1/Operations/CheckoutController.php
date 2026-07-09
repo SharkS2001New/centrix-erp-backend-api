@@ -42,6 +42,7 @@ use App\Services\Sales\MobileRouteMarkupCheckoutService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 class CheckoutController extends Controller
@@ -56,7 +57,13 @@ class CheckoutController extends Controller
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
-        $sale = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
+        try {
+            $sale = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
+        } catch (InvalidArgumentException $e) {
+            throw ValidationException::withMessages([
+                'checkout' => $e->getMessage(),
+            ]);
+        }
 
         if ($sale->status !== 'pending_approval') {
             app(AutoTripAssignmentService::class)->tryAssignSale($sale, $request->user());

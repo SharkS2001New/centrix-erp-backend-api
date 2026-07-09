@@ -2,7 +2,9 @@
 
 namespace App\Services\Sales;
 
+use App\Models\Organization;
 use App\Models\Sale;
+use Illuminate\Support\Facades\DB;
 
 class OrderNumberAllocator
 {
@@ -19,11 +21,22 @@ class OrderNumberAllocator
 
     public function nextForOrganization(int $organizationId): int
     {
-        $max = Sale::query()
-            ->where('organization_id', $organizationId)
-            ->where('order_num', '<', self::LEGACY_IMPORTED_ORDER_NUM_MIN)
-            ->max('order_num');
+        return DB::transaction(function () use ($organizationId): int {
+            // Serialize order number allocation per organization so concurrent checkouts
+            // cannot read the same max(order_num) and collide on insert.
+            Organization::query()
+                ->whereKey($organizationId)
+                ->lockForUpdate()
+                ->first();
 
-        return (int) ($max ?? 0) + 1;
+            $last = Sale::query()
+                ->where('organization_id', $organizationId)
+                ->where('order_num', '<', self::LEGACY_IMPORTED_ORDER_NUM_MIN)
+                ->orderByDesc('order_num')
+                ->lockForUpdate()
+                ->value('order_num');
+
+            return (int) ($last ?? 0) + 1;
+        });
     }
 }
