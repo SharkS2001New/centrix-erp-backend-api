@@ -28,13 +28,29 @@ class BackofficeOrderLineEditService
         protected DiscountApprovalService $discounts,
     ) {}
 
-    public function isBackofficeOrder(Sale $sale): bool
+    public function isBackofficeOrder(Sale $sale, ?CapabilityGate $gate = null): bool
     {
         if ((string) $sale->status === 'editable') {
             return true;
         }
 
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        if (($meta['sales_workspace'] ?? null) === 'backoffice') {
+            return true;
+        }
+
         $source = strtolower((string) ($sale->order_source ?? ''));
+        $channel = strtolower((string) ($sale->channel ?: ''));
+
+        if ($gate !== null && ! $gate->enabled('sales.pos')) {
+            if (in_array($source, ['pos', 'backend', 'backoffice', 'erp'], true)) {
+                return true;
+            }
+            if (in_array($channel, ['pos', 'backend', 'backoffice', 'erp'], true)) {
+                return true;
+            }
+        }
+
         if (in_array($source, ['pos', 'mobile'], true)) {
             return false;
         }
@@ -43,11 +59,9 @@ class BackofficeOrderLineEditService
             return true;
         }
 
-        if (strtolower((string) ($sale->channel ?: '')) === 'backend') {
+        if ($channel === 'backend') {
             return true;
         }
-
-        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
 
         return ($meta['sales_workspace'] ?? null) === 'backoffice';
     }
@@ -78,7 +92,7 @@ class BackofficeOrderLineEditService
             throw new InvalidArgumentException('Backoffice order editing is disabled for this organization.');
         }
 
-        if (! $this->isBackofficeOrder($sale)) {
+        if (! $this->isBackofficeOrder($sale, $gate)) {
             throw new InvalidArgumentException('Only backoffice or editable discount orders support line edits.');
         }
 

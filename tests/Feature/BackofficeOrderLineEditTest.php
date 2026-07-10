@@ -169,7 +169,7 @@ class BackofficeOrderLineEditTest extends TestCase
         ])->assertStatus(422);
     }
 
-    public function test_pos_order_line_edit_is_rejected(): void
+    public function test_pos_order_line_edit_is_rejected_when_external_pos_enabled(): void
     {
         $sale = $this->createBackofficeSale(1, 50.0);
         $sale->update(['order_source' => 'pos', 'channel' => 'pos']);
@@ -179,6 +179,36 @@ class BackofficeOrderLineEditTest extends TestCase
                 ['id' => $sale->items->first()->id, 'quantity' => 2],
             ],
         ])->assertStatus(422);
+    }
+
+    public function test_pos_channel_order_line_edit_allowed_when_external_pos_disabled(): void
+    {
+        $org = $this->user->organization;
+        $org->enabled_modules = [
+            'sales.pos' => false,
+        ];
+        $org->save();
+
+        $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org->fresh());
+        $this->assertFalse($gate->enabled('sales.pos'));
+
+        $sale = $this->createBackofficeSale(1, 50.0, 'booked');
+        $sale->update(['order_source' => 'pos', 'channel' => 'pos']);
+
+        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
+            'items' => [
+                ['id' => $sale->items->first()->id, 'quantity' => 2],
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('order_total', 100);
+
+        $this->getJson('/api/v1/sales?per_page=50')
+            ->assertOk()
+            ->assertJsonFragment([
+                'id' => $sale->id,
+                'can_edit_lines' => true,
+            ]);
     }
 
     public function test_backoffice_line_edit_syncs_sale_reservations_before_stock_deduction(): void

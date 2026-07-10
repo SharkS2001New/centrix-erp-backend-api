@@ -226,7 +226,7 @@ trait HandlesInventory
             $available = $this->stockNetAvailable($productCode, $branchId, $location);
             if ($quantity > $available) {
                 throw new InvalidArgumentException(
-                    "Cannot reserve {$quantity} of {$productCode} at {$location}; available {$available}."
+                    "Cannot reserve {$quantity}; available {$available}."
                 );
             }
         }
