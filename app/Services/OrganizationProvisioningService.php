@@ -186,14 +186,77 @@ class OrganizationProvisioningService
     }
 
     /**
+     * @param  list<string>  $configChannels
+     * @return list<string>
+     */
+    public function mapConfigChannelsToLoginChannels(array $configChannels): array
+    {
+        $map = ['backend' => 'backoffice', 'pos' => 'pos', 'mobile' => 'mobile'];
+
+        return array_values(array_unique(array_map(
+            fn (string $channel) => $map[$channel] ?? $channel,
+            $configChannels,
+        )));
+    }
+
+    /**
+     * Sales order channels exposed in capabilities (pos only when external POS is enabled).
+     *
+     * @param  array<string, bool>  $modules
+     * @return list<string>
+     */
+    public function salesChannelsFromEnabledModules(array $modules, bool $mobileOrdersEnabled = true): array
+    {
+        $channels = [];
+        if ($modules['sales.pos'] ?? false) {
+            $channels[] = 'pos';
+        }
+        if (($modules['sales.mobile'] ?? false) && $mobileOrdersEnabled) {
+            $channels[] = 'mobile';
+        }
+        if ($modules['sales.backend'] ?? false) {
+            $channels[] = 'backend';
+        }
+
+        return $channels;
+    }
+
+    /**
+     * User login channels allowed for an org based on enabled modules.
+     *
+     * @param  array<string, bool>  $modules
+     * @param  array<string, mixed>|null  $salesPlatform
+     * @return list<string>
+     */
+    public function loginChannelsFromEnabledModules(array $modules, ?array $salesPlatform = null): array
+    {
+        $mobileOrdersEnabled = ($salesPlatform['enable_mobile_orders'] ?? true) !== false;
+        $channels = [];
+
+        if ($modules['sales.backend'] ?? false) {
+            $channels[] = 'backoffice';
+        }
+        if ($modules['sales.pos'] ?? false) {
+            $channels[] = 'pos';
+        }
+        if (($modules['sales.mobile'] ?? false) && $mobileOrdersEnabled) {
+            $channels[] = 'mobile';
+        }
+        if (($modules['sales.backend'] ?? false) && ($salesPlatform['enable_manager_app'] ?? true) !== false) {
+            $channels[] = 'manager';
+        }
+
+        return $channels !== [] ? $channels : ['backoffice'];
+    }
+
+    /**
      * @return list<string>
      */
     protected function profileLoginChannels(string $profile): array
     {
         $configChannels = config("erp.profiles.{$profile}.default_channels", ['backend']);
-        $map = ['backend' => 'backoffice', 'pos' => 'pos', 'mobile' => 'mobile'];
 
-        return array_values(array_map(fn (string $channel) => $map[$channel] ?? $channel, $configChannels));
+        return $this->mapConfigChannelsToLoginChannels($configChannels);
     }
 
     /**

@@ -97,7 +97,7 @@ return [
             'required' => ['customer_num', 'lines' => [['product_code', 'quantity']]],
             'optional' => ['payment_method_code', 'pay_now', 'is_credit_sale', 'channel'],
             'action' => 'create_sales_order',
-            'notes' => 'Default: backend channel, CASH payment, full amount paid. Not the same as a held order.',
+            'notes' => 'Default: backoffice channel, CASH payment, full amount paid. Not the same as a held order.',
         ],
         'create_held_order' => [
             'summary' => 'Save an order without payment (held / save-only)',

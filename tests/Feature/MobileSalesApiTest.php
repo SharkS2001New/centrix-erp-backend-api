@@ -411,6 +411,108 @@ class MobileSalesApiTest extends TestCase
         $this->assertEquals(0, (float) ($sale['amount_paid'] ?? -1));
     }
 
+    public function test_mobile_booked_order_from_previous_day_exposes_can_edit(): void
+    {
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+        $user = $this->makeMobileUser(['assigned_route_id' => $template->route_id]);
+        $product = \App\Models\Product::firstOrFail();
+        $token = $this->loginMobile($user);
+
+        $sale = Sale::create([
+            'order_num' => 97001,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $user->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'booked',
+            'total_vat' => 10,
+            'order_total' => 100,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'created_at' => now()->subDay(),
+        ]);
+
+        \App\Models\SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => 1,
+            'uom' => $product->uom,
+            'selling_price' => 100,
+            'discount_given' => 0,
+            'product_vat' => 10,
+            'amount' => 100,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $this->withToken($token)
+            ->getJson("/api/v1/mobile/orders/{$sale->id}")
+            ->assertOk()
+            ->assertJsonPath('can_edit', true);
+
+        $response = $this->withToken($token)
+            ->postJson("/api/v1/sales/orders/{$sale->id}/restore-to-cart", [
+                'replace' => true,
+            ]);
+
+        $this->assertNotSame(
+            'Mobile orders from previous dates cannot be edited, cancelled, or returned.',
+            $response->json('message'),
+        );
+    }
+
+    public function test_mobile_paid_order_from_previous_day_cannot_be_restored_to_cart(): void
+    {
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+        $user = $this->makeMobileUser(['assigned_route_id' => $template->route_id]);
+        $product = \App\Models\Product::firstOrFail();
+        $token = $this->loginMobile($user);
+
+        $sale = Sale::create([
+            'order_num' => 97002,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $user->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 10,
+            'order_total' => 100,
+            'payment_status' => 'paid',
+            'amount_paid' => 100,
+            'created_at' => now()->subDay(),
+        ]);
+
+        \App\Models\SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => 1,
+            'uom' => $product->uom,
+            'selling_price' => 100,
+            'discount_given' => 0,
+            'product_vat' => 10,
+            'amount' => 100,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $this->withToken($token)
+            ->getJson("/api/v1/mobile/orders/{$sale->id}")
+            ->assertOk()
+            ->assertJsonPath('can_edit', false);
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/orders/{$sale->id}/restore-to-cart", [
+                'replace' => true,
+            ])
+            ->assertStatus(422);
+    }
+
     public function test_mobile_paid_order_cannot_be_restored_to_cart_for_editing(): void
     {
         $user = $this->makeMobileUser();

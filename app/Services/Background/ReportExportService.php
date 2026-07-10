@@ -6,7 +6,6 @@ use Dompdf\Dompdf;
 use Dompdf\Options;
 use OpenSpout\Common\Entity\Row;
 use OpenSpout\Writer\CSV\Writer as CsvWriter;
-use OpenSpout\Writer\XLSX\Writer as XlsxWriter;
 use RuntimeException;
 
 class ReportExportService
@@ -139,72 +138,6 @@ class ReportExportService
             'disk_path' => $diskPath,
             'filename' => $basename.'.csv',
             'mime_type' => 'text/csv',
-            'row_count' => $rowCount,
-        ];
-    }
-
-    /**
-     * @param  array<string, mixed>  $meta
-     * @param  list<array{key: string, label: string, align?: string}>  $columns
-     * @param  array<string, mixed>|null  $footerRow
-     * @param  callable(callable(list<array<string, mixed>>): void): void  $streamSource
-     * @return array{disk_path: string, filename: string, mime_type: string, row_count: int, truncated?: bool}
-     */
-    protected function streamXlsx(
-        string $directory,
-        string $basename,
-        string $taskId,
-        array $meta,
-        array $columns,
-        ?array $footerRow,
-        callable $streamSource,
-        ?callable $onProgress = null,
-    ): array {
-        $filename = $basename.'-'.$taskId.'.xlsx';
-        $diskPath = $directory.'/'.$filename;
-        $absolute = storage_path('app/'.$diskPath);
-
-        $writer = new XlsxWriter;
-        $writer->openToFile($absolute);
-
-        foreach ($this->metaLines($meta) as $line) {
-            $writer->addRow(Row::fromValues([$line]));
-        }
-        $writer->addRow(Row::fromValues([]));
-        $writer->addRow(Row::fromValues(array_map(fn (array $col) => $col['label'], $columns)));
-
-        $rowCount = 0;
-        $streamSource(function (array $batch) use ($writer, $columns, &$rowCount, $onProgress): void {
-            foreach ($batch as $row) {
-                if (! is_array($row)) {
-                    continue;
-                }
-                $writer->addRow(Row::fromValues(
-                    array_map(fn (array $col) => $this->cellValue($row, $col), $columns),
-                ));
-                $rowCount++;
-                if ($onProgress !== null && $rowCount % self::FILE_PROGRESS_CHUNK === 0) {
-                    $onProgress(90, 'Writing Excel…');
-                }
-            }
-        });
-
-        if (is_array($footerRow) && $footerRow !== []) {
-            $writer->addRow(Row::fromValues(
-                array_map(
-                    fn (array $col, int $index) => (string) ($footerRow[$col['key']] ?? ($index === 0 ? 'Totals' : '')),
-                    $columns,
-                    array_keys($columns),
-                ),
-            ));
-        }
-
-        $writer->close();
-
-        return [
-            'disk_path' => $diskPath,
-            'filename' => $basename.'.xlsx',
-            'mime_type' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             'row_count' => $rowCount,
         ];
     }

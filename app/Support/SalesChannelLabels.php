@@ -8,7 +8,7 @@ class SalesChannelLabels
     public static function metricKey(?string $channel): string
     {
         return match (strtolower(trim((string) $channel))) {
-            'backoffice', 'backend' => 'erp',
+            'backoffice', 'backend', 'erp' => 'backoffice',
             'mobile' => 'mobile',
             'pos' => 'pos',
             'whatsapp' => 'whatsapp',
@@ -21,7 +21,7 @@ class SalesChannelLabels
         $key = self::metricKey($channelOrKey);
 
         return match ($key) {
-            'erp' => 'ERP',
+            'backoffice' => 'Backoffice',
             'mobile' => 'Mobile',
             'pos' => 'POS',
             'whatsapp' => 'WhatsApp',

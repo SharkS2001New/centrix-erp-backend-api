@@ -148,4 +148,35 @@ class PosOrderEditServiceTest extends TestCase
         $service->assertSaleEditable($sale, $manager, $gate);
         $this->assertTrue($service->canRestoreSaleToCart($sale, $manager, $gate));
     }
+
+    public function test_booked_or_pending_mobile_orders_allow_previous_day_mutation(): void
+    {
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            app(\App\Services\Auth\UserPermissionService::class),
+        );
+
+        foreach (['booked', 'pending', 'editable'] as $status) {
+            $sale = new \App\Models\Sale([
+                'status' => $status,
+                'channel' => 'mobile',
+                'created_at' => now()->subDay(),
+            ]);
+
+            $this->assertTrue(
+                $service->allowsPreviousDayMobileMutation($sale),
+                "Expected {$status} mobile orders to allow previous-day mutation.",
+            );
+            $this->assertFalse($service->blocksPreviousDayMobileMutation($sale));
+        }
+
+        $paid = new \App\Models\Sale([
+            'status' => 'paid',
+            'channel' => 'mobile',
+            'created_at' => now()->subDay(),
+        ]);
+
+        $this->assertFalse($service->allowsPreviousDayMobileMutation($paid));
+        $this->assertTrue($service->blocksPreviousDayMobileMutation($paid));
+    }
 }

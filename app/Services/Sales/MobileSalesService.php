@@ -481,7 +481,7 @@ class MobileSalesService
 
     public function canRestoreSaleToCart(Sale $sale, User $user): bool
     {
-        if ((string) $sale->status !== 'editable' && ! $sale->created_at?->isSameDay(now())) {
+        if ($this->posOrderEdit->blocksPreviousDayMobileMutation($sale)) {
             return false;
         }
 
@@ -563,7 +563,7 @@ class MobileSalesService
 
     protected function isSaleCancellableByWorkflow(Sale $sale, User $user): bool
     {
-        if (! $sale->created_at?->isSameDay(now())) {
+        if ($this->posOrderEdit->blocksPreviousDayMobileMutation($sale)) {
             return false;
         }
 

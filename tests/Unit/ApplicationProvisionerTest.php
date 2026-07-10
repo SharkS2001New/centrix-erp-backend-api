@@ -141,6 +141,14 @@ class ApplicationProvisionerTest extends TestCase
                 'hr' => true,
                 'admin' => true,
             ]],
+            'distribution' => ['distribution', [
+                'pos' => false,
+                'backoffice' => true,
+                'distribution' => true,
+                'accounting' => true,
+                'hr' => true,
+                'admin' => true,
+            ]],
         ];
     }
 

@@ -599,7 +599,7 @@ class CartOperationsController extends Controller
         $user = $request->user();
         $sale = $this->findScopedSale($saleId, $user)->load('items');
 
-        if (($sale->channel ?? '') === 'mobile' && ! $sale->created_at?->isSameDay(now())) {
+        if (app(PosOrderEditService::class)->blocksPreviousDayMobileMutation($sale)) {
             throw new InvalidArgumentException(
                 'Mobile orders from previous dates cannot be edited, cancelled, or returned.',
             );
@@ -642,11 +642,7 @@ class CartOperationsController extends Controller
 
     protected function assertSaleRestorableToCart(Sale $sale, User $user): void
     {
-        if (
-            ($sale->channel ?? '') === 'mobile'
-            && (string) $sale->status !== 'editable'
-            && ! $sale->created_at?->isSameDay(now())
-        ) {
+        if (app(PosOrderEditService::class)->blocksPreviousDayMobileMutation($sale)) {
             throw new InvalidArgumentException(
                 'Mobile orders from previous dates cannot be edited, cancelled, or returned.',
             );

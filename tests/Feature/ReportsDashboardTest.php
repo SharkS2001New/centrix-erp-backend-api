@@ -42,7 +42,7 @@ class ReportsDashboardTest extends TestCase
         $this->assertGreaterThan(0, count($response->json('sales_trend')));
     }
 
-    public function test_reports_dashboard_sales_by_channel_includes_mobile_and_erp_labels(): void
+    public function test_reports_dashboard_sales_by_channel_includes_mobile_and_backoffice_labels(): void
     {
         $template = Sale::query()->firstOrFail();
         $saleDate = '2026-06-15 10:00:00';
@@ -87,12 +87,12 @@ class ReportsDashboardTest extends TestCase
                 ->json('sales_by_channel'),
         );
 
-        $erp = $channels->firstWhere('channel', 'erp');
+        $backoffice = $channels->firstWhere('channel', 'backoffice');
         $mobile = $channels->firstWhere('channel', 'mobile');
 
-        $this->assertNotNull($erp, 'Expected ERP/backend channel in sales_by_channel');
-        $this->assertSame('ERP', $erp['channel_label']);
-        $this->assertEqualsWithDelta(1000.0, (float) $erp['revenue'], 0.01);
+        $this->assertNotNull($backoffice, 'Expected backoffice channel in sales_by_channel');
+        $this->assertSame('Backoffice', $backoffice['channel_label']);
+        $this->assertEqualsWithDelta(1000.0, (float) $backoffice['revenue'], 0.01);
 
         $this->assertNotNull($mobile, 'Expected mobile channel in sales_by_channel');
         $this->assertSame('Mobile', $mobile['channel_label']);

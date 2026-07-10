@@ -161,4 +161,25 @@ class ModuleHierarchyTest extends TestCase
         $this->assertSame([], $enabled);
         $this->assertContains('custom', array_keys(config('erp.profiles')));
     }
+
+    public function test_distribution_profile_enables_mobile_and_backoffice_without_pos(): void
+    {
+        $profile = config('erp.profiles.distribution');
+        $this->assertNotNull($profile);
+
+        $modules = ModuleRegistry::cascade($profile['modules']);
+
+        $this->assertTrue($modules['sales.backend']);
+        $this->assertTrue($modules['sales.mobile']);
+        $this->assertFalse($modules['sales.pos']);
+        $this->assertTrue($modules['distribution']);
+        $this->assertSame(['mobile', 'backend'], $profile['default_channels']);
+
+        $provisioning = app(\App\Services\OrganizationProvisioningService::class);
+        $this->assertEqualsCanonicalizing(
+            ['backoffice', 'mobile', 'manager'],
+            $provisioning->loginChannelsFromEnabledModules($modules),
+        );
+        $this->assertSame(['mobile', 'backend'], $provisioning->salesChannelsFromEnabledModules($modules));
+    }
 }

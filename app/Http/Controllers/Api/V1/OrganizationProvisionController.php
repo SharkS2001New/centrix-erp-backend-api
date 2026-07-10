@@ -722,28 +722,15 @@ class OrganizationProvisionController extends Controller
     {
         $applications = $this->applications->applicationsFromEnabledModules($modules);
         $profileConfig = config("erp.profiles.{$profile}", []);
-        $channels = $profileConfig['default_channels'] ?? ['backend'];
-
-        if ($profile === 'custom') {
-            $channels = [];
-            if ($modules['sales.pos'] ?? false) {
-                $channels[] = 'pos';
-            }
-            if ($modules['sales.mobile'] ?? false) {
-                $channels[] = 'mobile';
-            }
-            if ($modules['sales.backend'] ?? false) {
-                $channels[] = 'backend';
-            }
-            $channels = $channels === [] ? ['backend'] : array_values(array_unique($channels));
-        }
+        $mobileOrdersEnabled = ($salesPlatform['enable_mobile_orders'] ?? true) !== false;
 
         return [
             'deployment_profile' => $profile,
             'profile_label' => $profileConfig['label'] ?? $profile,
             'applications' => $applications,
             'enabled_modules' => $modules,
-            'login_channels' => $channels,
+            'login_channels' => $this->provisioning->loginChannelsFromEnabledModules($modules, $salesPlatform),
+            'sales_channels' => $this->provisioning->salesChannelsFromEnabledModules($modules, $mobileOrdersEnabled),
             'recommended_roles' => $this->roleTemplates->recommendedForProfile($profile, $modules),
             'onboarding_steps' => $this->roleTemplates->onboardingSteps($profile, $modules),
             'sales_platform' => $salesPlatform,

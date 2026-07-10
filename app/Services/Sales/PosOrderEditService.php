@@ -15,6 +15,25 @@ class PosOrderEditService
     /** @var list<string> */
     private const DIRECT_RESTORE_STATUSES = ['booked', 'pending'];
 
+    /** @var list<string> */
+    private const MOBILE_PREVIOUS_DAY_MUTABLE_STATUSES = ['editable', 'booked', 'pending'];
+
+    public function allowsPreviousDayMobileMutation(Sale $sale): bool
+    {
+        if (($sale->channel ?? '') !== 'mobile') {
+            return true;
+        }
+
+        return in_array((string) $sale->status, self::MOBILE_PREVIOUS_DAY_MUTABLE_STATUSES, true);
+    }
+
+    public function blocksPreviousDayMobileMutation(Sale $sale): bool
+    {
+        return ($sale->channel ?? '') === 'mobile'
+            && ! $sale->created_at?->isSameDay(now())
+            && ! $this->allowsPreviousDayMobileMutation($sale);
+    }
+
     public function __construct(
         protected CustomerReturnService $customerReturnService,
         protected UserPermissionService $permissions,
