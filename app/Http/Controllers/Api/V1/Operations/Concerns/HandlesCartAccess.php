@@ -70,6 +70,9 @@ trait HandlesCartAccess
                     $line->uom,
                 );
                 $discountGiven = (float) ($line->discount_given ?? 0);
+                $storedDisplay = $line->display_unit_price !== null
+                    ? (float) $line->display_unit_price
+                    : null;
                 $lineArray['display_unit_price'] = $qtyDisplay->displayUnitPrice(
                     (float) $line->quantity,
                     (float) $line->amount,
@@ -77,6 +80,7 @@ trait HandlesCartAccess
                     $isRetail,
                     $discountGiven,
                     (float) $line->unit_price,
+                    $storedDisplay,
                 );
                 $lineArray['display_discount_per_unit'] = $qtyDisplay->displayDiscountPerUnit(
                     (float) $line->quantity,

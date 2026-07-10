@@ -91,7 +91,7 @@ class MobileRouteMarkupCheckoutService
                 return $line;
             }
 
-            $isRetail = (bool) $product->sell_on_retail && (bool) $line->on_wholesale_retail;
+            $isRetail = (bool) $line->on_wholesale_retail;
             [$unitPrice, $amount] = $this->pricing->resolveLineAmounts(
                 $product,
                 (float) $line->quantity,
@@ -108,10 +108,21 @@ class MobileRouteMarkupCheckoutService
                 SalesVatCalculator::vatRateFromProduct($product),
             );
 
+            $discountGiven = (float) ($line->discount_given ?? 0);
+            $displayUnitPrice = app(SaleLineQuantityDisplayService::class)->displayUnitPrice(
+                (float) $line->quantity,
+                $amount,
+                $product,
+                $isRetail,
+                $discountGiven,
+                $unitPrice,
+            );
+
             $adjusted = clone $line;
             $adjusted->unit_price = $unitPrice;
             $adjusted->amount = $amount;
             $adjusted->product_vat = $productVat;
+            $adjusted->display_unit_price = $displayUnitPrice;
 
             return $adjusted;
         });

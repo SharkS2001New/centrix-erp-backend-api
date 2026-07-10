@@ -397,6 +397,9 @@ class CheckoutController extends Controller
                     'quantity' => $line->quantity,
                     'uom' => $line->uom,
                     'selling_price' => $line->unit_price,
+                    'display_unit_price' => $line->display_unit_price !== null
+                        ? (float) $line->display_unit_price
+                        : null,
                     'discount_given' => (float) ($line->discount_given ?? 0),
                     'product_vat' => $line->product_vat ?? 0,
                     'amount' => $line->amount,

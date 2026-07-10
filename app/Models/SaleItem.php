@@ -12,7 +12,7 @@ class SaleItem extends Model
     public $timestamps = false;
     protected $fillable = [
         'sale_id', 'product_code', 'line_no', 'item_code', 'quantity', 'uom',
-        'selling_price', 'discount_given', 'product_vat', 'amount', 'on_wholesale_retail',
+        'selling_price', 'display_unit_price', 'discount_given', 'product_vat', 'amount', 'on_wholesale_retail',
     ];
 
     public function product()

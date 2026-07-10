@@ -65,7 +65,15 @@ class SaleOrderPresentationService
 
         $item->setAttribute(
             'display_unit_price',
-            $display->displayUnitPrice($baseQty, $amount, $product, $isRetail, $discount),
+            $display->displayUnitPrice(
+                $baseQty,
+                $amount,
+                $product,
+                $isRetail,
+                $discount,
+                (float) ($item->selling_price ?? 0),
+                $item->display_unit_price !== null ? (float) $item->display_unit_price : null,
+            ),
         );
         $item->setAttribute(
             'display_discount_per_unit',

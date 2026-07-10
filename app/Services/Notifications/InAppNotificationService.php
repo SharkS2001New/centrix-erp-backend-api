@@ -239,12 +239,26 @@ class InAppNotificationService
 
             if ($request->type === 'discount') {
                 $requestPayload = $request->payload ?? [];
+                $lines = $requestPayload['lines'] ?? [];
+                if (
+                    $request->reference_type === 'sale'
+                    && (int) $request->reference_id > 0
+                ) {
+                    $sale = \App\Models\Sale::query()->find((int) $request->reference_id);
+                    if ($sale !== null) {
+                        $lines = app(\App\Services\Sales\DiscountApprovalService::class)
+                            ->approvalLinesPayloadFromSale($sale);
+                        $requestPayload['lines'] = $lines;
+                        $payload['action_request']['payload'] = $requestPayload;
+                    }
+                }
+
                 $payload['discount_approval'] = [
                     'scope' => $requestPayload['scope'] ?? null,
                     'discount_amount' => $requestPayload['discount_amount'] ?? null,
                     'discount_percent' => $requestPayload['discount_percent'] ?? null,
                     'order_discount' => $requestPayload['order_discount'] ?? null,
-                    'lines' => $requestPayload['lines'] ?? [],
+                    'lines' => $lines,
                     'advised_discount_applied' => ! empty($requestPayload['advised_discount_applied']),
                     'discount_revision_submitted' => ! empty($requestPayload['discount_revision_submitted']),
                 ];

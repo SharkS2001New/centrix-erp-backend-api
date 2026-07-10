@@ -29,6 +29,7 @@ use App\Services\Sales\OrderSourceResolver;
 use App\Services\Sales\SaleCancellationService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
+use App\Services\Sales\SaleLineQuantityDisplayService;
 use App\Support\SalesCheckoutSettings;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Auth\UserLoginChannelService;
@@ -765,6 +766,9 @@ class CartOperationsController extends Controller
                 $discountGiven,
                 'discount_given',
                 $cart,
+                $product,
+                $qty,
+                $isRetail,
             );
         }
 
@@ -775,8 +779,22 @@ class CartOperationsController extends Controller
             $discountGiven,
             app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
             array_key_exists('unit_price', $line) ? (float) $line['unit_price'] : null,
-            $this->trustClientUnitPriceForLine($salesSettings, $cart->order_source, $discountGiven),
+            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
+
+        $displayUnitPrice = array_key_exists('display_unit_price', $line) && $line['display_unit_price'] !== null
+            ? max(0, (float) $line['display_unit_price'])
+            : null;
+        if ($displayUnitPrice === null || $displayUnitPrice <= 0) {
+            $displayUnitPrice = app(SaleLineQuantityDisplayService::class)->displayUnitPrice(
+                $qty,
+                $amount,
+                $product,
+                $isRetail,
+                $discountGiven,
+                $unitPrice,
+            );
+        }
 
         $product->loadMissing('vat');
         $grossForVat = max(0, $amount);
@@ -803,6 +821,7 @@ class CartOperationsController extends Controller
             'product_code' => $product->product_code,
             'product_name' => $product->product_name,
             'unit_price' => $unitPrice,
+            'display_unit_price' => round($displayUnitPrice, 4),
             'quantity' => $qty,
             'uom' => $line['uom'] ?? $product->unit?->uom_type,
             'product_vat' => $productVat,
@@ -872,6 +891,9 @@ class CartOperationsController extends Controller
                 $discountGiven,
                 'discount_given',
                 $cart,
+                $product,
+                $qty,
+                $isRetail,
             );
         }
 
@@ -882,8 +904,22 @@ class CartOperationsController extends Controller
             $discountGiven,
             app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
             array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : (float) $row->unit_price,
-            $this->trustClientUnitPriceForLine($salesSettings, $cart->order_source, $discountGiven),
+            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
+
+        $displayUnitPrice = array_key_exists('display_unit_price', $input) && $input['display_unit_price'] !== null
+            ? max(0, (float) $input['display_unit_price'])
+            : (float) ($row->display_unit_price ?? 0);
+        if ($displayUnitPrice <= 0) {
+            $displayUnitPrice = app(SaleLineQuantityDisplayService::class)->displayUnitPrice(
+                $qty,
+                $amount,
+                $product,
+                $isRetail,
+                $discountGiven,
+                $unitPrice,
+            );
+        }
 
         $settings = $gate->moduleSettings('inventory');
         $location = $this->resolveSaleLineStockLocation(
@@ -921,6 +957,7 @@ class CartOperationsController extends Controller
 
         $row->update([
             'unit_price' => $unitPrice,
+            'display_unit_price' => round($displayUnitPrice, 4),
             'quantity' => $qty,
             'uom' => $input['uom'] ?? $row->uom ?? $product->unit?->uom_type,
             'product_vat' => $productVat,
@@ -998,18 +1035,6 @@ class CartOperationsController extends Controller
         }
 
         return max(0, $amount);
-    }
-
-    protected function trustClientUnitPriceForLine(
-        array $salesSettings,
-        ?string $orderSource,
-        float $discountGiven,
-    ): bool {
-        if ($discountGiven > 0.001) {
-            return false;
-        }
-
-        return SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $orderSource);
     }
 
     protected function findProductForCart(TemporaryCart $cart, string $productCode, User $user): Product

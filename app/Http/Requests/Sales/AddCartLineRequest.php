@@ -17,6 +17,7 @@ class AddCartLineRequest extends FormRequest
             'product_code' => 'required|string|exists:products,product_code',
             'quantity' => 'required|numeric|min:0.001',
             'unit_price' => 'nullable|numeric|min:0',
+            'display_unit_price' => 'nullable|numeric|min:0',
             'uom' => 'nullable|string|max:45',
             'on_wholesale_retail' => 'nullable|boolean',
             'product_vat' => 'nullable|numeric|min:0',

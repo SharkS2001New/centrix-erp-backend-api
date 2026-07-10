@@ -11,7 +11,7 @@ class CartLine extends Model
     protected $table = 'cart_lines';
     public $timestamps = false;
     protected $fillable = [
-        'cart_id', 'product_code', 'product_name', 'unit_price', 'quantity', 'uom',
+        'cart_id', 'product_code', 'product_name', 'unit_price', 'display_unit_price', 'quantity', 'uom',
         'product_vat', 'amount', 'discount_given', 'on_wholesale_retail', 'line_no', 'update_code',
     ];
 

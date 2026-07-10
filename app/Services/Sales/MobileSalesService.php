@@ -255,8 +255,10 @@ class MobileSalesService
                     $product,
                     $isRetail,
                     $discountGiven,
+                    (float) ($item->selling_price ?? 0),
+                    $item->display_unit_price !== null ? (float) $item->display_unit_price : null,
                 )
-                : (float) $item->selling_price;
+                : (float) ($item->display_unit_price ?? $item->selling_price);
             $displayAmount = $product
                 ? $display->displayLineAmount(
                     (float) $item->quantity,
