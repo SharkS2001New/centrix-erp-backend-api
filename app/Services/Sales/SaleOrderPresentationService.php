@@ -3,7 +3,9 @@
 namespace App\Services\Sales;
 
 use App\Models\ActionRequest;
+use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SaleItem;
 use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
@@ -27,7 +29,7 @@ class SaleOrderPresentationService
         $pendingRequests = $this->pendingDiscountRequestsForSales($sales, $user);
 
         return $sales->map(function (Sale $sale) use ($user, $pendingRequests) {
-            return $this->applyPresentationAttributes($sale, $user, $pendingRequests->get($sale->id));
+            return $this->enrichSaleItems($this->applyPresentationAttributes($sale, $user, $pendingRequests->get($sale->id)));
         });
     }
 
@@ -35,7 +37,46 @@ class SaleOrderPresentationService
     {
         $pending = $this->pendingDiscountRequestsForSales(collect([$sale]), $user)->get($sale->id);
 
-        return $this->applyPresentationAttributes($sale, $user, $pending);
+        return $this->enrichSaleItems($this->applyPresentationAttributes($sale, $user, $pending));
+    }
+
+    public function enrichSaleItems(Sale $sale): Sale
+    {
+        if (! $sale->relationLoaded('items') || $sale->items->isEmpty()) {
+            return $sale;
+        }
+
+        $display = app(SaleLineQuantityDisplayService::class);
+        $sale->setRelation(
+            'items',
+            $sale->items->map(fn (SaleItem $item) => $this->presentSaleItem($item, $display)),
+        );
+
+        return $sale;
+    }
+
+    protected function presentSaleItem(SaleItem $item, SaleLineQuantityDisplayService $display): SaleItem
+    {
+        $product = $item->product ?? new Product(['product_code' => $item->product_code]);
+        $isRetail = (bool) $item->on_wholesale_retail;
+        $baseQty = (float) $item->quantity;
+        $amount = (float) $item->amount;
+        $discount = (float) ($item->discount_given ?? 0);
+
+        $item->setAttribute(
+            'display_unit_price',
+            $display->displayUnitPrice($baseQty, $amount, $product, $isRetail, $discount),
+        );
+        $item->setAttribute(
+            'display_discount_per_unit',
+            $display->displayDiscountPerUnit($baseQty, $discount, $product, $isRetail),
+        );
+        $item->setAttribute(
+            'display_amount',
+            $display->displayLineAmount($baseQty, $amount, $product, $isRetail, $discount),
+        );
+
+        return $item;
     }
 
     public function totalDiscount(Sale $sale): float

@@ -69,17 +69,34 @@ trait HandlesCartAccess
                     $isRetail,
                     $line->uom,
                 );
+                $discountGiven = (float) ($line->discount_given ?? 0);
                 $lineArray['display_unit_price'] = $qtyDisplay->displayUnitPrice(
                     (float) $line->quantity,
                     (float) $line->amount,
                     $product,
                     $isRetail,
-                    (float) ($line->discount_given ?? 0),
+                    $discountGiven,
+                    (float) $line->unit_price,
+                );
+                $lineArray['display_discount_per_unit'] = $qtyDisplay->displayDiscountPerUnit(
+                    (float) $line->quantity,
+                    $discountGiven,
+                    $product,
+                    $isRetail,
+                );
+                $lineArray['display_amount'] = $qtyDisplay->displayLineAmount(
+                    (float) $line->quantity,
+                    (float) $line->amount,
+                    $product,
+                    $isRetail,
+                    $discountGiven,
                     (float) $line->unit_price,
                 );
             } else {
                 $lineArray['qty_disp'] = trim((float) $line->quantity.' '.($line->uom ?? ''));
                 $lineArray['display_unit_price'] = round((float) $line->unit_price, 2);
+                $lineArray['display_discount_per_unit'] = 0.0;
+                $lineArray['display_amount'] = round((float) $line->amount, 2);
             }
 
             return $lineArray;

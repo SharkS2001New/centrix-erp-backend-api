@@ -572,6 +572,24 @@ class DiscountApprovalCheckoutTest extends TestCase
             ->assertJsonPath('deferred_approval', true)
             ->assertJsonMissingPath('pending_approval');
 
+        $gross = app(\App\Services\Sales\PosLinePricingService::class)->lineTotalBeforeDiscount(
+            $product,
+            1,
+            false,
+            null,
+            (int) $staff->organization_id,
+        );
+
+        $cartAfterDiscount = $this->getJson("/api/v1/sales/carts/{$cart['id']}")
+            ->assertOk()
+            ->assertJsonPath('lines.0.discount_given', 10)
+            ->json();
+
+        $line = $cartAfterDiscount['lines'][0];
+        $this->assertEqualsWithDelta(round($gross - 10, 2), (float) $line['amount'], 0.01);
+        $this->assertEqualsWithDelta(round($gross, 2), (float) $line['display_unit_price'], 0.01);
+        $this->assertEqualsWithDelta(round($gross - 10, 2), (float) $line['display_amount'], 0.01);
+
         $this->assertDatabaseMissing('action_requests', [
             'reference_type' => 'temporary_cart',
             'reference_id' => $cart['id'],

@@ -775,7 +775,7 @@ class CartOperationsController extends Controller
             $discountGiven,
             app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
             array_key_exists('unit_price', $line) ? (float) $line['unit_price'] : null,
-            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
+            $this->trustClientUnitPriceForLine($salesSettings, $cart->order_source, $discountGiven),
         );
 
         $product->loadMissing('vat');
@@ -882,7 +882,7 @@ class CartOperationsController extends Controller
             $discountGiven,
             app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
             array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : (float) $row->unit_price,
-            SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
+            $this->trustClientUnitPriceForLine($salesSettings, $cart->order_source, $discountGiven),
         );
 
         $settings = $gate->moduleSettings('inventory');
@@ -998,6 +998,18 @@ class CartOperationsController extends Controller
         }
 
         return max(0, $amount);
+    }
+
+    protected function trustClientUnitPriceForLine(
+        array $salesSettings,
+        ?string $orderSource,
+        float $discountGiven,
+    ): bool {
+        if ($discountGiven > 0.001) {
+            return false;
+        }
+
+        return SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $orderSource);
     }
 
     protected function findProductForCart(TemporaryCart $cart, string $productCode, User $user): Product

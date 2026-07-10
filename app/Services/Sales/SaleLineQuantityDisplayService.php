@@ -54,16 +54,26 @@ class SaleLineQuantityDisplayService
         float $discountGiven = 0.0,
         ?float $sellingPricePerBase = null,
     ): float {
-        if ($sellingPricePerBase !== null && $sellingPricePerBase > 0) {
-            return round($sellingPricePerBase, 2);
-        }
-
         $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
         if ($entryQty <= 0) {
             return 0.0;
         }
 
         return round(($lineAmount + max(0.0, $discountGiven)) / $entryQty, 2);
+    }
+
+    public function displayDiscountPerUnit(
+        float $baseQty,
+        float $discountGiven,
+        Product $product,
+        bool $isRetailLine,
+    ): float {
+        $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
+        if ($entryQty <= 0) {
+            return 0.0;
+        }
+
+        return round(max(0.0, $discountGiven) / $entryQty, 4);
     }
 
     public function displayLineAmount(

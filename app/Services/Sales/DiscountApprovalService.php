@@ -1365,19 +1365,20 @@ class DiscountApprovalService
             $qty = (float) $row->quantity;
             $isRetail = $this->isRetailLine($product, (bool) $row->on_wholesale_retail);
             $salesSettings = $gate->moduleSettings('sales');
+            $routeId = app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing(
+                $cart,
+                $salesSettings,
+            );
 
-            [$unitPrice, $amount] = $this->pricing->resolveLineAmounts(
+            $grossBeforeDiscount = $this->pricing->lineTotalBeforeDiscount(
                 $product,
                 $qty,
                 $isRetail,
-                $discountAmount,
-                app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing(
-                    $cart,
-                    $salesSettings,
-                ),
-                (float) $row->unit_price,
-                SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
+                $routeId,
+                (int) $user->organization_id,
             );
+            $amount = round(max(0, $grossBeforeDiscount - $discountAmount), 2);
+            $unitPrice = $qty > 0 ? round($amount / $qty, 4) : 0.0;
 
             $product->loadMissing('vat');
             $productVat = SalesVatCalculator::vatFromInclusiveGross(
