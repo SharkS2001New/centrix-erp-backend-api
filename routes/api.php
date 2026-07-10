@@ -339,6 +339,9 @@ Route::prefix('v1')->group(function () {
         Route::patch('admin/platform-invoices/{invoice}', [PlatformInvoiceController::class, 'update'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('invoice');
+        Route::post('admin/platform-invoices/{invoice}/email', [PlatformInvoiceController::class, 'email'])
+            ->middleware(['erp.super_admin'])
+            ->whereNumber('invoice');
         Route::delete('admin/platform-invoices/{invoice}', [PlatformInvoiceController::class, 'destroy'])
             ->middleware(['erp.super_admin'])
             ->whereNumber('invoice');

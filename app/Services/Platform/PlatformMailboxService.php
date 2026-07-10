@@ -16,6 +16,7 @@ class PlatformMailboxService
         ?User $user = null,
         array $meta = [],
         ?PlatformMailMessage $replyTo = null,
+        array $attachments = [],
     ): PlatformMailMessage {
         $settings = PlatformMailSettingsResolver::resolve();
         $messageIdBody = Str::uuid()->toString().'@centrix.platform';
@@ -30,7 +31,7 @@ class PlatformMailboxService
         }
 
         $inReplyTo = $replyTo?->message_id;
-        \Illuminate\Support\Facades\Mail::raw($body, function ($message) use ($to, $subject, $settings, $messageIdBody, $inReplyTo) {
+        \Illuminate\Support\Facades\Mail::raw($body, function ($message) use ($to, $subject, $settings, $messageIdBody, $inReplyTo, $attachments) {
             $message->to($to)->subject($subject);
             $headers = $message->getHeaders();
             // Symfony requires IdentificationHeader for Message-ID / In-Reply-To / References
@@ -54,6 +55,14 @@ class PlatformMailboxService
             }
             if (! empty($settings['reply_to'])) {
                 $message->replyTo($settings['reply_to']);
+            }
+            foreach ($attachments as $attachment) {
+                $data = $attachment['data'] ?? null;
+                $name = $attachment['name'] ?? 'attachment.bin';
+                $mime = $attachment['mime'] ?? 'application/octet-stream';
+                if (is_string($data) && $data !== '') {
+                    $message->attachData($data, $name, ['mime' => $mime]);
+                }
             }
         });
 

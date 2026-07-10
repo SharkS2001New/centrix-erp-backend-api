@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
 use App\Models\Organization;
+use App\Models\PlatformInvoice;
 use App\Models\PlatformSubscription;
 use App\Services\Platform\OrganizationLicenseService;
 use Carbon\Carbon;
+use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
 
 class PlatformSubscriptionController extends Controller
@@ -15,7 +17,7 @@ class PlatformSubscriptionController extends Controller
 
     public function index(Request $request)
     {
-        $q = PlatformSubscription::query()->with(['organization', 'plan'])->orderByDesc('id');
+        $q = PlatformSubscription::query()->with(['organization', 'plan', 'invoice'])->orderByDesc('id');
         if ($request->filled('status') && $request->status !== 'all') {
             $q->where('status', $request->status);
         }
@@ -42,7 +44,13 @@ class PlatformSubscriptionController extends Controller
             'workspace_keys' => 'sometimes|array',
             'module_keys' => 'sometimes|array',
             'contract_id' => 'nullable|integer',
+            'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
         ]);
+
+        $this->assertInvoiceBelongsToOrganization(
+            $data['invoice_id'] ?? null,
+            (int) $data['organization_id'],
+        );
 
         $org = Organization::query()->findOrFail($data['organization_id']);
         $sub = $this->licenses->createOrUpdateForOrganization($org, $data);
@@ -65,12 +73,20 @@ class PlatformSubscriptionController extends Controller
             'license_basis' => 'sometimes|in:org,user',
             'workspace_keys' => 'sometimes|array',
             'module_keys' => 'sometimes|array',
+            'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
         ]);
+
+        if (array_key_exists('invoice_id', $data)) {
+            $this->assertInvoiceBelongsToOrganization(
+                $data['invoice_id'],
+                (int) $platform_subscription->organization_id,
+            );
+        }
 
         $platform_subscription->update($data);
 
         return response()->json([
-            'data' => $platform_subscription->fresh()->load(['organization', 'plan']),
+            'data' => $platform_subscription->fresh()->load(['organization', 'plan', 'invoice']),
             'message' => 'Subscription updated.',
         ]);
     }
@@ -104,7 +120,7 @@ class PlatformSubscriptionController extends Controller
         ]);
 
         return response()->json([
-            'data' => $platform_subscription->fresh()->load(['organization', 'plan']),
+            'data' => $platform_subscription->fresh()->load(['organization', 'plan', 'invoice']),
             'message' => 'Licence extended.',
         ]);
     }
@@ -124,7 +140,7 @@ class PlatformSubscriptionController extends Controller
     public function forOrganization(Organization $organization)
     {
         $sub = PlatformSubscription::query()
-            ->with('plan')
+            ->with(['plan', 'invoice'])
             ->where('organization_id', $organization->id)
             ->first();
 
@@ -139,10 +155,24 @@ class PlatformSubscriptionController extends Controller
         }
 
         $sub = PlatformSubscription::query()
-            ->with('plan')
+            ->with(['plan', 'invoice'])
             ->where('organization_id', $org->id)
             ->first();
 
         return response()->json(['data' => $sub]);
+    }
+
+    protected function assertInvoiceBelongsToOrganization(?int $invoiceId, int $organizationId): void
+    {
+        if ($invoiceId === null) {
+            return;
+        }
+
+        $invoice = PlatformInvoice::query()->find($invoiceId);
+        if (! $invoice || (int) $invoice->organization_id !== $organizationId) {
+            throw new HttpResponseException(response()->json([
+                'message' => 'Invoice must belong to the same organization as the subscription.',
+            ], 422));
+        }
     }
 }

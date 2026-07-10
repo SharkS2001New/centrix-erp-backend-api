@@ -7,6 +7,8 @@ use App\Models\Organization;
 use App\Models\PlatformInvoice;
 use App\Models\PlatformInvoiceSavedTemplate;
 use App\Services\Platform\PlatformInvoiceBillingService;
+use App\Services\Platform\PlatformInvoiceDocumentService;
+use App\Services\Platform\PlatformMailSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -14,15 +16,21 @@ class PlatformInvoiceController extends Controller
 {
     public function __construct(
         protected PlatformInvoiceBillingService $billing,
+        protected PlatformInvoiceDocumentService $documents,
     ) {}
 
-    public function index()
+    public function index(Request $request)
     {
-        $invoices = PlatformInvoice::query()
+        $q = PlatformInvoice::query()
             ->with('organization:id,company_code,org_name')
             ->orderByDesc('issue_date')
-            ->orderByDesc('id')
-            ->get();
+            ->orderByDesc('id');
+
+        if ($request->filled('organization_id')) {
+            $q->where('organization_id', (int) $request->organization_id);
+        }
+
+        $invoices = $q->get();
 
         return response()->json(['data' => $invoices->map(fn (PlatformInvoice $inv) => $this->invoicePayload($inv))]);
     }
@@ -81,6 +89,55 @@ class PlatformInvoiceController extends Controller
         $model->delete();
 
         return response()->json(['message' => 'Invoice deleted.']);
+    }
+
+    public function email(Request $request, int $invoice)
+    {
+        $model = PlatformInvoice::query()->with('organization')->findOrFail($invoice);
+        $data = $request->validate([
+            'to' => 'required|email',
+            'subject' => 'nullable|string|max:500',
+            'body' => 'nullable|string',
+        ]);
+
+        $settings = PlatformMailSettingsResolver::resolve();
+        $customerName = $model->bill_to_name
+            ?? $model->organization?->org_name
+            ?? 'Customer';
+        $number = $model->invoice_number ?: '#'.$model->id;
+        $total = number_format((float) $model->total, 2).' '.($model->currency ?: 'KES');
+        $fromName = $settings['from_name'] ?? 'Centrix';
+
+        $subject = $data['subject']
+            ?? "Invoice {$number}";
+        $body = $data['body']
+            ?? "Dear {$customerName},\n\nPlease find attached invoice {$number} for {$total}.\n\nIf you have questions, reply to this email.\n\nRegards,\n{$fromName}";
+
+        $attachments = [[
+            'data' => $this->documents->buildPdfBinary($model),
+            'name' => $this->documents->attachmentFilename($model),
+            'mime' => 'application/pdf',
+        ]];
+
+        app(\App\Services\Platform\PlatformMailboxService::class)->send(
+            $data['to'],
+            $subject,
+            $body,
+            $request->user(),
+            [
+                'kind' => 'invoice',
+                'invoice_id' => $model->id,
+                'organization_id' => $model->organization_id,
+            ],
+            null,
+            $attachments,
+        );
+
+        if ($model->status === 'draft') {
+            $model->update(['status' => 'sent']);
+        }
+
+        return response()->json(['message' => 'Invoice emailed to '.$data['to'].'.']);
     }
 
     public function billingContext(Request $request)
@@ -173,6 +230,7 @@ class PlatformInvoiceController extends Controller
             'seller.address' => 'nullable|string|max:2000',
             'seller.tax_pin' => 'nullable|string|max:60',
             'invoice_options' => 'nullable|array',
+            'invoice_options.show_branding' => 'nullable|boolean',
             'invoice_options.show_quantity' => 'nullable|boolean',
             'invoice_options.show_payment_details' => 'nullable|boolean',
             'invoice_options.payment_details' => 'nullable|string|max:5000',

@@ -3,14 +3,19 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Models\PlatformInvoice;
 use App\Models\PlatformMailMessage;
+use App\Services\Platform\PlatformInvoiceDocumentService;
 use App\Services\Platform\PlatformMailboxService;
 use App\Services\Platform\PlatformMailSettingsResolver;
 use Illuminate\Http\Request;
 
 class PlatformMailController extends Controller
 {
-    public function __construct(protected PlatformMailboxService $mailbox) {}
+    public function __construct(
+        protected PlatformMailboxService $mailbox,
+        protected PlatformInvoiceDocumentService $invoiceDocuments,
+    ) {}
 
     public function show()
     {
@@ -126,7 +131,28 @@ class PlatformMailController extends Controller
             'subject' => 'required|string|max:500',
             'body' => 'required|string',
             'organization_id' => 'nullable|integer|exists:organizations,id',
+            'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
         ]);
+
+        $attachments = [];
+        $invoice = null;
+        if (! empty($data['invoice_id'])) {
+            $invoice = PlatformInvoice::query()->with('organization')->findOrFail($data['invoice_id']);
+            if (! empty($data['organization_id'])
+                && (int) $invoice->organization_id !== (int) $data['organization_id']) {
+                return response()->json([
+                    'message' => 'Selected invoice does not belong to the selected organization.',
+                ], 422);
+            }
+            $attachments[] = [
+                'data' => $this->invoiceDocuments->buildPdfBinary($invoice),
+                'name' => $this->invoiceDocuments->attachmentFilename($invoice),
+                'mime' => 'application/pdf',
+            ];
+            if (empty($data['organization_id']) && $invoice->organization_id) {
+                $data['organization_id'] = $invoice->organization_id;
+            }
+        }
 
         $msg = $this->mailbox->send(
             $data['to'],
@@ -135,11 +161,23 @@ class PlatformMailController extends Controller
             $request->user(),
             array_filter([
                 'organization_id' => $data['organization_id'] ?? null,
-                'kind' => 'compose',
-            ]),
+                'invoice_id' => $invoice?->id,
+                'kind' => $invoice ? 'invoice' : 'compose',
+            ], fn ($v) => $v !== null),
+            null,
+            $attachments,
         );
 
-        return response()->json(['data' => $msg, 'message' => 'Email sent.'], 201);
+        if ($invoice && $invoice->status === 'draft') {
+            $invoice->update(['status' => 'sent']);
+        }
+
+        return response()->json([
+            'data' => $msg,
+            'message' => $invoice
+                ? 'Email sent with invoice PDF attached.'
+                : 'Email sent.',
+        ], 201);
     }
 
     public function reply(Request $request, PlatformMailMessage $message)

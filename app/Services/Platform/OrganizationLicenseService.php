@@ -187,9 +187,13 @@ class OrganizationLicenseService
             'contract_id' => $payload['contract_id'] ?? null,
         ];
 
+        if (array_key_exists('invoice_id', $payload)) {
+            $attrs['invoice_id'] = $payload['invoice_id'];
+        }
+
         return PlatformSubscription::query()->updateOrCreate(
             ['organization_id' => $org->id],
             $attrs,
-        )->load('plan', 'organization');
+        )->load('plan', 'organization', 'invoice');
     }
 }
