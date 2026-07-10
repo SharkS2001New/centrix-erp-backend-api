@@ -35,7 +35,11 @@ class LpoAttachmentController extends Controller
         LpoMst::findOrFail((int) $data['lpo_no']);
 
         $file = $request->file('file');
-        $path = $file->store('lpo/'.(int) $data['lpo_no'].'/attachments', 'public');
+        $orgId = $request->user()?->organization_id;
+        $path = $file->store(
+            \App\Support\OrganizationPublicStorage::path($orgId, 'lpo', (string) ((int) $data['lpo_no']), 'attachments'),
+            'public',
+        );
 
         $attachment = LpoAttachment::create([
             'lpo_no' => (int) $data['lpo_no'],

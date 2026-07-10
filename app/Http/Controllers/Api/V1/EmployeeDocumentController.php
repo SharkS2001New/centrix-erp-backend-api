@@ -33,7 +33,10 @@ class EmployeeDocumentController extends Controller
         ]);
 
         $file = $request->file('file');
-        $path = $file->store('employees/'.$emp->id.'/documents', 'public');
+        $path = $file->store(
+            \App\Support\OrganizationPublicStorage::path($emp->organization_id, 'employees', (string) $emp->id, 'documents'),
+            'public',
+        );
 
         $doc = EmployeeDocument::create([
             'employee_id' => $emp->id,

@@ -3,8 +3,9 @@
 namespace App\Services\Platform;
 
 use App\Models\Organization;
+use App\Models\PlatformMailMessage;
+use App\Models\User;
 use Illuminate\Support\Facades\Config;
-use Illuminate\Support\Facades\Mail;
 
 class PlatformMailSettingsResolver
 {
@@ -30,6 +31,14 @@ class PlatformMailSettingsResolver
             'smtp_username' => '',
             'smtp_encryption' => 'tls',
             'smtp_password_set' => false,
+            'imap_enabled' => false,
+            'imap_host' => '',
+            'imap_port' => 993,
+            'imap_username' => '',
+            'imap_encryption' => 'ssl',
+            'imap_mailbox' => 'INBOX',
+            'imap_password_set' => false,
+            'imap_extension_available' => extension_loaded('imap'),
             'contract_email_subject' => 'Centrix ERP {kind}: {title}',
             'contract_email_body' => "Dear {customer_name},\n\nPlease find attached your Centrix ERP {kind} ({reference}).\n\nFirst payment: {first_payment}\nRenewal: {renewal_payment}\n\nIf you have questions, reply to this email.\n\nRegards,\n{from_name}",
         ];
@@ -46,7 +55,9 @@ class PlatformMailSettingsResolver
 
         $merged = array_merge($defaults, $stored);
         $merged['smtp_password_set'] = ! empty($stored['smtp_password']);
-        unset($merged['smtp_password']);
+        $merged['imap_password_set'] = ! empty($stored['imap_password']);
+        $merged['imap_extension_available'] = extension_loaded('imap');
+        unset($merged['smtp_password'], $merged['imap_password']);
 
         return $merged;
     }
@@ -65,6 +76,7 @@ class PlatformMailSettingsResolver
         foreach ([
             'enabled', 'from_name', 'from_address', 'reply_to',
             'smtp_host', 'smtp_port', 'smtp_username', 'smtp_encryption',
+            'imap_enabled', 'imap_host', 'imap_port', 'imap_username', 'imap_encryption', 'imap_mailbox',
             'contract_email_subject', 'contract_email_body',
         ] as $key) {
             if (array_key_exists($key, $data)) {
@@ -73,6 +85,9 @@ class PlatformMailSettingsResolver
         }
         if (! empty($data['smtp_password'])) {
             $current['smtp_password'] = $data['smtp_password'];
+        }
+        if (! empty($data['imap_password'])) {
+            $current['imap_password'] = $data['imap_password'];
         }
 
         $settings[self::SETTINGS_KEY] = $current;
@@ -110,19 +125,11 @@ class PlatformMailSettingsResolver
         ]);
     }
 
-    public static function sendRaw(string $to, string $subject, string $body): void
+    /**
+     * @param  array<string, mixed>  $meta
+     */
+    public static function sendRaw(string $to, string $subject, string $body, ?User $user = null, array $meta = []): PlatformMailMessage
     {
-        self::applyMailConfig();
-        $settings = self::resolve();
-        if (! ($settings['enabled'] ?? false)) {
-            abort(422, 'Platform outbound email is disabled.');
-        }
-
-        Mail::raw($body, function ($message) use ($to, $subject, $settings) {
-            $message->to($to)->subject($subject);
-            if (! empty($settings['reply_to'])) {
-                $message->replyTo($settings['reply_to']);
-            }
-        });
+        return app(PlatformMailboxService::class)->send($to, $subject, $body, $user, $meta);
     }
 }

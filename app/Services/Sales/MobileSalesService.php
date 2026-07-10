@@ -141,7 +141,7 @@ class MobileSalesService
                 ->where('status', '!=', 'cancelled');
         }
 
-        $query->orderByDesc('created_at')->orderByDesc('id');
+        $query->orderByDesc('id');
 
         if ($q = trim((string) ($filters['q'] ?? ''))) {
             SqlLikeSearch::applySalesOrderSearch($query, $q, includeCustomerRelation: true);
@@ -255,10 +255,9 @@ class MobileSalesService
                     $product,
                     $isRetail,
                     $discountGiven,
-                    (float) ($item->selling_price ?? 0),
-                    $item->display_unit_price !== null ? (float) $item->display_unit_price : null,
+                    (float) $item->selling_price,
                 )
-                : (float) ($item->display_unit_price ?? $item->selling_price);
+                : (float) $item->selling_price;
             $displayAmount = $product
                 ? $display->displayLineAmount(
                     (float) $item->quantity,
@@ -266,16 +265,9 @@ class MobileSalesService
                     $product,
                     $isRetail,
                     $discountGiven,
+                    (float) $item->selling_price,
                 )
                 : (float) $item->amount;
-            $displayDiscountPerUnit = $product
-                ? $display->displayDiscountPerUnit(
-                    (float) $item->quantity,
-                    $discountGiven,
-                    $product,
-                    $isRetail,
-                )
-                : ($discountGiven > 0 ? $discountGiven : 0.0);
 
             return [
                 'sale_item_id' => (int) $item->id,
@@ -287,10 +279,8 @@ class MobileSalesService
                 'unit_price' => $displayUnitPrice,
                 'unit_price_per_base' => (float) $item->selling_price,
                 'discount_given' => $discountGiven,
-                'display_discount_per_unit' => $displayDiscountPerUnit,
                 'product_vat' => (float) $item->product_vat,
                 'amount' => $displayAmount,
-                'display_amount' => $displayAmount,
                 'sell_on_retail' => (int) $item->on_wholesale_retail,
             ];
         })->values()->all();
@@ -320,7 +310,6 @@ class MobileSalesService
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')
             ->whereNotIn('status', ['pending_approval', 'editable'])
-            ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->limit(20)
             ->get()

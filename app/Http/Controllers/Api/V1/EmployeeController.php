@@ -188,7 +188,7 @@ class EmployeeController extends BaseResourceController
 
         $stored = app(UploadedImageProcessor::class)->storePublicImage(
             $request->file('image'),
-            'employees/'.$model->id,
+            \App\Support\OrganizationPublicStorage::path($model->organization_id, 'employees', (string) $model->id, 'photo'),
         );
         $model->update(['photo_path' => $stored['path']]);
 

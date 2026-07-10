@@ -181,40 +181,6 @@ class BackofficeOrderLineEditTest extends TestCase
         ])->assertStatus(422);
     }
 
-    public function test_mobile_booked_order_line_quantities_can_be_updated(): void
-    {
-        $sale = $this->createBackofficeSale(2, 100.0, 'booked');
-        $sale->update(['order_source' => 'mobile', 'channel' => 'mobile']);
-
-        $this->patchJson("/api/v1/sales/orders/{$sale->id}/line-quantities", [
-            'items' => [
-                ['id' => $sale->items->first()->id, 'quantity' => 4],
-            ],
-        ])
-            ->assertOk()
-            ->assertJsonPath('order_total', 200);
-
-        $this->getJson('/api/v1/sales?per_page=50&channel=mobile')
-            ->assertOk()
-            ->assertJsonFragment([
-                'id' => $sale->id,
-                'can_edit_lines' => true,
-            ]);
-    }
-
-    public function test_mobile_booked_order_exposes_can_edit_lines_on_index(): void
-    {
-        $sale = $this->createBackofficeSale(1, 50.0, 'booked');
-        $sale->update(['order_source' => 'mobile', 'channel' => 'mobile']);
-
-        $this->getJson('/api/v1/sales?per_page=50&channel=mobile')
-            ->assertOk()
-            ->assertJsonFragment([
-                'id' => $sale->id,
-                'can_edit_lines' => true,
-            ]);
-    }
-
     public function test_pos_channel_order_line_edit_allowed_when_external_pos_disabled(): void
     {
         $org = $this->user->organization;

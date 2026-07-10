@@ -8,7 +8,6 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Inventory\StockValuationService;
-use App\Services\Inventory\BranchStockService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Erp\ErpContext;
@@ -275,32 +274,20 @@ class ReportController extends Controller
         $storeInventoryValue = $inventorySummary['store_value'];
         $inventoryValue = $inventorySummary['value'];
 
-        $receiptValueSql = 'SUM((sr.units_received / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * COALESCE(sr.cost_price, 0))';
-
-        $receiptValue = (float) DB::table('stock_receipts as sr')
-            ->join('products as p', function ($join) {
-                $join->on('p.product_code', '=', 'sr.product_code')
-                    ->on('p.organization_id', '=', 'sr.organization_id');
-            })
-            ->join('uoms as u', 'u.id', '=', 'p.unit_id')
-            ->whereDate('sr.created_at', '>=', $from->toDateString())
-            ->whereDate('sr.created_at', '<=', $to->toDateString())
-            ->when($orgId, fn ($q) => $q->where('sr.organization_id', $orgId))
-            ->when($branchId, fn ($q) => $q->where('sr.branch_id', $branchId))
-            ->selectRaw("{$receiptValueSql} as total")
+        $receiptValue = (float) DB::table('stock_receipts')
+            ->whereDate('created_at', '>=', $from->toDateString())
+            ->whereDate('created_at', '<=', $to->toDateString())
+            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->selectRaw('SUM(units_received * COALESCE(cost_price, 0)) as total')
             ->value('total');
 
-        $prevReceiptValue = (float) DB::table('stock_receipts as sr')
-            ->join('products as p', function ($join) {
-                $join->on('p.product_code', '=', 'sr.product_code')
-                    ->on('p.organization_id', '=', 'sr.organization_id');
-            })
-            ->join('uoms as u', 'u.id', '=', 'p.unit_id')
-            ->whereDate('sr.created_at', '>=', $prevFrom->toDateString())
-            ->whereDate('sr.created_at', '<=', $prevTo->toDateString())
-            ->when($orgId, fn ($q) => $q->where('sr.organization_id', $orgId))
-            ->when($branchId, fn ($q) => $q->where('sr.branch_id', $branchId))
-            ->selectRaw("{$receiptValueSql} as total")
+        $prevReceiptValue = (float) DB::table('stock_receipts')
+            ->whereDate('created_at', '>=', $prevFrom->toDateString())
+            ->whereDate('created_at', '<=', $prevTo->toDateString())
+            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
+            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
+            ->selectRaw('SUM(units_received * COALESCE(cost_price, 0)) as total')
             ->value('total');
 
         $prevInventory = max(0, $inventoryValue - $receiptValue + $prevReceiptValue);
@@ -653,24 +640,12 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            $q->with([
-                'product:product_code,product_name,unit_id',
-                'product.unit:id,full_name,conversion_factor,small_packaging_label,middle_packaging_label,middle_factor,uom_type',
-            ])
+            $q->with(['product:product_code,product_name,unit_id'])
                 ->orderByDesc('id')
                 ->paginate(min((int) $request->input('per_page', 50), 200))
                 ->through(function ($transaction) {
                     $payload = $transaction->toArray();
                     $payload['product_name'] = $transaction->product?->product_name;
-                    $uom = $transaction->product?->unit;
-                    if ($uom) {
-                        $payload['uom_name'] = $uom->full_name;
-                        $payload['conversion_factor'] = $uom->conversion_factor;
-                        $payload['small_packaging_label'] = $uom->small_packaging_label;
-                        $payload['middle_packaging_label'] = $uom->middle_packaging_label;
-                        $payload['middle_factor'] = $uom->middle_factor;
-                        $payload['uom_type'] = $uom->uom_type;
-                    }
 
                     return $payload;
                 }),
@@ -697,37 +672,11 @@ class ReportController extends Controller
 
     public function stockValuation(Request $request)
     {
-        $paginator = $this->paginatedStockReport(
+        return response()->json($this->paginatedStockReport(
             $request,
             'v_stock_valuation',
             ['branch_id', 'product_code'],
-        );
-
-        $payload = $paginator->toArray();
-        $rows = app(BranchStockService::class)->attachAvailabilityToRows($payload['data'] ?? []);
-
-        foreach ($rows as &$row) {
-            $onHandShop = (float) ($row['shop_quantity'] ?? 0);
-            $onHandStore = (float) ($row['store_quantity'] ?? 0);
-            $availableShop = (float) ($row['available_shop_quantity'] ?? $onHandShop);
-            $availableStore = (float) ($row['available_store_quantity'] ?? $onHandStore);
-
-            // Qty columns show sellable stock; cost_value stays on physical on-hand.
-            $row['shop_on_hand'] = $onHandShop;
-            $row['store_on_hand'] = $onHandStore;
-            $row['shop_quantity'] = $availableShop;
-            $row['store_quantity'] = $availableStore;
-            $row['total_qty'] = $availableShop + $availableStore;
-            $row['shop_qty'] = $availableShop;
-            $row['store_qty'] = $availableStore;
-            $row['unit_cost'] = $row['effective_unit_cost'] ?? $row['last_cost_price'] ?? 0;
-            $row['stock_value'] = $row['cost_value'] ?? 0;
-        }
-        unset($row);
-
-        $payload['data'] = $rows;
-
-        return response()->json($payload);
+        ));
     }
 
     public function inventoryValuationSummary(Request $request)

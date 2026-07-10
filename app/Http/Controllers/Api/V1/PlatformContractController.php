@@ -143,7 +143,11 @@ class PlatformContractController extends Controller
         $subject = $data['subject'] ?? $fill($settings['contract_email_subject'] ?? 'Centrix ERP');
         $body = $data['body'] ?? $fill($settings['contract_email_body'] ?? '');
 
-        PlatformMailSettingsResolver::sendRaw($data['to'], $subject, $body);
+        PlatformMailSettingsResolver::sendRaw($data['to'], $subject, $body, $request->user(), [
+            'kind' => 'contract',
+            'contract_id' => $platform_contract->id,
+            'organization_id' => $platform_contract->organization_id,
+        ]);
 
         if ($platform_contract->status === 'draft') {
             $platform_contract->update(['status' => 'sent']);

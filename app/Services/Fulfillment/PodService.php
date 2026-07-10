@@ -32,8 +32,8 @@ class PodService
                 ? (int) $data['trip_id']
                 : (int) (($sale->fulfillment_meta ?? [])['trip_id'] ?? 0);
 
-            $photoPath = $this->storeUpload($data['photo'] ?? null, $sale->id, 'photo');
-            $signaturePath = $this->storeUpload($data['signature'] ?? null, $sale->id, 'signature');
+            $photoPath = $this->storeUpload($data['photo'] ?? null, $user->organization_id, $sale->id, 'photo');
+            $signaturePath = $this->storeUpload($data['signature'] ?? null, $user->organization_id, $sale->id, 'signature');
 
             $items = SaleItem::query()->where('sale_id', $sale->id)->get();
             $linePayloads = [];
@@ -130,18 +130,19 @@ class PodService
         return $anyPartial ? 'partial' : 'complete';
     }
 
-    protected function storeUpload(mixed $file, int $saleId, string $kind): ?string
+    protected function storeUpload(mixed $file, int|string|null $organizationId, int $saleId, string $kind): ?string
     {
         if (! $file instanceof UploadedFile) {
             return null;
         }
 
+        $directory = \App\Support\OrganizationPublicStorage::path($organizationId, 'pod', (string) $saleId, $kind);
         $processor = app(UploadedImageProcessor::class);
         if ($processor->isProcessableImage($file)) {
-            return $processor->storePublicImage($file, "pod/{$saleId}/{$kind}")['path'];
+            return $processor->storePublicImage($file, $directory)['path'];
         }
 
-        return $file->store("pod/{$saleId}/{$kind}", 'public');
+        return $file->store($directory, 'public');
     }
 
     public function hasPod(Sale $sale): bool

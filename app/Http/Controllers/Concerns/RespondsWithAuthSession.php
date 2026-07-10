@@ -28,17 +28,20 @@ trait RespondsWithAuthSession
                     ? $result['capabilities']['license']
                     : $licenses->resolveForOrganization($org instanceof \App\Models\Organization ? $org : null);
 
-                if ($licenses->isExpired($license)) {
-                    if (! empty($result['token']) && is_string($result['token'])) {
-                        // Best-effort: delete current token if Sanctum token id present later.
-                    }
+                if ($licenses->isPlatformOrganization($org instanceof \App\Models\Organization ? $org : null)) {
+                    // Platform tenant users are not subscription-gated.
+                } elseif ($licenses->isExpired($license)) {
                     if ($org instanceof \App\Models\Organization) {
                         $licenses->revokeOrganizationSessions($org);
                     }
 
+                    $missing = ! $license || ($license['status'] ?? '') === 'missing';
+
                     return response()->json([
-                        'message' => 'This organization’s Centrix licence has expired. Contact your Centrix administrator to renew or extend.',
-                        'code' => 'organization_license_expired',
+                        'message' => $missing
+                            ? 'This organization does not have an active Centrix subscription. Contact your Centrix administrator to activate a plan.'
+                            : 'This organization’s Centrix licence has expired. Contact your Centrix administrator to renew or extend.',
+                        'code' => $missing ? 'organization_subscription_required' : 'organization_license_expired',
                         'license' => $license,
                     ], 403);
                 }

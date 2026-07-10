@@ -101,7 +101,11 @@ class SupplierReturnDocumentService
             $this->syncLines($doc, $lines);
 
             if ($proof !== null) {
-                $this->proofService->store($doc, $proof, 'returns/supplier/'.$doc->id);
+                $this->proofService->store(
+                    $doc,
+                    $proof,
+                    \App\Support\OrganizationPublicStorage::path($doc->organization_id ?? $user->organization_id, 'returns', 'supplier', (string) $doc->id),
+                );
                 $doc->refresh();
             }
 
@@ -158,7 +162,11 @@ class SupplierReturnDocumentService
             }
 
             if ($proof !== null) {
-                $this->proofService->store($doc, $proof, 'returns/supplier/'.$doc->id);
+                $this->proofService->store(
+                    $doc,
+                    $proof,
+                    \App\Support\OrganizationPublicStorage::path($doc->organization_id ?? $user->organization_id, 'returns', 'supplier', (string) $doc->id),
+                );
             }
 
             return $doc->fresh(['lines', 'supplier', 'returnedByUser']);

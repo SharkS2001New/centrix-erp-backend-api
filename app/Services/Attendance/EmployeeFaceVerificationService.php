@@ -78,7 +78,7 @@ class EmployeeFaceVerificationService
     ): EmployeeFaceProfile {
         $path = app(UploadedImageProcessor::class)->storePublicImagePath(
             $photo,
-            "employee-face-profiles/{$employee->organization_id}/{$employee->id}",
+            \App\Support\OrganizationPublicStorage::path($employee->organization_id, 'employees', (string) $employee->id, 'face-profile'),
         );
 
         return EmployeeFaceProfile::query()->updateOrCreate(

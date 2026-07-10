@@ -187,7 +187,7 @@ class OrganizationController extends BaseResourceController
 
         $stored = app(UploadedImageProcessor::class)->storePublicImage(
             $request->file('image'),
-            'organizations/'.$model->id,
+            \App\Support\OrganizationPublicStorage::path($model, 'logo'),
         );
 
         $model->update(['logo' => $stored['path']]);

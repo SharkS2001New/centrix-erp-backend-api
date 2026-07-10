@@ -340,7 +340,7 @@ class MobileDriverAttendanceService
     {
         $path = app(UploadedImageProcessor::class)->storePublicImagePath(
             $photo,
-            "mobile-driver-attendance/{$user->organization_id}/{$user->id}/{$kind}",
+            \App\Support\OrganizationPublicStorage::path($user->organization_id, 'mobile-driver-attendance', (string) $user->id, $kind),
         );
 
         if (! is_string($path) || $path === '') {

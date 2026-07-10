@@ -15,10 +15,24 @@ class OrganizationLicenseService
 
     public const EXPIRED_CODES = [
         'organization_license_expired',
+        'organization_subscription_required',
         'license_expired',
         'subscription_expired',
         'organization_subscription_expired',
     ];
+
+    public const ACTIVE_STATUSES = ['active', 'trialing', 'past_due'];
+
+    public function isPlatformOrganization(?Organization $org): bool
+    {
+        if (! $org) {
+            return false;
+        }
+
+        $platformCode = config('erp.platform_company_code', 'PLATFORM');
+
+        return strcasecmp((string) $org->company_code, $platformCode) === 0;
+    }
 
     public function resolveForOrganization(?Organization $org): ?array
     {
@@ -26,8 +40,7 @@ class OrganizationLicenseService
             return null;
         }
 
-        $platformCode = config('erp.platform_company_code', 'PLATFORM');
-        if (strcasecmp((string) $org->company_code, $platformCode) === 0) {
+        if ($this->isPlatformOrganization($org)) {
             return null;
         }
 
@@ -38,7 +51,15 @@ class OrganizationLicenseService
             ->first();
 
         if (! $sub) {
-            return null;
+            return [
+                'status' => 'missing',
+                'expires_at' => null,
+                'is_trial' => false,
+                'days_remaining' => null,
+                'warning_days' => self::WARNING_DAYS,
+                'plan_name' => null,
+                'subscription_id' => null,
+            ];
         }
 
         $expiresAt = $sub->trial_ends_at ?? $sub->current_period_end;
@@ -46,7 +67,7 @@ class OrganizationLicenseService
         $daysRemaining = $end ? (int) Carbon::today()->diffInDays($end, false) : null;
 
         $status = strtolower((string) $sub->status);
-        if (in_array($status, ['active', 'trialing', 'past_due'], true) && $daysRemaining !== null && $daysRemaining < 0) {
+        if (in_array($status, self::ACTIVE_STATUSES, true) && $daysRemaining !== null && $daysRemaining < 0) {
             $status = 'expired';
         }
         if (in_array($status, ['cancelled'], true)) {
@@ -64,21 +85,36 @@ class OrganizationLicenseService
         ];
     }
 
+    /** True when the org must be locked out (no usable active subscription). */
     public function isExpired(?array $license): bool
     {
         if (! $license) {
             return false;
         }
-        if (in_array($license['status'] ?? '', ['expired', 'cancelled'], true)) {
+
+        $status = strtolower((string) ($license['status'] ?? ''));
+        if (in_array($status, ['missing', 'expired', 'cancelled', 'inactive'], true)) {
             return true;
         }
 
-        return isset($license['days_remaining']) && $license['days_remaining'] < 0;
+        if (isset($license['days_remaining']) && $license['days_remaining'] < 0) {
+            return true;
+        }
+
+        if ($status !== '' && ! in_array($status, self::ACTIVE_STATUSES, true)) {
+            return true;
+        }
+
+        return false;
     }
 
     public function assertUsable(?Organization $org, ?User $user = null): void
     {
         if ($user?->is_super_admin) {
+            return;
+        }
+
+        if ($this->isPlatformOrganization($org)) {
             return;
         }
 
@@ -91,9 +127,13 @@ class OrganizationLicenseService
             $this->revokeOrganizationSessions($org);
         }
 
+        $missing = ! $license || ($license['status'] ?? '') === 'missing';
+
         throw new HttpResponseException(response()->json([
-            'message' => 'This organization’s Centrix licence has expired. Contact your Centrix administrator to renew or extend.',
-            'code' => 'organization_license_expired',
+            'message' => $missing
+                ? 'This organization does not have an active Centrix subscription. Contact your Centrix administrator to activate a plan.'
+                : 'This organization’s Centrix licence has expired. Contact your Centrix administrator to renew or extend.',
+            'code' => $missing ? 'organization_subscription_required' : 'organization_license_expired',
             'license' => $license,
         ], 403));
     }

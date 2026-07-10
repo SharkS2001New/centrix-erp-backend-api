@@ -116,7 +116,7 @@ class Organization extends Model
 
     public static function logoIsStoredFile(?string $logo): bool
     {
-        return is_string($logo) && str_starts_with($logo, 'organizations/');
+        return \App\Support\OrganizationPublicStorage::isOrgScopedPath($logo);
     }
 
     /** @return array<string, mixed> */

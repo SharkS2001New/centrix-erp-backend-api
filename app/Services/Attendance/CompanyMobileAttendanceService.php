@@ -518,7 +518,7 @@ class CompanyMobileAttendanceService
 
         $photoPath = app(UploadedImageProcessor::class)->storePublicImagePath(
             $photo,
-            "company-mobile-attendance/{$employee->organization_id}/{$employee->id}/{$action}",
+            \App\Support\OrganizationPublicStorage::path($employee->organization_id, 'company-mobile-attendance', (string) $employee->id, $action),
         );
 
         return [

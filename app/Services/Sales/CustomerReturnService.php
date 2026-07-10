@@ -100,7 +100,11 @@ class CustomerReturnService
             $this->syncLines($return, $lines);
 
             if ($proof !== null) {
-                $this->proofService->store($return, $proof, 'returns/customer/'.$return->id);
+                $this->proofService->store(
+                    $return,
+                    $proof,
+                    \App\Support\OrganizationPublicStorage::path($return->organization_id ?? $user->organization_id, 'returns', 'customer', (string) $return->id),
+                );
                 $return->refresh();
             }
 
@@ -148,7 +152,11 @@ class CustomerReturnService
             }
 
             if ($proof !== null) {
-                $this->proofService->store($return, $proof, 'returns/customer/'.$return->id);
+                $this->proofService->store(
+                    $return,
+                    $proof,
+                    \App\Support\OrganizationPublicStorage::path($return->organization_id ?? $user->organization_id, 'returns', 'customer', (string) $return->id),
+                );
             }
 
             return $return->fresh(['lines', 'sale', 'customer', 'returnedByUser']);

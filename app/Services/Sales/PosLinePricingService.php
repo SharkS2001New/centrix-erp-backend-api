@@ -58,7 +58,7 @@ class PosLinePricingService
         ), 2);
     }
 
-    /** @return array{0: float, 1: float} unit price per base qty, line amount (after line discount) */
+    /** @return array{0: float, 1: float} gross unit price per sold display unit, line amount (after discount) */
     public function resolveLineAmounts(
         Product $product,
         float $baseQty,
@@ -69,15 +69,20 @@ class PosLinePricingService
         bool $trustClientUnitPrice,
         ?int $organizationId = null,
     ): array {
+        $product->loadMissing('unit');
+        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+        $entryQty = $factor > 1 && ! $isRetailLine ? $baseQty / $factor : $baseQty;
+
         if ($trustClientUnitPrice && $clientUnitPricePerBase !== null && $clientUnitPricePerBase > 0) {
             $amount = round($clientUnitPricePerBase * $baseQty, 2);
+            $unitPrice = $entryQty > 0 ? round($amount / $entryQty, 4) : $clientUnitPricePerBase;
 
-            return [$clientUnitPricePerBase, $amount];
+            return [$unitPrice, $amount];
         }
 
         $beforeDiscount = $this->lineTotalBeforeDiscount($product, $baseQty, $isRetailLine, $routeId, $organizationId);
         $amount = round(max(0, $beforeDiscount - max(0, $discountGiven)), 2);
-        $unitPrice = $baseQty > 0 ? round($amount / $baseQty, 4) : 0.0;
+        $unitPrice = $entryQty > 0 ? round($beforeDiscount / $entryQty, 4) : 0.0;
 
         return [$unitPrice, $amount];
     }

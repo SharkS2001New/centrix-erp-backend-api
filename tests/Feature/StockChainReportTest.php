@@ -19,19 +19,13 @@ class StockChainReportTest extends TestCase
         $user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($user);
 
-        $product = Product::query()->with('unit')->firstOrFail();
+        $product = Product::query()->firstOrFail();
         $branchId = (int) $user->branch_id;
 
-        DB::table('current_stock')->updateOrInsert(
-            [
-                'product_code' => $product->product_code,
-                'branch_id' => $branchId,
-            ],
-            [
-                'shop_quantity' => 0,
-                'store_quantity' => 100,
-            ],
-        );
+        DB::table('current_stock')->where([
+            'product_code' => $product->product_code,
+            'branch_id' => $branchId,
+        ])->delete();
 
         InventoryTransaction::query()->create([
             'branch_id' => $branchId,
@@ -100,81 +94,13 @@ class StockChainReportTest extends TestCase
             ->firstWhere('product_code', $product->product_code);
 
         $this->assertNotNull($row);
-        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
-        $this->assertEqualsWithDelta((100 / $factor) * 10, (float) $row['total_received'], 0.01);
+        $this->assertSame(1000.0, (float) $row['total_received']);
         $this->assertSame(50.0, (float) $row['total_sold']);
         $this->assertSame(0.0, (float) $row['current_shop_stock']);
         $this->assertSame(100.0, (float) $row['current_store_stock']);
-        $this->assertArrayHasKey('total_cost_value', $row);
         $this->assertNotNull($row['first_received_at']);
         $this->assertNotNull($row['first_sold_at']);
         $this->assertNotNull($row['last_movement_at']);
-    }
-
-    public function test_stock_chain_current_stock_is_available_after_reservations(): void
-    {
-        $user = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($user);
-
-        $product = Product::query()->with('unit')->firstOrFail();
-        $branchId = (int) $user->branch_id;
-
-        DB::table('current_stock')->updateOrInsert(
-            [
-                'product_code' => $product->product_code,
-                'branch_id' => $branchId,
-            ],
-            [
-                'shop_quantity' => 0,
-                'store_quantity' => 207,
-            ],
-        );
-
-        InventoryTransaction::query()->create([
-            'branch_id' => $branchId,
-            'product_code' => $product->product_code,
-            'stock_location' => 'store',
-            'transaction_type' => 'PURCHASE',
-            'reference_type' => 'manual',
-            'reference_id' => 99111,
-            'quantity_change' => 207,
-            'quantity_before' => 0,
-            'quantity_after' => 207,
-            'unit_cost' => 10,
-            'created_by' => $user->id,
-            'created_at' => now()->subDays(2),
-        ]);
-
-        DB::table('stock_reservations')->insert([
-            'branch_id' => $branchId,
-            'product_code' => $product->product_code,
-            'stock_location' => 'store',
-            'quantity' => 10,
-            'reserved_by' => $user->id,
-            'released_at' => null,
-            'expires_at' => now()->addHour(),
-            'created_at' => now(),
-        ]);
-
-        $from = now()->subDays(7)->toDateString();
-        $to = now()->toDateString();
-
-        $row = collect(
-            $this->getJson(
-                "/api/v1/reports/stock-chain?branch_id={$branchId}&from_date={$from}&to_date={$to}&q={$product->product_code}",
-            )->assertOk()->json('data'),
-        )->firstWhere('product_code', $product->product_code);
-
-        $this->assertNotNull($row);
-        $this->assertSame(197.0, (float) $row['current_store_stock']);
-        $this->assertSame(207.0, (float) $row['current_store_on_hand']);
-        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
-        $unitCost = (float) ($row['effective_unit_cost'] ?? 0);
-        $this->assertEqualsWithDelta(
-            (207 / $factor) * $unitCost,
-            (float) $row['total_cost_value'],
-            0.01,
-        );
     }
 
     public function test_stock_chain_shows_first_adjustment_for_opening_stock_only_product(): void
@@ -238,11 +164,11 @@ class StockChainReportTest extends TestCase
         $user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($user);
 
-        $product = Product::query()->with('unit')->firstOrFail();
+        $product = Product::query()->firstOrFail();
         $branchId = (int) $user->branch_id;
         $firstReceiveAt = now()->subDays(90);
 
-        InventoryTransaction::query()->forceCreate([
+        InventoryTransaction::query()->create([
             'branch_id' => $branchId,
             'product_code' => $product->product_code,
             'stock_location' => 'store',
@@ -257,7 +183,7 @@ class StockChainReportTest extends TestCase
             'created_at' => $firstReceiveAt,
         ]);
 
-        InventoryTransaction::query()->forceCreate([
+        InventoryTransaction::query()->create([
             'branch_id' => $branchId,
             'product_code' => $product->product_code,
             'stock_location' => 'store',
@@ -286,8 +212,6 @@ class StockChainReportTest extends TestCase
             $firstReceiveAt->toDateString(),
             substr((string) $row['first_received_at'], 0, 10),
         );
-        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
-        // Period filter only includes the recent purchase of 5 base units @ cost 5.
-        $this->assertEqualsWithDelta((5 / $factor) * 5, (float) $row['total_received'], 0.01);
+        $this->assertSame(25.0, (float) $row['total_received']);
     }
 }

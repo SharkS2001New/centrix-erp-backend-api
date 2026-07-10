@@ -672,7 +672,7 @@ class MobileFieldAttendanceService
         try {
             $path = app(UploadedImageProcessor::class)->storePublicImagePath(
                 $photo,
-                "mobile-attendance/{$user->organization_id}/{$user->id}/{$kind}",
+                \App\Support\OrganizationPublicStorage::path($user->organization_id, 'mobile-attendance', (string) $user->id, $kind),
             );
         } catch (\Throwable $exception) {
             throw new InvalidArgumentException(

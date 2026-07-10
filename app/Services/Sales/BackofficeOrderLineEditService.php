@@ -126,22 +126,12 @@ class BackofficeOrderLineEditService
         }
     }
 
-    public function allowsLineDiscountEdit(CapabilityGate $gate, ?Sale $sale = null): bool
+    public function allowsLineDiscountEdit(CapabilityGate $gate): bool
     {
         $salesSettings = $gate->moduleSettings('sales');
 
-        // Editable / pending-approval revisions must keep discount edits when either
-        // channel's approval workflow is on (e.g. mobile-only approval, backoffice edit).
-        if ($sale !== null) {
-            $status = (string) $sale->status;
-            if (in_array($status, ['editable', 'pending_approval'], true)
-                && $this->discounts->discountApprovalEnabled($salesSettings)) {
-                return true;
-            }
-        }
-
-        return $this->discounts->allowsManualLineDiscount($salesSettings, 'backend')
-            || $this->discounts->discountApprovalEnabled($salesSettings, 'backend');
+        return $this->discounts->allowsManualLineDiscount($salesSettings)
+            || $this->discounts->discountApprovalEnabled($salesSettings);
     }
 
     /**
@@ -151,7 +141,7 @@ class BackofficeOrderLineEditService
     {
         $this->assertLineEditAllowed($sale, $user, $gate);
         $wasEditable = (string) $sale->status === 'editable';
-        $allowDiscountEdit = $this->allowsLineDiscountEdit($gate, $sale);
+        $allowDiscountEdit = $this->allowsLineDiscountEdit($gate);
 
         return DB::transaction(function () use ($sale, $user, $items, $gate, $wasEditable, $allowDiscountEdit) {
             $sale = Sale::with('items')->lockForUpdate()->findOrFail($sale->id);

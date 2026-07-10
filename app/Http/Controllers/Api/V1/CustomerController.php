@@ -223,7 +223,7 @@ class CustomerController extends BaseResourceController
 
         $stored = app(UploadedImageProcessor::class)->storePublicImage(
             $request->file('image'),
-            'customers/'.$model->customer_num,
+            \App\Support\OrganizationPublicStorage::path($model->organization_id ?? $request->user()?->organization_id, 'customers', (string) $model->customer_num),
         );
 
         $model->update(['shop_image' => $stored['path']]);
