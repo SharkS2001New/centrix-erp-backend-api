@@ -384,8 +384,6 @@ Route::prefix('v1')->group(function () {
 
         Route::get('admin/organizations/{organization}/platform-contracts', [PlatformContractController::class, 'forOrganization'])
             ->middleware(['erp.super_admin']);
-        Route::get('admin/organizations/{organization}/contracts', [PlatformContractController::class, 'forOrganization'])
-            ->middleware(['erp.super_admin']);
         Route::get('erp/organization/contracts', [PlatformContractController::class, 'tenantContracts']);
 
         Route::prefix('admin/platform-mail')

@@ -32,102 +32,20 @@ class DiscountApprovalService
         protected SaleStockReservationService $stockReservations,
     ) {}
 
-    public function discountApprovalEnabled(array $salesSettings, ?string $channel = null): bool
+    public function discountApprovalEnabled(array $salesSettings): bool
     {
-        $salesSettings = self::normalizeDiscountApprovalSettings($salesSettings);
-
-        if ($channel === null) {
-            return ! empty($salesSettings['discount_approval_enabled_mobile'])
-                || ! empty($salesSettings['discount_approval_enabled_backoffice']);
-        }
-
-        return $this->isMobileSalesChannel($channel)
-            ? ! empty($salesSettings['discount_approval_enabled_mobile'])
-            : ! empty($salesSettings['discount_approval_enabled_backoffice']);
-    }
-
-    /**
-     * Normalize legacy `discount_approval_enabled` into per-channel flags.
-     * When channel keys are absent, both inherit the legacy/combined flag.
-     *
-     * @param  array<string, mixed>  $salesSettings
-     * @param  array<string, mixed>|null  $storedCustom  Org-stored sales keys (pre-defaults) when available
-     * @return array<string, mixed>
-     */
-    public static function normalizeDiscountApprovalSettings(
-        array $salesSettings,
-        ?array $storedCustom = null,
-    ): array {
-        $source = $storedCustom ?? $salesSettings;
-        $hasChannelKeys = array_key_exists('discount_approval_enabled_mobile', $source)
-            || array_key_exists('discount_approval_enabled_backoffice', $source);
-
-        $legacy = array_key_exists('discount_approval_enabled', $source)
-            ? ! empty($source['discount_approval_enabled'])
-            : ! empty($salesSettings['discount_approval_enabled'] ?? false);
-
-        if (! $hasChannelKeys) {
-            $salesSettings['discount_approval_enabled_mobile'] = $legacy;
-            $salesSettings['discount_approval_enabled_backoffice'] = $legacy;
-        } else {
-            $salesSettings['discount_approval_enabled_mobile'] = array_key_exists('discount_approval_enabled_mobile', $source)
-                ? ! empty($source['discount_approval_enabled_mobile'])
-                : $legacy;
-            $salesSettings['discount_approval_enabled_backoffice'] = array_key_exists('discount_approval_enabled_backoffice', $source)
-                ? ! empty($source['discount_approval_enabled_backoffice'])
-                : $legacy;
-        }
-
-        $salesSettings['discount_approval_enabled'] =
-            ! empty($salesSettings['discount_approval_enabled_mobile'])
-            || ! empty($salesSettings['discount_approval_enabled_backoffice']);
-
-        return $salesSettings;
-    }
-
-    public function isMobileSalesChannel(?string $channel): bool
-    {
-        return strtolower(trim((string) $channel)) === 'mobile';
-    }
-
-    public function salesChannelFromCart(TemporaryCart $cart): string
-    {
-        $channel = trim((string) ($cart->channel ?? ''));
-        if ($channel !== '') {
-            return strtolower($channel) === 'backoffice' ? 'backend' : strtolower($channel);
-        }
-
-        $source = strtolower(trim((string) ($cart->order_source ?? 'backend')));
-
-        return match ($source) {
-            'backoffice' => 'backend',
-            'mobile' => 'mobile',
-            'pos' => 'pos',
-            default => $source !== '' ? $source : 'backend',
-        };
-    }
-
-    public function salesChannelFromSale(Sale $sale): string
-    {
-        $channel = strtolower(trim((string) ($sale->channel ?: 'backend')));
-
-        return $channel === 'backoffice' ? 'backend' : $channel;
+        return ! empty($salesSettings['discount_approval_enabled']);
     }
 
     /** Manual line discounts (direct or via approval workflow). */
     public function allowsManualLineDiscount(array $salesSettings, ?string $orderSource = null): bool
     {
-        if ($orderSource !== null) {
-            // Channel approval unlocks entry on that channel only.
-            if ($this->discountApprovalEnabled($salesSettings, $orderSource)) {
-                return true;
-            }
-
-            return SalesCheckoutSettings::allowsManualLineDiscount($salesSettings, $orderSource);
-        }
-
         if ($this->discountApprovalEnabled($salesSettings)) {
             return true;
+        }
+
+        if ($orderSource !== null) {
+            return SalesCheckoutSettings::allowsManualLineDiscount($salesSettings, $orderSource);
         }
 
         return ! empty($salesSettings['allow_edit_line_discount'])
@@ -135,13 +53,9 @@ class DiscountApprovalService
     }
 
     /** Order-level discounts — disabled for staff in discount-for-approval mode. */
-    public function allowsOrderDiscount(
-        array $salesSettings,
-        ?User $user = null,
-        ?string $channel = null,
-    ): bool {
-        $channel ??= 'backend';
-        if ($user !== null && $this->requiresDiscountRequestWorkflow($salesSettings, $user, $channel)) {
+    public function allowsOrderDiscount(array $salesSettings, ?User $user = null): bool
+    {
+        if ($user !== null && $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return false;
         }
 
@@ -149,10 +63,10 @@ class DiscountApprovalService
     }
 
     /** Whether a cart line may carry a discount amount at all. */
-    public function allowsLineDiscountAmount(array $salesSettings, ?string $channel = null): bool
+    public function allowsLineDiscountAmount(array $salesSettings): bool
     {
         return ! empty($salesSettings['allow_discounts'])
-            || $this->discountApprovalEnabled($salesSettings, $channel);
+            || $this->discountApprovalEnabled($salesSettings);
     }
 
     public function thresholdPercent(array $salesSettings): float
@@ -270,12 +184,9 @@ class DiscountApprovalService
         return ($discountAmount / $baseAmount) * 100;
     }
 
-    public function requiresDiscountRequestWorkflow(
-        array $salesSettings,
-        User $user,
-        ?string $channel = null,
-    ): bool {
-        return $this->discountApprovalEnabled($salesSettings, $channel)
+    public function requiresDiscountRequestWorkflow(array $salesSettings, User $user): bool
+    {
+        return $this->discountApprovalEnabled($salesSettings)
             && ! $this->canAutoApproveDiscount($user);
     }
 
@@ -285,9 +196,6 @@ class DiscountApprovalService
         float $discountAmount,
         string $field = 'discount_given',
         ?TemporaryCart $cart = null,
-        ?Product $product = null,
-        ?float $quantity = null,
-        ?bool $isRetail = null,
     ): void {
         if ($discountAmount <= 0.01) {
             return;
@@ -297,24 +205,7 @@ class DiscountApprovalService
             return;
         }
 
-        $channel = $cart !== null ? $this->salesChannelFromCart($cart) : null;
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $channel)) {
-            return;
-        }
-
-        // Catalog / preconfigured product discounts are not "manual" — allow direct apply.
-        if ($cart !== null
-            && $product !== null
-            && $quantity !== null
-            && $isRetail !== null
-            && $this->discountMatchesConfiguredProductAmount(
-                $cart,
-                $user,
-                $product,
-                $quantity,
-                $isRetail,
-                $discountAmount,
-            )) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return;
         }
 
@@ -330,8 +221,7 @@ class DiscountApprovalService
         ?string $checkoutReason = null,
     ): void {
         $salesSettings = $gate->moduleSettings('sales');
-        $channel = $this->salesChannelFromCart($cart);
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $channel)) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return;
         }
 
@@ -365,8 +255,19 @@ class DiscountApprovalService
             return true;
         }
 
+        $user ??= User::query()->find($cart->user_id);
+        $bypassConfiguredProduct = false;
+        if ($user !== null) {
+            $gate = app(ErpContext::class)->gateForUser($user);
+            $bypassConfiguredProduct = ! $this->requiresDiscountRequestWorkflow(
+                $gate->moduleSettings('sales'),
+                $user,
+            );
+        }
+
         $channel = (string) ($cart->channel ?? 'backend');
-        $bypassConfigured = in_array($channel, ['mobile', 'pos'], true);
+        $bypassConfigured = $bypassConfiguredProduct
+            && in_array($channel, ['mobile', 'pos'], true);
 
         foreach ($cart->lines as $line) {
             $discountGiven = (float) ($line->discount_given ?? 0);
@@ -374,7 +275,6 @@ class DiscountApprovalService
                 continue;
             }
 
-            // Preconfigured catalog discounts do not require manager approval.
             if ($bypassConfigured && $this->lineDiscountMatchesConfiguredProduct($cart, $line, $discountGiven)) {
                 continue;
             }
@@ -393,8 +293,19 @@ class DiscountApprovalService
 
         $sale->loadMissing('items');
 
+        $user ??= User::query()->find($sale->cashier_id);
+        $bypassConfiguredProduct = false;
+        if ($user !== null) {
+            $gate = app(ErpContext::class)->gateForUser($user);
+            $bypassConfiguredProduct = ! $this->requiresDiscountRequestWorkflow(
+                $gate->moduleSettings('sales'),
+                $user,
+            );
+        }
+
         $channel = (string) ($sale->channel ?? 'backend');
-        $bypassConfigured = in_array($channel, ['mobile', 'pos'], true);
+        $bypassConfigured = $bypassConfiguredProduct
+            && in_array($channel, ['mobile', 'pos'], true);
 
         foreach ($sale->items as $item) {
             $discountGiven = (float) ($item->discount_given ?? 0);
@@ -415,7 +326,7 @@ class DiscountApprovalService
     public function saleRequiresPendingApproval(Sale $sale, User $user, CapabilityGate $gate): bool
     {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromSale($sale))) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return false;
         }
 
@@ -433,7 +344,7 @@ class DiscountApprovalService
     public function requiresDiscountResubmitApproval(Sale $sale, User $user, CapabilityGate $gate): bool
     {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromSale($sale))) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return false;
         }
 
@@ -590,19 +501,11 @@ class DiscountApprovalService
                 continue;
             }
 
-            $requestedPerUnit = array_key_exists('display_discount_per_unit', $line)
-                ? round((float) $line['display_discount_per_unit'], 4)
-                : $this->fallbackDisplayDiscountPerUnit(
-                    (float) ($line['display_quantity'] ?? $line['quantity'] ?? 1),
-                    (float) ($line['discount_given'] ?? 0),
-                );
-
             $result[] = [
                 'product_code' => $code,
                 'product_name' => (string) ($line['product_name'] ?? $code),
                 'unit_price' => round((float) ($line['unit_price'] ?? $line['selling_price'] ?? 0), 2),
-                // Requested amount stored as per-unit so it matches advised_discount units.
-                'discount_given' => $requestedPerUnit,
+                'discount_given' => round((float) ($line['discount_given'] ?? 0), 2),
                 'advised_discount' => $advised,
             ];
         }
@@ -637,34 +540,26 @@ class DiscountApprovalService
     /** @param  list<array<string, mixed>>  $advisedLines */
     protected function saleLineDiscountsMatchAdvised(Sale $sale, array $advisedLines): bool
     {
-        $sale->loadMissing(['items.product']);
+        $sale->loadMissing('items');
         if (abs((float) ($sale->order_discount ?? 0)) > 0.01) {
             return false;
         }
 
         $advisedByCode = collect($advisedLines)->keyBy(fn ($line) => (string) ($line['product_code'] ?? ''));
-        $display = app(SaleLineQuantityDisplayService::class);
 
         foreach ($sale->items as $item) {
             $code = (string) $item->product_code;
-            $discountTotal = round((float) ($item->discount_given ?? 0), 2);
+            $discount = round((float) ($item->discount_given ?? 0), 2);
             $advised = $advisedByCode->get($code);
-            $product = $item->product;
-            $isRetail = (bool) $item->on_wholesale_retail;
-            $packQty = $product
-                ? max(0.0001, $display->entryQtyFromBase((float) $item->quantity, $product, $isRetail))
-                : max(0.0001, (float) $item->quantity);
-            $discountPerUnit = round($discountTotal / $packQty, 4);
 
             if ($advised !== null) {
-                $advisedPerUnit = round((float) $advised['advised_discount'], 4);
-                if (abs($discountPerUnit - $advisedPerUnit) > 0.01) {
+                if (abs($discount - (float) $advised['advised_discount']) > 0.01) {
                     return false;
                 }
                 continue;
             }
 
-            if ($discountTotal > 0.01) {
+            if ($discount > 0.01) {
                 return false;
             }
         }
@@ -681,28 +576,20 @@ class DiscountApprovalService
         }
 
         $advisedByCode = collect($advisedLines)->keyBy(fn ($line) => (string) ($line['product_code'] ?? ''));
-        $display = app(SaleLineQuantityDisplayService::class);
 
         foreach ($cart->lines as $line) {
             $code = (string) $line->product_code;
-            $discountTotal = round((float) ($line->discount_given ?? 0), 2);
+            $discount = round((float) ($line->discount_given ?? 0), 2);
             $advised = $advisedByCode->get($code);
-            $product = Product::query()->find($code);
-            $isRetail = (bool) $line->on_wholesale_retail;
-            $packQty = $product
-                ? max(0.0001, $display->entryQtyFromBase((float) $line->quantity, $product, $isRetail))
-                : max(0.0001, (float) $line->quantity);
-            $discountPerUnit = round($discountTotal / $packQty, 4);
 
             if ($advised !== null) {
-                $advisedPerUnit = round((float) $advised['advised_discount'], 4);
-                if (abs($discountPerUnit - $advisedPerUnit) > 0.01) {
+                if (abs($discount - (float) $advised['advised_discount']) > 0.01) {
                     return false;
                 }
                 continue;
             }
 
-            if ($discountTotal > 0.01) {
+            if ($discount > 0.01) {
                 return false;
             }
         }
@@ -789,7 +676,7 @@ class DiscountApprovalService
         bool $fromEditableSave = false,
     ): ?ActionRequest {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromSale($sale))) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return null;
         }
 
@@ -886,7 +773,9 @@ class DiscountApprovalService
 
         return $cart->lines->map(function (CartLine $line) {
             $product = Product::query()->find($line->product_code);
-            $isRetail = (bool) $line->on_wholesale_retail;
+            $isRetail = $product
+                ? (bool) $product->sell_on_retail && (bool) $line->on_wholesale_retail
+                : (bool) $line->on_wholesale_retail;
 
             return $this->presentApprovalLinePayload(
                 (string) $line->product_code,
@@ -898,7 +787,6 @@ class DiscountApprovalService
                 $line->uom,
                 $isRetail,
                 $product,
-                $line->display_unit_price !== null ? (float) $line->display_unit_price : null,
             );
         })->values()->all();
     }
@@ -922,7 +810,6 @@ class DiscountApprovalService
                 $item->uom,
                 $isRetail,
                 $product,
-                $item->display_unit_price !== null ? (float) $item->display_unit_price : null,
             );
         })->values()->all();
     }
@@ -940,31 +827,11 @@ class DiscountApprovalService
         ?string $uom,
         bool $isRetail,
         ?Product $product,
-        ?float $storedDisplayUnitPrice = null,
     ): array {
         $display = app(SaleLineQuantityDisplayService::class);
         $displayUnitPrice = $product
-            ? $display->displayUnitPrice(
-                $baseQty,
-                $amount,
-                $product,
-                $isRetail,
-                $discountGiven,
-                $unitPriceStored,
-                $storedDisplayUnitPrice,
-            )
-            : ($storedDisplayUnitPrice !== null && $storedDisplayUnitPrice > 0
-                ? $storedDisplayUnitPrice
-                : $unitPriceStored);
-        $displayDiscountPerUnit = $product
-            ? $display->displayDiscountPerUnit($baseQty, $discountGiven, $product, $isRetail)
-            : $this->fallbackDisplayDiscountPerUnit($baseQty, $discountGiven);
-        $displayAmount = $product
-            ? $display->displayLineAmount($baseQty, $amount, $product, $isRetail, $discountGiven, $unitPriceStored)
-            : round($amount, 2);
-        $entryQty = $product
-            ? $display->entryQtyFromBase($baseQty, $product, $isRetail)
-            : $baseQty;
+            ? $display->displayUnitPrice($baseQty, $amount, $product, $isRetail, $discountGiven, $unitPriceStored)
+            : $unitPriceStored;
         $qtyDisp = $product
             ? $display->formatLineQtyDisplay($baseQty, $product, $isRetail, $uom)
             : trim($baseQty.' '.trim((string) ($uom ?? '')));
@@ -973,33 +840,23 @@ class DiscountApprovalService
             'product_code' => $productCode,
             'product_name' => $productName,
             'unit_price' => round($displayUnitPrice, 2),
-            'display_unit_price' => round($displayUnitPrice, 2),
             'selling_price' => round($unitPriceStored, 2),
             'discount_given' => round($discountGiven, 2),
-            'display_discount_per_unit' => round($displayDiscountPerUnit, 4),
-            'amount' => round($displayAmount, 2),
-            'display_amount' => round($displayAmount, 2),
+            'amount' => round($amount, 2),
             'quantity' => $baseQty,
-            'display_quantity' => $entryQty,
+            'display_quantity' => $product
+                ? $display->entryQtyFromBase($baseQty, $product, $isRetail)
+                : $baseQty,
             'qty_disp' => $qtyDisp,
             'uom' => $uom,
             'on_wholesale_retail' => $isRetail ? 1 : 0,
         ];
     }
 
-    protected function fallbackDisplayDiscountPerUnit(float $baseQty, float $discountGiven): float
-    {
-        if ($baseQty <= 0) {
-            return 0.0;
-        }
-
-        return round(max(0.0, $discountGiven) / $baseQty, 4);
-    }
-
     public function checkoutRequiresPendingApproval(TemporaryCart $cart, User $user, CapabilityGate $gate): bool
     {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromCart($cart))) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return false;
         }
 
@@ -1038,22 +895,15 @@ class DiscountApprovalService
             throw ValidationException::withMessages(['line_ref' => 'Line reference is required for line discounts.']);
         }
 
-        if ($scope === 'order') {
-            $channel = $this->salesChannelFromCart($cart);
-            // Staff in approval mode cannot free-apply order discounts (allowsOrderDiscount),
-            // but may still submit them for manager approval when the workflow is on.
-            $orderDiscountFeatureOn = ! empty($salesSettings['enable_order_discount'])
-                || $this->discountApprovalEnabled($salesSettings, $channel);
-            if (! $orderDiscountFeatureOn) {
-                throw ValidationException::withMessages(['scope' => 'Order discount is not enabled.']);
-            }
+        if ($scope === 'order' && ! $this->allowsOrderDiscount($salesSettings, $user)) {
+            throw ValidationException::withMessages(['scope' => 'Order discount is not enabled.']);
         }
 
         if ($scope === 'line' && ! $this->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             throw ValidationException::withMessages(['scope' => 'Manual line discounts are not enabled.']);
         }
 
-        $needsApproval = $this->discountApprovalEnabled($salesSettings, $this->salesChannelFromCart($cart))
+        $needsApproval = $this->discountApprovalEnabled($salesSettings)
             && $discountAmount > 0.01
             && ! $this->canAutoApproveDiscount($user);
 
@@ -1263,7 +1113,7 @@ class DiscountApprovalService
 
         $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromSale($sale))) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
             return null;
         }
 
@@ -1513,14 +1363,21 @@ class DiscountApprovalService
             $row = $this->findCartLineByRef($cart, $lineRef);
             $product = $this->findProductForCart($cart, (string) $row->product_code, $user);
             $qty = (float) $row->quantity;
+            $isRetail = $this->isRetailLine($product, (bool) $row->on_wholesale_retail);
+            $salesSettings = $gate->moduleSettings('sales');
 
-            // Keep the cart's already-calculated gross; only apply the new discount.
-            $grossBeforeDiscount = round(
-                (float) $row->amount + (float) ($row->discount_given ?? 0),
-                2,
+            [$unitPrice, $amount] = $this->pricing->resolveLineAmounts(
+                $product,
+                $qty,
+                $isRetail,
+                $discountAmount,
+                app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing(
+                    $cart,
+                    $salesSettings,
+                ),
+                (float) $row->unit_price,
+                SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
             );
-            $amount = round(max(0, $grossBeforeDiscount - $discountAmount), 2);
-            $unitPrice = $qty > 0 ? round($amount / $qty, 4) : 0.0;
 
             $product->loadMissing('vat');
             $productVat = SalesVatCalculator::vatFromInclusiveGross(
@@ -1602,34 +1459,6 @@ class DiscountApprovalService
     protected function isRetailLine(Product $product, bool $onWholesaleRetailFlag): bool
     {
         return (bool) $product->sell_on_retail && $onWholesaleRetailFlag;
-    }
-
-    protected function discountMatchesConfiguredProductAmount(
-        TemporaryCart $cart,
-        User $user,
-        Product $product,
-        float $quantity,
-        bool $isRetail,
-        float $discountGiven,
-    ): bool {
-        if (! $this->productDiscounts->productHasConfiguredDiscount($product)) {
-            return false;
-        }
-
-        $product->loadMissing('unit');
-        $salesSettings = app(ErpContext::class)->gateForUser($user)->moduleSettings('sales');
-        $routeId = app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings);
-        $beforeDiscount = $this->pricing->lineTotalBeforeDiscount(
-            $product,
-            $quantity,
-            $isRetail,
-            $routeId,
-        );
-        $conversion = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
-        $packQty = $conversion > 1 ? $quantity / $conversion : $quantity;
-        $configured = $this->productDiscounts->computeProductLineDiscount($product, $beforeDiscount, $packQty);
-
-        return abs($discountGiven - $configured) <= 0.02;
     }
 
     protected function lineDiscountMatchesConfiguredProduct(
