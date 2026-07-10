@@ -8,6 +8,7 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Inventory\StockValuationService;
+use App\Services\Inventory\BranchStockService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Erp\ErpContext;
@@ -696,11 +697,37 @@ class ReportController extends Controller
 
     public function stockValuation(Request $request)
     {
-        return response()->json($this->paginatedStockReport(
+        $paginator = $this->paginatedStockReport(
             $request,
             'v_stock_valuation',
             ['branch_id', 'product_code'],
-        ));
+        );
+
+        $payload = $paginator->toArray();
+        $rows = app(BranchStockService::class)->attachAvailabilityToRows($payload['data'] ?? []);
+
+        foreach ($rows as &$row) {
+            $onHandShop = (float) ($row['shop_quantity'] ?? 0);
+            $onHandStore = (float) ($row['store_quantity'] ?? 0);
+            $availableShop = (float) ($row['available_shop_quantity'] ?? $onHandShop);
+            $availableStore = (float) ($row['available_store_quantity'] ?? $onHandStore);
+
+            // Qty columns show sellable stock; cost_value stays on physical on-hand.
+            $row['shop_on_hand'] = $onHandShop;
+            $row['store_on_hand'] = $onHandStore;
+            $row['shop_quantity'] = $availableShop;
+            $row['store_quantity'] = $availableStore;
+            $row['total_qty'] = $availableShop + $availableStore;
+            $row['shop_qty'] = $availableShop;
+            $row['store_qty'] = $availableStore;
+            $row['unit_cost'] = $row['effective_unit_cost'] ?? $row['last_cost_price'] ?? 0;
+            $row['stock_value'] = $row['cost_value'] ?? 0;
+        }
+        unset($row);
+
+        $payload['data'] = $rows;
+
+        return response()->json($payload);
     }
 
     public function inventoryValuationSummary(Request $request)

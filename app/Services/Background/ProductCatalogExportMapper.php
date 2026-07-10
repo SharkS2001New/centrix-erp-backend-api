@@ -113,8 +113,14 @@ class ProductCatalogExportMapper implements ListExportRowMapper
             ? ($product['discount_value'] ?? '')
             : ($product['discount_percentage'] ?? '');
 
-        $shopQty = $product['shop_qty'] ?? $product['stock_in_shop'] ?? '';
-        $storeQty = $product['store_qty'] ?? $product['stock_in_store'] ?? '';
+        $shopQty = $product['shop_qty']
+            ?? $product['stock_available_shop']
+            ?? $product['stock_in_shop']
+            ?? '';
+        $storeQty = $product['store_qty']
+            ?? $product['stock_available_store']
+            ?? $product['stock_in_store']
+            ?? '';
 
         $isActive = array_key_exists('is_active', $product)
             ? ! empty($product['is_active'])

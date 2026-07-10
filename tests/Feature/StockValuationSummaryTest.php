@@ -144,4 +144,47 @@ class StockValuationSummaryTest extends TestCase
         $this->assertSame(2400.0, (float) $row['total_cost_value']);
         $this->assertGreaterThanOrEqual(2400.0, (float) $response->json('shop_value'));
     }
+
+    public function test_stock_valuation_report_shows_available_qty_and_on_hand_value(): void
+    {
+        $product = Product::query()->with('unit')->firstOrFail();
+        $branchId = (int) $this->user->branch_id;
+        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+
+        $product->update(['last_cost_price' => 100]);
+
+        CurrentStock::query()->updateOrCreate(
+            [
+                'product_code' => $product->product_code,
+                'branch_id' => $branchId,
+            ],
+            [
+                'shop_quantity' => 0,
+                'store_quantity' => 207,
+            ],
+        );
+
+        StockReservation::query()->create([
+            'branch_id' => $branchId,
+            'product_code' => $product->product_code,
+            'stock_location' => 'store',
+            'quantity' => 10,
+            'reserved_by' => $this->user->id,
+            'released_at' => null,
+            'expires_at' => now()->addHour(),
+        ]);
+
+        $row = collect(
+            $this->getJson(
+                '/api/v1/reports/stock-valuation?branch_id='.$branchId.'&q='.$product->product_code,
+            )->assertOk()->json('data'),
+        )->firstWhere('product_code', $product->product_code);
+
+        $this->assertNotNull($row);
+        $this->assertSame(197.0, (float) $row['store_quantity']);
+        $this->assertSame(197.0, (float) $row['store_qty']);
+        $this->assertSame(207.0, (float) $row['store_on_hand']);
+        $this->assertEqualsWithDelta((207 / $factor) * 100, (float) $row['cost_value'], 0.01);
+        $this->assertEqualsWithDelta((207 / $factor) * 100, (float) $row['stock_value'], 0.01);
+    }
 }
