@@ -830,7 +830,7 @@ class DiscountApprovalService
     ): array {
         $display = app(SaleLineQuantityDisplayService::class);
         $displayUnitPrice = $product
-            ? $display->displayUnitPrice($baseQty, $amount, $product, $isRetail)
+            ? $display->displayUnitPrice($baseQty, $amount, $product, $isRetail, $discountGiven, $unitPriceStored)
             : $unitPriceStored;
         $qtyDisp = $product
             ? $display->formatLineQtyDisplay($baseQty, $product, $isRetail, $uom)

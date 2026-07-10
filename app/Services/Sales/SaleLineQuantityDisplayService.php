@@ -51,13 +51,74 @@ class SaleLineQuantityDisplayService
         float $lineAmount,
         Product $product,
         bool $isRetailLine,
+        float $discountGiven = 0.0,
+        ?float $sellingPricePerBase = null,
     ): float {
+        $catalog = $this->catalogDisplayUnitPrice($product, $isRetailLine, $sellingPricePerBase);
+        if ($catalog > 0) {
+            return $catalog;
+        }
+
         $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
         if ($entryQty <= 0) {
             return 0.0;
         }
 
-        return round($lineAmount / $entryQty, 2);
+        return round(($lineAmount + max(0.0, $discountGiven)) / $entryQty, 2);
+    }
+
+    public function displayLineAmount(
+        float $baseQty,
+        float $lineAmount,
+        Product $product,
+        bool $isRetailLine,
+        float $discountGiven = 0.0,
+        ?float $sellingPricePerBase = null,
+    ): float {
+        $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
+        $unitPrice = $this->displayUnitPrice(
+            $baseQty,
+            $lineAmount,
+            $product,
+            $isRetailLine,
+            $discountGiven,
+            $sellingPricePerBase,
+        );
+
+        if ($unitPrice > 0 && $entryQty > 0) {
+            return max(0.0, round($unitPrice * $entryQty - max(0.0, $discountGiven), 2));
+        }
+
+        return round($lineAmount, 2);
+    }
+
+    public function catalogDisplayUnitPrice(
+        Product $product,
+        bool $isRetailLine,
+        ?float $sellingPricePerBase = null,
+    ): float {
+        $unit = $this->productUnit($product);
+        $factor = max(1.0, (float) ($unit?->conversion_factor ?? 1));
+        $catalogBase = (float) ($product->unit_price ?? 0);
+
+        if ($catalogBase > 0) {
+            if ($isRetailLine || $factor <= 1) {
+                return round($catalogBase, 2);
+            }
+
+            return round($catalogBase * $factor, 2);
+        }
+
+        $perBase = $sellingPricePerBase ?? 0.0;
+        if ($perBase > 0) {
+            if ($isRetailLine || $factor <= 1) {
+                return round($perBase, 2);
+            }
+
+            return round($perBase * $factor, 2);
+        }
+
+        return 0.0;
     }
 
     protected function defaultLineUomLabel(Product $product, bool $isRetailLine): string

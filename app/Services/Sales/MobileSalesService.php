@@ -247,14 +247,27 @@ class MobileSalesService
                     $item->uom,
                 )
                 : trim((float) $item->quantity.' '.($item->uom ?? ''));
+            $discountGiven = round((float) ($item->discount_given ?? 0), 2);
             $displayUnitPrice = $product
                 ? $display->displayUnitPrice(
                     (float) $item->quantity,
                     (float) $item->amount,
                     $product,
                     $isRetail,
+                    $discountGiven,
+                    (float) $item->selling_price,
                 )
                 : (float) $item->selling_price;
+            $displayAmount = $product
+                ? $display->displayLineAmount(
+                    (float) $item->quantity,
+                    (float) $item->amount,
+                    $product,
+                    $isRetail,
+                    $discountGiven,
+                    (float) $item->selling_price,
+                )
+                : (float) $item->amount;
 
             return [
                 'sale_item_id' => (int) $item->id,
@@ -265,9 +278,9 @@ class MobileSalesService
                 'uom' => $item->uom,
                 'unit_price' => $displayUnitPrice,
                 'unit_price_per_base' => (float) $item->selling_price,
-                'discount_given' => round((float) ($item->discount_given ?? 0), 2),
+                'discount_given' => $discountGiven,
                 'product_vat' => (float) $item->product_vat,
-                'amount' => (float) $item->amount,
+                'amount' => $displayAmount,
                 'sell_on_retail' => (int) $item->on_wholesale_retail,
             ];
         })->values()->all();

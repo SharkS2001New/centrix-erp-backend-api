@@ -27,11 +27,12 @@ class SaleLineQuantityDisplayServiceTest extends TestCase
         $this->assertSame('2 Bag', $display);
     }
 
-    public function test_wholesale_line_display_unit_price_uses_entry_qty(): void
+    public function test_wholesale_line_display_unit_price_uses_catalogue_price(): void
     {
         $product = new Product([
             'product_code' => 'TEST-003',
             'product_name' => 'Sugar 50kg',
+            'unit_price' => 25,
         ]);
         $product->setRelation('unit', new Uom([
             'conversion_factor' => 50,
@@ -40,9 +41,31 @@ class SaleLineQuantityDisplayServiceTest extends TestCase
             'small_packaging_label' => 'kg',
         ]));
 
-        $display = (new SaleLineQuantityDisplayService())->displayUnitPrice(100, 2500, $product, false);
+        $service = new SaleLineQuantityDisplayService();
+        $display = $service->displayUnitPrice(100, 2400, $product, false, 100.0);
 
         $this->assertSame(1250.0, $display);
+    }
+
+    public function test_display_line_amount_subtracts_discount_from_gross_total(): void
+    {
+        $product = new Product([
+            'product_code' => 'RICE25',
+            'product_name' => 'Rice 25kg',
+            'unit_price' => 91.44,
+        ]);
+        $product->setRelation('unit', new Uom([
+            'conversion_factor' => 25,
+            'full_name' => 'Bag',
+            'measure_name' => 'kg',
+            'small_packaging_label' => 'kg',
+        ]));
+
+        $service = new SaleLineQuantityDisplayService();
+        $amount = $service->displayLineAmount(25, 2272, $product, false, 14.0);
+
+        $this->assertSame(2272.0, $amount);
+        $this->assertSame(2286.0, $service->displayUnitPrice(25, 2272, $product, false, 14.0));
     }
 
     public function test_retail_line_with_base_qty_shows_pieces(): void

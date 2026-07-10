@@ -74,6 +74,8 @@ trait HandlesCartAccess
                     (float) $line->amount,
                     $product,
                     $isRetail,
+                    (float) ($line->discount_given ?? 0),
+                    (float) $line->unit_price,
                 );
             } else {
                 $lineArray['qty_disp'] = trim((float) $line->quantity.' '.($line->uom ?? ''));
