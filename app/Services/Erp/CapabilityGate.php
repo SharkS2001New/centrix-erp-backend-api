@@ -408,12 +408,20 @@ class CapabilityGate
     {
         $defaults = config("erp.module_settings_defaults.{$section}", []);
         $custom = $this->organization?->module_settings[$section] ?? [];
-        $merged = array_merge($defaults, is_array($custom) ? $custom : []);
+        $custom = is_array($custom) ? $custom : [];
+        $merged = array_merge($defaults, $custom);
 
         if ($section === 'finance') {
             $defaultMpesa = is_array($defaults['mpesa'] ?? null) ? $defaults['mpesa'] : [];
             $customMpesa = is_array($custom['mpesa'] ?? null) ? $custom['mpesa'] : [];
             $merged['mpesa'] = array_merge($defaultMpesa, $customMpesa);
+        }
+
+        if ($section === 'sales') {
+            $merged = \App\Services\Sales\DiscountApprovalService::normalizeDiscountApprovalSettings(
+                $merged,
+                $custom,
+            );
         }
 
         return $merged;
@@ -591,8 +599,11 @@ class CapabilityGate
             $sales['order_workflow'] = OrderWorkflowService::forGate($this)->config();
             $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
             $sales['effective_allow_edit_line_discount'] = $discounts->allowsManualLineDiscount($sales);
-            $sales['effective_enable_order_discount'] = $discounts->allowsOrderDiscount($sales, $user);
+            $sales['effective_enable_order_discount'] = $discounts->allowsOrderDiscount($sales, $user, 'backend');
             $sales['effective_allow_discounts'] = $discounts->allowsLineDiscountAmount($sales);
+            $sales['discount_approval_enabled_mobile'] = $discounts->discountApprovalEnabled($sales, 'mobile');
+            $sales['discount_approval_enabled_backoffice'] = $discounts->discountApprovalEnabled($sales, 'backend');
+            $sales['discount_approval_enabled'] = $discounts->discountApprovalEnabled($sales);
             $sales['discount_for_approval_mode'] = $user !== null
                 ? $discounts->requiresDiscountRequestWorkflow($sales, $user)
                 : $discounts->discountApprovalEnabled($sales);

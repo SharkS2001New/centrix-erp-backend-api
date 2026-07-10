@@ -33,6 +33,11 @@ class SalesCheckoutSettings
             return ! empty($sales['allow_pos_edit_line_discount']);
         }
 
+        // Mobile never uses the ERP "allow manual line discount" toggle — only mobile approval.
+        if ($source === 'mobile') {
+            return false;
+        }
+
         return ! empty($sales['allow_edit_line_discount']);
     }
 }

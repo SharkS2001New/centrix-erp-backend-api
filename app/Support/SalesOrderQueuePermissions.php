@@ -77,8 +77,22 @@ class SalesOrderQueuePermissions
             }
 
             if (! empty($def['terminal'])) {
+                if (in_array($slug, ['pending_approval', 'editable'], true)) {
+                    if (app(\App\Services\Sales\DiscountApprovalService::class)->discountApprovalEnabled($sales)) {
+                        $keys[] = $key;
+                    }
+                    continue;
+                }
+
+                if (! empty($def['requires_any_setting']) && is_array($def['requires_any_setting'])) {
+                    if (self::anySalesSettingEnabled($sales, $def['requires_any_setting'])) {
+                        $keys[] = $key;
+                    }
+                    continue;
+                }
+
                 $setting = (string) ($def['requires_setting'] ?? '');
-                if ($setting === '' || ($sales[$setting] ?? true) !== false) {
+                if ($setting === '' || self::salesSettingEnabled($sales, $setting)) {
                     $keys[] = $key;
                 }
                 continue;
@@ -224,5 +238,47 @@ class SalesOrderQueuePermissions
                 $sub->whereRaw('1 = 0');
             }
         });
+    }
+
+    /** @param  list<string>  $keys */
+    protected static function anySalesSettingEnabled(array $sales, array $keys): bool
+    {
+        foreach ($keys as $key) {
+            if (self::salesSettingEnabled($sales, (string) $key)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected static function salesSettingEnabled(array $sales, string $key): bool
+    {
+        if ($key === 'discount_approval_enabled_mobile' || $key === 'discount_approval_enabled_backoffice') {
+            if (array_key_exists($key, $sales)) {
+                return ($sales[$key] ?? false) !== false && ! empty($sales[$key]);
+            }
+
+            // Legacy orgs only stored the combined flag.
+            return ($sales['discount_approval_enabled'] ?? false) !== false
+                && ! empty($sales['discount_approval_enabled'] ?? false);
+        }
+
+        if ($key === 'discount_approval_enabled') {
+            $mobile = array_key_exists('discount_approval_enabled_mobile', $sales)
+                ? ! empty($sales['discount_approval_enabled_mobile'])
+                : null;
+            $backoffice = array_key_exists('discount_approval_enabled_backoffice', $sales)
+                ? ! empty($sales['discount_approval_enabled_backoffice'])
+                : null;
+            if ($mobile !== null || $backoffice !== null) {
+                return (bool) $mobile || (bool) $backoffice;
+            }
+
+            return ($sales['discount_approval_enabled'] ?? false) !== false
+                && ! empty($sales['discount_approval_enabled'] ?? false);
+        }
+
+        return ($sales[$key] ?? true) !== false;
     }
 }

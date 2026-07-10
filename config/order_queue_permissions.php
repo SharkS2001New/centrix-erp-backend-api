@@ -30,12 +30,20 @@ return [
     'pending_approval' => [
         'label' => 'Pending approval',
         'terminal' => true,
-        'requires_setting' => 'discount_approval_enabled',
+        'requires_any_setting' => [
+            'discount_approval_enabled_mobile',
+            'discount_approval_enabled_backoffice',
+            'discount_approval_enabled',
+        ],
     ],
     'editable' => [
         'label' => 'Editable',
         'terminal' => true,
-        'requires_setting' => 'discount_approval_enabled',
+        'requires_any_setting' => [
+            'discount_approval_enabled_mobile',
+            'discount_approval_enabled_backoffice',
+            'discount_approval_enabled',
+        ],
     ],
     'mobile' => [
         'label' => 'Mobile orders',

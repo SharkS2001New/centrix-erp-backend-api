@@ -418,7 +418,9 @@ return [
             'order_expiry_before_status' => 'processed',
             'order_cancellation_enabled' => true,
             'order_cancellation_approval_enabled' => false,
-            'discount_approval_enabled' => true,
+            'discount_approval_enabled' => false,
+            'discount_approval_enabled_mobile' => false,
+            'discount_approval_enabled_backoffice' => false,
             'discount_approval_threshold_percent' => 10,
             'stock_deduct_on' => [
                 'pos' => 'order_created',

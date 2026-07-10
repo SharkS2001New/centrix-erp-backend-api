@@ -116,7 +116,11 @@ class CheckoutController extends Controller
         $salesSettings = $gate->moduleSettings('sales');
         $lineNet = (float) $prepared['order_total'];
         $orderDiscount = 0.0;
-        if (app(DiscountApprovalService::class)->allowsOrderDiscount($salesSettings, $request->user())) {
+        if (app(DiscountApprovalService::class)->allowsOrderDiscount(
+            $salesSettings,
+            $request->user(),
+            (string) ($cart->channel ?? $cart->order_source ?? 'backend'),
+        )) {
             $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
         }
 
@@ -179,12 +183,22 @@ class CheckoutController extends Controller
             $payNow = (float) ($input['pay_now'] ?? 0);
 
             $orderDiscount = 0.0;
+            $discountService = app(DiscountApprovalService::class);
+            $salesChannel = (string) ($cart->channel ?? $cart->order_source ?? 'backend');
             if (! empty($salesSettings['enable_vouchers']) && $cart->discount_voucher_id) {
                 $discountVoucher = Voucher::find($cart->discount_voucher_id);
                 if ($discountVoucher && $discountVoucher->voucher_kind === 'discount') {
                     $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
                 }
-            } elseif (app(DiscountApprovalService::class)->allowsOrderDiscount($salesSettings, $user)) {
+            } elseif (
+                $discountService->allowsOrderDiscount($salesSettings, $user, $salesChannel)
+                || (
+                    (float) ($cart->order_discount ?? 0) > 0.01
+                    && $discountService->discountApprovalEnabled($salesSettings, $salesChannel)
+                )
+            ) {
+                // Staff in approval mode cannot free-apply order discounts, but checkout must
+                // keep the amount already stored on the cart for pending-approval sales.
                 $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
             }
             $total = max(0, $lineNet - $orderDiscount);

@@ -74,6 +74,8 @@ class DemoDataSeeder extends Seeder
                     'auto_assign_driver' => true,
                     'enable_order_discount' => true,
                     'discount_approval_enabled' => true,
+                    'discount_approval_enabled_mobile' => true,
+                    'discount_approval_enabled_backoffice' => true,
                 ],
                 'inventory' => ['reserve_stock_on_cart' => true, 'default_pos_sale_location' => 'shop'],
                 'distribution' => [

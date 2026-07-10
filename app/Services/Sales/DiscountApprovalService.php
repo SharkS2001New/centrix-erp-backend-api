@@ -32,20 +32,102 @@ class DiscountApprovalService
         protected SaleStockReservationService $stockReservations,
     ) {}
 
-    public function discountApprovalEnabled(array $salesSettings): bool
+    public function discountApprovalEnabled(array $salesSettings, ?string $channel = null): bool
     {
-        return ! empty($salesSettings['discount_approval_enabled']);
+        $salesSettings = self::normalizeDiscountApprovalSettings($salesSettings);
+
+        if ($channel === null) {
+            return ! empty($salesSettings['discount_approval_enabled_mobile'])
+                || ! empty($salesSettings['discount_approval_enabled_backoffice']);
+        }
+
+        return $this->isMobileSalesChannel($channel)
+            ? ! empty($salesSettings['discount_approval_enabled_mobile'])
+            : ! empty($salesSettings['discount_approval_enabled_backoffice']);
+    }
+
+    /**
+     * Normalize legacy `discount_approval_enabled` into per-channel flags.
+     * When channel keys are absent, both inherit the legacy/combined flag.
+     *
+     * @param  array<string, mixed>  $salesSettings
+     * @param  array<string, mixed>|null  $storedCustom  Org-stored sales keys (pre-defaults) when available
+     * @return array<string, mixed>
+     */
+    public static function normalizeDiscountApprovalSettings(
+        array $salesSettings,
+        ?array $storedCustom = null,
+    ): array {
+        $source = $storedCustom ?? $salesSettings;
+        $hasChannelKeys = array_key_exists('discount_approval_enabled_mobile', $source)
+            || array_key_exists('discount_approval_enabled_backoffice', $source);
+
+        $legacy = array_key_exists('discount_approval_enabled', $source)
+            ? ! empty($source['discount_approval_enabled'])
+            : ! empty($salesSettings['discount_approval_enabled'] ?? false);
+
+        if (! $hasChannelKeys) {
+            $salesSettings['discount_approval_enabled_mobile'] = $legacy;
+            $salesSettings['discount_approval_enabled_backoffice'] = $legacy;
+        } else {
+            $salesSettings['discount_approval_enabled_mobile'] = array_key_exists('discount_approval_enabled_mobile', $source)
+                ? ! empty($source['discount_approval_enabled_mobile'])
+                : $legacy;
+            $salesSettings['discount_approval_enabled_backoffice'] = array_key_exists('discount_approval_enabled_backoffice', $source)
+                ? ! empty($source['discount_approval_enabled_backoffice'])
+                : $legacy;
+        }
+
+        $salesSettings['discount_approval_enabled'] =
+            ! empty($salesSettings['discount_approval_enabled_mobile'])
+            || ! empty($salesSettings['discount_approval_enabled_backoffice']);
+
+        return $salesSettings;
+    }
+
+    public function isMobileSalesChannel(?string $channel): bool
+    {
+        return strtolower(trim((string) $channel)) === 'mobile';
+    }
+
+    public function salesChannelFromCart(TemporaryCart $cart): string
+    {
+        $channel = trim((string) ($cart->channel ?? ''));
+        if ($channel !== '') {
+            return strtolower($channel) === 'backoffice' ? 'backend' : strtolower($channel);
+        }
+
+        $source = strtolower(trim((string) ($cart->order_source ?? 'backend')));
+
+        return match ($source) {
+            'backoffice' => 'backend',
+            'mobile' => 'mobile',
+            'pos' => 'pos',
+            default => $source !== '' ? $source : 'backend',
+        };
+    }
+
+    public function salesChannelFromSale(Sale $sale): string
+    {
+        $channel = strtolower(trim((string) ($sale->channel ?: 'backend')));
+
+        return $channel === 'backoffice' ? 'backend' : $channel;
     }
 
     /** Manual line discounts (direct or via approval workflow). */
     public function allowsManualLineDiscount(array $salesSettings, ?string $orderSource = null): bool
     {
-        if ($this->discountApprovalEnabled($salesSettings)) {
-            return true;
+        if ($orderSource !== null) {
+            // Channel approval unlocks entry on that channel only.
+            if ($this->discountApprovalEnabled($salesSettings, $orderSource)) {
+                return true;
+            }
+
+            return SalesCheckoutSettings::allowsManualLineDiscount($salesSettings, $orderSource);
         }
 
-        if ($orderSource !== null) {
-            return SalesCheckoutSettings::allowsManualLineDiscount($salesSettings, $orderSource);
+        if ($this->discountApprovalEnabled($salesSettings)) {
+            return true;
         }
 
         return ! empty($salesSettings['allow_edit_line_discount'])
@@ -53,9 +135,13 @@ class DiscountApprovalService
     }
 
     /** Order-level discounts — disabled for staff in discount-for-approval mode. */
-    public function allowsOrderDiscount(array $salesSettings, ?User $user = null): bool
-    {
-        if ($user !== null && $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+    public function allowsOrderDiscount(
+        array $salesSettings,
+        ?User $user = null,
+        ?string $channel = null,
+    ): bool {
+        $channel ??= 'backend';
+        if ($user !== null && $this->requiresDiscountRequestWorkflow($salesSettings, $user, $channel)) {
             return false;
         }
 
@@ -63,10 +149,10 @@ class DiscountApprovalService
     }
 
     /** Whether a cart line may carry a discount amount at all. */
-    public function allowsLineDiscountAmount(array $salesSettings): bool
+    public function allowsLineDiscountAmount(array $salesSettings, ?string $channel = null): bool
     {
         return ! empty($salesSettings['allow_discounts'])
-            || $this->discountApprovalEnabled($salesSettings);
+            || $this->discountApprovalEnabled($salesSettings, $channel);
     }
 
     public function thresholdPercent(array $salesSettings): float
@@ -184,9 +270,12 @@ class DiscountApprovalService
         return ($discountAmount / $baseAmount) * 100;
     }
 
-    public function requiresDiscountRequestWorkflow(array $salesSettings, User $user): bool
-    {
-        return $this->discountApprovalEnabled($salesSettings)
+    public function requiresDiscountRequestWorkflow(
+        array $salesSettings,
+        User $user,
+        ?string $channel = null,
+    ): bool {
+        return $this->discountApprovalEnabled($salesSettings, $channel)
             && ! $this->canAutoApproveDiscount($user);
     }
 
@@ -208,7 +297,8 @@ class DiscountApprovalService
             return;
         }
 
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+        $channel = $cart !== null ? $this->salesChannelFromCart($cart) : null;
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $channel)) {
             return;
         }
 
@@ -240,7 +330,8 @@ class DiscountApprovalService
         ?string $checkoutReason = null,
     ): void {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+        $channel = $this->salesChannelFromCart($cart);
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $channel)) {
             return;
         }
 
@@ -324,7 +415,7 @@ class DiscountApprovalService
     public function saleRequiresPendingApproval(Sale $sale, User $user, CapabilityGate $gate): bool
     {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromSale($sale))) {
             return false;
         }
 
@@ -342,7 +433,7 @@ class DiscountApprovalService
     public function requiresDiscountResubmitApproval(Sale $sale, User $user, CapabilityGate $gate): bool
     {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromSale($sale))) {
             return false;
         }
 
@@ -698,7 +789,7 @@ class DiscountApprovalService
         bool $fromEditableSave = false,
     ): ?ActionRequest {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromSale($sale))) {
             return null;
         }
 
@@ -908,7 +999,7 @@ class DiscountApprovalService
     public function checkoutRequiresPendingApproval(TemporaryCart $cart, User $user, CapabilityGate $gate): bool
     {
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromCart($cart))) {
             return false;
         }
 
@@ -947,15 +1038,22 @@ class DiscountApprovalService
             throw ValidationException::withMessages(['line_ref' => 'Line reference is required for line discounts.']);
         }
 
-        if ($scope === 'order' && ! $this->allowsOrderDiscount($salesSettings, $user)) {
-            throw ValidationException::withMessages(['scope' => 'Order discount is not enabled.']);
+        if ($scope === 'order') {
+            $channel = $this->salesChannelFromCart($cart);
+            // Staff in approval mode cannot free-apply order discounts (allowsOrderDiscount),
+            // but may still submit them for manager approval when the workflow is on.
+            $orderDiscountFeatureOn = ! empty($salesSettings['enable_order_discount'])
+                || $this->discountApprovalEnabled($salesSettings, $channel);
+            if (! $orderDiscountFeatureOn) {
+                throw ValidationException::withMessages(['scope' => 'Order discount is not enabled.']);
+            }
         }
 
         if ($scope === 'line' && ! $this->allowsManualLineDiscount($salesSettings, $cart->order_source)) {
             throw ValidationException::withMessages(['scope' => 'Manual line discounts are not enabled.']);
         }
 
-        $needsApproval = $this->discountApprovalEnabled($salesSettings)
+        $needsApproval = $this->discountApprovalEnabled($salesSettings, $this->salesChannelFromCart($cart))
             && $discountAmount > 0.01
             && ! $this->canAutoApproveDiscount($user);
 
@@ -1165,7 +1263,7 @@ class DiscountApprovalService
 
         $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
         $salesSettings = $gate->moduleSettings('sales');
-        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user)) {
+        if (! $this->requiresDiscountRequestWorkflow($salesSettings, $user, $this->salesChannelFromSale($sale))) {
             return null;
         }
 

@@ -64,6 +64,8 @@ class ErpSettingsController extends Controller
             'allow_pos_edit_line_discount',
             'enable_order_discount',
             'discount_approval_enabled',
+            'discount_approval_enabled_mobile',
+            'discount_approval_enabled_backoffice',
             'discount_approval_threshold_percent',
             'order_cancellation_approval_enabled',
             'enable_vouchers',
@@ -279,6 +281,8 @@ class ErpSettingsController extends Controller
                 $data['orders_list_sort'],
             );
         }
+
+        $nextSales = \App\Services\Sales\DiscountApprovalService::normalizeDiscountApprovalSettings($nextSales);
 
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['sales'] = $nextSales;
