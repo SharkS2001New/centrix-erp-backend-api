@@ -368,8 +368,8 @@ class BranchStockService
         foreach ($normalized as &$row) {
             $branchId = (int) ($row['branch_id'] ?? 0);
             $code = (string) ($row['product_code'] ?? '');
-            $shop = (float) ($row['shop_quantity'] ?? 0);
-            $store = (float) ($row['store_quantity'] ?? 0);
+            $shop = (float) ($row['shop_quantity'] ?? $row['current_shop_stock'] ?? 0);
+            $store = (float) ($row['store_quantity'] ?? $row['current_store_stock'] ?? 0);
             $reservedShop = (float) ($reservedByBranch[$branchId][$code]['shop'] ?? 0);
             $reservedStore = (float) ($reservedByBranch[$branchId][$code]['store'] ?? 0);
             $availableShop = max(0, $shop - $reservedShop);
@@ -380,6 +380,20 @@ class BranchStockService
             $row['available_shop_quantity'] = $availableShop;
             $row['available_store_quantity'] = $availableStore;
             $row['available_total_units'] = $availableShop + $availableStore;
+
+            // Keep physical on-hand when report uses shop_quantity / store_quantity.
+            if (array_key_exists('shop_quantity', $row) || array_key_exists('store_quantity', $row)) {
+                $row['shop_quantity'] = $shop;
+                $row['store_quantity'] = $store;
+            }
+
+            // Stock-chain style columns: expose available as the live "current" stock.
+            if (array_key_exists('current_shop_stock', $row) || array_key_exists('current_store_stock', $row)) {
+                $row['current_shop_on_hand'] = $shop;
+                $row['current_store_on_hand'] = $store;
+                $row['current_shop_stock'] = $availableShop;
+                $row['current_store_stock'] = $availableStore;
+            }
         }
         unset($row);
 

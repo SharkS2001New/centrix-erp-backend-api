@@ -10,6 +10,11 @@ class StockChainReportService
 {
     private const SALE_TYPES = ['POS_SALE', 'MOBILE_SALE', 'BACKEND_SALE'];
 
+    public function __construct(
+        protected BranchStockService $branchStock,
+        protected StockValuationService $valuation,
+    ) {}
+
     /** @return array<string, mixed> */
     public function paginate(Request $request, int $organizationId): array
     {
@@ -41,6 +46,18 @@ class StockChainReportService
         $hasPeriod = $fromDate !== null || $toDate !== null;
 
         $saleTypeList = implode(', ', array_map(fn ($t) => "'{$t}'", self::SALE_TYPES));
+        $conversionFactorSql = StockCostCalculation::conversionFactorSqlExpression('u');
+        $unitCostSql = $this->valuation->effectiveUnitCostExpression('p', 'br');
+        $shopOnHandSql = 'COALESCE(cs.shop_quantity, 0)';
+        $storeOnHandSql = 'COALESCE(cs.store_quantity, 0)';
+        $shopCostValueSql = $this->valuation->stockCostValueSql($shopOnHandSql, 'p', 'br', 'u');
+        $storeCostValueSql = $this->valuation->stockCostValueSql($storeOnHandSql, 'p', 'br', 'u');
+        $totalCostValueSql = $this->valuation->stockCostValueSql(
+            "({$shopOnHandSql} + {$storeOnHandSql})",
+            'p',
+            'br',
+            'u',
+        );
 
         $lifecycleSub = DB::table('inventory_transactions as it')
             ->join('products as p', function ($join) use ($organizationId) {
@@ -64,12 +81,14 @@ class StockChainReportService
                 DB::raw('MAX(it.created_at) AS last_movement_at'),
             ]);
 
+        // Received value: (base_qty / conversion_factor) × package unit cost
         $periodTotalsSub = DB::table('inventory_transactions as it')
             ->join('products as p', function ($join) use ($organizationId) {
                 $join->on('p.product_code', '=', 'it.product_code')
                     ->where('p.organization_id', '=', $organizationId)
                     ->whereNull('p.deleted_at');
             })
+            ->join('uoms as u', 'u.id', '=', 'p.unit_id')
             ->leftJoin('sale_items as si', function ($join) {
                 $join->on('si.sale_id', '=', 'it.reference_id')
                     ->on('si.product_code', '=', 'it.product_code')
@@ -84,7 +103,8 @@ class StockChainReportService
                 'it.product_code',
                 DB::raw("SUM(CASE
                     WHEN it.transaction_type = 'PURCHASE' AND it.quantity_change > 0
-                    THEN it.quantity_change * COALESCE(it.unit_cost, p.last_cost_price, 0)
+                    THEN (it.quantity_change / {$conversionFactorSql})
+                         * COALESCE(it.unit_cost, p.last_cost_price, 0)
                     ELSE 0
                 END) AS total_received"),
                 DB::raw("SUM(CASE
@@ -122,6 +142,7 @@ class StockChainReportService
                     ->where('p.organization_id', '=', $organizationId)
                     ->whereNull('p.deleted_at');
             })
+            ->join('branches as br', 'br.id', '=', 'k.branch_id')
             ->joinSub($lifecycleSub, 'lc', function ($join) {
                 $join->on('lc.branch_id', '=', 'k.branch_id')
                     ->on('lc.product_code', '=', 'k.product_code');
@@ -153,8 +174,12 @@ class StockChainReportService
                 'lc.last_movement_at',
                 DB::raw('COALESCE(pt.total_received, 0) AS total_received'),
                 DB::raw('COALESCE(pt.total_sold, 0) AS total_sold'),
-                DB::raw('COALESCE(cs.shop_quantity, 0) AS current_shop_stock'),
-                DB::raw('COALESCE(cs.store_quantity, 0) AS current_store_stock'),
+                DB::raw("{$shopOnHandSql} AS current_shop_stock"),
+                DB::raw("{$storeOnHandSql} AS current_store_stock"),
+                DB::raw("({$unitCostSql}) AS effective_unit_cost"),
+                DB::raw("{$shopCostValueSql} AS shop_cost_value"),
+                DB::raw("{$storeCostValueSql} AS store_cost_value"),
+                DB::raw("{$totalCostValueSql} AS total_cost_value"),
             ]);
 
         if ($request->filled('product_code')) {
@@ -176,7 +201,10 @@ class StockChainReportService
             ->orderBy('p.product_name')
             ->paginate($perPage, ['*'], 'page', $page);
 
-        return $paginator->toArray();
+        $payload = $paginator->toArray();
+        $payload['data'] = $this->branchStock->attachAvailabilityToRows($payload['data'] ?? []);
+
+        return $payload;
     }
 
     /** @return array<string, mixed> */
