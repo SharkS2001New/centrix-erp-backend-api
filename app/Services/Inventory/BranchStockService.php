@@ -335,6 +335,17 @@ class BranchStockService
     }
 
     /**
+     * Active (unreleased, unexpired) reserved qty by product code for a branch.
+     *
+     * @param  list<string>  $productCodes
+     * @return array<string, array{shop: float, store: float}>
+     */
+    public function reservedQtyMapForCodes(array $productCodes, int $branchId): array
+    {
+        return $this->activeReservedQtyMap($productCodes, $branchId);
+    }
+
+    /**
      * @param  list<string>  $productCodes
      * @return array<string, array{shop: float, store: float}>
      */

@@ -9,7 +9,10 @@ use Illuminate\Support\Facades\DB;
 
 class StockOnHandReportService
 {
-    public function __construct(protected StockValuationService $valuation) {}
+    public function __construct(
+        protected StockValuationService $valuation,
+        protected BranchStockService $branchStock,
+    ) {}
 
     /** @return array<string, mixed> */
     public function paginate(Request $request, int $organizationId): array
@@ -109,7 +112,58 @@ class StockOnHandReportService
         }
 
         $paginator = $query->orderBy('p.product_name')->paginate($perPage);
+        $payload = $paginator->toArray();
+        $payload['data'] = $this->attachAvailableQuantities($payload['data'] ?? []);
 
-        return $paginator->toArray();
+        return $payload;
+    }
+
+    /**
+     * Attach reserved + sellable (on-hand − reserved) quantities per row.
+     *
+     * @param  list<array<string, mixed>|object>  $rows
+     * @return list<array<string, mixed>>
+     */
+    protected function attachAvailableQuantities(array $rows): array
+    {
+        if ($rows === []) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($rows as $row) {
+            $normalized[] = is_array($row) ? $row : (array) $row;
+        }
+
+        $byBranch = [];
+        foreach ($normalized as $row) {
+            $branchId = (int) ($row['branch_id'] ?? 0);
+            if ($branchId <= 0) {
+                continue;
+            }
+            $byBranch[$branchId][] = (string) ($row['product_code'] ?? '');
+        }
+
+        $reservedByBranch = [];
+        foreach ($byBranch as $branchId => $codes) {
+            $reservedByBranch[$branchId] = $this->branchStock->reservedQtyMapForCodes($codes, $branchId);
+        }
+
+        foreach ($normalized as &$row) {
+            $branchId = (int) ($row['branch_id'] ?? 0);
+            $code = (string) ($row['product_code'] ?? '');
+            $shop = (float) ($row['shop_quantity'] ?? 0);
+            $store = (float) ($row['store_quantity'] ?? 0);
+            $reservedShop = (float) ($reservedByBranch[$branchId][$code]['shop'] ?? 0);
+            $reservedStore = (float) ($reservedByBranch[$branchId][$code]['store'] ?? 0);
+
+            $row['reserved_shop_quantity'] = $reservedShop;
+            $row['reserved_store_quantity'] = $reservedStore;
+            $row['available_shop_quantity'] = max(0, $shop - $reservedShop);
+            $row['available_store_quantity'] = max(0, $store - $reservedStore);
+        }
+        unset($row);
+
+        return $normalized;
     }
 }

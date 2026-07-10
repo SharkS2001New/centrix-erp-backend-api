@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Product;
+use App\Models\StockReservation;
 use App\Models\User;
 use App\Models\CurrentStock;
 use Laravel\Sanctum\Sanctum;
@@ -33,6 +34,43 @@ class StockValuationSummaryTest extends TestCase
         $total = (float) $response->json('value');
 
         $this->assertSame(round($shop + $store, 2), $total);
+    }
+
+    public function test_stock_on_hand_includes_available_after_reservations(): void
+    {
+        $product = Product::query()->firstOrFail();
+        $branchId = (int) $this->user->branch_id;
+
+        CurrentStock::query()->updateOrCreate(
+            [
+                'product_code' => $product->product_code,
+                'branch_id' => $branchId,
+            ],
+            [
+                'shop_quantity' => 40,
+                'store_quantity' => 100,
+            ],
+        );
+
+        StockReservation::query()->create([
+            'branch_id' => $branchId,
+            'product_code' => $product->product_code,
+            'stock_location' => 'store',
+            'quantity' => 10,
+            'reserved_by' => $this->user->id,
+            'released_at' => null,
+            'expires_at' => now()->addHour(),
+        ]);
+
+        $row = $this->getJson(
+            '/api/v1/reports/stock-on-hand?branch_id='.$branchId.'&product_code='.$product->product_code,
+        )->json('data.0');
+
+        $this->assertNotNull($row);
+        $this->assertSame(100.0, (float) $row['store_quantity']);
+        $this->assertSame(10.0, (float) $row['reserved_store_quantity']);
+        $this->assertSame(90.0, (float) $row['available_store_quantity']);
+        $this->assertSame(40.0, (float) $row['available_shop_quantity']);
     }
 
     public function test_stock_on_hand_includes_effective_unit_cost(): void
