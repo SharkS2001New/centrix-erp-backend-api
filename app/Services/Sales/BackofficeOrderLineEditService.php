@@ -42,6 +42,10 @@ class BackofficeOrderLineEditService
         $source = strtolower((string) ($sale->order_source ?? ''));
         $channel = strtolower((string) ($sale->channel ?: ''));
 
+        if ($channel === 'mobile' || $source === 'mobile') {
+            return true;
+        }
+
         if ($gate !== null && ! $gate->enabled('sales.pos')) {
             if (in_array($source, ['pos', 'backend', 'backoffice', 'erp'], true)) {
                 return true;
@@ -51,7 +55,7 @@ class BackofficeOrderLineEditService
             }
         }
 
-        if (in_array($source, ['pos', 'mobile'], true)) {
+        if (in_array($source, ['pos'], true) || $channel === 'pos') {
             return false;
         }
 
@@ -93,7 +97,7 @@ class BackofficeOrderLineEditService
         }
 
         if (! $this->isBackofficeOrder($sale, $gate)) {
-            throw new InvalidArgumentException('Only backoffice or editable discount orders support line edits.');
+            throw new InvalidArgumentException('This order does not support line edits from Sales.');
         }
 
         if ($sale->status === 'cancelled' || (int) ($sale->archived ?? 0) === 1) {
