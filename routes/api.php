@@ -76,6 +76,10 @@ use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
 use App\Http\Controllers\Api\V1\SystemIssueReportController;
+use App\Http\Controllers\Api\V1\PlatformPlanController;
+use App\Http\Controllers\Api\V1\PlatformSubscriptionController;
+use App\Http\Controllers\Api\V1\PlatformContractController;
+use App\Http\Controllers\Api\V1\PlatformMailController;
 use App\Http\Controllers\Api\V1\PlatformInvoiceController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
 use App\Http\Controllers\Api\V1\PodRecordController;
@@ -197,6 +201,10 @@ Route::prefix('v1')->group(function () {
         Route::post('action-requests/{id}/remind', [InAppNotificationController::class, 'remindActionRequest']);
 
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
+        
+        Route::get('erp/organization/subscription', [PlatformSubscriptionController::class, 'tenantSubscription']);
+        Route::get('erp/organization/contracts', [PlatformContractController::class, 'tenantContracts']);
+
         Route::get('erp/organization/profile', [OrganizationController::class, 'currentProfile'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.company.view|admin.view']);
         Route::patch('erp/organization/profile', [OrganizationController::class, 'updateCurrentProfile'])
@@ -350,6 +358,37 @@ Route::prefix('v1')->group(function () {
 
         Route::post('system-issue-reports', [SystemIssueReportController::class, 'store']);
 
+        
+        Route::get('admin/platform-plans', [PlatformPlanController::class, 'index'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-plans', [PlatformPlanController::class, 'store'])->middleware(['erp.super_admin']);
+        Route::get('admin/platform-plans/{platform_plan}', [PlatformPlanController::class, 'show'])->middleware(['erp.super_admin']);
+        Route::patch('admin/platform-plans/{platform_plan}', [PlatformPlanController::class, 'update'])->middleware(['erp.super_admin']);
+        Route::delete('admin/platform-plans/{platform_plan}', [PlatformPlanController::class, 'destroy'])->middleware(['erp.super_admin']);
+
+        Route::get('admin/platform-subscriptions', [PlatformSubscriptionController::class, 'index'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-subscriptions', [PlatformSubscriptionController::class, 'store'])->middleware(['erp.super_admin']);
+        Route::patch('admin/platform-subscriptions/{platform_subscription}', [PlatformSubscriptionController::class, 'update'])->middleware(['erp.super_admin']);
+        Route::delete('admin/platform-subscriptions/{platform_subscription}', [PlatformSubscriptionController::class, 'destroy'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-subscriptions/{platform_subscription}/extend', [PlatformSubscriptionController::class, 'extend'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-subscriptions/{platform_subscription}/draft-invoice', [PlatformSubscriptionController::class, 'draftInvoice'])->middleware(['erp.super_admin']);
+
+        Route::get('admin/platform-contracts', [PlatformContractController::class, 'index'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-contracts', [PlatformContractController::class, 'store'])->middleware(['erp.super_admin']);
+        Route::get('admin/platform-contracts/{platform_contract}', [PlatformContractController::class, 'show'])->middleware(['erp.super_admin']);
+        Route::patch('admin/platform-contracts/{platform_contract}', [PlatformContractController::class, 'update'])->middleware(['erp.super_admin']);
+        Route::delete('admin/platform-contracts/{platform_contract}', [PlatformContractController::class, 'destroy'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-contracts/{platform_contract}/accept', [PlatformContractController::class, 'accept'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-contracts/{platform_contract}/provision', [PlatformContractController::class, 'provision'])->middleware(['erp.super_admin']);
+        Route::get('admin/platform-contracts/{platform_contract}/pdf', [PlatformContractController::class, 'pdf'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-contracts/{platform_contract}/email', [PlatformContractController::class, 'email'])->middleware(['erp.super_admin']);
+
+        Route::get('admin/platform-mail/settings', [PlatformMailController::class, 'show'])->middleware(['erp.super_admin']);
+        Route::put('admin/platform-mail/settings', [PlatformMailController::class, 'update'])->middleware(['erp.super_admin']);
+        Route::post('admin/platform-mail/test', [PlatformMailController::class, 'test'])->middleware(['erp.super_admin']);
+
+        Route::get('admin/organizations/{organization}/subscription', [PlatformSubscriptionController::class, 'forOrganization'])->middleware(['erp.super_admin']);
+        Route::get('admin/organizations/{organization}/contracts', [PlatformContractController::class, 'forOrganization'])->middleware(['erp.super_admin']);
+
         Route::prefix('admin/ai-training')
             ->middleware(['erp.super_admin'])
             ->group(function () {
@@ -361,6 +400,8 @@ Route::prefix('v1')->group(function () {
                 Route::patch('knowledge/{entry}', [PlatformAiTrainingController::class, 'updateKnowledge']);
                 Route::delete('knowledge/{entry}', [PlatformAiTrainingController::class, 'deleteKnowledge']);
                 Route::post('chat', [PlatformAiTrainingController::class, 'chat']);
+                Route::post('compose', [PlatformAiTrainingController::class, 'compose']);
+                Route::post('compose-email', [PlatformAiTrainingController::class, 'compose']);
             });
 
         Route::prefix('admin/whatsapp')

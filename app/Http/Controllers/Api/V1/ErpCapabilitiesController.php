@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Auth\PasswordExpiryService;
+use App\Services\Platform\OrganizationLicenseService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\ErpContext;
@@ -109,6 +110,7 @@ class ErpCapabilitiesController extends Controller
         $payload['allow_org_provisioning'] = (bool) $user->is_super_admin
             && config('erp.allow_org_provisioning');
         $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
+        $payload['license'] = app(OrganizationLicenseService::class)->resolveForOrganization($org);
 
         $permissions = app(UserPermissionService::class);
         $payload['permissions'] = $permissions->permissionMapForUser($user, $gate);

@@ -219,4 +219,77 @@ class PlatformAiTrainingController extends Controller
 
         return $normalized;
     }
+
+    public function compose(Request $request)
+    {
+        $data = $request->validate([
+            'task' => 'sometimes|string|max:50',
+            'mode' => 'sometimes|string|max:50',
+            'instruction' => 'nullable|string|max:5000',
+            'subject' => 'nullable|string|max:500',
+            'body' => 'nullable|string|max:20000',
+            'placeholders' => 'sometimes|array',
+            'use_knowledge' => 'sometimes|boolean',
+            'skip_training' => 'sometimes|boolean',
+            'system_hint' => 'nullable|string|max:5000',
+            'output_format' => 'sometimes|string|max:20',
+        ]);
+
+        $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForPlatformTraining();
+        if (! $runtime) {
+            return response()->json([
+                'message' => 'Platform AI is not configured. Add credentials under Platform → AI training → Credentials.',
+            ], 422);
+        }
+
+        $instruction = trim((string) ($data['instruction'] ?? ''));
+        $mode = $data['mode'] ?? 'improve';
+        $subject = (string) ($data['subject'] ?? '');
+        $body = (string) ($data['body'] ?? '');
+        $system = $data['system_hint']
+            ?? 'You help write Centrix platform emails. Return JSON only with subject and body keys. Keep placeholders unchanged.';
+
+        $userPrompt = "Mode: {$mode}\nInstruction: {$instruction}\nCurrent subject:\n{$subject}\n\nCurrent body:\n{$body}\n";
+        $baseUrl = rtrim((string) ($runtime['base_url'] ?? 'https://api.openai.com/v1'), '/');
+        $model = $runtime['model'] ?? 'gpt-4o-mini';
+        $apiKey = $runtime['api_key'] ?? null;
+        if (! $apiKey) {
+            return response()->json(['message' => 'Platform AI API key missing.'], 422);
+        }
+
+        try {
+            $response = \Illuminate\Support\Facades\Http::withToken($apiKey)
+                ->timeout(60)
+                ->post($baseUrl.'/chat/completions', [
+                    'model' => $model,
+                    'temperature' => 0.4,
+                    'messages' => [
+                        ['role' => 'system', 'content' => $system],
+                        ['role' => 'user', 'content' => $userPrompt],
+                    ],
+                    'response_format' => ['type' => 'json_object'],
+                ]);
+        } catch (\Throwable $e) {
+            return response()->json(['message' => 'AI compose failed: '.$e->getMessage()], 422);
+        }
+
+        if (! $response->successful()) {
+            return response()->json([
+                'message' => 'AI compose failed: '.$response->body(),
+            ], 422);
+        }
+
+        $raw = (string) data_get($response->json(), 'choices.0.message.content', '');
+        $parsed = json_decode($raw, true);
+        if (! is_array($parsed) && preg_match('/\{[\s\S]*\}/', $raw, $m)) {
+            $parsed = json_decode($m[0], true);
+        }
+
+        return response()->json([
+            'subject' => is_array($parsed) ? (string) ($parsed['subject'] ?? $subject) : $subject,
+            'body' => is_array($parsed) ? (string) ($parsed['body'] ?? $parsed['message'] ?? $body) : ($raw !== '' ? $raw : $body),
+            'reply' => $raw,
+        ]);
+    }
+
 }

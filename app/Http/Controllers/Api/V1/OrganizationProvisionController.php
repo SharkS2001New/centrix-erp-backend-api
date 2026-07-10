@@ -26,6 +26,7 @@ use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Auth\RoleTemplateService;
+use App\Services\Platform\OrganizationLicenseService;
 
 class OrganizationProvisionController extends Controller
 {
@@ -541,6 +542,22 @@ class OrganizationProvisionController extends Controller
                 'admin_email' => 'required|email|max:255',
                 'admin_password' => 'required|string|min:6',
                 'admin_full_name' => 'required|string|max:200',
+                'plan_id' => 'nullable|integer|exists:platform_plans,id',
+                'subscription' => 'nullable|array',
+                'subscription.plan_id' => 'nullable|integer|exists:platform_plans,id',
+                'subscription.status' => 'nullable|string|max:30',
+                'subscription.seat_count' => 'nullable|integer|min:1',
+                'subscription.current_period_start' => 'nullable|date',
+                'subscription.current_period_end' => 'nullable|date',
+                'subscription.is_trial' => 'nullable|boolean',
+                'subscription.trial_days' => 'nullable|integer|min:1',
+                'subscription.trial_ends_at' => 'nullable|date',
+                'subscription.first_payment_price' => 'nullable|numeric|min:0',
+                'subscription.renewal_price' => 'nullable|numeric|min:0',
+                'subscription.license_basis' => 'nullable|in:org,user',
+                'subscription.workspace_keys' => 'nullable|array',
+                'subscription.module_keys' => 'nullable|array',
+                'license' => 'nullable|array',
             ],
             $this->salesPlatformRules(),
             $this->applicationRules(),
@@ -557,10 +574,26 @@ class OrganizationProvisionController extends Controller
         $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
         $modules = $gate->allModules();
 
+        $subscriptionPayload = $data['subscription'] ?? $data['license'] ?? null;
+        if (is_array($subscriptionPayload)) {
+            if (! empty($data['plan_id']) && empty($subscriptionPayload['plan_id'])) {
+                $subscriptionPayload['plan_id'] = $data['plan_id'];
+            }
+        } elseif (! empty($data['plan_id'])) {
+            $subscriptionPayload = ['plan_id' => $data['plan_id'], 'status' => 'active'];
+        }
+
+        $subscription = null;
+        if (is_array($subscriptionPayload)) {
+            $subscription = app(OrganizationLicenseService::class)
+                ->createOrUpdateForOrganization($org, $subscriptionPayload);
+        }
+
         return response()->json([
             'organization' => $org,
             'manager' => $result['manager'],
             'branch' => $result['branch'],
+            'subscription' => $subscription,
             'recommended_roles' => $this->roleTemplates->recommendedForOrganization($org),
             'onboarding_steps' => $this->roleTemplates->onboardingSteps((string) $org->deployment_profile, $modules),
             'setup_preview' => $this->buildProvisionPreviewPayload(

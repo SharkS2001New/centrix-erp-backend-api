@@ -28,6 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->prependToGroup('api', \App\Http\Middleware\SecurityHeaders::class);
         // Inactivity is handled by the web app lock screen — do not revoke API tokens mid-session.
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureUserIsActive::class);
+        $middleware->prependToGroup('api', \App\Http\Middleware\EnsureOrganizationLicenseActive::class);
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureLoginChannel::class);
         // Must run before EnsureUserIsActive / EnsureLoginChannel / auth:sanctum read Bearer from cookie.
         $middleware->prependToGroup('api', \App\Http\Middleware\AuthenticateApiTokenCookie::class);
@@ -54,6 +55,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'erp.forbid_tenant_settings' => \App\Http\Middleware\ForbidTenantOrganizationSettings::class,
             'erp.session_idle' => \App\Http\Middleware\EnsureSessionNotIdle::class,
             'erp.password_expiry' => \App\Http\Middleware\EnsurePasswordNotForcedExpired::class,
+            'erp.organization_license' => \App\Http\Middleware\EnsureOrganizationLicenseActive::class,
             'erp.mpesa_callback_ip' => \App\Http\Middleware\EnsureMpesaCallbackIp::class,
             'erp.legacy_archive' => \App\Http\Middleware\EnsureLegacyArchiveEnabled::class,
         ]);
