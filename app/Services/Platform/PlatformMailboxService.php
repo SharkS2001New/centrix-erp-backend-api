@@ -18,7 +18,8 @@ class PlatformMailboxService
         ?PlatformMailMessage $replyTo = null,
     ): PlatformMailMessage {
         $settings = PlatformMailSettingsResolver::resolve();
-        $messageId = '<'.Str::uuid()->toString().'@centrix.platform>';
+        $messageIdBody = Str::uuid()->toString().'@centrix.platform';
+        $messageId = '<'.$messageIdBody.'>';
         $threadKey = $replyTo?->thread_key
             ?? $replyTo?->message_id
             ?? $messageId;
@@ -29,12 +30,27 @@ class PlatformMailboxService
         }
 
         $inReplyTo = $replyTo?->message_id;
-        \Illuminate\Support\Facades\Mail::raw($body, function ($message) use ($to, $subject, $settings, $messageId, $inReplyTo) {
+        \Illuminate\Support\Facades\Mail::raw($body, function ($message) use ($to, $subject, $settings, $messageIdBody, $inReplyTo) {
             $message->to($to)->subject($subject);
-            $message->getHeaders()->addTextHeader('Message-ID', $messageId);
+            $headers = $message->getHeaders();
+            // Symfony requires IdentificationHeader for Message-ID / In-Reply-To / References
+            // (addTextHeader creates UnstructuredHeader and throws).
+            if ($headers->has('Message-ID')) {
+                $headers->remove('Message-ID');
+            }
+            $headers->addIdHeader('Message-ID', $messageIdBody);
             if ($inReplyTo) {
-                $message->getHeaders()->addTextHeader('In-Reply-To', $inReplyTo);
-                $message->getHeaders()->addTextHeader('References', $inReplyTo);
+                $replyId = trim((string) $inReplyTo, " \t<>");
+                if ($replyId !== '') {
+                    if ($headers->has('In-Reply-To')) {
+                        $headers->remove('In-Reply-To');
+                    }
+                    if ($headers->has('References')) {
+                        $headers->remove('References');
+                    }
+                    $headers->addIdHeader('In-Reply-To', $replyId);
+                    $headers->addIdHeader('References', $replyId);
+                }
             }
             if (! empty($settings['reply_to'])) {
                 $message->replyTo($settings['reply_to']);
