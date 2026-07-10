@@ -54,9 +54,8 @@ class SaleLineQuantityDisplayService
         float $discountGiven = 0.0,
         ?float $sellingPricePerBase = null,
     ): float {
-        $catalog = $this->catalogDisplayUnitPrice($product, $isRetailLine, $sellingPricePerBase);
-        if ($catalog > 0) {
-            return $catalog;
+        if ($sellingPricePerBase !== null && $sellingPricePerBase > 0) {
+            return round($sellingPricePerBase, 2);
         }
 
         $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
@@ -75,19 +74,6 @@ class SaleLineQuantityDisplayService
         float $discountGiven = 0.0,
         ?float $sellingPricePerBase = null,
     ): float {
-        $unitPrice = $this->displayUnitPrice(
-            $baseQty,
-            $lineAmount,
-            $product,
-            $isRetailLine,
-            $discountGiven,
-            $sellingPricePerBase,
-        );
-
-        if ($unitPrice > 0 && $baseQty > 0) {
-            return max(0.0, round($unitPrice * $baseQty - max(0.0, $discountGiven), 2));
-        }
-
         return round($lineAmount, 2);
     }
 
