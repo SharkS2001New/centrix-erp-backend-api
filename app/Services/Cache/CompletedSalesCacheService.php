@@ -178,6 +178,15 @@ class CompletedSalesCacheService
 
         $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
         $rows = $cached['data'] ?? [];
+        usort($rows, function (array $a, array $b): int {
+            $aTime = strtotime((string) ($a['created_at'] ?? '')) ?: 0;
+            $bTime = strtotime((string) ($b['created_at'] ?? '')) ?: 0;
+            if ($bTime !== $aTime) {
+                return $bTime <=> $aTime;
+            }
+
+            return ((int) ($b['id'] ?? 0)) <=> ((int) ($a['id'] ?? 0));
+        });
 
         return [
             'data' => array_slice($rows, 0, $perPage),
@@ -234,6 +243,7 @@ class CompletedSalesCacheService
             ->whereIn('status', $statuses)
             ->whereDate('created_at', $dateString)
             ->with(['items.product', 'customer', 'cashier'])
+            ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->get();
 
@@ -266,7 +276,15 @@ class CompletedSalesCacheService
                     continue;
                 }
 
-                usort($rows, fn (array $a, array $b) => ($b['id'] ?? 0) <=> ($a['id'] ?? 0));
+                usort($rows, function (array $a, array $b): int {
+                    $aTime = strtotime((string) ($a['created_at'] ?? '')) ?: 0;
+                    $bTime = strtotime((string) ($b['created_at'] ?? '')) ?: 0;
+                    if ($bTime !== $aTime) {
+                        return $bTime <=> $aTime;
+                    }
+
+                    return ((int) ($b['id'] ?? 0)) <=> ((int) ($a['id'] ?? 0));
+                });
                 $unique = collect($rows)->unique('id')->values()->all();
 
                 $this->putMobileDayList($orgId, (int) $userId, $dateString, $allChannels, [

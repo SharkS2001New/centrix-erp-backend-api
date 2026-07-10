@@ -10,6 +10,8 @@ use Illuminate\Support\Facades\DB;
 
 class LowStockReportService
 {
+    public function __construct(protected BranchStockService $branchStock) {}
+
     /** @return array<string, mixed> */
     public function paginate(Request $request, int $organizationId): array
     {
@@ -128,6 +130,21 @@ class LowStockReportService
             ];
         });
 
-        return $paginator->toArray();
+        $payload = $paginator->toArray();
+        $payload['data'] = $this->branchStock->attachAvailabilityToRows(
+            array_map(
+                fn ($row) => is_array($row) ? $row : (array) $row,
+                $payload['data'] ?? [],
+            ),
+        );
+
+        foreach ($payload['data'] as &$row) {
+            $available = (float) ($row['available_total_units'] ?? 0);
+            $row['total_quantity'] = $available;
+            $row['total_base_units'] = $available;
+        }
+        unset($row);
+
+        return $payload;
     }
 }

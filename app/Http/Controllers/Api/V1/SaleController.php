@@ -13,7 +13,9 @@ use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\RouteOrderScope;
 use App\Services\Sales\SaleOrderPresentationService;
 use App\Services\Cache\CompletedSalesCacheService;
+use App\Services\OrganizationPlatformConfigService;
 use App\Support\EffectiveSaleDate;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -187,7 +189,13 @@ class SaleController extends BaseResourceController
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        $paginator = $query->orderByDesc('sales.id')->paginate($perPage);
+        $sort = app(OrganizationPlatformConfigService::class)->normalizeOrdersListSort(
+            $request->input('sort')
+                ?: ($gate->moduleSettings('sales')['orders_list_sort'] ?? '-created_at'),
+        );
+        $this->applyOrdersListSort($query, $sort);
+
+        $paginator = $query->paginate($perPage);
         $editService = app(PosOrderEditService::class);
         $lineEditService = app(BackofficeOrderLineEditService::class);
         $presentation = app(SaleOrderPresentationService::class);
@@ -263,5 +271,30 @@ class SaleController extends BaseResourceController
         }
 
         return response()->json($payload);
+    }
+
+    /**
+     * Newest-first by order date is the default; matches Sales → Orders / Mobile orders UI.
+     *
+     * @param  Builder<\App\Models\Sale>  $query
+     */
+    protected function applyOrdersListSort(Builder $query, string $sort): void
+    {
+        $orderDate = 'COALESCE(sales.completed_at, sales.created_at)';
+
+        match ($sort) {
+            'created_at' => $query
+                ->orderByRaw("{$orderDate} asc")
+                ->orderBy('sales.id'),
+            '-order_num' => $query
+                ->orderByDesc('sales.order_num')
+                ->orderByDesc('sales.id'),
+            'order_num' => $query
+                ->orderBy('sales.order_num')
+                ->orderBy('sales.id'),
+            default => $query
+                ->orderByRaw("{$orderDate} desc")
+                ->orderByDesc('sales.id'),
+        };
     }
 }

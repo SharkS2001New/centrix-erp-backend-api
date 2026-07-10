@@ -18,4 +18,9 @@ class StockReservation extends Model
         'expires_at' => 'datetime',
         'released_at' => 'datetime',
     ];
+
+    public function product()
+    {
+        return $this->belongsTo(Product::class, 'product_code', 'product_code');
+    }
 }

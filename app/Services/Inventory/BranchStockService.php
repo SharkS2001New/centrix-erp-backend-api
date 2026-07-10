@@ -335,6 +335,58 @@ class BranchStockService
     }
 
     /**
+     * Attach reserved + sellable (on-hand − reserved) quantities per stock report row.
+     *
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<array<string, mixed>>
+     */
+    public function attachAvailabilityToRows(array $rows): array
+    {
+        if ($rows === []) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($rows as $row) {
+            $normalized[] = is_array($row) ? $row : (array) $row;
+        }
+
+        $byBranch = [];
+        foreach ($normalized as $row) {
+            $branchId = (int) ($row['branch_id'] ?? 0);
+            if ($branchId <= 0) {
+                continue;
+            }
+            $byBranch[$branchId][] = (string) ($row['product_code'] ?? '');
+        }
+
+        $reservedByBranch = [];
+        foreach ($byBranch as $branchId => $codes) {
+            $reservedByBranch[$branchId] = $this->activeReservedQtyMap($codes, $branchId);
+        }
+
+        foreach ($normalized as &$row) {
+            $branchId = (int) ($row['branch_id'] ?? 0);
+            $code = (string) ($row['product_code'] ?? '');
+            $shop = (float) ($row['shop_quantity'] ?? 0);
+            $store = (float) ($row['store_quantity'] ?? 0);
+            $reservedShop = (float) ($reservedByBranch[$branchId][$code]['shop'] ?? 0);
+            $reservedStore = (float) ($reservedByBranch[$branchId][$code]['store'] ?? 0);
+            $availableShop = max(0, $shop - $reservedShop);
+            $availableStore = max(0, $store - $reservedStore);
+
+            $row['reserved_shop_quantity'] = $reservedShop;
+            $row['reserved_store_quantity'] = $reservedStore;
+            $row['available_shop_quantity'] = $availableShop;
+            $row['available_store_quantity'] = $availableStore;
+            $row['available_total_units'] = $availableShop + $availableStore;
+        }
+        unset($row);
+
+        return $normalized;
+    }
+
+    /**
      * Active (unreleased, unexpired) reserved qty by product code for a branch.
      *
      * @param  list<string>  $productCodes

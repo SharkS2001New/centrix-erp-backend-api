@@ -479,6 +479,11 @@ class CapabilityGate
         string $orderStatus,
         string $channel,
     ): bool {
+        // Soft holds must keep reservations — never hard-deduct ledger stock.
+        if (in_array($orderStatus, ['held', 'draft', 'pending_approval'], true)) {
+            return false;
+        }
+
         if ($this->shouldDeferStockToTrip($channel)) {
             return false;
         }

@@ -20,6 +20,7 @@ class Supplier extends Model
     {
         $codes = static::query()
             ->where('organization_id', $organizationId)
+            ->lockForUpdate()
             ->pluck('supplier_code');
 
         $max = 0;

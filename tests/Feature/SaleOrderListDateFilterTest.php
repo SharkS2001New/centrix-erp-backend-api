@@ -145,4 +145,53 @@ class SaleOrderListDateFilterTest extends TestCase
         $this->assertFalse($ids->contains($completedUnpaidLabel->id));
         $this->assertTrue($ids->contains($deliveredUnpaid->id));
     }
+
+    public function test_sales_list_orders_newest_first_by_date_by_default(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $older = Sale::query()->create([
+            'order_num' => 993101,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'booked',
+            'payment_status' => 'unpaid',
+            'order_total' => 100,
+            'amount_paid' => 0,
+            'completed_at' => null,
+            'created_at' => now()->subHours(3),
+            'updated_at' => now()->subHours(3),
+        ]);
+
+        $newer = Sale::query()->create([
+            'order_num' => 993100,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $admin->id,
+            'status' => 'booked',
+            'payment_status' => 'unpaid',
+            'order_total' => 200,
+            'amount_paid' => 0,
+            'completed_at' => null,
+            'created_at' => now()->subHour(),
+            'updated_at' => now()->subHour(),
+        ]);
+
+        $from = now()->subDay()->toDateString();
+        $to = now()->toDateString();
+        $response = $this->getJson("/api/v1/sales?from_date={$from}&to_date={$to}&per_page=200&sort=-created_at");
+
+        $response->assertOk();
+        $ids = collect($response->json('data'))->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $newerPos = array_search((int) $newer->id, $ids, true);
+        $olderPos = array_search((int) $older->id, $ids, true);
+
+        $this->assertNotFalse($newerPos);
+        $this->assertNotFalse($olderPos);
+        $this->assertLessThan($olderPos, $newerPos, 'Newer orders must appear before older ones.');
+    }
 }

@@ -141,7 +141,7 @@ class MobileSalesService
                 ->where('status', '!=', 'cancelled');
         }
 
-        $query->orderByDesc('id');
+        $query->orderByDesc('created_at')->orderByDesc('id');
 
         if ($q = trim((string) ($filters['q'] ?? ''))) {
             SqlLikeSearch::applySalesOrderSearch($query, $q, includeCustomerRelation: true);
@@ -320,6 +320,7 @@ class MobileSalesService
             ->whereDate('created_at', '<=', $to->toDateString())
             ->where('status', '!=', 'cancelled')
             ->whereNotIn('status', ['pending_approval', 'editable'])
+            ->orderByDesc('created_at')
             ->orderByDesc('id')
             ->limit(20)
             ->get()

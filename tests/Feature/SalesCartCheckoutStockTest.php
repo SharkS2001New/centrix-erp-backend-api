@@ -220,6 +220,9 @@ class SalesCartCheckoutStockTest extends TestCase
         $org = $this->user->organization;
         $settings = $org->module_settings ?? [];
         $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'allow_sell_from_shop' => false,
+            'allow_sell_from_store' => true,
+            'retail_shop_wholesale_store_stock' => false,
             'order_workflow' => array_merge(config('erp.default_order_workflow', []), [
                 'steps' => [
                     ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
@@ -231,6 +234,9 @@ class SalesCartCheckoutStockTest extends TestCase
                 'reserve_stock_on' => ['backend' => 'booked'],
                 'deduct_stock_on' => ['backend' => 'processed'],
             ]),
+        ]);
+        $settings['inventory'] = array_merge($settings['inventory'] ?? [], [
+            'default_distribution_sale_location' => 'store',
         ]);
         $org->forceFill(['module_settings' => $settings])->save();
 
@@ -356,6 +362,9 @@ class SalesCartCheckoutStockTest extends TestCase
         $org = $this->user->organization;
         $settings = $org->module_settings ?? [];
         $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'allow_sell_from_shop' => false,
+            'allow_sell_from_store' => true,
+            'retail_shop_wholesale_store_stock' => false,
             'order_workflow' => array_merge(config('erp.default_order_workflow', []), [
                 'steps' => [
                     ['status' => 'booked', 'label' => 'Booked', 'enabled' => true],
@@ -368,6 +377,9 @@ class SalesCartCheckoutStockTest extends TestCase
                 'deduct_stock_on' => ['backend' => 'processed'],
             ]),
             'stock_deduct_on' => ['backend' => 'trip_load'],
+        ]);
+        $settings['inventory'] = array_merge($settings['inventory'] ?? [], [
+            'default_distribution_sale_location' => 'store',
         ]);
         $org->forceFill(['module_settings' => $settings])->save();
 

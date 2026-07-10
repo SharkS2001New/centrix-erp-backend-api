@@ -7,6 +7,7 @@ use App\Services\Accounting\SupplierPaymentJournalService;
 use App\Services\Erp\ErpContext;
 use App\Services\SupplierModuleService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class SupplierController extends BaseResourceController
 {
@@ -30,6 +31,46 @@ class SupplierController extends BaseResourceController
             'town',
             'created_at',
         ];
+    }
+
+    public function store(Request $request)
+    {
+        $rules = array_fill_keys($this->fillableFields(), 'nullable');
+        $rules['supplier_name'] = 'required|string|max:255';
+        $data = $request->validate($rules);
+        $user = $request->user();
+
+        $supplier = DB::transaction(function () use ($data, $user, $request) {
+            if ($user && in_array('organization_id', $this->fillableFields(), true)) {
+                $orgId = $this->access()->organizationId($user, $request);
+                if ($orgId) {
+                    $data['organization_id'] = $orgId;
+                }
+            }
+
+            $organizationId = (int) ($data['organization_id'] ?? $user?->organization_id ?? 0);
+            if ($organizationId < 1) {
+                throw new \InvalidArgumentException('Organization is required to create a supplier.');
+            }
+
+            $data['organization_id'] = $organizationId;
+
+            if (trim((string) ($data['supplier_code'] ?? '')) === '') {
+                $data['supplier_code'] = Supplier::generateNextSupplierCode($organizationId);
+            }
+
+            if ($user) {
+                $data['created_by'] = $user->id;
+            }
+
+            return Supplier::create($data);
+        });
+
+        if ($user && $this->auditable()) {
+            $this->auditLogger()->logModel($user, 'create', $supplier, request: $request);
+        }
+
+        return response()->json($supplier, 201);
     }
 
     public function index(Request $request)

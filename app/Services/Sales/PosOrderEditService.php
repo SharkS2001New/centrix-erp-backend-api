@@ -13,9 +13,6 @@ use InvalidArgumentException;
 class PosOrderEditService
 {
     /** @var list<string> */
-    private const DIRECT_RESTORE_STATUSES = ['booked', 'pending'];
-
-    /** @var list<string> */
     private const MOBILE_PREVIOUS_DAY_MUTABLE_STATUSES = ['editable', 'booked', 'pending'];
 
     public function allowsPreviousDayMobileMutation(Sale $sale): bool
@@ -91,11 +88,31 @@ class PosOrderEditService
             return;
         }
 
-        if (in_array($status, self::DIRECT_RESTORE_STATUSES, true)) {
+        if (in_array($status, ['held', 'draft'], true)) {
+            if (! $workflowService->isRestorableToCartStatus(
+                $status,
+                $normalized,
+                $this->allowsCheckoutReEdit($normalized, $gate),
+            )) {
+                throw new InvalidArgumentException('This order cannot be edited in its current status.');
+            }
+
             return;
         }
 
-        throw new InvalidArgumentException('This order cannot be edited in its current status.');
+        if ($normalized === 'pos'
+            && $this->posOrderEditEnabled($gate)
+            && $workflowService->isRestorableToCartStatus(
+                $status,
+                $normalized,
+                true,
+            )) {
+            return;
+        }
+
+        if (! $workflowService->isCancellableStatus($status, $normalized)) {
+            throw new InvalidArgumentException('This order cannot be edited in its current status.');
+        }
     }
 
     public function canRestoreSaleToCart(Sale $sale, User $user, CapabilityGate $gate): bool

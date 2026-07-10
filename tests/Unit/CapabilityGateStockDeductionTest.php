@@ -69,4 +69,16 @@ class CapabilityGateStockDeductionTest extends TestCase
         $this->assertTrue($gate->shouldHoldStockOnCheckout($workflow, 'held', 'pos'));
         $this->assertFalse($gate->shouldHoldStockOnCheckout($workflow, 'completed', 'pos'));
     }
+
+    public function test_held_order_never_deducts_even_when_timing_is_order_created(): void
+    {
+        $gate = $this->gateWithStockTiming('order_created');
+        $workflow = OrderWorkflowService::forGate($gate);
+
+        $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'held', 'pos'));
+        $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'draft', 'pos'));
+        $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'pending_approval', 'mobile'));
+        $this->assertTrue($gate->shouldDeductStockAtCheckout($workflow, 'booked', 'pos'));
+        $this->assertTrue($gate->shouldHoldStockOnCheckout($workflow, 'held', 'pos'));
+    }
 }
