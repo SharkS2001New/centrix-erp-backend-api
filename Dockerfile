@@ -1,5 +1,6 @@
 # Laravel API — Apache + PHP 8.4 (matches composer.lock / Symfony 8.1)
-FROM php:8.4-apache
+# Bookworm: Debian Trixie removed libc-client (required to build PHP IMAP).
+FROM php:8.4-apache-bookworm
 
 RUN apt-get update && apt-get install -y \
     git \
@@ -14,13 +15,13 @@ RUN apt-get update && apt-get install -y \
     libjpeg-dev \
     libreadline-dev \
     libfreetype6-dev \
-    libc-client-dev \
+    libc-client2007e-dev \
     libkrb5-dev \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
+# IMAP moved to PECL in PHP 8.4 (no longer docker-php-ext-install imap).
 RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/include/ \
-    && docker-php-ext-configure imap --with-kerberos --with-imap-ssl \
     && docker-php-ext-install -j"$(nproc)" \
         bz2 \
         intl \
@@ -31,7 +32,8 @@ RUN docker-php-ext-configure gd --with-freetype=/usr/include/ --with-jpeg=/usr/i
         gd \
         zip \
         pcntl \
-        imap \
+    && yes '' | pecl install imap \
+    && docker-php-ext-enable imap \
     && pecl install redis \
     && docker-php-ext-enable redis
 
