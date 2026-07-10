@@ -14,19 +14,19 @@ class AccountingSettingsController extends Controller
 
     public function show(Request $request)
     {
-        $gate = $this->erp->gateForUser($request->user());
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForOrganization($org);
 
         return response()->json([
             'accounting' => $gate->moduleSettings('accounting'),
-            'chart_seeded' => app(StandardChartOfAccounts::class)->isSeeded((int) $request->user()->organization_id),
+            'chart_seeded' => app(StandardChartOfAccounts::class)->isSeeded((int) $org->id),
         ]);
     }
 
     public function update(Request $request)
     {
-        $user = $request->user();
-        $org = Organization::findOrFail($user->organization_id);
-        $gate = $this->erp->gateForUser($user);
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForOrganization($org);
 
         $data = $request->validate([
             'auto_post_sales' => 'sometimes|boolean',

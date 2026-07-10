@@ -415,6 +415,8 @@ Route::prefix('v1')->group(function () {
         Route::prefix('admin/organizations/{organization}')
             ->middleware(['erp.super_admin', 'erp.act_as_organization'])
             ->group(function () {
+                Route::get('accounting/settings', [\App\Http\Controllers\Api\V1\Operations\AccountingSettingsController::class, 'show']);
+                Route::patch('accounting/settings', [\App\Http\Controllers\Api\V1\Operations\AccountingSettingsController::class, 'update']);
                 Route::post('logo', function (Request $request, $organization) {
                     return app(OrganizationController::class)->uploadLogo($request, (string) $organization);
                 });

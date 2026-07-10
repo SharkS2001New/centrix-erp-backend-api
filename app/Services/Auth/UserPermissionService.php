@@ -71,7 +71,7 @@ class UserPermissionService
     /** @return list<int> */
     public function effectivePermissionIds(User $user): array
     {
-        if ($user->is_admin) {
+        if ($user->is_super_admin || $user->is_admin) {
             return Permission::query()->pluck('id')->map(fn ($id) => (int) $id)->all();
         }
 
@@ -90,6 +90,10 @@ class UserPermissionService
 
     public function hasPermission(User $user, string $permissionCode, ?CapabilityGate $gate = null): bool
     {
+        if ($user->is_super_admin) {
+            return true;
+        }
+
         if ($user->is_admin) {
             if ($gate === null) {
                 return true;
@@ -344,7 +348,7 @@ class UserPermissionService
         $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
         $map = $this->expandLegacySalesOrderQueueView($map);
 
-        if ($user->is_admin && $gate !== null) {
+        if (($user->is_admin || $user->is_super_admin) && $gate !== null) {
             $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
             $map = $this->grantOrgAdminMobileAppPermissions($map, $gate);
         }
