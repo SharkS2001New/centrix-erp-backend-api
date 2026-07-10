@@ -499,11 +499,19 @@ class DiscountApprovalService
                 continue;
             }
 
+            $requestedPerUnit = array_key_exists('display_discount_per_unit', $line)
+                ? round((float) $line['display_discount_per_unit'], 4)
+                : $this->fallbackDisplayDiscountPerUnit(
+                    (float) ($line['display_quantity'] ?? $line['quantity'] ?? 1),
+                    (float) ($line['discount_given'] ?? 0),
+                );
+
             $result[] = [
                 'product_code' => $code,
                 'product_name' => (string) ($line['product_name'] ?? $code),
                 'unit_price' => round((float) ($line['unit_price'] ?? $line['selling_price'] ?? 0), 2),
-                'discount_given' => round((float) ($line['discount_given'] ?? 0), 2),
+                // Requested amount stored as per-unit so it matches advised_discount units.
+                'discount_given' => $requestedPerUnit,
                 'advised_discount' => $advised,
             ];
         }
