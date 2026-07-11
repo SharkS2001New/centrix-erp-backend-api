@@ -245,6 +245,7 @@ class PlatformInvoiceController extends Controller
             'invoice_options.brand_logo_url' => 'nullable|string|max:500000',
             'invoice_options.print_font_family' => 'nullable|string|max:40',
             'invoice_options.print_font_scale' => 'nullable|in:compact,standard,large,extra_large',
+            'invoice_options.print_spacing' => 'nullable|in:compact,comfortable,spacious',
             'line_items' => 'required|array|min:1',
             'line_items.*.module_key' => 'nullable|string|max:80',
             'line_items.*.description' => 'required|string|max:500',
