@@ -105,12 +105,13 @@ class WhatsAppPlatformPreviewService
         }
 
         $gate = (new CapabilityGate)->forOrganization($organization);
+        $perPage = WhatsAppProductCatalogService::PLATFORM_PREVIEW_PER_PAGE;
         $q = trim($q);
         if ($q !== '') {
-            return $this->catalog->searchInStock($customer, $botUser, $gate, $q, $page);
+            return $this->catalog->searchInStock($customer, $botUser, $gate, $q, $page, $perPage);
         }
 
-        return $this->catalog->browseInStock($customer, $botUser, $gate, $page);
+        return $this->catalog->browseInStock($customer, $botUser, $gate, $page, $perPage);
     }
 
     /**

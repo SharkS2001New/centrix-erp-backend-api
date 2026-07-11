@@ -16,6 +16,9 @@ class WhatsAppProductCatalogService
 {
     public const PER_PAGE = 8;
 
+    /** Larger page for platform-admin dry-run product preview. */
+    public const PLATFORM_PREVIEW_PER_PAGE = 40;
+
     public function __construct(
         protected BranchStockService $branchStock,
         protected StockUomDisplayService $stockUom,
@@ -23,6 +26,11 @@ class WhatsAppProductCatalogService
 
     public function resolveBranchId(Customer $customer, User $botUser): ?int
     {
+        // Platform-admin dry-run stand-in (different org) — use org-wide stock, not a guessed branch.
+        if ((int) $botUser->organization_id !== (int) $customer->organization_id) {
+            return null;
+        }
+
         if ($customer->branch_id) {
             return (int) $customer->branch_id;
         }
@@ -39,16 +47,17 @@ class WhatsAppProductCatalogService
         CapabilityGate $gate,
         string $term,
         int $page = 1,
+        ?int $perPage = null,
     ): array {
         $term = trim($term);
-        if (strlen($term) < 2) {
-            return $this->emptyPage($page);
+        if ($term === '') {
+            return $this->emptyPage($page, $perPage);
         }
 
         $query = $this->inStockQuery($customer, $botUser, $gate);
         SqlLikeSearch::applyProductSearch($query, $term, 'products.product_code', 'products.product_name');
 
-        return $this->paginateProducts($query, $customer, $botUser, $gate, $page);
+        return $this->paginateProducts($query, $customer, $botUser, $gate, $page, $perPage);
     }
 
     /**
@@ -59,10 +68,11 @@ class WhatsAppProductCatalogService
         User $botUser,
         CapabilityGate $gate,
         int $page = 1,
+        ?int $perPage = null,
     ): array {
         $query = $this->inStockQuery($customer, $botUser, $gate)->orderBy('products.product_name');
 
-        return $this->paginateProducts($query, $customer, $botUser, $gate, $page);
+        return $this->paginateProducts($query, $customer, $botUser, $gate, $page, $perPage);
     }
 
     /** @return array<string, mixed>|null */
@@ -88,6 +98,12 @@ class WhatsAppProductCatalogService
     /** @return Builder<Product> */
     protected function inStockQuery(Customer $customer, User $botUser, CapabilityGate $gate): Builder
     {
+        // Cross-org bot (platform admin dry-run): include products with stock on the product
+        // row or at any branch — don't hide catalog behind a single customer/bot branch.
+        if ((int) $botUser->organization_id !== (int) $customer->organization_id) {
+            return $this->platformPreviewStockQuery((int) $customer->organization_id);
+        }
+
         $branchId = $this->resolveBranchId($customer, $botUser);
         $inventory = $gate->moduleSettings('inventory');
         $sales = $gate->moduleSettings('sales');
@@ -107,6 +123,26 @@ class WhatsAppProductCatalogService
         return $query->with('unit');
     }
 
+    /** @return Builder<Product> */
+    protected function platformPreviewStockQuery(int $organizationId): Builder
+    {
+        return Product::query()
+            ->where('products.organization_id', $organizationId)
+            ->whereNull('products.deleted_at')
+            ->where(function ($outer) use ($organizationId) {
+                $outer->whereRaw('(COALESCE(products.stock_in_shop, 0) + COALESCE(products.stock_in_store, 0)) > 0')
+                    ->orWhereExists(function ($sub) use ($organizationId) {
+                        $sub->selectRaw('1')
+                            ->from('current_stock as cs')
+                            ->join('branches as b', 'b.id', '=', 'cs.branch_id')
+                            ->whereColumn('cs.product_code', 'products.product_code')
+                            ->where('b.organization_id', $organizationId)
+                            ->whereRaw('(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0)) > 0');
+                    });
+            })
+            ->with('unit');
+    }
+
     /**
      * @param  Builder<Product>  $query
      * @return array{items: list<array<string, mixed>>, total: int, page: int, per_page: int, has_more: bool}
@@ -117,9 +153,10 @@ class WhatsAppProductCatalogService
         User $botUser,
         CapabilityGate $gate,
         int $page,
+        ?int $perPage = null,
     ): array {
         $page = max(1, $page);
-        $perPage = self::PER_PAGE;
+        $perPage = max(1, min(100, $perPage ?? self::PER_PAGE));
         $total = (clone $query)->count();
         $products = $query
             ->orderBy('products.product_name')
@@ -141,13 +178,13 @@ class WhatsAppProductCatalogService
     }
 
     /** @return array{items: list<array<string, mixed>>, total: int, page: int, per_page: int, has_more: bool} */
-    protected function emptyPage(int $page): array
+    protected function emptyPage(int $page, ?int $perPage = null): array
     {
         return [
             'items' => [],
             'total' => 0,
             'page' => max(1, $page),
-            'per_page' => self::PER_PAGE,
+            'per_page' => max(1, min(100, $perPage ?? self::PER_PAGE)),
             'has_more' => false,
         ];
     }
@@ -159,8 +196,10 @@ class WhatsAppProductCatalogService
         User $botUser,
         CapabilityGate $gate,
     ): array {
+        $crossOrgPreview = (int) $botUser->organization_id !== (int) $customer->organization_id;
         $branchId = $this->resolveBranchId($customer, $botUser);
         $payload = $product->toArray();
+
         if ($branchId) {
             $payload = $this->branchStock->overlayPayload($payload, $branchId);
             $payload = $this->branchStock->applySalesConsumerStock(
@@ -184,9 +223,20 @@ class WhatsAppProductCatalogService
                 $available = (float) ($payload['stock_available_shop'] ?? 0)
                     + (float) ($payload['stock_available_store'] ?? 0);
             }
+        } elseif ($crossOrgPreview) {
+            $branchTotal = (float) \Illuminate\Support\Facades\DB::table('current_stock as cs')
+                ->join('branches as b', 'b.id', '=', 'cs.branch_id')
+                ->where('b.organization_id', $customer->organization_id)
+                ->where('cs.product_code', $product->product_code)
+                ->selectRaw('COALESCE(SUM(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0)), 0) as qty')
+                ->value('qty');
+            $available = max($available, $branchTotal);
         }
 
-        $uom = $product->unit;
+        $uom = $product->relationLoaded('unit') ? $product->unit : $product->unit()->first();
+        if ($uom && ! $uom instanceof \App\Models\Uom) {
+            $uom = null;
+        }
         $displayStock = $this->stockUom->formatMixedStockDisplay($available, $uom)['text'];
 
         return [

@@ -5,6 +5,7 @@ namespace App\Services\WhatsApp;
 use App\Models\Customer;
 use App\Models\Organization;
 use App\Models\Product;
+use App\Models\Uom;
 use App\Models\User;
 use App\Models\WhatsappConversation;
 use App\Models\WhatsappMessageLog;
@@ -984,8 +985,8 @@ class WhatsAppBotHandler
     protected function addProductToCart(WhatsappConversation $conversation, array $product, float $displayQty): string
     {
         $uom = $this->uomFromSnapshot($product['uom_snapshot'] ?? null);
-        $factor = max(1.0, (float) ($uom->conversion_factor ?? 1));
-        $usesSmall = ($uom->uses_small_packaging ?? true) !== false;
+        $factor = max(1.0, (float) ($uom?->conversion_factor ?? 1));
+        $usesSmall = ($uom?->uses_small_packaging ?? true) !== false;
         $baseQty = $usesSmall && $factor > 1 ? $displayQty * $factor : $displayQty;
         $code = (string) $product['product_code'];
         $name = (string) $product['product_name'];
@@ -1211,12 +1212,27 @@ class WhatsAppBotHandler
         return in_array($input, $commands, true);
     }
 
-    protected function uomFromSnapshot(mixed $snapshot): ?object
+    protected function uomFromSnapshot(mixed $snapshot): ?Uom
     {
+        if ($snapshot instanceof Uom) {
+            return $snapshot;
+        }
+
         if (! is_array($snapshot) || $snapshot === []) {
             return null;
         }
 
-        return (object) $snapshot;
+        $uom = new Uom;
+        $uom->forceFill([
+            'conversion_factor' => $snapshot['conversion_factor'] ?? 1,
+            'full_name' => $snapshot['full_name'] ?? null,
+            'small_packaging_label' => $snapshot['small_packaging_label'] ?? null,
+            'middle_packaging_label' => $snapshot['middle_packaging_label'] ?? null,
+            'middle_factor' => $snapshot['middle_factor'] ?? null,
+            'uses_small_packaging' => $snapshot['uses_small_packaging'] ?? true,
+            'uom_type' => $snapshot['uom_type'] ?? null,
+        ]);
+
+        return $uom;
     }
 }
