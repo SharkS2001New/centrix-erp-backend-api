@@ -6,6 +6,8 @@ use App\Models\PlatformMailMessage;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Support\Str;
+use Symfony\Component\Mime\Header\Headers;
+use Symfony\Component\Mime\Header\IdentificationHeader;
 
 class PlatformMailboxService
 {
@@ -82,26 +84,11 @@ class PlatformMailboxService
             if ($fromAddress !== '') {
                 $message->from($fromAddress, $fromName !== '' ? $fromName : null);
             }
-            $headers = $message->getHeaders();
-            // Symfony requires IdentificationHeader for Message-ID / In-Reply-To / References
-            // (addTextHeader creates UnstructuredHeader and throws).
-            if ($headers->has('Message-ID')) {
-                $headers->remove('Message-ID');
-            }
-            $headers->addIdHeader('Message-ID', $messageIdBody);
-            if ($inReplyTo) {
-                $replyId = trim((string) $inReplyTo, " \t<>");
-                if ($replyId !== '') {
-                    if ($headers->has('In-Reply-To')) {
-                        $headers->remove('In-Reply-To');
-                    }
-                    if ($headers->has('References')) {
-                        $headers->remove('References');
-                    }
-                    $headers->addIdHeader('In-Reply-To', $replyId);
-                    $headers->addIdHeader('References', $replyId);
-                }
-            }
+            $this->setIdentificationHeaders(
+                $message->getHeaders(),
+                $messageIdBody,
+                $inReplyTo ? trim((string) $inReplyTo, " \t<>") : null,
+            );
             // Auth / verification mail must not invite replies.
             if (! $isNoReply && ! empty($settings['reply_to'])) {
                 $message->replyTo($settings['reply_to']);
@@ -135,6 +122,27 @@ class PlatformMailboxService
             'sent_at' => now(),
             'meta' => $meta ?: null,
         ]);
+    }
+
+    /**
+     * Symfony rejects Message-ID / In-Reply-To / References set via addTextHeader
+     * (UnstructuredHeader). Always use IdentificationHeader / addIdHeader.
+     */
+    protected function setIdentificationHeaders(Headers $headers, string $messageIdBody, ?string $inReplyToId = null): void
+    {
+        foreach (['Message-ID', 'In-Reply-To', 'References'] as $name) {
+            if ($headers->has($name)) {
+                $headers->remove($name);
+            }
+        }
+
+        $headers->add(new IdentificationHeader('Message-ID', $messageIdBody));
+
+        $replyId = trim((string) $inReplyToId);
+        if ($replyId !== '') {
+            $headers->add(new IdentificationHeader('In-Reply-To', $replyId));
+            $headers->add(new IdentificationHeader('References', $replyId));
+        }
     }
 
     /**
