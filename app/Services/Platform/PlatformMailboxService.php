@@ -235,15 +235,6 @@ class PlatformMailboxService
         }
 
         $accountId = (string) ($account['id'] ?? '');
-        if (empty($account['imap_enabled'])) {
-            return [
-                'ok' => false,
-                'code' => 'imap_disabled',
-                'message' => 'Inbox sync is off for this mailbox (SMTP-only mode).',
-                'detail' => 'Outbound email still works with SMTP. Enable IMAP under Platform settings → Email delivery → IMAP only if your provider allows IMAP. Many domain hosts disable IMAP — leave it off in that case.',
-                'account_id' => $accountId,
-            ];
-        }
 
         $account = PlatformMailSettingsResolver::prefillImapFromSmtp($account);
         if (empty($account['imap_host'])) {
