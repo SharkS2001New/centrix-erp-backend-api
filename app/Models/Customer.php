@@ -4,6 +4,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Customer extends Model
@@ -28,6 +29,21 @@ class Customer extends Model
     ];
 
     protected $appends = ['shop_image_url', 'has_location'];
+
+    public function route(): BelongsTo
+    {
+        return $this->belongsTo(RouteModel::class, 'route_id');
+    }
+
+    public function branch(): BelongsTo
+    {
+        return $this->belongsTo(Branch::class, 'branch_id');
+    }
+
+    public function organization(): BelongsTo
+    {
+        return $this->belongsTo(Organization::class, 'organization_id');
+    }
 
     protected function shopImageUrl(): Attribute
     {

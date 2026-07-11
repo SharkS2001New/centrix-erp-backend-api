@@ -16,6 +16,8 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Inventory\StockUomDisplayService;
+use App\Services\Sales\PosLinePricingService;
+use App\Services\Sales\SaleLineQuantityDisplayService;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Collection;
 use InvalidArgumentException;
@@ -25,6 +27,8 @@ class WhatsAppOrderService
     public function __construct(
         protected StockUomDisplayService $stockUom,
         protected BranchStockService $branchStock,
+        protected PosLinePricingService $pricing,
+        protected SaleLineQuantityDisplayService $qtyDisplay,
     ) {}
 
     public function lastSaleForCustomer(Customer $customer): ?Sale
@@ -78,20 +82,51 @@ class WhatsAppOrderService
         return $products;
     }
 
-    /** @return array<int, array{product_code: string, quantity: float, product_name: string, display: string, line_total: float}> */
+    /**
+     * @return array<int, array{
+     *   product_code: string,
+     *   quantity: float,
+     *   product_name: string,
+     *   display: string,
+     *   line_total: float,
+     *   unit_price: float,
+     *   on_wholesale_retail: int,
+     *   rw: string
+     * }>
+     */
     public function summarizeSaleLines(Sale $sale): array
     {
         $lines = [];
         foreach ($sale->items as $item) {
             $product = $item->product;
             $qty = (float) $item->quantity;
-            $display = $this->stockUom->formatMixedStockDisplay($qty, $product?->unit)['text'];
+            $isRetail = (bool) ($item->on_wholesale_retail ?? false)
+                && (bool) ($product?->sell_on_retail);
+            $display = $product
+                ? $this->qtyDisplay->formatLineQtyDisplay($qty, $product, $isRetail)
+                : $this->stockUom->formatMixedStockDisplay($qty, $product?->unit)['text'];
+            $lineTotal = (float) $item->amount;
+            $unitPrice = $product
+                ? $this->qtyDisplay->displayUnitPrice(
+                    $qty,
+                    $lineTotal,
+                    $product,
+                    $isRetail,
+                    (float) ($item->discount_given ?? 0),
+                    null,
+                    isset($item->display_unit_price) ? (float) $item->display_unit_price : null,
+                )
+                : (float) ($item->selling_price ?? 0);
+
             $lines[] = [
                 'product_code' => (string) $item->product_code,
                 'quantity' => $qty,
                 'product_name' => $product?->product_name ?? (string) $item->product_code,
                 'display' => $display,
-                'line_total' => (float) $item->amount,
+                'line_total' => $lineTotal,
+                'unit_price' => $unitPrice,
+                'on_wholesale_retail' => $isRetail ? 1 : 0,
+                'rw' => $isRetail ? 'R' : 'W',
             ];
         }
 
@@ -101,6 +136,18 @@ class WhatsAppOrderService
     public function formatMoney(float $amount): string
     {
         return 'KES '.number_format($amount, 0, '.', ',');
+    }
+
+    /** Format: Product Name, unit price, qty, amount, R/W */
+    public function formatSummaryLine(array $line): string
+    {
+        $name = (string) ($line['product_name'] ?? $line['product_code'] ?? 'Item');
+        $unitPrice = (float) ($line['unit_price'] ?? 0);
+        $qty = (string) ($line['display'] ?? $line['quantity'] ?? '');
+        $amount = (float) ($line['line_total'] ?? 0);
+        $rw = strtoupper((string) ($line['rw'] ?? ((($line['on_wholesale_retail'] ?? 0) ? 'R' : 'W'))));
+
+        return "{$name}, ".$this->formatMoney($unitPrice).", {$qty}, ".$this->formatMoney($amount).", {$rw}";
     }
 
     public function creditAvailable(Customer $customer): ?float
@@ -116,7 +163,7 @@ class WhatsAppOrderService
     }
 
     /**
-     * @param  array<int, array{product_code: string, quantity: float}>  $lines
+     * @param  array<int, array{product_code: string, quantity: float, on_wholesale_retail?: int|bool}>  $lines
      * @return array{order_num: int|null, sale_id: int|null, status: string|null, order_total: float|null}
      */
     public function placeOrder(
@@ -131,6 +178,7 @@ class WhatsAppOrderService
         }
 
         $isCredit = $useCredit && (float) $customer->credit_limit > 0;
+        $orgId = (int) $customer->organization_id;
 
         $productCodes = collect($lines)
             ->pluck('product_code')
@@ -143,7 +191,7 @@ class WhatsAppOrderService
         $validCodes = $productCodes === []
             ? []
             : Product::query()
-                ->where('organization_id', $botUser->organization_id)
+                ->where('organization_id', $orgId)
                 ->whereNull('deleted_at')
                 ->whereIn('product_code', $productCodes)
                 ->pluck('product_code')
@@ -174,10 +222,13 @@ class WhatsAppOrderService
                 throw new InvalidArgumentException("Product [{$productCode}] not found.");
             }
 
+            $onWholesaleRetail = ! empty($line['on_wholesale_retail']) ? 1 : 0;
+
             $lineReq = AiFormRequestHelper::prepare(
                 AddCartLineRequest::create("/sales/carts/{$cartId}/lines", 'POST', [
                     'product_code' => $productCode,
                     'quantity' => $qty,
+                    'on_wholesale_retail' => $onWholesaleRetail,
                 ]),
                 $botUser,
             );
@@ -251,9 +302,16 @@ class WhatsAppOrderService
         CapabilityGate $gate,
         array $cartLines,
     ): array {
-        $branchId = $customer->branch_id ? (int) $customer->branch_id : ($botUser->branch_id ? (int) $botUser->branch_id : null);
+        $branchId = $customer->branch_id
+            ? (int) $customer->branch_id
+            : ($botUser->branch_id && (int) $botUser->organization_id === (int) $customer->organization_id
+                ? (int) $botUser->branch_id
+                : null);
         $inventory = $gate->moduleSettings('inventory');
         $sales = $gate->moduleSettings('sales');
+        $splitShopStore = ! empty($sales['retail_shop_wholesale_store_stock']);
+        $routeId = $customer->route_id ? (int) $customer->route_id : null;
+        $orgId = (int) $customer->organization_id;
         $lines = [];
         $total = 0.0;
         $warnings = [];
@@ -267,7 +325,7 @@ class WhatsAppOrderService
 
             $product = Product::query()
                 ->with('unit')
-                ->where('organization_id', $customer->organization_id)
+                ->where('organization_id', $orgId)
                 ->where('product_code', $code)
                 ->whereNull('deleted_at')
                 ->first();
@@ -278,32 +336,45 @@ class WhatsAppOrderService
                 continue;
             }
 
-            $unitPrice = (float) $product->unit_price;
-            $lineTotal = round($unitPrice * $baseQty, 2);
-            $display = $line['display'] ?? $this->stockUom->formatMixedStockDisplay($baseQty, $product->unit)['text'];
-            $payload = $product->toArray();
-            if ($branchId) {
-                $payload = $this->branchStock->overlayPayload($payload, $branchId);
-                $payload = $this->branchStock->applySalesConsumerStock(
-                    $payload,
-                    SaleStockLocationResolver::forLine(
-                        'backend',
-                        $inventory,
-                        $sales,
-                        $product,
-                        (bool) $product->sell_on_retail,
-                    ),
-                    ! empty($sales['retail_shop_wholesale_store_stock']),
-                );
-            }
+            $isRetail = (bool) ($product->sell_on_retail)
+                && ! empty($line['on_wholesale_retail']);
+            $lineTotal = $this->pricing->lineTotalBeforeDiscount(
+                $product,
+                $baseQty,
+                $isRetail,
+                $routeId,
+                $orgId,
+            );
+            $unitPrice = $this->qtyDisplay->displayUnitPrice(
+                $baseQty,
+                $lineTotal,
+                $product,
+                $isRetail,
+            );
+            $display = $line['display']
+                ?? $this->qtyDisplay->formatLineQtyDisplay($baseQty, $product, $isRetail);
 
-            $available = (float) ($payload['stock_in_shop'] ?? 0);
-            if ($branchId && isset($payload['stock_available_shop'])) {
-                $available = (float) $payload['stock_available_shop'];
-            }
+            $location = SaleStockLocationResolver::forLine(
+                'backend',
+                $inventory,
+                $sales,
+                $product,
+                $isRetail,
+            );
 
-            if ($available < $baseQty) {
-                $warnings[] = "{$product->product_name}: only ".$this->stockUom->formatMixedStockDisplay($available, $product->unit)['text'].' in stock.';
+            $available = $this->availableQtyForLocation(
+                $product,
+                $branchId,
+                $orgId,
+                $location,
+                $splitShopStore,
+            );
+
+            if ($available + 0.0001 < $baseQty) {
+                $locLabel = $location === 'store' ? 'store' : 'shop';
+                $warnings[] = "{$product->product_name} ({$locLabel}): only "
+                    .$this->stockUom->formatMixedStockDisplay($available, $product->unit)['text']
+                    .' available.';
             }
 
             $lines[] = [
@@ -313,6 +384,9 @@ class WhatsAppOrderService
                 'display' => $display,
                 'unit_price' => $unitPrice,
                 'line_total' => $lineTotal,
+                'on_wholesale_retail' => $isRetail ? 1 : 0,
+                'rw' => $isRetail ? 'R' : 'W',
+                'stock_location' => $location,
             ];
             $total += $lineTotal;
         }
@@ -322,6 +396,50 @@ class WhatsAppOrderService
             'estimated_total' => round($total, 2),
             'stock_warnings' => $warnings,
         ];
+    }
+
+    /**
+     * Sellable quantity at the location WhatsApp will draw from for this line.
+     */
+    protected function availableQtyForLocation(
+        Product $product,
+        ?int $branchId,
+        int $orgId,
+        string $location,
+        bool $splitShopStore,
+    ): float {
+        $location = $location === 'store' ? 'store' : 'shop';
+
+        if ($branchId) {
+            $payload = $this->branchStock->overlayPayload($product->toArray(), $branchId);
+            $payload = $this->branchStock->applySalesConsumerStock(
+                $payload,
+                $location,
+                $splitShopStore,
+            );
+            $availableKey = $location === 'store' ? 'stock_available_store' : 'stock_available_shop';
+            $onHandKey = $location === 'store' ? 'stock_in_store' : 'stock_in_shop';
+
+            return (float) ($payload[$availableKey] ?? $payload[$onHandKey] ?? 0);
+        }
+
+        // No branch (rare): sum live branch stock for this org at the sale location.
+        $column = $location === 'store' ? 'store_quantity' : 'shop_quantity';
+        $qty = (float) \Illuminate\Support\Facades\DB::table('current_stock as cs')
+            ->join('branches as b', 'b.id', '=', 'cs.branch_id')
+            ->where('b.organization_id', $orgId)
+            ->where('cs.product_code', $product->product_code)
+            ->selectRaw("COALESCE(SUM(COALESCE(cs.{$column}, 0)), 0) as qty")
+            ->value('qty');
+
+        if ($qty > 0) {
+            return $qty;
+        }
+
+        // Fall back to denormalized product columns.
+        return $location === 'store'
+            ? (float) ($product->stock_in_store ?? 0)
+            : (float) ($product->stock_in_shop ?? 0);
     }
 
     public function logOrderFailure(

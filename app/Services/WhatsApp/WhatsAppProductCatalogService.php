@@ -9,8 +9,11 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Inventory\StockUomDisplayService;
+use App\Services\Sales\PosLinePricingService;
+use App\Services\Sales\SaleLineQuantityDisplayService;
 use App\Support\SqlLikeSearch;
 use Illuminate\Database\Eloquent\Builder;
+use Illuminate\Support\Facades\DB;
 
 class WhatsAppProductCatalogService
 {
@@ -22,6 +25,8 @@ class WhatsAppProductCatalogService
     public function __construct(
         protected BranchStockService $branchStock,
         protected StockUomDisplayService $stockUom,
+        protected PosLinePricingService $pricing,
+        protected SaleLineQuantityDisplayService $qtyDisplay,
     ) {}
 
     public function resolveBranchId(Customer $customer, User $botUser): ?int
@@ -39,6 +44,54 @@ class WhatsAppProductCatalogService
     }
 
     /**
+     * Platform dry-run catalog search: match name/code across the org catalog,
+     * including zero-stock items (so searches like "kamande" still work).
+     *
+     * @return array{items: list<array<string, mixed>>, total: int, page: int, per_page: int, has_more: bool}
+     */
+    public function searchForPlatformPreview(
+        Customer $customer,
+        User $botUser,
+        CapabilityGate $gate,
+        string $term,
+        int $page = 1,
+        ?int $perPage = null,
+    ): array {
+        $term = trim($term);
+        if ($term === '') {
+            return $this->emptyPage($page, $perPage);
+        }
+
+        $query = Product::query()
+            ->where('products.organization_id', $customer->organization_id)
+            ->whereNull('products.deleted_at')
+            ->with('unit');
+
+        SqlLikeSearch::applyProductSearch($query, $term, 'products.product_code', 'products.product_name');
+
+        // Prefer in-stock matches first, then alphabetical.
+        $orgId = (int) $customer->organization_id;
+        $query->orderByRaw(
+            '(CASE
+                WHEN (COALESCE(products.stock_in_shop, 0) + COALESCE(products.stock_in_store, 0)) > 0 THEN 0
+                WHEN EXISTS (
+                    SELECT 1 FROM current_stock cs
+                    INNER JOIN branches b ON b.id = cs.branch_id
+                    WHERE cs.product_code = products.product_code
+                      AND b.organization_id = ?
+                      AND (COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0)) > 0
+                ) THEN 0
+                ELSE 1
+            END)',
+            [$orgId]
+        )->orderBy('products.product_name');
+
+        return $this->paginateProducts($query, $customer, $botUser, $gate, $page, $perPage, alreadyOrdered: true);
+    }
+
+    /**
+     * In-stock product search for the WhatsApp bot (browse / type-a-name).
+     *
      * @return array{items: list<array<string, mixed>>, total: int, page: int, per_page: int, has_more: bool}
      */
     public function searchInStock(
@@ -50,7 +103,7 @@ class WhatsAppProductCatalogService
         ?int $perPage = null,
     ): array {
         $term = trim($term);
-        if ($term === '') {
+        if (strlen($term) < 2) {
             return $this->emptyPage($page, $perPage);
         }
 
@@ -154,12 +207,15 @@ class WhatsAppProductCatalogService
         CapabilityGate $gate,
         int $page,
         ?int $perPage = null,
+        bool $alreadyOrdered = false,
     ): array {
         $page = max(1, $page);
         $perPage = max(1, min(100, $perPage ?? self::PER_PAGE));
         $total = (clone $query)->count();
+        if (! $alreadyOrdered) {
+            $query = $query->orderBy('products.product_name');
+        }
         $products = $query
-            ->orderBy('products.product_name')
             ->forPage($page, $perPage)
             ->get();
 
@@ -224,7 +280,7 @@ class WhatsAppProductCatalogService
                     + (float) ($payload['stock_available_store'] ?? 0);
             }
         } elseif ($crossOrgPreview) {
-            $branchTotal = (float) \Illuminate\Support\Facades\DB::table('current_stock as cs')
+            $branchTotal = (float) DB::table('current_stock as cs')
                 ->join('branches as b', 'b.id', '=', 'cs.branch_id')
                 ->where('b.organization_id', $customer->organization_id)
                 ->where('cs.product_code', $product->product_code)
@@ -239,10 +295,50 @@ class WhatsAppProductCatalogService
         }
         $displayStock = $this->stockUom->formatMixedStockDisplay($available, $uom)['text'];
 
+        $sellOnRetail = (bool) $product->sell_on_retail;
+        $conversion = max(1.0, (float) ($uom?->conversion_factor ?? 1));
+        $orgId = (int) $customer->organization_id;
+        $routeId = $customer->route_id ? (int) $customer->route_id : null;
+
+        $wholesaleBaseQty = $conversion > 1 ? $conversion : 1.0;
+        $wholesaleAmount = $this->pricing->lineTotalBeforeDiscount(
+            $product,
+            $wholesaleBaseQty,
+            false,
+            $routeId,
+            $orgId,
+        );
+        $wholesaleUnitPrice = $this->qtyDisplay->displayUnitPrice(
+            $wholesaleBaseQty,
+            $wholesaleAmount,
+            $product,
+            false,
+        );
+
+        $retailUnitPrice = null;
+        if ($sellOnRetail) {
+            $retailAmount = $this->pricing->lineTotalBeforeDiscount(
+                $product,
+                1.0,
+                true,
+                $routeId,
+                $orgId,
+            );
+            $retailUnitPrice = $this->qtyDisplay->displayUnitPrice(
+                1.0,
+                $retailAmount,
+                $product,
+                true,
+            );
+        }
+
         return [
             'product_code' => (string) $product->product_code,
             'product_name' => (string) $product->product_name,
-            'unit_price' => (float) $product->unit_price,
+            'unit_price' => $wholesaleUnitPrice,
+            'wholesale_unit_price' => $wholesaleUnitPrice,
+            'retail_unit_price' => $retailUnitPrice,
+            'sell_on_retail' => $sellOnRetail,
             'available_qty' => $available,
             'available_display' => $displayStock,
             'uom_snapshot' => $uom ? $uom->only([

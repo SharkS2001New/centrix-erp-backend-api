@@ -56,11 +56,12 @@ class WhatsAppOrderingTest extends TestCase
         $this->assertNotNull($customer->route_id);
 
         $this->postSignedWebhook('wamid.001', 'HI');
-        $this->postSignedWebhook('wamid.002', '1');
-        $this->postSignedWebhook('wamid.003', '1');
-        $this->postSignedWebhook('wamid.004', '1');
-        $this->postSignedWebhook('wamid.005', '2');
-        $this->postSignedWebhook('wamid.006', 'CONFIRM')->assertOk();
+        $this->postSignedWebhook('wamid.002', '1'); // browse
+        $this->postSignedWebhook('wamid.003', '1'); // pick first product (asks R/W when sell_on_retail)
+        $this->postSignedWebhook('wamid.004', 'R'); // retail → shop stock
+        $this->postSignedWebhook('wamid.005', '1'); // qty
+        $this->postSignedWebhook('wamid.006', '2'); // review
+        $this->postSignedWebhook('wamid.007', 'CONFIRM')->assertOk();
 
         $sale = Sale::query()
             ->where('organization_id', $org->id)
@@ -73,6 +74,30 @@ class WhatsAppOrderingTest extends TestCase
         $this->assertSame('whatsapp', $sale->order_source);
         $this->assertSame('backend', $sale->channel);
         $this->assertGreaterThan(0, $sale->items()->count());
+        $this->assertSame(1, (int) $sale->items()->first()->on_wholesale_retail);
+    }
+
+    public function test_whatsapp_order_summary_includes_unit_price_and_rw(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $this->enableWhatsappForOrganization($org, $admin);
+
+        $this->postSignedWebhook('wamid.s01', 'HI');
+        $this->postSignedWebhook('wamid.s02', '1');
+        $this->postSignedWebhook('wamid.s03', '1');
+        $this->postSignedWebhook('wamid.s04', 'R');
+        $this->postSignedWebhook('wamid.s05', '2');
+        $this->postSignedWebhook('wamid.s06', '2')->assertOk();
+
+        $body = (string) \App\Models\WhatsappMessageLog::query()
+            ->where('organization_id', $org->id)
+            ->where('direction', 'out')
+            ->latest('id')
+            ->value('body');
+
+        $this->assertStringContainsString('Order summary', $body);
+        $this->assertMatchesRegularExpression('/,\s*KES\s*[\d,]+,\s*.+,\s*KES\s*[\d,]+,\s*R\b/', $body);
     }
 
     protected function enableWhatsappForOrganization(Organization $org, User $admin): void
