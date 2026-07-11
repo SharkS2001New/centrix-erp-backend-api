@@ -211,6 +211,7 @@ return [
             'features' => [
                 'overview' => ['label' => 'Admin home', 'actions' => ['view']],
                 'company' => ['label' => 'Company profile', 'actions' => ['view', 'edit']],
+                'license' => ['label' => 'License Information', 'actions' => ['view']],
                 'settings' => ['label' => 'Organization settings', 'actions' => ['view', 'edit']],
                 'branches' => ['label' => 'Branches', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'users' => ['label' => 'Users', 'actions' => ['view', 'create', 'edit', 'delete']],

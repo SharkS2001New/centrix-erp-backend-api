@@ -16,14 +16,32 @@ class PlatformInvoiceBillingService
     public function builtInDesignTemplates(): array
     {
         return [
-            ['id' => 'modern', 'label' => 'Modern', 'description' => 'Clean layout with accent header — Stripe-inspired.'],
-            ['id' => 'classic', 'label' => 'Classic', 'description' => 'Traditional bordered invoice with formal typography.'],
-            ['id' => 'minimal', 'label' => 'Minimal', 'description' => 'Generous whitespace and subtle dividers.'],
-            ['id' => 'corporate', 'label' => 'Corporate', 'description' => 'Navy header band suited for enterprise clients.'],
-            ['id' => 'bold', 'label' => 'Bold', 'description' => 'Large headings and high-contrast totals.'],
-            ['id' => 'elegant', 'label' => 'Elegant', 'description' => 'Refined serif accents — FreshBooks style.'],
+            ['id' => 'modern', 'label' => 'Modern', 'description' => 'Clean layout with blue accent header — Stripe-inspired.'],
+            ['id' => 'classic', 'label' => 'Classic', 'description' => 'Traditional bordered invoice with formal serif typography.'],
+            ['id' => 'minimal', 'label' => 'Minimal', 'description' => 'Quiet whitespace and subtle dividers — no chrome.'],
+            ['id' => 'corporate', 'label' => 'Corporate', 'description' => 'Solid navy header band suited for enterprise clients.'],
+            ['id' => 'bold', 'label' => 'Bold', 'description' => 'High-contrast red accents and large totals.'],
+            ['id' => 'elegant', 'label' => 'Elegant', 'description' => 'Warm serif accents — FreshBooks / boutique style.'],
             ['id' => 'stripe', 'label' => 'Stripe', 'description' => 'Purple accent sidebar — popular SaaS billing look.'],
             ['id' => 'compact', 'label' => 'Compact', 'description' => 'Dense layout for printing multiple copies.'],
+            ['id' => 'ocean', 'label' => 'Ocean', 'description' => 'Teal accents with a calm coastal feel.'],
+            ['id' => 'forest', 'label' => 'Forest', 'description' => 'Deep green header for eco / agri brands.'],
+            ['id' => 'sunset', 'label' => 'Sunset', 'description' => 'Warm orange accents — energetic retail look.'],
+            ['id' => 'slate', 'label' => 'Slate', 'description' => 'Neutral grey professional stationery.'],
+            ['id' => 'rose', 'label' => 'Rose', 'description' => 'Soft rose accents for lifestyle brands.'],
+            ['id' => 'indigo', 'label' => 'Indigo', 'description' => 'Deep indigo band — tech / SaaS friendly.'],
+            ['id' => 'gold', 'label' => 'Gold', 'description' => 'Premium gold accents with ivory background.'],
+            ['id' => 'paper', 'label' => 'Paper', 'description' => 'Cream paper feel with classic rule lines.'],
+            ['id' => 'ledger', 'label' => 'Ledger', 'description' => 'Accounting-style ruled rows and charcoal type.'],
+            ['id' => 'midnight', 'label' => 'Midnight', 'description' => 'Dark midnight header with crisp white type.'],
+            ['id' => 'emerald', 'label' => 'Emerald', 'description' => 'Bright emerald accents — growth / finance.'],
+            ['id' => 'mono', 'label' => 'Mono', 'description' => 'Monospace-inspired type for ops / logistics.'],
+            ['id' => 'coastal', 'label' => 'Coastal', 'description' => 'Sky blue top bar and airy spacing.'],
+            ['id' => 'graphite', 'label' => 'Graphite', 'description' => 'Matte graphite header — industrial polish.'],
+            ['id' => 'ivory', 'label' => 'Ivory', 'description' => 'Soft ivory sheet with chocolate brown accents.'],
+            ['id' => 'magenta', 'label' => 'Magenta', 'description' => 'Vivid magenta accent for creative agencies.'],
+            ['id' => 'safari', 'label' => 'Safari', 'description' => 'Earth-tone brown accents — East Africa inspired.'],
+            ['id' => 'rounded', 'label' => 'Rounded', 'description' => 'Friendly rounded sheet with soft sky accents.'],
         ];
     }
 

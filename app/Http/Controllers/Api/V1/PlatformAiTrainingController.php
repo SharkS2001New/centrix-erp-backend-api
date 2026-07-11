@@ -285,11 +285,18 @@ class PlatformAiTrainingController extends Controller
             $parsed = json_decode($m[0], true);
         }
 
+        $subject = is_array($parsed) ? (string) ($parsed['subject'] ?? $parsed['title'] ?? $subject) : $subject;
+        $body = is_array($parsed)
+            ? (string) ($parsed['body'] ?? $parsed['message'] ?? ((isset($parsed['title']) || isset($parsed['reference'])) ? json_encode($parsed) : $body))
+            : ($raw !== '' ? $raw : $body);
+
         return response()->json([
-            'subject' => is_array($parsed) ? (string) ($parsed['subject'] ?? $subject) : $subject,
-            'body' => is_array($parsed) ? (string) ($parsed['body'] ?? $parsed['message'] ?? $body) : ($raw !== '' ? $raw : $body),
+            'subject' => $subject,
+            'body' => $body,
+            'title' => is_array($parsed) ? (string) ($parsed['title'] ?? $subject) : $subject,
+            'reference' => is_array($parsed) ? (string) ($parsed['reference'] ?? '') : '',
+            'notes' => is_array($parsed) ? (string) ($parsed['notes'] ?? '') : '',
             'reply' => $raw,
         ]);
     }
-
 }

@@ -336,9 +336,33 @@ class UserController extends BaseResourceController
         ]);
     }
 
+    public function clearTwoFactor(Request $request, string $id, ?string $nestedId = null)
+    {
+        if (! $request->user()?->is_super_admin) {
+            abort(403, 'Only a platform super admin can clear two-factor authentication for a user.');
+        }
+
+        $model = $this->findOrgUser($this->resolveResourceId($id, $nestedId));
+        $model->forceFill([
+            'two_factor_enabled' => false,
+            'two_factor_method' => null,
+            'two_factor_secret' => null,
+            'two_factor_confirmed_at' => null,
+        ])->save();
+
+        return response()->json([
+            'message' => 'Two-factor authentication cleared. The user can sign in with password only until they enable 2FA again.',
+            'user' => $this->withPasswordLockFlag($model->fresh(), app(PasswordExpiryService::class)),
+        ]);
+    }
+
     protected function withPasswordLockFlag(User $user, PasswordExpiryService $expiryService): User
     {
         $user->setAttribute('password_locked', $expiryService->isAdministrativelyLocked($user));
+        $user->setAttribute(
+            'two_factor_enabled',
+            (bool) $user->two_factor_enabled && filled($user->two_factor_confirmed_at),
+        );
 
         return $user;
     }

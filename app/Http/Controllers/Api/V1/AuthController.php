@@ -126,7 +126,113 @@ class AuthController extends Controller
             throw $e;
         }
 
+        if (! empty($result['mfa_required'])) {
+            return response()->json($result);
+        }
+
         return $this->respondWithAuthSession($result, $request);
+    }
+
+    public function verifyTwoFactor(Request $request)
+    {
+        $data = $request->validate([
+            'challenge_token' => 'required|string|max:128',
+            'code' => 'required|string|max:12',
+        ]);
+
+        try {
+            $result = $this->sessions->completeTwoFactorLogin(
+                $data['challenge_token'],
+                $data['code'],
+            );
+        } catch (ValidationException $e) {
+            if ($e->errors()['session'] ?? null) {
+                return response()->json([
+                    'message' => 'This user is already logged in on another device.',
+                    'code' => 'session_active_elsewhere',
+                ], 403);
+            }
+            throw $e;
+        }
+
+        return $this->respondWithAuthSession($result, $request);
+    }
+
+    public function resendTwoFactorEmail(Request $request)
+    {
+        $data = $request->validate([
+            'challenge_token' => 'required|string|max:128',
+        ]);
+
+        return response()->json(
+            app(\App\Services\Auth\TwoFactorService::class)->resendLoginEmailCode($data['challenge_token'])
+        );
+    }
+
+    public function twoFactorStatus(Request $request)
+    {
+        return response()->json(
+            app(\App\Services\Auth\TwoFactorService::class)->statusForUser($request->user())
+        );
+    }
+
+    public function beginEmailTwoFactor(Request $request)
+    {
+        return response()->json(
+            app(\App\Services\Auth\TwoFactorService::class)->beginEmailSetup($request->user())
+        );
+    }
+
+    public function confirmEmailTwoFactor(Request $request)
+    {
+        $data = $request->validate([
+            'code' => 'required|string|max:12',
+        ]);
+
+        $user = app(\App\Services\Auth\TwoFactorService::class)
+            ->confirmEmailSetup($request->user(), $data['code']);
+
+        return response()->json([
+            'ok' => true,
+            'two_factor' => app(\App\Services\Auth\TwoFactorService::class)->statusForUser($user),
+        ]);
+    }
+
+    public function beginTotpTwoFactor(Request $request)
+    {
+        return response()->json(
+            app(\App\Services\Auth\TwoFactorService::class)->beginTotpSetup($request->user())
+        );
+    }
+
+    public function confirmTotpTwoFactor(Request $request)
+    {
+        $data = $request->validate([
+            'code' => 'required|string|max:12',
+        ]);
+
+        $user = app(\App\Services\Auth\TwoFactorService::class)
+            ->confirmTotpSetup($request->user(), $data['code']);
+
+        return response()->json([
+            'ok' => true,
+            'two_factor' => app(\App\Services\Auth\TwoFactorService::class)->statusForUser($user),
+        ]);
+    }
+
+    public function disableTwoFactor(Request $request)
+    {
+        $data = $request->validate([
+            'password' => 'required|string',
+        ]);
+
+        $user = app(\App\Services\Auth\TwoFactorService::class)
+            ->disable($request->user(), PasswordPolicy::normalizeInput($data['password']));
+
+        return response()->json([
+            'ok' => true,
+            'two_factor' => app(\App\Services\Auth\TwoFactorService::class)->statusForUser($user),
+        ]);
     }
 
     public function switchWorkspace(Request $request)

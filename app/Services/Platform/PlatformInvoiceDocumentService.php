@@ -44,7 +44,7 @@ class PlatformInvoiceDocumentService
                 $amount = isset($row['amount']) ? (float) $row['amount'] : $qty * $unit;
                 $rowHtml .= '<tr>'
                     .'<td style="padding:6px;border-bottom:1px solid #e2e8f0;">'.($index + 1).'</td>'
-                    .'<td style="padding:6px;border-bottom:1px solid #e2e8f0;">'.e((string) ($row['description'] ?? '')).'</td>'
+                    .'<td style="padding:6px;border-bottom:1px solid #e2e8f0;white-space:pre-wrap;">'.nl2br(e((string) ($row['description'] ?? ''))).'</td>'
                     .'<td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:right;">'.$this->money($qty).'</td>'
                     .'<td style="padding:6px;border-bottom:1px solid #e2e8f0;text-align:right;">'.$currency.' '.$this->money($amount).'</td>'
                     .'</tr>';

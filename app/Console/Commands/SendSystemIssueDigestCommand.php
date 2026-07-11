@@ -13,10 +13,18 @@ class SendSystemIssueDigestCommand extends Command
 
     public function handle(SystemIssueDigestService $digest): int
     {
-        $recipient = $this->option('email') ?: config('system_issues.digest_email');
+        $settings = \App\Services\SystemIssues\SystemIssueAlertSettingsResolver::forPlatform();
+        if (! ($settings['email_digest_enabled'] ?? true) && ! $this->option('email')) {
+            $this->info('Daily email digest is disabled in Platform → System errors & reports.');
+
+            return self::SUCCESS;
+        }
+
+        $recipient = $this->option('email')
+            ?: \App\Services\SystemIssues\SystemIssueAlertSettingsResolver::digestEmail();
 
         if (trim((string) $recipient) === '') {
-            $this->warn('Set SYSTEM_ISSUES_DIGEST_EMAIL to receive the daily digest.');
+            $this->warn('Set a digest email under Platform → System errors & reports (or SYSTEM_ISSUES_DIGEST_EMAIL).');
 
             return self::SUCCESS;
         }

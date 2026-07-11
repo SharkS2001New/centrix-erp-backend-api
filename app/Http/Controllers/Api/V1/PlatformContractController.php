@@ -183,7 +183,7 @@ class PlatformContractController extends Controller
 
     protected function validated(Request $request, bool $creating = true): array
     {
-        return $request->validate([
+        $data = $request->validate([
             'kind' => 'sometimes|in:quote,contract',
             'status' => 'sometimes|string|max:20',
             'organization_id' => 'nullable|integer|exists:organizations,id',
@@ -194,6 +194,7 @@ class PlatformContractController extends Controller
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date',
             'currency' => 'sometimes|string|max:8',
+            'interval' => 'sometimes|in:monthly,annual,yearly',
             'license_basis' => 'sometimes|in:org,user',
             'amount' => 'nullable|numeric|min:0',
             'first_payment_price' => 'nullable|numeric|min:0',
@@ -209,5 +210,11 @@ class PlatformContractController extends Controller
             'terms' => 'nullable|string',
             'notes' => 'nullable|string',
         ]);
+
+        if (($data['interval'] ?? null) === 'yearly') {
+            $data['interval'] = 'annual';
+        }
+
+        return $data;
     }
 }

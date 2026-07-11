@@ -9,7 +9,7 @@ class PlatformContract extends Model
 {
     protected $fillable = [
         'kind', 'status', 'organization_id', 'plan_id', 'title', 'reference',
-        'valid_until', 'start_date', 'end_date', 'currency', 'license_basis',
+        'valid_until', 'start_date', 'end_date', 'currency', 'interval', 'license_basis',
         'amount', 'first_payment_price', 'renewal_price', 'seat_count',
         'workspace_keys', 'module_keys',
         'customer_name', 'customer_email', 'customer_phone', 'customer_address', 'customer_tax_pin',

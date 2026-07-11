@@ -90,6 +90,15 @@ class SystemIssueReportController extends Controller
             'action_url' => '/platform/system-issues',
         ], InAppNotificationEvents::SYSTEM_ISSUE);
 
+        try {
+            app(\App\Services\SystemIssues\SystemIssueAlertService::class)->sendInstantIfNeeded($report);
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::warning('Failed to send system issue instant alert', [
+                'report_id' => $report->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
+
         return response()->json($report, 201);
     }
 

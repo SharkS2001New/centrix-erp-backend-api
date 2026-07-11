@@ -248,7 +248,7 @@ class PlatformInvoiceController extends Controller
             'invoice_options.print_spacing' => 'nullable|in:compact,comfortable,spacious',
             'line_items' => 'required|array|min:1',
             'line_items.*.module_key' => 'nullable|string|max:80',
-            'line_items.*.description' => 'required|string|max:500',
+            'line_items.*.description' => 'required|string|max:2000',
             'line_items.*.quantity' => 'nullable|numeric|min:0',
             'line_items.*.unit_price' => 'nullable|numeric',
             'line_items.*.amount' => 'nullable|numeric',

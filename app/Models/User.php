@@ -19,16 +19,19 @@ class User extends Authenticatable
         'full_name', 'is_admin', 'is_super_admin', 'access_scope', 'is_mobile_user', 'login_channels',
         'mobile_order_scope', 'assigned_route_id', 'is_active', 'must_change_password', 'password_expiry_skip_count',
         'password_changed_at', 'last_login',
+        'two_factor_enabled', 'two_factor_method', 'two_factor_secret', 'two_factor_confirmed_at',
         'deleted_by', 'deleted_at',
     ];
-    protected $hidden = ['password'];
+    protected $hidden = ['password', 'two_factor_secret'];
     protected $casts = [
         'is_admin' => 'boolean',
         'is_super_admin' => 'boolean',
         'is_active' => 'boolean',
         'must_change_password' => 'boolean',
         'is_mobile_user' => 'boolean',
+        'two_factor_enabled' => 'boolean',
         'password_changed_at' => 'datetime',
+        'two_factor_confirmed_at' => 'datetime',
         'login_channels' => 'array',
         'last_login' => 'datetime',
         'deleted_at' => 'datetime',

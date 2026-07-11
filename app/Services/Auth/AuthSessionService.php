@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Auth\PasswordExpiryService;
 use App\Services\Auth\OrganizationLoginGuard;
 use App\Services\Auth\SecuritySettingsResolver;
+use App\Services\Auth\TwoFactorService;
 use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -58,7 +59,51 @@ class AuthSessionService
             ]);
         }
 
+        return $this->continueAfterPassword($account, $clientId, $forceLogout, $loginChannel);
+    }
+
+    /**
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}|array{mfa_required: bool, code: string, challenge_token: string, method: string, email_hint: ?string, expires_in: int}
+     */
+    protected function continueAfterPassword(
+        TenantAccount $account,
+        string $clientId,
+        bool $forceLogout,
+        string $loginChannel,
+    ): array {
+        $effective = $account->effectiveUser();
+        $twoFactor = app(TwoFactorService::class);
+        if ($twoFactor->isEnabled($effective)) {
+            return $twoFactor->startLoginChallenge($account, $clientId, $forceLogout, $loginChannel);
+        }
+
         return $this->issueSession($account, $clientId, $forceLogout, $loginChannel);
+    }
+
+    /**
+     * Complete login after a successful 2FA challenge.
+     *
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    public function completeTwoFactorLogin(
+        string $challengeToken,
+        string $code,
+    ): array {
+        $verified = app(TwoFactorService::class)->verifyLoginChallenge($challengeToken, $code);
+        $org = \App\Models\Organization::query()->findOrFail($verified['organization_id']);
+        $account = $this->resolver->resolveForCanonicalUser($org, (int) $verified['user_id']);
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'code' => ['Unable to complete sign-in for this account.'],
+            ]);
+        }
+
+        return $this->issueSession(
+            $account,
+            $verified['client_id'],
+            $verified['force_logout'],
+            $verified['login_channel'],
+        );
     }
 
     /**
@@ -84,7 +129,7 @@ class AuthSessionService
             ]);
         }
 
-        return $this->issueSession($account, $clientId, $forceLogout, $loginChannel);
+        return $this->continueAfterPassword($account, $clientId, $forceLogout, $loginChannel);
     }
 
     /**

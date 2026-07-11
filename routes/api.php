@@ -79,6 +79,7 @@ use App\Http\Controllers\Api\V1\LegacyImportConverterController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
+use App\Http\Controllers\Api\V1\PlatformSystemIssueAlertSettingsController;
 use App\Http\Controllers\Api\V1\SystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformInvoiceController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
@@ -158,6 +159,10 @@ Route::prefix('v1')->group(function () {
     });
     Route::post('auth/login', [AuthController::class, 'login'])
         ->middleware('throttle:auth-login');
+    Route::post('auth/2fa/verify', [AuthController::class, 'verifyTwoFactor'])
+        ->middleware('throttle:auth-login');
+    Route::post('auth/2fa/resend', [AuthController::class, 'resendTwoFactorEmail'])
+        ->middleware('throttle:auth-login');
     Route::post('auth/logout', [AuthController::class, 'logout'])
         ->middleware('throttle:auth-login');
     Route::post('auth/forgot-password', [AuthController::class, 'forgotPassword'])
@@ -181,6 +186,12 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::patch('auth/me', [AuthController::class, 'updateMe']);
+        Route::get('auth/2fa', [AuthController::class, 'twoFactorStatus']);
+        Route::post('auth/2fa/email/begin', [AuthController::class, 'beginEmailTwoFactor']);
+        Route::post('auth/2fa/email/confirm', [AuthController::class, 'confirmEmailTwoFactor']);
+        Route::post('auth/2fa/totp/begin', [AuthController::class, 'beginTotpTwoFactor']);
+        Route::post('auth/2fa/totp/confirm', [AuthController::class, 'confirmTotpTwoFactor']);
+        Route::post('auth/2fa/disable', [AuthController::class, 'disableTwoFactor']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
         Route::post('auth/skip-password-expiry', [AuthController::class, 'skipPasswordExpiry']);
         Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);
@@ -409,6 +420,12 @@ Route::prefix('v1')->group(function () {
 
         Route::get('admin/system-issue-reports/summary', [PlatformSystemIssueReportController::class, 'summary'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/system-issue-reports/bulk', [PlatformSystemIssueReportController::class, 'bulkUpdate'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/system-issue-alert-settings', [PlatformSystemIssueAlertSettingsController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/system-issue-alert-settings', [PlatformSystemIssueAlertSettingsController::class, 'update'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/system-issue-reports', [PlatformSystemIssueReportController::class, 'index'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/system-issue-reports/{id}', [PlatformSystemIssueReportController::class, 'show'])
@@ -503,6 +520,7 @@ Route::prefix('v1')->group(function () {
                 Route::apiResource('audit-logs', AuditLogController::class)->only(['index', 'show']);
                 Route::apiResource('users', UserController::class);
                 Route::post('users/{user}/clear-password-lock', [UserController::class, 'clearPasswordLock']);
+                Route::post('users/{user}/clear-two-factor', [UserController::class, 'clearTwoFactor']);
                 Route::get('users/{user}/permissions', [UserController::class, 'permissions']);
                 Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions']);
                 Route::apiResource('routes', RouteModelController::class)->only(['index', 'show']);
@@ -564,6 +582,8 @@ Route::prefix('v1')->group(function () {
             ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
         Route::post('users/{user}/clear-password-lock', [UserController::class, 'clearPasswordLock'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        Route::post('users/{user}/clear-two-factor', [UserController::class, 'clearTwoFactor'])
+            ->middleware(['erp.super_admin']);
         Route::get('users/{user}/permissions', [UserController::class, 'permissions'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.view']);
         Route::put('users/{user}/permissions', [UserController::class, 'syncPermissions'])

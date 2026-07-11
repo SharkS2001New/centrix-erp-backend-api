@@ -97,7 +97,13 @@ class SystemIssueDigestService
 
     public function sendDailyDigest(?string $recipient = null): bool
     {
-        $to = trim((string) ($recipient ?? config('system_issues.digest_email', '')));
+        $to = trim((string) ($recipient ?? ''));
+        if ($to === '') {
+            if (! SystemIssueAlertSettingsResolver::forPlatform()['email_digest_enabled']) {
+                return false;
+            }
+            $to = SystemIssueAlertSettingsResolver::digestEmail();
+        }
         if ($to === '') {
             return false;
         }

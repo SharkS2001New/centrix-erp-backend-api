@@ -159,6 +159,45 @@ class PlatformSystemIssueReportController extends Controller
         ]));
     }
 
+    public function bulkUpdate(Request $request)
+    {
+        $data = $request->validate([
+            'ids' => 'required|array|min:1|max:100',
+            'ids.*' => 'required|uuid',
+            'status' => ['required', Rule::in(['open', 'acknowledged', 'resolved'])],
+            'resolution_notes' => 'nullable|string|max:5000',
+        ]);
+
+        $reports = SystemIssueReport::query()->whereIn('id', $data['ids'])->get();
+        $updated = [];
+
+        foreach ($reports as $report) {
+            $next = ['status' => $data['status']];
+            if ($data['status'] === 'resolved') {
+                $next['resolved_at'] = now();
+                $next['resolved_by_user_id'] = $request->user()->id;
+            } elseif ($report->status === 'resolved') {
+                $next['resolved_at'] = null;
+                $next['resolved_by_user_id'] = null;
+            }
+            if (array_key_exists('resolution_notes', $data)) {
+                $next['resolution_notes'] = $data['resolution_notes'];
+            }
+            $report->update($next);
+            $updated[] = $report->fresh([
+                'organization:id,org_name,company_code',
+                'user:id,username,full_name',
+                'resolvedBy:id,username,full_name',
+            ]);
+        }
+
+        return response()->json([
+            'data' => $updated,
+            'updated_count' => count($updated),
+            'message' => count($updated).' issue(s) updated.',
+        ]);
+    }
+
     public function summary()
     {
         return response()->json($this->digest->summaryCounts());

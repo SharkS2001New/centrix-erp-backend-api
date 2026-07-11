@@ -1,7 +1,7 @@
 <?php
 
 return [
-    /** Daily digest recipient for open / high-priority system issues. */
+    /** Fallback digest recipient when Platform UI has not set one yet. */
     'digest_email' => env('SYSTEM_ISSUES_DIGEST_EMAIL', 'alpacke.tech@gmail.com'),
 
     /** Local time (app timezone) for the daily digest. */

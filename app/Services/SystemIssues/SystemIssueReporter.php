@@ -66,8 +66,21 @@ class SystemIssueReporter
         }
 
         $this->safeNotifySuperAdmins($report, $user);
+        $this->safeInstantAlert($report);
 
         return $report;
+    }
+
+    protected function safeInstantAlert(SystemIssueReport $report): void
+    {
+        try {
+            app(SystemIssueAlertService::class)->sendInstantIfNeeded($report);
+        } catch (Throwable $e) {
+            Log::warning('Failed to send system issue instant alert', [
+                'report_id' => $report->id,
+                'error' => $e->getMessage(),
+            ]);
+        }
     }
 
     protected function enrichExistingReport(

@@ -304,6 +304,7 @@ return [
     'admin.view' => [
         'admin.overview.view',
         'admin.company.view',
+        'admin.license.view',
         'admin.settings.view',
         'admin.branches.view',
         'admin.users.view',
