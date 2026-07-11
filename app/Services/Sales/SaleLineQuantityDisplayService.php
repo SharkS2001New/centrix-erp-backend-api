@@ -53,9 +53,12 @@ class SaleLineQuantityDisplayService
         bool $isRetailLine,
         float $discountGiven = 0.0,
         ?float $sellingPricePerBase = null,
+        ?float $storedDisplayUnitPrice = null,
     ): float {
-        if ($sellingPricePerBase !== null && $sellingPricePerBase > 0) {
-            return round($sellingPricePerBase, 2);
+        // Prefer the pack/sold unit price already calculated on the cart/client
+        // (includes retail/wholesale/route markups from computePosLine).
+        if ($storedDisplayUnitPrice !== null && $storedDisplayUnitPrice > 0) {
+            return round($storedDisplayUnitPrice, 2);
         }
 
         $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
@@ -63,7 +66,41 @@ class SaleLineQuantityDisplayService
             return 0.0;
         }
 
-        return round(($lineAmount + max(0.0, $discountGiven)) / $entryQty, 2);
+        // When the line was already priced (amount set), recover the sold-unit
+        // gross from that priced total so retail/wholesale/route markups baked
+        // into amount are preserved. Do not fall back to bare catalog price —
+        // catalog omits markups.
+        $gross = $lineAmount + max(0.0, $discountGiven);
+        if ($gross > 0.0001) {
+            return round($gross / $entryQty, 2);
+        }
+
+        $catalogPack = (float) ($product->unit_price ?? 0);
+        if ($catalogPack > 0) {
+            return round($catalogPack, 2);
+        }
+
+        $perBase = $sellingPricePerBase;
+        if ($perBase === null || $perBase < 0) {
+            return 0.0;
+        }
+
+        return round($perBase * ($baseQty / $entryQty), 2);
+    }
+
+    /** Cashier-facing discount per display/pack unit (matches POS per-unit discount input). */
+    public function displayDiscountPerUnit(
+        float $baseQty,
+        float $discountGiven,
+        Product $product,
+        bool $isRetailLine,
+    ): float {
+        $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
+        if ($entryQty <= 0) {
+            return 0.0;
+        }
+
+        return round(max(0.0, $discountGiven) / $entryQty, 4);
     }
 
     public function displayLineAmount(
