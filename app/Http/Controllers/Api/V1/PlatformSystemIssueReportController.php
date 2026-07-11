@@ -32,7 +32,9 @@ class PlatformSystemIssueReportController extends Controller
                 'user:id,username,full_name',
             ])
             ->select('system_issue_reports.*')
-            ->selectSub($occurrenceSub, 'occurrence_count');
+            ->selectSub($occurrenceSub, 'occurrence_count')
+            ->selectSub($this->digest->firstSeenSubquery(), 'first_seen_at')
+            ->selectSub($this->digest->lastSeenSubquery(), 'last_seen_at');
 
         if ($request->filled('status') && $request->input('status') !== 'all') {
             $query->where('status', $request->input('status'));
@@ -89,7 +91,17 @@ class PlatformSystemIssueReportController extends Controller
         $paginator = $query->paginate($perPage);
         $paginator->getCollection()->transform(function (SystemIssueReport $report) use ($highPriority, $threshold) {
             $count = (int) ($report->occurrence_count ?? 1);
-            $report->setAttribute('occurrence_count', $count);
+            $report->setAttribute('occurrence_count', max(1, $count));
+            $firstSeen = $report->getAttribute('first_seen_at') ?: $report->created_at;
+            $lastSeen = $report->getAttribute('last_seen_at') ?: $firstSeen;
+            $report->setAttribute(
+                'first_seen_at',
+                $firstSeen ? \Illuminate\Support\Carbon::parse($firstSeen)->toIso8601String() : null,
+            );
+            $report->setAttribute(
+                'last_seen_at',
+                $lastSeen ? \Illuminate\Support\Carbon::parse($lastSeen)->toIso8601String() : null,
+            );
             $report->setAttribute(
                 'is_high_priority',
                 $report->fingerprint
@@ -116,7 +128,12 @@ class PlatformSystemIssueReportController extends Controller
         $count = $report->fingerprint
             ? $this->digest->occurrenceCountForFingerprint($report->fingerprint)
             : 1;
-        $report->setAttribute('occurrence_count', $count);
+        $bounds = $this->digest->seenBoundsForFingerprint($report->fingerprint);
+        $firstSeen = $bounds['first_seen_at'] ?: optional($report->created_at)?->toIso8601String();
+        $lastSeen = $bounds['last_seen_at'] ?: $firstSeen;
+        $report->setAttribute('occurrence_count', max(1, $count));
+        $report->setAttribute('first_seen_at', $firstSeen);
+        $report->setAttribute('last_seen_at', $lastSeen);
         $report->setAttribute(
             'is_high_priority',
             $count >= $this->digest->repeatThreshold(),

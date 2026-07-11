@@ -213,7 +213,7 @@ Configure in `.env`:
 |----------|---------|
 | `BACKUP_ENABLED` | Turn scheduled backups on/off |
 | `BACKUP_NOTIFY_EMAIL` | Email recipient for backup notifications |
-| `BACKUP_RETENTION_DAYS` | Delete local backups older than this |
+| `BACKUP_RETENTION_DAYS` | Auto-delete local backups older than this many days (default 7) |
 | `BACKUP_SCHEDULE_TIME` | Daily run time (24h clock, `APP_TIMEZONE` / Africa-Nairobi) |
 | `MAIL_*` | SMTP used to send backup emails |
 

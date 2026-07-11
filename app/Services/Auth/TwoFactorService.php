@@ -18,6 +18,7 @@ class TwoFactorService
 
     public function __construct(
         protected TotpService $totp,
+        protected EmailVerificationService $emailVerification,
     ) {}
 
     public function isEnabled(User $user): bool
@@ -29,12 +30,15 @@ class TwoFactorService
 
     public function statusForUser(User $user): array
     {
+        $emailStatus = $this->emailVerification->statusForUser($user);
+
         return [
             'enabled' => $this->isEnabled($user),
             'method' => $this->isEnabled($user) ? $user->two_factor_method : null,
             'confirmed_at' => $user->two_factor_confirmed_at?->toIso8601String(),
-            'email' => $user->email,
-            'has_email' => filter_var((string) $user->email, FILTER_VALIDATE_EMAIL) !== false,
+            'email' => $emailStatus['email'],
+            'has_email' => $emailStatus['has_email'],
+            'email_verified' => $emailStatus['email_verified'],
             'allowed_methods' => [self::METHOD_EMAIL, self::METHOD_TOTP],
         ];
     }
@@ -159,6 +163,11 @@ class TwoFactorService
                 'email' => ['Add a valid email on your profile before enabling email 2FA.'],
             ]);
         }
+        if (! $this->emailVerification->hasVerifiedEmail($user)) {
+            throw ValidationException::withMessages([
+                'email' => ['Verify your email address on your profile before enabling email 2FA.'],
+            ]);
+        }
 
         $code = (string) random_int(100000, 999999);
         Cache::put($this->setupKey($user->id, self::METHOD_EMAIL), [
@@ -255,6 +264,14 @@ class TwoFactorService
             ]);
         }
 
+        return $this->forceDisable($user);
+    }
+
+    /**
+     * Clear 2FA without password (e.g. email address changed, or admin unlock).
+     */
+    public function forceDisable(User $user): User
+    {
         $user->forceFill([
             'two_factor_enabled' => false,
             'two_factor_method' => null,
@@ -306,12 +323,14 @@ class TwoFactorService
             : 'Centrix ERP — your sign-in verification code';
         $body = "Hello {$user->full_name},\n\n"
             ."Your Centrix verification code is: {$code}\n\n"
-            ."This code expires in 10 minutes. If you did not request it, ignore this email.\n";
+            ."This code expires in 10 minutes. If you did not request it, ignore this email.\n\n"
+            ."This is an automated message — please do not reply.\n";
 
         try {
             PlatformMailSettingsResolver::sendRaw($to, $subject, $body, $user, [
                 'kind' => 'two_factor',
                 'purpose' => $purpose,
+                'no_reply' => true,
             ]);
         } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
             throw ValidationException::withMessages([

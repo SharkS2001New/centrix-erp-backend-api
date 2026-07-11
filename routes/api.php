@@ -186,6 +186,8 @@ Route::prefix('v1')->group(function () {
     Route::middleware(['auth:sanctum', 'erp.tenant', 'erp.session_idle', 'erp.password_expiry', 'throttle:api'])->group(function () {
         Route::get('auth/me', [AuthController::class, 'me']);
         Route::patch('auth/me', [AuthController::class, 'updateMe']);
+        Route::post('auth/email/verify/begin', [AuthController::class, 'beginEmailVerification']);
+        Route::post('auth/email/verify/confirm', [AuthController::class, 'confirmEmailVerification']);
         Route::get('auth/2fa', [AuthController::class, 'twoFactorStatus']);
         Route::post('auth/2fa/email/begin', [AuthController::class, 'beginEmailTwoFactor']);
         Route::post('auth/2fa/email/confirm', [AuthController::class, 'confirmEmailTwoFactor']);
@@ -407,6 +409,8 @@ Route::prefix('v1')->group(function () {
                 Route::get('settings', [PlatformMailController::class, 'show']);
                 Route::put('settings', [PlatformMailController::class, 'update']);
                 Route::post('test', [PlatformMailController::class, 'test']);
+                Route::post('test-auth', [PlatformMailController::class, 'testAuthMail']);
+                Route::post('test-renewal-reminder', [PlatformMailController::class, 'testRenewalReminder']);
                 Route::get('messages', [PlatformMailController::class, 'messages']);
                 Route::get('messages/{message}', [PlatformMailController::class, 'showMessage'])->whereNumber('message');
                 Route::post('messages', [PlatformMailController::class, 'send']);

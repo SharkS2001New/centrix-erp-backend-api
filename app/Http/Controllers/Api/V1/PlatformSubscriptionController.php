@@ -145,14 +145,13 @@ class PlatformSubscriptionController extends Controller
 
     public function draftInvoice(PlatformSubscription $platform_subscription)
     {
-        // Minimal stub: point frontend at invoice create with org preselected.
+        $invoice = app(\App\Services\Platform\SubscriptionRenewalReminderService::class)
+            ->createDraftRenewalInvoice($platform_subscription);
+
         return response()->json([
-            'message' => 'Open a new platform invoice for this organization.',
-            'data' => [
-                'organization_id' => $platform_subscription->organization_id,
-                'subscription_id' => $platform_subscription->id,
-            ],
-        ]);
+            'message' => 'Renewal invoice drafted.',
+            'data' => $invoice->fresh('organization:id,company_code,org_name'),
+        ], 201);
     }
 
     public function forOrganization(Organization $organization)

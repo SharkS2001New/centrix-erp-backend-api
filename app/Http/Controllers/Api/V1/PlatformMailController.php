@@ -31,6 +31,15 @@ class PlatformMailController extends Controller
             'from_name' => 'sometimes|string|max:200',
             'from_address' => 'sometimes|email|max:200',
             'reply_to' => 'nullable|email|max:200',
+            'noreply_address' => 'nullable|email|max:200',
+            'auth_mail_use_dedicated' => 'sometimes|boolean',
+            'auth_from_name' => 'nullable|string|max:200',
+            'auth_from_address' => 'nullable|email|max:200',
+            'auth_smtp_host' => 'nullable|string|max:200',
+            'auth_smtp_port' => 'nullable|integer|min:1',
+            'auth_smtp_username' => 'nullable|string|max:200',
+            'auth_smtp_password' => 'nullable|string|max:500',
+            'auth_smtp_encryption' => 'nullable|in:tls,ssl,none',
             'smtp_host' => 'nullable|string|max:200',
             'smtp_port' => 'nullable|integer|min:1',
             'smtp_username' => 'nullable|string|max:200',
@@ -45,6 +54,10 @@ class PlatformMailController extends Controller
             'imap_mailbox' => 'nullable|string|max:100',
             'contract_email_subject' => 'nullable|string|max:500',
             'contract_email_body' => 'nullable|string',
+            'subscription_reminder_enabled' => 'sometimes|boolean',
+            'subscription_reminder_days' => 'nullable|string|max:100',
+            'renewal_email_subject' => 'nullable|string|max:500',
+            'renewal_email_body' => 'nullable|string',
         ]);
 
         return response()->json([
@@ -65,6 +78,34 @@ class PlatformMailController extends Controller
         );
 
         return response()->json(['message' => 'Test email sent.']);
+    }
+
+    public function testAuthMail(Request $request)
+    {
+        $data = $request->validate(['to' => 'required|email']);
+        $this->mailbox->send(
+            $data['to'],
+            'Centrix 2FA / auth mail test',
+            "This is a test of the dedicated 2FA / email-verification sender.\n\n"
+            ."This is an automated message — please do not reply.\n",
+            $request->user(),
+            ['kind' => 'two_factor', 'no_reply' => true, 'purpose' => 'test'],
+        );
+
+        return response()->json(['message' => 'Auth / 2FA test email sent.']);
+    }
+
+    public function testRenewalReminder(Request $request)
+    {
+        $data = $request->validate(['to' => 'required|email']);
+
+        $result = app(\App\Services\Platform\SubscriptionRenewalReminderService::class)
+            ->sendTestReminder($data['to'], $request->user());
+
+        return response()->json([
+            'message' => 'Test renewal reminder sent to '.$result['to'].' (sample invoice PDF attached).',
+            'subject' => $result['subject'],
+        ]);
     }
 
     public function messages(Request $request)

@@ -337,12 +337,49 @@ class AuthController extends Controller
             );
         }
 
+        $emailChanged = false;
+        if (array_key_exists('email', $data)) {
+            $previous = strtolower(trim((string) ($user->email ?? '')));
+            $next = strtolower(trim((string) ($data['email'] ?? '')));
+            $emailChanged = $previous !== $next;
+            if ($emailChanged) {
+                $data['email_verified_at'] = null;
+            }
+        }
+
         if ($data !== []) {
             $user->update($data);
         }
 
+        $user = $user->fresh();
+        if ($emailChanged && $user->two_factor_enabled && $user->two_factor_method === 'email') {
+            app(\App\Services\Auth\TwoFactorService::class)->forceDisable($user);
+            $user = $user->fresh();
+        }
+
         return response()->json(
-            $user->fresh()->load(['branch', 'role', 'organization']),
+            $user->load(['branch', 'role', 'organization']),
+        );
+    }
+
+    public function beginEmailVerification(Request $request)
+    {
+        return response()->json(
+            app(\App\Services\Auth\EmailVerificationService::class)->begin($request->user())
+        );
+    }
+
+    public function confirmEmailVerification(Request $request)
+    {
+        $data = $request->validate([
+            'code' => 'required|string|max:12',
+        ]);
+
+        $user = app(\App\Services\Auth\EmailVerificationService::class)
+            ->confirm($request->user(), $data['code']);
+
+        return response()->json(
+            $user->load(['branch', 'role', 'organization']),
         );
     }
 

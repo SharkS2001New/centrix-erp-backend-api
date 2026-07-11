@@ -15,7 +15,7 @@ class User extends Authenticatable
 
     protected $table = 'users';
     protected $fillable = [
-        'organization_id', 'branch_id', 'role_id', 'username', 'email', 'password',
+        'organization_id', 'branch_id', 'role_id', 'username', 'email', 'email_verified_at', 'password',
         'full_name', 'is_admin', 'is_super_admin', 'access_scope', 'is_mobile_user', 'login_channels',
         'mobile_order_scope', 'assigned_route_id', 'is_active', 'must_change_password', 'password_expiry_skip_count',
         'password_changed_at', 'last_login',
@@ -30,6 +30,7 @@ class User extends Authenticatable
         'must_change_password' => 'boolean',
         'is_mobile_user' => 'boolean',
         'two_factor_enabled' => 'boolean',
+        'email_verified_at' => 'datetime',
         'password_changed_at' => 'datetime',
         'two_factor_confirmed_at' => 'datetime',
         'login_channels' => 'array',

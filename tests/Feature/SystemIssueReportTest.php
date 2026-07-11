@@ -36,10 +36,9 @@ class SystemIssueReportTest extends TestCase
             'http_status' => 500,
         ]);
 
-        $this->getJson('/api/v1/admin/system-issue-reports?status=open&kind=all&page=1&per_page=25')
+        $list = $this->getJson('/api/v1/admin/system-issue-reports?status=open&kind=all&page=1&per_page=25')
             ->assertOk()
             ->assertJsonPath('data.0.message', 'Test API failure')
-            ->assertJsonPath('data.0.user.username', 'admin')
             ->assertJsonStructure([
                 'data' => [
                     [
@@ -47,11 +46,18 @@ class SystemIssueReportTest extends TestCase
                         'kind',
                         'status',
                         'message',
+                        'first_seen_at',
+                        'last_seen_at',
                         'user' => ['id', 'username', 'full_name'],
                         'organization' => ['id', 'org_name', 'company_code'],
                     ],
                 ],
-            ]);
+            ])
+            ->json('data.0');
+
+        $this->assertSame('admin', strtolower((string) ($list['user']['username'] ?? '')));
+        $this->assertNotEmpty($list['first_seen_at']);
+        $this->assertNotEmpty($list['last_seen_at']);
     }
 
     public function test_super_admin_can_mark_issue_resolved_and_summary_includes_resolved_count(): void
@@ -89,7 +95,7 @@ class SystemIssueReportTest extends TestCase
         );
 
         for ($i = 0; $i < 3; $i++) {
-            SystemIssueReport::create([
+            $report = SystemIssueReport::create([
                 'organization_id' => null,
                 'user_id' => $superAdmin->id,
                 'kind' => 'error',
@@ -98,12 +104,25 @@ class SystemIssueReportTest extends TestCase
                 'message' => 'Repeated failure',
                 'api_path' => '/api/v1/sales',
             ]);
+            // Stagger created_at so last_seen reflects the latest occurrence, not this row's updated_at.
+            $report->forceFill([
+                'created_at' => now()->subHours(3 - $i),
+                'updated_at' => now()->subHours(3 - $i),
+            ])->saveQuietly();
         }
 
-        $this->getJson('/api/v1/admin/system-issue-reports?priority=high&status=open&page=1&per_page=25')
+        $payload = $this->getJson('/api/v1/admin/system-issue-reports?priority=high&status=open&page=1&per_page=25')
             ->assertOk()
             ->assertJsonPath('data.0.is_high_priority', true)
-            ->assertJsonPath('data.0.occurrence_count', 3);
+            ->assertJsonPath('data.0.occurrence_count', 3)
+            ->json('data.0');
+
+        $this->assertNotEmpty($payload['first_seen_at']);
+        $this->assertNotEmpty($payload['last_seen_at']);
+        $this->assertTrue(
+            strtotime($payload['last_seen_at']) >= strtotime($payload['first_seen_at']),
+            'last_seen_at should be >= first_seen_at across fingerprint occurrences',
+        );
     }
 
     public function test_client_cannot_submit_generic_server_error_duplicate(): void

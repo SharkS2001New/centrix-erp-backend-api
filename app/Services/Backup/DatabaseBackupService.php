@@ -269,7 +269,7 @@ class DatabaseBackupService
     public function pruneOldBackups(?string $disk = null, ?int $retentionDays = null): int
     {
         $disk = $disk ?: (string) config('backup.disk', 'local');
-        $retentionDays = $retentionDays ?? (int) config('backup.retention_days', 14);
+        $retentionDays = $retentionDays ?? (int) config('backup.retention_days', 7);
         $directory = trim((string) config('backup.path', 'backups/database'), '/');
         $cutoff = now()->subDays(max($retentionDays, 1))->getTimestamp();
         $deleted = 0;
@@ -363,6 +363,8 @@ class DatabaseBackupService
             '--quick',
             '--routines',
             '--triggers',
+            // Named columns help modern mysqldump omit generated values; we still sanitize CREATE + footer.
+            '--complete-insert',
             '--result-file='.$absolutePath,
             (string) ($config['database'] ?? ''),
         ], null, $this->mysqlEnvironment($config));
@@ -375,6 +377,66 @@ class DatabaseBackupService
 
             throw new ProcessFailedException($process);
         }
+
+        app(MysqlDumpGeneratedColumnSanitizer::class)->sanitizeFile(
+            $absolutePath,
+            $this->generatedColumnsForDump($config),
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $config
+     * @return array<string, list<array{name: string, type: string, expression: string, stored: bool}>>
+     */
+    protected function generatedColumnsForDump(array $config): array
+    {
+        try {
+            $pdo = new \PDO(
+                sprintf(
+                    'mysql:host=%s;port=%s;dbname=%s',
+                    $config['host'] ?? '127.0.0.1',
+                    $config['port'] ?? '3306',
+                    $config['database'] ?? '',
+                ),
+                (string) ($config['username'] ?? 'root'),
+                (string) ($config['password'] ?? ''),
+                [\PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION],
+            );
+
+            $stmt = $pdo->query(
+                "SELECT TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, GENERATION_EXPRESSION, EXTRA
+                 FROM information_schema.COLUMNS
+                 WHERE TABLE_SCHEMA = DATABASE()
+                   AND EXTRA LIKE '%GENERATED%'
+                 ORDER BY TABLE_NAME, ORDINAL_POSITION"
+            );
+
+            $byTable = [];
+            foreach ($stmt->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                $table = (string) $row['TABLE_NAME'];
+                $extra = strtoupper((string) $row['EXTRA']);
+                $expression = trim((string) $row['GENERATION_EXPRESSION']);
+                if ($expression !== '' && $expression[0] !== '(') {
+                    $expression = '('.$expression.')';
+                }
+                $byTable[$table][] = [
+                    'name' => (string) $row['COLUMN_NAME'],
+                    'type' => strtoupper((string) $row['COLUMN_TYPE']),
+                    'expression' => $expression !== '' ? $expression : '(NULL)',
+                    'stored' => str_contains($extra, 'STORED'),
+                ];
+            }
+
+            if ($byTable !== []) {
+                return $byTable;
+            }
+        } catch (\Throwable $e) {
+            Log::warning('Could not introspect generated columns for dump sanitization; using known defaults.', [
+                'error' => $e->getMessage(),
+            ]);
+        }
+
+        return MysqlDumpGeneratedColumnSanitizer::KNOWN_COLUMNS;
     }
 
     protected function dumpSqlite(array $config, string $absolutePath): void

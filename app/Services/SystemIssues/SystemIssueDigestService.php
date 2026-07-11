@@ -42,6 +42,57 @@ class SystemIssueDigestService
             ->count();
     }
 
+    /** @return array{first_seen_at: ?string, last_seen_at: ?string} */
+    public function seenBoundsForFingerprint(?string $fingerprint): array
+    {
+        if (! $fingerprint) {
+            return ['first_seen_at' => null, 'last_seen_at' => null];
+        }
+
+        $since = now()->subDays($this->repeatWindowDays());
+        $bounds = SystemIssueReport::query()
+            ->where('fingerprint', $fingerprint)
+            ->where('status', '!=', 'resolved')
+            ->where('created_at', '>=', $since)
+            ->selectRaw('MIN(created_at) as first_seen_at, MAX(created_at) as last_seen_at')
+            ->first();
+
+        return [
+            'first_seen_at' => $bounds?->first_seen_at
+                ? \Illuminate\Support\Carbon::parse($bounds->first_seen_at)->toIso8601String()
+                : null,
+            'last_seen_at' => $bounds?->last_seen_at
+                ? \Illuminate\Support\Carbon::parse($bounds->last_seen_at)->toIso8601String()
+                : null,
+        ];
+    }
+
+    /** Eloquent subquery: earliest occurrence created_at for the same fingerprint (windowed). */
+    public function firstSeenSubquery()
+    {
+        $since = now()->subDays($this->repeatWindowDays());
+
+        return SystemIssueReport::query()
+            ->from('system_issue_reports as sis_first')
+            ->selectRaw('MIN(sis_first.created_at)')
+            ->whereColumn('sis_first.fingerprint', 'system_issue_reports.fingerprint')
+            ->where('sis_first.status', '!=', 'resolved')
+            ->where('sis_first.created_at', '>=', $since);
+    }
+
+    /** Eloquent subquery: latest occurrence created_at for the same fingerprint (windowed). */
+    public function lastSeenSubquery()
+    {
+        $since = now()->subDays($this->repeatWindowDays());
+
+        return SystemIssueReport::query()
+            ->from('system_issue_reports as sis_last')
+            ->selectRaw('MAX(sis_last.created_at)')
+            ->whereColumn('sis_last.fingerprint', 'system_issue_reports.fingerprint')
+            ->where('sis_last.status', '!=', 'resolved')
+            ->where('sis_last.created_at', '>=', $since);
+    }
+
     /** @return array{open: int, acknowledged: int, resolved: int, today: int, high_priority: int} */
     public function summaryCounts(): array
     {

@@ -18,21 +18,62 @@ class PlatformMailboxService
         ?PlatformMailMessage $replyTo = null,
         array $attachments = [],
     ): PlatformMailMessage {
-        $settings = PlatformMailSettingsResolver::resolve();
+        $kind = (string) ($meta['kind'] ?? '');
+        $isAuthMail = (bool) ($meta['no_reply'] ?? false)
+            || in_array($kind, ['two_factor', 'email_verification'], true);
+
+        $settings = $isAuthMail
+            ? PlatformMailSettingsResolver::resolveForAuth()
+            : PlatformMailSettingsResolver::resolve();
+
         $messageIdBody = Str::uuid()->toString().'@centrix.platform';
         $messageId = '<'.$messageIdBody.'>';
         $threadKey = $replyTo?->thread_key
             ?? $replyTo?->message_id
             ?? $messageId;
 
-        PlatformMailSettingsResolver::applyMailConfig();
+        $profile = ($isAuthMail && ($settings['auth_profile'] ?? '') === 'auth') ? 'auth' : 'default';
+        PlatformMailSettingsResolver::applyMailConfig($profile);
+
         if (! ($settings['enabled'] ?? false)) {
+            if ($isAuthMail && ($settings['auth_profile'] ?? '') === 'auth') {
+                abort(422, 'Dedicated 2FA email SMTP is enabled but not fully configured. Set Auth / 2FA email under Settings → Email delivery.');
+            }
             abort(422, 'Platform outbound email is disabled. Enable it under Settings → Email delivery.');
         }
 
+        $isNoReply = $isAuthMail || (bool) ($settings['no_reply'] ?? false);
+
+        $fromAddress = (string) ($settings['from_address'] ?? '');
+        $fromName = (string) ($settings['from_name'] ?? 'Centrix');
+        if ($isNoReply && ($settings['auth_profile'] ?? 'default') === 'default') {
+            $main = PlatformMailSettingsResolver::resolve();
+            $candidate = $fromAddress !== ''
+                ? $fromAddress
+                : $this->deriveNoreplyAddress((string) ($main['from_address'] ?? ''));
+            if ($this->smtpAllowsCustomFrom($main, $candidate)) {
+                $fromAddress = $candidate;
+            } else {
+                $fromAddress = (string) ($main['from_address'] ?? $fromAddress);
+            }
+        }
+
         $inReplyTo = $replyTo?->message_id;
-        \Illuminate\Support\Facades\Mail::raw($body, function ($message) use ($to, $subject, $settings, $messageIdBody, $inReplyTo, $attachments) {
+        \Illuminate\Support\Facades\Mail::raw($body, function ($message) use (
+            $to,
+            $subject,
+            $settings,
+            $messageIdBody,
+            $inReplyTo,
+            $attachments,
+            $isNoReply,
+            $fromAddress,
+            $fromName,
+        ) {
             $message->to($to)->subject($subject);
+            if ($fromAddress !== '') {
+                $message->from($fromAddress, $fromName !== '' ? $fromName : null);
+            }
             $headers = $message->getHeaders();
             // Symfony requires IdentificationHeader for Message-ID / In-Reply-To / References
             // (addTextHeader creates UnstructuredHeader and throws).
@@ -53,7 +94,8 @@ class PlatformMailboxService
                     $headers->addIdHeader('References', $replyId);
                 }
             }
-            if (! empty($settings['reply_to'])) {
+            // Auth / verification mail must not invite replies.
+            if (! $isNoReply && ! empty($settings['reply_to'])) {
                 $message->replyTo($settings['reply_to']);
             }
             foreach ($attachments as $attachment) {
@@ -72,8 +114,8 @@ class PlatformMailboxService
             'thread_key' => $threadKey,
             'message_id' => $messageId,
             'in_reply_to' => $inReplyTo,
-            'from_address' => $settings['from_address'] ?? '',
-            'from_name' => $settings['from_name'] ?? null,
+            'from_address' => $fromAddress !== '' ? $fromAddress : ($settings['from_address'] ?? ''),
+            'from_name' => $fromName !== '' ? $fromName : ($settings['from_name'] ?? null),
             'to_addresses' => [$to],
             'subject' => $subject,
             'body_text' => $body,
@@ -84,6 +126,51 @@ class PlatformMailboxService
             'sent_at' => now(),
             'meta' => $meta ?: null,
         ]);
+    }
+
+    protected function deriveNoreplyAddress(string $fromAddress): string
+    {
+        $fromAddress = trim($fromAddress);
+        if ($fromAddress === '' || ! str_contains($fromAddress, '@')) {
+            return 'noreply@centrixerp.com';
+        }
+        [, $domain] = explode('@', $fromAddress, 2);
+
+        return 'noreply@'.strtolower(trim($domain));
+    }
+
+    /**
+     * Whether SMTP is likely to accept this From address (Gmail is strict).
+     *
+     * @param  array<string, mixed>  $settings
+     */
+    protected function smtpAllowsCustomFrom(array $settings, string $candidateFrom): bool
+    {
+        $candidateFrom = strtolower(trim($candidateFrom));
+        $fromAddress = strtolower(trim((string) ($settings['from_address'] ?? '')));
+        $smtpUser = strtolower(trim((string) ($settings['smtp_username'] ?? '')));
+        $host = strtolower(trim((string) ($settings['smtp_host'] ?? '')));
+
+        if ($candidateFrom === '' || $candidateFrom === $fromAddress || $candidateFrom === $smtpUser) {
+            return true;
+        }
+
+        $isGmail = str_contains($host, 'gmail.com')
+            || str_contains($host, 'googlemail.com')
+            || str_ends_with($smtpUser, '@gmail.com')
+            || str_ends_with($smtpUser, '@googlemail.com');
+
+        if (! $isGmail) {
+            return true;
+        }
+
+        // Same mailbox local-part variants are fine; different domains are not for Gmail SMTP.
+        $candidateDomain = str_contains($candidateFrom, '@') ? explode('@', $candidateFrom, 2)[1] : '';
+        $accountDomain = str_contains($smtpUser, '@')
+            ? explode('@', $smtpUser, 2)[1]
+            : (str_contains($fromAddress, '@') ? explode('@', $fromAddress, 2)[1] : '');
+
+        return $candidateDomain !== '' && $accountDomain !== '' && $candidateDomain === $accountDomain;
     }
 
     /** @return array{imported: int, skipped: int, message: string} */
