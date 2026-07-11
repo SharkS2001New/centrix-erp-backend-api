@@ -8,7 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class PlatformMailMessage extends Model
 {
     protected $fillable = [
-        'direction', 'folder', 'thread_key', 'message_id', 'in_reply_to',
+        'direction', 'folder', 'mailbox_account_id', 'thread_key', 'message_id', 'in_reply_to',
         'from_address', 'from_name', 'to_addresses', 'cc_addresses',
         'subject', 'body_text', 'body_html',
         'organization_id', 'contract_id', 'sent_by_user_id',

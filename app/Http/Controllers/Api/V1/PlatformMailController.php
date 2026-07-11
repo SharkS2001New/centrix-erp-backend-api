@@ -18,10 +18,14 @@ class PlatformMailController extends Controller
         protected PlatformInvoiceDocumentService $invoiceDocuments,
     ) {}
 
-    public function show()
+    public function show(Request $request)
     {
+        $accountId = $request->query('account_id');
+
         return response()->json([
-            'settings' => PlatformMailSettingsResolver::resolve(),
+            'settings' => PlatformMailSettingsResolver::resolve(
+                is_string($accountId) && $accountId !== '' ? $accountId : null
+            ),
             'stats' => PlatformMailStats::summarize(),
         ]);
     }
@@ -36,9 +40,16 @@ class PlatformMailController extends Controller
     public function update(Request $request)
     {
         $data = $request->validate([
+            'account_id' => 'nullable|string|max:64',
+            'active_account_id' => 'nullable|string|max:64',
+            'add_account' => 'nullable|array',
+            'remove_account_id' => 'nullable|string|max:64',
+            'set_default_account_id' => 'nullable|string|max:64',
+            'prefill_imap_from_smtp' => 'sometimes|boolean',
+            'label' => 'nullable|string|max:200',
             'enabled' => 'sometimes|boolean',
             'from_name' => 'sometimes|string|max:200',
-            'from_address' => 'sometimes|email|max:200',
+            'from_address' => 'sometimes|nullable|email|max:200',
             'reply_to' => 'nullable|email|max:200',
             'noreply_address' => 'nullable|email|max:200',
             'auth_mail_use_dedicated' => 'sometimes|boolean',
@@ -121,7 +132,21 @@ class PlatformMailController extends Controller
     {
         $folder = $request->query('folder', 'inbox');
         $kind = trim((string) $request->query('kind', ''));
+        $accountId = trim((string) $request->query('account_id', ''));
         $q = PlatformMailMessage::query()->orderByDesc('id');
+
+        if ($accountId !== '') {
+            $settings = PlatformMailSettingsResolver::resolve($accountId);
+            $isDefault = collect($settings['accounts'] ?? [])->contains(
+                fn ($row) => (string) ($row['id'] ?? '') === $accountId && ! empty($row['is_default'])
+            );
+            $q->where(function ($inner) use ($accountId, $isDefault) {
+                $inner->where('mailbox_account_id', $accountId);
+                if ($isDefault) {
+                    $inner->orWhereNull('mailbox_account_id');
+                }
+            });
+        }
 
         if ($folder === 'inbox') {
             $q->where('folder', 'inbox');
@@ -155,13 +180,28 @@ class PlatformMailController extends Controller
             return $payload;
         });
 
+        $unreadQuery = PlatformMailMessage::query()
+            ->where('folder', 'inbox')
+            ->whereNull('read_at');
+        if ($accountId !== '') {
+            $settings = PlatformMailSettingsResolver::resolve($accountId);
+            $isDefault = collect($settings['accounts'] ?? [])->contains(
+                fn ($row) => (string) ($row['id'] ?? '') === $accountId && ! empty($row['is_default'])
+            );
+            $unreadQuery->where(function ($inner) use ($accountId, $isDefault) {
+                $inner->where('mailbox_account_id', $accountId);
+                if ($isDefault) {
+                    $inner->orWhereNull('mailbox_account_id');
+                }
+            });
+        }
+
         return response()->json([
             'data' => $rows,
-            'unread_count' => PlatformMailMessage::query()
-                ->where('folder', 'inbox')
-                ->whereNull('read_at')
-                ->count(),
+            'unread_count' => $unreadQuery->count(),
             'stats' => PlatformMailStats::summarize(),
+            'active_account_id' => $accountId !== '' ? $accountId : (PlatformMailSettingsResolver::resolve()['active_account_id'] ?? null),
+            'accounts' => PlatformMailSettingsResolver::resolve()['accounts'] ?? [],
         ]);
     }
 
@@ -202,6 +242,7 @@ class PlatformMailController extends Controller
             'body' => 'required|string',
             'organization_id' => 'nullable|integer|exists:organizations,id',
             'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
+            'account_id' => 'nullable|string|max:64',
         ]);
 
         $attachments = [];
@@ -224,6 +265,10 @@ class PlatformMailController extends Controller
             }
         }
 
+        if (! empty($data['account_id'])) {
+            PlatformMailSettingsResolver::save(['active_account_id' => $data['account_id']]);
+        }
+
         $msg = $this->mailbox->send(
             $data['to'],
             $data['subject'],
@@ -233,6 +278,7 @@ class PlatformMailController extends Controller
                 'organization_id' => $data['organization_id'] ?? null,
                 'invoice_id' => $invoice?->id,
                 'kind' => $invoice ? 'invoice' : 'compose',
+                'mailbox_account_id' => $data['account_id'] ?? null,
             ], fn ($v) => $v !== null),
             null,
             $attachments,
@@ -293,9 +339,59 @@ class PlatformMailController extends Controller
 
     public function sync(Request $request)
     {
-        $limit = (int) $request->input('limit', 50);
-        $result = $this->mailbox->syncInbox($limit);
+        $data = $request->validate([
+            'limit' => 'nullable|integer|min:1|max:100',
+            'account_id' => 'nullable|string|max:64',
+        ]);
+        $limit = (int) ($data['limit'] ?? 50);
+        $accountId = $data['account_id'] ?? null;
+        if ($accountId) {
+            PlatformMailSettingsResolver::save(['active_account_id' => $accountId]);
+        }
+        $result = $this->mailbox->syncInbox($limit, $accountId);
 
-        return response()->json($result);
+        $status = ($result['ok'] ?? true) ? 200 : 422;
+
+        return response()->json($result, $status);
+    }
+
+    public function testImap(Request $request)
+    {
+        $data = $request->validate([
+            'account_id' => 'nullable|string|max:64',
+        ]);
+        $result = $this->mailbox->testImapConnection($data['account_id'] ?? null);
+
+        return response()->json($result, ($result['ok'] ?? false) ? 200 : 422);
+    }
+
+    public function listComposeTemplates()
+    {
+        return response()->json([
+            'data' => PlatformMailSettingsResolver::listComposeTemplates(),
+        ]);
+    }
+
+    public function storeComposeTemplate(Request $request)
+    {
+        $data = $request->validate([
+            'id' => 'nullable|string|max:64',
+            'name' => 'required|string|max:120',
+            'subject' => 'nullable|string|max:500',
+            'body' => 'nullable|string|max:50000',
+        ]);
+
+        return response()->json([
+            'data' => PlatformMailSettingsResolver::saveComposeTemplate($data),
+            'message' => 'Email template saved.',
+        ], empty($data['id']) ? 201 : 200);
+    }
+
+    public function destroyComposeTemplate(string $template)
+    {
+        return response()->json([
+            'data' => PlatformMailSettingsResolver::deleteComposeTemplate($template),
+            'message' => 'Email template deleted.',
+        ]);
     }
 }

@@ -420,12 +420,16 @@ Route::prefix('v1')->group(function () {
                 Route::post('test', [PlatformMailController::class, 'test']);
                 Route::post('test-auth', [PlatformMailController::class, 'testAuthMail']);
                 Route::post('test-renewal-reminder', [PlatformMailController::class, 'testRenewalReminder']);
+                Route::post('test-imap', [PlatformMailController::class, 'testImap']);
                 Route::get('messages', [PlatformMailController::class, 'messages']);
                 Route::get('messages/{message}', [PlatformMailController::class, 'showMessage'])->whereNumber('message');
                 Route::post('messages', [PlatformMailController::class, 'send']);
                 Route::post('messages/{message}/reply', [PlatformMailController::class, 'reply'])->whereNumber('message');
                 Route::post('messages/{message}/read', [PlatformMailController::class, 'markRead'])->whereNumber('message');
                 Route::post('sync', [PlatformMailController::class, 'sync']);
+                Route::get('compose-templates', [PlatformMailController::class, 'listComposeTemplates']);
+                Route::post('compose-templates', [PlatformMailController::class, 'storeComposeTemplate']);
+                Route::delete('compose-templates/{template}', [PlatformMailController::class, 'destroyComposeTemplate']);
             });
 
         Route::post('admin/ai-training/compose', [PlatformAiTrainingController::class, 'compose'])
@@ -466,6 +470,9 @@ Route::prefix('v1')->group(function () {
             ->group(function () {
                 Route::get('settings', [PlatformWhatsAppController::class, 'show']);
                 Route::patch('settings', [PlatformWhatsAppController::class, 'update']);
+                Route::get('preview/context', [PlatformWhatsAppController::class, 'previewContext']);
+                Route::get('preview/catalog', [PlatformWhatsAppController::class, 'previewCatalog']);
+                Route::post('preview/simulate', [PlatformWhatsAppController::class, 'previewSimulate']);
             });
 
         Route::prefix('admin/push')

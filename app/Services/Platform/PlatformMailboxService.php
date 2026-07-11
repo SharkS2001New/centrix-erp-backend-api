@@ -22,9 +22,17 @@ class PlatformMailboxService
         $isAuthMail = (bool) ($meta['no_reply'] ?? false)
             || in_array($kind, ['two_factor', 'email_verification'], true);
 
+        $accountId = isset($meta['mailbox_account_id'])
+            ? (string) $meta['mailbox_account_id']
+            : ($replyTo?->mailbox_account_id);
+
         $settings = $isAuthMail
             ? PlatformMailSettingsResolver::resolveForAuth()
-            : PlatformMailSettingsResolver::resolve();
+            : PlatformMailSettingsResolver::resolve($accountId);
+
+        if (! $isAuthMail) {
+            $accountId = (string) ($settings['account_id'] ?? $accountId ?? '');
+        }
 
         $messageIdBody = Str::uuid()->toString().'@centrix.platform';
         $messageId = '<'.$messageIdBody.'>';
@@ -33,7 +41,7 @@ class PlatformMailboxService
             ?? $messageId;
 
         $profile = ($isAuthMail && ($settings['auth_profile'] ?? '') === 'auth') ? 'auth' : 'default';
-        PlatformMailSettingsResolver::applyMailConfig($profile);
+        PlatformMailSettingsResolver::applyMailConfig($profile, $isAuthMail ? null : $accountId);
 
         if (! ($settings['enabled'] ?? false)) {
             if ($isAuthMail && ($settings['auth_profile'] ?? '') === 'auth') {
@@ -47,7 +55,7 @@ class PlatformMailboxService
         $fromAddress = (string) ($settings['from_address'] ?? '');
         $fromName = (string) ($settings['from_name'] ?? 'Centrix');
         if ($isNoReply && ($settings['auth_profile'] ?? 'default') === 'default') {
-            $main = PlatformMailSettingsResolver::resolve();
+            $main = PlatformMailSettingsResolver::resolve($accountId);
             $candidate = $fromAddress !== ''
                 ? $fromAddress
                 : $this->deriveNoreplyAddress((string) ($main['from_address'] ?? ''));
@@ -111,6 +119,7 @@ class PlatformMailboxService
         return PlatformMailMessage::query()->create([
             'direction' => 'outbound',
             'folder' => 'sent',
+            'mailbox_account_id' => $isAuthMail ? null : ($accountId !== '' ? $accountId : null),
             'thread_key' => $threadKey,
             'message_id' => $messageId,
             'in_reply_to' => $inReplyTo,
@@ -190,56 +199,121 @@ class PlatformMailboxService
         return $candidateDomain !== '' && $accountDomain !== '' && $candidateDomain === $accountDomain;
     }
 
-    /** @return array{imported: int, skipped: int, message: string} */
-    public function syncInbox(int $limit = 50): array
+    /**
+     * Dry-run IMAP connect for the given (or active) mailbox account.
+     *
+     * @return array{ok: bool, message: string, detail?: string|null, account_id?: string|null}
+     */
+    public function testImapConnection(?string $accountId = null): array
     {
         if (! extension_loaded('imap')) {
             return [
-                'imported' => 0,
-                'skipped' => 0,
-                'message' => 'PHP IMAP extension is not installed. Sent mail still works; install php-imap to sync replies into the mailbox.',
+                'ok' => false,
+                'message' => 'PHP IMAP extension is not installed on the API server. Install php-imap, then try again.',
+                'detail' => null,
+                'account_id' => $accountId,
             ];
         }
 
-        $org = PlatformMailSettingsResolver::platformOrganization();
-        $stored = is_array($org?->module_settings[PlatformMailSettingsResolver::SETTINGS_KEY] ?? null)
-            ? $org->module_settings[PlatformMailSettingsResolver::SETTINGS_KEY]
-            : [];
-        $settings = array_merge(PlatformMailSettingsResolver::defaults(), $stored);
-
-        if (empty($settings['imap_enabled']) || empty($settings['imap_host'])) {
+        $stored = PlatformMailSettingsResolver::ensureAccounts(PlatformMailSettingsResolver::rawStored());
+        $account = PlatformMailSettingsResolver::findAccount($stored, $accountId);
+        if (! $account) {
             return [
-                'imported' => 0,
-                'skipped' => 0,
-                'message' => 'IMAP is not configured. Add host/credentials under Settings → Email delivery, then sync again.',
+                'ok' => false,
+                'message' => 'Mailbox account not found.',
+                'detail' => 'Add a mailbox under Platform settings → Email delivery.',
+                'account_id' => $accountId,
             ];
         }
 
-        $encryption = $settings['imap_encryption'] ?? 'ssl';
-        $port = (int) ($settings['imap_port'] ?? ($encryption === 'ssl' ? 993 : 143));
-        $mailboxName = $settings['imap_mailbox'] ?? 'INBOX';
-        $flags = '/imap';
-        if ($encryption === 'ssl') {
-            $flags .= '/ssl';
-        } elseif ($encryption === 'tls') {
-            $flags .= '/tls';
-        }
-        $mailbox = '{'.$settings['imap_host'].':'.$port.$flags.'}'.$mailboxName;
-
-        $password = $stored['imap_password'] ?? $stored['smtp_password'] ?? null;
-        $username = $settings['imap_username'] ?: ($settings['smtp_username'] ?? '');
-        if (! $password || ! $username) {
+        $accountId = (string) ($account['id'] ?? '');
+        if (empty($account['imap_enabled'])) {
             return [
-                'imported' => 0,
-                'skipped' => 0,
-                'message' => 'IMAP username/password missing.',
+                'ok' => false,
+                'message' => 'IMAP is not enabled for this mailbox.',
+                'detail' => 'Enable IMAP under Platform settings → Email delivery → IMAP inbox, or use “Copy from SMTP” then save.',
+                'account_id' => $accountId,
             ];
         }
 
-        $inbox = @imap_open($mailbox, $username, $password);
+        $account = PlatformMailSettingsResolver::prefillImapFromSmtp($account);
+        if (empty($account['imap_host'])) {
+            return [
+                'ok' => false,
+                'message' => 'IMAP host is missing.',
+                'detail' => 'IMAP often matches your SMTP mailbox. Use “Copy from SMTP”, save, then test again — or enter the correct IMAP host.',
+                'account_id' => $accountId,
+            ];
+        }
+
+        $password = $account['imap_password'] ?? $account['smtp_password'] ?? null;
+        $username = trim((string) ($account['imap_username'] ?? ''))
+            ?: trim((string) ($account['smtp_username'] ?? ''));
+        if (! $password || $username === '') {
+            return [
+                'ok' => false,
+                'message' => 'IMAP username or password is missing.',
+                'detail' => 'If IMAP uses the same login as SMTP, leave the IMAP password blank (SMTP password is reused) and set the username. Otherwise enter the correct IMAP credentials and save.',
+                'account_id' => $accountId,
+            ];
+        }
+
+        [$mailbox] = $this->imapMailboxPath($account);
+        $inbox = @imap_open($mailbox, $username, (string) $password);
         if (! $inbox) {
             $err = imap_last_error() ?: 'Could not connect to IMAP server.';
-            abort(422, 'IMAP sync failed: '.$err);
+
+            return [
+                'ok' => false,
+                'message' => 'IMAP refused the connection. Check host, port, encryption, and credentials.',
+                'detail' => $err.' — If this mailbox matches SMTP, confirm the app password works for IMAP, then update IMAP settings and try again.',
+                'account_id' => $accountId,
+            ];
+        }
+        imap_close($inbox);
+
+        return [
+            'ok' => true,
+            'message' => 'Connected to IMAP as '.$username.'.',
+            'detail' => 'Mailbox '.$mailbox,
+            'account_id' => $accountId,
+        ];
+    }
+
+    /** @return array{imported: int, skipped: int, message: string, ok?: bool, detail?: string|null} */
+    public function syncInbox(int $limit = 50, ?string $accountId = null): array
+    {
+        $test = $this->testImapConnection($accountId);
+        if (! ($test['ok'] ?? false)) {
+            return [
+                'imported' => 0,
+                'skipped' => 0,
+                'ok' => false,
+                'message' => $test['message'],
+                'detail' => $test['detail'] ?? null,
+            ];
+        }
+
+        $stored = PlatformMailSettingsResolver::ensureAccounts(PlatformMailSettingsResolver::rawStored());
+        $account = PlatformMailSettingsResolver::findAccount($stored, $accountId);
+        $account = PlatformMailSettingsResolver::prefillImapFromSmtp($account ?? []);
+        $accountId = (string) ($account['id'] ?? '');
+        $password = $account['imap_password'] ?? $account['smtp_password'] ?? null;
+        $username = trim((string) ($account['imap_username'] ?? ''))
+            ?: trim((string) ($account['smtp_username'] ?? ''));
+        [$mailbox] = $this->imapMailboxPath($account);
+
+        $inbox = @imap_open($mailbox, $username, (string) $password);
+        if (! $inbox) {
+            $err = imap_last_error() ?: 'Could not connect to IMAP server.';
+
+            return [
+                'imported' => 0,
+                'skipped' => 0,
+                'ok' => false,
+                'message' => 'IMAP sync failed: '.$err,
+                'detail' => 'Update IMAP credentials under Platform settings → Email delivery and try again.',
+            ];
         }
 
         $imported = 0;
@@ -259,11 +333,20 @@ class PlatformMailboxService
 
                 $messageId = isset($header->message_id) ? trim((string) $header->message_id) : null;
                 $imapUid = (string) $uid;
-                if ($messageId && PlatformMailMessage::query()->where('message_id', $messageId)->exists()) {
+                if ($messageId && PlatformMailMessage::query()
+                    ->where('message_id', $messageId)
+                    ->where(function ($q) use ($accountId) {
+                        $q->where('mailbox_account_id', $accountId)->orWhereNull('mailbox_account_id');
+                    })
+                    ->exists()) {
                     $skipped++;
                     continue;
                 }
-                if (PlatformMailMessage::query()->where('imap_uid', $imapUid)->where('folder', 'inbox')->exists()) {
+                if (PlatformMailMessage::query()
+                    ->where('imap_uid', $imapUid)
+                    ->where('folder', 'inbox')
+                    ->where('mailbox_account_id', $accountId)
+                    ->exists()) {
                     $skipped++;
                     continue;
                 }
@@ -279,8 +362,9 @@ class PlatformMailboxService
                 PlatformMailMessage::query()->create([
                     'direction' => 'inbound',
                     'folder' => 'inbox',
+                    'mailbox_account_id' => $accountId !== '' ? $accountId : null,
                     'thread_key' => $threadKey,
-                    'message_id' => $messageId ?: ('imap-'.$imapUid.'@local'),
+                    'message_id' => $messageId ?: ('imap-'.$accountId.'-'.$imapUid.'@local'),
                     'in_reply_to' => $inReplyTo,
                     'from_address' => $from['email'] ?: 'unknown@unknown',
                     'from_name' => $from['name'],
@@ -300,8 +384,29 @@ class PlatformMailboxService
         return [
             'imported' => $imported,
             'skipped' => $skipped,
+            'ok' => true,
             'message' => "Synced inbox: {$imported} new, {$skipped} skipped.",
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $account
+     * @return array{0: string, 1: string}
+     */
+    protected function imapMailboxPath(array $account): array
+    {
+        $encryption = $account['imap_encryption'] ?? 'ssl';
+        $port = (int) ($account['imap_port'] ?? ($encryption === 'ssl' ? 993 : 143));
+        $mailboxName = $account['imap_mailbox'] ?? 'INBOX';
+        $flags = '/imap';
+        if ($encryption === 'ssl') {
+            $flags .= '/ssl';
+        } elseif ($encryption === 'tls') {
+            $flags .= '/tls';
+        }
+        $path = '{'.$account['imap_host'].':'.$port.$flags.'}'.$mailboxName;
+
+        return [$path, $mailboxName];
     }
 
     /** @return array{email: string, name: ?string} */

@@ -37,6 +37,11 @@ class WhatsAppBotHandler
 
     public const STATE_UNKNOWN = 'unknown';
 
+    protected bool $dryRun = false;
+
+    /** @var list<string> */
+    protected array $wouldMutate = [];
+
     public function __construct(
         protected CustomerPhoneLookup $customerLookup,
         protected WhatsAppOrderService $orders,
@@ -46,6 +51,106 @@ class WhatsAppBotHandler
         protected MetaWhatsAppClient $whatsapp,
         protected WhatsAppConfigResolver $configResolver,
     ) {}
+
+    /**
+     * Platform-admin dry run: same bot replies using org products/customers, with no Meta sends,
+     * conversation persistence, orders, stock changes, or handoffs.
+     *
+     * @param  array{state?: string, payload?: array<string, mixed>, customer_num?: string|null, phone?: string}|null  $session
+     * @return array{
+     *   reply: string,
+     *   state: string,
+     *   payload: array<string, mixed>,
+     *   customer_num: string|null,
+     *   customer_name: string|null,
+     *   phone: string,
+     *   cart: list<array<string, mixed>>,
+     *   would_mutate: list<string>,
+     *   dry_run: true
+     * }
+     */
+    public function simulate(
+        ResolvedWhatsAppConfig $config,
+        string $fromPhone,
+        string $text,
+        ?Customer $customer = null,
+        ?array $session = null,
+    ): array {
+        $this->dryRun = true;
+        $this->wouldMutate = [];
+
+        try {
+            $botUser = $this->configResolver->botUser($config);
+            if (! $botUser) {
+                return [
+                    'reply' => 'Ordering is temporarily unavailable. Please contact the office for help.',
+                    'state' => self::STATE_UNKNOWN,
+                    'payload' => [],
+                    'customer_num' => $customer?->customer_num,
+                    'customer_name' => $customer?->customer_name,
+                    'phone' => $fromPhone,
+                    'cart' => [],
+                    'would_mutate' => [],
+                    'dry_run' => true,
+                ];
+            }
+
+            $normalizedPhone = PhoneNumber::normalize($fromPhone) ?? $fromPhone;
+            $conversation = $this->makeEphemeralConversation($config, $normalizedPhone, $session);
+            if ($customer) {
+                $conversation->customer_num = $customer->customer_num;
+            } else {
+                $customer = $this->resolveCustomer($config, $conversation, $normalizedPhone);
+            }
+
+            $reply = $this->dispatch(
+                $config,
+                $botUser,
+                $conversation,
+                $customer,
+                $this->normalizeInput($text),
+                $text,
+            );
+
+            return [
+                'reply' => $reply,
+                'state' => (string) ($conversation->state ?? self::STATE_UNKNOWN),
+                'payload' => is_array($conversation->payload) ? $conversation->payload : [],
+                'customer_num' => $customer?->customer_num,
+                'customer_name' => $customer?->customer_name,
+                'phone' => $normalizedPhone,
+                'cart' => $this->cartLines($conversation),
+                'would_mutate' => $this->wouldMutate,
+                'dry_run' => true,
+            ];
+        } finally {
+            $this->dryRun = false;
+            $this->wouldMutate = [];
+        }
+    }
+
+    /**
+     * @param  array{state?: string, payload?: array<string, mixed>, customer_num?: string|null, phone?: string}|null  $session
+     */
+    protected function makeEphemeralConversation(
+        ResolvedWhatsAppConfig $config,
+        string $phone,
+        ?array $session,
+    ): WhatsappConversation {
+        $conversation = new WhatsappConversation([
+            'organization_id' => $config->organizationId,
+            'phone' => $session['phone'] ?? $phone,
+            'customer_num' => $session['customer_num'] ?? null,
+            'state' => $session['state'] ?? self::STATE_MAIN_MENU,
+            'payload' => is_array($session['payload'] ?? null) ? $session['payload'] : [],
+            'last_message_at' => now(),
+            'expires_at' => now()->addHours(24),
+        ]);
+        // Ensure Eloquent treats this as unsaved so accidental save() is obvious in tests.
+        $conversation->exists = false;
+
+        return $conversation;
+    }
 
     public function handleInbound(
         ResolvedWhatsAppConfig $config,
@@ -366,6 +471,26 @@ class WhatsAppBotHandler
                 ],
                 $this->cartLines($conversation),
             );
+
+            if ($this->dryRun) {
+                $this->wouldMutate[] = 'place_order';
+                $previewTotal = (float) ($preview['estimated_total'] ?? 0);
+                $conversation->payload = [
+                    'last_sale_id' => null,
+                    'last_order_num' => 'TEST-DRY-RUN',
+                    'notes' => $conversation->payload['notes'] ?? null,
+                ];
+                $conversation->state = self::STATE_MAIN_MENU;
+
+                return "✅ *TEST MODE — order not placed*\n\n"
+                    ."Would create WhatsApp order for *{$customer->customer_name}* "
+                    .'('.count($lines).' line(s)'
+                    .($previewTotal > 0 ? ', total ~'.$this->orders->formatMoney($previewTotal) : '')
+                    .").\n"
+                    ."No sale, stock, or ledger changes were made.\n\n"
+                    .$this->mainMenuMessage($customer);
+            }
+
             $result = $this->orders->placeOrder(
                 $botUser,
                 $customer,
@@ -384,24 +509,28 @@ class WhatsAppBotHandler
                 .'Status: '.ucfirst(str_replace('_', ' ', (string) ($result['status'] ?? 'received')))."\n\n"
                 .$this->mainMenuMessage($customer);
         } catch (InvalidArgumentException $e) {
-            $this->orders->logOrderFailure(
-                $config->organizationId,
-                $conversation->id,
-                $conversation->phone,
-                $e->getMessage(),
-                $this->cartLines($conversation),
-            );
+            if (! $this->dryRun) {
+                $this->orders->logOrderFailure(
+                    $config->organizationId,
+                    $conversation->id,
+                    $conversation->phone,
+                    $e->getMessage(),
+                    $this->cartLines($conversation),
+                );
+            }
 
             return "Could not place order: {$e->getMessage()}\n\n".$this->reviewMessage($config, $conversation, $customer, $botUser);
         } catch (\Throwable $e) {
             report($e);
-            $this->orders->logOrderFailure(
-                $config->organizationId,
-                $conversation->id,
-                $conversation->phone,
-                $e->getMessage(),
-                $this->cartLines($conversation),
-            );
+            if (! $this->dryRun) {
+                $this->orders->logOrderFailure(
+                    $config->organizationId,
+                    $conversation->id,
+                    $conversation->phone,
+                    $e->getMessage(),
+                    $this->cartLines($conversation),
+                );
+            }
 
             return "Something went wrong placing your order. Please try again or reply *4* to talk to our team.\n\n"
                 .$this->reviewMessage($config, $conversation, $customer, $botUser);
@@ -439,6 +568,18 @@ class WhatsAppBotHandler
                 ],
                 $this->cartLines($conversation),
             );
+
+            if ($this->dryRun) {
+                $this->wouldMutate[] = 'place_order';
+                $conversation->payload = [];
+                $conversation->state = self::STATE_MAIN_MENU;
+
+                return "✅ *TEST MODE — order not placed*\n\n"
+                    ."Would repeat last order for *{$customer->customer_name}* (".count($lines)." line(s)).\n"
+                    ."No sale or stock changes were made.\n\n"
+                    .$this->mainMenuMessage($customer);
+            }
+
             $result = $this->orders->placeOrder($botUser, $customer, $lines);
             $conversation->payload = [];
             $conversation->state = self::STATE_MAIN_MENU;
@@ -449,13 +590,15 @@ class WhatsAppBotHandler
                 .$this->mainMenuMessage($customer);
         } catch (\Throwable $e) {
             report($e);
-            $this->orders->logOrderFailure(
-                $config->organizationId,
-                $conversation->id,
-                $conversation->phone,
-                $e->getMessage(),
-                $this->cartLines($conversation),
-            );
+            if (! $this->dryRun) {
+                $this->orders->logOrderFailure(
+                    $config->organizationId,
+                    $conversation->id,
+                    $conversation->phone,
+                    $e->getMessage(),
+                    $this->cartLines($conversation),
+                );
+            }
 
             return 'Could not repeat your order. Reply *4* for help, or *MENU* to start over.';
         }
@@ -695,6 +838,16 @@ class WhatsAppBotHandler
         User $botUser,
         string $rawMessage,
     ): string {
+        if ($this->dryRun) {
+            $this->wouldMutate[] = 'handoff';
+            $conversation->state = self::STATE_HANDOFF;
+
+            return "🧑‍💼 *TEST MODE — handoff not created*\n\n"
+                ."In production this would notify staff for *{$customer->customer_name}*.\n"
+                ."No handoff or notifications were saved.\n\n"
+                .$this->handoffWaitingMessage();
+        }
+
         $this->handoffs->requestHandoff($config, $conversation, $customer, $botUser, trim($rawMessage) ?: null);
 
         return $this->handoffMessage();
@@ -983,6 +1136,14 @@ class WhatsAppBotHandler
 
     protected function persistConversation(WhatsappConversation $conversation, ?Customer $customer): void
     {
+        if ($this->dryRun) {
+            if ($customer && ! $conversation->customer_num) {
+                $conversation->customer_num = $customer->customer_num;
+            }
+
+            return;
+        }
+
         $conversation->last_message_at = now();
         $conversation->expires_at = now()->addHours((int) config('whatsapp.conversation_ttl_hours', 24));
         if ($customer && ! $conversation->customer_num) {
@@ -1000,6 +1161,10 @@ class WhatsAppBotHandler
         ?string $providerMessageId,
         ?array $meta = null,
     ): void {
+        if ($this->dryRun) {
+            return;
+        }
+
         if ($direction === 'in' && $providerMessageId) {
             try {
                 WhatsappMessageLog::query()->create([
