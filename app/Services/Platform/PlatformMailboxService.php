@@ -238,8 +238,9 @@ class PlatformMailboxService
         if (empty($account['imap_enabled'])) {
             return [
                 'ok' => false,
-                'message' => 'IMAP is not enabled for this mailbox.',
-                'detail' => 'Enable IMAP under Platform settings → Email delivery → IMAP inbox, or use “Copy from SMTP” then save.',
+                'code' => 'imap_disabled',
+                'message' => 'Inbox sync is off for this mailbox (SMTP-only mode).',
+                'detail' => 'Outbound email still works with SMTP. Enable IMAP under Platform settings → Email delivery → IMAP only if your provider allows IMAP. Many domain hosts disable IMAP — leave it off in that case.',
                 'account_id' => $accountId,
             ];
         }
@@ -297,6 +298,7 @@ class PlatformMailboxService
                 'imported' => 0,
                 'skipped' => 0,
                 'ok' => false,
+                'code' => $test['code'] ?? 'imap_error',
                 'message' => $test['message'],
                 'detail' => $test['detail'] ?? null,
             ];

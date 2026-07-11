@@ -177,6 +177,27 @@ class PlatformMailSettingsResolver
         $out['enabled'] = (bool) ($out['enabled'] ?? false);
         $out['imap_enabled'] = (bool) ($out['imap_enabled'] ?? false);
         $out['is_default'] = (bool) ($out['is_default'] ?? false);
+
+        $from = trim((string) ($out['from_address'] ?? ''));
+        $smtpHost = trim((string) ($out['smtp_host'] ?? ''));
+        $out['outbound_ready'] = $out['enabled']
+            && $smtpHost !== ''
+            && $from !== ''
+            && str_contains($from, '@');
+
+        $imapHost = trim((string) ($out['imap_host'] ?? ''));
+        $imapUser = trim((string) ($out['imap_username'] ?? ''))
+            ?: trim((string) ($out['smtp_username'] ?? ''));
+        $hasImapSecret = $out['imap_password_set'] || $out['smtp_password_set'];
+        $out['inbox_sync_ready'] = $out['imap_enabled']
+            && extension_loaded('imap')
+            && $imapHost !== ''
+            && $imapUser !== ''
+            && $hasImapSecret;
+
+        // SMTP-only is a supported mode when IMAP is off or the provider blocks IMAP.
+        $out['mail_mode'] = $out['imap_enabled'] ? 'smtp_and_imap' : 'smtp_only';
+
         unset($out['smtp_password'], $out['imap_password']);
 
         return $out;
