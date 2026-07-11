@@ -78,6 +78,8 @@ class PlatformMailController extends Controller
             'subscription_reminder_days' => 'nullable|string|max:100',
             'renewal_email_subject' => 'nullable|string|max:500',
             'renewal_email_body' => 'nullable|string',
+            'renewal_invoice_design_id' => 'nullable|string|max:40',
+            'renewal_invoice_saved_template_id' => 'nullable|integer|exists:platform_invoice_saved_templates,id',
         ]);
 
         return response()->json([
@@ -243,6 +245,7 @@ class PlatformMailController extends Controller
             'organization_id' => 'nullable|integer|exists:organizations,id',
             'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
             'account_id' => 'nullable|string|max:64',
+            'draft_id' => 'nullable|integer|exists:platform_mail_messages,id',
         ]);
 
         $attachments = [];
@@ -284,6 +287,13 @@ class PlatformMailController extends Controller
             $attachments,
         );
 
+        if (! empty($data['draft_id'])) {
+            $draft = PlatformMailMessage::query()->find($data['draft_id']);
+            if ($draft && $draft->folder === 'drafts') {
+                $draft->delete();
+            }
+        }
+
         if ($invoice && $invoice->status === 'draft') {
             $invoice->update(['status' => 'sent']);
         }
@@ -294,6 +304,91 @@ class PlatformMailController extends Controller
                 ? 'Email sent with invoice PDF attached.'
                 : 'Email sent.',
         ], 201);
+    }
+
+    public function saveDraft(Request $request)
+    {
+        $data = $request->validate([
+            'id' => 'nullable|integer|exists:platform_mail_messages,id',
+            'to' => 'nullable|email',
+            'subject' => 'nullable|string|max:500',
+            'body' => 'nullable|string',
+            'organization_id' => 'nullable|integer|exists:organizations,id',
+            'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
+            'account_id' => 'nullable|string|max:64',
+        ]);
+
+        $to = $data['to'] ?? null;
+        $subject = trim((string) ($data['subject'] ?? ''));
+        $body = (string) ($data['body'] ?? '');
+        if (($to === null || $to === '') && $subject === '' && trim($body) === '') {
+            return response()->json(['message' => 'Write a recipient, subject, or body before saving a draft.'], 422);
+        }
+
+        $accountId = $data['account_id']
+            ?? PlatformMailSettingsResolver::resolve()['active_account_id']
+            ?? null;
+        $meta = array_filter([
+            'organization_id' => $data['organization_id'] ?? null,
+            'invoice_id' => $data['invoice_id'] ?? null,
+            'kind' => 'draft',
+        ], fn ($v) => $v !== null);
+
+        $settings = PlatformMailSettingsResolver::resolve(is_string($accountId) ? $accountId : null);
+
+        if (! empty($data['id'])) {
+            $draft = PlatformMailMessage::query()->findOrFail($data['id']);
+            if ($draft->folder !== 'drafts') {
+                return response()->json(['message' => 'Only drafts can be updated this way.'], 422);
+            }
+            $draft->update([
+                'mailbox_account_id' => $accountId,
+                'from_address' => $settings['from_address'] ?? $draft->from_address,
+                'from_name' => $settings['from_name'] ?? $draft->from_name,
+                'to_addresses' => $to ? [$to] : [],
+                'subject' => $subject !== '' ? $subject : null,
+                'body_text' => $body,
+                'organization_id' => $data['organization_id'] ?? null,
+                'meta' => $meta ?: null,
+            ]);
+
+            return response()->json([
+                'data' => $draft->fresh(),
+                'message' => 'Draft updated.',
+            ]);
+        }
+
+        $draft = PlatformMailMessage::query()->create([
+            'direction' => 'outbound',
+            'folder' => 'drafts',
+            'mailbox_account_id' => $accountId,
+            'thread_key' => 'draft-'.\Illuminate\Support\Str::uuid(),
+            'message_id' => null,
+            'from_address' => $settings['from_address'] ?? '',
+            'from_name' => $settings['from_name'] ?? null,
+            'to_addresses' => $to ? [$to] : [],
+            'subject' => $subject !== '' ? $subject : null,
+            'body_text' => $body,
+            'organization_id' => $data['organization_id'] ?? null,
+            'sent_by_user_id' => $request->user()?->id,
+            'meta' => $meta ?: null,
+        ]);
+
+        return response()->json([
+            'data' => $draft,
+            'message' => 'Draft saved.',
+        ], 201);
+    }
+
+    public function destroyMessage(PlatformMailMessage $message)
+    {
+        if (! in_array($message->folder, ['drafts', 'sent'], true) && $message->direction !== 'outbound') {
+            // Allow deleting drafts always; allow trash of outbound/sent; inbox can be deleted too for cleanup.
+        }
+
+        $message->delete();
+
+        return response()->json(['message' => 'Message deleted.']);
     }
 
     public function reply(Request $request, PlatformMailMessage $message)

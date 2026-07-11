@@ -4,6 +4,7 @@ namespace App\Services\Platform;
 
 use App\Models\Organization;
 use App\Models\PlatformInvoice;
+use App\Models\PlatformInvoiceSavedTemplate;
 use App\Models\PlatformSubscription;
 use App\Models\User;
 use Carbon\Carbon;
@@ -88,6 +89,8 @@ class SubscriptionRenewalReminderService
 
     /**
      * Create (or reuse) a draft renewal invoice for the subscription.
+     * Uses platform renewal invoice template when set; otherwise plan auto template;
+     * otherwise design id (default modern). Amount comes from the subscription package renewal price.
      */
     public function createDraftRenewalInvoice(PlatformSubscription $sub): PlatformInvoice
     {
@@ -98,16 +101,14 @@ class SubscriptionRenewalReminderService
         }
 
         $expiresAt = $this->expiresAt($sub);
-        $amount = (float) ($sub->renewal_price
-            ?? $sub->amount
-            ?? $sub->plan?->renewal_price
-            ?? $sub->plan?->price
-            ?? 0);
+        $amount = $this->renewalAmount($sub);
         $currency = (string) ($sub->currency ?: $sub->plan?->currency ?: 'KES');
         $planName = (string) ($sub->plan?->name ?: 'Centrix ERP plan');
         $periodLabel = $expiresAt
             ? 'period ending '.$expiresAt->toDateString()
             : 'upcoming renewal';
+
+        $resolved = $this->resolveRenewalInvoiceTemplate($sub);
 
         // Reuse an unpaid draft already linked to this subscription.
         if ($sub->invoice_id) {
@@ -115,7 +116,13 @@ class SubscriptionRenewalReminderService
             if ($existing && in_array($existing->status, ['draft', 'sent'], true)
                 && (float) $existing->total > 0
                 && abs((float) $existing->total - $amount) < 0.01) {
-                return $existing;
+                // Keep selected template in sync for emailed PDFs.
+                $existing->forceFill([
+                    'template_id' => $resolved['template_id'],
+                    'invoice_options' => $resolved['invoice_options'],
+                ])->save();
+
+                return $existing->fresh();
             }
         }
 
@@ -134,14 +141,14 @@ class SubscriptionRenewalReminderService
             'amount' => $amount,
             'included' => true,
         ]];
-        $taxRate = 0.0;
+        $taxRate = (float) ($resolved['tax_rate'] ?? 0);
         $totals = $this->billing->calculateTotals($lineItems, $taxRate);
 
         $invoice = PlatformInvoice::query()->create([
             'invoice_number' => $this->billing->nextInvoiceNumber(),
             'organization_id' => $org->id,
             'status' => 'draft',
-            'template_id' => 'modern',
+            'template_id' => $resolved['template_id'],
             'currency' => $currency,
             'issue_date' => now()->toDateString(),
             'due_date' => $expiresAt?->toDateString(),
@@ -152,24 +159,98 @@ class SubscriptionRenewalReminderService
             'bill_to_tax_pin' => $billTo['tax_pin'] ?? $org->org_pin,
             'bill_to_company_code' => $billTo['company_code'] ?? $org->company_code,
             'seller' => $context['seller'] ?? $this->billing->platformSeller(),
-            'invoice_options' => [
-                'show_branding' => true,
-                'show_quantity' => true,
-                'show_payment_details' => true,
-            ],
+            'invoice_options' => $resolved['invoice_options'],
             'line_items' => $lineItems,
-            'selected_modules' => $sub->module_keys ?? [],
+            'selected_modules' => $sub->module_keys ?? ($resolved['selected_modules'] ?? []),
             'subtotal' => $totals['subtotal'],
             'tax_rate' => $taxRate,
             'tax_amount' => $totals['tax_amount'],
             'total' => $totals['total'],
-            'notes' => 'Auto-generated renewal invoice for subscription reminder.',
-            'terms' => 'Payment renews your Centrix ERP licence for the next billing period.',
+            'notes' => $resolved['notes']
+                ?: 'Auto-generated renewal invoice for subscription reminder.',
+            'terms' => $resolved['terms']
+                ?: 'Payment renews your Centrix ERP licence for the next billing period.',
         ]);
 
         $sub->forceFill(['invoice_id' => $invoice->id])->save();
 
         return $invoice;
+    }
+
+    /**
+     * Renewal amount from subscription package (plan), falling back to subscription amount.
+     */
+    public function renewalAmount(PlatformSubscription $sub): float
+    {
+        $sub->loadMissing(['plan']);
+
+        return (float) ($sub->renewal_price
+            ?? $sub->plan?->renewal_price
+            ?? $sub->amount
+            ?? $sub->plan?->price
+            ?? 0);
+    }
+
+    /**
+     * Platform admin default → plan saved template → design id (modern).
+     *
+     * @return array{
+     *   template_id: string,
+     *   invoice_options: array<string, mixed>,
+     *   notes: ?string,
+     *   terms: ?string,
+     *   tax_rate: float,
+     *   selected_modules: list<string>
+     * }
+     */
+    public function resolveRenewalInvoiceTemplate(?PlatformSubscription $sub = null): array
+    {
+        $settings = PlatformMailSettingsResolver::resolve();
+        $savedId = (int) ($settings['renewal_invoice_saved_template_id'] ?? 0);
+        $designId = trim((string) ($settings['renewal_invoice_design_id'] ?? 'modern')) ?: 'modern';
+
+        $saved = null;
+        if ($savedId > 0) {
+            $saved = PlatformInvoiceSavedTemplate::query()->find($savedId);
+        }
+        if (! $saved && $sub?->plan?->auto_invoice_template_id) {
+            $saved = PlatformInvoiceSavedTemplate::query()->find((int) $sub->plan->auto_invoice_template_id);
+        }
+
+        if ($saved) {
+            return [
+                'template_id' => (string) ($saved->template_id ?: $designId ?: 'modern'),
+                'invoice_options' => is_array($saved->invoice_options) && $saved->invoice_options !== []
+                    ? $saved->invoice_options
+                    : [
+                        'show_branding' => true,
+                        'show_quantity' => true,
+                        'show_payment_details' => true,
+                    ],
+                'notes' => $saved->notes,
+                'terms' => $saved->terms,
+                'tax_rate' => (float) ($saved->tax_rate ?? 0),
+                'selected_modules' => is_array($saved->selected_modules) ? $saved->selected_modules : [],
+            ];
+        }
+
+        $known = collect($this->billing->builtInDesignTemplates())->pluck('id')->all();
+        if (! in_array($designId, $known, true)) {
+            $designId = 'modern';
+        }
+
+        return [
+            'template_id' => $designId,
+            'invoice_options' => [
+                'show_branding' => true,
+                'show_quantity' => true,
+                'show_payment_details' => true,
+            ],
+            'notes' => null,
+            'terms' => null,
+            'tax_rate' => 0.0,
+            'selected_modules' => [],
+        ];
     }
 
     /**
@@ -314,11 +395,14 @@ class SubscriptionRenewalReminderService
     protected function sampleInvoice(): PlatformInvoice
     {
         $seller = $this->billing->platformSeller();
+        $resolved = $this->resolveRenewalInvoiceTemplate();
         $amount = 25000.0;
+        $taxRate = (float) ($resolved['tax_rate'] ?? 0);
+        $taxAmount = round($amount * ($taxRate / 100), 2);
         $invoice = new PlatformInvoice([
             'invoice_number' => 'PLT-TEST-RENEWAL',
             'status' => 'draft',
-            'template_id' => 'modern',
+            'template_id' => $resolved['template_id'],
             'currency' => 'KES',
             'issue_date' => now()->toDateString(),
             'due_date' => now()->addDays(14)->toDateString(),
@@ -327,6 +411,7 @@ class SubscriptionRenewalReminderService
             'bill_to_company_code' => 'SAMPLE',
             'bill_to_address' => 'Nairobi, Kenya',
             'seller' => $seller,
+            'invoice_options' => $resolved['invoice_options'],
             'line_items' => [[
                 'description' => 'Centrix ERP renewal — Growth (sample test invoice)',
                 'quantity' => 1,
@@ -335,11 +420,11 @@ class SubscriptionRenewalReminderService
                 'included' => true,
             ]],
             'subtotal' => $amount,
-            'tax_rate' => 0,
-            'tax_amount' => 0,
-            'total' => $amount,
-            'notes' => 'Sample invoice for renewal reminder preview only.',
-            'terms' => 'This is a test attachment — not a real bill.',
+            'tax_rate' => $taxRate,
+            'tax_amount' => $taxAmount,
+            'total' => $amount + $taxAmount,
+            'notes' => $resolved['notes'] ?: 'Sample invoice for renewal reminder preview only.',
+            'terms' => $resolved['terms'] ?: 'This is a test attachment — not a real bill.',
         ]);
         $invoice->id = 0;
 

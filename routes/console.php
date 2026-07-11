@@ -30,6 +30,11 @@ Schedule::command('erp:send-system-issue-digest')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/system-issue-digest.log'));
 
+Schedule::command('erp:prune-system-issue-reports')
+    ->dailyAt(config('system_issues.prune_time', '03:15'))
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/prune-system-issue-reports.log'));
+
 Schedule::command('erp:send-subscription-renewal-reminders')
     ->dailyAt(config('platform_billing.renewal_reminder_time', '09:00'))
     ->withoutOverlapping()

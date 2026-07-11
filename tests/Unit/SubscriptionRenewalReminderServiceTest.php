@@ -84,6 +84,7 @@ class SubscriptionRenewalReminderServiceTest extends TestCase
         $this->assertSame($org->id, $invoice->organization_id);
         $this->assertEquals(15000.0, (float) $invoice->total);
         $this->assertSame($invoice->id, $sub->fresh()->invoice_id);
+        $this->assertNotEmpty($invoice->template_id);
     }
 
     public function test_skips_when_reminders_disabled(): void

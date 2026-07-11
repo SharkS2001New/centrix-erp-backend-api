@@ -424,6 +424,8 @@ Route::prefix('v1')->group(function () {
                 Route::get('messages', [PlatformMailController::class, 'messages']);
                 Route::get('messages/{message}', [PlatformMailController::class, 'showMessage'])->whereNumber('message');
                 Route::post('messages', [PlatformMailController::class, 'send']);
+                Route::post('drafts', [PlatformMailController::class, 'saveDraft']);
+                Route::delete('messages/{message}', [PlatformMailController::class, 'destroyMessage'])->whereNumber('message');
                 Route::post('messages/{message}/reply', [PlatformMailController::class, 'reply'])->whereNumber('message');
                 Route::post('messages/{message}/read', [PlatformMailController::class, 'markRead'])->whereNumber('message');
                 Route::post('sync', [PlatformMailController::class, 'sync']);

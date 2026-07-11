@@ -25,14 +25,13 @@ class WhatsAppPlatformPreviewService
 
         $customers = Customer::query()
             ->where('organization_id', $organization->id)
-            ->whereNull('deleted_at')
             ->orderBy('customer_name')
             ->limit(40)
-            ->get(['customer_num', 'customer_name', 'telephone', 'mobile', 'email'])
+            ->get(['customer_num', 'customer_name', 'phone_number', 'additional_phone', 'email'])
             ->map(fn (Customer $c) => [
                 'customer_num' => $c->customer_num,
                 'customer_name' => $c->customer_name,
-                'phone' => $c->mobile ?: $c->telephone,
+                'phone' => $c->phone_number ?: $c->additional_phone,
             ])
             ->values()
             ->all();
@@ -110,7 +109,7 @@ class WhatsAppPlatformPreviewService
 
         $customer = $this->resolveCustomer($organization, $customerNum, $phone);
         $fromPhone = $phone
-            ?: ($customer?->mobile ?: $customer?->telephone)
+            ?: ($customer?->phone_number ?: $customer?->additional_phone)
             ?: '254700000000';
 
         $cacheKey = $this->sessionCacheKey(

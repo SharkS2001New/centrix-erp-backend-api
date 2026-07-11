@@ -76,6 +76,8 @@ class PlatformMailSettingsResolver
             'subscription_reminder_days' => '30,14,7',
             'renewal_email_subject' => 'Centrix ERP licence renewal reminder — {company_code}',
             'renewal_email_body' => "Dear {customer_name},\n\nYour Centrix ERP licence for {company_code} ({plan_name}) expires on {expires_on} ({days_remaining} day(s) remaining).\n\nPlease find attached invoice {invoice_number} for {total} to renew your subscription.\n\nIf you have already paid, you can ignore this message.\n\nRegards,\n{from_name}",
+            'renewal_invoice_design_id' => 'modern',
+            'renewal_invoice_saved_template_id' => null,
             'accounts' => [],
             'active_account_id' => null,
         ]);
@@ -350,6 +352,7 @@ class PlatformMailSettingsResolver
             'auth_smtp_host', 'auth_smtp_port', 'auth_smtp_username', 'auth_smtp_encryption',
             'subscription_reminder_enabled', 'subscription_reminder_days',
             'renewal_email_subject', 'renewal_email_body',
+            'renewal_invoice_design_id', 'renewal_invoice_saved_template_id',
             'active_account_id',
         ] as $key) {
             if (array_key_exists($key, $data)) {
