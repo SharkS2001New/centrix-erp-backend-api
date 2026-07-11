@@ -459,6 +459,57 @@ class PlatformMailController extends Controller
         ]);
     }
 
+    public function destroyMessages(Request $request)
+    {
+        $data = $request->validate([
+            'ids' => 'required|array|min:1|max:100',
+            'ids.*' => 'integer|distinct|exists:platform_mail_messages,id',
+            'account_id' => 'nullable|string|max:64',
+        ]);
+
+        $ids = array_values(array_unique(array_map('intval', $data['ids'])));
+        $messages = PlatformMailMessage::query()
+            ->whereIn('id', $ids)
+            ->get();
+
+        $deleted = 0;
+        $remoteDeleted = 0;
+
+        foreach ($messages as $message) {
+            $remote = $this->mailbox->deleteRemoteMessage($message);
+            if ($remote['remote'] ?? false) {
+                $remoteDeleted++;
+            }
+            $message->delete();
+            $deleted++;
+        }
+
+        $accountId = trim((string) ($data['account_id'] ?? ''));
+        $unreadQuery = PlatformMailMessage::query()
+            ->where('folder', 'inbox')
+            ->whereNull('read_at');
+        if ($accountId !== '') {
+            $unreadQuery->where(function ($inner) use ($accountId) {
+                $inner->where('mailbox_account_id', $accountId)->orWhereNull('mailbox_account_id');
+            });
+        }
+
+        $message = $deleted === 1
+            ? ($remoteDeleted > 0
+                ? 'Message deleted from mailbox and email account.'
+                : 'Message deleted.')
+            : ($remoteDeleted > 0
+                ? "{$deleted} messages deleted ({$remoteDeleted} also removed from the email account)."
+                : "{$deleted} messages deleted.");
+
+        return response()->json([
+            'message' => $message,
+            'deleted' => $deleted,
+            'remote_deleted' => $remoteDeleted,
+            'unread_count' => $unreadQuery->count(),
+        ]);
+    }
+
     public function similarReplies(PlatformMailMessage $message)
     {
         $subject = trim((string) preg_replace('/^(re|fw|fwd):\s*/i', '', (string) ($message->subject ?? '')));

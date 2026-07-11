@@ -427,6 +427,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('messages', [PlatformMailController::class, 'send']);
                 Route::post('drafts', [PlatformMailController::class, 'saveDraft']);
                 Route::delete('messages/{message}', [PlatformMailController::class, 'destroyMessage'])->whereNumber('message');
+                Route::post('messages/bulk-delete', [PlatformMailController::class, 'destroyMessages']);
                 Route::post('messages/{message}/reply', [PlatformMailController::class, 'reply'])->whereNumber('message');
                 Route::get('messages/{message}/similar-replies', [PlatformMailController::class, 'similarReplies'])->whereNumber('message');
                 Route::post('messages/{message}/save-reply-memory', [PlatformMailController::class, 'saveReplyMemory'])->whereNumber('message');
