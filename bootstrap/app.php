@@ -25,6 +25,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // Token-based API auth (Bearer). Do not enable statefulApi() — the web/mobile
         // clients do not use Sanctum cookie sessions or CSRF cookies.
+        $middleware->prependToGroup('api', \App\Http\Middleware\RecordResponseTime::class);
         $middleware->prependToGroup('api', \App\Http\Middleware\SecurityHeaders::class);
         // Inactivity is handled by the web app lock screen — do not revoke API tokens mid-session.
         $middleware->prependToGroup('api', \App\Http\Middleware\EnsureUserIsActive::class);

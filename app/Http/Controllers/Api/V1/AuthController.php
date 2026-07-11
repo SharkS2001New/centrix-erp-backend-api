@@ -36,9 +36,17 @@ class AuthController extends Controller
 
     public function health(Request $request)
     {
+        $started = hrtime(true);
+
         // Browser connectivity probes — no DB/Redis work (avoids load from many open tabs).
         if ($request->boolean('connectivity')) {
-            return response()->json(['ok' => true, 'checks' => ['app' => true]]);
+            $serverMs = max(0, (int) round((hrtime(true) - $started) / 1_000_000));
+
+            return response()->json([
+                'ok' => true,
+                'server_ms' => $serverMs,
+                'checks' => ['app' => true],
+            ]);
         }
 
         $checks = ['app' => true];
@@ -48,8 +56,11 @@ class AuthController extends Controller
             DB::select('select 1');
             $checks['database'] = true;
         } catch (\Throwable) {
+            $serverMs = max(0, (int) round((hrtime(true) - $started) / 1_000_000));
+
             return response()->json([
                 'ok' => false,
+                'server_ms' => $serverMs,
                 'checks' => array_merge($checks, ['database' => false]),
             ], 503);
         }
@@ -63,14 +74,23 @@ class AuthController extends Controller
             }
 
             if ($checks['redis'] === false) {
+                $serverMs = max(0, (int) round((hrtime(true) - $started) / 1_000_000));
+
                 return response()->json([
                     'ok' => false,
+                    'server_ms' => $serverMs,
                     'checks' => $checks,
                 ], 503);
             }
         }
 
-        return response()->json(['ok' => true, 'checks' => $checks]);
+        $serverMs = max(0, (int) round((hrtime(true) - $started) / 1_000_000));
+
+        return response()->json([
+            'ok' => true,
+            'server_ms' => $serverMs,
+            'checks' => $checks,
+        ]);
     }
 
     public function organizationPreview(Request $request)

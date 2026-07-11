@@ -29,7 +29,7 @@ class PlatformDatabaseBackupTest extends TestCase
         $response = $this->getJson('/api/v1/admin/database-backups');
 
         $response->assertOk()
-            ->assertJsonPath('google_drive_enabled', false)
+            ->assertJsonPath('r2_enabled', false)
             ->assertJsonFragment(['filename' => 'pos_erp_2026-06-20.sql.gz']);
 
         Storage::disk('local')->deleteDirectory('backups/testing-platform');
@@ -82,7 +82,9 @@ class PlatformDatabaseBackupTest extends TestCase
                     'database' => 'pos_erp',
                     'created_at' => now()->toIso8601String(),
                 ],
-                'google_drive' => null,
+                'r2' => null,
+                'r2_error' => null,
+                'r2_skipped_reason' => null,
                 'email_sent' => false,
                 'pruned' => 0,
             ]);

@@ -8,6 +8,7 @@ use App\Models\PlatformMailMessage;
 use App\Services\Platform\PlatformInvoiceDocumentService;
 use App\Services\Platform\PlatformMailboxService;
 use App\Services\Platform\PlatformMailSettingsResolver;
+use App\Services\Platform\PlatformMailStats;
 use Illuminate\Http\Request;
 
 class PlatformMailController extends Controller
@@ -21,6 +22,14 @@ class PlatformMailController extends Controller
     {
         return response()->json([
             'settings' => PlatformMailSettingsResolver::resolve(),
+            'stats' => PlatformMailStats::summarize(),
+        ]);
+    }
+
+    public function stats()
+    {
+        return response()->json([
+            'stats' => PlatformMailStats::summarize(),
         ]);
     }
 
@@ -111,6 +120,7 @@ class PlatformMailController extends Controller
     public function messages(Request $request)
     {
         $folder = $request->query('folder', 'inbox');
+        $kind = trim((string) $request->query('kind', ''));
         $q = PlatformMailMessage::query()->orderByDesc('id');
 
         if ($folder === 'inbox') {
@@ -123,6 +133,10 @@ class PlatformMailController extends Controller
             $q->where('folder', $folder);
         }
 
+        if ($kind !== '') {
+            $q->where('meta->kind', $kind);
+        }
+
         if ($request->filled('q')) {
             $term = '%'.$request->query('q').'%';
             $q->where(function ($inner) use ($term) {
@@ -132,7 +146,14 @@ class PlatformMailController extends Controller
             });
         }
 
-        $rows = $q->limit(100)->get();
+        $rows = $q->limit(100)->get()->map(function (PlatformMailMessage $message) {
+            $payload = $message->toArray();
+            $kind = is_array($message->meta) ? ($message->meta['kind'] ?? null) : null;
+            $payload['kind'] = $kind;
+            $payload['kind_label'] = PlatformMailStats::labelForKind(is_string($kind) ? $kind : null);
+
+            return $payload;
+        });
 
         return response()->json([
             'data' => $rows,
@@ -140,6 +161,7 @@ class PlatformMailController extends Controller
                 ->where('folder', 'inbox')
                 ->whereNull('read_at')
                 ->count(),
+            'stats' => PlatformMailStats::summarize(),
         ]);
     }
 
@@ -160,7 +182,14 @@ class PlatformMailController extends Controller
             ->get();
 
         return response()->json([
-            'data' => $message->fresh(),
+            'data' => array_merge($message->fresh()->toArray(), [
+                'kind' => is_array($message->meta) ? ($message->meta['kind'] ?? null) : null,
+                'kind_label' => PlatformMailStats::labelForKind(
+                    is_array($message->meta) && is_string($message->meta['kind'] ?? null)
+                        ? $message->meta['kind']
+                        : null
+                ),
+            ]),
             'thread' => $thread,
         ]);
     }

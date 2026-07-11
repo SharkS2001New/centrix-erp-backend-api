@@ -10,7 +10,7 @@ Run this **before** `scripts/purge-git-secrets.sh` and a force-push.
 4. **Mail** — rotate SMTP username/password.
 5. **M-Pesa** — rotate consumer key/secret and passkeys in the Daraja portal.
 6. **OpenAI** — revoke and reissue API key if it was in `.env`.
-7. **Google Drive backup** — delete the compromised service account key in GCP, create a new key, update `BACKUP_GOOGLE_DRIVE_CREDENTIALS` / mounted JSON.
+7. **Cloudflare R2 backup** — revoke the R2 API token in Cloudflare, create a new access key, update `BACKUP_R2_ACCESS_KEY_ID` / `BACKUP_R2_SECRET_ACCESS_KEY`.
 8. **Platform super-admin** — change `PLATFORM_SUPER_ADMIN_PASSWORD` and org admin passwords if dumps were exposed.
 
 ## Untrack (keeps local files)

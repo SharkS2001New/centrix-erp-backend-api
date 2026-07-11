@@ -14,17 +14,22 @@ class ResolveActingTenantUser
         $user = $request->user();
         $token = $user?->currentAccessToken();
 
-        if (! $user || ! $token || ! $token->organization_id) {
+        // Sanctum::actingAs() uses TransientToken (no org metadata).
+        $orgId = is_object($token) && isset($token->organization_id)
+            ? (int) $token->organization_id
+            : 0;
+
+        if (! $user || ! $token || $orgId < 1) {
             return $next($request);
         }
 
-        $orgId = (int) $token->organization_id;
         if ((int) $user->organization_id === $orgId) {
             return $next($request);
         }
 
-        $membership = $token->user_membership_id
-            ? UserMembership::find($token->user_membership_id)
+        $membershipId = isset($token->user_membership_id) ? $token->user_membership_id : null;
+        $membership = $membershipId
+            ? UserMembership::find($membershipId)
             : null;
 
         if ($membership) {

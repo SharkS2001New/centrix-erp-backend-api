@@ -215,9 +215,13 @@ Configure in `.env`:
 | `BACKUP_NOTIFY_EMAIL` | Email recipient for backup notifications |
 | `BACKUP_RETENTION_DAYS` | Auto-delete local backups older than this many days (default 7) |
 | `BACKUP_SCHEDULE_TIME` | Daily run time (24h clock, `APP_TIMEZONE` / Africa-Nairobi) |
+| `BACKUP_R2_ENABLED` | Optional env bootstrap — prefer Platform → Database backups UI |
+| `BACKUP_R2_ACCESS_KEY_ID` / `BACKUP_R2_SECRET_ACCESS_KEY` | Optional env fallback for R2 API token credentials |
+| `BACKUP_R2_BUCKET` / `BACKUP_R2_ENDPOINT` | Optional env fallback for bucket + `https://<ACCOUNT_ID>.r2.cloudflarestorage.com` |
+| `BACKUP_R2_PREFIX` | Object key prefix (default `backups/database`) |
 | `MAIL_*` | SMTP used to send backup emails |
 
-Backups are stored under `storage/app/private/backups/database/` by default (gzip SQL). Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
+Backups are stored under `storage/app/private/backups/database/` by default (gzip SQL). Super-admins configure Cloudflare R2 upload under **Platform → Database backups**. Env `BACKUP_R2_*` values remain as fallback until settings are saved in the UI. Skip R2 with `php artisan erp:database-backup --no-r2`. Files larger than `BACKUP_ATTACH_MAX_BYTES` (default 10 MB) trigger an email notification with the path only — not an attachment.
 
 ## Shared storage (API + queue workers)
 

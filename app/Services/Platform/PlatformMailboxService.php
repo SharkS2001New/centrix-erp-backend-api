@@ -118,7 +118,7 @@ class PlatformMailboxService
             'from_name' => $fromName !== '' ? $fromName : ($settings['from_name'] ?? null),
             'to_addresses' => [$to],
             'subject' => $subject,
-            'body_text' => $body,
+            'body_text' => $this->bodyForMailboxStorage($body, $meta),
             'organization_id' => $meta['organization_id'] ?? $replyTo?->organization_id,
             'contract_id' => $meta['contract_id'] ?? null,
             'sent_by_user_id' => $user?->id,
@@ -126,6 +126,23 @@ class PlatformMailboxService
             'sent_at' => now(),
             'meta' => $meta ?: null,
         ]);
+    }
+
+    /**
+     * Store a safe copy in Sent (OTP codes are redacted; the real email already went out).
+     *
+     * @param  array<string, mixed>  $meta
+     */
+    protected function bodyForMailboxStorage(string $body, array $meta): string
+    {
+        $kind = (string) ($meta['kind'] ?? '');
+        if (! in_array($kind, ['two_factor', 'email_verification'], true)) {
+            return $body;
+        }
+
+        $redacted = preg_replace('/\b\d{4,8}\b/', '******', $body);
+
+        return is_string($redacted) ? $redacted : $body;
     }
 
     protected function deriveNoreplyAddress(string $fromAddress): string

@@ -13,7 +13,7 @@ return [
         '#^https?://127\.0\.0\.1(:\d+)?$#',
     ],
     'allowed_headers' => ['*'],
-    'exposed_headers' => [],
+    'exposed_headers' => ['X-Response-Time', 'Server-Timing'],
     'max_age' => 0,
     'supports_credentials' => filter_var(
         env('CORS_SUPPORTS_CREDENTIALS', env('WEB_COOKIE_AUTH', false)),

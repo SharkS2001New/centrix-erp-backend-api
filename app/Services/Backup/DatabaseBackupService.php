@@ -208,9 +208,9 @@ class DatabaseBackupService
     /**
      * @return array{
      *     backup: array<string, mixed>,
-     *     google_drive: array<string, mixed>|null,
-     *     google_drive_error: string|null,
-     *     google_drive_skipped_reason: string|null,
+     *     r2: array<string, mixed>|null,
+     *     r2_error: string|null,
+     *     r2_skipped_reason: string|null,
      *     email_sent: bool,
      *     pruned: int,
      * }
@@ -218,33 +218,34 @@ class DatabaseBackupService
     public function runBackupCycle(
         bool $sendEmail = true,
         bool $prune = true,
-        bool $uploadGoogleDrive = true,
+        bool $uploadR2 = true,
     ): array {
         $backup = $this->createBackup();
-        $googleDrive = null;
-        $googleDriveError = null;
-        $googleDriveSkippedReason = null;
-        $uploader = app(GoogleDriveBackupUploader::class);
+        $r2 = null;
+        $r2Error = null;
+        $r2SkippedReason = null;
+        $uploader = app(CloudflareR2BackupUploader::class);
 
-        if ($uploadGoogleDrive) {
+        if ($uploadR2) {
             if ($uploader->isEnabled()) {
                 try {
-                    $googleDrive = $uploader->upload(
+                    $r2 = $uploader->upload(
                         $backup['absolute_path'],
                         $backup['filename'],
                     );
                 } catch (\Throwable $e) {
-                    $googleDriveError = app(GoogleDriveBackupUploader::class)
-                        ->humanizeDriveErrorForUser($e->getMessage());
-                    Log::warning('Google Drive backup upload failed', [
+                    $r2Error = $e instanceof DatabaseBackupException
+                        ? $e->getMessage()
+                        : $uploader->humanizeErrorForUser($e->getMessage());
+                    Log::warning('Cloudflare R2 backup upload failed', [
                         'filename' => $backup['filename'],
-                        'error' => $googleDriveError,
+                        'error' => $r2Error,
                     ]);
                 }
             } else {
                 $diagnostics = $uploader->diagnostics();
-                $googleDriveSkippedReason = $diagnostics['issues'][0]
-                    ?? 'Google Drive upload is not configured on the API server.';
+                $r2SkippedReason = $diagnostics['issues'][0]
+                    ?? 'Cloudflare R2 upload is not configured on the API server.';
             }
         }
 
@@ -253,9 +254,9 @@ class DatabaseBackupService
 
         return [
             'backup' => $backup,
-            'google_drive' => $googleDrive,
-            'google_drive_error' => $googleDriveError,
-            'google_drive_skipped_reason' => $googleDriveSkippedReason,
+            'r2' => $r2,
+            'r2_error' => $r2Error,
+            'r2_skipped_reason' => $r2SkippedReason,
             'email_sent' => $emailSent,
             'pruned' => $pruned,
         ];

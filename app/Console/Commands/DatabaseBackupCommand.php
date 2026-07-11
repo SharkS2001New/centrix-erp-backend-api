@@ -10,7 +10,7 @@ class DatabaseBackupCommand extends Command
     protected $signature = 'erp:database-backup
                             {--no-email : Skip sending the backup notification email}
                             {--no-prune : Skip deleting backups older than retention days}
-                            {--no-google-drive : Skip uploading the backup to Google Drive}';
+                            {--no-r2 : Skip uploading the backup to Cloudflare R2}';
 
     protected $description = 'Create a compressed database backup and optionally email it';
 
@@ -26,7 +26,7 @@ class DatabaseBackupCommand extends Command
             $result = $backups->runBackupCycle(
                 sendEmail: ! $this->option('no-email'),
                 prune: ! $this->option('no-prune'),
-                uploadGoogleDrive: ! $this->option('no-google-drive'),
+                uploadR2: ! $this->option('no-r2'),
             );
         } catch (\Throwable $e) {
             $this->error('Database backup failed: '.$e->getMessage());
@@ -42,12 +42,12 @@ class DatabaseBackupCommand extends Command
             $this->formatBytes($backup['size_bytes']),
         ));
 
-        if ($result['google_drive'] !== null) {
-            $this->line('Uploaded to Google Drive: '.$result['google_drive']['file_id']);
-        } elseif (! empty($result['google_drive_error'])) {
-            $this->warn('Google Drive upload failed: '.$result['google_drive_error']);
-        } elseif (! empty($result['google_drive_skipped_reason'])) {
-            $this->comment('Google Drive upload skipped: '.$result['google_drive_skipped_reason']);
+        if ($result['r2'] !== null) {
+            $this->line('Uploaded to Cloudflare R2: '.$result['r2']['file_id']);
+        } elseif (! empty($result['r2_error'])) {
+            $this->warn('Cloudflare R2 upload failed: '.$result['r2_error']);
+        } elseif (! empty($result['r2_skipped_reason'])) {
+            $this->comment('Cloudflare R2 upload skipped: '.$result['r2_skipped_reason']);
         }
 
         if ($result['pruned'] > 0) {

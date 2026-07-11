@@ -155,8 +155,48 @@ class UserAccountGuardTest extends TestCase
         $this->deleteJson("/api/v1/users/{$staff->id}")
             ->assertOk()
             ->assertJsonPath('mode', 'archived')
-            ->assertJsonPath('message', 'User archived (soft deleted). Sales and activity history are retained.');
+            ->assertJsonPath(
+                'message',
+                'User archived (soft deleted). Related records are retained so the account cannot be permanently removed.',
+            );
 
         $this->assertSoftDeleted('users', ['id' => $staff->id]);
+    }
+
+    public function test_user_with_in_app_notifications_is_soft_deleted_not_hard_deleted(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $role = Role::where('role_name', 'Cashier')->firstOrFail();
+
+        $staff = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'notify_me',
+            'password' => Hash::make('password'),
+            'full_name' => 'Notify Me',
+            'access_scope' => 'branch',
+            'is_admin' => false,
+            'is_active' => true,
+        ]);
+
+        \Illuminate\Support\Facades\DB::table('in_app_notifications')->insert([
+            'user_id' => $staff->id,
+            'organization_id' => $admin->organization_id,
+            'type' => 'test',
+            'title' => 'Hello',
+            'message' => 'Test notification',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->deleteJson("/api/v1/users/{$staff->id}")
+            ->assertOk()
+            ->assertJsonPath('mode', 'archived');
+
+        $this->assertSoftDeleted('users', ['id' => $staff->id]);
+        $this->assertDatabaseHas('in_app_notifications', ['user_id' => $staff->id]);
     }
 }

@@ -329,6 +329,14 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/database-backups/{filename}/download', [PlatformDatabaseBackupController::class, 'download'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/database-backup-settings', [PlatformDatabaseBackupController::class, 'showSettings'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/database-backup-settings', [PlatformDatabaseBackupController::class, 'updateSettings'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/database-backup-settings/test-connection', [PlatformDatabaseBackupController::class, 'testR2Connection'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/database-backup-settings/test-upload', [PlatformDatabaseBackupController::class, 'testR2Upload'])
+            ->middleware(['erp.super_admin']);
         Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])
             ->middleware(['erp.super_admin']);
 
@@ -408,6 +416,7 @@ Route::prefix('v1')->group(function () {
             ->group(function () {
                 Route::get('settings', [PlatformMailController::class, 'show']);
                 Route::put('settings', [PlatformMailController::class, 'update']);
+                Route::get('stats', [PlatformMailController::class, 'stats']);
                 Route::post('test', [PlatformMailController::class, 'test']);
                 Route::post('test-auth', [PlatformMailController::class, 'testAuthMail']);
                 Route::post('test-renewal-reminder', [PlatformMailController::class, 'testRenewalReminder']);

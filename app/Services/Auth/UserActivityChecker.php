@@ -7,7 +7,12 @@ use Illuminate\Support\Facades\Schema;
 
 class UserActivityChecker
 {
-    /** @var list<array{0: string, 1: string}> */
+    /**
+     * Tables/columns that retain a reference to the user and block hard delete
+     * (or should keep the user row for history). Soft-delete instead.
+     *
+     * @var list<array{0: string, 1: string}>
+     */
     protected array $activityReferences = [
         ['sales', 'cashier_id'],
         ['sales', 'cancelled_by'],
@@ -30,6 +35,16 @@ class UserActivityChecker
         ['payroll_runs', 'paid_by'],
         ['mobile_rep_attendance_sessions', 'user_id'],
         ['employees', 'user_id'],
+        // Operational / notification FKs that block permanent delete
+        ['in_app_notifications', 'user_id'],
+        ['action_requests', 'requested_by'],
+        ['action_requests', 'assigned_to'],
+        ['action_requests', 'resolved_by'],
+        ['approval_actions', 'user_id'],
+        ['background_tasks', 'user_id'],
+        ['system_issue_reports', 'user_id'],
+        ['platform_mail_messages', 'sent_by_user_id'],
+        ['personal_access_tokens', 'tokenable_id'],
     ];
 
     public function hasRetainedActivity(int $userId): bool
@@ -39,7 +54,14 @@ class UserActivityChecker
                 continue;
             }
 
-            if (DB::table($table)->where($column, $userId)->exists()) {
+            $query = DB::table($table)->where($column, $userId);
+
+            // Sanctum tokens are polymorphic — only count user tokens.
+            if ($table === 'personal_access_tokens' && Schema::hasColumn($table, 'tokenable_type')) {
+                $query->where('tokenable_type', \App\Models\User::class);
+            }
+
+            if ($query->exists()) {
                 return true;
             }
         }

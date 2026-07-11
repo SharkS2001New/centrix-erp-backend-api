@@ -1,0 +1,4 @@
+Centrix ERP Cloudflare R2 upload test
+Uploaded at: 2026-07-11T16:50:52+03:00
+Bucket: centrix-backups
+Object: backups/database/connection-tests/centrix-r2-test-20260711-165052.txt

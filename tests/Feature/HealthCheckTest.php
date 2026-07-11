@@ -23,7 +23,10 @@ class HealthCheckTest extends TestCase
             ->assertOk()
             ->assertJsonPath('ok', true)
             ->assertJsonPath('checks.app', true)
-            ->assertJsonMissingPath('checks.database');
+            ->assertJsonMissingPath('checks.database')
+            ->assertJsonStructure(['server_ms'])
+            ->assertHeader('X-Response-Time')
+            ->assertHeader('Server-Timing');
     }
 
     public function test_connectivity_health_allows_pos_session_token(): void

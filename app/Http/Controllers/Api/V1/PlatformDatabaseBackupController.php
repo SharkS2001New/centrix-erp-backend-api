@@ -5,9 +5,10 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Controller;
 use App\Jobs\RunDatabaseBackupJob;
 use App\Services\Background\BackgroundTaskService;
+use App\Services\Backup\BackupR2SettingsResolver;
+use App\Services\Backup\CloudflareR2BackupUploader;
 use App\Services\Backup\DatabaseBackupException;
 use App\Services\Backup\DatabaseBackupService;
-use App\Services\Backup\GoogleDriveBackupUploader;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Schema;
@@ -25,19 +26,80 @@ class PlatformDatabaseBackupController extends Controller
     public function index()
     {
         try {
-            $drive = app(GoogleDriveBackupUploader::class)->diagnostics();
+            $r2 = app(CloudflareR2BackupUploader::class)->diagnostics();
 
             return response()->json([
                 'data' => $this->backups->listBackups(),
-                'google_drive_enabled' => $drive['upload_ready'],
-                'google_drive_configured' => $drive['configured'],
-                'google_drive' => $drive,
+                'r2_enabled' => $r2['upload_ready'],
+                'r2_configured' => $r2['configured'],
+                'r2' => $r2,
+                'r2_settings' => BackupR2SettingsResolver::describe(),
             ]);
         } catch (\Throwable $e) {
             report($e);
 
             return $this->backupErrorResponse($e, 'Could not list database backups.', 500);
         }
+    }
+
+    /** GET /api/v1/admin/database-backup-settings */
+    public function showSettings()
+    {
+        return response()->json(BackupR2SettingsResolver::describe());
+    }
+
+    /** PUT /api/v1/admin/database-backup-settings */
+    public function updateSettings(Request $request)
+    {
+        $data = $request->validate($this->r2SettingsRules());
+
+        return response()->json(BackupR2SettingsResolver::save($data));
+    }
+
+    /** POST /api/v1/admin/database-backup-settings/test-connection */
+    public function testR2Connection(Request $request)
+    {
+        try {
+            $overrides = $request->validate($this->r2SettingsRules());
+            $result = app(CloudflareR2BackupUploader::class)->testConnection($overrides);
+
+            return response()->json($result);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return $this->backupErrorResponse($e, 'Cloudflare R2 connection test failed.', 422);
+        }
+    }
+
+    /** POST /api/v1/admin/database-backup-settings/test-upload */
+    public function testR2Upload(Request $request)
+    {
+        try {
+            $overrides = $request->validate($this->r2SettingsRules());
+            $result = app(CloudflareR2BackupUploader::class)->testUpload($overrides);
+
+            return response()->json($result);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return $this->backupErrorResponse($e, 'Cloudflare R2 upload test failed.', 422);
+        }
+    }
+
+    /** @return array<string, mixed> */
+    protected function r2SettingsRules(): array
+    {
+        return [
+            'enabled' => ['sometimes', 'boolean'],
+            'access_key_id' => ['nullable', 'string', 'max:255'],
+            'secret_access_key' => ['nullable', 'string', 'max:255'],
+            'bucket' => ['nullable', 'string', 'max:255'],
+            'endpoint' => ['nullable', 'string', 'max:500'],
+            'region' => ['nullable', 'string', 'max:64'],
+            'prefix' => ['nullable', 'string', 'max:255'],
+            'public_url' => ['nullable', 'string', 'max:500'],
+            'use_path_style_endpoint' => ['sometimes', 'boolean'],
+        ];
     }
 
     /** POST /api/v1/admin/database-backups */
@@ -53,18 +115,18 @@ class PlatformDatabaseBackupController extends Controller
 
             $validated = $request->validate([
                 'send_email' => ['sometimes', 'boolean'],
-                'upload_google_drive' => ['sometimes', 'boolean'],
+                'upload_r2' => ['sometimes', 'boolean'],
                 'async' => ['sometimes', 'boolean'],
             ]);
 
             $sendEmail = (bool) ($validated['send_email'] ?? true);
-            $uploadGoogleDrive = (bool) ($validated['upload_google_drive'] ?? true);
+            $uploadR2 = (bool) ($validated['upload_r2'] ?? true);
 
             if ($request->boolean('async') && Schema::hasTable('background_tasks')) {
                 try {
                     $task = $this->tasks->create('database_backup', $request->user(), [
                         'send_email' => $sendEmail,
-                        'upload_google_drive' => $uploadGoogleDrive,
+                        'upload_r2' => $uploadR2,
                     ]);
 
                     RunDatabaseBackupJob::dispatch($task->id);
@@ -85,17 +147,17 @@ class PlatformDatabaseBackupController extends Controller
             $result = $this->backups->runBackupCycle(
                 sendEmail: $sendEmail,
                 prune: true,
-                uploadGoogleDrive: $uploadGoogleDrive,
+                uploadR2: $uploadR2,
             );
 
             return response()->json([
-                'message' => $result['google_drive_error']
-                    ? 'Database backup completed, but Google Drive upload failed.'
-                    : ($result['google_drive'] ? 'Database backup completed and uploaded to Google Drive.' : 'Database backup completed.'),
+                'message' => $result['r2_error']
+                    ? 'Database backup completed, but Cloudflare R2 upload failed.'
+                    : ($result['r2'] ? 'Database backup completed and uploaded to Cloudflare R2.' : 'Database backup completed.'),
                 'data' => $result['backup'],
-                'google_drive' => $result['google_drive'],
-                'google_drive_error' => $result['google_drive_error'],
-                'google_drive_skipped_reason' => $result['google_drive_skipped_reason'],
+                'r2' => $result['r2'],
+                'r2_error' => $result['r2_error'],
+                'r2_skipped_reason' => $result['r2_skipped_reason'],
                 'email_sent' => $result['email_sent'],
                 'pruned' => $result['pruned'],
             ], 201);

@@ -35,17 +35,17 @@ class RunDatabaseBackupJob implements ShouldQueue
             $result = $backups->runBackupCycle(
                 sendEmail: (bool) ($payload['send_email'] ?? true),
                 prune: true,
-                uploadGoogleDrive: (bool) ($payload['upload_google_drive'] ?? true),
+                uploadR2: (bool) ($payload['upload_r2'] ?? $payload['upload_google_drive'] ?? true),
             );
 
             $tasks->markCompleted($task, [
-                'message' => $result['google_drive_error']
-                    ? 'Database backup completed, but Google Drive upload failed.'
-                    : ($result['google_drive'] ? 'Database backup completed and uploaded to Google Drive.' : 'Database backup completed.'),
+                'message' => $result['r2_error']
+                    ? 'Database backup completed, but Cloudflare R2 upload failed.'
+                    : ($result['r2'] ? 'Database backup completed and uploaded to Cloudflare R2.' : 'Database backup completed.'),
                 'backup' => $result['backup'] ?? null,
-                'google_drive' => $result['google_drive'] ?? null,
-                'google_drive_error' => $result['google_drive_error'] ?? null,
-                'google_drive_skipped_reason' => $result['google_drive_skipped_reason'] ?? null,
+                'r2' => $result['r2'] ?? null,
+                'r2_error' => $result['r2_error'] ?? null,
+                'r2_skipped_reason' => $result['r2_skipped_reason'] ?? null,
                 'email_sent' => $result['email_sent'] ?? false,
                 'pruned' => $result['pruned'] ?? 0,
             ]);
