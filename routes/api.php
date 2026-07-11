@@ -364,6 +364,7 @@ Route::prefix('v1')->group(function () {
                 Route::patch('{platform_subscription}', [PlatformSubscriptionController::class, 'update'])->whereNumber('platform_subscription');
                 Route::delete('{platform_subscription}', [PlatformSubscriptionController::class, 'destroy'])->whereNumber('platform_subscription');
                 Route::post('{platform_subscription}/extend', [PlatformSubscriptionController::class, 'extend'])->whereNumber('platform_subscription');
+                Route::post('{platform_subscription}/revoke', [PlatformSubscriptionController::class, 'revoke'])->whereNumber('platform_subscription');
                 Route::post('{platform_subscription}/draft-invoice', [PlatformSubscriptionController::class, 'draftInvoice'])->whereNumber('platform_subscription');
             });
 

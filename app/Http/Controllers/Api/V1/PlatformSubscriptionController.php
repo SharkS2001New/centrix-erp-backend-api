@@ -125,6 +125,24 @@ class PlatformSubscriptionController extends Controller
         ]);
     }
 
+    public function revoke(PlatformSubscription $platform_subscription)
+    {
+        $platform_subscription->update([
+            'status' => 'cancelled',
+            'is_trial' => false,
+        ]);
+
+        $org = $platform_subscription->organization;
+        if ($org) {
+            $this->licenses->revokeOrganizationSessions($org);
+        }
+
+        return response()->json([
+            'data' => $platform_subscription->fresh()->load(['organization', 'plan', 'invoice']),
+            'message' => 'Licence revoked. Organization users have been signed out.',
+        ]);
+    }
+
     public function draftInvoice(PlatformSubscription $platform_subscription)
     {
         // Minimal stub: point frontend at invoice create with org preselected.
