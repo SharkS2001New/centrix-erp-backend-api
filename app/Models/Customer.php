@@ -5,6 +5,7 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Customer extends Model
@@ -22,6 +23,8 @@ class Customer extends Model
     ];
 
     protected $casts = [
+        'customer_num' => 'integer',
+        'organization_id' => 'integer',
         'latitude' => 'float',
         'longitude' => 'float',
         'credit_limit' => 'decimal:2',
@@ -43,6 +46,15 @@ class Customer extends Model
     public function organization(): BelongsTo
     {
         return $this->belongsTo(Organization::class, 'organization_id');
+    }
+
+    /**
+     * Orders for this customer number. Always constrain by organization_id in queries —
+     * customer_num is only unique within an organization.
+     */
+    public function sales(): HasMany
+    {
+        return $this->hasMany(Sale::class, 'customer_num', 'customer_num');
     }
 
     protected function shopImageUrl(): Attribute

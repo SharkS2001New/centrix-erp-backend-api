@@ -536,6 +536,7 @@ return [
         'whatsapp' => [
             'enable_whatsapp_orders' => false,
             'enabled' => false,
+            'agent_name' => '',
         ],
         'admin' => [
             'enable_advanced_data_import' => false,

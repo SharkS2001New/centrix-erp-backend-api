@@ -50,4 +50,61 @@ class MetaWhatsAppClient
 
         return true;
     }
+
+    /**
+     * Download inbound WhatsApp media bytes via Graph API.
+     *
+     * @return array{bytes: string, mime_type: string}|null
+     */
+    public function downloadMedia(ResolvedWhatsAppConfig $config, string $mediaId): ?array
+    {
+        $mediaId = trim($mediaId);
+        if ($mediaId === '' || $config->accessToken === '') {
+            return null;
+        }
+
+        $version = $config->graphApiVersion;
+        $meta = Http::withToken($config->accessToken)
+            ->acceptJson()
+            ->get("https://graph.facebook.com/{$version}/{$mediaId}");
+
+        if (! $meta->successful()) {
+            Log::warning('whatsapp.media_meta_failed', [
+                'media_id' => $mediaId,
+                'status' => $meta->status(),
+                'body' => $meta->json() ?? $meta->body(),
+            ]);
+
+            return null;
+        }
+
+        $downloadUrl = (string) ($meta->json('url') ?? '');
+        $mime = (string) ($meta->json('mime_type') ?? 'application/octet-stream');
+        if ($downloadUrl === '') {
+            return null;
+        }
+
+        $bin = Http::withToken($config->accessToken)
+            ->withHeaders(['Accept' => '*/*'])
+            ->get($downloadUrl);
+
+        if (! $bin->successful()) {
+            Log::warning('whatsapp.media_download_failed', [
+                'media_id' => $mediaId,
+                'status' => $bin->status(),
+            ]);
+
+            return null;
+        }
+
+        $bytes = $bin->body();
+        if ($bytes === '') {
+            return null;
+        }
+
+        return [
+            'bytes' => $bytes,
+            'mime_type' => $mime !== '' ? $mime : 'application/octet-stream',
+        ];
+    }
 }

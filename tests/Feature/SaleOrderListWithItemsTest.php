@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\PlatformSubscription;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -13,6 +14,26 @@ use Tests\TestCase;
 class SaleOrderListWithItemsTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $admin = User::where('username', 'admin')->first();
+        if ($admin?->organization_id) {
+            PlatformSubscription::query()->firstOrCreate(
+                ['organization_id' => $admin->organization_id],
+                [
+                    'status' => 'active',
+                    'current_period_start' => now()->subMonth()->toDateString(),
+                    'current_period_end' => now()->addYear()->toDateString(),
+                    'renewal_price' => 0,
+                    'amount' => 0,
+                    'currency' => 'KES',
+                ],
+            );
+        }
+    }
 
     public function test_sales_list_with_items_includes_line_items_in_response(): void
     {
@@ -29,6 +50,7 @@ class SaleOrderListWithItemsTest extends TestCase
             'status' => 'paid',
             'payment_status' => 'paid',
             'order_total' => 500,
+            'total_vat' => 0,
             'amount_paid' => 500,
             'completed_at' => now(),
             'created_at' => now(),
@@ -77,6 +99,7 @@ class SaleOrderListWithItemsTest extends TestCase
             'status' => 'booked',
             'payment_status' => 'unpaid',
             'order_total' => 2272,
+            'total_vat' => 0,
             'amount_paid' => 0,
             'created_at' => now(),
             'updated_at' => now(),

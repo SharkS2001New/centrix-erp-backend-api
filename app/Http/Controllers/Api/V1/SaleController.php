@@ -109,6 +109,11 @@ class SaleController extends BaseResourceController
                 $sub->whereIn('sales.order_source', ['backoffice', 'backend'])
                     ->orWhereIn('sales.channel', ['backoffice', 'backend']);
             });
+        } elseif ($request->input('order_source') === 'whatsapp') {
+            $query->where(function ($sub) {
+                $sub->where('sales.order_source', 'whatsapp')
+                    ->orWhere('sales.channel', 'whatsapp');
+            });
         } elseif ($request->filled('order_source')) {
             $query->where('sales.order_source', $request->input('order_source'));
         }

@@ -360,7 +360,8 @@ class PlatformMailboxService
                 }
 
                 $structure = imap_fetchstructure($inbox, $uid);
-                $body = $this->getBody($inbox, $uid, $structure);
+                $fullBody = $this->getBody($inbox, $uid, $structure);
+                $snippet = $this->snippetBody($fullBody);
                 $from = $this->parseAddress($header->from ?? '');
                 $to = $this->parseAddressList($header->to ?? '');
                 $inReplyTo = isset($header->in_reply_to) ? trim((string) $header->in_reply_to) : null;
@@ -378,10 +379,15 @@ class PlatformMailboxService
                     'from_name' => $from['name'],
                     'to_addresses' => $to,
                     'subject' => isset($header->subject) ? $this->decodeMime((string) $header->subject) : null,
-                    'body_text' => $body,
+                    // Hybrid: keep a short snippet locally; full body is loaded from IMAP on open.
+                    'body_text' => $snippet,
                     'imap_uid' => $imapUid,
                     'received_at' => isset($header->date) ? Carbon::parse($header->date) : now(),
                     'read_at' => null,
+                    'meta' => [
+                        'body_storage' => 'imap_snippet',
+                        'body_snippet_len' => mb_strlen($snippet),
+                    ],
                 ]);
                 $imported++;
             }
@@ -395,6 +401,229 @@ class PlatformMailboxService
             'ok' => true,
             'message' => "Synced inbox: {$imported} new, {$skipped} skipped.",
         ];
+    }
+
+    /**
+     * Load the full plain-text body from IMAP for a hybrid/snippet inbound message.
+     *
+     * @return array{ok: bool, body: ?string, message: string}
+     */
+    public function fetchRemoteBody(PlatformMailMessage $message): array
+    {
+        if ($message->direction !== 'inbound') {
+            return [
+                'ok' => true,
+                'body' => (string) ($message->body_text ?? ''),
+                'message' => 'Not an inbound IMAP message.',
+            ];
+        }
+
+        $meta = is_array($message->meta) ? $message->meta : [];
+        if (($meta['body_storage'] ?? '') !== 'imap_snippet' && trim((string) ($message->imap_uid ?? '')) === '') {
+            return [
+                'ok' => true,
+                'body' => (string) ($message->body_text ?? ''),
+                'message' => 'Full body already available locally.',
+            ];
+        }
+
+        if (! extension_loaded('imap')) {
+            return [
+                'ok' => false,
+                'body' => (string) ($message->body_text ?? ''),
+                'message' => 'PHP IMAP extension is not installed.',
+            ];
+        }
+
+        $accountId = $message->mailbox_account_id ? (string) $message->mailbox_account_id : null;
+        $stored = PlatformMailSettingsResolver::ensureAccounts(PlatformMailSettingsResolver::rawStored());
+        $account = PlatformMailSettingsResolver::findAccount($stored, $accountId);
+        $account = PlatformMailSettingsResolver::prefillImapFromSmtp($account ?? []);
+
+        if (empty($account['imap_enabled']) || empty($account['imap_host'])) {
+            return [
+                'ok' => false,
+                'body' => (string) ($message->body_text ?? ''),
+                'message' => 'IMAP is not configured for this account.',
+            ];
+        }
+
+        $password = $account['imap_password'] ?? $account['smtp_password'] ?? null;
+        $username = trim((string) ($account['imap_username'] ?? ''))
+            ?: trim((string) ($account['smtp_username'] ?? ''));
+        [$mailbox] = $this->imapMailboxPath($account);
+
+        $inbox = @imap_open($mailbox, $username, (string) $password);
+        if (! $inbox) {
+            return [
+                'ok' => false,
+                'body' => (string) ($message->body_text ?? ''),
+                'message' => 'Could not connect to IMAP: '.(imap_last_error() ?: 'unknown error'),
+            ];
+        }
+
+        try {
+            $seq = null;
+            $messageId = trim((string) ($message->message_id ?? ''));
+            if ($messageId !== '' && ! str_ends_with($messageId, '@local')) {
+                $needle = trim($messageId, " \t<>");
+                $found = @imap_search($inbox, 'HEADER Message-ID "'.$needle.'"')
+                    ?: @imap_search($inbox, 'HEADER Message-ID "<'.$needle.'>"')
+                    ?: [];
+                $seq = $found[0] ?? null;
+            }
+            if ($seq === null && trim((string) ($message->imap_uid ?? '')) !== '') {
+                $seq = (int) $message->imap_uid;
+            }
+            if ($seq === null) {
+                return [
+                    'ok' => false,
+                    'body' => (string) ($message->body_text ?? ''),
+                    'message' => 'Could not locate the message on the IMAP server.',
+                ];
+            }
+
+            $structure = imap_fetchstructure($inbox, $seq);
+            $body = $this->getBody($inbox, (int) $seq, $structure);
+
+            return [
+                'ok' => true,
+                'body' => $body,
+                'message' => 'Loaded full body from IMAP.',
+            ];
+        } finally {
+            imap_close($inbox);
+        }
+    }
+
+    /**
+     * Delete local mailbox copies older than the retention window (default 3 months).
+     * Does not delete mail from the remote IMAP account.
+     *
+     * @return array{deleted: int, cutoff: string}
+     */
+    public function pruneLocalMessages(int $months = 3): array
+    {
+        $months = max(1, min(24, $months));
+        $cutoff = now()->subMonths($months);
+
+        $deleted = PlatformMailMessage::query()
+            ->where(function ($q) use ($cutoff) {
+                $q->where(function ($inner) use ($cutoff) {
+                    $inner->whereNotNull('received_at')->where('received_at', '<', $cutoff);
+                })->orWhere(function ($inner) use ($cutoff) {
+                    $inner->whereNull('received_at')
+                        ->whereNotNull('sent_at')
+                        ->where('sent_at', '<', $cutoff);
+                })->orWhere(function ($inner) use ($cutoff) {
+                    $inner->whereNull('received_at')
+                        ->whereNull('sent_at')
+                        ->where('created_at', '<', $cutoff);
+                });
+            })
+            ->delete();
+
+        return [
+            'deleted' => (int) $deleted,
+            'cutoff' => $cutoff->toIso8601String(),
+        ];
+    }
+
+    public function snippetBody(?string $text, int $max = 500): string
+    {
+        $clean = trim(preg_replace('/\s+/u', ' ', (string) $text) ?? '');
+        if ($clean === '') {
+            return '';
+        }
+
+        return \Illuminate\Support\Str::limit($clean, $max, '…');
+    }
+
+    /**
+     * Delete an inbound message from the remote IMAP mailbox when possible.
+     *
+     * @return array{ok: bool, remote: bool, message: string}
+     */
+    public function deleteRemoteMessage(PlatformMailMessage $message): array
+    {
+        $imapUid = trim((string) ($message->imap_uid ?? ''));
+        if ($message->direction !== 'inbound' || $imapUid === '') {
+            return [
+                'ok' => true,
+                'remote' => false,
+                'message' => 'No remote IMAP message to delete.',
+            ];
+        }
+
+        if (! extension_loaded('imap')) {
+            return [
+                'ok' => false,
+                'remote' => false,
+                'message' => 'PHP IMAP extension is not installed; deleted locally only.',
+            ];
+        }
+
+        $accountId = $message->mailbox_account_id ? (string) $message->mailbox_account_id : null;
+        $stored = PlatformMailSettingsResolver::ensureAccounts(PlatformMailSettingsResolver::rawStored());
+        $account = PlatformMailSettingsResolver::findAccount($stored, $accountId);
+        $account = PlatformMailSettingsResolver::prefillImapFromSmtp($account ?? []);
+
+        if (empty($account['imap_enabled']) || empty($account['imap_host'])) {
+            return [
+                'ok' => true,
+                'remote' => false,
+                'message' => 'IMAP is not configured for this account; deleted locally only.',
+            ];
+        }
+
+        $password = $account['imap_password'] ?? $account['smtp_password'] ?? null;
+        $username = trim((string) ($account['imap_username'] ?? ''))
+            ?: trim((string) ($account['smtp_username'] ?? ''));
+        [$mailbox] = $this->imapMailboxPath($account);
+
+        $inbox = @imap_open($mailbox, $username, (string) $password);
+        if (! $inbox) {
+            return [
+                'ok' => false,
+                'remote' => false,
+                'message' => 'Could not connect to IMAP to delete remotely: '.(imap_last_error() ?: 'unknown error'),
+            ];
+        }
+
+        try {
+            $deleted = false;
+            $messageId = trim((string) ($message->message_id ?? ''));
+            // Prefer Message-ID lookup — stored imap_uid values are sequence numbers and can drift.
+            if ($messageId !== '' && ! str_ends_with($messageId, '@local')) {
+                $needle = trim($messageId, " \t<>");
+                $found = @imap_search($inbox, 'HEADER Message-ID "'.$needle.'"')
+                    ?: @imap_search($inbox, 'HEADER Message-ID "<'.$needle.'>"')
+                    ?: [];
+                foreach ($found as $seq) {
+                    if (@imap_delete($inbox, (string) $seq)) {
+                        $deleted = true;
+                    }
+                }
+            }
+
+            if (! $deleted && $imapUid !== '') {
+                $deleted = (bool) @imap_delete($inbox, $imapUid);
+            }
+
+            if ($deleted) {
+                @imap_expunge($inbox);
+            }
+
+            return [
+                'ok' => (bool) $deleted,
+                'remote' => (bool) $deleted,
+                'message' => $deleted
+                    ? 'Deleted from the email account.'
+                    : ('Local delete succeeded; remote delete failed: '.(imap_last_error() ?: 'unknown error')),
+            ];
+        } finally {
+            imap_close($inbox);
+        }
     }
 
     /**

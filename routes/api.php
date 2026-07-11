@@ -126,6 +126,7 @@ use App\Http\Controllers\Api\V1\WhatsappAdminController;
 use App\Http\Controllers\Api\V1\WhatsAppWebhookController;
 use App\Http\Controllers\Api\V1\WhatsAppSettingsController;
 use App\Http\Controllers\Api\V1\PlatformWhatsAppController;
+use App\Http\Controllers\Api\V1\PlatformWhatsAppTrainingController;
 use App\Http\Controllers\Api\V1\PlatformFcmPushController;
 use App\Http\Controllers\Api\V1\WorkShiftController;
 use Illuminate\Http\Request;
@@ -427,6 +428,9 @@ Route::prefix('v1')->group(function () {
                 Route::post('drafts', [PlatformMailController::class, 'saveDraft']);
                 Route::delete('messages/{message}', [PlatformMailController::class, 'destroyMessage'])->whereNumber('message');
                 Route::post('messages/{message}/reply', [PlatformMailController::class, 'reply'])->whereNumber('message');
+                Route::get('messages/{message}/similar-replies', [PlatformMailController::class, 'similarReplies'])->whereNumber('message');
+                Route::post('messages/{message}/save-reply-memory', [PlatformMailController::class, 'saveReplyMemory'])->whereNumber('message');
+                Route::delete('messages/{message}/reply-memory', [PlatformMailController::class, 'clearReplyMemory'])->whereNumber('message');
                 Route::post('messages/{message}/read', [PlatformMailController::class, 'markRead'])->whereNumber('message');
                 Route::post('sync', [PlatformMailController::class, 'sync']);
                 Route::get('compose-templates', [PlatformMailController::class, 'listComposeTemplates']);
@@ -475,6 +479,14 @@ Route::prefix('v1')->group(function () {
                 Route::get('preview/context', [PlatformWhatsAppController::class, 'previewContext']);
                 Route::get('preview/catalog', [PlatformWhatsAppController::class, 'previewCatalog']);
                 Route::post('preview/simulate', [PlatformWhatsAppController::class, 'previewSimulate']);
+
+                Route::get('training', [PlatformWhatsAppTrainingController::class, 'index']);
+                Route::post('training', [PlatformWhatsAppTrainingController::class, 'store']);
+                Route::patch('training/{id}', [PlatformWhatsAppTrainingController::class, 'update'])
+                    ->whereNumber('id');
+                Route::delete('training/{id}', [PlatformWhatsAppTrainingController::class, 'destroy'])
+                    ->whereNumber('id');
+                Route::post('training/preview', [PlatformWhatsAppTrainingController::class, 'preview']);
             });
 
         Route::prefix('admin/push')

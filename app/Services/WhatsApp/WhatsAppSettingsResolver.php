@@ -155,6 +155,7 @@ class WhatsAppSettingsResolver
         $out = array_merge(self::defaults(), $settings);
         $out['enabled'] = (bool) ($out['enabled'] ?? false);
         $out['enable_whatsapp_orders'] = (bool) ($out['enable_whatsapp_orders'] ?? true);
+        $out['agent_name'] = trim((string) ($out['agent_name'] ?? ''));
 
         return $out;
     }

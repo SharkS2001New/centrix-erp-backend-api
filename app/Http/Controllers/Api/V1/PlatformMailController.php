@@ -169,15 +169,25 @@ class PlatformMailController extends Controller
             $q->where(function ($inner) use ($term) {
                 $inner->where('subject', 'like', $term)
                     ->orWhere('from_address', 'like', $term)
-                    ->orWhere('body_text', 'like', $term);
+                    ->orWhere('from_name', 'like', $term)
+                    ->orWhere('body_text', 'like', $term)
+                    ->orWhere('to_addresses', 'like', $term);
             });
         }
 
-        $rows = $q->limit(100)->get()->map(function (PlatformMailMessage $message) {
+        $limit = min(50, max(1, (int) $request->query('limit', 20)));
+        $offset = max(0, (int) $request->query('offset', 0));
+        $total = (clone $q)->count();
+
+        $rows = $q->offset($offset)->limit($limit)->get()->map(function (PlatformMailMessage $message) {
             $payload = $message->toArray();
             $kind = is_array($message->meta) ? ($message->meta['kind'] ?? null) : null;
             $payload['kind'] = $kind;
             $payload['kind_label'] = PlatformMailStats::labelForKind(is_string($kind) ? $kind : null);
+            $payload['body_is_snippet'] = is_array($message->meta)
+                && (($message->meta['body_storage'] ?? '') === 'imap_snippet');
+            // List views only need a short preview.
+            $payload['body_text'] = \Illuminate\Support\Str::limit((string) ($message->body_text ?? ''), 500, '…');
 
             return $payload;
         });
@@ -201,6 +211,10 @@ class PlatformMailController extends Controller
         return response()->json([
             'data' => $rows,
             'unread_count' => $unreadQuery->count(),
+            'total' => $total,
+            'limit' => $limit,
+            'offset' => $offset,
+            'has_more' => ($offset + $rows->count()) < $total,
             'stats' => PlatformMailStats::summarize(),
             'active_account_id' => $accountId !== '' ? $accountId : (PlatformMailSettingsResolver::resolve()['active_account_id'] ?? null),
             'accounts' => PlatformMailSettingsResolver::resolve()['accounts'] ?? [],
@@ -211,6 +225,26 @@ class PlatformMailController extends Controller
     {
         if ($message->folder === 'inbox' && ! $message->read_at) {
             $message->update(['read_at' => now()]);
+            $message->refresh();
+        }
+
+        $bodyFromImap = false;
+        $bodyDetail = null;
+        $displayBody = (string) ($message->body_text ?? '');
+        $meta = is_array($message->meta) ? $message->meta : [];
+        $needsImapBody = $message->direction === 'inbound'
+            && (
+                ($meta['body_storage'] ?? '') === 'imap_snippet'
+                || (trim((string) ($message->imap_uid ?? '')) !== '' && mb_strlen($displayBody) <= 520)
+            );
+
+        if ($needsImapBody) {
+            $fetched = $this->mailbox->fetchRemoteBody($message);
+            $bodyDetail = $fetched['message'] ?? null;
+            if (($fetched['ok'] ?? false) && is_string($fetched['body'] ?? null) && $fetched['body'] !== '') {
+                $displayBody = $fetched['body'];
+                $bodyFromImap = true;
+            }
         }
 
         $thread = PlatformMailMessage::query()
@@ -221,17 +255,33 @@ class PlatformMailController extends Controller
                     ->orWhere('id', $message->id);
             })
             ->orderBy('id')
-            ->get();
+            ->get()
+            ->map(function (PlatformMailMessage $row) use ($message, $displayBody, $bodyFromImap) {
+                $payload = $row->toArray();
+                if ($row->id === $message->id && $bodyFromImap) {
+                    $payload['body_text'] = $displayBody;
+                    $payload['body_from_imap'] = true;
+                } elseif (is_array($row->meta) && ($row->meta['body_storage'] ?? '') === 'imap_snippet') {
+                    $payload['body_is_snippet'] = true;
+                }
+
+                return $payload;
+            });
+
+        $data = array_merge($message->fresh()->toArray(), [
+            'body_text' => $displayBody,
+            'body_from_imap' => $bodyFromImap,
+            'body_is_snippet' => ! $bodyFromImap && ($meta['body_storage'] ?? '') === 'imap_snippet',
+            'body_imap_detail' => $bodyDetail,
+            'kind' => $meta['kind'] ?? null,
+            'kind_label' => PlatformMailStats::labelForKind(
+                is_string($meta['kind'] ?? null) ? $meta['kind'] : null
+            ),
+            'saved_for_ai' => (bool) ($meta['reply_memory']['use_for_ai'] ?? false),
+        ]);
 
         return response()->json([
-            'data' => array_merge($message->fresh()->toArray(), [
-                'kind' => is_array($message->meta) ? ($message->meta['kind'] ?? null) : null,
-                'kind_label' => PlatformMailStats::labelForKind(
-                    is_array($message->meta) && is_string($message->meta['kind'] ?? null)
-                        ? $message->meta['kind']
-                        : null
-                ),
-            ]),
+            'data' => $data,
             'thread' => $thread,
         ]);
     }
@@ -382,13 +432,161 @@ class PlatformMailController extends Controller
 
     public function destroyMessage(PlatformMailMessage $message)
     {
-        if (! in_array($message->folder, ['drafts', 'sent'], true) && $message->direction !== 'outbound') {
-            // Allow deleting drafts always; allow trash of outbound/sent; inbox can be deleted too for cleanup.
-        }
+        $wasUnread = $message->folder === 'inbox' && $message->read_at === null;
+        $accountId = $message->mailbox_account_id ? (string) $message->mailbox_account_id : null;
+
+        $remote = $this->mailbox->deleteRemoteMessage($message);
 
         $message->delete();
 
-        return response()->json(['message' => 'Message deleted.']);
+        $unreadQuery = PlatformMailMessage::query()
+            ->where('folder', 'inbox')
+            ->whereNull('read_at');
+        if ($accountId) {
+            $unreadQuery->where(function ($inner) use ($accountId) {
+                $inner->where('mailbox_account_id', $accountId)->orWhereNull('mailbox_account_id');
+            });
+        }
+
+        return response()->json([
+            'message' => ($remote['remote'] ?? false)
+                ? 'Message deleted from mailbox and email account.'
+                : 'Message deleted.',
+            'remote_deleted' => (bool) ($remote['remote'] ?? false),
+            'remote_detail' => $remote['message'] ?? null,
+            'was_unread' => $wasUnread,
+            'unread_count' => $unreadQuery->count(),
+        ]);
+    }
+
+    public function similarReplies(PlatformMailMessage $message)
+    {
+        $subject = trim((string) preg_replace('/^(re|fw|fwd):\s*/i', '', (string) ($message->subject ?? '')));
+        $from = strtolower(trim((string) ($message->from_address ?? '')));
+
+        // Only examples the admin explicitly saved for AI reply memory.
+        $query = PlatformMailMessage::query()
+            ->where('folder', 'sent')
+            ->where('direction', 'outbound')
+            ->where('meta->reply_memory->use_for_ai', true)
+            ->orderByDesc('id')
+            ->limit(12);
+
+        if ($from !== '' || $subject !== '') {
+            $query->where(function ($q) use ($from, $subject) {
+                if ($from !== '') {
+                    $q->orWhere('to_addresses', 'like', '%'.$from.'%')
+                        ->orWhere('meta->reply_memory->from_address', $from);
+                }
+                if ($subject !== '' && mb_strlen($subject) >= 4) {
+                    $q->orWhere('subject', 'like', '%'.$subject.'%')
+                        ->orWhere('meta->reply_memory->subject_norm', 'like', '%'.$subject.'%');
+                }
+            });
+        }
+
+        $rows = $query->get(['id', 'subject', 'body_text', 'to_addresses', 'sent_at', 'in_reply_to', 'meta'])
+            ->map(fn (PlatformMailMessage $row) => [
+                'id' => $row->id,
+                'subject' => $row->subject,
+                'body_text' => \Illuminate\Support\Str::limit((string) $row->body_text, 1200),
+                'to_addresses' => $row->to_addresses,
+                'sent_at' => optional($row->sent_at)?->toIso8601String(),
+                'inbound_snippet' => is_array($row->meta)
+                    ? ($row->meta['reply_memory']['inbound_snippet'] ?? null)
+                    : null,
+                'saved_for_ai' => true,
+            ])
+            ->values()
+            ->all();
+
+        return response()->json([
+            'data' => $rows,
+            'inbound' => [
+                'id' => $message->id,
+                'subject' => $message->subject,
+                'from_address' => $message->from_address,
+                'from_name' => $message->from_name,
+                'body_text' => \Illuminate\Support\Str::limit((string) $message->body_text, 2000),
+            ],
+        ]);
+    }
+
+    /**
+     * Opt-in: mark this sent reply as an AI memory example for similar future emails.
+     */
+    public function saveReplyMemory(Request $request, PlatformMailMessage $message)
+    {
+        if ($message->direction !== 'outbound' || $message->folder !== 'sent') {
+            return response()->json(['message' => 'Only sent replies can be saved for AI memory.'], 422);
+        }
+
+        $data = $request->validate([
+            'inbound_message_id' => 'nullable|integer|exists:platform_mail_messages,id',
+        ]);
+
+        $inbound = null;
+        $inboundId = $data['inbound_message_id'] ?? null;
+        if ($inboundId) {
+            $inbound = PlatformMailMessage::query()->find($inboundId);
+        }
+        if (! $inbound && $message->in_reply_to) {
+            $inbound = PlatformMailMessage::query()
+                ->where('message_id', $message->in_reply_to)
+                ->orWhere('message_id', trim((string) $message->in_reply_to, " \t<>"))
+                ->first();
+        }
+        if (! $inbound && is_array($message->meta) && ! empty($message->meta['inbound_message_id'])) {
+            $inbound = PlatformMailMessage::query()->find($message->meta['inbound_message_id']);
+        }
+
+        $subjectNorm = trim((string) preg_replace(
+            '/^(re|fw|fwd):\s*/i',
+            '',
+            (string) ($inbound?->subject ?? $message->subject ?? '')
+        ));
+        $from = strtolower(trim((string) (
+            $inbound?->from_address
+            ?? (is_array($message->to_addresses) ? ($message->to_addresses[0] ?? '') : '')
+        )));
+
+        $meta = is_array($message->meta) ? $message->meta : [];
+        $meta['kind'] = $meta['kind'] ?? 'reply';
+        $meta['reply_memory'] = [
+            'use_for_ai' => true,
+            'saved_at' => now()->toIso8601String(),
+            'expires_at' => now()->addMonths(3)->toIso8601String(),
+            'from_address' => $from,
+            'subject_norm' => $subjectNorm,
+            'inbound_snippet' => \Illuminate\Support\Str::limit((string) ($inbound?->body_text ?? ''), 500),
+            'inbound_message_id' => $inbound?->id,
+        ];
+
+        $message->update(['meta' => $meta]);
+
+        return response()->json([
+            'data' => $message->fresh(),
+            'saved_for_ai' => true,
+            'message' => 'Saved for future similar responses (kept up to 3 months).',
+        ]);
+    }
+
+    public function clearReplyMemory(PlatformMailMessage $message)
+    {
+        $meta = is_array($message->meta) ? $message->meta : [];
+        if (isset($meta['reply_memory']) && is_array($meta['reply_memory'])) {
+            $meta['reply_memory']['use_for_ai'] = false;
+            $meta['reply_memory']['cleared_at'] = now()->toIso8601String();
+        } else {
+            $meta['reply_memory'] = ['use_for_ai' => false];
+        }
+        $message->update(['meta' => $meta]);
+
+        return response()->json([
+            'data' => $message->fresh(),
+            'saved_for_ai' => false,
+            'message' => 'Removed from future AI responses.',
+        ]);
     }
 
     public function reply(Request $request, PlatformMailMessage $message)
@@ -397,6 +595,7 @@ class PlatformMailController extends Controller
             'body' => 'required|string',
             'subject' => 'nullable|string|max:500',
             'to' => 'nullable|email',
+            'save_for_ai' => 'sometimes|boolean',
         ]);
 
         $to = $data['to']
@@ -413,16 +612,44 @@ class PlatformMailController extends Controller
             $subject = 'Re: '.$subject;
         }
 
+        $subjectNorm = trim((string) preg_replace('/^(re|fw|fwd):\s*/i', '', (string) ($message->subject ?? '')));
+        $saveForAi = (bool) ($data['save_for_ai'] ?? false);
+
+        $meta = [
+            'kind' => 'reply',
+            'organization_id' => $message->organization_id,
+            'inbound_message_id' => $message->id,
+        ];
+
+        // Only store as AI memory when the admin opts in (auto-pruned after ~3 months).
+        if ($saveForAi) {
+            $meta['reply_memory'] = [
+                'use_for_ai' => true,
+                'saved_at' => now()->toIso8601String(),
+                'expires_at' => now()->addMonths(3)->toIso8601String(),
+                'from_address' => strtolower(trim((string) ($message->from_address ?? ''))),
+                'subject_norm' => $subjectNorm,
+                'inbound_snippet' => \Illuminate\Support\Str::limit((string) ($message->body_text ?? ''), 500),
+                'inbound_message_id' => $message->id,
+            ];
+        }
+
         $msg = $this->mailbox->send(
             $to,
             $subject,
             $data['body'],
             $request->user(),
-            ['kind' => 'reply', 'organization_id' => $message->organization_id],
+            $meta,
             $message,
         );
 
-        return response()->json(['data' => $msg, 'message' => 'Reply sent.'], 201);
+        return response()->json([
+            'data' => $msg,
+            'saved_for_ai' => $saveForAi,
+            'message' => $saveForAi
+                ? 'Reply sent and saved for AI suggestions.'
+                : 'Reply sent.',
+        ], 201);
     }
 
     public function markRead(PlatformMailMessage $message)

@@ -36,14 +36,42 @@ class WhatsAppOrderService
 
     public function lastSaleForCustomer(Customer $customer): ?Sale
     {
+        $orgId = (int) $customer->organization_id;
+        $customerNum = (int) $customer->customer_num;
+        if ($orgId <= 0 || $customerNum <= 0) {
+            return null;
+        }
+
+        // Same scope as GET /customers/{num}/sales, excluding voided statuses only.
         return Sale::query()
             ->with(['items.product.unit'])
-            ->where('customer_num', $customer->customer_num)
-            ->where('organization_id', $customer->organization_id)
+            ->where('organization_id', $orgId)
+            ->where('customer_num', $customerNum)
             ->whereNull('deleted_at')
-            ->whereNotIn('status', ['cancelled', 'held'])
+            ->whereNotIn('status', ['cancelled', 'expired'])
+            ->whereHas('items')
             ->orderByDesc('id')
             ->first();
+    }
+
+    /**
+     * How many orders are available to repeat for this customer (org-scoped).
+     */
+    public function repeatableOrderCount(Customer $customer): int
+    {
+        $orgId = (int) $customer->organization_id;
+        $customerNum = (int) $customer->customer_num;
+        if ($orgId <= 0 || $customerNum <= 0) {
+            return 0;
+        }
+
+        return (int) Sale::query()
+            ->where('organization_id', $orgId)
+            ->where('customer_num', $customerNum)
+            ->whereNull('deleted_at')
+            ->whereNotIn('status', ['cancelled', 'expired'])
+            ->whereHas('items')
+            ->count();
     }
 
     /** @return Collection<int, array{product_code: string, product_name: string, unit_price: float, uom: mixed}> */

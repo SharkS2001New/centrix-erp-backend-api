@@ -446,6 +446,7 @@ class OrganizationPlatformConfigService
         if (! $gate->whatsappPlatformEnabled()) {
             unset(
                 $data['enabled'],
+                $data['agent_name'],
                 $data['display_phone'],
                 $data['phone_number_id'],
                 $data['waba_id'],

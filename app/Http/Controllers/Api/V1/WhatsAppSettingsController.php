@@ -39,6 +39,7 @@ class WhatsAppSettingsController extends Controller
 
         $data = $request->validate([
             'enabled' => 'sometimes|boolean',
+            'agent_name' => 'sometimes|nullable|string|max:80',
             'display_phone' => 'sometimes|nullable|string|max:32',
             'phone_number_id' => 'sometimes|nullable|string|max:64',
             'waba_id' => 'sometimes|nullable|string|max:64',
@@ -51,7 +52,7 @@ class WhatsAppSettingsController extends Controller
         $data = $this->platformConfig->filterOrgManagerWhatsappPayload($data, $gate);
 
         if ($data === [] && $request->hasAny([
-            'enabled', 'display_phone', 'phone_number_id', 'waba_id', 'access_token', 'bot_user_id', 'branch_id',
+            'enabled', 'agent_name', 'display_phone', 'phone_number_id', 'waba_id', 'access_token', 'bot_user_id', 'branch_id',
         ])) {
             throw ValidationException::withMessages([
                 'enabled' => ['WhatsApp ordering is not enabled for this organization by the platform administrator.'],

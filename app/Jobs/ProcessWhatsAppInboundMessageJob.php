@@ -16,10 +16,22 @@ class ProcessWhatsAppInboundMessageJob implements ShouldQueue
 
     public int $timeout = 120;
 
+    /**
+     * @param  array{
+     *   type?: string,
+     *   text?: string|null,
+     *   image_id?: string|null,
+     *   image_mime?: string|null,
+     *   latitude?: float|null,
+     *   longitude?: float|null,
+     *   location_name?: string|null,
+     *   location_address?: string|null
+     * }  $inbound
+     */
     public function __construct(
         public string $phoneNumberId,
         public string $fromPhone,
-        public string $text,
+        public array $inbound = [],
         public ?string $providerMessageId = null,
     ) {}
 
@@ -33,7 +45,12 @@ class ProcessWhatsAppInboundMessageJob implements ShouldQueue
         }
 
         try {
-            $botHandler->handleInbound($config, $this->fromPhone, $this->text, $this->providerMessageId);
+            $botHandler->handleInbound(
+                $config,
+                $this->fromPhone,
+                $this->inbound,
+                $this->providerMessageId,
+            );
         } catch (\Throwable $e) {
             report($e);
             Log::error('whatsapp.handler_failed', [

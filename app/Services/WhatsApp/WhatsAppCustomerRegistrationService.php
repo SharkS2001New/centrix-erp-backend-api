@@ -11,8 +11,12 @@ use App\Services\Customers\CustomerNumberAllocator;
 use App\Services\Customers\CustomerRoutePolicy;
 use App\Services\Customers\CustomerUniquenessValidator;
 use App\Services\Erp\CapabilityGate;
+use App\Support\OrganizationPublicStorage;
 use App\Support\PhoneNumber;
+use App\Support\UploadedImageProcessor;
+use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use Throwable;
 
@@ -66,7 +70,11 @@ class WhatsAppCustomerRegistrationService
      *   phone: string,
      *   town?: string|null,
      *   route_id?: int|null,
-     *   branch_id?: int|null
+     *   branch_id?: int|null,
+     *   kra_pin?: string|null,
+     *   latitude?: float|null,
+     *   longitude?: float|null,
+     *   shop_image_path?: string|null
      * }  $input
      * @return array{ok: true, customer: Customer}|array{ok: false, message: string}
      */
@@ -89,15 +97,29 @@ class WhatsAppCustomerRegistrationService
         $town = trim((string) ($input['town'] ?? ''));
         $town = $town !== '' && strtoupper($town) !== 'SKIP' ? $town : null;
 
+        $kraPin = trim((string) ($input['kra_pin'] ?? ''));
+        $kraPin = $kraPin !== '' && strtoupper($kraPin) !== 'SKIP' ? strtoupper($kraPin) : null;
+
+        $latitude = $this->optionalLatitude($input['latitude'] ?? null);
+        $longitude = $this->optionalLongitude($input['longitude'] ?? null);
+
         $branchId = $this->resolveBranchId($config, $botUser, isset($input['branch_id']) ? (int) $input['branch_id'] : null);
         if (! $branchId) {
             return ['ok' => false, 'message' => 'Registration is unavailable right now (no branch configured).'];
         }
 
+        $pendingShopImage = isset($input['shop_image_path']) && is_string($input['shop_image_path'])
+            ? trim($input['shop_image_path'])
+            : '';
+        $pendingShopImage = $pendingShopImage !== '' ? $pendingShopImage : null;
+
         $payload = [
             'customer_name' => $name,
             'phone_number' => $phone,
             'town' => $town,
+            'kra_pin' => $kraPin,
+            'latitude' => $latitude,
+            'longitude' => $longitude,
             'branch_id' => $branchId,
             'customer_type' => 'regular',
             'credit_limit' => 0,
@@ -110,14 +132,25 @@ class WhatsAppCustomerRegistrationService
                 $config->organizationId,
                 $payload['phone_number'],
                 null,
-                null,
+                $kraPin,
             );
 
-            $customer = DB::transaction(function () use ($config, $botUser, $payload) {
+            $customer = DB::transaction(function () use ($config, $botUser, $payload, $pendingShopImage) {
                 $payload['customer_num'] = app(CustomerNumberAllocator::class)
                     ->nextForOrganization($config->organizationId);
                 $payload['organization_id'] = $config->organizationId;
                 $payload['created_by'] = (int) $botUser->id;
+
+                if ($pendingShopImage !== null) {
+                    $finalPath = $this->promotePendingShopImage(
+                        $config->organizationId,
+                        (string) $payload['customer_num'],
+                        $pendingShopImage,
+                    );
+                    if ($finalPath !== null) {
+                        $payload['shop_image'] = $finalPath;
+                    }
+                }
 
                 return Customer::query()->create($payload);
             });
@@ -139,6 +172,63 @@ class WhatsAppCustomerRegistrationService
                 'ok' => false,
                 'message' => 'Something went wrong while creating your account.',
             ];
+        }
+    }
+
+    /**
+     * Store a shop photo temporarily until the customer record is created.
+     */
+    public function storePendingShopImage(int $organizationId, string $phone, string $bytes, string $mime): ?string
+    {
+        $mime = strtolower(trim($mime));
+        $allowed = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp', 'image/gif'];
+        if (! in_array($mime, $allowed, true) || $bytes === '') {
+            return null;
+        }
+
+        $tmp = tempnam(sys_get_temp_dir(), 'wa-shop-');
+        if ($tmp === false) {
+            return null;
+        }
+
+        $ext = match ($mime) {
+            'image/png' => 'png',
+            'image/webp' => 'webp',
+            'image/gif' => 'gif',
+            default => 'jpg',
+        };
+        $pathWithExt = $tmp.'.'.$ext;
+        @unlink($tmp);
+
+        if (file_put_contents($pathWithExt, $bytes) === false) {
+            return null;
+        }
+
+        try {
+            $file = new UploadedFile($pathWithExt, 'shop.'.$ext, $mime, null, true);
+            $directory = OrganizationPublicStorage::path($organizationId, 'whatsapp-pending');
+            $stored = app(UploadedImageProcessor::class)->storePublicImage($file, $directory);
+
+            return $stored['path'] ?? null;
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        } finally {
+            @unlink($pathWithExt);
+        }
+    }
+
+    public function discardPendingShopImage(?string $path): void
+    {
+        if ($path === null || $path === '') {
+            return;
+        }
+
+        try {
+            Storage::disk('public')->delete($path);
+        } catch (Throwable) {
+            // best-effort cleanup
         }
     }
 
@@ -187,6 +277,34 @@ class WhatsAppCustomerRegistrationService
         return null;
     }
 
+    protected function promotePendingShopImage(int $organizationId, string $customerNum, string $pendingPath): ?string
+    {
+        $disk = Storage::disk('public');
+        if (! $disk->exists($pendingPath)) {
+            return null;
+        }
+
+        $ext = strtolower(pathinfo($pendingPath, PATHINFO_EXTENSION) ?: 'jpg');
+        $final = OrganizationPublicStorage::path($organizationId, 'customers', $customerNum).'/shop.'.$ext;
+
+        try {
+            if ($disk->exists($final)) {
+                $disk->delete($final);
+            }
+            $disk->makeDirectory(dirname($final));
+            if (! $disk->move($pendingPath, $final)) {
+                $disk->put($final, $disk->get($pendingPath));
+                $disk->delete($pendingPath);
+            }
+
+            return $final;
+        } catch (Throwable $e) {
+            report($e);
+
+            return null;
+        }
+    }
+
     protected function resolveBranchId(ResolvedWhatsAppConfig $config, User $botUser, ?int $requested): ?int
     {
         if ($requested && $requested > 0) {
@@ -224,5 +342,37 @@ class WhatsAppCustomerRegistrationService
         }
 
         return $normalized;
+    }
+
+    protected function optionalLatitude(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (! is_numeric($value)) {
+            return null;
+        }
+        $n = (float) $value;
+        if ($n < -90 || $n > 90) {
+            return null;
+        }
+
+        return $n;
+    }
+
+    protected function optionalLongitude(mixed $value): ?float
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+        if (! is_numeric($value)) {
+            return null;
+        }
+        $n = (float) $value;
+        if ($n < -180 || $n > 180) {
+            return null;
+        }
+
+        return $n;
     }
 }

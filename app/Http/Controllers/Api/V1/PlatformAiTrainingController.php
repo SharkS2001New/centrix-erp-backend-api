@@ -233,6 +233,8 @@ class PlatformAiTrainingController extends Controller
             'skip_training' => 'sometimes|boolean',
             'system_hint' => 'nullable|string|max:5000',
             'output_format' => 'sometimes|string|max:20',
+            'inbound_email' => 'nullable|array',
+            'similar_replies' => 'nullable|array',
         ]);
 
         $runtime = \App\Services\Ai\AiSettingsResolver::resolveRuntimeForPlatformTraining();
@@ -250,6 +252,40 @@ class PlatformAiTrainingController extends Controller
             ?? 'You help write Centrix platform emails. Return JSON only with subject and body keys. Keep placeholders unchanged.';
 
         $userPrompt = "Mode: {$mode}\nInstruction: {$instruction}\nCurrent subject:\n{$subject}\n\nCurrent body:\n{$body}\n";
+
+        if ($mode === 'reply' || ! empty($data['inbound_email'])) {
+            $inbound = is_array($data['inbound_email'] ?? null) ? $data['inbound_email'] : [];
+            $similar = is_array($data['similar_replies'] ?? null) ? $data['similar_replies'] : [];
+            $inboundBlock = "From: ".($inbound['from_name'] ?? '')." <".($inbound['from_address'] ?? '').">\n"
+                ."Subject: ".($inbound['subject'] ?? '')."\n\n"
+                .($inbound['body_text'] ?? '');
+            $memoryBlock = '';
+            foreach (array_slice($similar, 0, 6) as $i => $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $n = $i + 1;
+                $memoryBlock .= "\n--- Past reply {$n} ---\n"
+                    .'Subject: '.($row['subject'] ?? '')."\n"
+                    .'Body: '.($row['body_text'] ?? '')."\n";
+                if (! empty($row['inbound_snippet'])) {
+                    $memoryBlock .= 'Original inbound snippet: '.$row['inbound_snippet']."\n";
+                }
+            }
+            $userPrompt =
+                "Mode: reply\nInstruction: ".($instruction !== '' ? $instruction : 'Draft a professional reply to the inbound email.')."\n\n"
+                ."Inbound email to answer:\n{$inboundBlock}\n\n"
+                .($memoryBlock !== ''
+                    ? "How we replied to similar emails before (match tone and approach; do not copy blindly):\n{$memoryBlock}\n"
+                    : "No prior similar replies on file — write a sensible first reply.\n")
+                ."Draft reply so far (may be empty):\nSubject:\n{$subject}\n\nBody:\n{$body}\n";
+            if (empty($data['system_hint'])) {
+                $system = 'You help the Centrix platform admin reply to inbound mailbox emails. '
+                    .'Read the inbound message and any past similar replies, then suggest a sensible response. '
+                    .'Match how similar emails were answered when memory is provided. '
+                    .'Return JSON only: {"subject":"...","body":"..."}. Kenya business English, professional and concise.';
+            }
+        }
         $baseUrl = rtrim((string) ($runtime['base_url'] ?? 'https://api.openai.com/v1'), '/');
         $model = $runtime['model'] ?? 'gpt-4o-mini';
         $apiKey = $runtime['api_key'] ?? null;

@@ -30,13 +30,23 @@ class WhatsAppPlatformPreviewService
 
         $customers = Customer::query()
             ->where('organization_id', $organization->id)
+            ->withCount([
+                'sales as orders_count' => function ($q) use ($organization) {
+                    $q->where('organization_id', $organization->id)
+                        ->whereNull('deleted_at')
+                        ->whereNotIn('status', ['cancelled', 'expired'])
+                        ->whereHas('items');
+                },
+            ])
+            ->orderByDesc('orders_count')
             ->orderBy('customer_name')
             ->limit(40)
-            ->get(['customer_num', 'customer_name', 'phone_number', 'additional_phone', 'email'])
+            ->get(['id', 'customer_num', 'customer_name', 'phone_number', 'additional_phone', 'email', 'organization_id'])
             ->map(fn (Customer $c) => [
-                'customer_num' => $c->customer_num,
+                'customer_num' => (int) $c->customer_num,
                 'customer_name' => $c->customer_name,
                 'phone' => $c->phone_number ?: $c->additional_phone,
+                'orders_count' => (int) ($c->orders_count ?? 0),
             ])
             ->values()
             ->all();
@@ -281,11 +291,10 @@ class WhatsAppPlatformPreviewService
         ?string $customerNum,
         ?string $phone,
     ): ?Customer {
-        if ($customerNum) {
+        if ($customerNum !== null && trim((string) $customerNum) !== '') {
             return Customer::query()
                 ->where('organization_id', $organization->id)
-                ->where('customer_num', $customerNum)
-                ->whereNull('deleted_at')
+                ->where('customer_num', (int) $customerNum)
                 ->first();
         }
 

@@ -46,7 +46,36 @@ class WhatsAppBotHandler
 
     public const STATE_REGISTER_ROUTE = 'register_route';
 
+    public const STATE_REGISTER_KRA = 'register_kra';
+
+    public const STATE_REGISTER_PHOTO = 'register_photo';
+
+    public const STATE_REGISTER_LOCATION = 'register_location';
+
+    public const STATE_REGISTER_LOCATION_CONFIRM = 'register_location_confirm';
+
+    /** @var list<string> */
+    protected const REGISTER_PAYLOAD_KEYS = [
+        'register_name',
+        'register_town',
+        'register_route_id',
+        'register_routes',
+        'register_kra_pin',
+        'register_shop_image_path',
+        'register_latitude',
+        'register_longitude',
+        'register_pending_latitude',
+        'register_pending_longitude',
+    ];
+
     protected bool $dryRun = false;
+
+    /**
+     * Current inbound message (text / image / location).
+     *
+     * @var array<string, mixed>
+     */
+    protected array $inbound = ['type' => 'text', 'text' => ''];
 
     /** Simulator session: ephemeral chat state; never sends Meta WhatsApp messages. */
     protected bool $simulatorSession = false;
@@ -66,6 +95,7 @@ class WhatsAppBotHandler
         protected StockUomDisplayService $stockUom,
         protected MetaWhatsAppClient $whatsapp,
         protected WhatsAppConfigResolver $configResolver,
+        protected WhatsAppTrainingReplyMatcher $trainingReplies,
     ) {}
 
     /**
@@ -127,6 +157,11 @@ class WhatsAppBotHandler
                 $customer = $this->resolveCustomer($config, $conversation, $normalizedPhone);
             }
 
+            $this->inbound = [
+                'type' => 'text',
+                'text' => $text,
+            ];
+
             $reply = $this->dispatch(
                 $config,
                 $botUser,
@@ -180,10 +215,22 @@ class WhatsAppBotHandler
         return $conversation;
     }
 
+    /**
+     * @param  array{
+     *   type?: string,
+     *   text?: string|null,
+     *   image_id?: string|null,
+     *   image_mime?: string|null,
+     *   latitude?: float|null,
+     *   longitude?: float|null,
+     *   location_name?: string|null,
+     *   location_address?: string|null
+     * }  $inbound
+     */
     public function handleInbound(
         ResolvedWhatsAppConfig $config,
         string $fromPhone,
-        string $text,
+        array $inbound,
         ?string $providerMessageId,
     ): void {
         if ($providerMessageId) {
@@ -195,6 +242,9 @@ class WhatsAppBotHandler
                 return;
             }
         }
+
+        $this->inbound = $inbound;
+        $text = $this->inboundTextForLog($inbound);
 
         $botUser = $this->configResolver->botUser($config);
         if (! $botUser) {
@@ -214,13 +264,14 @@ class WhatsAppBotHandler
         $conversation = $this->loadConversation($config, $normalizedPhone);
         $customer = $this->resolveCustomer($config, $conversation, $normalizedPhone);
 
+        $rawText = trim((string) ($inbound['text'] ?? ''));
         $reply = $this->dispatch(
             $config,
             $botUser,
             $conversation,
             $customer,
-            $this->normalizeInput($text),
-            $text,
+            $this->normalizeInput($rawText),
+            $rawText,
         );
 
         $this->persistConversation($conversation, $customer);
@@ -241,6 +292,33 @@ class WhatsAppBotHandler
         }
     }
 
+    /**
+     * @param  array<string, mixed>  $inbound
+     */
+    protected function inboundTextForLog(array $inbound): string
+    {
+        $type = (string) ($inbound['type'] ?? 'text');
+        $text = trim((string) ($inbound['text'] ?? ''));
+
+        if ($type === 'location') {
+            $lat = $inbound['latitude'] ?? null;
+            $lng = $inbound['longitude'] ?? null;
+
+            return sprintf(
+                '[location %s,%s]%s',
+                is_numeric($lat) ? (string) $lat : '?',
+                is_numeric($lng) ? (string) $lng : '?',
+                $text !== '' ? ' '.$text : '',
+            );
+        }
+
+        if ($type === 'image') {
+            return $text !== '' ? $text : '[image]';
+        }
+
+        return $text;
+    }
+
     protected function dispatch(
         ResolvedWhatsAppConfig $config,
         User $botUser,
@@ -253,12 +331,12 @@ class WhatsAppBotHandler
             if ($customer) {
                 $conversation->state = self::STATE_MAIN_MENU;
 
-                return $this->mainMenuMessage($customer);
+                return $this->withAgentIntro($config, $this->mainMenuMessage($customer), $input);
             }
 
             $conversation->state = self::STATE_UNKNOWN;
 
-            return $this->unknownCustomerMessage($config);
+            return $this->withAgentIntro($config, $this->unknownCustomerMessage($config), $input);
         }
 
         if ($input === 'CANCEL') {
@@ -269,15 +347,7 @@ class WhatsAppBotHandler
                 return "Cart cleared.\n\n".$this->mainMenuMessage($customer);
             }
 
-            $conversation->payload = array_diff_key(
-                $conversation->payload ?? [],
-                array_flip([
-                    'register_name',
-                    'register_town',
-                    'register_route_id',
-                    'register_routes',
-                ]),
-            );
+            $this->clearRegistrationPayload($conversation);
             $conversation->state = self::STATE_UNKNOWN;
 
             return $this->unknownCustomerMessage($config);
@@ -288,6 +358,10 @@ class WhatsAppBotHandler
                 self::STATE_REGISTER_NAME => $this->handleRegisterName($config, $conversation, $botUser, $input, $rawText),
                 self::STATE_REGISTER_TOWN => $this->handleRegisterTown($config, $conversation, $botUser, $input, $rawText),
                 self::STATE_REGISTER_ROUTE => $this->handleRegisterRoute($config, $conversation, $botUser, $input, $rawText),
+                self::STATE_REGISTER_KRA => $this->handleRegisterKra($config, $conversation, $botUser, $input, $rawText),
+                self::STATE_REGISTER_PHOTO => $this->handleRegisterPhoto($config, $conversation, $botUser, $input, $rawText),
+                self::STATE_REGISTER_LOCATION => $this->handleRegisterLocation($config, $conversation, $botUser, $input, $rawText),
+                self::STATE_REGISTER_LOCATION_CONFIRM => $this->handleRegisterLocationConfirm($config, $conversation, $botUser, $input, $rawText),
                 self::STATE_HANDOFF => $this->handleHandoffState($config, $conversation, null, $input),
                 default => $this->handleUnknownCustomer($config, $conversation, $botUser, $input, $rawText),
             };
@@ -322,6 +396,7 @@ class WhatsAppBotHandler
             '3' => $this->startTrackOrders($conversation, $customer),
             '4', 'HUMAN', 'HELP' => $this->requestHandoff($config, $conversation, $customer, $botUser, $rawText),
             default => $this->tryHandleProductText($config, $conversation, $customer, $input, $botUser)
+                ?? $this->tryHandleTrainedReply($input, $rawText)
                 ?? $this->mainMenuMessage($customer),
         };
     }
@@ -777,15 +852,17 @@ class WhatsAppBotHandler
     {
         $sale = $this->orders->lastSaleForCustomer($customer);
         if (! $sale) {
-            return "No previous order found.\n\n".$this->mainMenuMessage($customer);
+            return "No previous order found for *{$customer->customer_name}* "
+                ."(customer #{$customer->customer_num}) in this organization.\n"
+                ."Reply *1* to place a new order, or choose a customer that already has sales.\n\n"
+                .$this->mainMenuMessage($customer);
         }
 
         $lines = $this->orders->summarizeSaleLines($sale);
-        $conversation->payload = array_merge($conversation->payload ?? [], [
-            'cart' => $lines,
-            'repeat_sale_id' => $sale->id,
-        ]);
-        $conversation->state = self::STATE_REPEAT_CONFIRM;
+        if ($lines === []) {
+            return "Your last order (#{$sale->order_num}) has no line items to repeat.\n\n"
+                .$this->mainMenuMessage($customer);
+        }
 
         $body = "Your last order (#{$sale->order_num}):\n\n";
         foreach ($lines as $line) {
@@ -793,7 +870,14 @@ class WhatsAppBotHandler
         }
         $body .= "\nTotal: *".$this->orders->formatMoney((float) $sale->order_total)."*\n\n";
         $body .= "1️⃣ Yes, place same order\n2️⃣ Edit first\n3️⃣ Cancel";
-        $conversation->payload['repeat_prompt'] = $body;
+
+        // Assign whole payload array — indirect $payload['x'] = writes fail on cast attributes.
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'cart' => $lines,
+            'repeat_sale_id' => $sale->id,
+            'repeat_prompt' => $body,
+        ]);
+        $conversation->state = self::STATE_REPEAT_CONFIRM;
 
         return $body;
     }
@@ -843,6 +927,53 @@ class WhatsAppBotHandler
             ."3️⃣ Track my orders\n"
             ."4️⃣ Talk to someone\n\n"
             ."Reply with a number, or type a product name (e.g. *2 halisi*).";
+    }
+
+    /**
+     * Opening intro for Hi / Hello / Start (not for MENU alone).
+     */
+    protected function withAgentIntro(ResolvedWhatsAppConfig $config, string $body, string $input): string
+    {
+        if (! $this->shouldIncludeAgentIntro($input)) {
+            return $body;
+        }
+
+        $name = $this->agentDisplayName($config);
+
+        return "Hello!\n\n"
+            ."My name is *{$name}*. I am a powered WhatsApp Agent from CentrixERP.\n\n"
+            .$body;
+    }
+
+    protected function shouldIncludeAgentIntro(string $input): bool
+    {
+        if ($input === 'MENU') {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/^(HI|HELLO|HEY|HOLA|HABARI|JAMBO|START|GOOD\s+(MORNING|AFTERNOON|EVENING))/u',
+            $input,
+        );
+    }
+
+    protected function agentDisplayName(ResolvedWhatsAppConfig $config): string
+    {
+        $org = Organization::query()->find($config->organizationId);
+        if ($org) {
+            $settings = WhatsAppSettingsResolver::forOrganization($org);
+            $configured = trim((string) ($settings['agent_name'] ?? ''));
+            if ($configured !== '') {
+                return $configured;
+            }
+
+            $orgName = trim((string) ($org->org_name ?? ''));
+            if ($orgName !== '') {
+                return $orgName;
+            }
+        }
+
+        return 'Centrix Assistant';
     }
 
     protected function browseMessage(
@@ -978,7 +1109,8 @@ class WhatsAppBotHandler
             return $this->requestUnknownContact($config, $conversation, $botUser, $rawText);
         }
 
-        return $this->unknownCustomerMessage($config);
+        return $this->tryHandleTrainedReply($input, $rawText)
+            ?? $this->unknownCustomerMessage($config);
     }
 
     protected function startRegistration(WhatsappConversation $conversation): string
@@ -988,6 +1120,12 @@ class WhatsAppBotHandler
             'register_town' => null,
             'register_route_id' => null,
             'register_routes' => null,
+            'register_kra_pin' => null,
+            'register_shop_image_path' => null,
+            'register_latitude' => null,
+            'register_longitude' => null,
+            'register_pending_latitude' => null,
+            'register_pending_longitude' => null,
         ]);
         $conversation->state = self::STATE_REGISTER_NAME;
 
@@ -1064,7 +1202,7 @@ class WhatsAppBotHandler
             return implode("\n", $lines);
         }
 
-        return $this->finishRegistration($config, $conversation, $botUser, $rawText);
+        return $this->askRegisterKra($conversation);
     }
 
     protected function handleRegisterRoute(
@@ -1087,7 +1225,7 @@ class WhatsAppBotHandler
 
         $index = (int) $input;
         if ($index < 1 || $index > count($routes)) {
-            return "Pick a number from the route list (1–".count($routes).'), or CANCEL.';
+            return 'Pick a number from the route list (1–'.count($routes).'), or CANCEL.';
         }
 
         $route = $routes[$index - 1];
@@ -1095,7 +1233,196 @@ class WhatsAppBotHandler
             'register_route_id' => (int) ($route['id'] ?? 0),
         ]);
 
-        return $this->finishRegistration($config, $conversation, $botUser, $rawText);
+        return $this->askRegisterKra($conversation);
+    }
+
+    protected function askRegisterKra(WhatsappConversation $conversation): string
+    {
+        $conversation->state = self::STATE_REGISTER_KRA;
+
+        return "Optional: what is your *KRA PIN*?\n\n"
+            .'Reply with the PIN, *SKIP* to leave blank, or CANCEL.';
+    }
+
+    protected function handleRegisterKra(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $input,
+        string $rawText,
+    ): string {
+        $kra = trim($rawText);
+        if (strtoupper($kra) === 'SKIP' || $kra === '0') {
+            $kra = '';
+        }
+
+        if ($kra !== '' && mb_strlen($kra) < 5) {
+            return 'That KRA PIN looks too short. Reply with a valid PIN, *SKIP*, or CANCEL.';
+        }
+
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'register_kra_pin' => $kra !== '' ? strtoupper($kra) : null,
+        ]);
+
+        return $this->askRegisterPhoto($conversation);
+    }
+
+    protected function askRegisterPhoto(WhatsappConversation $conversation): string
+    {
+        $conversation->state = self::STATE_REGISTER_PHOTO;
+
+        return "Optional: send a *photo of your shop* so our team can recognize it.\n\n"
+            .'Send a photo, reply *SKIP* to continue without one, or CANCEL.';
+    }
+
+    protected function handleRegisterPhoto(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $input,
+        string $rawText,
+    ): string {
+        $type = (string) ($this->inbound['type'] ?? 'text');
+
+        if ($type === 'image') {
+            $imageId = trim((string) ($this->inbound['image_id'] ?? ''));
+            if ($imageId === '') {
+                return 'We could not read that photo. Please send the shop photo again, *SKIP*, or CANCEL.';
+            }
+
+            $downloaded = $this->whatsapp->downloadMedia($config, $imageId);
+            if ($downloaded === null) {
+                return 'We could not download that photo. Please try again, *SKIP*, or CANCEL.';
+            }
+
+            $path = $this->registration->storePendingShopImage(
+                $config->organizationId,
+                (string) $conversation->phone,
+                $downloaded['bytes'],
+                (string) ($this->inbound['image_mime'] ?? $downloaded['mime_type'] ?? 'image/jpeg'),
+            );
+            if ($path === null) {
+                return 'That image could not be saved. Please send a JPG/PNG photo, *SKIP*, or CANCEL.';
+            }
+
+            $previous = $conversation->payload['register_shop_image_path'] ?? null;
+            if (is_string($previous) && $previous !== '' && $previous !== $path) {
+                $this->registration->discardPendingShopImage($previous);
+            }
+
+            $conversation->payload = array_merge($conversation->payload ?? [], [
+                'register_shop_image_path' => $path,
+            ]);
+
+            return $this->askRegisterLocation($conversation);
+        }
+
+        if (in_array($input, ['SKIP', '0'], true) || strtoupper(trim($rawText)) === 'SKIP') {
+            $previous = $conversation->payload['register_shop_image_path'] ?? null;
+            if (is_string($previous) && $previous !== '') {
+                $this->registration->discardPendingShopImage($previous);
+            }
+            $conversation->payload = array_merge($conversation->payload ?? [], [
+                'register_shop_image_path' => null,
+            ]);
+
+            return $this->askRegisterLocation($conversation);
+        }
+
+        return 'Please *send a photo* of your shop, reply *SKIP* to continue without one, or CANCEL.';
+    }
+
+    protected function askRegisterLocation(WhatsappConversation $conversation): string
+    {
+        $conversation->state = self::STATE_REGISTER_LOCATION;
+
+        return "Optional: share your *shop location* so deliveries are easier.\n\n"
+            ."On WhatsApp, tap 📎 → *Location* → send your current location.\n\n"
+            .'Or reply *SKIP* to continue without saving a location, or CANCEL.';
+    }
+
+    protected function handleRegisterLocation(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $input,
+        string $rawText,
+    ): string {
+        $type = (string) ($this->inbound['type'] ?? 'text');
+
+        if ($type === 'location') {
+            $lat = $this->inbound['latitude'] ?? null;
+            $lng = $this->inbound['longitude'] ?? null;
+            if (! is_numeric($lat) || ! is_numeric($lng)) {
+                return 'We could not read that location. Please share it again, *SKIP*, or CANCEL.';
+            }
+
+            $conversation->payload = array_merge($conversation->payload ?? [], [
+                'register_pending_latitude' => (float) $lat,
+                'register_pending_longitude' => (float) $lng,
+            ]);
+            $conversation->state = self::STATE_REGISTER_LOCATION_CONFIRM;
+
+            return "Got it — we received your current location.\n\n"
+                ."*Is this the location of your shop* so we can save it for easy delivery?\n\n"
+                .'Reply *YES* to save, *NO* / *SKIP* to continue without saving, or CANCEL.';
+        }
+
+        if (in_array($input, ['SKIP', '0'], true) || strtoupper(trim($rawText)) === 'SKIP') {
+            $conversation->payload = array_merge($conversation->payload ?? [], [
+                'register_latitude' => null,
+                'register_longitude' => null,
+                'register_pending_latitude' => null,
+                'register_pending_longitude' => null,
+            ]);
+
+            return $this->finishRegistration($config, $conversation, $botUser, $rawText);
+        }
+
+        return 'Please *share your location* (📎 → Location), reply *SKIP*, or CANCEL.';
+    }
+
+    protected function handleRegisterLocationConfirm(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $input,
+        string $rawText,
+    ): string {
+        if (in_array($input, ['YES', 'Y', '1'], true)) {
+            $lat = $conversation->payload['register_pending_latitude'] ?? null;
+            $lng = $conversation->payload['register_pending_longitude'] ?? null;
+            if (! is_numeric($lat) || ! is_numeric($lng)) {
+                return $this->askRegisterLocation($conversation);
+            }
+
+            $conversation->payload = array_merge($conversation->payload ?? [], [
+                'register_latitude' => (float) $lat,
+                'register_longitude' => (float) $lng,
+                'register_pending_latitude' => null,
+                'register_pending_longitude' => null,
+            ]);
+
+            return $this->finishRegistration($config, $conversation, $botUser, $rawText);
+        }
+
+        if (in_array($input, ['NO', 'N', 'SKIP', '0', '2'], true)) {
+            $conversation->payload = array_merge($conversation->payload ?? [], [
+                'register_latitude' => null,
+                'register_longitude' => null,
+                'register_pending_latitude' => null,
+                'register_pending_longitude' => null,
+            ]);
+
+            return $this->finishRegistration($config, $conversation, $botUser, $rawText);
+        }
+
+        // Allow resending a different pin while confirming.
+        if (($this->inbound['type'] ?? '') === 'location') {
+            return $this->handleRegisterLocation($config, $conversation, $botUser, $input, $rawText);
+        }
+
+        return 'Reply *YES* to save this as your shop location for delivery, *NO* / *SKIP* to continue without it, or CANCEL.';
     }
 
     protected function finishRegistration(
@@ -1107,11 +1434,8 @@ class WhatsAppBotHandler
         if ($this->dryRun) {
             $this->wouldMutate[] = 'register_customer';
             $previewName = (string) ($conversation->payload['register_name'] ?? 'your shop');
+            $this->clearRegistrationPayload($conversation);
             $conversation->state = self::STATE_UNKNOWN;
-            $conversation->payload = array_diff_key(
-                $conversation->payload ?? [],
-                array_flip(['register_name', 'register_town', 'register_route_id', 'register_routes']),
-            );
 
             return "✅ *TEST MODE — customer not created*\n\n"
                 ."In production we would register *{$previewName}* against this WhatsApp number.\n\n"
@@ -1128,6 +1452,10 @@ class WhatsAppBotHandler
                 'town' => $conversation->payload['register_town'] ?? null,
                 'route_id' => $conversation->payload['register_route_id'] ?? null,
                 'branch_id' => $config->branchId,
+                'kra_pin' => $conversation->payload['register_kra_pin'] ?? null,
+                'latitude' => $conversation->payload['register_latitude'] ?? null,
+                'longitude' => $conversation->payload['register_longitude'] ?? null,
+                'shop_image_path' => $conversation->payload['register_shop_image_path'] ?? null,
             ],
         );
 
@@ -1144,10 +1472,7 @@ class WhatsAppBotHandler
         /** @var Customer $customer */
         $customer = $result['customer'];
         $conversation->customer_num = $customer->customer_num;
-        $conversation->payload = array_diff_key(
-            $conversation->payload ?? [],
-            array_flip(['register_name', 'register_town', 'register_route_id', 'register_routes']),
-        );
+        $this->clearRegistrationPayload($conversation, discardPendingImage: false);
         $conversation->state = self::STATE_MAIN_MENU;
 
         return "✅ *Registered successfully*\n\n"
@@ -1164,10 +1489,7 @@ class WhatsAppBotHandler
         string $reason,
     ): string {
         $conversation->state = self::STATE_UNKNOWN;
-        $conversation->payload = array_diff_key(
-            $conversation->payload ?? [],
-            array_flip(['register_name', 'register_town', 'register_route_id', 'register_routes']),
-        );
+        $this->clearRegistrationPayload($conversation);
 
         $office = $this->registration->officeContactLine($config->organizationId, $config->branchId);
 
@@ -1183,6 +1505,21 @@ class WhatsAppBotHandler
             ."{$reason}\n\n"
             ."A team member will try to contact you, or {$office}\n\n"
             .'Reply *1* to try again, or *2* for help.';
+    }
+
+    protected function clearRegistrationPayload(
+        WhatsappConversation $conversation,
+        bool $discardPendingImage = true,
+    ): void {
+        $pending = $conversation->payload['register_shop_image_path'] ?? null;
+        if ($discardPendingImage && is_string($pending) && $pending !== '') {
+            $this->registration->discardPendingShopImage($pending);
+        }
+
+        $conversation->payload = array_diff_key(
+            $conversation->payload ?? [],
+            array_flip(self::REGISTER_PAYLOAD_KEYS),
+        );
     }
 
     protected function requestUnknownContact(
@@ -1326,6 +1663,26 @@ class WhatsAppBotHandler
         );
     }
 
+    /**
+     * Platform-trained FAQ / keyword replies (Integrations → WhatsApp → Training).
+     */
+    protected function tryHandleTrainedReply(string $input, string $rawText = ''): ?string
+    {
+        if ($this->isReservedCommand($input)) {
+            return null;
+        }
+
+        $probe = trim($rawText) !== '' ? $rawText : $input;
+        $match = $this->trainingReplies->match($probe);
+        if (! $match) {
+            return null;
+        }
+
+        $reply = trim((string) ($match['response_text'] ?? ''));
+
+        return $reply !== '' ? $reply : null;
+    }
+
     protected function showSearchResults(
         ResolvedWhatsAppConfig $config,
         WhatsappConversation $conversation,
@@ -1339,8 +1696,9 @@ class WhatsAppBotHandler
         $result = $this->catalog->searchInStock($customer, $botUser, $gate, $term, $page);
 
         if ($result['total'] === 0) {
-            return "No in-stock products matched *{$term}*.\n\nTry another name or reply *1* to browse.\n\n"
-                .$this->mainMenuMessage($customer);
+            return $this->tryHandleTrainedReply(strtoupper($term), $term)
+                ?? ("No in-stock products matched *{$term}*.\n\nTry another name or reply *1* to browse.\n\n"
+                    .$this->mainMenuMessage($customer));
         }
 
         if ($result['total'] === 1 && $presetQty !== null && $presetQty > 0) {
