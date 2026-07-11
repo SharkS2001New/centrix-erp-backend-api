@@ -18,14 +18,14 @@ class WhatsAppHandoffService
     public function requestHandoff(
         ResolvedWhatsAppConfig $config,
         WhatsappConversation $conversation,
-        Customer $customer,
+        ?Customer $customer,
         User $botUser,
         ?string $customerMessage = null,
     ): WhatsappHandoff {
         $handoff = WhatsappHandoff::query()->create([
             'organization_id' => $config->organizationId,
             'conversation_id' => $conversation->id,
-            'customer_num' => $customer->customer_num,
+            'customer_num' => $customer?->customer_num,
             'phone' => $conversation->phone,
             'status' => 'open',
             'customer_message' => $customerMessage,
@@ -37,7 +37,10 @@ class WhatsAppHandoffService
         ]);
         $conversation->save();
 
-        $message = "Customer *{$customer->customer_name}* ({$conversation->phone}) asked to speak with someone on WhatsApp.";
+        $who = $customer
+            ? "Customer *{$customer->customer_name}* ({$conversation->phone})"
+            : "Unknown WhatsApp number *{$conversation->phone}*";
+        $message = "{$who} asked to speak with someone on WhatsApp.";
         if ($customerMessage) {
             $message .= ' Last message: "'.mb_substr($customerMessage, 0, 200).'".';
         }

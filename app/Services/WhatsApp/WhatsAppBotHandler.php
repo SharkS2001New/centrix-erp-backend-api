@@ -40,6 +40,12 @@ class WhatsAppBotHandler
 
     public const STATE_UNKNOWN = 'unknown';
 
+    public const STATE_REGISTER_NAME = 'register_name';
+
+    public const STATE_REGISTER_TOWN = 'register_town';
+
+    public const STATE_REGISTER_ROUTE = 'register_route';
+
     protected bool $dryRun = false;
 
     /** Simulator session: ephemeral chat state; never sends Meta WhatsApp messages. */
@@ -56,6 +62,7 @@ class WhatsAppBotHandler
         protected WhatsAppOrderService $orders,
         protected WhatsAppProductCatalogService $catalog,
         protected WhatsAppHandoffService $handoffs,
+        protected WhatsAppCustomerRegistrationService $registration,
         protected StockUomDisplayService $stockUom,
         protected MetaWhatsAppClient $whatsapp,
         protected WhatsAppConfigResolver $configResolver,
@@ -243,26 +250,47 @@ class WhatsAppBotHandler
         string $rawText = '',
     ): string {
         if ($this->isGreetingOrMenuCommand($input)) {
-            $conversation->state = $customer ? self::STATE_MAIN_MENU : self::STATE_UNKNOWN;
+            if ($customer) {
+                $conversation->state = self::STATE_MAIN_MENU;
 
-            return $customer
-                ? $this->mainMenuMessage($customer)
-                : $this->unknownCustomerMessage();
+                return $this->mainMenuMessage($customer);
+            }
+
+            $conversation->state = self::STATE_UNKNOWN;
+
+            return $this->unknownCustomerMessage($config);
         }
 
         if ($input === 'CANCEL') {
-            $conversation->payload = [];
-            $conversation->state = $customer ? self::STATE_MAIN_MENU : self::STATE_UNKNOWN;
+            if ($customer) {
+                $conversation->payload = [];
+                $conversation->state = self::STATE_MAIN_MENU;
 
-            return $customer
-                ? "Cart cleared.\n\n".$this->mainMenuMessage($customer)
-                : $this->unknownCustomerMessage();
+                return "Cart cleared.\n\n".$this->mainMenuMessage($customer);
+            }
+
+            $conversation->payload = array_diff_key(
+                $conversation->payload ?? [],
+                array_flip([
+                    'register_name',
+                    'register_town',
+                    'register_route_id',
+                    'register_routes',
+                ]),
+            );
+            $conversation->state = self::STATE_UNKNOWN;
+
+            return $this->unknownCustomerMessage($config);
         }
 
         if (! $customer) {
-            $conversation->state = self::STATE_UNKNOWN;
-
-            return $this->unknownCustomerMessage();
+            return match ($conversation->state) {
+                self::STATE_REGISTER_NAME => $this->handleRegisterName($config, $conversation, $botUser, $input, $rawText),
+                self::STATE_REGISTER_TOWN => $this->handleRegisterTown($config, $conversation, $botUser, $input, $rawText),
+                self::STATE_REGISTER_ROUTE => $this->handleRegisterRoute($config, $conversation, $botUser, $input, $rawText),
+                self::STATE_HANDOFF => $this->handleHandoffState($config, $conversation, null, $input),
+                default => $this->handleUnknownCustomer($config, $conversation, $botUser, $input, $rawText),
+            };
         }
 
         return match ($conversation->state) {
@@ -511,14 +539,13 @@ class WhatsAppBotHandler
             $this->gateForConfig($config),
             $this->cartLines($conversation),
         );
-        if ($preview['stock_warnings'] !== []) {
-            return "⚠️ Stock issue:\n• ".implode("\n• ", $preview['stock_warnings'])
-                ."\n\nAdjust your cart (reply *EDIT*) or confirm if your branch will fulfil partial stock.\n\n"
-                .$this->reviewMessage($config, $conversation, $customer, $botUser);
-        }
 
         try {
             $lines = $this->placeOrderLines($conversation);
+            if ($lines === []) {
+                return "Your cart is empty. Reply *EDIT* or *1* to add items.\n\n"
+                    .$this->mainMenuMessage($customer);
+            }
 
             if ($this->dryRun) {
                 $this->wouldMutate[] = 'place_order';
@@ -530,11 +557,17 @@ class WhatsAppBotHandler
                 ];
                 $conversation->state = self::STATE_MAIN_MENU;
 
+                $warningNote = $preview['stock_warnings'] !== []
+                    ? "\n⚠️ Stock notes (would still place in live mode):\n• "
+                        .implode("\n• ", $preview['stock_warnings'])."\n"
+                    : '';
+
                 return "✅ *TEST MODE — order not placed*\n\n"
                     ."Would create WhatsApp order for *{$customer->customer_name}* "
                     .'('.count($lines).' line(s)'
                     .($previewTotal > 0 ? ', total ~'.$this->orders->formatMoney($previewTotal) : '')
                     .").\n"
+                    .$warningNote
                     ."No sale, stock, or ledger changes were made.\n\n"
                     .$this->mainMenuMessage($customer);
             }
@@ -545,6 +578,13 @@ class WhatsAppBotHandler
                 $lines,
                 $conversation->payload['notes'] ?? null,
             );
+
+            if (empty($result['order_num']) && empty($result['sale_id'])) {
+                throw new InvalidArgumentException(
+                    'Checkout finished without creating an order. Check sales permissions and stock settings.',
+                );
+            }
+
             $this->lastPlacedOrder = $result;
             $conversation->payload = [
                 'last_sale_id' => $result['sale_id'],
@@ -556,36 +596,34 @@ class WhatsAppBotHandler
                 ? "✅ *Live test order placed*\n\n"
                 : "✅ *Order placed successfully*\n\n";
 
+            $stockNote = $preview['stock_warnings'] !== []
+                ? "\n⚠️ Stock notes at confirm time:\n• ".implode("\n• ", $preview['stock_warnings'])."\n"
+                : '';
+
             return $livePrefix
                 ."Order #*{$result['order_num']}*\n"
                 .'Total: *'.$this->orders->formatMoney((float) ($result['order_total'] ?? 0))."*\n"
-                .'Status: '.ucfirst(str_replace('_', ' ', (string) ($result['status'] ?? 'received')))."\n\n"
+                .'Status: '.ucfirst(str_replace('_', ' ', (string) ($result['status'] ?? 'received')))
+                .$stockNote."\n\n"
                 .$this->mainMenuMessage($customer);
         } catch (InvalidArgumentException $e) {
-            if (! $this->dryRun) {
-                $this->orders->logOrderFailure(
-                    $config->organizationId,
-                    $conversation->id,
-                    $conversation->phone,
-                    $e->getMessage(),
-                    $this->cartLines($conversation),
-                );
-            }
+            $this->recordPlaceOrderFailure($config, $conversation, $e);
 
-            return "Could not place order: {$e->getMessage()}\n\n".$this->reviewMessage($config, $conversation, $customer, $botUser);
+            return "❌ Could not place order: {$e->getMessage()}\n\n"
+                .$this->reviewMessage($config, $conversation, $customer, $botUser);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $message = collect($e->errors())->flatten()->filter()->first()
+                ?: ($e->getMessage() ?: 'Validation failed while placing the order.');
+            $this->recordPlaceOrderFailure($config, $conversation, $e, (string) $message);
+
+            return "❌ Could not place order: {$message}\n\n"
+                .$this->reviewMessage($config, $conversation, $customer, $botUser);
         } catch (\Throwable $e) {
             report($e);
-            if (! $this->dryRun) {
-                $this->orders->logOrderFailure(
-                    $config->organizationId,
-                    $conversation->id,
-                    $conversation->phone,
-                    $e->getMessage(),
-                    $this->cartLines($conversation),
-                );
-            }
+            $this->recordPlaceOrderFailure($config, $conversation, $e);
 
-            return "Something went wrong placing your order. Please try again or reply *4* to talk to our team.\n\n"
+            return "❌ Something went wrong placing your order. The error was logged for support.\n"
+                ."Please try again or reply *4* to talk to our team.\n\n"
                 .$this->reviewMessage($config, $conversation, $customer, $botUser);
         }
     }
@@ -628,6 +666,11 @@ class WhatsAppBotHandler
             }
 
             $result = $this->orders->placeOrder($botUser, $customer, $lines);
+            if (empty($result['order_num']) && empty($result['sale_id'])) {
+                throw new InvalidArgumentException(
+                    'Checkout finished without creating an order. Check sales permissions and stock settings.',
+                );
+            }
             $this->lastPlacedOrder = $result;
             $conversation->payload = [];
             $conversation->state = self::STATE_MAIN_MENU;
@@ -640,20 +683,45 @@ class WhatsAppBotHandler
                 ."Order #*{$result['order_num']}*\n"
                 .'Total: *'.$this->orders->formatMoney((float) ($result['order_total'] ?? 0))."*\n\n"
                 .$this->mainMenuMessage($customer);
+        } catch (InvalidArgumentException $e) {
+            $this->recordPlaceOrderFailure($config, $conversation, $e);
+
+            return "❌ Could not repeat your order: {$e->getMessage()}\n\nReply *4* for help, or *MENU* to start over.";
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $message = collect($e->errors())->flatten()->filter()->first()
+                ?: ($e->getMessage() ?: 'Validation failed while placing the order.');
+            $this->recordPlaceOrderFailure($config, $conversation, $e, (string) $message);
+
+            return "❌ Could not repeat your order: {$message}\n\nReply *4* for help, or *MENU* to start over.";
         } catch (\Throwable $e) {
             report($e);
-            if (! $this->dryRun) {
-                $this->orders->logOrderFailure(
-                    $config->organizationId,
-                    $conversation->id,
-                    $conversation->phone,
-                    $e->getMessage(),
-                    $this->cartLines($conversation),
-                );
-            }
+            $this->recordPlaceOrderFailure($config, $conversation, $e);
 
-            return 'Could not repeat your order. Reply *4* for help, or *MENU* to start over.';
+            return '❌ Could not repeat your order. The error was logged for support. Reply *4* for help, or *MENU* to start over.';
         }
+    }
+
+    protected function recordPlaceOrderFailure(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        \Throwable $e,
+        ?string $messageOverride = null,
+    ): void {
+        if ($this->dryRun) {
+            return;
+        }
+
+        $message = $messageOverride ?: ($e->getMessage() !== '' ? $e->getMessage() : class_basename($e));
+
+        $this->orders->logOrderFailure(
+            $config->organizationId,
+            $conversation->id ? (int) $conversation->id : null,
+            (string) $conversation->phone,
+            $message,
+            $this->cartLines($conversation),
+            $e,
+            $this->simulatorSession,
+        );
     }
 
     protected function handleTrack(
@@ -847,6 +915,9 @@ class WhatsAppBotHandler
             $lines[] = "\nNotes: {$notes}";
         }
         $lines[] = "\nReply *CONFIRM* to place order";
+        if ($preview['stock_warnings'] !== []) {
+            $lines[] = '(CONFIRM still places the order even when stock warnings are shown)';
+        }
         $lines[] = 'Reply *EDIT* to change cart';
         $lines[] = 'Reply *notes:* your delivery note (optional)';
 
@@ -870,24 +941,298 @@ class WhatsAppBotHandler
         return implode("\n", $lines);
     }
 
-    protected function unknownCustomerMessage(): string
+    protected function unknownCustomerMessage(ResolvedWhatsAppConfig $config): string
     {
-        return "We don't recognize this WhatsApp number.\n\n"
-            ."Please contact our sales team to register your shop, or call your account manager.\n\n"
-            .'Reply *MENU* anytime once your number is linked.';
+        $office = $this->registration->officeContactLine($config->organizationId, $config->branchId);
+
+        return "We don't recognize this WhatsApp number yet.\n\n"
+            ."1️⃣ Register your shop (quick signup)\n"
+            ."2️⃣ Talk to someone / call the office\n\n"
+            ."{$office}\n\n"
+            .'Reply *1* to register, or *2* for help.';
     }
 
-    protected function handoffMessage(): string
+    protected function handleUnknownCustomer(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $input,
+        string $rawText,
+    ): string {
+        $conversation->state = self::STATE_UNKNOWN;
+
+        if (in_array($input, ['1', 'REGISTER', 'SIGNUP', 'SIGN UP'], true)) {
+            return $this->startRegistration($conversation);
+        }
+
+        if (in_array($input, ['2', 'HUMAN', 'HELP', 'CALL'], true)) {
+            return $this->requestUnknownContact($config, $conversation, $botUser, $rawText);
+        }
+
+        return $this->unknownCustomerMessage($config);
+    }
+
+    protected function startRegistration(WhatsappConversation $conversation): string
     {
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'register_name' => null,
+            'register_town' => null,
+            'register_route_id' => null,
+            'register_routes' => null,
+        ]);
+        $conversation->state = self::STATE_REGISTER_NAME;
+
+        return "Let's register your shop 📝\n\n"
+            ."What is your *shop / business name*?\n\n"
+            .'Reply with the name, or CANCEL to go back.';
+    }
+
+    protected function handleRegisterName(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $input,
+        string $rawText,
+    ): string {
+        $name = trim($rawText);
+        if ($name === '' || mb_strlen($name) < 2) {
+            return 'Please reply with your shop or business name (at least 2 characters), or CANCEL.';
+        }
+
+        if (in_array(strtoupper($name), ['1', '2', 'MENU', 'HELP', 'HUMAN'], true)) {
+            return 'That looks like a menu choice. Please send your *shop / business name*, or CANCEL.';
+        }
+
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'register_name' => $name,
+        ]);
+        $conversation->state = self::STATE_REGISTER_TOWN;
+
+        return "Thanks. Which *town / area* is the shop in?\n\n"
+            .'Reply with the town, *SKIP* to leave blank, or CANCEL.';
+    }
+
+    protected function handleRegisterTown(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $input,
+        string $rawText,
+    ): string {
+        $town = trim($rawText);
+        if (strtoupper($town) === 'SKIP' || $town === '0') {
+            $town = '';
+        }
+
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'register_town' => $town !== '' ? $town : null,
+        ]);
+
+        $gate = $this->gateForConfig($config);
+        if ($this->registration->requiresRoute($gate)) {
+            $routes = $this->registration->listRoutes($config->organizationId, $config->branchId);
+            if ($routes === []) {
+                return $this->failRegistration(
+                    $config,
+                    $conversation,
+                    $botUser,
+                    $rawText,
+                    'No delivery routes are set up yet, so we cannot finish signup here.',
+                );
+            }
+
+            $conversation->payload = array_merge($conversation->payload ?? [], [
+                'register_routes' => $routes,
+            ]);
+            $conversation->state = self::STATE_REGISTER_ROUTE;
+
+            $lines = ["Which *delivery route* should we assign?\n"];
+            foreach ($routes as $index => $route) {
+                $lines[] = ($index + 1).'. '.$route['route_name'];
+            }
+            $lines[] = "\nReply with the route number, or CANCEL.";
+
+            return implode("\n", $lines);
+        }
+
+        return $this->finishRegistration($config, $conversation, $botUser, $rawText);
+    }
+
+    protected function handleRegisterRoute(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $input,
+        string $rawText,
+    ): string {
+        $routes = $conversation->payload['register_routes'] ?? [];
+        if (! is_array($routes) || $routes === []) {
+            return $this->failRegistration(
+                $config,
+                $conversation,
+                $botUser,
+                $rawText,
+                'Route list expired. Please start registration again.',
+            );
+        }
+
+        $index = (int) $input;
+        if ($index < 1 || $index > count($routes)) {
+            return "Pick a number from the route list (1–".count($routes).'), or CANCEL.';
+        }
+
+        $route = $routes[$index - 1];
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'register_route_id' => (int) ($route['id'] ?? 0),
+        ]);
+
+        return $this->finishRegistration($config, $conversation, $botUser, $rawText);
+    }
+
+    protected function finishRegistration(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $rawText,
+    ): string {
+        if ($this->dryRun) {
+            $this->wouldMutate[] = 'register_customer';
+            $previewName = (string) ($conversation->payload['register_name'] ?? 'your shop');
+            $conversation->state = self::STATE_UNKNOWN;
+            $conversation->payload = array_diff_key(
+                $conversation->payload ?? [],
+                array_flip(['register_name', 'register_town', 'register_route_id', 'register_routes']),
+            );
+
+            return "✅ *TEST MODE — customer not created*\n\n"
+                ."In production we would register *{$previewName}* against this WhatsApp number.\n\n"
+                .$this->unknownCustomerMessage($config);
+        }
+
+        $result = $this->registration->register(
+            $config,
+            $botUser,
+            $this->gateForConfig($config),
+            [
+                'customer_name' => (string) ($conversation->payload['register_name'] ?? ''),
+                'phone' => (string) $conversation->phone,
+                'town' => $conversation->payload['register_town'] ?? null,
+                'route_id' => $conversation->payload['register_route_id'] ?? null,
+                'branch_id' => $config->branchId,
+            ],
+        );
+
+        if (! ($result['ok'] ?? false)) {
+            return $this->failRegistration(
+                $config,
+                $conversation,
+                $botUser,
+                $rawText,
+                (string) ($result['message'] ?? 'Registration failed.'),
+            );
+        }
+
+        /** @var Customer $customer */
+        $customer = $result['customer'];
+        $conversation->customer_num = $customer->customer_num;
+        $conversation->payload = array_diff_key(
+            $conversation->payload ?? [],
+            array_flip(['register_name', 'register_town', 'register_route_id', 'register_routes']),
+        );
+        $conversation->state = self::STATE_MAIN_MENU;
+
+        return "✅ *Registered successfully*\n\n"
+            ."Welcome *{$customer->customer_name}*!\n"
+            .'Your WhatsApp number is now linked. You can place orders below.'
+            ."\n\n".$this->mainMenuMessage($customer);
+    }
+
+    protected function failRegistration(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $rawText,
+        string $reason,
+    ): string {
+        $conversation->state = self::STATE_UNKNOWN;
+        $conversation->payload = array_diff_key(
+            $conversation->payload ?? [],
+            array_flip(['register_name', 'register_town', 'register_route_id', 'register_routes']),
+        );
+
+        $office = $this->registration->officeContactLine($config->organizationId, $config->branchId);
+
+        $this->requestUnknownContact(
+            $config,
+            $conversation,
+            $botUser,
+            trim($rawText) !== '' ? $rawText : $reason,
+            notifyOnly: true,
+        );
+
+        return "We could not finish registration automatically.\n"
+            ."{$reason}\n\n"
+            ."A team member will try to contact you, or {$office}\n\n"
+            .'Reply *1* to try again, or *2* for help.';
+    }
+
+    protected function requestUnknownContact(
+        ResolvedWhatsAppConfig $config,
+        WhatsappConversation $conversation,
+        User $botUser,
+        string $rawMessage,
+        bool $notifyOnly = false,
+    ): string {
+        $office = $this->registration->officeContactLine($config->organizationId, $config->branchId);
+
+        if ($this->dryRun || $this->simulatorSession) {
+            $this->wouldMutate[] = 'handoff';
+            if (! $notifyOnly) {
+                $conversation->state = self::STATE_HANDOFF;
+            }
+
+            return "🧑‍💼 *TEST MODE — handoff not created*\n\n"
+                ."In production staff would be notified for *{$conversation->phone}*.\n"
+                ."{$office}\n\n"
+                .($notifyOnly ? '' : $this->handoffWaitingMessage());
+        }
+
+        $this->handoffs->requestHandoff(
+            $config,
+            $conversation,
+            null,
+            $botUser,
+            trim($rawMessage) !== '' ? trim($rawMessage) : 'Unknown number requested help / registration failed.',
+        );
+
+        if ($notifyOnly) {
+            // Keep unknown state so they can retry; handoff service sets handoff state — restore.
+            $conversation->state = self::STATE_UNKNOWN;
+            if (! $this->dryRun && ! $this->simulatorSession && $conversation->exists) {
+                $conversation->save();
+            }
+        }
+
+        return "Thanks — our team has been notified.\n\n"
+            ."{$office}\n\n"
+            .($notifyOnly
+                ? 'Reply *1* to try registering again.'
+                : $this->handoffWaitingMessage());
+    }
+
+    protected function handoffMessage(ResolvedWhatsAppConfig $config): string
+    {
+        $office = $this->registration->officeContactLine($config->organizationId, $config->branchId);
+
         return "Thanks — our team has been notified and will assist you during business hours.\n\n"
-            .'For urgent orders, please call your sales rep.\n\n'
+            ."{$office}\n\n"
             .'Reply *MENU* to return to ordering.';
     }
 
     protected function requestHandoff(
         ResolvedWhatsAppConfig $config,
         WhatsappConversation $conversation,
-        Customer $customer,
+        ?Customer $customer,
         User $botUser,
         string $rawMessage,
     ): string {
@@ -895,36 +1240,48 @@ class WhatsAppBotHandler
         if ($this->dryRun || $this->simulatorSession) {
             $this->wouldMutate[] = 'handoff';
             $conversation->state = self::STATE_HANDOFF;
+            $label = $customer?->customer_name ?? $conversation->phone;
 
             return "🧑‍💼 *TEST MODE — handoff not created*\n\n"
-                ."In production this would notify staff for *{$customer->customer_name}*.\n"
+                ."In production this would notify staff for *{$label}*.\n"
                 ."No handoff or notifications were saved.\n\n"
                 .$this->handoffWaitingMessage();
         }
 
         $this->handoffs->requestHandoff($config, $conversation, $customer, $botUser, trim($rawMessage) ?: null);
 
-        return $this->handoffMessage();
+        return $this->handoffMessage($config);
     }
 
     protected function handleHandoffState(
         ResolvedWhatsAppConfig $config,
         WhatsappConversation $conversation,
-        Customer $customer,
+        ?Customer $customer,
         string $input,
     ): string {
-        if ($this->handoffs->hasOpenHandoff($config->organizationId, (int) $conversation->id)) {
+        $conversationId = (int) ($conversation->id ?? 0);
+        $hasOpen = $conversationId > 0
+            && $this->handoffs->hasOpenHandoff($config->organizationId, $conversationId);
+
+        if ($hasOpen) {
             if ($this->isGreetingOrMenuCommand($input)) {
-                return "Our team is still handling your request. Please wait for them to follow up, or call your sales rep.\n\n"
+                return "Our team is still handling your request. Please wait for them to follow up.\n\n"
+                    .$this->registration->officeContactLine($config->organizationId, $config->branchId)."\n\n"
                     .$this->handoffWaitingMessage();
             }
 
             return $this->handoffWaitingMessage();
         }
 
-        $conversation->state = self::STATE_MAIN_MENU;
+        if ($customer) {
+            $conversation->state = self::STATE_MAIN_MENU;
 
-        return "Your request has been resolved.\n\n".$this->mainMenuMessage($customer);
+            return "Your request has been resolved.\n\n".$this->mainMenuMessage($customer);
+        }
+
+        $conversation->state = self::STATE_UNKNOWN;
+
+        return "Your request has been resolved.\n\n".$this->unknownCustomerMessage($config);
     }
 
     protected function handoffWaitingMessage(): string
@@ -1308,7 +1665,7 @@ class WhatsAppBotHandler
 
     protected function isReservedCommand(string $input): bool
     {
-        if (in_array($input, ['1', '2', '3', '4', '0', 'CONFIRM', 'EDIT', 'CANCEL', 'MENU', 'HELP', 'HUMAN', 'NEXT', 'MORE', 'START', 'HI', 'HELLO', 'HEY', 'HOLA', 'HABARI', 'JAMBO', 'R', 'W', 'RETAIL', 'WHOLESALE', 'GOOD MORNING', 'GOOD AFTERNOON', 'GOOD EVENING'], true)) {
+        if (in_array($input, ['1', '2', '3', '4', '0', 'CONFIRM', 'EDIT', 'CANCEL', 'MENU', 'HELP', 'HUMAN', 'NEXT', 'MORE', 'START', 'HI', 'HELLO', 'HEY', 'HOLA', 'HABARI', 'JAMBO', 'R', 'W', 'RETAIL', 'WHOLESALE', 'REGISTER', 'SIGNUP', 'CALL', 'GOOD MORNING', 'GOOD AFTERNOON', 'GOOD EVENING'], true)) {
             return true;
         }
 

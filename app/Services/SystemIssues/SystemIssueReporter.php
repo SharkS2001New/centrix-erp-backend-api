@@ -21,6 +21,73 @@ class SystemIssueReporter
         $apiPath = '/'.ltrim($request->path(), '/');
         $technicalDetail = $this->formatException($e);
         $summary = $this->summarizeException($e);
+
+        return $this->persistReport(
+            summary: $summary,
+            technicalDetail: $technicalDetail,
+            organizationId: $user?->organization_id ? (int) $user->organization_id : null,
+            userId: $user?->id ? (int) $user->id : null,
+            apiPath: $apiPath,
+            httpMethod: $request->method(),
+            httpStatus: 500,
+            pageUrl: $request->header('X-Page-Url') ?: null,
+            context: [
+                'source' => 'server',
+                'exception_class' => $e::class,
+                'exception_message' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'user_agent' => substr((string) $request->userAgent(), 0, 500),
+            ],
+            actor: $user,
+        );
+    }
+
+    /**
+     * Persist an operational failure (e.g. WhatsApp live order) for the system issues page.
+     *
+     * @param  array<string, mixed>  $context
+     */
+    public function reportMessage(
+        string $summary,
+        string $technicalDetail,
+        ?int $organizationId = null,
+        ?int $userId = null,
+        array $context = [],
+        string $apiPath = '/api/v1/admin/whatsapp/preview/simulate',
+        ?string $httpMethod = 'POST',
+        ?int $httpStatus = 422,
+        ?User $actor = null,
+    ): ?SystemIssueReport {
+        return $this->persistReport(
+            summary: $summary,
+            technicalDetail: $technicalDetail,
+            organizationId: $organizationId,
+            userId: $userId,
+            apiPath: $apiPath,
+            httpMethod: $httpMethod,
+            httpStatus: $httpStatus,
+            pageUrl: null,
+            context: $context,
+            actor: $actor,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    protected function persistReport(
+        string $summary,
+        string $technicalDetail,
+        ?int $organizationId,
+        ?int $userId,
+        string $apiPath,
+        ?string $httpMethod,
+        ?int $httpStatus,
+        ?string $pageUrl,
+        array $context,
+        ?User $actor,
+    ): ?SystemIssueReport {
         $fingerprint = SystemIssueFingerprint::forReport('error', $summary, $apiPath);
 
         try {
@@ -35,25 +102,18 @@ class SystemIssueReporter
             }
 
             $report = SystemIssueReport::create([
-                'organization_id' => $user?->organization_id,
-                'user_id' => $user?->id,
+                'organization_id' => $organizationId,
+                'user_id' => $userId,
                 'kind' => 'error',
                 'fingerprint' => $fingerprint,
                 'status' => 'open',
                 'message' => mb_substr($summary, 0, 500),
                 'technical_detail' => $technicalDetail,
-                'page_url' => $request->header('X-Page-Url') ?: null,
+                'page_url' => $pageUrl,
                 'api_path' => mb_substr($apiPath, 0, 500),
-                'http_method' => mb_substr($request->method(), 0, 16),
-                'http_status' => 500,
-                'context' => [
-                    'source' => 'server',
-                    'exception_class' => $e::class,
-                    'exception_message' => $e->getMessage(),
-                    'file' => $e->getFile(),
-                    'line' => $e->getLine(),
-                    'user_agent' => substr((string) $request->userAgent(), 0, 500),
-                ],
+                'http_method' => $httpMethod ? mb_substr($httpMethod, 0, 16) : null,
+                'http_status' => $httpStatus,
+                'context' => $context,
                 'reported_by_user' => false,
             ]);
         } catch (Throwable $reportError) {
@@ -65,7 +125,7 @@ class SystemIssueReporter
             return null;
         }
 
-        $this->safeNotifySuperAdmins($report, $user);
+        $this->safeNotifySuperAdmins($report, $actor);
         $this->safeInstantAlert($report);
 
         return $report;

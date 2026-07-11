@@ -71,6 +71,13 @@ class TwoFactorService
         ];
 
             if ($user->two_factor_method === self::METHOD_EMAIL) {
+                if (! PlatformMailSettingsResolver::canDeliverAuthMail()) {
+                    throw ValidationException::withMessages([
+                        'email' => [
+                            'Platform outbound email is disabled. Enable it under Settings → Email delivery before using email two-factor authentication.',
+                        ],
+                    ]);
+                }
                 $code = (string) random_int(100000, 999999);
                 $payload['email_code_hash'] = Hash::make($code);
                 $this->sendEmailCode($user, $code, 'login');
@@ -146,6 +153,13 @@ class TwoFactorService
         $code = (string) random_int(100000, 999999);
         $payload['email_code_hash'] = Hash::make($code);
         Cache::put($key, $payload, now()->addMinutes(10));
+        if (! PlatformMailSettingsResolver::canDeliverAuthMail()) {
+            throw ValidationException::withMessages([
+                'email' => [
+                    'Platform outbound email is disabled. Enable it under Settings → Email delivery.',
+                ],
+            ]);
+        }
         $this->sendEmailCode($user, $code, 'login');
 
         return [
@@ -166,6 +180,13 @@ class TwoFactorService
         if (! $this->emailVerification->hasVerifiedEmail($user)) {
             throw ValidationException::withMessages([
                 'email' => ['Verify your email address on your profile before enabling email 2FA.'],
+            ]);
+        }
+        if (! PlatformMailSettingsResolver::canDeliverAuthMail()) {
+            throw ValidationException::withMessages([
+                'email' => [
+                    'Platform outbound email is disabled. Enable it under Settings → Email delivery before enabling email 2FA.',
+                ],
             ]);
         }
 

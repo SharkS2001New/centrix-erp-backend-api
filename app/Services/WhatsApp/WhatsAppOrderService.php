@@ -7,9 +7,11 @@ use App\Http\Controllers\Api\V1\Operations\CheckoutController;
 use App\Http\Requests\Sales\AddCartLineRequest;
 use App\Http\Requests\Sales\CheckoutRequest;
 use App\Http\Requests\Sales\StoreCartRequest;
+use App\Models\CartLine;
 use App\Models\Customer;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Services\Ai\AiFormRequestHelper;
 use App\Services\Erp\CapabilityGate;
@@ -211,6 +213,18 @@ class WhatsAppOrderService
         );
         $cart = app(CartOperationsController::class)->store($cartReq)->getData(true);
         $cartId = (int) ($cart['id'] ?? 0);
+        if ($cartId <= 0) {
+            throw new InvalidArgumentException('Could not create a sales cart for this WhatsApp order.');
+        }
+
+        // Bot users reuse a single channel cart — clear leftovers before adding this order's lines.
+        CartLine::query()->where('cart_id', $cartId)->delete();
+        TemporaryCart::query()->whereKey($cartId)->update([
+            'order_discount' => 0,
+            'discount_voucher_id' => null,
+            'held_order_num' => null,
+            'superseded_sale_id' => null,
+        ]);
 
         foreach ($lines as $line) {
             $productCode = (string) ($line['product_code'] ?? '');
@@ -263,6 +277,17 @@ class WhatsAppOrderService
 
         $response = app(CheckoutController::class)->fromCart($checkoutReq, $cartId);
         $sale = json_decode($response->getContent(), true) ?? [];
+
+        if (($response->getStatusCode() >= 400) || (empty($sale['id']) && empty($sale['order_num']))) {
+            $error = is_array($sale['message'] ?? null)
+                ? collect($sale['message'])->flatten()->first()
+                : ($sale['message'] ?? $sale['checkout'] ?? null);
+            throw new InvalidArgumentException(
+                is_string($error) && $error !== ''
+                    ? $error
+                    : 'Checkout failed while placing the WhatsApp order.',
+            );
+        }
 
         if (! empty($comments) && ! empty($sale['id'])) {
             Sale::query()->where('id', (int) $sale['id'])->update([
@@ -457,19 +482,55 @@ class WhatsAppOrderService
         string $phone,
         string $error,
         array $cartLines = [],
+        ?\Throwable $exception = null,
+        bool $fromSimulator = false,
     ): void {
-        \App\Models\WhatsappMessageLog::query()->create([
-            'organization_id' => $organizationId,
-            'conversation_id' => $conversationId,
-            'direction' => 'system',
-            'from_phone' => $phone,
-            'body' => $error,
-            'meta' => [
-                'event' => 'order_failed',
-                'error' => $error,
-                'cart' => $cartLines,
-            ],
-            'created_at' => now(),
-        ]);
+        try {
+            \App\Models\WhatsappMessageLog::query()->create([
+                'organization_id' => $organizationId,
+                'conversation_id' => $conversationId,
+                'direction' => 'system',
+                'from_phone' => $phone,
+                'body' => $error,
+                'meta' => [
+                    'event' => 'order_failed',
+                    'error' => $error,
+                    'cart' => $cartLines,
+                    'from_simulator' => $fromSimulator,
+                ],
+                'created_at' => now(),
+            ]);
+        } catch (\Throwable $logError) {
+            \Illuminate\Support\Facades\Log::warning('whatsapp.order_failure_log_failed', [
+                'organization_id' => $organizationId,
+                'error' => $logError->getMessage(),
+                'original' => $error,
+            ]);
+        }
+
+        try {
+            app(\App\Services\SystemIssues\SystemIssueReporter::class)->reportMessage(
+                summary: 'WhatsApp order placement failed: '.$error,
+                technicalDetail: $exception
+                    ? app(\App\Services\SystemIssues\SystemIssueReporter::class)->formatException($exception)
+                    : $error,
+                organizationId: $organizationId,
+                context: [
+                    'source' => $fromSimulator ? 'whatsapp_live_simulator' : 'whatsapp_bot',
+                    'phone' => $phone,
+                    'conversation_id' => $conversationId,
+                    'cart' => $cartLines,
+                    'error' => $error,
+                ],
+                apiPath: $fromSimulator
+                    ? '/api/v1/admin/whatsapp/preview/simulate'
+                    : '/api/v1/webhooks/whatsapp',
+            );
+        } catch (\Throwable $reportError) {
+            \Illuminate\Support\Facades\Log::warning('whatsapp.order_failure_system_issue_failed', [
+                'organization_id' => $organizationId,
+                'error' => $reportError->getMessage(),
+            ]);
+        }
     }
 }

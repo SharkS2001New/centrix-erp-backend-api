@@ -9,6 +9,7 @@ use App\Services\Auth\OrganizationLoginGuard;
 use App\Services\Auth\SecuritySettingsResolver;
 use App\Services\Auth\TwoFactorService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Platform\PlatformMailSettingsResolver;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
 
@@ -74,6 +75,29 @@ class AuthSessionService
         $effective = $account->effectiveUser();
         $twoFactor = app(TwoFactorService::class);
         if ($twoFactor->isEnabled($effective)) {
+            if (
+                $effective->two_factor_method === TwoFactorService::METHOD_EMAIL
+                && ! PlatformMailSettingsResolver::canDeliverAuthMail()
+            ) {
+                // Superadmin must still be able to sign in to re-enable email delivery.
+                if ($effective->is_super_admin) {
+                    $session = $this->issueSession($account, $clientId, $forceLogout, $loginChannel);
+                    $session['warnings'] = [[
+                        'code' => 'platform_email_disabled',
+                        'message' => 'Platform outbound email is disabled, so email two-factor authentication was skipped. Enable it under Settings → Email delivery.',
+                        'action_url' => '/platform/settings?tab=email',
+                    ]];
+
+                    return $session;
+                }
+
+                throw ValidationException::withMessages([
+                    'username' => [
+                        'Sign-in verification email cannot be sent because platform email delivery is disabled. Ask a platform administrator to enable Settings → Email delivery.',
+                    ],
+                ]);
+            }
+
             return $twoFactor->startLoginChallenge($account, $clientId, $forceLogout, $loginChannel);
         }
 

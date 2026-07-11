@@ -333,6 +333,20 @@ class PlatformMailSettingsResolver
         ]);
     }
 
+    /** Whether 2FA / verification emails can actually be sent right now. */
+    public static function canDeliverAuthMail(): bool
+    {
+        $settings = self::resolveForAuth();
+        if (! ($settings['enabled'] ?? false)) {
+            return false;
+        }
+
+        $from = trim((string) ($settings['from_address'] ?? ''));
+        $host = trim((string) ($settings['smtp_host'] ?? ''));
+
+        return $from !== '' && str_contains($from, '@') && $host !== '';
+    }
+
     /** @param  array<string, mixed>  $data */
     public static function save(array $data): array
     {

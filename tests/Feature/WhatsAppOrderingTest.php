@@ -8,6 +8,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Models\WhatsappConfig;
 use Illuminate\Support\Facades\Http;
+use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
 
@@ -104,6 +105,134 @@ class WhatsAppOrderingTest extends TestCase
         $this->assertMatchesRegularExpression('/,\s*KES\s*[\d,]+,\s*.+,\s*KES\s*[\d,]+,\s*R\b/', $body);
     }
 
+    public function test_unknown_whatsapp_number_can_self_register(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $this->enableWhatsappForOrganization($org, $admin);
+
+        $newPhone = '254733998877';
+        $this->assertNull(
+            \App\Support\PhoneNumber::normalize($newPhone)
+                ? app(\App\Services\Customers\CustomerPhoneLookup::class)->findByPhone($org->id, $newPhone)
+                : null
+        );
+
+        $this->postSignedWebhook('wamid.r01', 'HI', $newPhone);
+        $this->postSignedWebhook('wamid.r02', '1', $newPhone); // register
+        $this->postSignedWebhook('wamid.r03', 'WhatsApp Test Shop', $newPhone);
+        $this->postSignedWebhook('wamid.r04', 'Nairobi', $newPhone);
+        $this->postSignedWebhook('wamid.r05', '1', $newPhone)->assertOk(); // pick route (distribution org)
+
+        $customer = app(\App\Services\Customers\CustomerPhoneLookup::class)->findByPhone($org->id, $newPhone);
+        $this->assertNotNull($customer);
+        $this->assertSame('WhatsApp Test Shop', $customer->customer_name);
+        $this->assertSame('Nairobi', $customer->town);
+        $this->assertNotNull($customer->route_id);
+
+        $welcome = (string) \App\Models\WhatsappMessageLog::query()
+            ->where('organization_id', $org->id)
+            ->where('direction', 'out')
+            ->latest('id')
+            ->value('body');
+        $this->assertStringContainsString('Registered successfully', $welcome);
+        $this->assertStringContainsString('Place new order', $welcome);
+    }
+
+    public function test_unknown_customer_help_includes_office_phone(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $this->enableWhatsappForOrganization($org, $admin);
+
+        $this->postSignedWebhook('wamid.h01', 'HI', '254700111222')->assertOk();
+
+        $body = (string) \App\Models\WhatsappMessageLog::query()
+            ->where('organization_id', $org->id)
+            ->where('direction', 'out')
+            ->latest('id')
+            ->value('body');
+
+        $this->assertStringContainsString('Register your shop', $body);
+        $this->assertStringContainsString('0700111222', $body);
+    }
+
+    public function test_platform_live_simulate_confirm_creates_real_order(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $this->enableWhatsappForOrganization($org, $admin);
+
+        $customer = Customer::query()
+            ->where('organization_id', $org->id)
+            ->where('phone_number', '0722111222')
+            ->firstOrFail();
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $sessionId = null;
+        foreach (['HI', '1', '1', 'R', '1', '2', 'CONFIRM'] as $message) {
+            $response = $this->postJson('/api/v1/admin/whatsapp/preview/simulate', [
+                'organization_id' => $org->id,
+                'message' => $message,
+                'customer_num' => (string) $customer->customer_num,
+                'phone' => '254722111222',
+                'session_id' => $sessionId,
+                'place_real_orders' => true,
+                'bot_user_id' => $admin->id,
+            ])->assertOk();
+
+            $sessionId = $response->json('session.session_id');
+        }
+
+        $this->assertNotEmpty($response->json('placed_order.order_num'));
+        $this->assertFalse((bool) $response->json('dry_run'));
+        $this->assertStringContainsString('Live test order placed', (string) $response->json('reply'));
+
+        $sale = Sale::query()
+            ->where('organization_id', $org->id)
+            ->where('order_source', 'whatsapp')
+            ->where('customer_num', $customer->customer_num)
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($sale);
+        $this->assertSame((int) $response->json('placed_order.order_num'), (int) $sale->order_num);
+    }
+
+    public function test_confirm_from_review_completes_in_dry_run(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $this->enableWhatsappForOrganization($org, $admin);
+
+        $customer = Customer::query()
+            ->where('organization_id', $org->id)
+            ->where('phone_number', '0722111222')
+            ->firstOrFail();
+
+        $handler = app(\App\Services\WhatsApp\WhatsAppBotHandler::class);
+        $config = app(\App\Services\WhatsApp\WhatsAppConfigResolver::class)
+            ->resolveForOrganizationPreview($org, null, $admin);
+        $this->assertNotNull($config);
+
+        $session = null;
+        foreach (['HI', '1', '1', 'R', '1', '2', 'CONFIRM'] as $message) {
+            $result = $handler->simulate($config, '254722111222', $message, $customer, $session, false);
+            $session = [
+                'state' => $result['state'],
+                'payload' => $result['payload'],
+                'customer_num' => $result['customer_num'],
+                'phone' => $result['phone'],
+            ];
+        }
+
+        $this->assertContains('place_order', $result['would_mutate']);
+        $this->assertStringContainsString('TEST MODE — order not placed', $result['reply']);
+        $this->assertSame('main_menu', $result['state']);
+    }
+
     protected function enableWhatsappForOrganization(Organization $org, User $admin): void
     {
         $settings = $org->module_settings ?? [];
@@ -126,7 +255,7 @@ class WhatsAppOrderingTest extends TestCase
         );
     }
 
-    protected function postSignedWebhook(string $messageId, string $text)
+    protected function postSignedWebhook(string $messageId, string $text, ?string $fromPhone = null)
     {
         $payload = [
             'object' => 'whatsapp_business_account',
@@ -140,7 +269,7 @@ class WhatsAppOrderingTest extends TestCase
                                 ],
                                 'messages' => [
                                     [
-                                        'from' => self::CUSTOMER_PHONE,
+                                        'from' => $fromPhone ?? self::CUSTOMER_PHONE,
                                         'id' => $messageId,
                                         'type' => 'text',
                                         'text' => ['body' => $text],
