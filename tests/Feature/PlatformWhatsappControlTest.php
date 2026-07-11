@@ -228,4 +228,44 @@ class PlatformWhatsappControlTest extends TestCase
         $this->assertNotNull($row);
         $this->assertSame('moon-phone-id-001', $row->phone_number_id);
     }
+
+    public function test_platform_admin_can_preview_without_org_bot_user(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'WAPRV',
+            'org_name' => 'WhatsApp Preview Org',
+            'org_email' => 'waprev@org.com',
+            'primary_tel' => '0711000033',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'sales_platform' => ['enable_whatsapp_orders' => true],
+            'admin_username' => 'waprev_admin',
+            'admin_email' => 'waprev@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'WA Preview Admin',
+        ])->assertCreated();
+
+        $orgId = (int) $create->json('organization.id');
+
+        $context = $this->getJson('/api/v1/admin/whatsapp/preview/context?organization_id='.$orgId)
+            ->assertOk()
+            ->assertJsonPath('preview_ready', true)
+            ->assertJsonPath('using_platform_admin_bot', true)
+            ->assertJsonPath('preview_bot_user.username', $superAdmin->username)
+            ->json();
+
+        $this->assertSame('platform_admin', $context['preview_bot_user']['source'] ?? null);
+
+        $this->postJson('/api/v1/admin/whatsapp/preview/simulate', [
+            'organization_id' => $orgId,
+            'message' => 'HI',
+        ])->assertOk()
+            ->assertJsonPath('dry_run', true)
+            ->assertJsonStructure(['reply', 'session', 'notice']);
+    }
 }

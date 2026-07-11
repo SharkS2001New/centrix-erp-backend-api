@@ -37,7 +37,7 @@ class PlatformWhatsAppController extends Controller
 
         $organization = $this->tenantOrganization((int) $data['organization_id']);
 
-        return response()->json($this->preview->context($organization));
+        return response()->json($this->preview->context($organization, $request->user()));
     }
 
     public function previewCatalog(Request $request)
@@ -57,6 +57,7 @@ class PlatformWhatsAppController extends Controller
                 $data['customer_num'] ?? null,
                 (string) ($data['q'] ?? ''),
                 (int) ($data['page'] ?? 1),
+                $request->user(),
             )
         );
     }
@@ -73,10 +74,11 @@ class PlatformWhatsAppController extends Controller
         ]);
 
         $organization = $this->tenantOrganization((int) $data['organization_id']);
+        $actor = $request->user();
 
         if (! empty($data['reset'])) {
             $this->preview->resetSession(
-                $request->user()?->id,
+                $actor?->id,
                 $organization->id,
                 $data['session_id'] ?? null,
                 $data['customer_num'] ?? null,
@@ -93,7 +95,8 @@ class PlatformWhatsAppController extends Controller
                 [
                     'session_id' => $data['session_id'] ?? null,
                 ],
-                $request->user()?->id,
+                $actor?->id,
+                $actor,
             )
         );
     }

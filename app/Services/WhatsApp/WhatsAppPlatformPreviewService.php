@@ -4,6 +4,7 @@ namespace App\Services\WhatsApp;
 
 use App\Models\Customer;
 use App\Models\Organization;
+use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Str;
@@ -17,11 +18,15 @@ class WhatsAppPlatformPreviewService
     ) {}
 
     /** @return array<string, mixed> */
-    public function context(Organization $organization): array
+    public function context(Organization $organization, ?User $platformActor = null): array
     {
         $described = WhatsAppSettingsResolver::describeForOrganization($organization);
-        $config = $this->configs->resolveForOrganizationPreview($organization);
+        $config = $this->configs->resolveForOrganizationPreview($organization, $platformActor);
         $botUser = $config ? $this->configs->botUser($config) : null;
+        $usingPlatformAdminBot = $botUser
+            && $platformActor
+            && (int) $botUser->id === (int) $platformActor->id
+            && (int) ($described['bot_user']['id'] ?? 0) !== (int) $botUser->id;
 
         $customers = Customer::query()
             ->where('organization_id', $organization->id)
@@ -42,10 +47,20 @@ class WhatsAppPlatformPreviewService
             $issues[] = 'WhatsApp ordering is not enabled for this organization on the platform licence.';
         }
         if (! ($described['configured'] ?? false)) {
-            $issues[] = 'Organization WhatsApp credentials are incomplete (phone number ID, access token, bot user, or enabled toggle). Soft preview may still work if a bot user is assigned.';
+            $issues[] = 'Organization Meta credentials are incomplete — dry-run still works using your platform admin account as the bot user.';
         }
         if (! $botUser) {
-            $issues[] = 'Assign a bot user under the organization WhatsApp settings before testing.';
+            $issues[] = 'Sign in as a platform super-admin to dry-run without an org bot user.';
+        }
+
+        $previewBot = null;
+        if ($botUser) {
+            $previewBot = [
+                'id' => $botUser->id,
+                'username' => $botUser->username,
+                'full_name' => $botUser->full_name,
+                'source' => $usingPlatformAdminBot ? 'platform_admin' : 'organization',
+            ];
         }
 
         return [
@@ -57,22 +72,31 @@ class WhatsAppPlatformPreviewService
             'preview_ready' => $ready,
             'issues' => $issues,
             'bot_user' => $described['bot_user'] ?? null,
+            'preview_bot_user' => $previewBot,
+            'using_platform_admin_bot' => $usingPlatformAdminBot,
             'display_phone' => $described['settings']['display_phone'] ?? null,
             'customers' => $customers,
             'dry_run' => true,
-            'notice' => 'Test mode uses this organization’s real products and customers, but never places orders, reduces stock, creates handoffs, or sends WhatsApp messages.',
+            'notice' => $usingPlatformAdminBot
+                ? 'Test mode uses this organization’s products and customers. Your platform admin account stands in as the bot user — no orders, stock changes, or WhatsApp messages are created.'
+                : 'Test mode uses this organization’s real products and customers, but never places orders, reduces stock, creates handoffs, or sends WhatsApp messages.',
         ];
     }
 
     /**
      * @return array{items: list<array<string, mixed>>, total: int, page: int, per_page: int, has_more: bool}
      */
-    public function catalog(Organization $organization, ?string $customerNum, string $q = '', int $page = 1): array
-    {
-        $config = $this->configs->resolveForOrganizationPreview($organization);
+    public function catalog(
+        Organization $organization,
+        ?string $customerNum,
+        string $q = '',
+        int $page = 1,
+        ?User $platformActor = null,
+    ): array {
+        $config = $this->configs->resolveForOrganizationPreview($organization, $platformActor);
         $botUser = $config ? $this->configs->botUser($config) : null;
         if (! $config || ! $botUser) {
-            abort(422, 'Choose an organization with a WhatsApp bot user assigned to preview products.');
+            abort(422, 'Sign in as a platform admin to preview products for this organization.');
         }
 
         $customer = $this->resolveCustomer($organization, $customerNum, null);
@@ -100,11 +124,13 @@ class WhatsAppPlatformPreviewService
         ?string $phone = null,
         ?array $session = null,
         ?int $actorUserId = null,
+        ?User $platformActor = null,
     ): array {
-        $config = $this->configs->resolveForOrganizationPreview($organization);
+        $actor = $platformActor ?? ($actorUserId ? User::query()->find($actorUserId) : null);
+        $config = $this->configs->resolveForOrganizationPreview($organization, $actor);
         $botUser = $config ? $this->configs->botUser($config) : null;
         if (! $config || ! $botUser) {
-            abort(422, 'Choose an organization with a WhatsApp bot user assigned before testing.');
+            abort(422, 'Sign in as a platform admin to dry-run WhatsApp for this organization.');
         }
 
         $customer = $this->resolveCustomer($organization, $customerNum, $phone);
@@ -113,7 +139,7 @@ class WhatsAppPlatformPreviewService
             ?: '254700000000';
 
         $cacheKey = $this->sessionCacheKey(
-            $actorUserId,
+            $actor?->id ?? $actorUserId,
             $organization->id,
             $session['session_id'] ?? null,
             $customer?->customer_num,
@@ -144,6 +170,14 @@ class WhatsAppPlatformPreviewService
             'session' => $nextSession,
             'organization_id' => $organization->id,
             'organization_name' => $organization->org_name,
+            'preview_bot_user' => [
+                'id' => $botUser->id,
+                'username' => $botUser->username,
+                'source' => $actor && (int) $botUser->id === (int) $actor->id
+                    && (int) $botUser->organization_id !== (int) $organization->id
+                    ? 'platform_admin'
+                    : 'organization',
+            ],
             'notice' => 'Dry run only — no production data was changed and no WhatsApp message was sent.',
         ]);
     }
