@@ -233,6 +233,71 @@ class WhatsAppOrderingTest extends TestCase
         $this->assertSame('main_menu', $result['state']);
     }
 
+    public function test_platform_live_simulate_confirm_creates_real_order_when_whatsapp_channel_disabled(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+
+        // Platform gate on, org WhatsApp channel off — production bot would refuse, simulator must still place.
+        $settings = $org->module_settings ?? [];
+        $settings['whatsapp'] = array_merge($settings['whatsapp'] ?? [], [
+            'enable_whatsapp_orders' => true,
+            'enabled' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        WhatsappConfig::query()->updateOrCreate(
+            ['organization_id' => $org->id],
+            [
+                'branch_id' => $admin->branch_id,
+                'bot_user_id' => $admin->id,
+                'phone_number_id' => self::PHONE_NUMBER_ID,
+                'access_token' => 'EAA-test-token',
+                'display_phone' => '+254700000099',
+                'is_active' => true,
+            ],
+        );
+
+        $customer = Customer::query()
+            ->where('organization_id', $org->id)
+            ->where('phone_number', '0722111222')
+            ->firstOrFail();
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $sessionId = null;
+        $response = null;
+        foreach (['HI', '1', '1', 'R', '1', '2', 'CONFIRM'] as $message) {
+            $response = $this->postJson('/api/v1/admin/whatsapp/preview/simulate', [
+                'organization_id' => $org->id,
+                'message' => $message,
+                'customer_num' => (string) $customer->customer_num,
+                'phone' => '254722111222',
+                'session_id' => $sessionId,
+                'place_real_orders' => true,
+                'bot_user_id' => $admin->id,
+            ])->assertOk();
+
+            $sessionId = $response->json('session.session_id');
+        }
+
+        $this->assertNotEmpty($response->json('placed_order.order_num'));
+        $this->assertStringContainsString('Live test order placed', (string) $response->json('reply'));
+        $this->assertStringNotContainsString('Channel [whatsapp] is not enabled', (string) $response->json('reply'));
+
+        $sale = Sale::query()
+            ->where('organization_id', $org->id)
+            ->where('order_source', 'whatsapp')
+            ->where('customer_num', $customer->customer_num)
+            ->latest('id')
+            ->first();
+
+        $this->assertNotNull($sale);
+        $this->assertSame('whatsapp', $sale->channel);
+        $this->assertSame('whatsapp', $sale->order_source);
+    }
+
     protected function enableWhatsappForOrganization(Organization $org, User $admin): void
     {
         $settings = $org->module_settings ?? [];

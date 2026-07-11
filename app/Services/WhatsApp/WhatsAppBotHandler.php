@@ -577,6 +577,8 @@ class WhatsAppBotHandler
                 $customer,
                 $lines,
                 $conversation->payload['notes'] ?? null,
+                true,
+                $this->simulatorSession,
             );
 
             if (empty($result['order_num']) && empty($result['sale_id'])) {
@@ -665,7 +667,14 @@ class WhatsAppBotHandler
                     .$this->mainMenuMessage($customer);
             }
 
-            $result = $this->orders->placeOrder($botUser, $customer, $lines);
+            $result = $this->orders->placeOrder(
+                $botUser,
+                $customer,
+                $lines,
+                null,
+                true,
+                $this->simulatorSession,
+            );
             if (empty($result['order_num']) && empty($result['sale_id'])) {
                 throw new InvalidArgumentException(
                     'Checkout finished without creating an order. Check sales permissions and stock settings.',

@@ -175,6 +175,7 @@ class WhatsAppOrderService
         array $lines,
         ?string $comments = null,
         bool $useCredit = true,
+        bool $bypassWhatsappChannelGate = false,
     ): array {
         if ($lines === []) {
             throw new InvalidArgumentException('Order has no lines.');
@@ -202,17 +203,7 @@ class WhatsAppOrderService
 
         $validCodeSet = array_fill_keys($validCodes, true);
 
-        $cartReq = AiFormRequestHelper::prepare(
-            StoreCartRequest::create('/sales/carts', 'POST', [
-                'channel' => 'whatsapp',
-                'order_source' => 'whatsapp',
-                'branch_id' => $customer->branch_id ?? $botUser->branch_id,
-                'route_id' => $customer->route_id,
-            ]),
-            $botUser,
-        );
-        $cart = app(CartOperationsController::class)->store($cartReq)->getData(true);
-        $cartId = (int) ($cart['id'] ?? 0);
+        $cartId = $this->createWhatsappCart($botUser, $customer, $bypassWhatsappChannelGate);
         if ($cartId <= 0) {
             throw new InvalidArgumentException('Could not create a sales cart for this WhatsApp order.');
         }
@@ -224,6 +215,10 @@ class WhatsAppOrderService
             'discount_voucher_id' => null,
             'held_order_num' => null,
             'superseded_sale_id' => null,
+            'channel' => 'whatsapp',
+            'order_source' => 'whatsapp',
+            'branch_id' => $customer->branch_id ?? $botUser->branch_id,
+            'route_id' => $customer->route_id,
         ]);
 
         foreach ($lines as $line) {
@@ -301,6 +296,69 @@ class WhatsAppOrderService
             'status' => $sale['status'] ?? null,
             'order_total' => isset($sale['order_total']) ? (float) $sale['order_total'] : null,
         ];
+    }
+
+    /**
+     * Create (or reuse) a WhatsApp channel cart for the bot user.
+     * Platform live simulator may bypass the org WhatsApp channel gate so demos can
+     * still produce a real whatsapp-sourced order before the tenant enables WhatsApp.
+     */
+    protected function createWhatsappCart(
+        User $botUser,
+        Customer $customer,
+        bool $bypassWhatsappChannelGate,
+    ): int {
+        $org = $botUser->organization;
+        $gate = (new CapabilityGate)->forOrganization($org);
+        $whatsappEnabled = $gate->channelEnabled('whatsapp');
+
+        if (! $whatsappEnabled && ! $bypassWhatsappChannelGate) {
+            throw new InvalidArgumentException('Channel [whatsapp] is not enabled for this organization.');
+        }
+
+        if (! $whatsappEnabled && ! $gate->enabled('sales.backend')) {
+            throw new InvalidArgumentException(
+                'Cannot place a simulator WhatsApp order because sales (backend) is not enabled for this organization.',
+            );
+        }
+
+        if ($whatsappEnabled) {
+            $cartReq = AiFormRequestHelper::prepare(
+                StoreCartRequest::create('/sales/carts', 'POST', [
+                    'channel' => 'whatsapp',
+                    'order_source' => 'whatsapp',
+                    'branch_id' => $customer->branch_id ?? $botUser->branch_id,
+                    'route_id' => $customer->route_id,
+                ]),
+                $botUser,
+            );
+            $cart = app(CartOperationsController::class)->store($cartReq)->getData(true);
+
+            return (int) ($cart['id'] ?? 0);
+        }
+
+        // Platform simulator bypass: create the whatsapp cart without channelEnabled().
+        $branchId = $customer->branch_id ?? $botUser->branch_id;
+        $cart = TemporaryCart::query()->firstOrCreate(
+            [
+                'user_id' => $botUser->id,
+                'channel' => 'whatsapp',
+            ],
+            [
+                'branch_id' => $branchId,
+                'order_source' => 'whatsapp',
+                'route_id' => $customer->route_id,
+                'update_no' => 0,
+            ],
+        );
+
+        $cart->fill([
+            'order_source' => 'whatsapp',
+            'branch_id' => $branchId ?: $cart->branch_id,
+            'route_id' => $customer->route_id ?? $cart->route_id,
+        ])->save();
+
+        return (int) $cart->id;
     }
 
     /** @return array<int, array{order_num: int, status: string, total: float, created_at: string}> */
