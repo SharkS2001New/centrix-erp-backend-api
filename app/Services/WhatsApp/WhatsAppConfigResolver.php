@@ -62,6 +62,38 @@ class WhatsAppConfigResolver
     public function resolveForOrganizationPreview(
         Organization $organization,
         ?User $platformActor = null,
+        ?User $botUserOverride = null,
+    ): ?ResolvedWhatsAppConfig {
+        $config = $this->resolvePreviewBase($organization, $platformActor);
+        if (! $config) {
+            return null;
+        }
+
+        if (
+            $botUserOverride
+            && (int) $botUserOverride->organization_id === (int) $organization->id
+            && $botUserOverride->is_active
+            && ! $botUserOverride->is_super_admin
+        ) {
+            return new ResolvedWhatsAppConfig(
+                organizationId: $config->organizationId,
+                branchId: $botUserOverride->branch_id
+                    ? (int) $botUserOverride->branch_id
+                    : $config->branchId,
+                botUserId: (int) $botUserOverride->id,
+                phoneNumberId: $config->phoneNumberId,
+                accessToken: $config->accessToken,
+                webhookVerifyToken: $config->webhookVerifyToken,
+                graphApiVersion: $config->graphApiVersion,
+            );
+        }
+
+        return $config;
+    }
+
+    protected function resolvePreviewBase(
+        Organization $organization,
+        ?User $platformActor = null,
     ): ?ResolvedWhatsAppConfig {
         $runtime = WhatsAppSettingsResolver::resolveRuntimeForOrganization($organization);
         if ($runtime) {

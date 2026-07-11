@@ -94,13 +94,15 @@ class DiscountApprovalService
     {
         $channel = trim((string) ($cart->channel ?? ''));
         if ($channel !== '') {
-            return strtolower($channel) === 'backoffice' ? 'backend' : strtolower($channel);
+            $normalized = strtolower($channel);
+
+            return in_array($normalized, ['backoffice', 'whatsapp'], true) ? 'backend' : $normalized;
         }
 
         $source = strtolower(trim((string) ($cart->order_source ?? 'backend')));
 
         return match ($source) {
-            'backoffice' => 'backend',
+            'backoffice', 'whatsapp' => 'backend',
             'mobile' => 'mobile',
             'pos' => 'pos',
             default => $source !== '' ? $source : 'backend',
@@ -111,7 +113,7 @@ class DiscountApprovalService
     {
         $channel = strtolower(trim((string) ($sale->channel ?: 'backend')));
 
-        return $channel === 'backoffice' ? 'backend' : $channel;
+        return in_array($channel, ['backoffice', 'whatsapp'], true) ? 'backend' : $channel;
     }
 
     /** Manual line discounts (direct or via approval workflow). */
@@ -221,7 +223,7 @@ class DiscountApprovalService
         $channel = strtolower((string) ($cart->channel ?: 'pos'));
         $source = strtolower((string) ($cart->order_source ?: ''));
 
-        if (in_array($channel, ['backend', 'backoffice'], true) || $source === 'backoffice') {
+        if (in_array($channel, ['backend', 'backoffice', 'whatsapp'], true) || in_array($source, ['backoffice', 'whatsapp'], true)) {
             return '/sales/pos';
         }
 

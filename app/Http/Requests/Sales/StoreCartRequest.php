@@ -18,7 +18,7 @@ class StoreCartRequest extends FormRequest
         $orgId = app(UserAccessService::class)->organizationId($this->user(), $this);
 
         return [
-            'channel' => 'required|in:pos,mobile,backend',
+            'channel' => 'required|in:pos,mobile,backend,whatsapp',
             'order_source' => 'nullable|in:pos,mobile,backoffice,backend,whatsapp',
             'branch_id' => 'nullable|integer|exists:branches,id',
             'till_id' => 'nullable|integer|exists:tills,id',

@@ -71,10 +71,14 @@ class PlatformWhatsAppController extends Controller
             'phone' => 'nullable|string|max:40',
             'session_id' => 'nullable|string|max:64',
             'reset' => 'sometimes|boolean',
+            'place_real_orders' => 'sometimes|boolean',
+            'bot_user_id' => 'nullable|integer|exists:users,id',
         ]);
 
         $organization = $this->tenantOrganization((int) $data['organization_id']);
         $actor = $request->user();
+        $placeRealOrders = (bool) ($data['place_real_orders'] ?? false);
+        $botUserId = isset($data['bot_user_id']) ? (int) $data['bot_user_id'] : null;
 
         if (! empty($data['reset'])) {
             $this->preview->resetSession(
@@ -83,6 +87,8 @@ class PlatformWhatsAppController extends Controller
                 $data['session_id'] ?? null,
                 $data['customer_num'] ?? null,
                 $data['phone'] ?? null,
+                $placeRealOrders,
+                $botUserId,
             );
         }
 
@@ -97,6 +103,8 @@ class PlatformWhatsAppController extends Controller
                 ],
                 $actor?->id,
                 $actor,
+                $placeRealOrders,
+                $botUserId,
             )
         );
     }

@@ -47,10 +47,10 @@ class BackofficeOrderLineEditService
         }
 
         if ($gate !== null && ! $gate->enabled('sales.pos')) {
-            if (in_array($source, ['pos', 'backend', 'backoffice', 'erp'], true)) {
+            if (in_array($source, ['pos', 'backend', 'backoffice', 'erp', 'whatsapp'], true)) {
                 return true;
             }
-            if (in_array($channel, ['pos', 'backend', 'backoffice', 'erp'], true)) {
+            if (in_array($channel, ['pos', 'backend', 'backoffice', 'erp', 'whatsapp'], true)) {
                 return true;
             }
         }
@@ -59,11 +59,11 @@ class BackofficeOrderLineEditService
             return false;
         }
 
-        if (in_array($source, ['backoffice', 'backend'], true)) {
+        if (in_array($source, ['backoffice', 'backend', 'whatsapp'], true)) {
             return true;
         }
 
-        if ($channel === 'backend') {
+        if (in_array($channel, ['backend', 'whatsapp'], true)) {
             return true;
         }
 

@@ -13,6 +13,7 @@ use App\Models\Sale;
 use App\Models\User;
 use App\Services\Ai\AiFormRequestHelper;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\OrderWorkflowService;
 use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Inventory\StockUomDisplayService;
@@ -201,7 +202,7 @@ class WhatsAppOrderService
 
         $cartReq = AiFormRequestHelper::prepare(
             StoreCartRequest::create('/sales/carts', 'POST', [
-                'channel' => 'backend',
+                'channel' => 'whatsapp',
                 'order_source' => 'whatsapp',
                 'branch_id' => $customer->branch_id ?? $botUser->branch_id,
                 'route_id' => $customer->route_id,
@@ -235,12 +236,20 @@ class WhatsAppOrderService
             app(CartOperationsController::class)->addLine($lineReq, $cartId);
         }
 
+        $org = $botUser->organization;
+        $gate = (new CapabilityGate)->forOrganization($org);
+        $workflow = OrderWorkflowService::forGate($gate);
+        // Cart channel is whatsapp; workflow normalizes to backend (same save status as backoffice).
+        $saveStatus = $workflow->resolveSaveStatus('whatsapp');
+
         $checkoutPayload = [
             'customer_num' => $customer->customer_num,
             'save_only' => true,
             'pay_now' => 0,
             'is_credit_sale' => $isCredit,
-            'deduct_stock' => false,
+            // Match backoffice "Save order": workflow/inventory timing decides deduct vs reserve.
+            'deduct_stock' => true,
+            'status' => $saveStatus,
         ];
 
         if ($comments !== null && trim($comments) !== '') {
@@ -355,7 +364,7 @@ class WhatsAppOrderService
                 ?? $this->qtyDisplay->formatLineQtyDisplay($baseQty, $product, $isRetail);
 
             $location = SaleStockLocationResolver::forLine(
-                'backend',
+                'whatsapp',
                 $inventory,
                 $sales,
                 $product,

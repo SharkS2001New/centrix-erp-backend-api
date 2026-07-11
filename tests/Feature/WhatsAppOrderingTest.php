@@ -72,7 +72,11 @@ class WhatsAppOrderingTest extends TestCase
 
         $this->assertNotNull($sale, 'Expected a WhatsApp sale to be created.');
         $this->assertSame('whatsapp', $sale->order_source);
-        $this->assertSame('backend', $sale->channel);
+        $this->assertSame('whatsapp', $sale->channel);
+        $expectedStatus = \App\Services\Erp\OrderWorkflowService::forGate(
+            (new \App\Services\Erp\CapabilityGate)->forOrganization($org)
+        )->resolveSaveStatus('whatsapp');
+        $this->assertSame($expectedStatus, $sale->status);
         $this->assertGreaterThan(0, $sale->items()->count());
         $this->assertSame(1, (int) $sale->items()->first()->on_wholesale_retail);
     }

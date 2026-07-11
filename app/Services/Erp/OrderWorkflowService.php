@@ -71,6 +71,8 @@ class OrderWorkflowService
     /** @return array<string, mixed> */
     public function forChannel(string $channel): array
     {
+        // WhatsApp / backoffice aliases share the backend workflow maps.
+        $channel = $this->normalizeSalesChannel($channel);
         $config = $this->config();
         $channelConfig = config("erp.workflows.{$channel}", []);
         $channelStatuses = $channelConfig['statuses'] ?? self::ALL_STATUSES;
@@ -348,7 +350,7 @@ class OrderWorkflowService
     public function normalizeSalesChannel(string $channel): string
     {
         return match (strtolower($channel)) {
-            'backoffice' => 'backend',
+            'backoffice', 'whatsapp' => 'backend',
             default => strtolower($channel),
         };
     }

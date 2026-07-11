@@ -42,8 +42,14 @@ class WhatsAppBotHandler
 
     protected bool $dryRun = false;
 
+    /** Simulator session: ephemeral chat state; never sends Meta WhatsApp messages. */
+    protected bool $simulatorSession = false;
+
     /** @var list<string> */
     protected array $wouldMutate = [];
+
+    /** @var array{order_num: int|null, sale_id: int|null, status: string|null, order_total: float|null}|null */
+    protected ?array $lastPlacedOrder = null;
 
     public function __construct(
         protected CustomerPhoneLookup $customerLookup,
@@ -56,8 +62,9 @@ class WhatsAppBotHandler
     ) {}
 
     /**
-     * Platform-admin dry run: same bot replies using org products/customers, with no Meta sends,
-     * conversation persistence, orders, stock changes, or handoffs.
+     * Platform-admin simulator: same bot replies using org products/customers.
+     * Dry run (default) never mutates data. Live mode places real orders/handoffs
+     * in the tenant org but still does not send WhatsApp messages.
      *
      * @param  array{state?: string, payload?: array<string, mixed>, customer_num?: string|null, phone?: string}|null  $session
      * @return array{
@@ -69,7 +76,9 @@ class WhatsAppBotHandler
      *   phone: string,
      *   cart: list<array<string, mixed>>,
      *   would_mutate: list<string>,
-     *   dry_run: true
+     *   dry_run: bool,
+     *   place_real_orders: bool,
+     *   placed_order: array<string, mixed>|null
      * }
      */
     public function simulate(
@@ -78,9 +87,12 @@ class WhatsAppBotHandler
         string $text,
         ?Customer $customer = null,
         ?array $session = null,
+        bool $placeRealOrders = false,
     ): array {
-        $this->dryRun = true;
+        $this->simulatorSession = true;
+        $this->dryRun = ! $placeRealOrders;
         $this->wouldMutate = [];
+        $this->lastPlacedOrder = null;
 
         try {
             $botUser = $this->configResolver->botUser($config);
@@ -94,7 +106,9 @@ class WhatsAppBotHandler
                     'phone' => $fromPhone,
                     'cart' => [],
                     'would_mutate' => [],
-                    'dry_run' => true,
+                    'dry_run' => $this->dryRun,
+                    'place_real_orders' => $placeRealOrders,
+                    'placed_order' => null,
                 ];
             }
 
@@ -124,11 +138,15 @@ class WhatsAppBotHandler
                 'phone' => $normalizedPhone,
                 'cart' => $this->cartLines($conversation),
                 'would_mutate' => $this->wouldMutate,
-                'dry_run' => true,
+                'dry_run' => $this->dryRun,
+                'place_real_orders' => $placeRealOrders,
+                'placed_order' => $this->lastPlacedOrder,
             ];
         } finally {
             $this->dryRun = false;
+            $this->simulatorSession = false;
             $this->wouldMutate = [];
+            $this->lastPlacedOrder = null;
         }
     }
 
@@ -527,13 +545,18 @@ class WhatsAppBotHandler
                 $lines,
                 $conversation->payload['notes'] ?? null,
             );
+            $this->lastPlacedOrder = $result;
             $conversation->payload = [
                 'last_sale_id' => $result['sale_id'],
                 'last_order_num' => $result['order_num'],
             ];
             $conversation->state = self::STATE_MAIN_MENU;
 
-            return "✅ *Order placed successfully*\n\n"
+            $livePrefix = $this->simulatorSession
+                ? "✅ *Live test order placed*\n\n"
+                : "✅ *Order placed successfully*\n\n";
+
+            return $livePrefix
                 ."Order #*{$result['order_num']}*\n"
                 .'Total: *'.$this->orders->formatMoney((float) ($result['order_total'] ?? 0))."*\n"
                 .'Status: '.ucfirst(str_replace('_', ' ', (string) ($result['status'] ?? 'received')))."\n\n"
@@ -605,10 +628,15 @@ class WhatsAppBotHandler
             }
 
             $result = $this->orders->placeOrder($botUser, $customer, $lines);
+            $this->lastPlacedOrder = $result;
             $conversation->payload = [];
             $conversation->state = self::STATE_MAIN_MENU;
 
-            return "✅ *Order placed successfully*\n\n"
+            $livePrefix = $this->simulatorSession
+                ? "✅ *Live test order placed*\n\n"
+                : "✅ *Order placed successfully*\n\n";
+
+            return $livePrefix
                 ."Order #*{$result['order_num']}*\n"
                 .'Total: *'.$this->orders->formatMoney((float) ($result['order_total'] ?? 0))."*\n\n"
                 .$this->mainMenuMessage($customer);
@@ -863,7 +891,8 @@ class WhatsAppBotHandler
         User $botUser,
         string $rawMessage,
     ): string {
-        if ($this->dryRun) {
+        // Platform simulator never writes handoff rows (ephemeral conversation has no id).
+        if ($this->dryRun || $this->simulatorSession) {
             $this->wouldMutate[] = 'handoff';
             $conversation->state = self::STATE_HANDOFF;
 
@@ -1356,7 +1385,8 @@ class WhatsAppBotHandler
 
     protected function persistConversation(WhatsappConversation $conversation, ?Customer $customer): void
     {
-        if ($this->dryRun) {
+        // Simulator keeps state in cache only — never writes conversation rows.
+        if ($this->dryRun || $this->simulatorSession) {
             if ($customer && ! $conversation->customer_num) {
                 $conversation->customer_num = $customer->customer_num;
             }
@@ -1381,7 +1411,7 @@ class WhatsAppBotHandler
         ?string $providerMessageId,
         ?array $meta = null,
     ): void {
-        if ($this->dryRun) {
+        if ($this->dryRun || $this->simulatorSession) {
             return;
         }
 

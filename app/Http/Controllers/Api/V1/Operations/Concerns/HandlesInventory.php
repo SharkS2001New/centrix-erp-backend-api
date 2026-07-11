@@ -158,7 +158,7 @@ trait HandlesInventory
     protected function saleStockLocation(string $channel, array $settings = []): string
     {
         return match ($channel) {
-            'backend', 'mobile' => $settings['default_distribution_sale_location'] ?? 'store',
+            'backend', 'mobile', 'whatsapp' => $settings['default_distribution_sale_location'] ?? 'store',
             default => $settings['default_pos_sale_location'] ?? 'shop',
         };
     }
@@ -204,7 +204,7 @@ trait HandlesInventory
         return match ($channel) {
             'pos' => 'POS_SALE',
             'mobile' => 'MOBILE_SALE',
-            'backend' => 'BACKEND_SALE',
+            'backend', 'whatsapp' => 'BACKEND_SALE',
             default => 'POS_SALE',
         };
     }

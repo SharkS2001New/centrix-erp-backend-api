@@ -269,8 +269,22 @@ class CapabilityGate
             'pos' => $this->enabled('sales.pos'),
             'mobile' => $this->mobileSalesEnabled(),
             'backend' => $this->enabled('sales.backend'),
+            // WhatsApp carts are a distinct channel but require backoffice sales + WhatsApp orders.
+            'whatsapp' => $this->enabled('sales.backend') && $this->whatsappOrdersRuntimeEnabled(),
             default => false,
         };
+    }
+
+    /** Org WhatsApp ordering is live (platform gate + org enabled settings). */
+    public function whatsappOrdersRuntimeEnabled(): bool
+    {
+        if (! $this->whatsappPlatformEnabled()) {
+            return false;
+        }
+
+        $whatsapp = $this->moduleSettings('whatsapp');
+
+        return (bool) ($whatsapp['enabled'] ?? false);
     }
 
     /** Mobile app, mobile login channel, and backoffice mobile-order views when enabled for the org. */

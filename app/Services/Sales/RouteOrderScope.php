@@ -73,8 +73,8 @@ class RouteOrderScope
             }
             if ($includeNormalOrders) {
                 $sub->orWhere(function (Builder $backoffice) {
-                    $backoffice->whereIn('sales.channel', ['backend', 'backoffice'])
-                        ->orWhereIn('sales.order_source', ['backend', 'backoffice']);
+                    $backoffice->whereIn('sales.channel', ['backend', 'backoffice', 'whatsapp'])
+                        ->orWhereIn('sales.order_source', ['backend', 'backoffice', 'whatsapp']);
                 });
             }
         });
@@ -149,7 +149,7 @@ class RouteOrderScope
             return false;
         }
 
-        return in_array($channel, ['backend', 'backoffice'], true)
-            || in_array($orderSource, ['backend', 'backoffice'], true);
+        return in_array($channel, ['backend', 'backoffice', 'whatsapp'], true)
+            || in_array($orderSource, ['backend', 'backoffice', 'whatsapp'], true);
     }
 }

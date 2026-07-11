@@ -73,7 +73,7 @@ class SaleStockLocationResolver
     public static function defaultChannelLocation(string $channel, array $inventorySettings): string
     {
         return match ($channel) {
-            'backend', 'mobile' => $inventorySettings['default_distribution_sale_location'] ?? 'store',
+            'backend', 'mobile', 'whatsapp' => $inventorySettings['default_distribution_sale_location'] ?? 'store',
             default => $inventorySettings['default_pos_sale_location'] ?? 'shop',
         };
     }

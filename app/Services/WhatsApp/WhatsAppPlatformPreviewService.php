@@ -41,6 +41,23 @@ class WhatsAppPlatformPreviewService
             ->values()
             ->all();
 
+        $orgUsers = User::query()
+            ->where('organization_id', $organization->id)
+            ->where('is_super_admin', false)
+            ->where('is_active', true)
+            ->orderBy('full_name')
+            ->orderBy('username')
+            ->get(['id', 'username', 'full_name', 'is_admin', 'branch_id'])
+            ->map(fn (User $u) => [
+                'id' => $u->id,
+                'username' => $u->username,
+                'full_name' => $u->full_name,
+                'is_admin' => (bool) $u->is_admin,
+                'branch_id' => $u->branch_id,
+            ])
+            ->values()
+            ->all();
+
         $ready = $config !== null && $botUser !== null;
         $issues = [];
         if (! ($described['platform_enabled'] ?? false)) {
@@ -63,6 +80,13 @@ class WhatsAppPlatformPreviewService
             ];
         }
 
+        $defaultLiveBotId = null;
+        if (! $usingPlatformAdminBot && $botUser && (int) $botUser->organization_id === (int) $organization->id) {
+            $defaultLiveBotId = (int) $botUser->id;
+        } elseif ($orgUsers !== []) {
+            $defaultLiveBotId = (int) $orgUsers[0]['id'];
+        }
+
         return [
             'organization_id' => $organization->id,
             'organization_name' => $organization->org_name,
@@ -76,6 +100,8 @@ class WhatsAppPlatformPreviewService
             'using_platform_admin_bot' => $usingPlatformAdminBot,
             'display_phone' => $described['settings']['display_phone'] ?? null,
             'customers' => $customers,
+            'org_users' => $orgUsers,
+            'default_live_bot_user_id' => $defaultLiveBotId,
             'dry_run' => true,
             'notice' => $usingPlatformAdminBot
                 ? 'Test mode uses this organization’s products and customers. Your platform admin account stands in as the bot user — no orders, stock changes, or WhatsApp messages are created.'
@@ -126,9 +152,25 @@ class WhatsAppPlatformPreviewService
         ?array $session = null,
         ?int $actorUserId = null,
         ?User $platformActor = null,
+        bool $placeRealOrders = false,
+        ?int $botUserId = null,
     ): array {
         $actor = $platformActor ?? ($actorUserId ? User::query()->find($actorUserId) : null);
-        $config = $this->configs->resolveForOrganizationPreview($organization, $actor);
+
+        $botOverride = null;
+        if ($botUserId) {
+            $botOverride = User::query()
+                ->where('organization_id', $organization->id)
+                ->where('is_super_admin', false)
+                ->where('is_active', true)
+                ->whereKey($botUserId)
+                ->first();
+            if (! $botOverride) {
+                abort(422, 'Choose an active user from this organization to act as the bot.');
+            }
+        }
+
+        $config = $this->configs->resolveForOrganizationPreview($organization, $actor, $botOverride);
         $botUser = $config ? $this->configs->botUser($config) : null;
         if (! $config || ! $botUser) {
             abort(422, 'Sign in as a platform admin to dry-run WhatsApp for this organization.');
@@ -139,12 +181,26 @@ class WhatsAppPlatformPreviewService
             ?: ($customer?->phone_number ?: $customer?->additional_phone)
             ?: '254700000000';
 
+        if ($placeRealOrders) {
+            if (! $customer) {
+                abort(422, 'Select a customer before placing real test orders.');
+            }
+            if (! $botOverride || (int) $botUser->organization_id !== (int) $organization->id) {
+                abort(
+                    422,
+                    'Select an organization user to act as the bot before placing real test orders.',
+                );
+            }
+        }
+
         $cacheKey = $this->sessionCacheKey(
             $actor?->id ?? $actorUserId,
             $organization->id,
             $session['session_id'] ?? null,
             $customer?->customer_num,
             $fromPhone,
+            $placeRealOrders,
+            $botOverride?->id,
         );
         $cached = Cache::get($cacheKey);
         $sessionState = is_array($cached) ? $cached : (is_array($session) ? $session : null);
@@ -155,6 +211,7 @@ class WhatsAppPlatformPreviewService
             $message,
             $customer,
             $sessionState,
+            $placeRealOrders,
         );
 
         $sessionId = (string) ($session['session_id'] ?? Str::uuid());
@@ -167,6 +224,10 @@ class WhatsAppPlatformPreviewService
         ];
         Cache::put($cacheKey, $nextSession, now()->addHours(2));
 
+        $notice = $placeRealOrders
+            ? 'Live test mode — real orders (and stock) are created in this organization as @'.$botUser->username.'. No WhatsApp messages are sent.'
+            : 'Dry run only — no production data was changed and no WhatsApp message was sent.';
+
         return array_merge($result, [
             'session' => $nextSession,
             'organization_id' => $organization->id,
@@ -174,18 +235,45 @@ class WhatsAppPlatformPreviewService
             'preview_bot_user' => [
                 'id' => $botUser->id,
                 'username' => $botUser->username,
-                'source' => $actor && (int) $botUser->id === (int) $actor->id
-                    && (int) $botUser->organization_id !== (int) $organization->id
-                    ? 'platform_admin'
-                    : 'organization',
+                'full_name' => $botUser->full_name,
+                'source' => $botOverride
+                    ? 'selected_org_user'
+                    : ($actor && (int) $botUser->id === (int) $actor->id
+                        && (int) $botUser->organization_id !== (int) $organization->id
+                        ? 'platform_admin'
+                        : 'organization'),
             ],
-            'notice' => 'Dry run only — no production data was changed and no WhatsApp message was sent.',
+            'notice' => $notice,
         ]);
     }
 
-    public function resetSession(?int $actorUserId, int $organizationId, ?string $sessionId, ?string $customerNum, ?string $phone): void
-    {
-        Cache::forget($this->sessionCacheKey($actorUserId, $organizationId, $sessionId, $customerNum, $phone));
+    public function resetSession(
+        ?int $actorUserId,
+        int $organizationId,
+        ?string $sessionId,
+        ?string $customerNum,
+        ?string $phone,
+        bool $placeRealOrders = false,
+        ?int $botUserId = null,
+    ): void {
+        Cache::forget($this->sessionCacheKey(
+            $actorUserId,
+            $organizationId,
+            $sessionId,
+            $customerNum,
+            $phone,
+            $placeRealOrders,
+            $botUserId,
+        ));
+        Cache::forget($this->sessionCacheKey(
+            $actorUserId,
+            $organizationId,
+            $sessionId,
+            $customerNum,
+            $phone,
+            ! $placeRealOrders,
+            $botUserId,
+        ));
     }
 
     protected function resolveCustomer(
@@ -215,10 +303,15 @@ class WhatsAppPlatformPreviewService
         ?string $sessionId,
         ?string $customerNum,
         ?string $phone,
+        bool $placeRealOrders = false,
+        ?int $botUserId = null,
     ): string {
         $sid = $sessionId ?: 'default';
+        $mode = $placeRealOrders ? 'live' : 'dry';
 
         return 'wa_platform_preview:'
+            .$mode.':'
+            .($botUserId ?: 0).':'
             .($actorUserId ?: 0).':'
             .$organizationId.':'
             .$sid.':'
