@@ -320,7 +320,12 @@ class PlatformMailboxService
         $imported = 0;
         $skipped = 0;
         try {
-            $emails = imap_search($inbox, 'ALL') ?: [];
+            $criteria = $this->imapSearchCriteria($account);
+            $emails = @imap_search($inbox, $criteria) ?: [];
+            // Fallback if Gmail category search is unsupported on this server build.
+            if ($emails === [] && str_starts_with($criteria, 'X-GM-RAW')) {
+                $emails = @imap_search($inbox, 'ALL') ?: [];
+            }
             rsort($emails);
             $emails = array_slice($emails, 0, max(1, min($limit, 100)));
 
@@ -620,6 +625,28 @@ class PlatformMailboxService
     }
 
     /**
+     * Build IMAP SEARCH criteria. Gmail Primary/Updates are categories inside INBOX, not folders.
+     *
+     * @param  array<string, mixed>  $account
+     */
+    protected function imapSearchCriteria(array $account): string
+    {
+        $host = strtolower(trim((string) ($account['imap_host'] ?? '')));
+        $isGmail = str_contains($host, 'gmail.com') || str_contains($host, 'googlemail.com');
+        $filter = strtolower(trim((string) ($account['imap_sync_filter'] ?? 'primary')));
+
+        if (! $isGmail) {
+            return 'ALL';
+        }
+
+        return match ($filter) {
+            'updates' => 'X-GM-RAW "category:updates"',
+            'all' => 'ALL',
+            default => 'X-GM-RAW "category:primary"',
+        };
+    }
+
+    /**
      * @param  array<string, mixed>  $account
      * @return array{0: string, 1: string}
      */
@@ -627,7 +654,12 @@ class PlatformMailboxService
     {
         $encryption = $account['imap_encryption'] ?? 'ssl';
         $port = (int) ($account['imap_port'] ?? ($encryption === 'ssl' ? 993 : 143));
-        $mailboxName = $account['imap_mailbox'] ?? 'INBOX';
+        $mailboxName = trim((string) ($account['imap_mailbox'] ?? 'INBOX')) ?: 'INBOX';
+        // Never treat Gmail tabs as IMAP folder names.
+        if (preg_match('/^(updates|primary|social|promotions|forums)$/i', $mailboxName)
+            || preg_match('/\[Gmail\]\/(Updates|Primary|Social|Promotions|Forums)/i', $mailboxName)) {
+            $mailboxName = 'INBOX';
+        }
         $flags = '/imap';
         if ($encryption === 'ssl') {
             $flags .= '/ssl';

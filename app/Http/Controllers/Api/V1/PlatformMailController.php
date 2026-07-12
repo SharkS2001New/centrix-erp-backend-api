@@ -72,6 +72,7 @@ class PlatformMailController extends Controller
             'imap_password' => 'nullable|string|max:500',
             'imap_encryption' => 'nullable|in:tls,ssl,none',
             'imap_mailbox' => 'nullable|string|max:100',
+            'imap_sync_filter' => 'nullable|in:primary,updates,all',
             'contract_email_subject' => 'nullable|string|max:500',
             'contract_email_body' => 'nullable|string',
             'subscription_reminder_enabled' => 'sometimes|boolean',

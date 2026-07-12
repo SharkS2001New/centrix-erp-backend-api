@@ -19,7 +19,7 @@ class PlatformMailSettingsResolver
             'label', 'enabled', 'from_name', 'from_address', 'reply_to', 'noreply_address',
             'smtp_host', 'smtp_port', 'smtp_username', 'smtp_encryption', 'smtp_password',
             'imap_enabled', 'imap_host', 'imap_port', 'imap_username', 'imap_encryption',
-            'imap_mailbox', 'imap_password',
+            'imap_mailbox', 'imap_sync_filter', 'imap_password',
         ];
     }
 
@@ -53,6 +53,7 @@ class PlatformMailSettingsResolver
             'imap_username' => '',
             'imap_encryption' => 'ssl',
             'imap_mailbox' => 'INBOX',
+            'imap_sync_filter' => 'primary',
             'imap_password_set' => false,
         ];
     }
@@ -235,6 +236,16 @@ class PlatformMailSettingsResolver
         }
         if (trim((string) ($account['imap_mailbox'] ?? '')) === '') {
             $account['imap_mailbox'] = 'INBOX';
+        }
+        // Gmail "Updates" / "Primary" are tabs, not IMAP folders — always sync from INBOX.
+        $mailboxName = trim((string) ($account['imap_mailbox'] ?? 'INBOX'));
+        if (preg_match('/^(updates|primary|social|promotions|forums)$/i', $mailboxName)
+            || preg_match('/\[Gmail\]\/(Updates|Primary|Social|Promotions|Forums)/i', $mailboxName)) {
+            $account['imap_mailbox'] = 'INBOX';
+        }
+        $filter = strtolower(trim((string) ($account['imap_sync_filter'] ?? 'primary')));
+        if (! in_array($filter, ['primary', 'updates', 'all'], true)) {
+            $account['imap_sync_filter'] = 'primary';
         }
         if (trim((string) ($account['imap_username'] ?? '')) === '') {
             $account['imap_username'] = $smtpUser !== '' ? $smtpUser : $from;
@@ -461,6 +472,7 @@ class PlatformMailSettingsResolver
                 'label', 'enabled', 'from_name', 'from_address', 'reply_to', 'noreply_address',
                 'smtp_host', 'smtp_port', 'smtp_username', 'smtp_encryption',
                 'imap_enabled', 'imap_host', 'imap_port', 'imap_username', 'imap_encryption', 'imap_mailbox',
+                'imap_sync_filter',
             ] as $key) {
                 if (array_key_exists($key, $data)) {
                     $account[$key] = $data[$key];
