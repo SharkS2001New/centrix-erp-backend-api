@@ -217,15 +217,10 @@ class PlatformMailSettingsResolver
         $from = trim((string) ($account['from_address'] ?? ''));
 
         if (trim((string) ($account['imap_host'] ?? '')) === '' && $smtpHost !== '') {
-            $imapHost = $smtpHost;
-            if (str_starts_with($smtpHost, 'smtp.')) {
-                $imapHost = 'imap.'.substr($smtpHost, 5);
-            } elseif ($smtpHost === 'smtp.office365.com' || $smtpHost === 'smtp-mail.outlook.com') {
-                $imapHost = 'outlook.office365.com';
-            } elseif (str_contains($smtpHost, 'gmail.com') || str_contains($smtpHost, 'googlemail.com')) {
-                $imapHost = 'imap.gmail.com';
-            }
-            $account['imap_host'] = $imapHost;
+            $account['imap_host'] = self::suggestImapHostFromSmtp($smtpHost);
+        } elseif (trim((string) ($account['imap_host'] ?? '')) !== '') {
+            // Correct common mistakes (SMTP host pasted into IMAP, Zoho Pro hosts, etc.).
+            $account['imap_host'] = self::normalizeImapHost((string) $account['imap_host']);
         }
 
         if (empty($account['imap_port'])) {
@@ -248,10 +243,58 @@ class PlatformMailSettingsResolver
             $account['imap_sync_filter'] = 'primary';
         }
         if (trim((string) ($account['imap_username'] ?? '')) === '') {
+            // Zoho / Gmail require the full email address as the IMAP username.
             $account['imap_username'] = $smtpUser !== '' ? $smtpUser : $from;
         }
 
         return $account;
+    }
+
+    public static function suggestImapHostFromSmtp(string $smtpHost): string
+    {
+        $smtpHost = strtolower(trim($smtpHost));
+
+        return self::normalizeImapHost(match (true) {
+            $smtpHost === 'smtp.office365.com', $smtpHost === 'smtp-mail.outlook.com' => 'outlook.office365.com',
+            str_contains($smtpHost, 'gmail.com'), str_contains($smtpHost, 'googlemail.com') => 'imap.gmail.com',
+            str_starts_with($smtpHost, 'smtppro.') => 'imappro.'.substr($smtpHost, strlen('smtppro.')),
+            str_starts_with($smtpHost, 'smtp.') => 'imap.'.substr($smtpHost, strlen('smtp.')),
+            default => $smtpHost,
+        });
+    }
+
+    public static function normalizeImapHost(string $host): string
+    {
+        $host = strtolower(trim($host));
+        $map = [
+            'smtp.zoho.com' => 'imap.zoho.com',
+            'smtp.zoho.eu' => 'imap.zoho.eu',
+            'smtp.zoho.in' => 'imap.zoho.in',
+            'smtp.zoho.com.au' => 'imap.zoho.com.au',
+            'smtppro.zoho.com' => 'imappro.zoho.com',
+            'smtppro.zoho.eu' => 'imappro.zoho.eu',
+            'smtppro.zoho.in' => 'imappro.zoho.in',
+            'smtppro.zoho.com.au' => 'imappro.zoho.com.au',
+        ];
+
+        if (isset($map[$host])) {
+            return $map[$host];
+        }
+        if (str_starts_with($host, 'smtppro.')) {
+            return 'imappro.'.substr($host, strlen('smtppro.'));
+        }
+        if (str_starts_with($host, 'smtp.') && str_contains($host, 'zoho.')) {
+            return 'imap.'.substr($host, strlen('smtp.'));
+        }
+
+        return $host;
+    }
+
+    public static function isZohoMailHost(?string $host): bool
+    {
+        $host = strtolower(trim((string) $host));
+
+        return $host !== '' && str_contains($host, 'zoho.');
     }
 
     /** @return array<string, mixed>|null */

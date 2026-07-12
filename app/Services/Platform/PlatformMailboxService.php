@@ -259,14 +259,29 @@ class PlatformMailboxService
         }
 
         [$mailbox] = $this->imapMailboxPath($account);
-        $inbox = @imap_open($mailbox, $username, (string) $password);
+        @imap_errors();
+        @imap_alerts();
+        $inbox = @imap_open($mailbox, $username, (string) $password, 0, 1);
         if (! $inbox) {
             $err = imap_last_error() ?: 'Could not connect to IMAP server.';
+            $detail = $err.' — If this mailbox matches SMTP, confirm the app password works for IMAP, then update IMAP settings and try again.';
+            $isZoho = PlatformMailSettingsResolver::isZohoMailHost($account['imap_host'] ?? null)
+                || PlatformMailSettingsResolver::isZohoMailHost($account['smtp_host'] ?? null);
+            if ($isZoho || preg_match('/auth|login|credentials|password|authenticate/i', $err)) {
+                $detail = $err
+                    ."\n\nZoho IMAP checklist:"
+                    ."\n• Host must be IMAP (not SMTP): imap.zoho.com / imap.zoho.eu / imap.zoho.in — or imappro.zoho.com for Zoho Mail Plus / custom domain"
+                    ."\n• Port 993, encryption SSL"
+                    ."\n• Username = full email address"
+                    ."\n• Enable IMAP Access in Zoho Mail → Settings → Mail Accounts"
+                    ."\n• If 2FA is on, create an Application-Specific Password and use that (normal Zoho password often fails IMAP)"
+                    ."\n• Match your Zoho data center region (.com / .eu / .in)";
+            }
 
             return [
                 'ok' => false,
                 'message' => 'IMAP refused the connection. Check host, port, encryption, and credentials.',
-                'detail' => $err.' — If this mailbox matches SMTP, confirm the app password works for IMAP, then update IMAP settings and try again.',
+                'detail' => $detail,
                 'account_id' => $accountId,
             ];
         }
