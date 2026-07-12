@@ -13,6 +13,8 @@ return [
 
     'reports_eod_ttl' => (int) env('CACHE_REPORTS_EOD_TTL', 120),
 
+    'mobile_dashboard_ttl' => (int) env('CACHE_MOBILE_DASHBOARD_TTL', 60),
+
     'stores' => [
         'array' => [
             'driver' => 'array',

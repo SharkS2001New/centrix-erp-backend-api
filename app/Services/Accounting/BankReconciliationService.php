@@ -95,7 +95,12 @@ class BankReconciliationService
                 'created_by' => (int) $user->id,
             ]);
 
-            $this->importStatementLines($reconciliation, $lines);
+            if ($lines !== []) {
+                $imported = $this->importStatementLines($reconciliation, $lines);
+                if (! empty($data['csv']) && $imported === 0) {
+                    throw new InvalidArgumentException('No valid statement lines were imported. Check dates and amounts in the CSV.');
+                }
+            }
 
             return $this->refreshSummary($reconciliation->fresh(['chartOfAccount']));
         });
@@ -106,7 +111,7 @@ class BankReconciliationService
      */
     public function parseCsvRows(string $csv): array
     {
-        $csv = trim($csv);
+        $csv = $this->stripCsvBom(trim($csv));
         if ($csv === '') {
             return [];
         }
@@ -117,9 +122,9 @@ class BankReconciliationService
             return [];
         }
 
-        $delimiter = str_contains((string) $lines[0], ';') ? ';' : ',';
+        $delimiter = $this->detectCsvDelimiter((string) $lines[0]);
         $header = str_getcsv((string) $lines[0], $delimiter);
-        $header = array_map(fn ($col) => strtolower(trim((string) $col)), $header);
+        $header = array_map(fn ($col) => $this->normalizeCsvHeaderKey((string) $col), $header);
         $hasHeader = $this->looksLikeHeader($header);
         $start = $hasHeader ? 1 : 0;
 
@@ -133,6 +138,20 @@ class BankReconciliationService
         }
 
         return $parsed;
+    }
+
+    public function assertCsvParsed(string $csv, array $parsed): void
+    {
+        if (trim($csv) === '') {
+            return;
+        }
+
+        if ($parsed === []) {
+            throw new InvalidArgumentException(
+                'Could not parse any rows from the CSV. Use columns such as date, description, reference, amount (or debit/credit). '
+                .'Excel exports with headers like "Transaction Date" are supported.',
+            );
+        }
     }
 
     public function show(int $organizationId, int $reconciliationId): array
@@ -283,14 +302,19 @@ class BankReconciliationService
         $this->assertEditable($reconciliation);
 
         if ($csv !== null && trim($csv) !== '') {
-            $lines = array_merge($lines, $this->parseCsvRows($csv));
+            $parsed = $this->parseCsvRows($csv);
+            $this->assertCsvParsed($csv, $parsed);
+            $lines = array_merge($lines, $parsed);
         }
 
         if ($lines === []) {
             throw new InvalidArgumentException('Provide statement lines or CSV data to import.');
         }
 
-        $this->importStatementLines($reconciliation, $lines);
+        $imported = $this->importStatementLines($reconciliation, $lines);
+        if ($imported === 0) {
+            throw new InvalidArgumentException('No valid statement lines were imported. Check dates and amounts in the CSV.');
+        }
         $this->refreshSummary($reconciliation->fresh(['chartOfAccount']));
 
         return $this->show($organizationId, $reconciliationId);
@@ -577,23 +601,33 @@ class BankReconciliationService
     /**
      * @param  array<int, array<string, mixed>>  $lines
      */
-    protected function importStatementLines(BankReconciliation $reconciliation, array $lines): void
+    protected function importStatementLines(BankReconciliation $reconciliation, array $lines): int
     {
+        $imported = 0;
+
         foreach (array_values($lines) as $index => $line) {
             $amount = $this->resolveLineAmount($line);
             if ($amount === null) {
                 continue;
             }
 
+            $lineDate = (string) ($line['line_date'] ?? $line['date'] ?? $reconciliation->period_end);
+            if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $lineDate)) {
+                continue;
+            }
+
             BankStatementLine::query()->create([
                 'bank_reconciliation_id' => $reconciliation->id,
-                'line_date' => (string) ($line['line_date'] ?? $line['date'] ?? $reconciliation->period_end),
+                'line_date' => $lineDate,
                 'description' => trim((string) ($line['description'] ?? '')),
                 'reference' => trim((string) ($line['reference'] ?? '')),
                 'amount' => $amount,
                 'sort_order' => $index + 1,
             ]);
+            $imported++;
         }
+
+        return $imported;
     }
 
     /**
@@ -797,9 +831,28 @@ class BankReconciliationService
             ];
         }
 
-        $date = $mapped['line_date'] ?? $mapped['date'] ?? $mapped['transaction_date'] ?? '';
-        $description = $mapped['description'] ?? $mapped['narrative'] ?? $mapped['details'] ?? '';
-        $reference = $mapped['reference'] ?? $mapped['ref'] ?? $mapped['cheque_number'] ?? '';
+        $date = $mapped['line_date']
+            ?? $mapped['date']
+            ?? $mapped['transaction_date']
+            ?? $mapped['value_date']
+            ?? $mapped['txn_date']
+            ?? $mapped['post_date']
+            ?? '';
+        $description = $mapped['description']
+            ?? $mapped['narrative']
+            ?? $mapped['particulars']
+            ?? $mapped['details']
+            ?? $mapped['detail']
+            ?? $mapped['memo']
+            ?? '';
+        $reference = $mapped['reference']
+            ?? $mapped['ref']
+            ?? $mapped['reference_no']
+            ?? $mapped['reference_number']
+            ?? $mapped['transaction_reference']
+            ?? $mapped['cheque_number']
+            ?? $mapped['cheque_no']
+            ?? '';
         $amount = $this->resolveLineAmount($mapped);
 
         if ($date === '' || $amount === null) {
@@ -818,16 +871,19 @@ class BankReconciliationService
     protected function resolveLineAmount(array $line): ?float
     {
         if (isset($line['amount']) && $line['amount'] !== '') {
-            return round((float) str_replace([',', ' '], '', (string) $line['amount']), 2);
+            $parsed = $this->parseAmountString((string) $line['amount']);
+            if ($parsed !== null) {
+                return $parsed;
+            }
         }
 
-        $debit = (float) str_replace([',', ' '], '', (string) ($line['debit'] ?? $line['money_in'] ?? 0));
-        $credit = (float) str_replace([',', ' '], '', (string) ($line['credit'] ?? $line['money_out'] ?? 0));
+        $debit = $this->parseAmountString((string) ($line['debit'] ?? $line['money_in'] ?? $line['deposit'] ?? ''));
+        $credit = $this->parseAmountString((string) ($line['credit'] ?? $line['money_out'] ?? $line['withdrawal'] ?? ''));
 
-        if ($debit > 0 && $credit <= 0) {
+        if ($debit !== null && $debit > 0 && ($credit === null || $credit <= 0)) {
             return round($debit, 2);
         }
-        if ($credit > 0 && $debit <= 0) {
+        if ($credit !== null && $credit > 0 && ($debit === null || $debit <= 0)) {
             return round($credit * -1, 2);
         }
 
@@ -837,13 +893,66 @@ class BankReconciliationService
     /** @param array<int, string> $header */
     protected function looksLikeHeader(array $header): bool
     {
+        $known = [
+            'date', 'line_date', 'transaction_date', 'value_date', 'txn_date', 'post_date',
+            'description', 'narrative', 'particulars', 'details', 'detail', 'memo',
+            'reference', 'ref', 'reference_no', 'reference_number', 'transaction_reference',
+            'amount', 'debit', 'credit', 'money_in', 'money_out', 'deposit', 'withdrawal',
+        ];
+
         foreach ($header as $cell) {
-            if (in_array($cell, ['date', 'line_date', 'transaction_date', 'description', 'reference', 'amount', 'debit', 'credit'], true)) {
+            if (in_array($cell, $known, true)) {
                 return true;
             }
         }
 
         return false;
+    }
+
+    protected function stripCsvBom(string $csv): string
+    {
+        return ltrim($csv, "\xEF\xBB\xBF");
+    }
+
+    protected function normalizeCsvHeaderKey(string $key): string
+    {
+        $key = $this->stripCsvBom(trim($key));
+        $key = strtolower($key);
+        $key = preg_replace('/[^a-z0-9]+/', '_', $key) ?? $key;
+        $key = trim($key, '_');
+
+        return $key;
+    }
+
+    protected function detectCsvDelimiter(string $line): string
+    {
+        if (substr_count($line, "\t") >= 2) {
+            return "\t";
+        }
+        if (substr_count($line, ';') >= 2) {
+            return ';';
+        }
+
+        return ',';
+    }
+
+    protected function parseAmountString(string $value): ?float
+    {
+        $value = trim($value);
+        if ($value === '') {
+            return null;
+        }
+
+        if (preg_match('/^\(([\d,\.\s]+)\)$/', $value, $matches)) {
+            $value = '-'.str_replace([',', ' '], '', $matches[1]);
+        }
+
+        $value = preg_replace('/[^\d.\-]/', '', str_replace([',', ' '], '', $value)) ?? '';
+        if ($value === '' || $value === '-' || $value === '.') {
+            return null;
+        }
+
+        return round((float) $value, 2);
     }
 
     protected function normalizeDate(string $value): string

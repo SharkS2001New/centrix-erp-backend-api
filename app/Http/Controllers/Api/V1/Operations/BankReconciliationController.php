@@ -66,7 +66,9 @@ class BankReconciliationController extends Controller
 
         $lines = $data['statement_lines'] ?? [];
         if (! empty($data['csv'])) {
-            $lines = array_merge($lines, $this->reconciliations->parseCsvRows($data['csv']));
+            $parsed = $this->reconciliations->parseCsvRows($data['csv']);
+            $this->reconciliations->assertCsvParsed($data['csv'], $parsed);
+            $lines = array_merge($lines, $parsed);
         }
 
         try {

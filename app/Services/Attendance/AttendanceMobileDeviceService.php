@@ -33,6 +33,28 @@ class AttendanceMobileDeviceService
         return $normalized;
     }
 
+    public function assertValidDeviceIdentifier(string $deviceIdentifier): string
+    {
+        $normalized = $this->normalizeIdentifier($deviceIdentifier);
+        if ($normalized === '') {
+            throw new InvalidArgumentException('Device identifier is required.');
+        }
+
+        $core = preg_match('/^(android|ios):(.+)$/', $normalized, $matches) === 1
+            ? $matches[2]
+            : $normalized;
+
+        if (strlen($core) < 12) {
+            throw new InvalidArgumentException('Device identifier is too short to be trusted.');
+        }
+
+        if (preg_match('/^(test|demo|00000000|1234567890|device|attendance)$/i', $core) === 1) {
+            throw new InvalidArgumentException('Device identifier is not allowed.');
+        }
+
+        return $normalized;
+    }
+
     /** @return list<string> */
     public function identifierLookupKeys(string $identifier, ?string $platform = null): array
     {
@@ -70,7 +92,8 @@ class AttendanceMobileDeviceService
 
     public function assertRegisteredDevice(Organization $organization, string $deviceIdentifier): AttendanceMobileDevice
     {
-        $device = $this->findRegisteredDevice($organization, $deviceIdentifier);
+        $normalized = $this->assertValidDeviceIdentifier($deviceIdentifier);
+        $device = $this->findRegisteredDevice($organization, $normalized);
         if (! $device) {
             throw new InvalidArgumentException('This phone is not registered for company attendance.');
         }

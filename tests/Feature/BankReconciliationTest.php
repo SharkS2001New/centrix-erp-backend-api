@@ -140,6 +140,52 @@ CSV;
             ->assertJsonPath('statement_lines.1.amount', -150);
     }
 
+    public function test_csv_import_supports_spaced_bank_headers(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        $bank = ChartOfAccount::query()
+            ->where('organization_id', $orgId)
+            ->where('account_code', '1100')
+            ->firstOrFail();
+
+        $csv = <<<'CSV'
+Transaction Date,Narrative,Reference,Debit,Credit
+10/06/2026,Customer deposit,DEP-77,2500.00,
+11/06/2026,Bank charge,CHG-2,,150.00
+CSV;
+
+        $created = $this->postJson('/api/v1/accounting/bank-reconciliations', [
+            'chart_of_account_id' => $bank->id,
+            'period_end' => '2026-06-30',
+            'statement_balance' => 2350,
+            'csv' => $csv,
+        ])->assertCreated();
+
+        $reconciliationId = (int) $created->json('id');
+
+        $this->getJson("/api/v1/accounting/bank-reconciliations/{$reconciliationId}")
+            ->assertOk()
+            ->assertJsonCount(2, 'statement_lines')
+            ->assertJsonPath('statement_lines.0.amount', 2500)
+            ->assertJsonPath('statement_lines.1.amount', -150);
+    }
+
+    public function test_csv_import_rejects_unparseable_csv(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        $bank = ChartOfAccount::query()
+            ->where('organization_id', $orgId)
+            ->where('account_code', '1100')
+            ->firstOrFail();
+
+        $this->postJson('/api/v1/accounting/bank-reconciliations', [
+            'chart_of_account_id' => $bank->id,
+            'period_end' => '2026-06-30',
+            'statement_balance' => 100,
+            'csv' => "foo,bar,baz\n1,2,3",
+        ])->assertStatus(422);
+    }
+
     public function test_can_import_statement_lines_into_existing_reconciliation(): void
     {
         $orgId = (int) $this->user->organization_id;

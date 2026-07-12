@@ -341,11 +341,11 @@ class WhatsAppBotHandler
 
         if ($input === 'CANCEL') {
             if ($customer) {
-                $conversation->payload = [];
+            $conversation->payload = [];
                 $conversation->state = self::STATE_MAIN_MENU;
 
                 return "Cart cleared.\n\n".$this->mainMenuMessage($customer);
-            }
+        }
 
             $this->clearRegistrationPayload($conversation);
             $conversation->state = self::STATE_UNKNOWN;
@@ -797,15 +797,15 @@ class WhatsAppBotHandler
 
         $message = $messageOverride ?: ($e->getMessage() !== '' ? $e->getMessage() : class_basename($e));
 
-        $this->orders->logOrderFailure(
-            $config->organizationId,
+                $this->orders->logOrderFailure(
+                    $config->organizationId,
             $conversation->id ? (int) $conversation->id : null,
             (string) $conversation->phone,
             $message,
-            $this->cartLines($conversation),
+                    $this->cartLines($conversation),
             $e,
             $this->simulatorSession,
-        );
+                );
     }
 
     protected function handleTrack(
@@ -1620,9 +1620,9 @@ class WhatsAppBotHandler
         }
 
         if ($customer) {
-            $conversation->state = self::STATE_MAIN_MENU;
+        $conversation->state = self::STATE_MAIN_MENU;
 
-            return "Your request has been resolved.\n\n".$this->mainMenuMessage($customer);
+        return "Your request has been resolved.\n\n".$this->mainMenuMessage($customer);
         }
 
         $conversation->state = self::STATE_UNKNOWN;

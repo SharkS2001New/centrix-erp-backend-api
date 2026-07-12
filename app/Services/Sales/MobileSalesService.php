@@ -9,6 +9,7 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Cache\CompletedSalesCacheService;
+use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Support\SqlLikeSearch;
@@ -42,6 +43,60 @@ class MobileSalesService
             $allChannels = false;
         }
 
+        $orgId = (int) ($user->organization_id ?? 0);
+        $ttl = (int) config('cache.mobile_dashboard_ttl', 60);
+        $cacheable = $orgId > 0 && $ttl > 0 && $from->isSameDay($to);
+
+        $build = fn (): array => $this->buildDashboardPayload($user, $from, $to, $allChannels);
+
+        if (! $cacheable) {
+            return $build();
+        }
+
+        $key = sprintf(
+            'mobile-dashboard:u%d:%s:%d',
+            (int) $user->id,
+            $from->toDateString(),
+            $allChannels ? 1 : 0,
+        );
+
+        return OrganizationCache::remember($orgId, $key, $ttl, $build);
+    }
+
+    /** Drop cached same-day dashboard payloads for a rep after checkout or order changes. */
+    public function invalidateDashboardForUser(User $user, ?Carbon $date = null): void
+    {
+        $orgId = (int) ($user->organization_id ?? 0);
+        if ($orgId <= 0) {
+            return;
+        }
+
+        $date ??= now()->startOfDay();
+        $dateKey = $date->toDateString();
+
+        foreach ([0, 1] as $allChannelsFlag) {
+            OrganizationCache::forget(
+                $orgId,
+                sprintf(
+                    'mobile-dashboard:u%d:%s:%d',
+                    (int) $user->id,
+                    $dateKey,
+                    $allChannelsFlag,
+                ),
+            );
+        }
+    }
+
+    /**
+     * @return array{
+     *     summary: array<string, int|float>,
+     *     recent_orders: list<array<string, mixed>>,
+     *     weekly_sales: list<array<string, mixed>>,
+     *     monthly_sales: list<array<string, mixed>>
+     * }
+     */
+    protected function buildDashboardPayload(User $user, Carbon $from, Carbon $to, bool $allChannels): array
+    {
         $salesQuery = $this->mobileSalesQuery($user, $allChannels)
             ->whereDate('created_at', '>=', $from->toDateString())
             ->whereDate('created_at', '<=', $to->toDateString())

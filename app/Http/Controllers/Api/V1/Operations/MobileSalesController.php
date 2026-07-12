@@ -3,8 +3,10 @@
 namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
+use App\Models\UserDeviceToken;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Customers\MobileCustomerService;
+use App\Services\Mobile\UserDeviceTokenService;
 use App\Services\Sales\MobileSalesService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -15,6 +17,7 @@ class MobileSalesController extends Controller
         protected MobileSalesService $mobileSales,
         protected MobileCustomerService $mobileCustomers,
         protected UserMobileOrderScopeService $mobileScope,
+        protected UserDeviceTokenService $deviceTokens,
     ) {}
 
     /** GET /mobile/dashboard — rep-scoped KPIs and charts for the mobile app. */
@@ -96,6 +99,29 @@ class MobileSalesController extends Controller
         );
     }
 
+    /** PATCH /mobile/orders/{saleId}/editable-lines — revise qty/discount on a rejected editable order. */
+    public function updateEditableLines(Request $request, int $saleId)
+    {
+        $data = $request->validate([
+            'items' => 'required|array|min:1',
+            'items.*.id' => 'required|integer',
+            'items.*.quantity' => 'required|numeric|min:0.0001',
+            'items.*.discount_given' => 'sometimes|numeric|min:0',
+            'all_channels' => 'nullable|boolean',
+        ]);
+
+        $allChannels = filter_var($data['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        return response()->json(
+            $this->mobileSales->updateEditableOrderLines(
+                $request->user(),
+                $saleId,
+                $data['items'],
+                $allChannels,
+            ),
+        );
+    }
+
     /** POST /mobile/orders/{saleId}/returns — line or full-order return with stock restore. */
     public function storeReturn(Request $request, int $saleId)
     {
@@ -150,6 +176,7 @@ class MobileSalesController extends Controller
         $filters = $request->validate([
             'q' => 'nullable|string|max:200',
             'per_page' => 'nullable|integer|min:1|max:200',
+            'page' => 'nullable|integer|min:1',
             'route_id' => 'nullable|integer|min:1',
         ]);
 
@@ -213,5 +240,42 @@ class MobileSalesController extends Controller
         return response()->json(
             $this->mobileCustomers->update($request->user(), $customerNum, $data),
         );
+    }
+
+    /** POST /mobile/device-tokens — register FCM/APNs token for push. */
+    public function registerDeviceToken(Request $request)
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string', 'max:512'],
+            'platform' => ['nullable', 'string', 'max:20'],
+        ]);
+
+        $record = $this->deviceTokens->register(
+            $request->user(),
+            $data['token'],
+            UserDeviceToken::CHANNEL_MOBILE_SALES,
+            $data['platform'] ?? null,
+        );
+
+        return response()->json([
+            'message' => 'Device token registered.',
+            'id' => $record->id,
+        ]);
+    }
+
+    /** DELETE /mobile/device-tokens — unregister on sign-out. */
+    public function unregisterDeviceToken(Request $request)
+    {
+        $data = $request->validate([
+            'token' => ['required', 'string', 'max:512'],
+        ]);
+
+        $this->deviceTokens->unregister(
+            $request->user(),
+            $data['token'],
+            UserDeviceToken::CHANNEL_MOBILE_SALES,
+        );
+
+        return response()->json(['message' => 'Device token removed.']);
     }
 }

@@ -57,7 +57,7 @@ class CompanyMobileAttendanceController extends Controller
     {
         $data = $request->validate([
             'company_code' => 'required|string|max:45',
-            'device_identifier' => 'required|string|max:120',
+            'device_identifier' => 'required|string|min:12|max:120',
         ]);
 
         try {
@@ -76,7 +76,7 @@ class CompanyMobileAttendanceController extends Controller
     {
         $data = $request->validate([
             'company_code' => 'required|string|max:45',
-            'device_identifier' => 'required|string|max:120',
+            'device_identifier' => 'required|string|min:12|max:120',
             'q' => 'nullable|string|max:120',
             'limit' => 'nullable|integer|min:1|max:50',
         ]);
@@ -101,7 +101,7 @@ class CompanyMobileAttendanceController extends Controller
     {
         $data = $request->validate([
             'company_code' => 'required|string|max:45',
-            'device_identifier' => 'required|string|max:120',
+            'device_identifier' => 'required|string|min:12|max:120',
         ]);
 
         try {
@@ -123,7 +123,7 @@ class CompanyMobileAttendanceController extends Controller
     {
         $data = $request->validate([
             'company_code' => 'required|string|max:45',
-            'device_identifier' => 'required|string|max:120',
+            'device_identifier' => 'required|string|min:12|max:120',
             'employee_id' => 'required|integer',
             'verification_method' => 'required|in:face,fingerprint',
             'photo' => 'nullable|required_if:verification_method,face|image|max:10240',
@@ -162,7 +162,7 @@ class CompanyMobileAttendanceController extends Controller
     {
         $data = $request->validate([
             'company_code' => 'required|string|max:45',
-            'device_identifier' => 'required|string|max:120',
+            'device_identifier' => 'required|string|min:12|max:120',
             'employee_id' => 'required|integer',
             'verification_method' => 'required|in:face,fingerprint',
             'photo' => 'nullable|required_if:verification_method,face|image|max:10240',

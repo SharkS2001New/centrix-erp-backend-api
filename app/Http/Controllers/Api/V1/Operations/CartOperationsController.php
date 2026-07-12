@@ -181,6 +181,76 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
     }
 
+    /** POST /sales/carts/{cartId}/apply-advised-discounts — apply manager-advised per-line discounts in one request. */
+    public function applyAdvisedDiscounts(Request $request, int $cartId)
+    {
+        $user = $request->user();
+        $cart = $this->findOwnedCart($cartId, $user);
+        $gate = $this->erp->gateForUser($user);
+        $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
+
+        $data = $request->validate([
+            'update_no' => 'nullable|integer|min:0',
+        ]);
+
+        if (
+            array_key_exists('update_no', $data)
+            && (int) $data['update_no'] !== (int) $cart->update_no
+        ) {
+            throw new InvalidArgumentException('Cart was updated elsewhere. Refresh and try again.');
+        }
+
+        if (! $discounts->cartResubmitsRejectedDiscountOrder($cart)) {
+            throw new InvalidArgumentException('Cart is not a discount-rejected order edit.');
+        }
+
+        $supersededId = (int) ($cart->superseded_sale_id ?? 0);
+        if ($supersededId <= 0) {
+            throw new InvalidArgumentException('No superseded order on this cart.');
+        }
+
+        $superseded = Sale::query()->findOrFail($supersededId);
+        $advisedLines = $discounts->saleAdvisedDiscountLines($superseded);
+        if ($advisedLines === []) {
+            throw new InvalidArgumentException('No per-line advised discounts on this order.');
+        }
+
+        $advisedByCode = collect($advisedLines)->keyBy(
+            static fn (array $line) => (string) ($line['product_code'] ?? ''),
+        );
+        $display = app(\App\Services\Sales\SaleLineQuantityDisplayService::class);
+
+        foreach ($cart->lines as $line) {
+            $code = (string) $line->product_code;
+            $advised = $advisedByCode->get($code);
+            if ($advised === null) {
+                continue;
+            }
+
+            $product = $this->findProductForCart($cart, $code, $user);
+            $packQty = max(
+                0.0001,
+                $display->entryQtyFromBase(
+                    (float) $line->quantity,
+                    $product,
+                    (bool) $line->on_wholesale_retail,
+                ),
+            );
+            $discountGiven = round((float) ($advised['advised_discount'] ?? 0) * $packQty, 2);
+
+            $this->updateCartLine($cart, (string) $line->update_code, [
+                'quantity' => (float) $line->quantity,
+                'on_wholesale_retail' => (bool) $line->on_wholesale_retail,
+                'discount_given' => $discountGiven,
+            ], $user, $gate);
+
+            $cart->refresh();
+            $cart->load('lines');
+        }
+
+        return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
+    }
+
     public function deleteLine(int $cartId, string $lineRef)
     {
         $user = request()->user();

@@ -39,7 +39,9 @@ use App\Services\Sales\DiscountApprovalService;
 use App\Services\Sales\MobileCheckoutLocationService;
 use App\Services\Sales\MobileCheckoutSettings;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
+use App\Services\Sales\MobileSalesService;
 use App\Services\Sales\OrderNumberAllocator;
+use App\Services\Cache\CompletedSalesCacheService;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -71,6 +73,9 @@ class CheckoutController extends Controller
 
         $sale = $sale->fresh(['items', 'payments.paymentMethod']);
         $labels = config('erp.order_status_labels', []);
+
+        app(MobileSalesService::class)->invalidateDashboardForUser($request->user());
+        app(CompletedSalesCacheService::class)->invalidateForSale($sale);
 
         return response()->json(array_merge($sale->toArray(), [
             'status_name' => $labels[$sale->status]

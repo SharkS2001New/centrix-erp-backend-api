@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Erp\CapabilityGate;
+use App\Support\SqlLikeSearch;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -21,7 +22,8 @@ class MobileCustomerService
 
     public function list(User $user, array $filters): array
     {
-        $perPage = min((int) ($filters['per_page'] ?? 50), 200);
+        $perPage = min((int) ($filters['per_page'] ?? 40), 200);
+        $page = max(1, (int) ($filters['page'] ?? 1));
         $term = trim((string) ($filters['q'] ?? ''));
         $routeId = isset($filters['route_id']) ? (int) $filters['route_id'] : null;
 
@@ -35,30 +37,23 @@ class MobileCustomerService
             ]);
 
         if ($term !== '') {
-            $like = '%'.$term.'%';
-            $query->where(function ($builder) use ($like, $term) {
-                $builder
-                    ->where('customers.customer_name', 'like', $like)
-                    ->orWhere('customers.phone_number', 'like', $like)
-                    ->orWhere('customers.additional_phone', 'like', $like)
-                    ->orWhere('customers.town', 'like', $like)
-                    ->orWhere('customers.kra_pin', 'like', $like);
-                if (ctype_digit($term)) {
-                    $builder->orWhere('customers.customer_num', 'like', $like);
-                }
-            });
+            SqlLikeSearch::applyCustomerSearch($query, $term);
         }
 
-        $rows = $query
+        $paginator = $query
             ->orderBy('customers.customer_name')
-            ->limit($perPage)
-            ->get();
+            ->paginate($perPage, ['customers.*', 'routes.route_name', 'users.username as created_by_username'], 'page', $page);
 
         return [
-            'data' => $rows->map(fn ($row) => $this->presentRow($row))->values()->all(),
+            'data' => collect($paginator->items())
+                ->map(fn ($row) => $this->presentRow($row))
+                ->values()
+                ->all(),
             'meta' => [
-                'count' => $rows->count(),
-                'per_page' => $perPage,
+                'current_page' => $paginator->currentPage(),
+                'last_page' => $paginator->lastPage(),
+                'per_page' => $paginator->perPage(),
+                'total' => $paginator->total(),
             ],
         ];
     }

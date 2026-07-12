@@ -10,6 +10,7 @@ use App\Services\Inventory\OpeningStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileProductListSettings;
+use App\Support\SqlLikeSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -227,10 +228,7 @@ class ProductController extends BaseResourceController
         }
 
         if ($q = trim((string) $request->input('q', ''))) {
-            $query->where(function ($inner) use ($q) {
-                $inner->where('products.product_code', 'like', "%{$q}%")
-                    ->orWhere('products.product_name', 'like', "%{$q}%");
-            });
+            SqlLikeSearch::applyProductSearch($query, $q, 'products.product_code', 'products.product_name');
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
