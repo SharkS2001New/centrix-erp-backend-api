@@ -19,10 +19,11 @@ class InAppNotificationController extends Controller
     public function unreadCount(Request $request)
     {
         $user = $request->user();
+        $workspace = $request->input('workspace');
 
         return response()->json([
-            'count' => $this->notifications->unreadCount($user),
-            'pending_approvals_count' => $this->notifications->pendingApprovalsCount($user),
+            'count' => $this->notifications->unreadCount($user, $workspace),
+            'pending_approvals_count' => $this->notifications->pendingApprovalsCount($user, $workspace),
         ]);
     }
 
@@ -31,13 +32,13 @@ class InAppNotificationController extends Controller
         $limit = min(max((int) $request->input('limit', 20), 1), 50);
 
         return response()->json([
-            'data' => $this->notifications->listRecent($request->user(), $limit)->values(),
+            'data' => $this->notifications->listRecent($request->user(), $limit, $request->input('workspace'))->values(),
         ]);
     }
 
     public function all(Request $request)
     {
-        $filters = $request->only(['bucket', 'per_page']);
+        $filters = $request->only(['bucket', 'per_page', 'workspace']);
         $page = $this->notifications->paginate($request->user(), $filters);
 
         return response()->json([
@@ -66,7 +67,7 @@ class InAppNotificationController extends Controller
 
     public function markAllRead(Request $request)
     {
-        $count = $this->notifications->markAllRead($request->user());
+        $count = $this->notifications->markAllRead($request->user(), $request->input('workspace'));
 
         return response()->json([
             'message' => 'All notifications marked as read.',
@@ -93,7 +94,7 @@ class InAppNotificationController extends Controller
 
     public function clearAll(Request $request)
     {
-        $count = $this->notifications->clearAll($request->user());
+        $count = $this->notifications->clearAll($request->user(), $request->input('workspace'));
 
         return response()->json([
             'message' => 'Notifications cleared.',

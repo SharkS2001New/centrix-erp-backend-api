@@ -40,30 +40,37 @@ class InAppNotificationService
         return $notification;
     }
 
-    public function unreadCount(User $user): int
+    public function unreadCount(User $user, ?string $workspace = null): int
     {
-        return $this->visibleQuery($user)
+        $query = $this->visibleQuery($user)
             ->where('is_read', false)
-            ->whereNull('resolved_at')
-            ->count();
+            ->whereNull('resolved_at');
+        $this->applyWorkspaceFilter($query, $workspace);
+
+        return $query->count();
     }
 
-    public function pendingApprovalsCount(User $user): int
+    public function pendingApprovalsCount(User $user, ?string $workspace = null): int
     {
-        return $this->visibleQuery($user)
+        $query = $this->visibleQuery($user)
             ->where('type', 'approval')
             ->whereNull('resolved_at')
-            ->whereHas('actionRequest', fn ($q) => $q->where('status', 'pending'))
-            ->count();
+            ->whereHas('actionRequest', fn ($q) => $q->where('status', 'pending'));
+        $this->applyWorkspaceFilter($query, $workspace);
+
+        return $query->count();
     }
 
     /** @return Collection<int, array<string, mixed>> */
-    public function listRecent(User $user, int $limit = 20): Collection
+    public function listRecent(User $user, int $limit = 20, ?string $workspace = null): Collection
     {
-        return $this->activeQuery($user)
+        $query = $this->activeQuery($user)
             ->with(['actionRequest.requester', 'creator'])
             ->orderByDesc('created_at')
-            ->limit(min($limit, 50))
+            ->limit(min($limit, 50));
+        $this->applyWorkspaceFilter($query, $workspace);
+
+        return $query
             ->get()
             ->map(fn (InAppNotification $notification) => $this->format($notification, $user));
     }
@@ -73,6 +80,7 @@ class InAppNotificationService
     {
         $query = $this->visibleQuery($user)
             ->with(['actionRequest.requester', 'creator']);
+        $this->applyWorkspaceFilter($query, $filters['workspace'] ?? null);
 
         $bucket = (string) ($filters['bucket'] ?? '');
         if ($bucket === 'pending_approvals') {
@@ -109,14 +117,16 @@ class InAppNotificationService
         return $notification->fresh(['actionRequest.requester', 'creator']);
     }
 
-    public function markAllRead(User $user): int
+    public function markAllRead(User $user, ?string $workspace = null): int
     {
-        return $this->visibleQuery($user)
-            ->where('is_read', false)
-            ->update([
-                'is_read' => true,
-                'read_at' => now(),
-            ]);
+        $query = $this->visibleQuery($user)
+            ->where('is_read', false);
+        $this->applyWorkspaceFilter($query, $workspace);
+
+        return $query->update([
+            'is_read' => true,
+            'read_at' => now(),
+        ]);
     }
 
     public function dismiss(InAppNotification $notification, User $user): InAppNotification
@@ -138,18 +148,20 @@ class InAppNotificationService
         return $notification->fresh(['actionRequest.requester', 'creator']);
     }
 
-    public function clearAll(User $user): int
+    public function clearAll(User $user, ?string $workspace = null): int
     {
-        return $this->visibleQuery($user)
+        $query = $this->visibleQuery($user)
             ->where(function ($query) {
                 $query->where('type', '!=', 'approval')
                     ->orWhereDoesntHave('actionRequest', fn ($q) => $q->where('status', 'pending'));
-            })
-            ->update([
-                'dismissed_at' => now(),
-                'is_read' => true,
-                'read_at' => now(),
-            ]);
+            });
+        $this->applyWorkspaceFilter($query, $workspace);
+
+        return $query->update([
+            'dismissed_at' => now(),
+            'is_read' => true,
+            'read_at' => now(),
+        ]);
     }
 
     public function isPendingApproval(InAppNotification $notification): bool
@@ -275,5 +287,10 @@ class InAppNotificationService
         }
 
         return $payload;
+    }
+
+    protected function applyWorkspaceFilter($query, ?string $workspace): void
+    {
+        app(NotificationWorkspaceFilter::class)->apply($query, $workspace);
     }
 }
