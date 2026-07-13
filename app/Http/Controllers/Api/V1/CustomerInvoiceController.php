@@ -80,6 +80,14 @@ class CustomerInvoiceController extends BaseResourceController
             $query->where('payment_status', $request->input('payment_status'));
         }
 
+        if ($request->filled('from_date')) {
+            $query->whereDate('invoice_date', '>=', $request->input('from_date'));
+        }
+
+        if ($request->filled('to_date')) {
+            $query->whereDate('invoice_date', '<=', $request->input('to_date'));
+        }
+
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);

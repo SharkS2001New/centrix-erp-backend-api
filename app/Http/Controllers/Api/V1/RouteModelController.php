@@ -47,11 +47,15 @@ class RouteModelController extends BaseResourceController
         if ($request->boolean('include_stats')) {
             $gate = $this->erp->gateForUser($request->user());
             $period = (string) $request->input('stats_period', 'day');
+            $fromDate = $request->input('stats_from_date') ?: $request->input('from_date');
+            $toDate = $request->input('stats_to_date') ?: $request->input('to_date');
             $collection = app(RouteDashboardStatsService::class)->attachStats(
                 $paginator->getCollection(),
                 $period,
                 $gate,
                 $request->user(),
+                $fromDate ? (string) $fromDate : null,
+                $toDate ? (string) $toDate : null,
             );
             $paginator->setCollection($collection);
         }

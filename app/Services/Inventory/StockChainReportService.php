@@ -155,6 +155,12 @@ class StockChainReportService
                 DB::raw('COALESCE(pt.total_sold, 0) AS total_sold'),
                 DB::raw('COALESCE(cs.shop_quantity, 0) AS current_shop_stock'),
                 DB::raw('COALESCE(cs.store_quantity, 0) AS current_store_stock'),
+                DB::raw('ROUND(
+                    (COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))
+                    / NULLIF(GREATEST(COALESCE(u.conversion_factor, 1), 1), 0)
+                    * COALESCE(NULLIF(p.last_cost_price, 0), 0),
+                    2
+                ) AS total_cost_value'),
             ]);
 
         if ($request->filled('product_code')) {
