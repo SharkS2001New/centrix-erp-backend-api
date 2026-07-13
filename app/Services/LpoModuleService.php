@@ -334,7 +334,9 @@ class LpoModuleService
         $ordered = (float) ($txn->ordered_qty ?? 0);
         $received = (float) ($txn->received_qty ?? 0);
         $returned = (float) ($returnedByProduct[$txn->product_code] ?? 0);
-        $openReturn = max(0, min($received, $ordered) - $returned);
+        $offer = (float) ($txn->offer_qty ?? max(0, $received - $ordered));
+        $openReturn = max(0, min($received - $offer, $ordered) - $returned);
+        $remainingQty = max(0, $ordered - max(0, $received - $offer) - $returned);
 
         return [
             'id' => (int) $txn->id,
@@ -343,6 +345,8 @@ class LpoModuleService
             'product_name' => $product?->product_name ?? $txn->product_code,
             'ordered_qty' => $ordered,
             'received_qty' => $received,
+            'offer_qty' => $offer,
+            'remaining_qty' => $remainingQty,
             'returned_qty' => $returned,
             'committed_return_qty' => $returned,
             'max_return_qty' => $openReturn,
@@ -424,7 +428,8 @@ class LpoModuleService
                 'number' => $inv->supplier_invoice_number,
                 'invoice_date' => $inv->invoice_date,
                 'invoice_amount' => (float) ($inv->invoice_amount ?? 0),
-                'has_document' => false,
+                'has_document' => filled($inv->file_path),
+                'file_name' => $inv->file_name,
                 'received_at' => $inv->created_at,
             ])
             ->values()
@@ -516,9 +521,11 @@ class LpoModuleService
     {
         return $lineRows->sum(function (array $line) {
             $received = (float) ($line['received_qty'] ?? 0);
+            $offer = (float) ($line['offer_qty'] ?? 0);
             $cost = (float) ($line['cost_price'] ?? 0);
+            $payableQty = max(0, $received - $offer);
 
-            return $received * $cost;
+            return $payableQty * $cost;
         });
     }
 

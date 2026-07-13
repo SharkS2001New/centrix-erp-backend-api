@@ -12,7 +12,7 @@ class LpoTxn extends Model
     public $timestamps = false;
     protected $fillable = [
         'lpo_no', 'product_code', 'ordered_qty', 'uom', 'cost_price',
-        'received_qty', 'markup_amount', 'markup_percent',
+        'received_qty', 'offer_qty', 'markup_amount', 'markup_percent',
     ];
 
     public function lpo()

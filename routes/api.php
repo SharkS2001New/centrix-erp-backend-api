@@ -729,6 +729,10 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('lpo-attachments', LpoAttachmentController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:purchasing.view'])
                 ->middlewareFor(['store', 'destroy'], ['erp.permission:purchasing.manage']);
+            Route::get('lpo-supplier-invoices/{lpo_supplier_invoice}/file', [LpoSupplierInvoiceController::class, 'file'])
+                ->middleware('erp.permission:purchasing.view');
+            Route::post('lpo-supplier-invoices/{lpo_supplier_invoice}/document', [LpoSupplierInvoiceController::class, 'uploadDocument'])
+                ->middleware('erp.permission:purchasing.manage');
             Route::apiResource('lpo-supplier-invoices', LpoSupplierInvoiceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:purchasing.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:purchasing.manage']);

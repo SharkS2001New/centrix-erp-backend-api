@@ -55,12 +55,35 @@ class StockReceiveService
             if (! empty($data['lpo_txn_id'])) {
                 $txn = LpoTxn::find($data['lpo_txn_id']);
                 if ($txn) {
-                    $txn->received_qty = (float) ($txn->received_qty ?? 0) + $qty;
-                    $txn->save();
+                    $this->applyLpoTxnReceive($txn, $data, $qty);
                 }
             }
 
             return $receipt;
         });
+    }
+
+    /**
+     * Update LPO line received totals. Offer qty is the portion received above the ordered qty.
+     *
+     * @param  array<string, mixed>  $data
+     */
+    protected function applyLpoTxnReceive(LpoTxn $txn, array $data, float $unitsReceived): void
+    {
+        $incomingPack = isset($data['pack_qty']) && $data['pack_qty'] !== null
+            ? (float) $data['pack_qty']
+            : $unitsReceived;
+
+        $ordered = (float) ($txn->ordered_qty ?? 0);
+        $received = (float) ($txn->received_qty ?? 0);
+        $offer = (float) ($txn->offer_qty ?? 0);
+        $paidReceived = max(0.0, $received - $offer);
+        $roomOnOrder = max(0.0, $ordered - $paidReceived);
+        $onOrder = min($incomingPack, $roomOnOrder);
+        $bonus = max(0.0, $incomingPack - $onOrder);
+
+        $txn->received_qty = $received + $incomingPack;
+        $txn->offer_qty = $offer + $bonus;
+        $txn->save();
     }
 }

@@ -11,6 +11,7 @@ class LpoSupplierInvoice extends Model
     protected $table = 'lpo_supplier_invoices';
     protected $fillable = [
         'lpo_no', 'supplier_id', 'supplier_invoice_number', 'invoice_date', 'invoice_amount',
+        'file_path', 'file_name', 'mime_type', 'file_size', 'uploaded_by',
     ];
 
     public function lpo()

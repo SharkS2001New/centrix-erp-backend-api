@@ -22,6 +22,7 @@ class StockReceiveRequest extends FormRequest
             'invoice_number' => 'nullable|string|max:45',
             'lpo_no' => 'nullable|integer',
             'lpo_txn_id' => 'nullable|integer',
+            'pack_qty' => 'nullable|numeric|min:0',
         ];
     }
 }

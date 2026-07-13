@@ -176,6 +176,7 @@ class LpoMstController extends BaseResourceController
                     'cost_price' => $line['cost_price'],
                     'uom' => $line['uom'] ?? null,
                     'received_qty' => 0,
+                    'offer_qty' => 0,
                 ]);
             }
 
@@ -224,6 +225,7 @@ class LpoMstController extends BaseResourceController
                     'cost_price' => $line['cost_price'],
                     'uom' => $line['uom'] ?? null,
                     'received_qty' => 0,
+                    'offer_qty' => 0,
                 ]);
             }
         });

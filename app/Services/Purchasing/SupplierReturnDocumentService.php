@@ -476,8 +476,10 @@ class SupplierReturnDocumentService
                     ]);
                 }
                 $received = (float) ($txn->received_qty ?? 0);
+                $offer = (float) ($txn->offer_qty ?? 0);
+                $paidReceived = max(0.0, $received - $offer);
                 $already = (float) ($returnedByProduct[$productCode] ?? 0);
-                $maxReturn = max(0, min($received, (float) ($txn->ordered_qty ?? 0)) - $already);
+                $maxReturn = max(0, min($paidReceived, (float) ($txn->ordered_qty ?? 0)) - $already);
                 if ($qty > $maxReturn + 0.0001) {
                     throw ValidationException::withMessages([
                         "lines.{$i}.quantity" => ["Return quantity exceeds available ({$maxReturn}) for {$productCode}."],
