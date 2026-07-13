@@ -217,4 +217,50 @@ CSV;
             ->assertJsonCount(1, 'statement_lines')
             ->assertJsonPath('statement_lines.0.reference', 'DEP-99');
     }
+
+    public function test_can_delete_in_progress_bank_reconciliation(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        $bank = ChartOfAccount::query()
+            ->where('organization_id', $orgId)
+            ->where('account_code', '1100')
+            ->firstOrFail();
+
+        $created = $this->postJson('/api/v1/accounting/bank-reconciliations', [
+            'chart_of_account_id' => $bank->id,
+            'period_end' => '2026-06-30',
+            'statement_balance' => 1000,
+        ])->assertCreated();
+
+        $reconciliationId = (int) $created->json('id');
+
+        $this->deleteJson("/api/v1/accounting/bank-reconciliations/{$reconciliationId}")
+            ->assertNoContent();
+
+        $this->assertDatabaseMissing('bank_reconciliations', ['id' => $reconciliationId]);
+    }
+
+    public function test_cannot_delete_completed_bank_reconciliation(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        $bank = ChartOfAccount::query()
+            ->where('organization_id', $orgId)
+            ->where('account_code', '1100')
+            ->firstOrFail();
+
+        $created = $this->postJson('/api/v1/accounting/bank-reconciliations', [
+            'chart_of_account_id' => $bank->id,
+            'period_end' => '2026-06-30',
+            'statement_balance' => 0,
+        ])->assertCreated();
+
+        $reconciliationId = (int) $created->json('id');
+
+        $this->postJson("/api/v1/accounting/bank-reconciliations/{$reconciliationId}/complete", [
+            'notes' => 'Done',
+        ])->assertOk();
+
+        $this->deleteJson("/api/v1/accounting/bank-reconciliations/{$reconciliationId}")
+            ->assertStatus(422);
+    }
 }

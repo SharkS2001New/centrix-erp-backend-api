@@ -443,7 +443,7 @@ class ReportController extends Controller
     public function salesBySupplier(Request $request)
     {
         return response()->json($this->reportFromView('v_sales_by_supplier', $this->filters($request), [
-            'sale_date', 'branch_id', 'supplier_id', 'channel',
+            'sale_date', 'branch_id', 'supplier_id', 'channel', 'product_code',
         ]));
     }
 
@@ -564,7 +564,7 @@ class ReportController extends Controller
     public function categorySales(Request $request)
     {
         return response()->json($this->reportFromView('v_category_sales', $this->filters($request), [
-            'sale_date', 'branch_id', 'category_id', 'sub_category_id',
+            'sale_date', 'branch_id', 'category_id', 'sub_category_id', 'product_code',
         ]));
     }
 
@@ -640,12 +640,21 @@ class ReportController extends Controller
         }
 
         return response()->json(
-            $q->with(['product:product_code,product_name,unit_id'])
+            $q->with(['product:product_code,product_name,unit_id', 'product.unit'])
                 ->orderByDesc('id')
                 ->paginate(min((int) $request->input('per_page', 50), 200))
                 ->through(function ($transaction) {
                     $payload = $transaction->toArray();
                     $payload['product_name'] = $transaction->product?->product_name;
+                    $unit = $transaction->product?->unit;
+                    if ($unit) {
+                        $payload['uom_name'] = $unit->full_name;
+                        $payload['conversion_factor'] = $unit->conversion_factor;
+                        $payload['small_packaging_label'] = $unit->small_packaging_label;
+                        $payload['middle_packaging_label'] = $unit->middle_packaging_label;
+                        $payload['middle_factor'] = $unit->middle_factor;
+                        $payload['uom_type'] = $unit->uom_type;
+                    }
 
                     return $payload;
                 }),
@@ -1143,9 +1152,82 @@ class ReportController extends Controller
 
     public function topDebtors(Request $request)
     {
-        return response()->json($this->reportFromView('v_top_debtors', $this->filters($request), [
-            'customer_num', 'route_name',
-        ]));
+        $filters = $this->filters($request);
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        $hasDateFilter = ! empty($filters['from_date']) || ! empty($filters['to_date']);
+
+        $q = DB::table('customers as c')
+            ->leftJoin('routes as r', 'c.route_id', '=', 'r.id')
+            ->leftJoin('customer_invoices as ci', function ($join) use ($filters) {
+                $join->on('ci.customer_num', '=', 'c.customer_num')
+                    ->whereColumn('ci.organization_id', 'c.organization_id')
+                    ->whereIn('ci.payment_status', [0, 1])
+                    ->whereNull('ci.deleted_at');
+                if (! empty($filters['from_date'])) {
+                    $join->where('ci.invoice_date', '>=', $filters['from_date']);
+                }
+                if (! empty($filters['to_date'])) {
+                    $join->where('ci.invoice_date', '<=', $filters['to_date']);
+                }
+            })
+            ->whereNull('c.deleted_at')
+            ->when($orgId, fn ($query) => $query->where('c.organization_id', $orgId));
+
+        if (! empty($filters['customer_num'])) {
+            $q->where('c.customer_num', $filters['customer_num']);
+        }
+        if (! empty($filters['route_name'])) {
+            $q->where('r.route_name', $filters['route_name']);
+        }
+
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($inner) use ($search) {
+                $inner->where('c.customer_name', 'like', "%{$search}%")
+                    ->orWhere('c.customer_num', 'like', "%{$search}%")
+                    ->orWhere('c.phone_number', 'like', "%{$search}%");
+            });
+        }
+
+        $invoiceBalanceSql = 'COALESCE(SUM(GREATEST(ci.invoice_total - ci.amount_paid, 0)), 0)';
+        $outstandingSql = $hasDateFilter
+            ? $invoiceBalanceSql
+            : "GREATEST(COALESCE(c.current_balance, 0), {$invoiceBalanceSql})";
+
+        $q->groupBy(
+            'c.organization_id',
+            'c.customer_num',
+            'c.customer_name',
+            'c.phone_number',
+            'r.route_name',
+            'c.current_balance',
+        )
+            ->select([
+                'c.organization_id',
+                'c.customer_num',
+                'c.customer_name',
+                'c.phone_number',
+                'r.route_name',
+                DB::raw('COALESCE(c.current_balance, 0) as current_balance'),
+                DB::raw('COUNT(DISTINCT ci.id) as open_invoices'),
+                DB::raw("{$invoiceBalanceSql} as invoice_balance"),
+                DB::raw("{$outstandingSql} as outstanding_balance"),
+            ]);
+
+        if ($hasDateFilter) {
+            $q->havingRaw('COALESCE(SUM(GREATEST(ci.invoice_total - ci.amount_paid, 0)), 0) > 0');
+        } else {
+            $q->havingRaw(
+                'COALESCE(c.current_balance, 0) > 0 OR COALESCE(SUM(GREATEST(ci.invoice_total - ci.amount_paid, 0)), 0) > 0',
+            );
+        }
+
+        $perPage = min((int) ($filters['per_page'] ?? 20), 200);
+
+        return response()->json(
+            $q->orderByRaw('outstanding_balance DESC')
+                ->orderBy('c.customer_name')
+                ->paginate($perPage),
+        );
     }
 
     public function invoicePayments(Request $request)
@@ -1748,7 +1830,7 @@ class ReportController extends Controller
             return;
         }
 
-        if ($view === 'v_open_lpo_lines') {
+        if ($view === 'v_open_lpo_lines' || $view === 'v_purchases_by_supplier') {
             $query->whereIn('supplier_id', function ($sub) use ($orgId) {
                 $sub->select('id')
                     ->from('suppliers')

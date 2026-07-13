@@ -43,6 +43,8 @@ return [
         'permission_prefixes' => ['fulfillment.'],
         'entry_permission' => 'fulfillment.drivers.view',
         'home_path_by_permissions' => [
+            // Prefer the distribution dashboard whenever the user can open it.
+            ['prefixes' => ['fulfillment.overview.'], 'path' => '/fulfillment'],
             ['prefixes' => ['fulfillment.dispatch.'], 'path' => '/fulfillment/dispatch'],
             ['prefixes' => ['fulfillment.trips.'], 'path' => '/fulfillment/trips'],
             ['prefixes' => ['fulfillment.picking.'], 'path' => '/fulfillment/picking'],

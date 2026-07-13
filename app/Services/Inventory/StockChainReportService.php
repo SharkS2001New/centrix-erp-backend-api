@@ -122,6 +122,7 @@ class StockChainReportService
                     ->where('p.organization_id', '=', $organizationId)
                     ->whereNull('p.deleted_at');
             })
+            ->leftJoin('uoms as u', 'u.id', '=', 'p.unit_id')
             ->joinSub($lifecycleSub, 'lc', function ($join) {
                 $join->on('lc.branch_id', '=', 'k.branch_id')
                     ->on('lc.product_code', '=', 'k.product_code');
@@ -139,6 +140,12 @@ class StockChainReportService
                 'k.product_code',
                 'p.product_name',
                 'p.unit_id',
+                'u.full_name as uom_name',
+                'u.conversion_factor',
+                'u.small_packaging_label',
+                'u.middle_packaging_label',
+                'u.middle_factor',
+                'u.uom_type',
                 'lc.first_received_at',
                 'lc.first_adjustment_at',
                 'lc.first_entered_at',

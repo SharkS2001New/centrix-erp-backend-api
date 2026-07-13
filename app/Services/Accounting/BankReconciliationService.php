@@ -559,6 +559,18 @@ class BankReconciliationService
         return $reconciliation->fresh(['chartOfAccount']);
     }
 
+    public function destroy(int $organizationId, int $reconciliationId): void
+    {
+        $reconciliation = $this->findReconciliation($organizationId, $reconciliationId);
+        $this->assertEditable($reconciliation);
+
+        DB::transaction(function () use ($reconciliation) {
+            $reconciliation->matches()->delete();
+            $reconciliation->statementLines()->delete();
+            $reconciliation->delete();
+        });
+    }
+
     protected function refreshSummary(BankReconciliation $reconciliation): BankReconciliation
     {
         $orgId = (int) $reconciliation->organization_id;

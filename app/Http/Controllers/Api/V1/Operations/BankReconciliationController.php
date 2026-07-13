@@ -248,4 +248,18 @@ class BankReconciliationController extends Controller
 
         return response()->json($reconciliation);
     }
+
+    public function destroy(Request $request, int $reconciliationId)
+    {
+        try {
+            $this->reconciliations->destroy(
+                (int) $request->user()->organization_id,
+                $reconciliationId,
+            );
+        } catch (InvalidArgumentException $e) {
+            return response()->json(['message' => $e->getMessage()], 422);
+        }
+
+        return response()->json(null, 204);
+    }
 }

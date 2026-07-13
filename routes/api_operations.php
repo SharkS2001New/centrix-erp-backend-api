@@ -246,6 +246,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('bank-reconciliations/{reconciliationId}/clear-book-item', [BankReconciliationController::class, 'clearBookItem']);
         Route::post('bank-reconciliations/{reconciliationId}/adjustment', [BankReconciliationController::class, 'createAdjustment']);
         Route::post('bank-reconciliations/{reconciliationId}/complete', [BankReconciliationController::class, 'complete']);
+        Route::delete('bank-reconciliations/{reconciliationId}', [BankReconciliationController::class, 'destroy']);
         Route::post('mpesa-reconciliation/{paymentId}/apply', [MpesaReconciliationController::class, 'apply']);
         Route::post('mpesa-reconciliation/{paymentId}/ignore', [MpesaReconciliationController::class, 'ignore']);
     });
