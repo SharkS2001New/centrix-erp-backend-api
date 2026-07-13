@@ -99,6 +99,7 @@ class AccountingReportController extends Controller
 
         $invoiceSub = DB::table('customer_invoices as ci')
             ->leftJoin('sales as s', 's.id', '=', 'ci.sale_id')
+            ->where('ci.organization_id', $orgId)
             ->whereIn('ci.payment_status', [0, 1])
             ->whereNull('ci.deleted_at')
             ->where(function ($query) {
@@ -116,6 +117,7 @@ class AccountingReportController extends Controller
             ]);
 
         $creditSub = DB::table('sales as s')
+            ->where('s.organization_id', $orgId)
             ->where('s.status', 'completed')
             ->where('s.is_credit_sale', 1)
             ->whereIn('s.payment_status', ['unpaid', 'partial'])
@@ -156,9 +158,8 @@ class AccountingReportController extends Controller
                     'COALESCE(inv.open_invoice_total, 0) + COALESCE(credit.credit_sales_outstanding, 0) AS total_outstanding',
                 ),
             ])
-            ->havingRaw(
-                'COALESCE(inv.open_invoice_total, 0) + COALESCE(credit.credit_sales_outstanding, 0) > 0',
-            );
+            // Use the SELECT alias so Laravel's paginate() count subquery works in MySQL.
+            ->havingRaw('total_outstanding > 0');
 
         return response()->json($q->orderByDesc('total_outstanding')->paginate(
             min((int) $request->input('per_page', 50), 200),

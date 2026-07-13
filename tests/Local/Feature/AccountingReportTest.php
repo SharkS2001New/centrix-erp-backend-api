@@ -129,6 +129,9 @@ class AccountingReportTest extends TestCase
     public function test_accounts_receivable_and_payable_endpoints(): void
     {
         $this->getJson('/api/v1/reports/accounts-receivable?per_page=10')->assertOk();
+        $this->getJson('/api/v1/reports/accounts-receivable?per_page=10&from_date=2026-07-01&to_date=2026-07-13')
+            ->assertOk()
+            ->assertJsonStructure(['data', 'current_page', 'last_page', 'total']);
         $this->getJson('/api/v1/reports/accounts-payable?per_page=10')->assertOk();
     }
 
