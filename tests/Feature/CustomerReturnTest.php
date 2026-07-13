@@ -235,6 +235,7 @@ class CustomerReturnTest extends TestCase
         $this->assertArrayHasKey('customer_name', $row);
         $this->assertArrayHasKey('product_name', $row);
         $this->assertArrayHasKey('quantity', $row);
+        $this->assertArrayHasKey('uom_name', $row);
         $this->assertArrayHasKey('returned_by', $row);
         $this->assertArrayNotHasKey('sale_id', $row);
         $this->assertArrayNotHasKey('return_type', $row);
