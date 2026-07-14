@@ -91,6 +91,53 @@ class ModuleScopedPermissionsTest extends TestCase
         $this->assertTrue($map['mobile_sales.orders.create'] ?? false);
     }
 
+    public function test_sales_orders_create_role_expands_mobile_sales_permission_map(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::query()->findOrFail((int) $admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'enable_mobile_orders' => true,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $role = \App\Models\Role::create([
+            'role_name' => 'Field Sales Create Only',
+            'scope' => 'branch',
+            'is_active' => true,
+        ]);
+
+        $createId = (int) Permission::where('permission_code', 'sales.orders.create')->value('id');
+        $this->assertGreaterThan(0, $createId);
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $createId,
+        ]);
+
+        $user = User::create([
+            'organization_id' => $org->id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'field_sales_create_only',
+            'password' => bcrypt('password'),
+            'full_name' => 'Field Sales Create Only',
+            'access_scope' => 'branch',
+            'is_active' => true,
+            'login_channels' => ['mobile'],
+        ]);
+
+        $gate = app(ErpContext::class)->gateForUser($user);
+        $map = app(UserPermissionService::class)->permissionMapForUser($user, $gate);
+
+        $this->assertTrue($map['sales.create'] ?? false);
+        $this->assertTrue($map['mobile_sales.dashboard.view'] ?? false);
+        $this->assertTrue($map['mobile_sales.orders.create'] ?? false);
+        $this->assertTrue($map['mobile_sales.catalog.view'] ?? false);
+    }
+
     public function test_role_sync_strips_permissions_for_disabled_modules(): void
     {
         PermissionMatrixService::ensure();

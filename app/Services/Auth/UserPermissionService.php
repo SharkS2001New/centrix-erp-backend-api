@@ -347,6 +347,8 @@ class UserPermissionService
     {
         $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
         $map = $this->expandLegacySalesOrderQueueView($map);
+        // Mirror hasPermission('sales.create'|'driver.mobile') for mobile app UI codes.
+        $map = $this->expandMobileBundlePermissions($map);
 
         if (($user->is_admin || $user->is_super_admin) && $gate !== null) {
             $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
@@ -589,6 +591,56 @@ class UserPermissionService
         }
 
         return $map;
+    }
+
+    /**
+     * When a role grants sales.create / driver.mobile (or any alias that expands to them),
+     * also mark the mobile_* feature codes true so /erp/capabilities matches mobile module access.
+     *
+     * @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function expandMobileBundlePermissions(array $map): array
+    {
+        $aliases = config('permission_aliases', []);
+
+        if ($this->capabilityEffectivelyGranted($map, 'sales.create')
+            || $this->capabilityEffectivelyGranted($map, 'mobile.access')) {
+            foreach (array_merge(
+                $aliases['sales.create'] ?? [],
+                $aliases['mobile.access'] ?? [],
+            ) as $code) {
+                if (is_string($code) && str_starts_with($code, 'mobile_sales.')) {
+                    $map[$code] = true;
+                }
+            }
+        }
+
+        if ($this->capabilityEffectivelyGranted($map, 'driver.mobile')) {
+            foreach ($aliases['driver.mobile'] ?? [] as $code) {
+                if (is_string($code) && str_starts_with($code, 'mobile_driver.')) {
+                    $map[$code] = true;
+                }
+            }
+        }
+
+        return $map;
+    }
+
+    /** @param  array<string, bool>  $map */
+    protected function capabilityEffectivelyGranted(array $map, string $capability): bool
+    {
+        if ($map[$capability] ?? false) {
+            return true;
+        }
+
+        foreach (config('permission_aliases.'.$capability, []) as $alias) {
+            if (is_string($alias) && ($map[$alias] ?? false)) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** @param  list<int>  $grantedIds

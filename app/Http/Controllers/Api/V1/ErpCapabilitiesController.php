@@ -208,7 +208,7 @@ class ErpCapabilitiesController extends Controller
         }
 
         if (isset($payload['permissions']) && is_array($payload['permissions'])) {
-            $payload['permissions'] = array_filter(
+            $filtered = array_filter(
                 $payload['permissions'],
                 static function ($granted, $code) {
                     if (! $granted) {
@@ -229,6 +229,8 @@ class ErpCapabilitiesController extends Controller
                 },
                 ARRAY_FILTER_USE_BOTH,
             );
+            // Keep JSON object `{}` (not `[]`) so mobile clients parse permissions as a map.
+            $payload['permissions'] = $filtered === [] ? new \stdClass : $filtered;
         }
 
         return $payload;

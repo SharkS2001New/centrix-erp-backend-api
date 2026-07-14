@@ -155,12 +155,38 @@ class HrReportController extends Controller
             }
         }
         if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
-            $q->where($filters['date_column'], '>=', $filters['from_date']);
+            $dateColumn = (string) $filters['date_column'];
+            if ($this->viewColumnExists($view, $dateColumn)) {
+                $q->where($dateColumn, '>=', $filters['from_date']);
+            }
         }
         if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
-            $q->where($filters['date_column'], '<=', $filters['to_date']);
+            $dateColumn = (string) $filters['date_column'];
+            if ($this->viewColumnExists($view, $dateColumn)) {
+                $q->where($dateColumn, '<=', $filters['to_date']);
+            }
         }
 
         return $q->paginate(min((int) ($filters['per_page'] ?? 50), 200));
+    }
+
+    protected function viewColumnExists(string $view, string $column): bool
+    {
+        if (! preg_match('/^[A-Za-z_][A-Za-z0-9_]*$/', $column)) {
+            return false;
+        }
+
+        static $cache = [];
+        $key = "{$view}.{$column}";
+        if (! array_key_exists($key, $cache)) {
+            $cache[$key] = collect(DB::select(
+                'SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = DATABASE() AND table_name = ? AND column_name = ?
+                 LIMIT 1',
+                [$view, $column],
+            ))->isNotEmpty();
+        }
+
+        return $cache[$key];
     }
 }
