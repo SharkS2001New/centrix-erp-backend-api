@@ -19,6 +19,21 @@ class OrderNumberAllocator
         return self::SUPERSEDED_ORDER_NUM_BASE + $saleId;
     }
 
+    /**
+     * Next order number preview for cart/UI — no locks.
+     * Use {@see nextForOrganization()} only when actually allocating at checkout.
+     */
+    public function peekNextForOrganization(int $organizationId): int
+    {
+        $last = Sale::query()
+            ->where('organization_id', $organizationId)
+            ->where('order_num', '<', self::LEGACY_IMPORTED_ORDER_NUM_MIN)
+            ->orderByDesc('order_num')
+            ->value('order_num');
+
+        return (int) ($last ?? 0) + 1;
+    }
+
     public function nextForOrganization(int $organizationId): int
     {
         return DB::transaction(function () use ($organizationId): int {

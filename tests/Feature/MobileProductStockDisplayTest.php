@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Models\CurrentStock;
 use App\Models\Organization;
+use App\Models\PlatformSubscription;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
@@ -13,6 +14,26 @@ use Tests\TestCase;
 class MobileProductStockDisplayTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $admin = User::where('username', 'admin')->first();
+        if ($admin?->organization_id) {
+            PlatformSubscription::query()->firstOrCreate(
+                ['organization_id' => $admin->organization_id],
+                [
+                    'status' => 'active',
+                    'current_period_start' => now()->subMonth()->toDateString(),
+                    'current_period_end' => now()->addYear()->toDateString(),
+                    'renewal_price' => 0,
+                    'amount' => 0,
+                    'currency' => 'KES',
+                ],
+            );
+        }
+    }
 
     protected function enableSplitShopStoreStock(): void
     {

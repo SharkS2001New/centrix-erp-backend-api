@@ -138,6 +138,7 @@ class MobileDriverService
     {
         $summaries = $this->financials->summarizeForTripIds(
             $trips->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            true,
         );
 
         return [

@@ -427,7 +427,7 @@ return [
                 'mobile' => 'order_completed',
                 'backend' => 'order_completed',
             ],
-            'orders_list_default_days' => 5,
+            'orders_list_default_days' => 6,
             'orders_list_sort' => '-created_at',
         ],
         'distribution' => [

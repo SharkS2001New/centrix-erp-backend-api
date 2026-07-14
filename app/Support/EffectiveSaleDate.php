@@ -43,10 +43,10 @@ class EffectiveSaleDate
 
         if (self::columnExists()) {
             if ($from !== null) {
-                $query->whereDate("{$alias}.effective_sale_date", '>=', $from);
+                $query->where("{$alias}.effective_sale_date", '>=', $from);
             }
             if ($to !== null) {
-                $query->whereDate("{$alias}.effective_sale_date", '<=', $to);
+                $query->where("{$alias}.effective_sale_date", '<=', $to);
             }
 
             return;

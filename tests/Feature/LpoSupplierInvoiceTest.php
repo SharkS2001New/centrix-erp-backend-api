@@ -102,5 +102,22 @@ class LpoSupplierInvoiceTest extends TestCase
         $txn->refresh();
         $this->assertSame(15.0, (float) $txn->received_qty);
         $this->assertSame(5.0, (float) $txn->offer_qty);
+        // PO line keeps the original ordered unit cost for records.
+        $this->assertSame(100.0, (float) $txn->cost_price);
+
+        $product->refresh();
+        // Stock value ≈ 10 × 100 across 15 units → unit cost 66.6667
+        $this->assertEqualsWithDelta(66.6667, (float) $product->last_cost_price, 0.001);
+
+        $receipt = \App\Models\StockReceipt::query()
+            ->where('product_code', $product->product_code)
+            ->where('invoice_number', 'GRN-OFFER-001')
+            ->latest('id')
+            ->first();
+        $this->assertNotNull($receipt);
+        $this->assertEqualsWithDelta(66.6667, (float) $receipt->cost_price, 0.001);
+        if (\Illuminate\Support\Facades\Schema::hasColumn('stock_receipts', 'original_cost_price')) {
+            $this->assertEqualsWithDelta(100.0, (float) $receipt->original_cost_price, 0.001);
+        }
     }
 }

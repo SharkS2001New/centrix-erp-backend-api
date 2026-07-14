@@ -16,7 +16,13 @@ class NotificationWorkspaceFilter
         'distribution' => [],
     ];
 
-    /** @var array<string, list<string>> */
+    /**
+     * Path prefixes for workspace-scoped notifications.
+     * Distribution must not include /sales/orders — that matched discount approvals
+     * and other Backoffice sales queues (deep-links from trips stay a nav concern).
+     *
+     * @var array<string, list<string>>
+     */
     private const PREFIXES_BY_WORKSPACE = [
         'pos' => ['/pos', '/sales/pos'],
         'backoffice' => [
@@ -44,7 +50,7 @@ class NotificationWorkspaceFilter
         'admin' => ['/admin', '/vats'],
         'accounting' => ['/accounting', '/expenses', '/finance'],
         'hr' => ['/hr', '/employees'],
-        'distribution' => ['/fulfillment', '/dispatch-trips', '/sales/orders/'],
+        'distribution' => ['/fulfillment', '/dispatch-trips'],
     ];
 
     public function apply(Builder $query, ?string $workspace): void

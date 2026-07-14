@@ -50,6 +50,15 @@ class InAppNotificationService
         return $query->count();
     }
 
+    /** Highest visible notification id (any read state) for client watermark polls. */
+    public function latestVisibleId(User $user, ?string $workspace = null): int
+    {
+        $query = $this->activeQuery($user)->orderByDesc('id');
+        $this->applyWorkspaceFilter($query, $workspace);
+
+        return (int) ($query->value('id') ?? 0);
+    }
+
     public function pendingApprovalsCount(User $user, ?string $workspace = null): int
     {
         $query = $this->visibleQuery($user)
@@ -70,9 +79,7 @@ class InAppNotificationService
             ->limit(min($limit, 50));
         $this->applyWorkspaceFilter($query, $workspace);
 
-        return $query
-            ->get()
-            ->map(fn (InAppNotification $notification) => $this->format($notification, $user));
+        return $this->formatMany($query->get(), $user);
     }
 
     /** @param  array<string, mixed>  $filters */
@@ -97,10 +104,10 @@ class InAppNotificationService
 
         $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 100);
 
-        return $query
-            ->orderByDesc('created_at')
-            ->paginate($perPage)
-            ->through(fn (InAppNotification $notification) => $this->format($notification, $user));
+        $paginator = $query->orderByDesc('created_at')->paginate($perPage);
+        $paginator->setCollection($this->formatMany($paginator->getCollection(), $user));
+
+        return $paginator;
     }
 
     public function markRead(InAppNotification $notification, User $user): InAppNotification
@@ -214,8 +221,54 @@ class InAppNotificationService
     /** @return array<string, mixed> */
     public function format(InAppNotification $notification, User $viewer): array
     {
+        return $this->formatMany(collect([$notification]), $viewer)->first()
+            ?? $this->formatOne($notification, $viewer, []);
+    }
+
+    /**
+     * Format a page of notifications without per-row Sale::find / repeated permission scans.
+     *
+     * @param  Collection<int, InAppNotification>  $notifications
+     * @return Collection<int, array<string, mixed>>
+     */
+    public function formatMany(Collection $notifications, User $viewer): Collection
+    {
+        $actions = app(ActionRequestService::class);
+        // Cache permission checks per request type (only for pending samples).
+        $canApproveByType = [];
+
+        foreach ($notifications as $notification) {
+            $request = $notification->actionRequest;
+            if (! $request || ! $request->isPending()) {
+                continue;
+            }
+            $type = (string) $request->type;
+            if (! array_key_exists($type, $canApproveByType)) {
+                $canApproveByType[$type] = $actions->canApprove($viewer, $request);
+            }
+        }
+
+        return $notifications->map(
+            fn (InAppNotification $notification) => $this->formatOne(
+                $notification,
+                $viewer,
+                $canApproveByType,
+            ),
+        )->values();
+    }
+
+    /**
+     * @param  array<string, bool>  $canApproveByType
+     * @return array<string, mixed>
+     */
+    protected function formatOne(
+        InAppNotification $notification,
+        User $viewer,
+        array $canApproveByType = [],
+    ): array {
         $request = $notification->actionRequest;
         $requester = $request?->requester ?? $notification->creator;
+        $actions = app(ActionRequestService::class);
 
         $payload = [
             'id' => (int) $notification->id,
@@ -236,6 +289,7 @@ class InAppNotificationService
         ];
 
         if ($request !== null) {
+            $type = (string) $request->type;
             $payload['action_request'] = [
                 'id' => (int) $request->id,
                 'type' => $request->type,
@@ -245,25 +299,16 @@ class InAppNotificationService
                 'reference_id' => (int) $request->reference_id,
                 'reason' => $request->reason,
                 'payload' => $request->payload,
-                'can_approve' => app(ActionRequestService::class)->canApprove($viewer, $request),
-                'can_remind' => app(ActionRequestService::class)->canRemind($viewer, $request),
+                'can_approve' => $request->isPending()
+                    ? ($canApproveByType[$type] ?? $actions->canApprove($viewer, $request))
+                    : false,
+                'can_remind' => $actions->canRemind($viewer, $request),
             ];
 
             if ($request->type === 'discount') {
+                // Prefer stored payload lines — avoid Sale::find + line rebuild on every poll.
                 $requestPayload = $request->payload ?? [];
                 $lines = $requestPayload['lines'] ?? [];
-                if (
-                    $request->reference_type === 'sale'
-                    && (int) $request->reference_id > 0
-                ) {
-                    $sale = \App\Models\Sale::query()->find((int) $request->reference_id);
-                    if ($sale !== null) {
-                        $lines = app(\App\Services\Sales\DiscountApprovalService::class)
-                            ->approvalLinesPayloadFromSale($sale);
-                        $requestPayload['lines'] = $lines;
-                        $payload['action_request']['payload'] = $requestPayload;
-                    }
-                }
 
                 $payload['discount_approval'] = [
                     'scope' => $requestPayload['scope'] ?? null,

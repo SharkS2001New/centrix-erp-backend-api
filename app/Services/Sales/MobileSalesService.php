@@ -84,6 +84,24 @@ class MobileSalesService
                     $allChannelsFlag,
                 ),
             );
+            OrganizationCache::forget(
+                $orgId,
+                sprintf(
+                    'mobile-reconciliation:u%d:%s:%d',
+                    (int) $user->id,
+                    $date->copy()->startOfMonth()->format('Y-m'),
+                    $allChannelsFlag,
+                ),
+            );
+            OrganizationCache::forget(
+                $orgId,
+                sprintf(
+                    'mobile-today-orders:u%d:%s:%d',
+                    (int) $user->id,
+                    $dateKey,
+                    $allChannelsFlag,
+                ),
+            );
         }
     }
 
@@ -97,10 +115,9 @@ class MobileSalesService
      */
     protected function buildDashboardPayload(User $user, Carbon $from, Carbon $to, bool $allChannels): array
     {
-        $salesQuery = $this->mobileSalesQuery($user, $allChannels)
-            ->whereDate('created_at', '>=', $from->toDateString())
-            ->whereDate('created_at', '<=', $to->toDateString())
-            ->where('status', '!=', 'cancelled');
+        $salesQuery = $this->mobileSalesQuery($user, $allChannels);
+        $this->applyCreatedAtDayRange($salesQuery, $from, $to);
+        $salesQuery->where('status', '!=', 'cancelled');
 
         $summaryRow = (clone $salesQuery)
             ->selectRaw('COUNT(*) as order_count')
@@ -144,29 +161,72 @@ class MobileSalesService
         $cache = app(CompletedSalesCacheService::class);
         $cachedList = $cache->getMobileListFromCache($user, $filters);
         if ($cachedList !== null) {
-            $gate = $this->erp->gateForUser($user);
-            $saleIds = collect($cachedList['data'] ?? [])->pluck('id')->filter()->map(fn ($id) => (int) $id)->all();
-            $salesById = $saleIds === []
-                ? collect()
-                : Sale::query()->whereIn('id', $saleIds)->get()->keyBy('id');
-
+            // Past-day cache only — previous-day mobile mutations are blocked, so edit/cancel stay off.
             $cachedList['data'] = collect($cachedList['data'] ?? [])
-                ->map(function (array $row) use ($user, $gate, $salesById) {
-                    $sale = $salesById->get((int) ($row['id'] ?? 0));
-                    if (! $sale) {
-                        return $row;
-                    }
-
-                    return array_merge($row, [
-                        'can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
-                        ...$this->cancellationCapabilities($sale, $user),
-                    ]);
-                })
+                ->map(fn (array $row) => array_merge($row, [
+                    'can_edit' => false,
+                    'can_cancel' => false,
+                    'can_direct_cancel' => false,
+                    'can_request_cancellation' => false,
+                ]))
                 ->values()
                 ->all();
 
             return $cachedList;
         }
+
+        $todayTtl = (int) config('cache.mobile_today_orders_ttl', 45);
+        $orgId = (int) ($user->organization_id ?? 0);
+        if ($orgId > 0 && $todayTtl > 0 && $this->isCacheableTodayOrdersList($filters)) {
+            $allChannelsFlag = filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN) ? 1 : 0;
+            $key = sprintf(
+                'mobile-today-orders:u%d:%s:%d',
+                (int) $user->id,
+                now()->toDateString(),
+                $allChannelsFlag,
+            );
+
+            return OrganizationCache::remember(
+                $orgId,
+                $key,
+                $todayTtl,
+                fn (): array => $this->buildLiveOrderList($user, $filters),
+            );
+        }
+
+        return $this->buildLiveOrderList($user, $filters);
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     */
+    protected function isCacheableTodayOrdersList(array $filters): bool
+    {
+        if (filled($filters['q'] ?? null)) {
+            return false;
+        }
+
+        if (in_array((string) ($filters['status'] ?? ''), ['pending_approval', 'editable'], true)) {
+            return false;
+        }
+
+        $from = isset($filters['from_date'])
+            ? Carbon::parse((string) $filters['from_date'])->toDateString()
+            : now()->toDateString();
+        $to = isset($filters['to_date'])
+            ? Carbon::parse((string) $filters['to_date'])->toDateString()
+            : $from;
+
+        return $from === $to && $from === now()->toDateString();
+    }
+
+    /**
+     * @param  array<string, mixed>  $filters
+     * @return array{data: list<array<string, mixed>>, meta: array<string, mixed>}
+     */
+    protected function buildLiveOrderList(User $user, array $filters): array
+    {
+        $cache = app(CompletedSalesCacheService::class);
 
         $from = isset($filters['from_date'])
             ? Carbon::parse($filters['from_date'])->startOfDay()
@@ -175,44 +235,58 @@ class MobileSalesService
             ? Carbon::parse($filters['to_date'])->startOfDay()
             : now()->startOfDay();
 
+        if ($from->gt($to)) {
+            [$from, $to] = [$to->copy(), $from->copy()];
+        }
+
         $allChannels = filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
         if ($allChannels && ! $this->mobileScope->canUseAllChannels($user)) {
             $allChannels = false;
         }
 
         $query = $this->mobileSalesQuery($user, $allChannels)
-            ->with('customer');
+            ->select($this->orderListColumns())
+            ->with(['customer:customer_num,customer_name'])
+            ->withSum('items', 'discount_given');
 
         $workflowStatus = in_array((string) ($filters['status'] ?? ''), ['pending_approval', 'editable'], true)
             ? (string) $filters['status']
             : null;
 
+        $search = trim((string) ($filters['q'] ?? ''));
+
         if ($workflowStatus) {
             $query->where('status', $workflowStatus);
+        } elseif ($search === '') {
+            $this->applyCreatedAtDayRange($query, $from, $to);
+            $query->where('status', '!=', 'cancelled');
         } else {
-            $query
-                ->whereDate('created_at', '>=', $from->toDateString())
-                ->whereDate('created_at', '<=', $to->toDateString())
-                ->where('status', '!=', 'cancelled');
+            // Keep search within a reasonable window unless looking up a specific order #.
+            if (! ctype_digit($search)) {
+                $this->applyCreatedAtDayRange($query, $from, $to);
+            }
+            $query->where('status', '!=', 'cancelled');
         }
 
         $query->orderByDesc('id');
 
-        if ($q = trim((string) ($filters['q'] ?? ''))) {
-            SqlLikeSearch::applySalesOrderSearch($query, $q, includeCustomerRelation: true);
+        if ($search !== '') {
+            SqlLikeSearch::applySalesOrderSearch($query, $search, includeCustomerRelation: ! ctype_digit($search));
         }
 
         $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
         $page = $query->paginate($perPage);
         $gate = $this->erp->gateForUser($user);
+        $presentation = app(SaleOrderPresentationService::class);
+        $cancelCaps = $this->cancellationCapabilitiesTemplate($user, $gate);
 
         $result = [
             'data' => collect($page->items())
                 ->map(fn (Sale $sale) => array_merge(
-                    $this->presentOrderSummary($sale),
+                    $this->presentOrderSummary($sale, $user, $presentation),
                     [
                         'can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
-                        ...$this->cancellationCapabilities($sale, $user),
+                        ...$this->cancellationCapabilitiesForSale($sale, $user, $gate, $cancelCaps),
                     ],
                 ))
                 ->values()
@@ -227,13 +301,14 @@ class MobileSalesService
 
         if (
             $cache->canServeMobileListFromCache($filters)
+            && isset($filters['from_date'])
             && $cache->isPastDate(Carbon::parse((string) $filters['from_date'])->toDateString())
         ) {
             $orgId = (int) ($user->organization_id ?? 0);
             if ($orgId > 0) {
                 $date = Carbon::parse((string) $filters['from_date'])->toDateString();
-                $allChannels = filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
-                $cache->putMobileDayList($orgId, (int) $user->id, $date, $allChannels, [
+                $allChannelsFlag = filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+                $cache->putMobileDayList($orgId, (int) $user->id, $date, $allChannelsFlag, [
                     'data' => collect($result['data'])
                         ->map(fn (array $row) => collect($row)->except(['can_edit', 'can_cancel', 'can_direct_cancel', 'can_request_cancellation'])->all())
                         ->values()
@@ -254,7 +329,12 @@ class MobileSalesService
         }
 
         $sale = $this->mobileSalesQuery($user, $allChannels)
-            ->with(['items.product', 'cashier'])
+            ->with([
+                'items.product:product_code,product_name,unit_id,organization_id',
+                'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label',
+                'cashier:id,username',
+                'customer:customer_num,customer_name',
+            ])
             ->findOrFail($saleId);
 
         $cache = app(CompletedSalesCacheService::class);
@@ -266,13 +346,11 @@ class MobileSalesService
             }
         }
 
+        $flags = $this->orderCapabilityFlags($sale, $user);
         $detail = array_merge(
-            $this->presentOrderSummary($sale),
-            [
-                'can_edit' => $this->canRestoreSaleToCart($sale, $user),
-                ...$this->cancellationCapabilities($sale, $user),
-                'items' => $this->mapOrderItems($sale),
-            ],
+            $this->presentOrderSummary($sale, $user),
+            $flags,
+            ['items' => $this->mapOrderItems($sale)],
         );
 
         if ($cache->isImmutableSale($sale)) {
@@ -285,6 +363,33 @@ class MobileSalesService
         }
 
         return $detail;
+    }
+
+    /**
+     * @return array{
+     *     can_edit: bool,
+     *     can_cancel: bool,
+     *     can_direct_cancel: bool,
+     *     can_request_cancellation: bool
+     * }
+     */
+    public function orderCapabilityFlags(Sale $sale, User $user): array
+    {
+        $gate = $this->erp->gateForUser($user);
+
+        return array_merge(
+            [
+                'can_edit' => $this->posOrderEdit->blocksPreviousDayMobileMutation($sale)
+                    ? false
+                    : $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
+            ],
+            $this->cancellationCapabilitiesForSale(
+                $sale,
+                $user,
+                $gate,
+                $this->cancellationCapabilitiesTemplate($user, $gate),
+            ),
+        );
     }
 
     /** @return list<array<string, mixed>> */
@@ -359,18 +464,22 @@ class MobileSalesService
     /** @return list<array<string, mixed>> */
     protected function recentOrders(User $user, Carbon $from, Carbon $to, bool $allChannels = false): array
     {
+        $gate = $this->erp->gateForUser($user);
+        $presentation = app(SaleOrderPresentationService::class);
+
         return $this->mobileSalesQuery($user, $allChannels)
-            ->with(['customer', 'cashier'])
-            ->whereDate('created_at', '>=', $from->toDateString())
-            ->whereDate('created_at', '<=', $to->toDateString())
+            ->select($this->orderListColumns())
+            ->with(['customer:customer_num,customer_name'])
+            ->withSum('items', 'discount_given')
+            ->tap(fn (Builder $q) => $this->applyCreatedAtDayRange($q, $from, $to))
             ->where('status', '!=', 'cancelled')
             ->whereNotIn('status', ['pending_approval', 'editable'])
             ->orderByDesc('id')
             ->limit(20)
             ->get()
             ->map(fn (Sale $sale) => array_merge(
-                $this->presentOrderSummary($sale),
-                ['can_edit' => $this->canRestoreSaleToCart($sale, $user)],
+                $this->presentOrderSummary($sale, $user, $presentation),
+                ['can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate)],
             ))
             ->values()
             ->all();
@@ -379,9 +488,9 @@ class MobileSalesService
     /** @return list<array<string, mixed>> */
     protected function trendSales(User $user, Carbon $from, Carbon $to, bool $allChannels = false): array
     {
-        $rows = $this->mobileSalesQuery($user, $allChannels)
-            ->whereDate('created_at', '>=', $from->toDateString())
-            ->whereDate('created_at', '<=', $to->toDateString())
+        $rows = $this->mobileSalesQuery($user, $allChannels);
+        $this->applyCreatedAtDayRange($rows, $from, $to);
+        $rows = $rows
             ->where('status', '!=', 'cancelled')
             ->selectRaw('DATE(created_at) as sale_day')
             ->selectRaw('COUNT(*) as order_count')
@@ -408,9 +517,9 @@ class MobileSalesService
         Carbon $to,
         bool $allChannels = false,
     ): array {
-        $rows = $this->mobileSalesQuery($user, $allChannels)
-            ->whereDate('created_at', '>=', $from->toDateString())
-            ->whereDate('created_at', '<=', $to->toDateString())
+        $rowsQuery = $this->mobileSalesQuery($user, $allChannels);
+        $this->applyCreatedAtDayRange($rowsQuery, $from, $to);
+        $rows = $rowsQuery
             ->where('status', '!=', 'cancelled')
             ->selectRaw('DATE(created_at) as sale_day')
             ->selectRaw('COUNT(*) as order_count')
@@ -508,7 +617,9 @@ class MobileSalesService
     /** @return array{pending_approval_count: int, editable_count: int} */
     protected function workflowQueueCounts(User $user, bool $allChannels = false): array
     {
-        $base = $this->mobileSalesQuery($user, $allChannels);
+        // Cap queue scans — older workflow rows are not actionable for mobile ops.
+        $base = $this->mobileSalesQuery($user, $allChannels)
+            ->where('sales.created_at', '>=', now()->subDays(90)->startOfDay()->toDateTimeString());
 
         return [
             'pending_approval_count' => (int) (clone $base)->where('status', 'pending_approval')->count(),
@@ -517,10 +628,18 @@ class MobileSalesService
     }
 
     /** @return array<string, mixed> */
-    protected function presentOrderSummary(Sale $sale): array
-    {
-        $sale->loadMissing(['customer', 'cashier']);
+    protected function presentOrderSummary(
+        Sale $sale,
+        ?User $viewer = null,
+        ?SaleOrderPresentationService $presentation = null,
+    ): array {
+        $sale->loadMissing(['customer:customer_num,customer_name']);
+        if (! $viewer || (int) ($sale->cashier_id ?? 0) !== (int) $viewer->id) {
+            $sale->loadMissing(['cashier:id,username']);
+        }
+        $presentation ??= app(SaleOrderPresentationService::class);
         $labels = config('erp.order_status_labels', []);
+        $rejection = $presentation->discountRejectionPresentation($sale);
 
         return [
             'id' => $sale->id,
@@ -531,33 +650,102 @@ class MobileSalesService
                 ?? 'Walk-in',
             'orderTotals' => round((float) $sale->order_total, 2),
             'order_discount' => round((float) ($sale->order_discount ?? 0), 2),
-            'total_discount' => app(SaleOrderPresentationService::class)->totalDiscount($sale),
+            'total_discount' => $presentation->totalDiscount($sale),
             'status' => $sale->status,
             'status_name' => $labels[$sale->status] ?? ucfirst(str_replace('_', ' ', (string) $sale->status)),
             'payment_status' => $sale->payment_status,
-            'createdBy' => $sale->cashier?->username ?? '',
+            'createdBy' => $viewer && (int) ($sale->cashier_id ?? 0) === (int) $viewer->id
+                ? (string) ($viewer->username ?? '')
+                : ($sale->cashier?->username ?? ''),
             'channel' => $sale->channel,
             'created_at' => $sale->created_at,
             'route_markup_applied' => (bool) (($sale->fulfillment_meta ?? [])['route_markup']['applied'] ?? false),
             'route_markup_message' => ($sale->fulfillment_meta ?? [])['route_markup']['message'] ?? null,
             'order_connectivity' => $sale->mobileOrderConnectivity(),
             'is_offline_order' => $sale->isOfflineMobileOrder(),
-            'discount_rejected' => (bool) (app(SaleOrderPresentationService::class)->discountRejectionPresentation($sale)),
-            'discount_rejection' => app(SaleOrderPresentationService::class)->discountRejectionPresentation($sale),
+            'discount_rejected' => (bool) $rejection,
+            'discount_rejection' => $rejection,
         ];
+    }
+
+    /** @return list<string> */
+    protected function orderListColumns(): array
+    {
+        return [
+            'sales.id',
+            'sales.order_num',
+            'sales.customer_num',
+            'sales.customer_name_override',
+            'sales.order_total',
+            'sales.order_discount',
+            'sales.status',
+            'sales.payment_status',
+            'sales.channel',
+            'sales.created_at',
+            'sales.cashier_id',
+            'sales.fulfillment_meta',
+            'sales.branch_id',
+            'sales.organization_id',
+            'sales.route_id',
+            'sales.archived',
+        ];
+    }
+
+    /** @param  Builder<Sale>  $query */
+    protected function applyCreatedAtDayRange(Builder $query, Carbon $from, Carbon $to): void
+    {
+        $query->where('sales.created_at', '>=', $from->copy()->startOfDay()->toDateTimeString())
+            ->where('sales.created_at', '<', $to->copy()->startOfDay()->addDay()->toDateTimeString());
+    }
+
+    /**
+     * @return array{can_cancel: bool, can_direct_cancel: bool, can_request_cancellation: bool}
+     */
+    protected function cancellationCapabilitiesTemplate(User $user, $gate): array
+    {
+        $cancellations = app(SaleCancellationService::class);
+
+        if (! $cancellations->cancellationApprovalEnabled($gate)) {
+            return [
+                'can_cancel' => true,
+                'can_direct_cancel' => true,
+                'can_request_cancellation' => false,
+            ];
+        }
+
+        $canDirect = app(OrderCancellationRequestService::class)->canDirectCancel($user);
+
+        return [
+            'can_cancel' => true,
+            'can_direct_cancel' => $canDirect,
+            'can_request_cancellation' => ! $canDirect,
+        ];
+    }
+
+    /**
+     * @param  array{can_cancel: bool, can_direct_cancel: bool, can_request_cancellation: bool}  $template
+     * @return array{can_cancel: bool, can_direct_cancel: bool, can_request_cancellation: bool}
+     */
+    protected function cancellationCapabilitiesForSale(
+        Sale $sale,
+        User $user,
+        $gate,
+        array $template,
+    ): array {
+        if (! $this->isSaleCancellableByWorkflow($sale, $user, $gate)) {
+            return [
+                'can_cancel' => false,
+                'can_direct_cancel' => false,
+                'can_request_cancellation' => false,
+            ];
+        }
+
+        return $template;
     }
 
     public function canRestoreSaleToCart(Sale $sale, User $user): bool
     {
-        if ($this->posOrderEdit->blocksPreviousDayMobileMutation($sale)) {
-            return false;
-        }
-
-        return $this->posOrderEdit->canRestoreSaleToCart(
-            $sale,
-            $user,
-            $this->erp->gateForUser($user),
-        );
+        return $this->orderCapabilityFlags($sale, $user)['can_edit'];
     }
 
     /**
@@ -596,31 +784,12 @@ class MobileSalesService
     /** @return array{can_cancel: bool, can_direct_cancel: bool, can_request_cancellation: bool} */
     public function cancellationCapabilities(Sale $sale, User $user): array
     {
-        if (! $this->isSaleCancellableByWorkflow($sale, $user)) {
-            return [
-                'can_cancel' => false,
-                'can_direct_cancel' => false,
-                'can_request_cancellation' => false,
-            ];
-        }
-
-        $gate = $this->erp->gateForUser($user);
-        $cancellations = app(SaleCancellationService::class);
-
-        if (! $cancellations->cancellationApprovalEnabled($gate)) {
-            return [
-                'can_cancel' => true,
-                'can_direct_cancel' => true,
-                'can_request_cancellation' => false,
-            ];
-        }
-
-        $canDirect = app(OrderCancellationRequestService::class)->canDirectCancel($user);
+        $flags = $this->orderCapabilityFlags($sale, $user);
 
         return [
-            'can_cancel' => true,
-            'can_direct_cancel' => $canDirect,
-            'can_request_cancellation' => ! $canDirect,
+            'can_cancel' => $flags['can_cancel'],
+            'can_direct_cancel' => $flags['can_direct_cancel'],
+            'can_request_cancellation' => $flags['can_request_cancellation'],
         ];
     }
 
@@ -629,13 +798,13 @@ class MobileSalesService
         return $this->cancellationCapabilities($sale, $user)['can_cancel'];
     }
 
-    protected function isSaleCancellableByWorkflow(Sale $sale, User $user): bool
+    protected function isSaleCancellableByWorkflow(Sale $sale, User $user, $gate = null): bool
     {
         if ($this->posOrderEdit->blocksPreviousDayMobileMutation($sale)) {
             return false;
         }
 
-        $gate = $this->erp->gateForUser($user);
+        $gate ??= $this->erp->gateForUser($user);
 
         return OrderWorkflowService::forGate($gate)->isCancellableStatus(
             (string) $sale->status,
@@ -660,15 +829,32 @@ class MobileSalesService
 
         $monthStart = now()->startOfMonth();
         $today = now()->startOfDay();
-        $dailySales = $this->dailyTrendWithCounts($user, $monthStart, $today, $allChannels);
+        $orgId = (int) ($user->organization_id ?? 0);
+        $ttl = (int) config('cache.mobile_reconciliation_ttl', 120);
+        $build = function () use ($user, $monthStart, $today, $allChannels): array {
+            $dailySales = $this->dailyTrendWithCounts($user, $monthStart, $today, $allChannels);
 
-        return [
-            'month_label' => $monthStart->format('F Y'),
-            'from_date' => $monthStart->toDateString(),
-            'to_date' => $today->toDateString(),
-            'daily_sales' => $dailySales,
-            'weekly_sales' => $this->weeklyBucketsFromDaily($dailySales, $monthStart, $today),
-        ];
+            return [
+                'month_label' => $monthStart->format('F Y'),
+                'from_date' => $monthStart->toDateString(),
+                'to_date' => $today->toDateString(),
+                'daily_sales' => $dailySales,
+                'weekly_sales' => $this->weeklyBucketsFromDaily($dailySales, $monthStart, $today),
+            ];
+        };
+
+        if ($orgId <= 0 || $ttl <= 0) {
+            return $build();
+        }
+
+        $key = sprintf(
+            'mobile-reconciliation:u%d:%s:%d',
+            (int) $user->id,
+            $monthStart->format('Y-m'),
+            $allChannels ? 1 : 0,
+        );
+
+        return OrganizationCache::remember($orgId, $key, $ttl, $build);
     }
 
     /** @param  array<string, mixed>  $data */

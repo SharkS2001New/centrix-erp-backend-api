@@ -15,7 +15,10 @@ class StockReservationController extends BaseResourceController
     protected function baseQuery(Request $request)
     {
         return parent::baseQuery($request)
-            ->with(['product:product_code,product_name']);
+            ->with([
+                'product:product_code,product_name',
+                'sale:id,order_num,status,organization_id',
+            ]);
     }
 
     protected function searchColumns(): array
@@ -29,6 +32,16 @@ class StockReservationController extends BaseResourceController
         $payload = $row->toArray();
         $payload['product_name'] = $row->product?->product_name ?? $row->product_code;
         unset($payload['product']);
+        // Keep a lean sale stub for order labels without a second round-trip.
+        if ($row->relationLoaded('sale') && $row->sale) {
+            $payload['sale'] = [
+                'id' => (int) $row->sale->id,
+                'order_num' => $row->sale->order_num,
+                'status' => $row->sale->status,
+            ];
+        } else {
+            unset($payload['sale']);
+        }
 
         return $payload;
     }

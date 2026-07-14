@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\PlatformSubscription;
 use App\Models\Sale;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
@@ -11,6 +12,26 @@ use Tests\TestCase;
 class MobileSalesApiTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $admin = User::where('username', 'admin')->first();
+        if ($admin?->organization_id) {
+            PlatformSubscription::query()->firstOrCreate(
+                ['organization_id' => $admin->organization_id],
+                [
+                    'status' => 'active',
+                    'current_period_start' => now()->subMonth()->toDateString(),
+                    'current_period_end' => now()->addYear()->toDateString(),
+                    'renewal_price' => 0,
+                    'amount' => 0,
+                    'currency' => 'KES',
+                ],
+            );
+        }
+    }
 
     public function test_mobile_session_can_create_cart_and_add_line(): void
     {
@@ -1076,10 +1097,15 @@ class MobileSalesApiTest extends TestCase
 
         $token = $this->loginMobile($rep);
 
-        $this->withToken($token)
+        $response = $this->withToken($token)
             ->getJson('/api/v1/mobile/orders')
-            ->assertOk()
-            ->assertJsonPath('data.0.total_discount', 35.0);
+            ->assertOk();
+
+        $this->assertEqualsWithDelta(
+            35.0,
+            (float) $response->json('data.0.total_discount'),
+            0.001,
+        );
     }
 
     protected function loginMobile(User $user): string

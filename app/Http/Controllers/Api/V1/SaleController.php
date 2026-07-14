@@ -12,9 +12,9 @@ use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\RouteOrderScope;
 use App\Services\Sales\SaleOrderPresentationService;
+use App\Services\Sales\SalesListDateScope;
 use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\OrganizationPlatformConfigService;
-use App\Support\EffectiveSaleDate;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -122,10 +122,17 @@ class SaleController extends BaseResourceController
             $query->where('sales.channel', $request->input('channel'));
         }
 
-        EffectiveSaleDate::applyFromToDateFilter(
+        $dateField = strtolower(trim((string) $request->input('date_field', 'effective')));
+        $hotWindowDays = app(OrganizationPlatformConfigService::class)->normalizeOrdersListDefaultDays(
+            $gate->moduleSettings('sales')['orders_list_default_days'] ?? 6,
+        );
+        $listScope = app(SalesListDateScope::class)->apply(
             $query,
             $request->filled('from_date') ? (string) $request->input('from_date') : null,
             $request->filled('to_date') ? (string) $request->input('to_date') : null,
+            $dateField,
+            $request->filled('q') ? (string) $request->input('q') : null,
+            $hotWindowDays,
         );
 
         if ($request->filled('min_order_total')) {
@@ -227,7 +234,9 @@ class SaleController extends BaseResourceController
             return $sale;
         });
 
-        return response()->json($paginator);
+        return response()->json(array_merge($paginator->toArray(), [
+            'list_scope' => $listScope,
+        ]));
     }
 
     public function show(Request $request, string $id)

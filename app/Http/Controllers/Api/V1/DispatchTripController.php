@@ -50,8 +50,10 @@ class DispatchTripController extends BaseResourceController
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         $paginator = $query->orderByDesc('scheduled_date')->orderByDesc('id')->paginate($perPage);
+        // Batched COGS (one inventory_transactions query for the page) — safe for list.
         $summaries = $this->financials->summarizeForTripIds(
             $paginator->getCollection()->pluck('id')->map(fn ($id) => (int) $id)->all(),
+            true,
         );
         $paginator->getCollection()->transform(
             fn (DispatchTrip $trip) => $this->presentTrip($trip, $summaries[(int) $trip->id] ?? null),
@@ -63,7 +65,8 @@ class DispatchTripController extends BaseResourceController
     public function show(Request $request, string $id)
     {
         $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
-        $trip->load(['route', 'routes', 'driver', 'vehicle', 'crewMembers', 'sales', 'loadingList.lines']);
+        // Sales headers for stop list + cash summary; loading-list is fetched via its own endpoint.
+        $trip->load(['route', 'routes', 'driver', 'vehicle', 'crewMembers', 'sales']);
         $summary = $this->financials->summarizeForTrip($trip);
 
         return response()->json(

@@ -35,7 +35,10 @@ class ErpCapabilitiesController extends Controller
         $orgId = (int) ($user?->organization_id ?? 0);
 
         if ($orgId <= 0) {
-            return $this->applyRuntimeCapabilityFlags($request, $this->buildCapabilitiesPayload($request));
+            return $this->slimCapabilitiesForChannel(
+                $request,
+                $this->applyRuntimeCapabilityFlags($request, $this->buildCapabilitiesPayload($request)),
+            );
         }
 
         $payload = OrganizationCache::remember(
@@ -45,7 +48,10 @@ class ErpCapabilitiesController extends Controller
             fn () => $this->buildCapabilitiesPayload($request),
         );
 
-        return $this->applyRuntimeCapabilityFlags($request, $payload);
+        return $this->slimCapabilitiesForChannel(
+            $request,
+            $this->applyRuntimeCapabilityFlags($request, $payload),
+        );
     }
 
     /** @return array<string, mixed> */
@@ -103,6 +109,7 @@ class ErpCapabilitiesController extends Controller
         $org = $gate->organization();
 
         // Lightweight fields that may change without busting the org capabilities cache.
+        // Permissions stay on the cached payload — role/module changes call invalidateCapabilities().
         $payload['is_super_admin'] = (bool) $user->is_super_admin;
         $payload['is_admin'] = (bool) $user->is_admin;
         $payload['access_scope'] = $user->access_scope ?? 'org';
@@ -112,23 +119,31 @@ class ErpCapabilitiesController extends Controller
         $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);
         $payload['license'] = app(OrganizationLicenseService::class)->resolveForOrganization($org);
 
-        $permissions = app(UserPermissionService::class);
-        $payload['permissions'] = $permissions->permissionMapForUser($user, $gate);
-        $payload['approval_permissions'] = $permissions->approvalCapabilitiesForUser($user);
+        $loginChannel = $this->requestLoginChannel($request);
+        $isMobileChannel = in_array($loginChannel, ['mobile', 'manager'], true);
 
         $payload['platform_mpesa_stk_enabled'] = $gate->mpesaStkPlatformEnabled();
         $payload['platform_kra_integration_enabled'] = $gate->kraIntegrationPlatformEnabled();
         $payload['platform_ai_enabled'] = $gate->aiPlatformEnabled();
-        $payload['platform_advanced_data_import_enabled'] = $gate->advancedDataImportPlatformEnabled();
-        $payload['advanced_data_import_pages'] = $gate->advancedDataImportPagesEnabled();
+        if (! $isMobileChannel) {
+            $payload['platform_advanced_data_import_enabled'] = $gate->advancedDataImportPlatformEnabled();
+            $payload['advanced_data_import_pages'] = $gate->advancedDataImportPagesEnabled();
 
-        $archive = app(LegacyArchiveReader::class);
-        if ($org) {
-            $payload['legacy_archive_enabled'] = $archive->isEnabled($org);
-            $payload['legacy_archive_available'] = $this->legacyArchiveConnectable($org, $archive);
-            $payload['legacy_archive_cutover_date'] = $archive->cutoverDate($org)?->toDateString();
-            $payload['legacy_archive_label'] = app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive';
+            $archive = app(LegacyArchiveReader::class);
+            if ($org) {
+                $payload['legacy_archive_enabled'] = $archive->isEnabled($org);
+                $payload['legacy_archive_available'] = $this->legacyArchiveConnectable($org, $archive);
+                $payload['legacy_archive_cutover_date'] = $archive->cutoverDate($org)?->toDateString();
+                $payload['legacy_archive_label'] = app(OrganizationLegacyArchiveService::class)->forOrganization($org)['label'] ?? 'LightStores archive';
+            } else {
+                $payload['legacy_archive_enabled'] = false;
+                $payload['legacy_archive_available'] = false;
+                $payload['legacy_archive_cutover_date'] = null;
+                $payload['legacy_archive_label'] = null;
+            }
         } else {
+            $payload['platform_advanced_data_import_enabled'] = false;
+            $payload['advanced_data_import_pages'] = [];
             $payload['legacy_archive_enabled'] = false;
             $payload['legacy_archive_available'] = false;
             $payload['legacy_archive_cutover_date'] = null;
@@ -146,8 +161,75 @@ class ErpCapabilitiesController extends Controller
         $payload['mobile_app'] = app(MobileAppModuleAccessService::class)
             ->capabilitiesForUser($user, $gate);
 
-        $payload['manager_app'] = app(ManagerAppModuleAccessService::class)
-            ->capabilitiesForUser($user, $gate);
+        if ($loginChannel === 'manager' || ! $isMobileChannel) {
+            $payload['manager_app'] = app(ManagerAppModuleAccessService::class)
+                ->capabilitiesForUser($user, $gate);
+        }
+
+        return $payload;
+    }
+
+    protected function requestLoginChannel(Request $request): string
+    {
+        $token = $request->user()?->currentAccessToken();
+
+        return strtolower((string) ($token?->login_channel ?? ''));
+    }
+
+    /** @param  array<string, mixed>  $payload
+     * @return array<string, mixed>
+     */
+    protected function slimCapabilitiesForChannel(Request $request, array $payload): array
+    {
+        $channel = $this->requestLoginChannel($request);
+        if (! in_array($channel, ['mobile', 'manager'], true)) {
+            return $payload;
+        }
+
+        unset(
+            $payload['workspaces'],
+            $payload['allow_org_provisioning'],
+            $payload['ai_assistant'],
+            $payload['whatsapp_orders'],
+            $payload['platform_tab_workspace_enabled'],
+            $payload['workflows'],
+        );
+
+        if ($channel === 'mobile') {
+            unset($payload['manager_app']);
+        }
+
+        if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
+            $keep = ['sales', 'inventory', 'general', 'security', 'mobile', 'fulfillment', 'notifications'];
+            $payload['module_settings'] = array_intersect_key(
+                $payload['module_settings'],
+                array_flip($keep),
+            );
+        }
+
+        if (isset($payload['permissions']) && is_array($payload['permissions'])) {
+            $payload['permissions'] = array_filter(
+                $payload['permissions'],
+                static function ($granted, $code) {
+                    if (! $granted) {
+                        return false;
+                    }
+                    $code = (string) $code;
+
+                    return str_starts_with($code, 'mobile')
+                        || str_starts_with($code, 'sales')
+                        || str_starts_with($code, 'products')
+                        || str_starts_with($code, 'catalogue')
+                        || str_starts_with($code, 'customers')
+                        || str_starts_with($code, 'inventory')
+                        || str_starts_with($code, 'fulfillment')
+                        || str_starts_with($code, 'reports')
+                        || str_starts_with($code, 'approvals')
+                        || str_starts_with($code, 'discount');
+                },
+                ARRAY_FILTER_USE_BOTH,
+            );
+        }
 
         return $payload;
     }

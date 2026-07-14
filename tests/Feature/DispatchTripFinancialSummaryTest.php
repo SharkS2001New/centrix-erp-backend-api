@@ -171,7 +171,7 @@ class DispatchTripFinancialSummaryTest extends TestCase
         $this->enableDistributionModules($admin);
         Sanctum::actingAs($admin);
 
-        $this->getJson('/api/v1/dispatch-trips?per_page=5')
+        $response = $this->getJson('/api/v1/dispatch-trips?per_page=5')
             ->assertOk()
             ->assertJsonStructure([
                 'data' => [
@@ -184,9 +184,16 @@ class DispatchTripFinancialSummaryTest extends TestCase
                             'total_expenses',
                             'net_profit',
                             'net_profit_margin_percent',
+                            'cogs_included',
                         ],
                     ],
                 ],
             ]);
+
+        $summaries = collect($response->json('data'))->pluck('financial_summary');
+        $this->assertTrue(
+            $summaries->every(fn ($summary) => ($summary['cogs_included'] ?? false) === true),
+            'Trip index should include batched COGS',
+        );
     }
 }

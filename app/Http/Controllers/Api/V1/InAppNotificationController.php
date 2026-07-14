@@ -23,6 +23,7 @@ class InAppNotificationController extends Controller
 
         return response()->json([
             'count' => $this->notifications->unreadCount($user, $workspace),
+            'latest_id' => $this->notifications->latestVisibleId($user, $workspace),
             'pending_approvals_count' => $this->notifications->pendingApprovalsCount($user, $workspace),
         ]);
     }

@@ -85,8 +85,10 @@ class MobileRouteMarkupCheckoutService
             throw new \InvalidArgumentException('The selected route is not available for this organization.');
         }
 
-        $repriced = $lines->map(function (CartLine $line) use ($routeId) {
-            $product = Product::query()->find($line->product_code);
+        $productsByCode = $this->productsForCheckoutLines($lines, $organizationId);
+
+        $repriced = $lines->map(function (CartLine $line) use ($routeId, $productsByCode) {
+            $product = $productsByCode->get((string) $line->product_code);
             if (! $product) {
                 return $line;
             }
@@ -102,7 +104,6 @@ class MobileRouteMarkupCheckoutService
                 false,
             );
 
-            $product->loadMissing('vat');
             $productVat = SalesVatCalculator::vatFromInclusiveGross(
                 max(0, $amount),
                 SalesVatCalculator::vatRateFromProduct($product),
@@ -133,6 +134,28 @@ class MobileRouteMarkupCheckoutService
             'total_vat' => round((float) $repriced->sum('product_vat'), 2),
             'meta' => $this->buildMeta($route),
         ];
+    }
+
+    /**
+     * @param  Collection<int, CartLine>  $lines
+     * @return Collection<string, Product>
+     */
+    protected function productsForCheckoutLines(Collection $lines, ?int $organizationId): Collection
+    {
+        $codes = $lines->pluck('product_code')->filter()->unique()->values()->all();
+        if ($codes === []) {
+            return collect();
+        }
+
+        return Product::query()
+            ->with('vat')
+            ->when(
+                $organizationId,
+                fn ($q) => $q->where('organization_id', $organizationId),
+            )
+            ->whereIn('product_code', $codes)
+            ->get()
+            ->keyBy(fn (Product $product) => (string) $product->product_code);
     }
 
     /** @return array<string, mixed> */

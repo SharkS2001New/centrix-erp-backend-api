@@ -56,7 +56,7 @@ class CartOperationsController extends Controller
         User $user,
         int $status = 200,
         array $extra = [],
-        bool $includeNextOrderNum = true,
+        bool $includeNextOrderNum = false,
     ) {
         return response()->json(
             $this->presentCart($cart, $user, $extra, $includeNextOrderNum),
@@ -69,14 +69,14 @@ class CartOperationsController extends Controller
         $cart = $this->getOrCreateCart($request->user(), $request->validated());
         $cart->load('lines');
 
-        return $this->cartResponse($cart, $request->user(), 201);
+        return $this->cartResponse($cart, $request->user(), 201, includeNextOrderNum: true);
     }
 
     public function show(int $cartId)
     {
         $user = request()->user();
 
-        return $this->cartResponse($this->findOwnedCart($cartId, $user), $user);
+        return $this->cartResponse($this->findOwnedCart($cartId, $user), $user, includeNextOrderNum: true);
     }
 
     public function update(\Illuminate\Http\Request $request, int $cartId)
@@ -459,7 +459,7 @@ class CartOperationsController extends Controller
         $cart->increment('update_no');
 
         return response()->json([
-            'cart' => $this->presentCart($cart->fresh('lines'), $request->user()),
+            'cart' => $this->presentCart($cart->fresh('lines'), $request->user(), includeNextOrderNum: false),
             'loyalty' => [
                 'loyalty_card_id' => $card->id,
                 'card_number' => $card->card_number,

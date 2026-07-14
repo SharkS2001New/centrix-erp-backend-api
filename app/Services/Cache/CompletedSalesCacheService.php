@@ -344,10 +344,7 @@ class CompletedSalesCacheService
     {
         $mobileService = app(MobileSalesService::class);
 
-        return array_merge($cached, [
-            'can_edit' => $mobileService->canRestoreSaleToCart($sale, $user),
-            ...$mobileService->cancellationCapabilities($sale, $user),
-        ]);
+        return array_merge($cached, $mobileService->orderCapabilityFlags($sale, $user));
     }
 
     /**

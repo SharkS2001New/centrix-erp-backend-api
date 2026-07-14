@@ -15,6 +15,10 @@ return [
 
     'mobile_dashboard_ttl' => (int) env('CACHE_MOBILE_DASHBOARD_TTL', 60),
 
+    'mobile_reconciliation_ttl' => (int) env('CACHE_MOBILE_RECONCILIATION_TTL', 120),
+
+    'mobile_today_orders_ttl' => (int) env('CACHE_MOBILE_TODAY_ORDERS_TTL', 45),
+
     'stores' => [
         'array' => [
             'driver' => 'array',

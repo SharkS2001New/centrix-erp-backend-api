@@ -90,7 +90,9 @@ class SaleOrderPresentationService
     public function totalDiscount(Sale $sale): float
     {
         $lineDiscount = 0.0;
-        if ($sale->relationLoaded('items')) {
+        if (array_key_exists('items_sum_discount_given', $sale->getAttributes())) {
+            $lineDiscount = (float) ($sale->items_sum_discount_given ?? 0);
+        } elseif ($sale->relationLoaded('items')) {
             $lineDiscount = (float) $sale->items->sum(fn ($item) => (float) ($item->discount_given ?? 0));
         }
 

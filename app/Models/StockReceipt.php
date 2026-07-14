@@ -14,6 +14,6 @@ class StockReceipt extends Model
 
     protected $fillable = [
         'product_code', 'branch_id', 'organization_id', 'units_received',
-        'stock_location', 'invoice_number', 'cost_price', 'received_by',
+        'stock_location', 'invoice_number', 'cost_price', 'original_cost_price', 'received_by',
     ];
 }

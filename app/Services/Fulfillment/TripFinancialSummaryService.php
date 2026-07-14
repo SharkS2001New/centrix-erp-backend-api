@@ -37,26 +37,25 @@ class TripFinancialSummaryService
             'total_expenses' => 0.0,
             'net_profit' => 0.0,
             'net_profit_margin_percent' => null,
+            'cogs_included' => true,
         ];
     }
 
     /** @return array<string, mixed> */
     public function summarizeForTrip(DispatchTrip $trip): array
     {
-        if (! $trip->relationLoaded('sales')) {
-            $trip->load('sales');
-        }
+        // Reuse batched COGS path (inventory_transactions once + sale items batch).
+        $tripId = (int) $trip->id;
+        $summaries = $this->summarizeForTripIds([$tripId], true);
 
-        $summary = $this->summarizeSales($trip->sales);
-
-        return $this->mergeExpensesIntoSummary($summary, $this->expensesForTrip((int) $trip->id));
+        return $summaries[$tripId] ?? $this->emptySummary();
     }
 
     /**
      * @param  list<int>  $tripIds
      * @return array<int, array<string, mixed>>
      */
-    public function summarizeForTripIds(array $tripIds): array
+    public function summarizeForTripIds(array $tripIds, bool $includeCogs = true): array
     {
         $tripIds = array_values(array_unique(array_map('intval', $tripIds)));
         if ($tripIds === []) {
@@ -69,15 +68,25 @@ class TripFinancialSummaryService
             ->get();
 
         if ($rows->isEmpty()) {
-            return array_fill_keys($tripIds, $this->emptySummary());
+            $empty = $this->emptySummary();
+            if (! $includeCogs) {
+                $empty['cogs_included'] = false;
+                $empty['total_profit'] = null;
+                $empty['net_profit'] = null;
+                $empty['profit_margin_percent'] = null;
+                $empty['net_profit_margin_percent'] = null;
+            }
+
+            return array_fill_keys($tripIds, $empty);
         }
 
         $saleIds = $rows->pluck('sale_id')->map(fn ($id) => (int) $id)->unique()->values()->all();
-        $sales = Sale::query()
-            ->with(['items.product'])
-            ->whereIn('id', $saleIds)
-            ->get()
-            ->keyBy('id');
+        $salesQuery = Sale::query()->whereIn('id', $saleIds);
+        if ($includeCogs) {
+            $salesQuery->with(['items.product']);
+        }
+        // Without COGS, skip line/product eager-load — list only needs sale headers.
+        $sales = $salesQuery->get()->keyBy('id');
 
         $salesByTrip = [];
         foreach ($rows as $row) {
@@ -90,11 +99,19 @@ class TripFinancialSummaryService
             $salesByTrip[$tripId]->push($sale);
         }
 
+        $costBySaleId = $includeCogs
+            ? $this->cogsCalculator->totalCostForSales($sales)
+            : null;
+
         $expensesByTrip = $this->expensesForTripIds($tripIds)->groupBy('dispatch_trip_id');
 
         $summaries = [];
         foreach ($tripIds as $tripId) {
-            $summary = $this->summarizeSales($salesByTrip[$tripId] ?? collect());
+            $summary = $this->summarizeSales(
+                $salesByTrip[$tripId] ?? collect(),
+                $includeCogs,
+                $costBySaleId,
+            );
             $summaries[$tripId] = $this->mergeExpensesIntoSummary(
                 $summary,
                 $expensesByTrip->get($tripId, collect()),
@@ -106,12 +123,25 @@ class TripFinancialSummaryService
 
     /**
      * @param  Collection<int, Sale>  $sales
+     * @param  array<int, float>|null  $costBySaleId
      * @return array<string, mixed>
      */
-    protected function summarizeSales(Collection $sales): array
-    {
+    protected function summarizeSales(
+        Collection $sales,
+        bool $includeCogs = true,
+        ?array $costBySaleId = null,
+    ): array {
         if ($sales->isEmpty()) {
-            return $this->emptySummary();
+            $empty = $this->emptySummary();
+            if (! $includeCogs) {
+                $empty['cogs_included'] = false;
+                $empty['total_profit'] = null;
+                $empty['net_profit'] = null;
+                $empty['profit_margin_percent'] = null;
+                $empty['net_profit_margin_percent'] = null;
+            }
+
+            return $empty;
         }
 
         $totalAmount = 0.0;
@@ -155,7 +185,11 @@ class TripFinancialSummaryService
                 $unresolvedOrderCount++;
             }
             $netRevenue += $orderTotal - $vat;
-            $totalCost += $this->cogsCalculator->totalCostForSale($sale);
+            if ($includeCogs) {
+                $saleId = (int) $sale->id;
+                $totalCost += $costBySaleId[$saleId]
+                    ?? $this->cogsCalculator->totalCostForSale($sale);
+            }
         }
 
         $totalAmount = round($totalAmount, 2);
@@ -164,8 +198,8 @@ class TripFinancialSummaryService
         $failedAmount = round($failedAmount, 2);
         $actualAmount = round($actualAmount, 2);
         $netRevenue = round($netRevenue, 2);
-        $totalProfit = round($netRevenue - $totalCost, 2);
-        $profitMarginPercent = $netRevenue > 0
+        $totalProfit = $includeCogs ? round($netRevenue - $totalCost, 2) : null;
+        $profitMarginPercent = ($includeCogs && $netRevenue > 0 && $totalProfit !== null)
             ? round(($totalProfit / $netRevenue) * 100, 1)
             : null;
 
@@ -188,6 +222,7 @@ class TripFinancialSummaryService
             'total_expenses' => 0.0,
             'net_profit' => $totalProfit,
             'net_profit_margin_percent' => $profitMarginPercent,
+            'cogs_included' => $includeCogs,
         ];
     }
 
@@ -262,14 +297,22 @@ class TripFinancialSummaryService
         }
 
         $totalExpenses = round($totalExpenses, 2);
+        $summary['expenses'] = $expenseRows;
+        $summary['total_expenses'] = $totalExpenses;
+
+        if (($summary['cogs_included'] ?? true) === false || $summary['total_profit'] === null) {
+            $summary['net_profit'] = null;
+            $summary['net_profit_margin_percent'] = null;
+
+            return $summary;
+        }
+
         $netProfit = round((float) $summary['total_profit'] - $totalExpenses, 2);
         $netRevenue = (float) ($summary['net_revenue'] ?? 0);
         $netProfitMarginPercent = $netRevenue > 0
             ? round(($netProfit / $netRevenue) * 100, 1)
             : null;
 
-        $summary['expenses'] = $expenseRows;
-        $summary['total_expenses'] = $totalExpenses;
         $summary['net_profit'] = $netProfit;
         $summary['net_profit_margin_percent'] = $netProfitMarginPercent;
 

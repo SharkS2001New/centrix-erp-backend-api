@@ -7,6 +7,7 @@ use App\Models\Customer;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
+use App\Services\Catalog\ProductPriceSheetService;
 use App\Services\Inventory\StockValuationService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
@@ -702,6 +703,10 @@ class ReportController extends Controller
                 'store_value' => 0,
                 'value' => 0,
                 'branch_id' => null,
+                'skus_in_stock' => 0,
+                'skus_low' => 0,
+                'skus_out' => 0,
+                'total_available_units' => 0,
             ]);
         }
 
@@ -1402,6 +1407,114 @@ class ReportController extends Controller
         return response()->json(
             $this->buildPriceList($request, $filters, $page, $perPage)
         );
+    }
+
+    /**
+     * Rich price sheet rows (retail/dozens/wholesale) — preferred over client product crawls.
+     */
+    public function productPriceSheet(Request $request)
+    {
+        $filters = $this->filters($request);
+        $perPage = min(max((int) ($filters['per_page'] ?? 200), 1), 200);
+        $page = max((int) $request->input('page', 1), 1);
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+
+        $query = DB::table('products as p')
+            ->leftJoin('uoms as u', 'p.unit_id', '=', 'u.id')
+            ->leftJoin('retail_package_settings as r', 'p.product_code', '=', 'r.product_code')
+            ->leftJoin('sub_categories as sc', 'p.subcategory_id', '=', 'sc.id')
+            ->leftJoin('categories as c', 'sc.category_id', '=', 'c.id')
+            ->whereNull('p.deleted_at')
+            ->where('p.unit_price', '>', 0)
+            ->select([
+                'p.product_code',
+                'p.product_name',
+                'p.unit_price',
+                'p.last_cost_price',
+                'p.sell_on_retail',
+                'p.subcategory_id',
+                'p.unit_id',
+                'p.stock_in_shop',
+                'p.stock_in_store',
+                'p.reorder_point',
+                'u.uom_type',
+                'u.full_name as uom_full_name',
+                'u.conversion_factor',
+                'u.middle_factor',
+                'u.small_packaging_label',
+                'u.measure_name',
+                'r.max_qty_measure',
+                'r.markup_price',
+                'r.wholesale_qty_measure',
+                'r.wholesale_markup_price',
+                'r.min_uom_measure',
+                'r.pricing_tiers',
+                'sc.subcategory_name',
+                'c.category_name',
+            ])
+            ->orderBy('p.product_name');
+
+        if ($orgId) {
+            $query->where('p.organization_id', $orgId);
+        }
+
+        if (! empty($filters['branch_id'])) {
+            $query->where(function ($branchQuery) use ($filters) {
+                $branchQuery->where('p.branch_id', $filters['branch_id'])
+                    ->orWhereNull('p.branch_id');
+            });
+        }
+
+        if ($subcategoryId = ProductCatalogFilterService::resolveSubcategoryFilterId($request)) {
+            $query->where('p.subcategory_id', $subcategoryId);
+        }
+
+        if ($request->filled('q')) {
+            $q = trim((string) $request->input('q'));
+            $query->where(function ($inner) use ($q) {
+                $inner->where('p.product_name', 'like', "%{$q}%")
+                    ->orWhere('p.product_code', 'like', "%{$q}%");
+            });
+        }
+
+        $sheet = app(ProductPriceSheetService::class);
+        $retailPricingEnabled = ! $request->boolean('wholesale_only');
+        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+
+        $paginator->getCollection()->transform(function ($row) use ($sheet, $retailPricingEnabled) {
+            $uom = (object) [
+                'conversion_factor' => $row->conversion_factor,
+                'middle_factor' => $row->middle_factor,
+                'small_packaging_label' => $row->small_packaging_label,
+                'uom_type' => $row->uom_type,
+                'full_name' => $row->uom_full_name,
+                'measure_name' => $row->measure_name,
+            ];
+            $retail = [
+                'max_qty_measure' => $row->max_qty_measure,
+                'markup_price' => $row->markup_price,
+                'wholesale_qty_measure' => $row->wholesale_qty_measure,
+                'wholesale_markup_price' => $row->wholesale_markup_price,
+                'min_uom_measure' => $row->min_uom_measure,
+                'pricing_tiers' => $row->pricing_tiers,
+            ];
+            $built = $sheet->buildRow(
+                $row,
+                $uom,
+                $retail,
+                (string) ($row->subcategory_name ?? 'Uncategorized'),
+                (string) ($row->category_name ?? 'Uncategorized'),
+                $retailPricingEnabled,
+            );
+            $shop = (float) ($row->stock_in_shop ?? 0);
+            $store = (float) ($row->stock_in_store ?? 0);
+            $built['stock_qty'] = $shop + $store;
+            $built['reorder_point'] = (float) ($row->reorder_point ?? 0);
+
+            return $built;
+        });
+
+        return response()->json($paginator);
     }
 
     public function customerStatement(Request $request, int $customerNum)

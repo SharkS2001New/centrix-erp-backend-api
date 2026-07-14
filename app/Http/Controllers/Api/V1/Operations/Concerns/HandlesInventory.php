@@ -286,6 +286,31 @@ trait HandlesInventory
             ->first();
     }
 
+    /**
+     * @param  iterable<int, string|null>  $productCodes
+     * @return \Illuminate\Support\Collection<string, Product>
+     */
+    protected function orgProductsByCode(?int $orgId, iterable $productCodes): \Illuminate\Support\Collection
+    {
+        $codes = collect($productCodes)
+            ->map(fn ($code) => trim((string) $code))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        if ($codes === []) {
+            return collect();
+        }
+
+        $query = Product::query()->whereIn('product_code', $codes);
+        if ($orgId) {
+            $query->where('organization_id', $orgId);
+        }
+
+        return $query->get()->keyBy(fn (Product $product) => (string) $product->product_code);
+    }
+
     protected function productUnitCost(?int $orgId, string $productCode): ?float
     {
         if (! $orgId) {

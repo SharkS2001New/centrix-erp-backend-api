@@ -38,23 +38,30 @@ trait HandlesCartAccess
         TemporaryCart $cart,
         ?User $user = null,
         array $extra = [],
-        bool $includeNextOrderNum = true,
+        bool $includeNextOrderNum = false,
     ): array {
         $user ??= request()->user();
         $cart->loadMissing('lines');
         $payload = array_merge($cart->toArray(), $extra);
 
-        if ($user && $includeNextOrderNum) {
+        if ($user && $includeNextOrderNum && $user->organization_id) {
+            // Peek only — never lock org/sales for cart present (allocation happens at checkout).
             $payload['next_order_num'] = app(OrderNumberAllocator::class)
-                ->nextForOrganization((int) $user->organization_id);
+                ->peekNextForOrganization((int) $user->organization_id);
         }
 
-        $productCodes = $cart->lines->pluck('product_code')->unique()->values()->all();
-        $products = Product::query()
-            ->with('unit')
-            ->whereIn('product_code', $productCodes)
-            ->get()
-            ->keyBy('product_code');
+        $productCodes = $cart->lines->pluck('product_code')->filter()->unique()->values()->all();
+        $products = $productCodes === []
+            ? collect()
+            : Product::query()
+                ->with('unit')
+                ->when(
+                    $user?->organization_id,
+                    fn ($q) => $q->where('organization_id', (int) $user->organization_id),
+                )
+                ->whereIn('product_code', $productCodes)
+                ->get()
+                ->keyBy('product_code');
         $qtyDisplay = app(SaleLineQuantityDisplayService::class);
 
         $payload['lines'] = $cart->lines->map(function ($line) use ($products, $qtyDisplay) {
@@ -86,21 +93,44 @@ trait HandlesCartAccess
         })->values()->all();
 
         if ($user) {
-            $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
-            $pending = $discounts->pendingRequestForCart($cart, $user);
-            $payload['discount_approval_pending'] = $pending !== null;
-            $payload['discount_approval_request'] = $discounts->presentPendingRequest($pending);
-            $payload['discount_resubmit'] = $discounts->cartResubmitsRejectedDiscountOrder($cart);
-            $payload['advised_discount_ready'] = $discounts->cartMatchesAdvisedDiscount($cart);
-            $payload['cart_has_manual_discount'] = $discounts->cartHasManualDiscount($cart);
-            if ($payload['discount_resubmit'] && (int) ($cart->superseded_sale_id ?? 0) > 0) {
-                $superseded = \App\Models\Sale::query()->find((int) $cart->superseded_sale_id);
-                if ($superseded !== null) {
-                    $payload['advised_discount_lines'] = $discounts->saleAdvisedDiscountLines($superseded);
-                }
-            }
+            $this->presentCartDiscountMeta($cart, $user, $payload);
         }
 
         return $payload;
+    }
+
+    /** @param  array<string, mixed>  $payload */
+    protected function presentCartDiscountMeta(TemporaryCart $cart, User $user, array &$payload): void
+    {
+        $hasLineDiscount = $cart->lines->contains(
+            static fn ($line) => (float) ($line->discount_given ?? 0) > 0.01,
+        );
+        $needsDiscountMeta = $hasLineDiscount
+            || (float) ($cart->order_discount ?? 0) > 0.01
+            || (int) ($cart->superseded_sale_id ?? 0) > 0;
+
+        if (! $needsDiscountMeta) {
+            $payload['discount_approval_pending'] = false;
+            $payload['discount_approval_request'] = null;
+            $payload['discount_resubmit'] = false;
+            $payload['advised_discount_ready'] = false;
+            $payload['cart_has_manual_discount'] = false;
+
+            return;
+        }
+
+        $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
+        $pending = $discounts->pendingRequestForCart($cart, $user);
+        $payload['discount_approval_pending'] = $pending !== null;
+        $payload['discount_approval_request'] = $discounts->presentPendingRequest($pending);
+        $payload['discount_resubmit'] = $discounts->cartResubmitsRejectedDiscountOrder($cart);
+        $payload['advised_discount_ready'] = $discounts->cartMatchesAdvisedDiscount($cart);
+        $payload['cart_has_manual_discount'] = $discounts->cartHasManualDiscount($cart);
+        if ($payload['discount_resubmit'] && (int) ($cart->superseded_sale_id ?? 0) > 0) {
+            $superseded = \App\Models\Sale::query()->find((int) $cart->superseded_sale_id);
+            if ($superseded !== null) {
+                $payload['advised_discount_lines'] = $discounts->saleAdvisedDiscountLines($superseded);
+            }
+        }
     }
 }

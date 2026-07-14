@@ -35,11 +35,25 @@ class SqlLikeSearch
             return;
         }
 
-        $like = '%'.self::escape($term).'%';
+        $escaped = self::escape($term);
+        $prefix = $escaped.'%';
+        $contains = '%'.$escaped.'%';
 
-        $query->where(function ($inner) use ($like, $codeColumn, $nameColumn) {
-            $inner->where($codeColumn, 'like', $like)
-                ->orWhere($nameColumn, 'like', $like);
+        // Code-like terms: prefer exact/prefix on product_code (index-friendly), then name contains.
+        $looksLikeCode = (bool) preg_match('/^[A-Za-z0-9][A-Za-z0-9\\-_\\/.]*$/', $term)
+            && strlen($term) <= 64;
+
+        $query->where(function ($inner) use ($term, $prefix, $contains, $codeColumn, $nameColumn, $looksLikeCode) {
+            if ($looksLikeCode) {
+                $inner->where($codeColumn, '=', $term)
+                    ->orWhere($codeColumn, 'like', $prefix)
+                    ->orWhere($nameColumn, 'like', $contains);
+
+                return;
+            }
+
+            $inner->where($nameColumn, 'like', $contains)
+                ->orWhere($codeColumn, 'like', $contains);
         });
     }
 
@@ -56,11 +70,22 @@ class SqlLikeSearch
             return;
         }
 
+        if (ctype_digit($term)) {
+            $orderNum = (int) $term;
+            $query->where(function ($sub) use ($orderNum, $term) {
+                $sub->where('sales.order_num', $orderNum)
+                    ->orWhere('sales.customer_num', $orderNum)
+                    ->orWhere('sales.order_num', 'like', self::escape($term).'%');
+            });
+
+            return;
+        }
+
         $like = '%'.self::escape($term).'%';
 
         $query->where(function ($sub) use ($like, $includeCustomerRelation) {
-            $sub->whereRaw('CAST(sales.order_num AS CHAR) LIKE ?', [$like])
-                ->orWhere('sales.customer_name_override', 'like', $like)
+            $sub->where('sales.customer_name_override', 'like', $like)
+                ->orWhereRaw('CAST(sales.order_num AS CHAR) LIKE ?', [$like])
                 ->orWhereRaw('CAST(sales.customer_num AS CHAR) LIKE ?', [$like]);
 
             if ($includeCustomerRelation) {
@@ -81,13 +106,24 @@ class SqlLikeSearch
 
         $like = '%'.self::escape($term).'%';
 
-        $query->where(function ($inner) use ($like) {
+        $query->where(function ($inner) use ($term, $like) {
+            if (ctype_digit($term)) {
+                $inner->where('customer_num', (int) $term)
+                    ->orWhere('phone_number', 'like', $like)
+                    ->orWhere('additional_phone', 'like', $like);
+
+                return;
+            }
+
             $inner->where('customer_name', 'like', $like)
                 ->orWhere('phone_number', 'like', $like)
                 ->orWhere('additional_phone', 'like', $like)
-                ->orWhereRaw('CAST(customer_num AS CHAR) LIKE ?', [$like])
                 ->orWhere('town', 'like', $like)
                 ->orWhere('kra_pin', 'like', $like);
+
+            if (preg_match('/^\d+$/', $term)) {
+                $inner->orWhere('customer_num', (int) $term);
+            }
         });
     }
 

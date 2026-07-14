@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\PlatformSubscription;
 use App\Models\Sale;
 use App\Models\User;
 use Laravel\Sanctum\Sanctum;
@@ -11,6 +12,26 @@ use Tests\TestCase;
 class SaleOrderListDateFilterTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        $admin = User::where('username', 'admin')->first();
+        if ($admin?->organization_id) {
+            PlatformSubscription::query()->firstOrCreate(
+                ['organization_id' => $admin->organization_id],
+                [
+                    'status' => 'active',
+                    'current_period_start' => now()->subMonth()->toDateString(),
+                    'current_period_end' => now()->addYear()->toDateString(),
+                    'renewal_price' => 0,
+                    'amount' => 0,
+                    'currency' => 'KES',
+                ],
+            );
+        }
+    }
 
     public function test_sales_list_includes_orders_without_completed_at_when_filtering_by_today(): void
     {
@@ -60,9 +81,14 @@ class SaleOrderListDateFilterTest extends TestCase
             'order_total' => 100,
             'amount_paid' => 0,
             'completed_at' => null,
-            'created_at' => now()->subDays(2),
-            'updated_at' => now()->subDays(2),
         ]);
+        $twoDaysAgo = now()->subDays(2);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $sale->id)->update(array_filter([
+            'created_at' => $twoDaysAgo,
+            'effective_sale_date' => \Illuminate\Support\Facades\Schema::hasColumn('sales', 'effective_sale_date')
+                ? $twoDaysAgo->toDateString()
+                : null,
+        ], fn ($v) => $v !== null));
 
         $response = $this->getJson("/api/v1/sales?from_date={$yesterday}&to_date={$today}&per_page=200");
 
@@ -193,5 +219,86 @@ class SaleOrderListDateFilterTest extends TestCase
         $this->assertNotFalse($newerPos);
         $this->assertNotFalse($olderPos);
         $this->assertLessThan($olderPos, $newerPos, 'Newer orders must appear before older ones.');
+    }
+
+    public function test_sales_list_defaults_to_hot_window_when_dates_omitted(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $old = Sale::query()->create([
+            'order_num' => 993201,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 80,
+            'amount_paid' => 80,
+            'completed_at' => now()->subDays(20),
+            'archived' => 0,
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $old->id)->update([
+            'created_at' => now()->subDays(20),
+            'completed_at' => now()->subDays(20),
+        ]);
+
+        $recent = Sale::query()->create([
+            'order_num' => 993202,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 90,
+            'amount_paid' => 90,
+            'completed_at' => now(),
+            'archived' => 0,
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?per_page=200&date_field=placed');
+
+        $response->assertOk()
+            ->assertJsonPath('list_scope.applied', true)
+            ->assertJsonPath('list_scope.skipped_for_search', false);
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($recent->id));
+        $this->assertFalse($ids->contains($old->id));
+    }
+
+    public function test_sales_list_search_finds_orders_outside_hot_window(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $old = Sale::query()->create([
+            'order_num' => 993301,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 55,
+            'amount_paid' => 55,
+            'completed_at' => now()->subDays(40),
+            'archived' => 0,
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $old->id)->update([
+            'created_at' => now()->subDays(40),
+            'completed_at' => now()->subDays(40),
+        ]);
+
+        $today = now()->toDateString();
+        $response = $this->getJson("/api/v1/sales?q=993301&from_date={$today}&to_date={$today}&per_page=50&date_field=placed");
+
+        $response->assertOk()
+            ->assertJsonPath('list_scope.skipped_for_search', true);
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($old->id));
     }
 }

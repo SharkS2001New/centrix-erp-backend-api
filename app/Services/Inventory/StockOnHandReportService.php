@@ -111,7 +111,18 @@ class StockOnHandReportService
             $query->whereRaw("{$totalSql} > 0");
         }
 
-        $paginator = $query->orderBy('p.product_name')->paginate($perPage);
+        if ($request->boolean('out_of_stock_only')) {
+            $query->whereRaw("{$totalSql} <= 0");
+        }
+
+        $sort = strtolower(trim((string) $request->input('sort', '')));
+        if ($sort === 'available_desc') {
+            $query->orderByRaw("{$totalSql} desc")->orderBy('p.product_name');
+        } else {
+            $query->orderBy('p.product_name');
+        }
+
+        $paginator = $query->paginate($perPage);
         $payload = $paginator->toArray();
         $payload['data'] = $this->branchStock->attachAvailabilityToRows($payload['data'] ?? []);
 

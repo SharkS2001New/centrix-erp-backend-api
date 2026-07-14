@@ -4,6 +4,9 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\PriceHistory;
 use App\Models\Product;
+use App\Models\RetailPackageSetting;
+use App\Models\Uom;
+use App\Models\Vat;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\OpeningStockService;
@@ -12,6 +15,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileProductListSettings;
 use App\Support\SqlLikeSearch;
 use Illuminate\Http\Request;
+use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -231,12 +235,59 @@ class ProductController extends BaseResourceController
             SqlLikeSearch::applyProductSearch($query, $q, 'products.product_code', 'products.product_name');
         }
 
+        $productCodesRaw = trim((string) $request->input('product_codes', ''));
+        if ($productCodesRaw !== '') {
+            $codes = array_values(array_filter(array_map(
+                static fn ($code) => trim((string) $code),
+                explode(',', $productCodesRaw),
+            )));
+            $codes = array_slice($codes, 0, 500);
+            if ($codes !== []) {
+                $query->whereIn('products.product_code', $codes);
+            }
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
         $this->applyListOrdering($request, $query, 'product_name', 'asc');
-        $paginator = $query
-            ->select('products.*')
-            ->with('branch:id,branch_code,branch_name')
-            ->paginate($perPage);
+
+        $leanSalesList = in_array($this->salesLoginChannel($request), ['mobile', 'pos'], true);
+        $fields = strtolower(trim((string) $request->input('fields', '')));
+        $leanOptIn = $fields === 'lean' || $request->boolean('lightweight');
+        $useLeanSelect = $leanSalesList || $leanOptIn;
+        $select = $useLeanSelect
+            ? [
+                'products.product_code',
+                'products.product_name',
+                'products.unit_id',
+                'products.vat_id',
+                'products.unit_price',
+                'products.last_cost_price',
+                'products.sell_on_retail',
+                'products.discount_type',
+                'products.discount_value',
+                'products.discount_percentage',
+                'products.branch_id',
+                'products.organization_id',
+                'products.subcategory_id',
+                'products.supplier_id',
+                'products.reorder_point',
+                'products.product_weight',
+                'products.stock_in_shop',
+                'products.stock_in_store',
+                'products.created_by',
+                'products.updated_by',
+                'products.updated_at',
+                'products.created_at',
+                'products.deleted_at',
+            ]
+            : ['products.*'];
+
+        $paginatorQuery = $query->select($select);
+        // Skip branch relation on lean lists — callers rarely need it and it inflates payloads.
+        if (! $useLeanSelect) {
+            $paginatorQuery->with('branch:id,branch_code,branch_name');
+        }
+        $paginator = $paginatorQuery->paginate($perPage);
 
         $branchId = $this->branchStock->resolveBranchIdOptional($user, $request);
         $presented = $paginator->getCollection()->map(
@@ -258,9 +309,100 @@ class ProductController extends BaseResourceController
             }
         }
 
+        // Embed UOM / VAT / retail pack helpers on lean sales lists so mobile
+        // does not need separate /uoms /vats /retail-package-settings fan-out.
+        if ($useLeanSelect) {
+            $presented = $this->embedSalesHelpers($presented);
+        }
+
         $paginator->setCollection($presented);
 
         return response()->json($paginator);
+    }
+
+    /**
+     * @param  Collection<int, array<string, mixed>>  $rows
+     * @return Collection<int, array<string, mixed>>
+     */
+    protected function embedSalesHelpers(Collection $rows): Collection
+    {
+        if ($rows->isEmpty()) {
+            return $rows;
+        }
+
+        $unitIds = $rows->pluck('unit_id')->filter()->unique()->values()->all();
+        $vatIds = $rows->pluck('vat_id')->filter()->unique()->values()->all();
+        $productCodes = $rows->pluck('product_code')->filter()->unique()->values()->all();
+
+        $uoms = $unitIds === []
+            ? collect()
+            : Uom::query()
+                ->whereIn('id', $unitIds)
+                ->get([
+                    'id',
+                    'conversion_factor',
+                    'full_name',
+                    'measure_name',
+                    'small_packaging_label',
+                    'middle_packaging_label',
+                    'middle_factor',
+                    'uses_small_packaging',
+                    'uom_type',
+                ])
+                ->keyBy('id');
+
+        $vats = $vatIds === []
+            ? collect()
+            : Vat::query()
+                ->whereIn('id', $vatIds)
+                ->get(['id', 'vat_percentage', 'vat_code'])
+                ->keyBy('id');
+
+        $retail = $productCodes === []
+            ? collect()
+            : RetailPackageSetting::query()
+                ->whereIn('product_code', $productCodes)
+                ->get()
+                ->keyBy('product_code');
+
+        return $rows->map(function (array $item) use ($uoms, $vats, $retail) {
+            $unitId = (int) ($item['unit_id'] ?? 0);
+            $vatId = (int) ($item['vat_id'] ?? 0);
+            $code = (string) ($item['product_code'] ?? '');
+
+            $uom = $unitId > 0 ? $uoms->get($unitId) : null;
+            if ($uom) {
+                $item['uom'] = $uom->toArray();
+                $item['conversion_factor'] = (float) ($uom->conversion_factor ?? 1);
+            }
+
+            $vat = $vatId > 0 ? $vats->get($vatId) : null;
+            if ($vat) {
+                $item['vat_percentage'] = (float) ($vat->vat_percentage ?? 0);
+            }
+
+            $rps = $code !== '' ? $retail->get($code) : null;
+            if ($rps) {
+                $item['retail_package'] = [
+                    'product_code' => $rps->product_code,
+                    'max_qty_measure' => $rps->max_qty_measure,
+                    'markup_price' => $rps->markup_price,
+                    'min_uom_measure' => $rps->min_uom_measure,
+                    'wholesale_qty_measure' => $rps->wholesale_qty_measure,
+                    'wholesale_markup_price' => $rps->wholesale_markup_price,
+                    'max_uom_measure' => $rps->max_uom_measure,
+                    'pricing_tiers' => $rps->pricing_tiers,
+                ];
+                $item['max_qty_measure'] = $rps->max_qty_measure;
+                $item['markup_price'] = $rps->markup_price;
+                $item['min_uom_measure'] = $rps->min_uom_measure;
+                $item['wholesale_qty_measure'] = $rps->wholesale_qty_measure;
+                $item['wholesale_markup_price'] = $rps->wholesale_markup_price;
+                $item['max_uom_measure'] = $rps->max_uom_measure;
+            }
+
+            return $item;
+        });
     }
 
     /** GET /products/catalog-summary */
@@ -290,6 +432,61 @@ class ProductController extends BaseResourceController
             'low_stock' => $lowStock,
             'out_of_stock' => $outOfStock,
             'branch_id' => $branchId,
+        ]);
+    }
+
+    /**
+     * Lightweight product counts for catalogue admin screens.
+     * Avoids downloading the full product catalog just to tally rows.
+     *
+     * GET /products/group-counts
+     */
+    public function groupCounts(Request $request)
+    {
+        $query = Product::query()->whereNull('deleted_at');
+        $user = $request->user();
+        if ($user) {
+            $this->catalogScope->scopeForUser($query, $user, $request);
+        }
+
+        $bySubcategory = (clone $query)
+            ->whereNotNull('subcategory_id')
+            ->selectRaw('subcategory_id, COUNT(*) as aggregate_count')
+            ->groupBy('subcategory_id')
+            ->pluck('aggregate_count', 'subcategory_id')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+
+        $byUnit = (clone $query)
+            ->whereNotNull('unit_id')
+            ->selectRaw('unit_id, COUNT(*) as aggregate_count')
+            ->groupBy('unit_id')
+            ->pluck('aggregate_count', 'unit_id')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+
+        $byCategory = (clone $query)
+            ->join('sub_categories', 'products.subcategory_id', '=', 'sub_categories.id')
+            ->whereNotNull('sub_categories.category_id')
+            ->selectRaw('sub_categories.category_id as category_id, COUNT(*) as aggregate_count')
+            ->groupBy('sub_categories.category_id')
+            ->pluck('aggregate_count', 'category_id')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+
+        $byVat = (clone $query)
+            ->whereNotNull('vat_id')
+            ->selectRaw('vat_id, COUNT(*) as aggregate_count')
+            ->groupBy('vat_id')
+            ->pluck('aggregate_count', 'vat_id')
+            ->map(fn ($count) => (int) $count)
+            ->all();
+
+        return response()->json([
+            'by_subcategory_id' => $bySubcategory,
+            'by_category_id' => $byCategory,
+            'by_unit_id' => $byUnit,
+            'by_vat_id' => $byVat,
         ]);
     }
 

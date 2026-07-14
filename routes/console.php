@@ -59,3 +59,12 @@ Schedule::command('erp:warm-completed-sales-cache --days=3')
     ->hourly()
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/warm-completed-sales-cache-hourly.log'));
+
+/** Heartbeat for platform infrastructure health UI (must see age < ~2 minutes). */
+Schedule::call(function () {
+    \Illuminate\Support\Facades\Cache::put(
+        \App\Services\Platform\PlatformHealthProbe::SCHEDULER_HEARTBEAT_KEY,
+        now()->toIso8601String(),
+        now()->addHours(2),
+    );
+})->everyMinute()->name('platform-scheduler-heartbeat');

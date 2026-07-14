@@ -11,6 +11,7 @@ use App\Services\Notifications\ActionRequestService;
 use App\Services\Returns\ReturnProofService;
 use App\Services\Sales\CustomerReturnService;
 use App\Support\StoredPublicFile;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Symfony\Component\HttpFoundation\Response;
@@ -18,6 +19,8 @@ use Symfony\Component\HttpFoundation\Response;
 class CustomerReturnController extends Controller
 {
     use ParsesMultipartJsonFields;
+
+    private const DEFAULT_RANGE_DAYS = 30;
 
     public function __construct(
         protected CustomerReturnService $service,
@@ -27,7 +30,8 @@ class CustomerReturnController extends Controller
     public function index(Request $request)
     {
         $user = $request->user();
-        $relations = ['lines.product.unit', 'sale', 'customer', 'returnedByUser'];
+        // List rows do not need lines/product graphs — detail/print load those on demand.
+        $relations = ['sale', 'customer', 'returnedByUser'];
         if (Schema::hasTable('credit_notes')) {
             $relations[] = 'creditNote';
         }
@@ -60,12 +64,24 @@ class CustomerReturnController extends Controller
             $query->where('customer_num', $request->input('customer_num'));
         }
 
-        if ($request->filled('from_date')) {
-            $query->whereDate('return_date', '>=', $request->input('from_date'));
-        }
+        $hasFrom = $request->filled('from_date');
+        $hasTo = $request->filled('to_date');
+        $skipDefaultDate = $request->filled('sale_id')
+            || $request->filled('customer_num')
+            || trim((string) $request->input('q', '')) !== '';
 
-        if ($request->filled('to_date')) {
-            $query->whereDate('return_date', '<=', $request->input('to_date'));
+        if (! $hasFrom && ! $hasTo && ! $skipDefaultDate) {
+            $to = now()->toDateString();
+            $from = Carbon::parse($to)->subDays(self::DEFAULT_RANGE_DAYS - 1)->toDateString();
+            $query->whereDate('return_date', '>=', $from)
+                ->whereDate('return_date', '<=', $to);
+        } else {
+            if ($hasFrom) {
+                $query->whereDate('return_date', '>=', $request->input('from_date'));
+            }
+            if ($hasTo) {
+                $query->whereDate('return_date', '<=', $request->input('to_date'));
+            }
         }
 
         if ($q = trim((string) $request->input('q', ''))) {

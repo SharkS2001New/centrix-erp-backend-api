@@ -319,6 +319,10 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::get('admin/active-sessions', [PlatformActiveSessionsController::class, 'index'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-health', [\App\Http\Controllers\Api\V1\PlatformHealthController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/platform-health/reverb-test', [\App\Http\Controllers\Api\V1\PlatformHealthController::class, 'sendReverbTest'])
+            ->middleware(['erp.super_admin']);
         Route::delete('admin/active-sessions/{token}', [PlatformActiveSessionsController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/active-sessions/{token}/disable-user', [PlatformActiveSessionsController::class, 'disableUser'])
@@ -656,6 +660,8 @@ Route::prefix('v1')->group(function () {
             Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::get('products/catalog-summary', [ProductController::class, 'catalogSummary'])
+                ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
+            Route::get('products/group-counts', [ProductController::class, 'groupCounts'])
                 ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
             Route::post('products/import-batch', [ProductImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);

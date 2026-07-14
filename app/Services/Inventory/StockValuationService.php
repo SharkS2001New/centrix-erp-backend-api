@@ -59,17 +59,32 @@ SQL;
     }
 
     /**
-     * @return array{shop_value: float, store_value: float, value: float, branch_id: int|null}
+     * @return array{
+     *   shop_value: float,
+     *   store_value: float,
+     *   value: float,
+     *   branch_id: int|null,
+     *   skus_in_stock: int,
+     *   skus_low: int,
+     *   skus_out: int,
+     *   total_available_units: float
+     * }
      */
     public function summarize(?int $organizationId, ?int $branchId = null): array
     {
+        $empty = [
+            'shop_value' => 0.0,
+            'store_value' => 0.0,
+            'value' => 0.0,
+            'branch_id' => $branchId,
+            'skus_in_stock' => 0,
+            'skus_low' => 0,
+            'skus_out' => 0,
+            'total_available_units' => 0.0,
+        ];
+
         if (! $organizationId) {
-            return [
-                'shop_value' => 0.0,
-                'store_value' => 0.0,
-                'value' => 0.0,
-                'branch_id' => $branchId,
-            ];
+            return $empty;
         }
 
         $shopValueSql = $this->stockCostValueSql('cs.shop_quantity');
@@ -97,11 +112,51 @@ SQL;
         $shopValue = round((float) ($totals->shop_value ?? 0), 2);
         $storeValue = round((float) ($totals->store_value ?? 0), 2);
 
+        // Catalog-wide health (includes zero-stock products missing from current_stock).
+        $branchIds = $branchId !== null
+            ? [$branchId]
+            : DB::table('branches')->where('organization_id', $organizationId)->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $health = [
+            'skus_in_stock' => 0,
+            'skus_low' => 0,
+            'skus_out' => 0,
+            'total_available_units' => 0.0,
+        ];
+
+        if ($branchIds !== []) {
+            $qtySql = '(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))';
+            $healthRow = DB::table('products as p')
+                ->join('branches as br', function ($join) use ($organizationId, $branchIds) {
+                    $join->where('br.organization_id', '=', $organizationId)
+                        ->whereIn('br.id', $branchIds);
+                })
+                ->leftJoin('current_stock as cs', function ($join) {
+                    $join->on('cs.product_code', '=', 'p.product_code')
+                        ->on('cs.branch_id', '=', 'br.id');
+                })
+                ->where('p.organization_id', $organizationId)
+                ->whereNull('p.deleted_at')
+                ->selectRaw("SUM(CASE WHEN {$qtySql} > 0 THEN 1 ELSE 0 END) as skus_in_stock")
+                ->selectRaw("SUM(CASE WHEN {$qtySql} <= 0 THEN 1 ELSE 0 END) as skus_out")
+                ->selectRaw("SUM(CASE WHEN {$qtySql} <= COALESCE(p.reorder_point, 0) THEN 1 ELSE 0 END) as skus_low")
+                ->selectRaw("COALESCE(SUM({$qtySql}), 0) as total_available_units")
+                ->first();
+
+            $health = [
+                'skus_in_stock' => (int) ($healthRow->skus_in_stock ?? 0),
+                'skus_low' => (int) ($healthRow->skus_low ?? 0),
+                'skus_out' => (int) ($healthRow->skus_out ?? 0),
+                'total_available_units' => round((float) ($healthRow->total_available_units ?? 0), 2),
+            ];
+        }
+
         return [
             'shop_value' => $shopValue,
             'store_value' => $storeValue,
             'value' => round($shopValue + $storeValue, 2),
             'branch_id' => $branchId,
+            ...$health,
         ];
     }
 }

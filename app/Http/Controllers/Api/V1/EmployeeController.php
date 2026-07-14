@@ -37,7 +37,19 @@ class EmployeeController extends BaseResourceController
 
     public function index(Request $request)
     {
-        $query = Employee::query()->with($this->employeeRelations());
+        $fields = strtolower(trim((string) $request->input('fields', '')));
+        $lean = $fields === 'lean' || $request->boolean('lightweight');
+
+        // Pickers / list rows: skip bank, NOK, emergency, user, shift graph.
+        $relations = $lean
+            ? [
+                'department:id,organization_id,department_name',
+                'position:id,organization_id,position_title',
+                'branch:id,organization_id,branch_name',
+            ]
+            : $this->employeeRelations();
+
+        $query = Employee::query()->with($relations);
         $user = $request->user();
         if ($user) {
             $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
@@ -69,7 +81,15 @@ class EmployeeController extends BaseResourceController
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        return response()->json($query->orderBy('full_name')->paginate($perPage));
+        $sort = strtolower(trim((string) $request->input('sort', '')));
+        $sortDir = strtolower((string) $request->input('sort_dir', '')) === 'desc' ? 'desc' : 'asc';
+        if (in_array($sort, ['created_at', 'id', 'hire_date'], true)) {
+            $query->orderBy($sort, $sortDir);
+        } else {
+            $query->orderBy('full_name');
+        }
+
+        return response()->json($query->paginate($perPage));
     }
 
     /** GET /employees/summary */
@@ -97,11 +117,24 @@ class EmployeeController extends BaseResourceController
                 $this->access()->scopeOrganization($departmentQuery, $user, 'organization_id', $request);
             }
 
+            $byDepartment = (clone $query)
+                ->where(function ($inner) {
+                    $inner->where('is_active', '!=', false)->orWhereNull('is_active');
+                })
+                ->selectRaw('department_id, COUNT(*) as aggregate_count')
+                ->groupBy('department_id')
+                ->get()
+                ->mapWithKeys(fn ($r) => [
+                    (string) ($r->department_id ?? 'null') => (int) $r->aggregate_count,
+                ])
+                ->all();
+
             return [
                 'total' => (int) ($row->total ?? 0),
                 'active' => (int) ($row->active ?? 0),
                 'departments' => $departmentQuery->count(),
                 'payroll_cost' => (float) ($row->payroll_cost ?? 0),
+                'by_department_id' => $byDepartment,
             ];
         };
 

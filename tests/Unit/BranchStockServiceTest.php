@@ -60,4 +60,25 @@ class BranchStockServiceTest extends TestCase
 
         $this->assertSame([], $service->reservedMap([], 1));
     }
+
+    public function test_consumer_available_stock_filter_joins_aggregated_reservations(): void
+    {
+        $service = app(BranchStockService::class);
+        $query = \App\Models\Product::query();
+
+        $service->applyConsumerAvailableStockFilter(
+            $query,
+            1,
+            'mobile',
+            [],
+            ['allow_sell_from_shop' => true],
+        );
+
+        $sql = strtolower($query->toSql());
+
+        $this->assertStringContainsString('left join', $sql);
+        $this->assertStringContainsString('stock_reservations', $sql);
+        $this->assertStringContainsString('reserved_shop', $sql);
+        $this->assertStringNotContainsString('sr.product_code = products.product_code', $sql);
+    }
 }

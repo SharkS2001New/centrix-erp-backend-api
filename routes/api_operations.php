@@ -376,6 +376,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('till-sessions', [ReportController::class, 'tillSessions']);
             Route::get('audit-trail', [ReportController::class, 'auditTrail']);
             Route::get('price-list', [ReportController::class, 'priceList']);
+            Route::get('product-price-sheet', [ReportController::class, 'productPriceSheet']);
             Route::get('returns', [ReportController::class, 'returns']);
 
             Route::prefix('legacy-archive')->group(function () {

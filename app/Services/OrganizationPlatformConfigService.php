@@ -225,7 +225,7 @@ class OrganizationPlatformConfigService
             'enable_backoffice_order_edit' => true,
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
-            'orders_list_default_days' => 5,
+            'orders_list_default_days' => 6,
             'orders_list_sort' => '-created_at',
         ];
     }
@@ -513,7 +513,7 @@ class OrganizationPlatformConfigService
         $days = (int) $value;
 
         if ($days < 1) {
-            return 5;
+            return 6;
         }
 
         return min(90, $days);

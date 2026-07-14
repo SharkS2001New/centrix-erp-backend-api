@@ -9,10 +9,13 @@ use App\Services\Erp\ErpContext;
 use App\Services\Inventory\StockReceiveService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Services\Notifications\InAppNotificationEvents;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class StockReceiptController extends BaseResourceController
 {
+    public const DEFAULT_RANGE_DAYS = 30;
+
     public function __construct(
         protected StockReceiveService $receives,
         protected ErpContext $erp,
@@ -21,6 +24,27 @@ class StockReceiptController extends BaseResourceController
     protected function modelClass(): string
     {
         return \App\Models\StockReceipt::class;
+    }
+
+    /** @param  \Illuminate\Database\Eloquent\Builder<mixed>  $query */
+    protected function applyCreatedAtDateRange($query, Request $request): void
+    {
+        $hasFrom = $request->filled('from_date');
+        $hasTo = $request->filled('to_date');
+        $hasExactLookup = $request->filled('q')
+            || $request->filled('filter.invoice_number')
+            || $request->filled('filter.product_code');
+
+        if (! $hasFrom && ! $hasTo && ! $hasExactLookup) {
+            $to = now()->toDateString();
+            $from = Carbon::parse($to)->subDays(self::DEFAULT_RANGE_DAYS - 1)->toDateString();
+            $query->whereDate('created_at', '>=', $from)
+                ->whereDate('created_at', '<=', $to);
+
+            return;
+        }
+
+        parent::applyCreatedAtDateRange($query, $request);
     }
 
     public function store(Request $request)

@@ -71,15 +71,30 @@ class CheckoutController extends Controller
             app(AutoTripAssignmentService::class)->tryAssignSale($sale, $request->user());
         }
 
-        $sale = $sale->fresh(['items', 'payments.paymentMethod']);
         $labels = config('erp.order_status_labels', []);
+        $statusName = $labels[$sale->status]
+            ?? ucfirst(str_replace('_', ' ', (string) $sale->status));
 
         app(MobileSalesService::class)->invalidateDashboardForUser($request->user());
         app(CompletedSalesCacheService::class)->invalidateForSale($sale);
 
+        // Mobile only needs confirmation fields; skip full toArray of items/payments.
+        if ((string) $cart->channel === 'mobile') {
+            return response()->json([
+                'id' => (int) $sale->id,
+                'order_num' => (int) $sale->order_num,
+                'order_total' => round((float) $sale->order_total, 2),
+                'status' => $sale->status,
+                'status_name' => $statusName,
+                'payment_status' => $sale->payment_status,
+                'amount_paid' => round((float) $sale->amount_paid, 2),
+            ], 201);
+        }
+
+        $sale = $sale->fresh(['items', 'payments.paymentMethod']);
+
         return response()->json(array_merge($sale->toArray(), [
-            'status_name' => $labels[$sale->status]
-                ?? ucfirst(str_replace('_', ' ', (string) $sale->status)),
+            'status_name' => $statusName,
         ]), 201);
     }
 
@@ -391,8 +406,13 @@ class CheckoutController extends Controller
             $shouldDeductNow = $deductStockRequested
                 && $gate->shouldDeductStockAtCheckout($workflow, $orderStatus, (string) $cart->channel);
 
+            $productsByCode = $this->orgProductsByCode(
+                (int) $user->organization_id,
+                $lines->pluck('product_code'),
+            );
+
             foreach ($lines as $i => $line) {
-                $product = $this->orgProduct((int) $user->organization_id, (string) $line->product_code);
+                $product = $productsByCode->get((string) $line->product_code);
                 $location = $product
                     ? $this->resolveSaleLineStockLocation(
                         (string) $cart->channel,

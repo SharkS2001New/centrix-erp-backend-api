@@ -31,7 +31,22 @@ class MobileCustomerService
             ->leftJoin('routes', 'customers.route_id', '=', 'routes.id')
             ->leftJoin('users', 'customers.created_by', '=', 'users.id')
             ->select([
-                'customers.*',
+                'customers.customer_num',
+                'customers.branch_id',
+                'customers.customer_name',
+                'customers.customer_type',
+                'customers.phone_number',
+                'customers.additional_phone',
+                'customers.email',
+                'customers.town',
+                'customers.latitude',
+                'customers.longitude',
+                'customers.route_id',
+                'customers.kra_pin',
+                'customers.terms_of_payment',
+                'customers.credit_limit',
+                'customers.current_balance',
+                'customers.customer_status',
                 'routes.route_name',
                 'users.username as created_by_username',
             ]);
@@ -42,7 +57,7 @@ class MobileCustomerService
 
         $paginator = $query
             ->orderBy('customers.customer_name')
-            ->paginate($perPage, ['customers.*', 'routes.route_name', 'users.username as created_by_username'], 'page', $page);
+            ->paginate($perPage, ['*'], 'page', $page);
 
         return [
             'data' => collect($paginator->items())

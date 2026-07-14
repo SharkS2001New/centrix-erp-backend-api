@@ -69,7 +69,8 @@ class InAppNotificationTest extends TestCase
 
         $this->getJson('/api/v1/notifications/unread-count')
             ->assertOk()
-            ->assertJsonPath('count', 1);
+            ->assertJsonPath('count', 1)
+            ->assertJsonStructure(['count', 'latest_id', 'pending_approvals_count']);
 
         $list = $this->getJson('/api/v1/notifications')
             ->assertOk()

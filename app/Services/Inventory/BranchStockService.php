@@ -236,11 +236,13 @@ class BranchStockService
     ): void {
         if ($branchId) {
             $alias = 'branch_stock';
+            $resAlias = 'active_res';
             $this->joinBranchStock($query, $branchId, $alias);
+            $this->joinActiveReservationsAggregate($query, $branchId, $resAlias);
 
             if (! empty($salesSettings['retail_shop_wholesale_store_stock'])) {
-                $shopAvailable = $this->availableQuantitySql($branchId, 'shop', $alias);
-                $storeAvailable = $this->availableQuantitySql($branchId, 'store', $alias);
+                $shopAvailable = $this->availableQuantitySql($resAlias, 'shop', $alias);
+                $storeAvailable = $this->availableQuantitySql($resAlias, 'store', $alias);
                 // Wholesale lines draw from store; retail lines from shop. W/R products can sell from either.
                 $query->whereRaw("(
                     (COALESCE(products.sell_on_retail, 0) = 0 AND ({$storeAvailable}) > 0)
@@ -255,7 +257,7 @@ class BranchStockService
                 $inventorySettings,
                 $salesSettings,
             );
-            $available = $this->availableQuantitySql($branchId, $location, $alias);
+            $available = $this->availableQuantitySql($resAlias, $location, $alias);
             $query->whereRaw("({$available}) > 0");
 
             return;
@@ -264,19 +266,49 @@ class BranchStockService
         $query->whereRaw('(COALESCE(products.stock_in_shop, 0) + COALESCE(products.stock_in_store, 0)) > 0');
     }
 
-    protected function availableQuantitySql(int $branchId, string $location, string $stockAlias): string
-    {
+    /**
+     * One aggregated reservations join for the branch — avoids per-row correlated subqueries.
+     *
+     * @param  Builder<Product>  $query
+     */
+    public function joinActiveReservationsAggregate(
+        Builder $query,
+        int $branchId,
+        string $alias = 'active_res',
+    ): void {
+        if ($this->queryHasJoin($query, $alias)) {
+            return;
+        }
+
+        $sub = DB::table('stock_reservations')
+            ->whereNull('released_at')
+            ->where(function ($inner) {
+                $inner->whereNull('expires_at')
+                    ->orWhere('expires_at', '>', now());
+            })
+            ->where('branch_id', $branchId)
+            ->groupBy('product_code')
+            ->selectRaw("
+                product_code,
+                COALESCE(SUM(CASE WHEN stock_location = 'shop' THEN quantity ELSE 0 END), 0) AS reserved_shop,
+                COALESCE(SUM(CASE WHEN stock_location = 'store' THEN quantity ELSE 0 END), 0) AS reserved_store
+            ");
+
+        $query->leftJoinSub($sub, $alias, function ($join) use ($alias) {
+            $join->on("{$alias}.product_code", '=', 'products.product_code');
+        });
+    }
+
+    protected function availableQuantitySql(
+        string $reservationAlias,
+        string $location,
+        string $stockAlias,
+    ): string {
         $location = $location === 'store' ? 'store' : 'shop';
         $qtyColumn = $location === 'store' ? 'store_quantity' : 'shop_quantity';
-        $reservedSubquery = "(SELECT COALESCE(SUM(sr.quantity), 0)
-            FROM stock_reservations sr
-            WHERE sr.released_at IS NULL
-              AND (sr.expires_at IS NULL OR sr.expires_at > NOW())
-              AND sr.product_code = products.product_code
-              AND sr.branch_id = {$branchId}
-              AND sr.stock_location = '{$location}')";
+        $reservedColumn = $location === 'store' ? 'reserved_store' : 'reserved_shop';
 
-        return "GREATEST(0, COALESCE({$stockAlias}.{$qtyColumn}, 0) - {$reservedSubquery})";
+        return "GREATEST(0, COALESCE({$stockAlias}.{$qtyColumn}, 0) - COALESCE({$reservationAlias}.{$reservedColumn}, 0))";
     }
 
     /**

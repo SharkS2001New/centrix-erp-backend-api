@@ -17,6 +17,7 @@ use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Fulfillment\TripAutoCloseService;
 use App\Services\Notifications\CustomerNotificationService;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 class SalePaymentAllocationService
@@ -28,12 +29,20 @@ class SalePaymentAllocationService
      */
     public function allocate(Sale $sale, array $payment, User $user): Sale
     {
-        $amount = (float) $payment['amount'];
+        $amount = round((float) $payment['amount'], 2);
         if ($amount <= 0) {
-            throw new InvalidArgumentException('Payment amount must be positive.');
+            throw ValidationException::withMessages([
+                'amount' => ['Payment amount must be positive.'],
+            ]);
         }
 
+        // Validate before opening the write transaction so 422s are not wrapped.
+        $this->assertAmountWithinBalanceDue($sale->fresh() ?? $sale, $amount);
+
         return DB::transaction(function () use ($sale, $payment, $amount, $user) {
+            $sale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
+            $this->assertAmountWithinBalanceDue($sale, $amount);
+
             $priorPaid = (float) $sale->amount_paid;
             $collectsReceivable = (bool) $sale->is_credit_sale
                 || $sale->customer_num
@@ -130,6 +139,29 @@ class SalePaymentAllocationService
 
             return $sale;
         });
+    }
+
+    public function assertAmountWithinBalanceDue(Sale $sale, float $amount): void
+    {
+        $orderTotal = round((float) $sale->order_total, 2);
+        $alreadyPaid = round((float) $sale->amount_paid, 2);
+        $balanceDue = round(max(0, $orderTotal - $alreadyPaid), 2);
+
+        if ($balanceDue <= 0.01) {
+            throw ValidationException::withMessages([
+                'amount' => ['This order has already been fully paid.'],
+            ]);
+        }
+
+        if ($amount - $balanceDue > 0.01) {
+            throw ValidationException::withMessages([
+                'amount' => [sprintf(
+                    'Payment of %.2f exceeds the amount due of %.2f. Enter the correct amount to continue.',
+                    $amount,
+                    $balanceDue,
+                )],
+            ]);
+        }
     }
 
     protected function derivePaymentStatus(float $total, float $paid): string

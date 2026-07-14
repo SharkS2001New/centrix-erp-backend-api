@@ -124,17 +124,20 @@ class CustomerController extends BaseResourceController
         return response()->json($build());
     }
 
-    /** GET /customers/{customerNum}/sales — orders with line items */
+    /** GET /customers/{customerNum}/sales — orders; line items optional via with_items=1 */
     public function sales(Request $request, string $customer)
     {
         $model = $this->findScopedModel($request, $customer);
 
         $query = Sale::query()
-            ->with(['items.product'])
             ->where('customer_num', $model->customer_num)
             ->where('organization_id', $model->organization_id)
             ->whereNull('deleted_at')
             ->orderByDesc('id');
+
+        if ($request->boolean('with_items')) {
+            $query->with(['items.product']);
+        }
 
         $perPage = min((int) $request->input('per_page', 20), 100);
 
