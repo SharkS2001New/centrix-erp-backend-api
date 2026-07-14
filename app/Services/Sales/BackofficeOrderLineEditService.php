@@ -135,15 +135,21 @@ class BackofficeOrderLineEditService
     }
 
     /**
-     * @param  list<array{id: int, quantity: float|int|string, discount_given?: float|int|string|null}>  $items
+     * @param  list<array{id?: int|null, product_code?: string|null, quantity: float|int|string, discount_given?: float|int|string|null, on_wholesale_retail?: bool|int|null}>  $items
+     * @param  list<int|string>  $removeItemIds
      */
-    public function updateLineQuantities(Sale $sale, User $user, array $items, CapabilityGate $gate): Sale
-    {
+    public function updateLineQuantities(
+        Sale $sale,
+        User $user,
+        array $items,
+        CapabilityGate $gate,
+        array $removeItemIds = [],
+    ): Sale {
         $this->assertLineEditAllowed($sale, $user, $gate);
         $wasEditable = (string) $sale->status === 'editable';
         $allowDiscountEdit = $this->allowsLineDiscountEdit($gate);
 
-        return DB::transaction(function () use ($sale, $user, $items, $gate, $wasEditable, $allowDiscountEdit) {
+        return DB::transaction(function () use ($sale, $user, $items, $gate, $wasEditable, $allowDiscountEdit, $removeItemIds) {
             $sale = Sale::with('items')->lockForUpdate()->findOrFail($sale->id);
             $itemsById = $sale->items->keyBy('id');
             $salesSettings = $gate->moduleSettings('sales');
@@ -152,9 +158,74 @@ class BackofficeOrderLineEditService
             $qtyChanged = false;
             $lineChanged = false;
 
+            $removeIds = array_values(array_unique(array_map(
+                static fn ($id) => (int) $id,
+                $removeItemIds,
+            )));
+            $removeSet = array_fill_keys($removeIds, true);
+
             foreach ($items as $row) {
-                $itemId = (int) $row['id'];
+                if (! empty($row['id']) && isset($removeSet[(int) $row['id']])) {
+                    throw new InvalidArgumentException('Cannot update and remove the same line item.');
+                }
+            }
+
+            foreach ($removeIds as $itemId) {
+                /** @var SaleItem|null $saleItem */
+                $saleItem = $itemsById->get($itemId);
+                if (! $saleItem) {
+                    throw new InvalidArgumentException("Line item [{$itemId}] was not found on this order.");
+                }
+
+                $oldQty = (float) $saleItem->quantity;
+                if ($sale->stock_balanced && $oldQty > 0) {
+                    $this->adjustStockForQtyChange(
+                        $sale,
+                        $saleItem,
+                        $oldQty,
+                        0,
+                        $user,
+                        $gate,
+                        $salesSettings,
+                        $inventorySettings,
+                        $allowBelowStock,
+                    );
+                }
+
+                $saleItem->delete();
+                $itemsById->forget($itemId);
+                $lineChanged = true;
+                $qtyChanged = true;
+            }
+
+            foreach ($items as $row) {
                 $newQty = round(max(0, (float) $row['quantity']), 4);
+                if ($newQty <= 0) {
+                    throw new InvalidArgumentException('Quantity must be greater than zero.');
+                }
+
+                if (empty($row['id'])) {
+                    $this->createSaleLine(
+                        $sale,
+                        $user,
+                        $row,
+                        $newQty,
+                        $allowDiscountEdit,
+                        $gate,
+                        $salesSettings,
+                        $inventorySettings,
+                        $allowBelowStock,
+                    );
+                    $lineChanged = true;
+                    $qtyChanged = true;
+                    $sale->unsetRelation('items');
+                    $sale->load('items');
+                    $itemsById = $sale->items->keyBy('id');
+
+                    continue;
+                }
+
+                $itemId = (int) $row['id'];
                 /** @var SaleItem|null $saleItem */
                 $saleItem = $itemsById->get($itemId);
                 if (! $saleItem) {
@@ -170,10 +241,6 @@ class BackofficeOrderLineEditService
                     $newDiscount = (float) ($saleItem->discount_given ?? 0);
                 }
 
-                if ($newQty <= 0) {
-                    throw new InvalidArgumentException('Quantity must be greater than zero.');
-                }
-
                 $itemQtyChanged = abs($newQty - $oldQty) >= 0.0001;
                 $discountChanged = abs($newDiscount - (float) ($saleItem->discount_given ?? 0)) >= 0.01;
 
@@ -185,7 +252,10 @@ class BackofficeOrderLineEditService
                 $qtyChanged = $qtyChanged || $itemQtyChanged;
 
                 if ($discountChanged && ! $itemQtyChanged) {
-                    $product = Product::query()->find($saleItem->product_code);
+                    $product = Product::query()
+                        ->where('organization_id', $user->organization_id)
+                        ->where('product_code', $saleItem->product_code)
+                        ->first();
                     if (! $product) {
                         throw new InvalidArgumentException("Product [{$saleItem->product_code}] was not found.");
                     }
@@ -199,6 +269,7 @@ class BackofficeOrderLineEditService
                         $sale->route_id ? (int) $sale->route_id : null,
                         (float) $saleItem->selling_price,
                         false,
+                        $user->organization_id,
                     );
                     $product->loadMissing('vat');
                     $productVat = SalesVatCalculator::vatFromInclusiveGross(
@@ -230,6 +301,10 @@ class BackofficeOrderLineEditService
             }
 
             $sale->refresh()->load('items');
+            if ($sale->items->isEmpty()) {
+                throw new InvalidArgumentException('An order must keep at least one line item.');
+            }
+
             $orderTotal = round((float) $sale->items->sum('amount'), 2);
             $totalVat = round((float) $sale->items->sum('product_vat'), 2);
             $amountPaid = min((float) ($sale->amount_paid ?? 0), $orderTotal);
@@ -294,6 +369,88 @@ class BackofficeOrderLineEditService
 
             return $sale->fresh(['items.product.unit', 'cashier:id,username,full_name', 'customer:customer_num,customer_name']);
         });
+    }
+
+    /**
+     * @param  array{product_code?: string|null, discount_given?: float|int|string|null, on_wholesale_retail?: bool|int|null}  $row
+     */
+    protected function createSaleLine(
+        Sale $sale,
+        User $user,
+        array $row,
+        float $newQty,
+        bool $allowDiscountEdit,
+        CapabilityGate $gate,
+        array $salesSettings,
+        array $inventorySettings,
+        bool $allowBelowStock,
+    ): SaleItem {
+        $productCode = trim((string) ($row['product_code'] ?? ''));
+        if ($productCode === '') {
+            throw new InvalidArgumentException('Product code is required when adding a line item.');
+        }
+
+        $product = Product::query()
+            ->where('organization_id', $user->organization_id)
+            ->where('product_code', $productCode)
+            ->first();
+        if (! $product) {
+            throw new InvalidArgumentException("Product [{$productCode}] was not found.");
+        }
+
+        $isRetail = (bool) ($row['on_wholesale_retail'] ?? false);
+        $newDiscount = $allowDiscountEdit && array_key_exists('discount_given', $row)
+            ? max(0, (float) $row['discount_given'])
+            : 0.0;
+
+        [$unitPrice, $amount] = $this->pricing->resolveLineAmounts(
+            $product,
+            $newQty,
+            $isRetail,
+            $newDiscount,
+            $sale->route_id ? (int) $sale->route_id : null,
+            null,
+            false,
+            $user->organization_id,
+        );
+
+        $product->loadMissing(['vat', 'unit']);
+        $productVat = SalesVatCalculator::vatFromInclusiveGross(
+            max(0, $amount),
+            SalesVatCalculator::vatRateFromProduct($product),
+        );
+
+        $nextLineNo = ((int) ($sale->items()->max('line_no') ?? 0)) + 1;
+
+        $saleItem = SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => $nextLineNo,
+            'item_code' => (string) $nextLineNo,
+            'quantity' => $newQty,
+            'uom' => $product->uom ?? $product->unit_id,
+            'selling_price' => $unitPrice,
+            'discount_given' => $newDiscount,
+            'product_vat' => $productVat,
+            'amount' => $amount,
+            'on_wholesale_retail' => $isRetail ? 1 : 0,
+        ]);
+
+        if ($sale->stock_balanced) {
+            $this->adjustStockForQtyChange(
+                $sale,
+                $saleItem,
+                0,
+                $newQty,
+                $user,
+                $gate,
+                $salesSettings,
+                $inventorySettings,
+                $allowBelowStock,
+            );
+        }
+
+        return $saleItem;
     }
 
     protected function adjustStockForQtyChange(

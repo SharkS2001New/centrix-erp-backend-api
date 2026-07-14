@@ -275,6 +275,102 @@ class BackofficeOrderLineEditTest extends TestCase
             ->assertJsonPath('order_total', 370.0);
     }
 
+    public function test_backoffice_order_can_add_a_line_item(): void
+    {
+        $sale = $this->createBackofficeSale(2, 100.0);
+        $other = \App\Models\Product::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('product_code', '!=', $sale->items->first()->product_code)
+            ->first();
+        $this->assertNotNull($other);
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($this->user);
+        $updated = app(\App\Services\Sales\BackofficeOrderLineEditService::class)->updateLineQuantities(
+            $sale,
+            $this->user,
+            [
+                ['id' => $sale->items->first()->id, 'quantity' => 2],
+                ['product_code' => $other->product_code, 'quantity' => 1],
+            ],
+            $gate,
+        );
+
+        $this->assertSame(2, SaleItem::query()->where('sale_id', $updated->id)->count());
+        $this->assertTrue(
+            SaleItem::query()
+                ->where('sale_id', $updated->id)
+                ->where('product_code', $other->product_code)
+                ->exists()
+        );
+    }
+
+    public function test_backoffice_order_can_remove_a_line_item(): void
+    {
+        $sale = $this->createBackofficeSale(2, 100.0);
+        $first = $sale->items->first();
+        $other = \App\Models\Product::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('product_code', '!=', $first->product_code)
+            ->firstOrFail();
+
+        $second = SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $other->product_code,
+            'line_no' => 2,
+            'item_code' => '2',
+            'quantity' => 1,
+            'uom' => $other->uom,
+            'selling_price' => 50,
+            'discount_given' => 0,
+            'product_vat' => 0,
+            'amount' => 50,
+            'on_wholesale_retail' => 0,
+        ]);
+        $sale->update(['order_total' => 150]);
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($this->user);
+        $updated = app(\App\Services\Sales\BackofficeOrderLineEditService::class)->updateLineQuantities(
+            $sale->fresh('items'),
+            $this->user,
+            [
+                ['id' => $first->id, 'quantity' => 2],
+            ],
+            $gate,
+            [$second->id],
+        );
+
+        $this->assertEquals(100.0, (float) $updated->order_total);
+        $this->assertDatabaseMissing('sale_items', ['id' => $second->id]);
+        $this->assertSame(1, SaleItem::query()->where('sale_id', $sale->id)->count());
+    }
+
+    public function test_backoffice_order_can_replace_last_line_with_another_product(): void
+    {
+        $sale = $this->createBackofficeSale(2, 100.0);
+        $item = $sale->items->first();
+        $other = \App\Models\Product::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('product_code', '!=', $item->product_code)
+            ->firstOrFail();
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($this->user);
+        $updated = app(\App\Services\Sales\BackofficeOrderLineEditService::class)->updateLineQuantities(
+            $sale,
+            $this->user,
+            [
+                ['product_code' => $other->product_code, 'quantity' => 1],
+            ],
+            $gate,
+            [$item->id],
+        );
+
+        $this->assertSame(1, SaleItem::query()->where('sale_id', $updated->id)->count());
+        $this->assertSame(
+            $other->product_code,
+            SaleItem::query()->where('sale_id', $updated->id)->value('product_code')
+        );
+    }
+
     protected function createBackofficeSale(float $qty, float $amount, string $status = 'booked'): Sale
     {
         $product = \App\Models\Product::query()->firstOrFail();
