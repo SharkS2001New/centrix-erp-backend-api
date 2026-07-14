@@ -530,6 +530,34 @@ class MobileFieldAttendanceService
         return $payload;
     }
 
+    /** Compact session flags for logout / status probes — skips work-hour formatting. */
+    /** @return array<string, mixed> */
+    public function serializeSessionStatus(MobileRepAttendanceSession $session): array
+    {
+        return [
+            'id' => $session->id,
+            'user_id' => $session->user_id,
+            'branch_id' => $session->branch_id,
+            'sign_in_at' => $session->sign_in_at?->toIso8601String(),
+            'sign_out_at' => $session->sign_out_at?->toIso8601String(),
+            'suspended_at' => $session->suspended_at?->toIso8601String(),
+            'last_resumed_at' => $session->last_resumed_at?->toIso8601String(),
+            'sign_in_latitude' => (float) ($session->sign_in_latitude ?? 0),
+            'sign_in_longitude' => (float) ($session->sign_in_longitude ?? 0),
+            'sign_out_latitude' => $session->sign_out_latitude,
+            'sign_out_longitude' => $session->sign_out_longitude,
+            'sign_in_address' => $session->sign_in_address,
+            'sign_out_address' => $session->sign_out_address,
+            'is_open' => $session->isOpen(),
+            'is_active' => $session->isActive(),
+            'is_suspended' => $session->isSuspended(),
+            'status' => $this->sessionStatus($session),
+            'close_reason' => $session->close_reason,
+            'close_reason_label' => $this->closeReasonLabel($session->close_reason),
+            'source' => 'field_rep',
+        ];
+    }
+
     protected function sessionStatus(MobileRepAttendanceSession $session): string
     {
         if ($session->isClosed()) {

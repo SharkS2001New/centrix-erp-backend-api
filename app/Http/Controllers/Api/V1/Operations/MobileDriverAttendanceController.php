@@ -17,18 +17,23 @@ class MobileDriverAttendanceController extends Controller
         protected MobileDriverAttendanceService $attendance,
     ) {}
 
-    /** GET /mobile/driver/attendance/session */
+    /** GET /mobile/driver/attendance/session
+     *  ?lean=1 — compact payload for logout / status probes.
+     */
     public function session(Request $request)
     {
         $user = $request->user();
         $gate = $this->erp->gateForUser($user);
         $enabled = $this->attendance->isEnabled($gate);
         $openSession = $enabled ? $this->attendance->openSessionForUser($user) : null;
+        $lean = $request->boolean('lean');
 
         return response()->json([
             'feature_enabled' => $enabled,
             'session' => $openSession
-                ? $this->attendance->serializeSession($openSession)
+                ? ($lean
+                    ? $this->attendance->serializeSessionStatus($openSession)
+                    : $this->attendance->serializeSession($openSession))
                 : null,
         ]);
     }

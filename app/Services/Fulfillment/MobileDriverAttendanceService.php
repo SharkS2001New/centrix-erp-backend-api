@@ -297,6 +297,34 @@ class MobileDriverAttendanceService
         ];
     }
 
+    /** Compact session flags for logout / status probes. */
+    /** @return array<string, mixed> */
+    public function serializeSessionStatus(MobileDriverAttendanceSession $session): array
+    {
+        return [
+            'id' => $session->id,
+            'user_id' => $session->user_id,
+            'driver_id' => $session->driver_id,
+            'sign_in_at' => $session->sign_in_at?->toIso8601String(),
+            'sign_out_at' => $session->sign_out_at?->toIso8601String(),
+            'suspended_at' => $session->suspended_at?->toIso8601String(),
+            'last_resumed_at' => $session->last_resumed_at?->toIso8601String(),
+            'sign_in_latitude' => (float) ($session->sign_in_latitude ?? 0),
+            'sign_in_longitude' => (float) ($session->sign_in_longitude ?? 0),
+            'sign_out_latitude' => $session->sign_out_latitude,
+            'sign_out_longitude' => $session->sign_out_longitude,
+            'sign_in_address' => $session->sign_in_address,
+            'sign_out_address' => $session->sign_out_address,
+            'is_open' => $session->isOpen(),
+            'is_active' => $session->isActive(),
+            'is_suspended' => $session->isSuspended(),
+            'status' => $session->isClosed()
+                ? 'closed'
+                : ($session->isSuspended() ? 'suspended' : 'active'),
+            'source' => 'driver',
+        ];
+    }
+
     public function workSeconds(MobileDriverAttendanceSession $session, ?Carbon $until = null): int
     {
         if ($session->isClosed()) {

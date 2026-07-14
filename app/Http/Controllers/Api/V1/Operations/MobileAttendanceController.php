@@ -17,18 +17,23 @@ class MobileAttendanceController extends Controller
         protected MobileFieldAttendanceService $attendance,
     ) {}
 
-    /** GET /mobile/attendance/session */
+    /** GET /mobile/attendance/session
+     *  ?lean=1 — compact payload for logout / status probes (no work-hour math).
+     */
     public function session(Request $request)
     {
         $user = $request->user();
         $gate = $this->erp->gateForUser($user);
         $enabled = $this->attendance->isEnabled($gate);
         $openSession = $enabled ? $this->attendance->openSessionForUser($user) : null;
+        $lean = $request->boolean('lean');
 
         return response()->json([
             'feature_enabled' => $enabled,
             'session' => $openSession
-                ? $this->attendance->serializeSession($openSession)
+                ? ($lean
+                    ? $this->attendance->serializeSessionStatus($openSession)
+                    : $this->attendance->serializeSession($openSession))
                 : null,
         ]);
     }
