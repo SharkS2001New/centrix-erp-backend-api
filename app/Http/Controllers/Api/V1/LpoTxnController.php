@@ -28,10 +28,10 @@ class LpoTxnController extends BaseResourceController
         $orgId = (int) ($this->access()->organizationId($user, $request) ?? 0);
 
         $query = LpoTxn::query()
-            ->with(['lpo:id,lpo_no,lpo_seq,organization_id,created_at,sent_at,reference_number'])
+            ->with(['lpo:lpo_no,lpo_seq,organization_id,created_at,sent_at,reference_number'])
             ->when($orgId > 0, fn ($builder) => $builder->whereHas(
                 'lpo',
-                fn ($lpo) => $lpo->where('organization_id', $orgId),
+                fn ($lpo) => $lpo->where('organization_id', $orgId)->whereNull('deleted_at'),
             ));
 
         foreach ((array) $request->input('filter', []) as $col => $val) {

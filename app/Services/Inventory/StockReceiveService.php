@@ -114,7 +114,16 @@ class StockReceiveService
         $paidQty = $split['on_order'];
         $offerQty = $split['bonus'];
 
-        if ($incomingPack <= 0 || $offerQty <= 0.0001) {
+        // Reconcile across the whole PO line (already received + this receipt) so
+        // partial then offer (or late free goods) ends at the same unit cost.
+        $priorReceived = (float) ($txn->received_qty ?? 0);
+        $priorOffer = (float) ($txn->offer_qty ?? 0);
+        $priorPaid = max(0.0, $priorReceived - $priorOffer);
+        $paidToDate = $priorPaid + $paidQty;
+        $receivedToDate = $priorReceived + $incomingPack;
+
+        $lineHasOffer = $offerQty > 0.0001 || $priorOffer > 0.0001;
+        if ($incomingPack <= 0 || $receivedToDate <= 0.0001 || ! $lineHasOffer) {
             return [
                 'effective_cost' => $requestedCost ?? $originalCost,
                 'original_cost' => $originalCost > 0 ? $originalCost : $requestedCost,
@@ -123,8 +132,8 @@ class StockReceiveService
             ];
         }
 
-        $paidValue = $paidQty * $originalCost;
-        $effectiveCost = round($paidValue / $incomingPack, 4);
+        $paidValue = $paidToDate * $originalCost;
+        $effectiveCost = round($paidValue / $receivedToDate, 4);
 
         return [
             'effective_cost' => $effectiveCost,

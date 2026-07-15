@@ -74,6 +74,13 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 404);
             }
 
+            if ($e->getModel() === \App\Models\LpoMst::class) {
+                return response()->json([
+                    'message' => 'Purchase order not found.',
+                    'code' => 'lpo_not_found',
+                ], 404);
+            }
+
             return null;
         });
         $exceptions->renderable(function (AuthenticationException $e, Request $request) {

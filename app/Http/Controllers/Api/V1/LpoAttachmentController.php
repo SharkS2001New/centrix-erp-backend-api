@@ -32,12 +32,16 @@ class LpoAttachmentController extends Controller
             'file' => 'required|file|max:10240|mimes:pdf,jpeg,jpg,png,webp,doc,docx,xls,xlsx',
         ]);
 
-        LpoMst::findOrFail((int) $data['lpo_no']);
+        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $lpoQuery = LpoMst::query()->whereNull('deleted_at')->where('lpo_no', (int) $data['lpo_no']);
+        if ($orgId > 0) {
+            $lpoQuery->where('organization_id', $orgId);
+        }
+        $lpoQuery->firstOrFail();
 
         $file = $request->file('file');
-        $orgId = $request->user()?->organization_id;
         $path = $file->store(
-            \App\Support\OrganizationPublicStorage::path($orgId, 'lpo', (string) ((int) $data['lpo_no']), 'attachments'),
+            \App\Support\OrganizationPublicStorage::path($orgId ?: null, 'lpo', (string) ((int) $data['lpo_no']), 'attachments'),
             'public',
         );
 

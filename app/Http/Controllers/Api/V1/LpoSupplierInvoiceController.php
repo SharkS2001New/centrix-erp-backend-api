@@ -41,7 +41,7 @@ class LpoSupplierInvoiceController extends Controller
 
     protected function assertLpoInOrganization(Request $request, int $lpoNo): LpoMst
     {
-        $query = LpoMst::query()->where('lpo_no', $lpoNo);
+        $query = LpoMst::query()->whereNull('deleted_at')->where('lpo_no', $lpoNo);
         $user = $request->user();
         if ($user) {
             $orgId = $this->access()->organizationId($user, $request);

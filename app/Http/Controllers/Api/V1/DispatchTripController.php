@@ -62,9 +62,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($paginator);
     }
 
-    public function show(Request $request, string $id)
+    public function show(Request $request, string|int $id)
     {
-        $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
+        $trip = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($id), $request->user());
         // Sales headers for stop list + cash summary; loading-list is fetched via its own endpoint.
         $trip->load(['route', 'routes', 'driver', 'vehicle', 'crewMembers', 'sales']);
         $summary = $this->financials->summarizeForTrip($trip);
@@ -134,9 +134,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($this->presentTrip($trip->fresh(['route', 'routes', 'driver', 'vehicle', 'crewMembers'])), 201);
     }
 
-    public function update(Request $request, string $id)
+    public function update(Request $request, string|int $id)
     {
-        $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
+        $trip = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($id), $request->user());
         $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $data = $request->validate([
             'route_id' => array_merge(['sometimes'], TenantRouteRules::nullable($orgId ?: null)),
@@ -162,9 +162,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($this->presentTrip($trip->fresh(['route', 'routes', 'driver', 'vehicle', 'crewMembers'])));
     }
 
-    public function destroy(Request $request, string $id)
+    public function destroy(Request $request, string|int $id)
     {
-        $trip = $this->findBranchScopedModel(DispatchTrip::class, $id, $request->user());
+        $trip = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($id), $request->user());
         if (! in_array($trip->status, ['draft', 'cancelled'], true)) {
             return response()->json(['message' => 'Only draft or cancelled trips can be deleted. Cancel the trip first.'], 422);
         }
@@ -206,9 +206,19 @@ class DispatchTripController extends BaseResourceController
         $trip->crewMembers()->sync($sync);
     }
 
-    public function assignOrders(Request $request, int $trip)
+    /** @param  string|int  $trip */
+    protected function resolveTripId(string|int $trip): int
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        if (! is_numeric($trip) || (int) $trip < 1) {
+            abort(404);
+        }
+
+        return (int) $trip;
+    }
+
+    public function assignOrders(Request $request, string|int $trip)
+    {
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         $data = $request->validate([
             'sale_ids' => 'required|array|min:1',
             'sale_ids.*' => 'integer|exists:sales,id',
@@ -223,9 +233,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($this->presentTrip($updated));
     }
 
-    public function removeOrder(Request $request, int $trip, int $sale)
+    public function removeOrder(Request $request, string|int $trip, int $sale)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
 
         try {
             $updated = $this->trips->removeOrder($model, $sale, $request->user());
@@ -259,9 +269,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($this->presentTrip($trip->fresh(['route', 'routes', 'driver', 'vehicle', 'crewMembers'])));
     }
 
-    public function loadingList(Request $request, int $trip)
+    public function loadingList(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         $builder = app(\App\Services\Fulfillment\LoadingListBuilder::class);
         $loadingList = $builder->syncLoadingList($model);
         $loadingList->load(['route', 'trip.route', 'trip.driver', 'trip.vehicle']);
@@ -287,9 +297,9 @@ class DispatchTripController extends BaseResourceController
         ]);
     }
 
-    public function pickingList(Request $request, int $trip)
+    public function pickingList(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         $builder = app(\App\Services\Fulfillment\PickingListBuilder::class);
         $pickingList = $builder->syncPickingList($model);
         $pickingList->load(['route', 'trip.route', 'trip.driver', 'trip.vehicle']);
@@ -299,9 +309,9 @@ class DispatchTripController extends BaseResourceController
         ]);
     }
 
-    public function updatePickingListLines(Request $request, int $trip)
+    public function updatePickingListLines(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         $data = $request->validate([
             'lines' => 'required|array|min:1',
             'lines.*.id' => 'nullable|integer',
@@ -319,9 +329,9 @@ class DispatchTripController extends BaseResourceController
         ]);
     }
 
-    public function completePickingList(Request $request, int $trip)
+    public function completePickingList(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         $data = $request->validate([
             'picker_name' => 'nullable|string|max:200',
         ]);
@@ -339,9 +349,9 @@ class DispatchTripController extends BaseResourceController
         ]);
     }
 
-    public function lockLoadingList(Request $request, int $trip)
+    public function lockLoadingList(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         $data = $request->validate([
             'prepared_by_name' => 'required|string|max:200',
             'checked_by_name' => 'required|string|max:200',
@@ -356,9 +366,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($updated);
     }
 
-    public function start(Request $request, int $trip)
+    public function start(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
 
         try {
             $updated = $this->trips->startTrip($model, $request->user());
@@ -370,9 +380,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($updated);
     }
 
-    public function confirmDeliveries(Request $request, int $trip)
+    public function confirmDeliveries(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
 
         try {
             $updated = $this->trips->confirmAllDelivered($model, $request->user());
@@ -384,9 +394,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($this->presentTrip($updated));
     }
 
-    public function complete(Request $request, int $trip)
+    public function complete(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
 
         try {
             $updated = $this->trips->completeTrip($model, $request->user());
@@ -398,9 +408,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($updated);
     }
 
-    public function settle(Request $request, int $trip)
+    public function settle(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         $data = $request->validate([
             'collected_cash' => 'required|numeric|min:0',
         ]);
@@ -415,9 +425,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($updated);
     }
 
-    public function cancel(Request $request, int $trip)
+    public function cancel(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         if ($model->status === 'completed') {
             return response()->json(['message' => 'Completed trips cannot be cancelled.'], 422);
         }
@@ -427,9 +437,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($model->fresh(['route', 'driver', 'vehicle', 'sales', 'loadingList.lines']));
     }
 
-    public function reorderStops(Request $request, int $trip)
+    public function reorderStops(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
         $data = $request->validate([
             'stops' => 'required|array|min:1',
             'stops.*.sale_id' => 'required|integer|exists:sales,id',
@@ -445,9 +455,9 @@ class DispatchTripController extends BaseResourceController
         return response()->json($updated);
     }
 
-    public function reconciliation(Request $request, int $trip)
+    public function reconciliation(Request $request, string|int $trip)
     {
-        $model = $this->findBranchScopedModel(DispatchTrip::class, $trip, $request->user());
+        $model = $this->findBranchScopedModel(DispatchTrip::class, $this->resolveTripId($trip), $request->user());
 
         return response()->json(
             app(\App\Services\Fulfillment\TripReconciliationService::class)->build($model, $request->user()),

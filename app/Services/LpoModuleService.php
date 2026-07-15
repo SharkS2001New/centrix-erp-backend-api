@@ -114,6 +114,35 @@ class LpoModuleService
         return sprintf('LPO-%d-%04d', $year, $lpoNo);
     }
 
+    /**
+     * Resolve an LPO for an organization. Prefer primary key (lpo_no), then org-local
+     * sequence (lpo_seq) so URLs that still use the display sequence keep working.
+     */
+    public function findForOrganization(int $lpoNoOrSeq, ?int $organizationId = null): LpoMst
+    {
+        $query = LpoMst::query()
+            ->with('supplier')
+            ->whereNull('deleted_at');
+
+        if ($organizationId) {
+            $query->where('organization_id', $organizationId);
+        }
+
+        $byPk = (clone $query)->where('lpo_no', $lpoNoOrSeq)->first();
+        if ($byPk) {
+            return $byPk;
+        }
+
+        if ($organizationId) {
+            $bySeq = (clone $query)->where('lpo_seq', $lpoNoOrSeq)->first();
+            if ($bySeq) {
+                return $bySeq;
+            }
+        }
+
+        throw (new \Illuminate\Database\Eloquent\ModelNotFoundException)->setModel(LpoMst::class, [$lpoNoOrSeq]);
+    }
+
     public function mapListRow(LpoMst $lpo, ?int $organizationId = null, ?User $viewer = null): array
     {
         return $this->mapListRows(collect([$lpo]), $organizationId, $viewer)[0];
@@ -188,7 +217,8 @@ class LpoModuleService
 
             return [
                 'lpo_no' => $lpoNo,
-                'po_number' => $this->formatPoNumber($lpoNo, $orderDate),
+                'lpo_seq' => (int) ($lpo->lpo_seq ?? $lpoNo),
+                'po_number' => $this->formatPoNumber((int) ($lpo->lpo_seq ?? $lpoNo), $orderDate),
                 'supplier_id' => (int) $lpo->supplier_id,
                 'supplier_name' => $supplier?->supplier_name,
                 'reference_number' => $lpo->reference_number,
@@ -320,11 +350,7 @@ class LpoModuleService
 
     public function summary(int $lpoNo, ?int $organizationId = null, ?User $viewer = null): array
     {
-        $lpo = LpoMst::query()
-            ->with('supplier')
-            ->whereNull('deleted_at')
-            ->where('lpo_no', $lpoNo)
-            ->firstOrFail();
+        $lpo = $this->findForOrganization($lpoNo, $organizationId);
 
         $settings = \App\Services\Purchasing\ProcurementSettingsResolver::forOrganizationId($organizationId);
         $defaultReceiveLocation = $settings['default_receive_location'] ?? 'store';
@@ -340,6 +366,7 @@ class LpoModuleService
         }
         $creator = $lpo->created_by ? User::query()->find($lpo->created_by) : null;
 
+        $lpoNo = (int) $lpo->lpo_no;
         $lines = LpoTxn::query()->where('lpo_no', $lpoNo)->orderBy('id')->get();
         $products = Product::query()
             ->with('unit')
@@ -379,7 +406,8 @@ class LpoModuleService
 
         $lpoPayload = [
             'lpo_no' => (int) $lpo->lpo_no,
-            'po_number' => $this->formatPoNumber((int) $lpo->lpo_no, $lpo->created_at ?? $lpo->sent_at),
+            'lpo_seq' => (int) ($lpo->lpo_seq ?? $lpo->lpo_no),
+            'po_number' => $this->formatPoNumber((int) ($lpo->lpo_seq ?? $lpo->lpo_no), $lpo->created_at ?? $lpo->sent_at),
             'supplier_id' => (int) $lpo->supplier_id,
             'supplier_name' => $lpo->supplier?->supplier_name,
             'reference_number' => $lpo->reference_number,
