@@ -4,8 +4,10 @@ namespace App\Services\Accounting;
 
 use App\Models\Customer;
 use App\Models\CustomerInvoice;
+use App\Models\CustomerInvoicePayment;
 use App\Models\Sale;
 use App\Models\User;
+use Illuminate\Support\Facades\Schema;
 
 class CustomerInvoiceService
 {
@@ -33,7 +35,12 @@ class CustomerInvoiceService
             ->first();
 
         if ($existing) {
+            $oldCustomerNum = (int) ($existing->customer_num ?? 0);
+            $newCustomerNum = (int) $sale->customer_num;
             $updates = [];
+            if ($oldCustomerNum !== $newCustomerNum && $newCustomerNum > 0) {
+                $updates['customer_num'] = $newCustomerNum;
+            }
             if (round((float) $existing->invoice_total, 2) !== $total) {
                 $updates['invoice_total'] = $total;
             }
@@ -50,8 +57,21 @@ class CustomerInvoiceService
                 $existing->update($updates);
             }
 
+            if (
+                $oldCustomerNum !== $newCustomerNum
+                && $newCustomerNum > 0
+                && Schema::hasTable('customer_invoice_payments')
+            ) {
+                CustomerInvoicePayment::query()
+                    ->where('customer_invoice_id', $existing->id)
+                    ->update(['customer_num' => $newCustomerNum]);
+            }
+
             $invoice = $existing->fresh();
-            $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
+            $this->refreshCustomerBalance((int) $sale->organization_id, $newCustomerNum);
+            if ($oldCustomerNum > 0 && $oldCustomerNum !== $newCustomerNum) {
+                $this->refreshCustomerBalance((int) $sale->organization_id, $oldCustomerNum);
+            }
 
             return $invoice;
         }

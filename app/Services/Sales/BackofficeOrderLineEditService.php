@@ -4,6 +4,7 @@ namespace App\Services\Sales;
 
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesPricing;
+use App\Models\Customer;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -145,12 +146,13 @@ class BackofficeOrderLineEditService
         array $items,
         CapabilityGate $gate,
         array $removeItemIds = [],
+        ?int $customerNum = null,
     ): Sale {
         $this->assertLineEditAllowed($sale, $user, $gate);
         $wasEditable = (string) $sale->status === 'editable';
         $allowDiscountEdit = $this->allowsLineDiscountEdit($gate);
 
-        return DB::transaction(function () use ($sale, $user, $items, $gate, $wasEditable, $allowDiscountEdit, $removeItemIds) {
+        return DB::transaction(function () use ($sale, $user, $items, $gate, $wasEditable, $allowDiscountEdit, $removeItemIds, $customerNum) {
             $sale = Sale::with('items')->lockForUpdate()->findOrFail($sale->id);
             $itemsById = $sale->items->keyBy('id');
             $salesSettings = $gate->moduleSettings('sales');
@@ -158,6 +160,11 @@ class BackofficeOrderLineEditService
             $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
             $qtyChanged = false;
             $lineChanged = false;
+            $customerChanged = false;
+
+            if ($customerNum !== null) {
+                $customerChanged = $this->applyCustomerChange($sale, $user, $gate, $customerNum);
+            }
 
             $removeIds = array_values(array_unique(array_map(
                 static fn ($id) => (int) $id,
@@ -346,6 +353,15 @@ class BackofficeOrderLineEditService
                         'discount_approval' => 'Could not submit this order for discount approval.',
                     ]);
                 }
+            } elseif ($customerChanged) {
+                // Observer also syncs invoices when customer_num changes; this covers totals-only updates
+                // when status did not flip and customer was moved on an already-booked order.
+                app(CustomerInvoiceService::class)->ensureForSale(
+                    $sale->fresh(),
+                    $user,
+                    $orderTotal,
+                    $amountPaid,
+                );
             }
 
             if ($qtyChanged && ! $sale->stock_balanced) {
@@ -360,6 +376,47 @@ class BackofficeOrderLineEditService
 
             return $sale->fresh(['items.product.unit', 'cashier:id,username,full_name', 'customer:customer_num,customer_name']);
         });
+    }
+
+    /**
+     * Move the order (and invoice) to another customer in the same organization.
+     *
+     * @return bool True when customer_num actually changed
+     */
+    protected function applyCustomerChange(Sale $sale, User $user, CapabilityGate $gate, int $customerNum): bool
+    {
+        if ($customerNum <= 0) {
+            throw new InvalidArgumentException('Select a valid customer for this order.');
+        }
+
+        if ((int) ($sale->customer_num ?? 0) === $customerNum) {
+            return false;
+        }
+
+        $customer = Customer::query()
+            ->where('organization_id', $user->organization_id)
+            ->where('customer_num', $customerNum)
+            ->whereNull('deleted_at')
+            ->first();
+
+        if (! $customer) {
+            throw new InvalidArgumentException('The selected customer was not found.');
+        }
+
+        $routeId = app(SaleRouteResolver::class)->resolveFromCustomer(
+            $customerNum,
+            $gate,
+            (string) ($sale->channel ?: 'backend'),
+        );
+
+        $sale->update([
+            'customer_num' => $customerNum,
+            'customer_name_override' => null,
+            'route_id' => $routeId,
+        ]);
+        $sale->setRelation('customer', $customer);
+
+        return true;
     }
 
     /**

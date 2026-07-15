@@ -27,6 +27,7 @@ class BackofficeOrderLineEditController extends Controller
             'items.*.on_wholesale_retail' => 'sometimes|boolean',
             'remove_item_ids' => 'sometimes|array',
             'remove_item_ids.*' => 'integer',
+            'customer_num' => 'sometimes|integer|min:1',
         ]);
 
         foreach ($data['items'] as $index => $row) {
@@ -48,6 +49,7 @@ class BackofficeOrderLineEditController extends Controller
             $data['items'],
             $this->erp->gateForUser($user),
             $data['remove_item_ids'] ?? [],
+            array_key_exists('customer_num', $data) ? (int) $data['customer_num'] : null,
         );
         $gate = $this->erp->gateForUser($user);
         $channel = $updated->channel ?: 'backend';

@@ -371,6 +371,44 @@ class BackofficeOrderLineEditTest extends TestCase
         );
     }
 
+    public function test_backoffice_order_customer_can_be_reassigned(): void
+    {
+        $sale = $this->createBackofficeSale(2, 100.0, 'booked');
+        $from = $this->createCustomer('Wrong Customer');
+        $to = $this->createCustomer('Correct Customer');
+        $sale->update(['customer_num' => $from->customer_num]);
+
+        $updated = app(\App\Services\Sales\BackofficeOrderLineEditService::class)->updateLineQuantities(
+            $sale->fresh('items'),
+            $this->user,
+            [
+                ['id' => $sale->items->first()->id, 'quantity' => 2],
+            ],
+            app(\App\Services\Erp\ErpContext::class)->gateForUser($this->user),
+            [],
+            $to->customer_num,
+        );
+
+        $this->assertSame($to->customer_num, (int) $updated->customer_num);
+        $this->assertSame('Correct Customer', (string) $updated->customer?->customer_name);
+        $this->assertSame($to->customer_num, (int) $sale->fresh()->customer_num);
+    }
+
+    protected function createCustomer(string $name): \App\Models\Customer
+    {
+        $max = (int) \App\Models\Customer::query()->max('customer_num');
+
+        return \App\Models\Customer::create([
+            'customer_num' => $max + 1,
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'customer_name' => $name,
+            'customer_type' => 'regular',
+            'phone_number' => '07'.random_int(10000000, 99999999),
+            'created_by' => $this->user->id,
+        ]);
+    }
+
     protected function createBackofficeSale(float $qty, float $amount, string $status = 'booked'): Sale
     {
         $product = \App\Models\Product::query()->firstOrFail();
