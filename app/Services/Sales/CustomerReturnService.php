@@ -7,6 +7,7 @@ use App\Models\CreditNote;
 use App\Models\CustomerReturn;
 use App\Models\CustomerReturnLine;
 use App\Models\Organization;
+use App\Models\Product;
 use App\Models\ReturnRecord;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -30,6 +31,7 @@ class CustomerReturnService
         protected UserPermissionService $permissions,
         protected ReturnProofService $proofService,
         protected CustomerReturnNumberAllocator $returnNumbers,
+        protected SaleLineQuantityDisplayService $lineQuantityDisplay,
     ) {}
 
     public function withActionFlags(CustomerReturn $return, User $user): CustomerReturn
@@ -286,10 +288,9 @@ class CustomerReturnService
             ->filter(fn ($line) => (float) ($line['max_return_qty'] ?? 0) > 0)
             ->map(function ($line) {
                 $returnQty = (float) $line['max_return_qty'];
+                $maxReturnQty = (float) ($line['max_return_qty'] ?? $returnQty);
                 $lineTotal = (float) ($line['line_total'] ?? 0);
-                $amount = $returnQty + 0.0001 >= (float) ($line['quantity_sold'] ?? $returnQty) - (float) ($line['already_returned'] ?? 0)
-                    ? $lineTotal
-                    : round($returnQty * (float) $line['unit_price'], 2);
+                $amount = $this->returnAmountForQty($returnQty, $maxReturnQty, $lineTotal);
 
                 return [
                     'sale_item_id' => $line['sale_item_id'],
@@ -412,9 +413,18 @@ class CustomerReturnService
             $alreadyReturned = $this->returnedQtyForLine($returned, (int) $item->id, (string) $item->product_code);
             $originalQty = $currentQty + $alreadyReturned;
             $lineAmount = round((float) ($item->amount ?? 0), 2);
-            $unitPrice = $currentQty > 0
-                ? round($lineAmount / $currentQty, 2)
-                : round((float) ($item->selling_price ?? 0), 2);
+            $product = $item->product ?? new Product(['product_code' => $item->product_code]);
+            $isRetail = (bool) ($item->on_wholesale_retail ?? false);
+            // Match order presentation: sold/pack unit price, not amount ÷ base qty.
+            $unitPrice = $this->lineQuantityDisplay->displayUnitPrice(
+                $currentQty > 0 ? $currentQty : $originalQty,
+                $lineAmount,
+                $product,
+                $isRetail,
+                (float) ($item->discount_given ?? 0),
+                (float) ($item->selling_price ?? 0),
+                $item->display_unit_price !== null ? (float) $item->display_unit_price : null,
+            );
             $pending = $this->pendingReturnQuantities((int) $sale->id);
             $pendingQty = $this->returnedQtyForLine($pending, (int) $item->id, (string) $item->product_code);
             $maxReturnQty = max(0, round($currentQty - $pendingQty, 4));
@@ -445,6 +455,28 @@ class CustomerReturnService
                 'full_return' => $legacy,
             ];
         })->values()->all();
+    }
+
+    /**
+     * Credit amount for a return qty. Prefer proportional share of the remaining
+     * sale line total — unit_price is the sold/display pack price and must not
+     * be multiplied by base-unit return_qty.
+     */
+    protected function returnAmountForQty(float $returnQty, float $maxReturnQty, float $lineTotal): float
+    {
+        if ($returnQty <= 0 || $lineTotal <= 0) {
+            return 0.0;
+        }
+
+        if ($maxReturnQty <= 0) {
+            return 0.0;
+        }
+
+        if ($returnQty + 0.0001 >= $maxReturnQty) {
+            return round($lineTotal, 2);
+        }
+
+        return round($lineTotal * ($returnQty / $maxReturnQty), 2);
     }
 
     /** @param  array<int, array<string, mixed>>  $lines */
@@ -985,18 +1017,40 @@ class CustomerReturnService
             }
 
             $unitPrice = (float) ($line['unit_price'] ?? 0);
-            $amount = round((float) ($line['amount'] ?? ($returnQty * $unitPrice)), 2);
+            $lineTotal = (float) ($line['line_total'] ?? ($saleItem?->amount ?? 0));
+            if (array_key_exists('amount', $line) && $line['amount'] !== null && $line['amount'] !== '') {
+                $amount = round((float) $line['amount'], 2);
+            } elseif ($saleItem) {
+                $amount = $this->returnAmountForQty($returnQty, $maxReturnQty, round((float) ($saleItem->amount ?? 0), 2));
+            } elseif ($lineTotal > 0 && $maxReturnQty > 0) {
+                $amount = $this->returnAmountForQty($returnQty, $maxReturnQty, $lineTotal);
+            } else {
+                $amount = 0.0;
+            }
+
+            if ($saleItem && ($unitPrice <= 0 || ! array_key_exists('unit_price', $line))) {
+                $product = $saleItem->product ?? new Product(['product_code' => $saleItem->product_code]);
+                $unitPrice = $this->lineQuantityDisplay->displayUnitPrice(
+                    (float) ($saleItem->quantity ?? 0),
+                    round((float) ($saleItem->amount ?? 0), 2),
+                    $product,
+                    (bool) ($saleItem->on_wholesale_retail ?? false),
+                    (float) ($saleItem->discount_given ?? 0),
+                    (float) ($saleItem->selling_price ?? 0),
+                    $saleItem->display_unit_price !== null ? (float) $saleItem->display_unit_price : null,
+                );
+            }
 
             $normalized[] = [
-                'sale_item_id' => $line['sale_item_id'] ?? null,
-                'product_code' => (string) $line['product_code'],
-                'product_name' => $line['product_name'] ?? null,
-                'uom' => $line['uom'] ?? null,
+                'sale_item_id' => $line['sale_item_id'] ?? $saleItem?->id,
+                'product_code' => (string) ($line['product_code'] ?? $saleItem?->product_code),
+                'product_name' => $line['product_name'] ?? $saleItem?->product?->product_name,
+                'uom' => $line['uom'] ?? $saleItem?->uom ?? null,
                 'quantity_sold' => $qtySold,
                 'return_qty' => $returnQty,
-                'unit_price' => $unitPrice,
+                'unit_price' => round($unitPrice, 2),
                 'amount' => $amount,
-                'line_no' => $line['line_no'] ?? null,
+                'line_no' => $line['line_no'] ?? $saleItem?->line_no,
             ];
         }
 

@@ -566,6 +566,7 @@ class LpoModuleService
             'committed_return_qty' => $returned,
             'max_return_qty' => $openReturn,
             'cost_price' => (float) ($txn->cost_price ?? 0),
+            'line_total' => round($ordered * (float) ($txn->cost_price ?? 0), 2),
             'unit_id' => $product?->unit_id,
             'uom' => $txn->uom ?: $this->packageNameFromUom($uom),
             'packaging_label' => $this->formatPackagingLabel($uom),

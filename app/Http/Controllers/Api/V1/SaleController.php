@@ -312,14 +312,13 @@ class SaleController extends BaseResourceController
     }
 
     /**
-     * Newest-first by order date is the default; matches Sales → Orders / Mobile orders UI.
+     * Newest-first by when the order was placed (created_at).
+     * Do not sort on completed_at — completed older orders would jump above new ones.
      *
      * @param  Builder<\App\Models\Sale>  $query
      */
     protected function applyOrdersListSort(Builder $query, string $sort): void
     {
-        $orderDate = 'COALESCE(sales.completed_at, sales.created_at)';
-
         if (in_array($sort, ['customer_name', '-customer_name'], true)) {
             RouteOrderScope::withCustomerRouteJoin($query);
             if (empty($query->getQuery()->columns)) {
@@ -337,7 +336,8 @@ class SaleController extends BaseResourceController
 
         match ($sort) {
             'created_at' => $query
-                ->orderByRaw("{$orderDate} asc")
+                ->orderBy('sales.created_at')
+                ->orderBy('sales.order_num')
                 ->orderBy('sales.id'),
             '-order_num' => $query
                 ->orderByDesc('sales.order_num')
@@ -363,8 +363,10 @@ class SaleController extends BaseResourceController
             'channel' => $query
                 ->orderBy('sales.channel')
                 ->orderBy('sales.id'),
+            // Default and -created_at: newest placed orders first.
             default => $query
-                ->orderByRaw("{$orderDate} desc")
+                ->orderByDesc('sales.created_at')
+                ->orderByDesc('sales.order_num')
                 ->orderByDesc('sales.id'),
         };
     }

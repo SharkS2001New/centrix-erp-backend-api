@@ -241,4 +241,48 @@ class CustomerReturnTest extends TestCase
         $this->assertArrayNotHasKey('return_type', $row);
         $this->assertSame($this->user->username, $row['returned_by']);
     }
+
+    public function test_return_lines_use_sold_display_unit_price_not_base_piece_price(): void
+    {
+        $product = Product::query()->with('unit')->firstOrFail();
+        $sale = Sale::query()->create([
+            'order_num' => 994168,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 9600,
+            'total_vat' => 0,
+            'amount_paid' => 9600,
+            'completed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        // Base qty 960 pieces, piece price 10, carton sold at 120.
+        SaleItem::query()->create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => 960,
+            'uom' => 'CARTON',
+            'selling_price' => 10,
+            'display_unit_price' => 120,
+            'discount_given' => 0,
+            'product_vat' => 0,
+            'amount' => 9600,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $sale->load(['items.product.unit']);
+        $lines = app(\App\Services\Sales\CustomerReturnService::class)->linesFromSale($sale);
+        $line = collect($lines)->firstWhere('product_code', $product->product_code);
+
+        $this->assertNotNull($line);
+        $this->assertEquals(120.0, (float) $line['unit_price']);
+        $this->assertNotEquals(10.0, (float) $line['unit_price']);
+    }
 }
