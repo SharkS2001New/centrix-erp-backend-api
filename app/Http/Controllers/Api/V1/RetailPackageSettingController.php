@@ -55,7 +55,8 @@ class RetailPackageSettingController extends BaseResourceController
             });
         }
 
-        $perPage = min((int) $request->input('per_page', 25), 200);
+        // Align with catalogue refs (categories / UOMs): allow larger list pages for cache warmers.
+        $perPage = min((int) $request->input('per_page', 25), 500);
         $this->applyListOrdering($request, $query, 'id', 'desc');
 
         return response()->json(
