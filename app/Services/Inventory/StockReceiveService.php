@@ -74,6 +74,8 @@ class StockReceiveService
 
             if ($txn) {
                 $this->applyLpoTxnReceive($txn, $data, $qty);
+                app(\App\Services\LpoModuleService::class)
+                    ->syncReceiveHeaderStatus((int) $txn->lpo_no);
             }
 
             return $receipt;

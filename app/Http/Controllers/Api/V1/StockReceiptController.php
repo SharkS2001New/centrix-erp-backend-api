@@ -26,6 +26,11 @@ class StockReceiptController extends BaseResourceController
         return \App\Models\StockReceipt::class;
     }
 
+    protected function baseQuery(Request $request)
+    {
+        return parent::baseQuery($request)->with('receiver:id,full_name,username');
+    }
+
     /** @param  \Illuminate\Database\Eloquent\Builder<mixed>  $query */
     protected function applyCreatedAtDateRange($query, Request $request): void
     {

@@ -12,6 +12,44 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
 class CentrixSalesScope
 {
     /**
+     * Order statuses included in backoffice sales performance reports.
+     * Excludes draft/held/cancelled/expired so reports can trace work in progress
+     * (booked → completed, including unpaid / partial payments).
+     *
+     * @return list<string>
+     */
+    public static function reportPipelineStatuses(): array
+    {
+        return [
+            'booked',
+            'pending',
+            'unpaid',
+            'pending_payment',
+            'paid',
+            'processed',
+            'delivered',
+            'completed',
+        ];
+    }
+
+    /** SQL: `s.status IN ('booked', …)` */
+    public static function reportPipelineStatusSql(string $column = 's.status'): string
+    {
+        $list = implode(', ', array_map(
+            static fn (string $status): string => "'".str_replace("'", "''", $status)."'",
+            self::reportPipelineStatuses(),
+        ));
+
+        return "{$column} IN ({$list})";
+    }
+
+    /** Report date bucket: completed when set, else created/booked date. */
+    public static function reportSaleDateSql(string $alias = 's'): string
+    {
+        return "DATE(COALESCE({$alias}.completed_at, {$alias}.created_at))";
+    }
+
+    /**
      * @param  EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder  $query
      * @return EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder
      */
@@ -32,5 +70,16 @@ class CentrixSalesScope
         $column = "{$alias}.fulfillment_meta";
 
         return "({$column} IS NULL OR JSON_EXTRACT({$column}, '$.legacy_import') IS NULL OR JSON_EXTRACT({$column}, '$.legacy_import') = false OR JSON_UNQUOTE(JSON_EXTRACT({$column}, '$.legacy_import')) = 'false')";
+    }
+
+    /**
+     * Restrict a query builder to sales pipeline statuses used by reports.
+     *
+     * @param  EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder  $query
+     * @return EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder
+     */
+    public static function whereReportPipelineStatus(EloquentBuilder|QueryBuilder $query, string $column = 'status'): EloquentBuilder|QueryBuilder
+    {
+        return $query->whereIn($column, self::reportPipelineStatuses());
     }
 }

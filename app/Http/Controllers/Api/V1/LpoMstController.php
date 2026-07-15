@@ -114,9 +114,12 @@ class LpoMstController extends BaseResourceController
             'total_value' => (float) ((clone $monthly)->sum('total_amount') ?? 0),
             'pending_count' => (clone $base)->whereIn('lpo_status_code', $pendingStatuses)->count(),
             'cleared_count' => (clone $base)->where(function ($q) {
-                $q->where('lpo_status_code', 5)->orWhere('cleared_flag', 1);
+                $q->where('lpo_status_code', LpoModuleService::STATUS_CLEARED)
+                    ->orWhere('cleared_flag', 1);
             })->count(),
-            'partially_received_count' => (clone $base)->where('lpo_status_code', 4)->count(),
+            'partially_received_count' => (clone $base)
+                ->where('lpo_status_code', LpoModuleService::STATUS_PARTIALLY_RECEIVED)
+                ->count(),
         ]);
     }
 

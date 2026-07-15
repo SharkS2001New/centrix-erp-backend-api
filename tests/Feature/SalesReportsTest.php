@@ -25,7 +25,7 @@ class SalesReportsTest extends TestCase
         Sanctum::actingAs($this->admin);
     }
 
-    public function test_daily_sales_report_returns_completed_sales_for_org(): void
+    public function test_daily_sales_report_returns_pipeline_sales_for_org(): void
     {
         $today = now()->toDateString();
 
@@ -42,6 +42,22 @@ class SalesReportsTest extends TestCase
             'amount_paid' => 5000,
             'archived' => 0,
             'completed_at' => now(),
+            'created_at' => now(),
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 995013,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $this->admin->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'order_total' => 2500,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'archived' => 0,
+            'created_at' => now(),
         ]);
 
         $response = $this->getJson("/api/v1/reports/daily-sales?from_date={$today}&to_date={$today}&date_column=sale_day&per_page=50")
@@ -49,6 +65,8 @@ class SalesReportsTest extends TestCase
 
         $this->assertGreaterThan(0, (int) $response->json('total'));
         $this->assertNotEmpty($response->json('data'));
+        $orders = collect($response->json('data'))->sum(fn ($row) => (int) ($row['orders'] ?? 0));
+        $this->assertGreaterThanOrEqual(2, $orders);
     }
 
     public function test_sales_by_user_report_includes_vat_columns(): void
@@ -65,6 +83,54 @@ class SalesReportsTest extends TestCase
         } else {
             $this->assertSame(0, (int) $response->json('total'));
         }
+    }
+
+    public function test_sales_by_user_includes_processed_and_booked_orders(): void
+    {
+        $today = now()->toDateString();
+
+        Sale::query()->create([
+            'order_num' => 995011,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $this->admin->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'order_total' => 3200,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 995012,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $this->admin->id,
+            'status' => 'booked',
+            'payment_status' => 'partial',
+            'order_total' => 1800,
+            'total_vat' => 0,
+            'amount_paid' => 500,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        $response = $this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$today}&to_date={$today}&date_column=sale_date&cashier_id={$this->admin->id}&per_page=50"
+        )->assertOk();
+
+        $rows = collect($response->json('data'));
+        $this->assertTrue(
+            $rows->contains(fn ($row) => (int) ($row['order_count'] ?? 0) >= 1),
+            'Sales by user should include pipeline orders for the cashier.',
+        );
+
+        $orderCount = (int) $rows->sum(fn ($row) => (int) ($row['order_count'] ?? 0));
+        $this->assertGreaterThanOrEqual(2, $orderCount);
     }
 
     public function test_dispatch_orders_match_orders_without_required_date_using_created_at(): void

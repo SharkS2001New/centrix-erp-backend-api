@@ -9,6 +9,7 @@ use App\Models\LpoStatus;
 use App\Models\LpoSupplierInvoice;
 use App\Models\LpoTxn;
 use App\Models\Product;
+use App\Models\StockReceipt;
 use App\Models\SupplierReturn;
 use App\Models\SupplierReturnDocument;
 use App\Models\Uom;
@@ -23,6 +24,86 @@ use Illuminate\Support\Facades\Schema;
 class LpoModuleService
 {
     public const STATUS_AWAITING_RECEIVE = 3;
+
+    public const STATUS_PARTIALLY_RECEIVED = 4;
+
+    public const STATUS_FULLY_RECEIVED = 5;
+
+    public const STATUS_CLEARED = 6;
+
+    public const STATUS_CANCELLED_RETURNED = 7;
+
+    /** Canonical labels when lpo_statuses rows are missing or outdated. */
+    public const STATUS_LABELS = [
+        0 => 'Awaiting check',
+        1 => 'Awaiting approval',
+        2 => 'Awaiting send',
+        3 => 'Awaiting receive',
+        4 => 'Partially received',
+        5 => 'Fully received',
+        6 => 'Cleared',
+        7 => 'Cancelled / returned',
+    ];
+
+    public static function statusLabel(?int $statusCode): string
+    {
+        $code = (int) ($statusCode ?? 0);
+
+        return self::STATUS_LABELS[$code] ?? "Status {$code}";
+    }
+
+    /**
+     * Advance LPO header status from line received_qty (partial vs fully received).
+     * Does not regress cleared / cancelled headers.
+     */
+    public function syncReceiveHeaderStatus(int $lpoNo): void
+    {
+        if ($lpoNo <= 0) {
+            return;
+        }
+
+        $lpo = LpoMst::query()->lockForUpdate()->find($lpoNo);
+        if (! $lpo || (int) ($lpo->cleared_flag ?? 0) === 1) {
+            return;
+        }
+
+        $current = (int) ($lpo->lpo_status_code ?? 0);
+        if ($current >= self::STATUS_CLEARED || $current === self::STATUS_CANCELLED_RETURNED) {
+            return;
+        }
+
+        $lines = LpoTxn::query()->where('lpo_no', $lpoNo)->get();
+        if ($lines->isEmpty()) {
+            return;
+        }
+
+        $anyReceived = false;
+        $allComplete = true;
+        foreach ($lines as $txn) {
+            $ordered = (float) ($txn->ordered_qty ?? 0);
+            $received = (float) ($txn->received_qty ?? 0);
+            $offer = (float) ($txn->offer_qty ?? max(0.0, $received - $ordered));
+            $paidReceived = max(0.0, $received - $offer);
+            if ($received > 0.0001) {
+                $anyReceived = true;
+            }
+            if ($ordered > 0.0001 && $paidReceived + 0.0001 < $ordered) {
+                $allComplete = false;
+            }
+        }
+
+        if (! $anyReceived) {
+            return;
+        }
+
+        $next = $allComplete
+            ? self::STATUS_FULLY_RECEIVED
+            : self::STATUS_PARTIALLY_RECEIVED;
+
+        if ($next !== $current) {
+            $lpo->update(['lpo_status_code' => $next]);
+        }
+    }
 
     public function formatPoNumber(int $lpoNo, $orderDate = null): string
     {
@@ -48,11 +129,16 @@ class LpoModuleService
             return [];
         }
 
-        $statusCodes = $lpos->pluck('lpo_status_code')->filter()->unique()->values()->all();
+        // Keep status 0 — Collection::filter() would drop it as "empty".
+        $statusCodes = $lpos->pluck('lpo_status_code')
+            ->map(fn ($code) => (int) ($code ?? 0))
+            ->unique()
+            ->values()
+            ->all();
         $statuses = LpoStatus::query()
             ->whereIn('status_code', $statusCodes)
             ->get()
-            ->keyBy('status_code');
+            ->keyBy(fn (LpoStatus $status) => (int) $status->status_code);
 
         $creatorIds = $lpos->pluck('created_by')->filter()->unique()->values()->all();
         $creators = $creatorIds === []
@@ -82,9 +168,9 @@ class LpoModuleService
             $lastRejections,
             $viewer,
         ) {
-            $status = $statuses->get((int) ($lpo->lpo_status_code ?? 0));
-            $creator = $lpo->created_by ? $creators->get($lpo->created_by) : null;
             $statusCode = (int) ($lpo->lpo_status_code ?? 0);
+            $status = $statuses->get($statusCode);
+            $creator = $lpo->created_by ? $creators->get($lpo->created_by) : null;
             $orderDate = $lpo->created_at ?? $lpo->sent_at;
             $canEdit = $statusCode < self::STATUS_AWAITING_RECEIVE;
             $lpoNo = (int) $lpo->lpo_no;
@@ -92,6 +178,13 @@ class LpoModuleService
             $netAmount = (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0);
             $supplier = $lpo->supplier ?? $suppliers->get($lpo->supplier_id);
             $pendingRequest = $pendingApprovals->get($lpoNo);
+            $statusName = trim((string) ($status?->status_name ?? ''));
+            if ($statusName === '') {
+                $statusName = self::statusLabel($statusCode);
+            }
+            if ((int) ($lpo->cleared_flag ?? 0) === 1 && $statusCode >= self::STATUS_FULLY_RECEIVED) {
+                $statusName = self::statusLabel(self::STATUS_CLEARED);
+            }
 
             return [
                 'lpo_no' => $lpoNo,
@@ -103,7 +196,7 @@ class LpoModuleService
                 'created_at' => $lpo->created_at,
                 'due_date' => $lpo->due_date,
                 'lpo_status_code' => $statusCode,
-                'status_name' => $status?->status_name,
+                'status_name' => $statusName,
                 'cleared_flag' => (int) ($lpo->cleared_flag ?? 0),
                 'total_amount' => (float) ($lpo->total_amount ?? 0),
                 'vat_amount' => (float) ($lpo->vat_amount ?? 0),
@@ -237,6 +330,14 @@ class LpoModuleService
         $defaultReceiveLocation = $settings['default_receive_location'] ?? 'store';
 
         $status = LpoStatus::query()->find($lpo->lpo_status_code);
+        $statusCode = (int) ($lpo->lpo_status_code ?? 0);
+        $statusName = trim((string) ($status?->status_name ?? ''));
+        if ($statusName === '') {
+            $statusName = self::statusLabel($statusCode);
+        }
+        if ((int) ($lpo->cleared_flag ?? 0) === 1 && $statusCode >= self::STATUS_FULLY_RECEIVED) {
+            $statusName = self::statusLabel(self::STATUS_CLEARED);
+        }
         $creator = $lpo->created_by ? User::query()->find($lpo->created_by) : null;
 
         $lines = LpoTxn::query()->where('lpo_no', $lpoNo)->orderBy('id')->get();
@@ -268,6 +369,14 @@ class LpoModuleService
 
         $lastRejections = $this->lastRejectedApprovalsForLpos([$lpoNo], $organizationId);
 
+        $supplierInvoices = $this->supplierInvoices($lpoNo);
+        $receiveStaff = $this->receiveStaffForLpo(
+            $lpo,
+            $lineRows,
+            $supplierInvoices,
+            $organizationId,
+        );
+
         $lpoPayload = [
             'lpo_no' => (int) $lpo->lpo_no,
             'po_number' => $this->formatPoNumber((int) $lpo->lpo_no, $lpo->created_at ?? $lpo->sent_at),
@@ -278,8 +387,8 @@ class LpoModuleService
             'delivery_address' => $lpo->delivery_address,
             'terms' => $lpo->terms,
             'instructions' => $lpo->instructions,
-            'lpo_status_code' => (int) ($lpo->lpo_status_code ?? 0),
-            'status_name' => $status?->status_name,
+            'lpo_status_code' => $statusCode,
+            'status_name' => $statusName,
             'cleared_flag' => (int) ($lpo->cleared_flag ?? 0),
             'total_amount' => (float) ($lpo->total_amount ?? 0),
             'vat_amount' => (float) ($lpo->vat_amount ?? 0),
@@ -315,15 +424,121 @@ class LpoModuleService
             'supplier_email' => $lpo->supplier?->email,
             'supplier_phone' => $lpo->supplier?->phone ?? $lpo->supplier?->alternate_phone,
             'default_receive_location' => $defaultReceiveLocation,
+            'received_by' => $receiveStaff['user_ids'][0] ?? null,
+            'received_by_name' => $receiveStaff['display_name'],
+            'received_by_names' => $receiveStaff['names'],
+            'received_by_user_ids' => $receiveStaff['user_ids'],
         ];
 
         return [
             'lpo' => $lpoPayload,
             'lines' => $lineRows->values()->all(),
-            'supplier_invoices' => $this->supplierInvoices($lpoNo),
+            'supplier_invoices' => $supplierInvoices,
             'supplier_returns' => $this->supplierReturns($lpoNo, (int) $lpo->supplier_id, $lines),
             'payments_total' => round($paymentsTotal, 2),
             'balance_due' => round($payableBalance, 2),
+        ];
+    }
+
+    /**
+     * Staff who posted stock receipts for this LPO (via matching supplier invoice # / products).
+     *
+     * @param  Collection<int, array<string, mixed>>  $lineRows
+     * @param  list<array<string, mixed>>  $supplierInvoices
+     * @return array{user_ids: list<int>, names: list<string>, display_name: ?string}
+     */
+    protected function receiveStaffForLpo(
+        LpoMst $lpo,
+        Collection $lineRows,
+        array $supplierInvoices,
+        ?int $organizationId,
+    ): array {
+        $empty = ['user_ids' => [], 'names' => [], 'display_name' => null];
+        $productCodes = $lineRows->pluck('product_code')->filter()->unique()->values()->all();
+        if ($productCodes === []) {
+            return $empty;
+        }
+
+        $invoiceNumbers = collect($supplierInvoices)
+            ->pluck('supplier_invoice_number')
+            ->map(fn ($v) => trim((string) $v))
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        $query = StockReceipt::query()
+            ->with('receiver:id,full_name,username')
+            ->whereIn('product_code', $productCodes)
+            ->whereNotNull('received_by');
+
+        if ($organizationId) {
+            $query->where('organization_id', $organizationId);
+        }
+
+        if ($invoiceNumbers !== []) {
+            $query->whereIn('invoice_number', $invoiceNumbers);
+        } else {
+            // No supplier invoice attached yet — bound to receipts after this LPO was sent/created.
+            $since = $lpo->sent_at ?? $lpo->created_at;
+            if ($since) {
+                $query->where('created_at', '>=', $since);
+            }
+        }
+
+        $userIds = $query->orderBy('created_at')
+            ->pluck('received_by')
+            ->map(fn ($id) => (int) $id)
+            ->filter()
+            ->unique()
+            ->values()
+            ->all();
+
+        // Fallback: invoice # on the receipt may differ from the attached supplier invoice document.
+        if ($userIds === [] && $invoiceNumbers !== []) {
+            $since = $lpo->sent_at ?? $lpo->created_at;
+            $fallback = StockReceipt::query()
+                ->whereIn('product_code', $productCodes)
+                ->whereNotNull('received_by');
+            if ($organizationId) {
+                $fallback->where('organization_id', $organizationId);
+            }
+            if ($since) {
+                $fallback->where('created_at', '>=', $since);
+            }
+            $userIds = $fallback->orderBy('created_at')
+                ->pluck('received_by')
+                ->map(fn ($id) => (int) $id)
+                ->filter()
+                ->unique()
+                ->values()
+                ->all();
+        }
+
+        if ($userIds === []) {
+            return $empty;
+        }
+
+        $users = User::query()
+            ->whereIn('id', $userIds)
+            ->get(['id', 'full_name', 'username'])
+            ->keyBy('id');
+
+        $names = [];
+        foreach ($userIds as $id) {
+            $user = $users->get($id);
+            if (! $user) {
+                continue;
+            }
+            $label = trim((string) ($user->full_name ?? ''));
+            $names[] = $label !== '' ? $label : (string) $user->username;
+        }
+        $names = array_values(array_unique(array_filter($names)));
+
+        return [
+            'user_ids' => $userIds,
+            'names' => $names,
+            'display_name' => $names === [] ? null : implode(', ', $names),
         ];
     }
 

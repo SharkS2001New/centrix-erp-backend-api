@@ -2109,18 +2109,38 @@ GROUP BY it.branch_id, it.product_code, p.product_name, p.unit_id, cs.shop_quant
 DROP VIEW IF EXISTS v_sales_by_user;
 CREATE VIEW v_sales_by_user AS
 SELECT
-    DATE(s.completed_at) AS sale_date,
+    s.organization_id,
+    DATE(COALESCE(s.completed_at, s.created_at)) AS sale_date,
     s.branch_id,
     s.cashier_id,
     u.full_name AS salesperson,
     s.channel,
     COUNT(DISTINCT s.id) AS order_count,
     SUM(s.order_total) AS gross_sales,
+    SUM(s.total_vat) AS total_vat,
+    SUM(s.order_total - s.total_vat) AS net_sales,
     SUM(s.amount_paid) AS amount_collected
 FROM sales s
 JOIN users u ON s.cashier_id = u.id
-WHERE s.status = 'completed'
-GROUP BY DATE(s.completed_at), s.branch_id, s.cashier_id, s.channel;
+WHERE s.status IN (
+        'booked',
+        'pending',
+        'unpaid',
+        'pending_payment',
+        'paid',
+        'processed',
+        'delivered',
+        'completed'
+    )
+  AND s.archived = 0
+  AND s.cashier_id IS NOT NULL
+GROUP BY
+    s.organization_id,
+    DATE(COALESCE(s.completed_at, s.created_at)),
+    s.branch_id,
+    s.cashier_id,
+    u.full_name,
+    s.channel;
 
 DROP VIEW IF EXISTS v_stock_valuation;
 CREATE VIEW v_stock_valuation AS
@@ -2822,8 +2842,9 @@ JOIN users u ON cip.received_by = u.id;
 -- ================================================================
 
 INSERT INTO lpo_statuses (status_code, status_name) VALUES
-(0,'Pending Approval'),(1,'Not Sent'),(2,'Pending Received'),
-(3,'Partially Received'),(4,'Fully Received'),(5,'Cleared');
+(0,'Awaiting check'),(1,'Awaiting approval'),(2,'Awaiting send'),
+(3,'Awaiting receive'),(4,'Partially received'),(5,'Fully received'),
+(6,'Cleared'),(7,'Cancelled / returned');
 
 INSERT INTO payment_methods (method_name, method_code, requires_reference) VALUES
 ('Cash',        'CASH',   FALSE),

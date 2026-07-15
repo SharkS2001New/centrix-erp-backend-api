@@ -480,15 +480,16 @@ class ReportController extends Controller
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
         if ($orgId && ! empty($filters['from_date']) && ! empty($filters['to_date'])) {
             $legacy = CentrixSalesScope::legacyExcludeSql('s');
-            $q->whereExists(function ($sub) use ($filters, $orgId, $legacy) {
+            $statuses = CentrixSalesScope::reportPipelineStatuses();
+            $q->whereExists(function ($sub) use ($filters, $orgId, $legacy, $statuses) {
                 $sub->select(DB::raw('1'))
                     ->from('sales as s')
                     ->whereColumn('s.customer_num', 'v_sales_by_customer.customer_num')
                     ->where('s.organization_id', $orgId)
-                    ->where('s.status', 'completed')
+                    ->whereIn('s.status', $statuses)
                     ->where('s.archived', 0)
-                    ->whereDate('s.completed_at', '>=', $filters['from_date'])
-                    ->whereDate('s.completed_at', '<=', $filters['to_date'])
+                    ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$filters['from_date']])
+                    ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$filters['to_date']])
                     ->whereRaw($legacy);
             });
         }

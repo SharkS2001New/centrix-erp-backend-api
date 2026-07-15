@@ -316,7 +316,7 @@ class SupplierModuleService
             ->update([
                 'cleared_flag' => 1,
                 'cleared_at' => now(),
-                'lpo_status_code' => 5,
+                'lpo_status_code' => LpoModuleService::STATUS_CLEARED,
             ]);
     }
 
