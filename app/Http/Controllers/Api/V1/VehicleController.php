@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Sale;
 use App\Models\Vehicle;
 use Illuminate\Http\Request;
+use Illuminate\Validation\Rule;
 
 class VehicleController extends BaseResourceController
 {
@@ -16,6 +17,22 @@ class VehicleController extends BaseResourceController
     protected function baseQuery(Request $request)
     {
         return parent::baseQuery($request)->with('branch');
+    }
+
+    public function store(Request $request)
+    {
+        $data = $this->validatedVehicle($request);
+        $vehicle = Vehicle::create($data);
+
+        return response()->json($vehicle->load('branch'), 201);
+    }
+
+    public function update(Request $request, string $id)
+    {
+        $vehicle = $this->findScopedModel($request, $id);
+        $vehicle->update($this->validatedVehicle($request, $vehicle));
+
+        return response()->json($vehicle->fresh('branch'));
     }
 
     public function show(Request $request, string $id)
@@ -44,5 +61,27 @@ class VehicleController extends BaseResourceController
         $perPage = min((int) $request->input('per_page', 50), 200);
 
         return response()->json($query->paginate($perPage));
+    }
+
+    protected function validatedVehicle(Request $request, ?Vehicle $existing = null): array
+    {
+        $branchId = (int) ($request->input('branch_id') ?? $existing?->branch_id ?? 0);
+
+        return $request->validate([
+            'branch_id' => $existing ? 'sometimes|integer|exists:branches,id' : 'required|integer|exists:branches,id',
+            'vehicle_code' => [
+                ($existing ? 'sometimes|' : '').'required',
+                'string',
+                'max:45',
+                Rule::unique('vehicles', 'vehicle_code')
+                    ->where(fn ($query) => $query->where('branch_id', $branchId ?: $request->input('branch_id')))
+                    ->ignore($existing?->id),
+            ],
+            'vehicle_name' => ($existing ? 'sometimes|' : '').'required|string|max:200',
+            'plate_number' => 'nullable|string|max:45',
+            'max_weight_kg' => 'nullable|numeric|min:0',
+            'max_volume_m3' => 'nullable|numeric|min:0',
+            'is_active' => 'nullable|boolean',
+        ]);
     }
 }

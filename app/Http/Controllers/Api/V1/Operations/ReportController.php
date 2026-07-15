@@ -89,7 +89,7 @@ class ReportController extends Controller
             ['key' => 'stock-valuation', 'path' => '/reports/stock-valuation', 'label' => 'Stock valuation'],
             ['key' => 'stock-reservations', 'path' => '/reports/stock-reservations', 'label' => 'Active cart reservations'],
             ['key' => 'stock-receipts', 'path' => '/reports/stock-receipts', 'label' => 'Purchase receipts'],
-            ['key' => 'stock-transfers', 'path' => '/reports/stock-transfers', 'label' => 'Shop ↔ store transfers'],
+            ['key' => 'stock-transfers', 'path' => '/reports/stock-transfers', 'label' => 'Stock transfers'],
         ];
 
         if ($this->organizationHasMultipleBranches($request)) {
@@ -760,9 +760,15 @@ class ReportController extends Controller
 
     public function openLpo(Request $request)
     {
-        return response()->json($this->reportFromView('v_open_lpo_lines', $this->filters($request), [
-            'lpo_no', 'supplier_id', 'product_code', 'lpo_status_code',
-        ]));
+        return response()->json($this->reportFromView(
+            'v_open_lpo_lines',
+            $this->filters($request),
+            ['lpo_no', 'supplier_id', 'product_code', 'lpo_status_code'],
+            function ($query) {
+                $query->orderByDesc('lpo_no')
+                    ->orderBy('product_name');
+            },
+        ));
     }
 
     public function profitLoss(Request $request)
@@ -1319,9 +1325,18 @@ class ReportController extends Controller
 
     public function purchasesBySupplier(Request $request)
     {
-        return response()->json($this->reportFromView('v_purchases_by_supplier', $this->filters($request), [
-            'supplier_id', 'lpo_no',
-        ]));
+        return response()->json($this->reportFromView(
+            'v_purchases_by_supplier',
+            $this->filters($request),
+            ['supplier_id', 'lpo_no'],
+            function ($query) {
+                $query->orderBy('supplier_name')
+                    ->orderBy('supplier_id')
+                    ->orderByDesc('order_date')
+                    ->orderBy('lpo_no')
+                    ->orderBy('product_name');
+            },
+        ));
     }
 
     public function expenses(Request $request)
@@ -1564,7 +1579,7 @@ class ReportController extends Controller
         return $filters;
     }
 
-    protected function reportFromView(string $view, array $filters, array $allowedCols)
+    protected function reportFromView(string $view, array $filters, array $allowedCols, ?callable $orderBy = null)
     {
         $request = request();
         $q = DB::table($view);
@@ -1612,6 +1627,10 @@ class ReportController extends Controller
         }
 
         $this->applyProductSubcategoryFilter($q, $request, $view);
+
+        if ($orderBy) {
+            $orderBy($q);
+        }
 
         return $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
     }

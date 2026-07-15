@@ -14,6 +14,6 @@ class StockMovementHistory extends Model
 
     protected $fillable = [
         'product_code', 'branch_id', 'quantity_moved', 'from_location', 'to_location',
-        'moved_by', 'move_status',
+        'notes', 'moved_by', 'move_status',
     ];
 }

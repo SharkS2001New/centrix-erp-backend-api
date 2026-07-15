@@ -324,19 +324,46 @@ class ReportExportService
 
         $head = '';
         foreach ($columns as $column) {
+            if ($this->isPrintAsRowColumn($column)) {
+                continue;
+            }
             $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
             $head .= '<th'.$class.'>'.$escape($column['label']).'</th>';
         }
+
+        $tableColumns = array_values(array_filter(
+            $columns,
+            fn (array $column) => ! $this->isPrintAsRowColumn($column),
+        ));
+        $noteColumns = array_values(array_filter(
+            $columns,
+            fn (array $column) => $this->isPrintAsRowColumn($column),
+        ));
+        $colSpan = max(1, count($tableColumns));
 
         $body = '';
         $total = count($rows);
         foreach ($rows as $index => $row) {
             $body .= '<tr>';
-            foreach ($columns as $column) {
+            foreach ($tableColumns as $column) {
                 $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
                 $body .= '<td'.$class.'>'.$escape($this->cellValue($row, $column)).'</td>';
             }
             $body .= '</tr>';
+
+            foreach ($noteColumns as $noteColumn) {
+                $note = trim($this->cellValue($row, $noteColumn));
+                if ($note === '') {
+                    continue;
+                }
+                $label = trim((string) ($noteColumn['label'] ?? 'Reason'));
+                $body .= '<tr class="note-row"><td colspan="'.$colSpan.'"><strong>'
+                    .$escape($label !== '' ? $label : 'Reason')
+                    .':</strong> '
+                    .$escape($note)
+                    .'</td></tr>';
+            }
+
             if ($onProgress !== null && $total > 0 && ($index + 1) % self::FILE_PROGRESS_CHUNK === 0) {
                 $onProgress(90 + (int) floor((($index + 1) / $total) * 5), 'Building PDF rows…');
             }
@@ -345,7 +372,7 @@ class ReportExportService
         $foot = '';
         if (is_array($footerRow) && $footerRow !== []) {
             $foot .= '<tfoot><tr>';
-            foreach ($columns as $index => $column) {
+            foreach ($tableColumns as $index => $column) {
                 $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
                 $value = $footerRow[$column['key']] ?? ($index === 0 ? 'Totals' : '');
                 $foot .= '<td'.$class.'>'.$escape($value).'</td>';
@@ -363,6 +390,7 @@ class ReportExportService
 <style>
 '.$styles['base'].'
 '.$styles['watermark'].'
+tr.note-row td { background: #f8fafc; color: #334155; font-size: 0.92em; padding-top: 4px; padding-bottom: 6px; }
 </style></head><body>
 '.$watermarkHtml.'
 '.$orgHeaderHtml.'
@@ -370,6 +398,14 @@ class ReportExportService
 <table><thead><tr>'.$head.'</tr></thead><tbody>'.$body.'</tbody>'.$foot.'</table>
 '.$footerHtml.'
 </body></html>';
+    }
+
+    /**
+     * @param  array{key?: string, label?: string, align?: string, print_as_row?: bool, printAsRow?: bool}  $column
+     */
+    protected function isPrintAsRowColumn(array $column): bool
+    {
+        return ! empty($column['print_as_row']) || ! empty($column['printAsRow']);
     }
 
     protected function sanitizeFilename(string $value): string
