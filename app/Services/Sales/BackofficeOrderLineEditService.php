@@ -14,6 +14,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Sales\DiscountApprovalService;
+use App\Services\Sales\MobileRouteMarkupCheckoutService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -251,49 +252,39 @@ class BackofficeOrderLineEditService
                 $lineChanged = true;
                 $qtyChanged = $qtyChanged || $itemQtyChanged;
 
-                if ($discountChanged && ! $itemQtyChanged) {
-                    $product = Product::query()
-                        ->where('organization_id', $user->organization_id)
-                        ->where('product_code', $saleItem->product_code)
-                        ->first();
-                    if (! $product) {
-                        throw new InvalidArgumentException("Product [{$saleItem->product_code}] was not found.");
-                    }
-
-                    $isRetail = (bool) $saleItem->on_wholesale_retail;
-                    [$unitPrice, $amount] = $this->pricing->resolveLineAmounts(
-                        $product,
-                        $newQty,
-                        $isRetail,
-                        $newDiscount,
-                        $sale->route_id ? (int) $sale->route_id : null,
-                        (float) $saleItem->selling_price,
-                        false,
-                        $user->organization_id,
-                    );
-                    $product->loadMissing('vat');
-                    $productVat = SalesVatCalculator::vatFromInclusiveGross(
-                        max(0, $amount),
-                        SalesVatCalculator::vatRateFromProduct($product),
-                    );
-
-                    $saleItem->update([
-                        'quantity' => $newQty,
-                        'selling_price' => $unitPrice,
-                        'amount' => $amount,
-                        'product_vat' => $productVat,
-                        'discount_given' => $newDiscount,
-                    ]);
-                } else {
-                    $saleItem->update([
-                        'quantity' => $newQty,
-                        'amount' => $this->scaleByQtyRatio((float) $saleItem->amount, $newQty, $oldQty),
-                        'product_vat' => $this->scaleByQtyRatio((float) ($saleItem->product_vat ?? 0), $newQty, $oldQty),
-                        'discount_given' => $discountChanged
-                            ? $newDiscount
-                            : $this->scaleByQtyRatio((float) ($saleItem->discount_given ?? 0), $newQty, $oldQty),
-                    ]);
+                $product = Product::query()
+                    ->where('organization_id', $user->organization_id)
+                    ->where('product_code', $saleItem->product_code)
+                    ->first();
+                if (! $product) {
+                    throw new InvalidArgumentException("Product [{$saleItem->product_code}] was not found.");
                 }
+
+                $isRetail = (bool) $saleItem->on_wholesale_retail;
+                [$unitPrice, $amount] = $this->pricing->resolveLineAmounts(
+                    $product,
+                    $newQty,
+                    $isRetail,
+                    $newDiscount,
+                    $this->routeIdForLinePricing($sale, $salesSettings, $user),
+                    null,
+                    false,
+                    $user->organization_id,
+                );
+                $product->loadMissing('vat');
+                $productVat = SalesVatCalculator::vatFromInclusiveGross(
+                    max(0, $amount),
+                    SalesVatCalculator::vatRateFromProduct($product),
+                );
+
+                $saleItem->update([
+                    'quantity' => $newQty,
+                    'selling_price' => $unitPrice,
+                    'display_unit_price' => $unitPrice,
+                    'amount' => $amount,
+                    'product_vat' => $productVat,
+                    'discount_given' => $newDiscount,
+                ]);
 
                 if ($sale->stock_balanced && $itemQtyChanged) {
                     $this->adjustStockForQtyChange($sale, $saleItem, $oldQty, $newQty, $user, $gate, $salesSettings, $inventorySettings, $allowBelowStock);
@@ -408,7 +399,7 @@ class BackofficeOrderLineEditService
             $newQty,
             $isRetail,
             $newDiscount,
-            $sale->route_id ? (int) $sale->route_id : null,
+            $this->routeIdForLinePricing($sale, $salesSettings, $user),
             null,
             false,
             $user->organization_id,
@@ -430,6 +421,7 @@ class BackofficeOrderLineEditService
             'quantity' => $newQty,
             'uom' => $product->uom ?? $product->unit_id,
             'selling_price' => $unitPrice,
+            'display_unit_price' => $unitPrice,
             'discount_given' => $newDiscount,
             'product_vat' => $productVat,
             'amount' => $amount,
@@ -451,6 +443,45 @@ class BackofficeOrderLineEditService
         }
 
         return $saleItem;
+    }
+
+    /**
+     * Route markup for line edit/add — same gate as checkout:
+     * feature enabled, sale has a route, route has a markup price.
+     * Backoffice "normal" order-type mode does not apply markup unless this sale
+     * was already booked with route markup applied.
+     */
+    protected function routeIdForLinePricing(Sale $sale, array $salesSettings, User $user): ?int
+    {
+        $routeId = $sale->route_id ? (int) $sale->route_id : null;
+        if (! $routeId) {
+            return null;
+        }
+
+        $orgId = $user->organization_id ? (int) $user->organization_id : null;
+        $markupService = app(MobileRouteMarkupCheckoutService::class);
+        if (! $markupService->shouldApplyAtCheckout($salesSettings, $routeId, $orgId)) {
+            return null;
+        }
+
+        $channel = strtolower((string) ($sale->channel ?: $sale->order_source ?: 'backend'));
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $isBackofficeChannel = ($meta['sales_workspace'] ?? null) === 'backoffice'
+            || in_array($channel, ['backend', 'backoffice', 'erp', 'whatsapp'], true);
+
+        if ($isBackofficeChannel) {
+            $mode = strtolower((string) ($salesSettings['backoffice_order_type_mode'] ?? 'toggle'));
+            if (! in_array($mode, ['route', 'toggle', 'normal'], true)) {
+                $mode = 'toggle';
+            }
+            if ($mode === 'normal') {
+                $alreadyApplied = (bool) (($meta['route_markup']['applied'] ?? false));
+
+                return $alreadyApplied ? $routeId : null;
+            }
+        }
+
+        return $routeId;
     }
 
     protected function adjustStockForQtyChange(
@@ -500,15 +531,6 @@ class BackofficeOrderLineEditService
             'notes' => 'Backoffice order line quantity edit',
             'created_by' => $user->id,
         ], $allowBelowStock);
-    }
-
-    protected function scaleByQtyRatio(float $value, float $newQty, float $oldQty): float
-    {
-        if ($oldQty <= 0) {
-            return 0.0;
-        }
-
-        return round($value * ($newQty / $oldQty), 2);
     }
 
     protected function derivePaymentStatus(float $total, float $paid): string

@@ -374,6 +374,13 @@ class BackofficeOrderLineEditTest extends TestCase
     protected function createBackofficeSale(float $qty, float $amount, string $status = 'booked'): Sale
     {
         $product = \App\Models\Product::query()->firstOrFail();
+        $unitPrice = round($amount / $qty, 4);
+        // Keep catalog price aligned with the seeded line so repricing (tiers/markups path)
+        // still matches the linear unit × qty expectations in these tests.
+        $product->forceFill(['unit_price' => $unitPrice])->save();
+        \App\Models\RetailPackageSetting::query()
+            ->where('product_code', $product->product_code)
+            ->delete();
 
         $sale = Sale::create([
             'order_num' => (int) (Sale::query()->max('order_num') ?? 0) + 1,
@@ -398,7 +405,7 @@ class BackofficeOrderLineEditTest extends TestCase
             'item_code' => '1',
             'quantity' => $qty,
             'uom' => $product->uom,
-            'selling_price' => round($amount / $qty, 4),
+            'selling_price' => $unitPrice,
             'discount_given' => 0,
             'product_vat' => 0,
             'amount' => $amount,
