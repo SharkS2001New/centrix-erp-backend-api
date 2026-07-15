@@ -94,11 +94,11 @@ class BelongsToCustomerByOrganization extends BelongsTo
         );
     }
 
-    public function get()
+    public function get($columns = ['*'])
     {
         $this->ensureOrganizationIdSelected();
 
-        return parent::get();
+        return parent::get($columns);
     }
 
     protected function ensureOrganizationIdSelected(): void
