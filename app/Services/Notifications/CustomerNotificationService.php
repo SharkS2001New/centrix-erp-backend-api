@@ -83,7 +83,10 @@ class CustomerNotificationService
             return;
         }
 
-        $customer = Customer::query()->where('customer_num', $payment->customer_num)->first();
+        $customer = Customer::query()
+            ->where('customer_num', $payment->customer_num)
+            ->where('organization_id', $payment->organization_id)
+            ->first();
         if (! $customer) {
             return;
         }
@@ -135,7 +138,10 @@ class CustomerNotificationService
             return false;
         }
 
-        $customer = Customer::query()->where('customer_num', $sale->customer_num)->first();
+        $customer = Customer::query()
+            ->where('customer_num', $sale->customer_num)
+            ->where('organization_id', $sale->organization_id)
+            ->first();
         if (! $customer) {
             return false;
         }

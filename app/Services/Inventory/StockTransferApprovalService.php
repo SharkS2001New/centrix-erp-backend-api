@@ -77,7 +77,11 @@ class StockTransferApprovalService
         $productName = $product?->product_name ?? $data['product_code'];
         $requesterName = $user->full_name ?: $user->username;
         $qty = rtrim(rtrim(number_format((float) $data['quantity'], 4, '.', ''), '0'), '.');
-        $route = ucfirst($data['from_location']).' → '.ucfirst($data['to_location']);
+        $to = (string) $data['to_location'];
+        $toLabel = StockTransferService::isPurposeDestination($to)
+            ? StockTransferService::purposeLabel($to)
+            : ucfirst($to);
+        $route = ucfirst((string) $data['from_location']).' → '.$toLabel;
 
         return app(ActionRequestService::class)->requestApproval($user, [
             'type' => 'stock_transfer',

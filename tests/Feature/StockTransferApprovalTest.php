@@ -6,6 +6,7 @@ use App\Models\CurrentStock;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
+use App\Services\Inventory\StockTransferService;
 use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -56,17 +57,17 @@ class StockTransferApprovalTest extends TestCase
     {
         $this->enableTransferApproval();
         $clerk = $this->stockClerk();
-        Sanctum::actingAs($clerk);
         $product = Product::query()->firstOrFail();
         $this->seedStoreStock($clerk, $product->product_code);
 
-        $this->postJson('/api/v1/inventory/transfer', [
-            'branch_id' => $clerk->branch_id,
-            'product_code' => $product->product_code,
-            'quantity' => 3,
-            'from_location' => 'store',
-            'to_location' => 'shop',
-        ])->assertCreated();
+        app(StockTransferService::class)->transfer(
+            (int) $clerk->branch_id,
+            (string) $product->product_code,
+            3.0,
+            'store',
+            'shop',
+            $clerk,
+        );
 
         $this->assertDatabaseHas('stock_movement_history', [
             'product_code' => $product->product_code,
@@ -117,5 +118,37 @@ class StockTransferApprovalTest extends TestCase
             'from_location' => 'shop',
             'to_location' => 'store',
         ]);
+    }
+
+    public function test_internal_use_purpose_transfer_deducts_from_source_only(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $product = Product::query()->firstOrFail();
+        $this->seedStoreStock($admin, $product->product_code, 40);
+
+        $before = CurrentStock::query()
+            ->where('product_code', $product->product_code)
+            ->where('branch_id', $admin->branch_id)
+            ->firstOrFail();
+
+        $result = app(StockTransferService::class)->transfer(
+            (int) $admin->branch_id,
+            (string) $product->product_code,
+            4.0,
+            'store',
+            'internal_use',
+            $admin,
+            'Staff lunch',
+        );
+
+        $this->assertNotNull($result['out']);
+        $this->assertNull($result['in']);
+
+        $after = CurrentStock::query()
+            ->where('product_code', $product->product_code)
+            ->where('branch_id', $admin->branch_id)
+            ->firstOrFail();
+        $this->assertEqualsWithDelta((float) $before->store_quantity - 4, (float) $after->store_quantity, 0.001);
+        $this->assertEqualsWithDelta((float) $before->shop_quantity, (float) $after->shop_quantity, 0.001);
     }
 }

@@ -337,6 +337,7 @@ class CheckoutController extends Controller
                 $customerNum ? (int) $customerNum : null,
                 $creditBalance,
                 $isCredit,
+                (int) $user->organization_id,
             );
 
             $customer = $customerNum
@@ -353,10 +354,9 @@ class CheckoutController extends Controller
                 $input,
             );
 
-            $customerNameOverride = trim((string) ($input['customer_name_override'] ?? ''));
-            if ($customerNameOverride === '' && $customer) {
-                $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
-            }
+            $customerNameOverride = $customer
+                ? trim((string) ($customer->customer_name ?? ''))
+                : trim((string) ($input['customer_name_override'] ?? ''));
 
             $fulfillmentMeta = $locationMeta !== [] ? ['location_check' => $locationMeta] : [];
             if ($prepared['meta'] !== null) {

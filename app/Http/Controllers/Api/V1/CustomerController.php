@@ -144,6 +144,36 @@ class CustomerController extends BaseResourceController
         return response()->json($query->paginate($perPage));
     }
 
+    /** POST /customers/{customerNum}/payments — collect AR against open invoices (FIFO). */
+    public function storePayment(Request $request, string $customer)
+    {
+        $model = $this->findScopedModel($request, $customer);
+        $data = $request->validate([
+            'payment_method_id' => 'required|integer|exists:payment_methods,id',
+            'amount_paid' => 'required|numeric|min:0.01',
+            'customer_invoice_id' => 'nullable|integer|exists:customer_invoices,id',
+            'reference_number' => 'nullable|string|max:100',
+            'cheque_number' => 'nullable|string|max:45',
+            'date_paid' => 'nullable|date',
+            'notes' => 'nullable|string|max:1000',
+        ]);
+
+        $result = app(\App\Services\Accounting\CustomerReceivablePaymentService::class)
+            ->receive($model, $request->user(), $data);
+
+        return response()->json([
+            'amount_applied' => $result['amount_applied'],
+            'payments' => $result['payments'],
+            'customer' => $result['customer'],
+            'allocations' => collect($result['payments'])->map(fn ($payment) => [
+                'id' => $payment->id,
+                'customer_invoice_id' => $payment->customer_invoice_id,
+                'invoice_number' => $payment->customerInvoice?->invoice_number,
+                'amount_paid' => (float) $payment->amount_paid,
+            ])->values()->all(),
+        ], 201);
+    }
+
     public function store(Request $request)
     {
         $user = $request->user();

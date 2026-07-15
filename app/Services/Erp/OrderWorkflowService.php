@@ -129,6 +129,12 @@ class OrderWorkflowService
     /** @return list<string> */
     public function allowedTransitions(string $from, ?string $channel = null): array
     {
+        if ($from === 'expired') {
+            $target = $this->restoreTargetStatus($channel);
+
+            return $target !== null ? [$target] : [];
+        }
+
         if ($channel) {
             $workflow = $this->forChannel($channel);
             $transitions = $workflow['transitions'][$from] ?? [];
@@ -148,6 +154,19 @@ class OrderWorkflowService
         $statuses = $this->enabledStatuses($config);
 
         return $this->transitions($config, $statuses)[$from] ?? [];
+    }
+
+    /** First enabled pipeline status used when restoring an expired order. */
+    public function restoreTargetStatus(?string $channel = null): ?string
+    {
+        if ($channel) {
+            $pipeline = $this->forChannel($channel)['pipeline'] ?? [];
+            if ($pipeline !== []) {
+                return (string) ($pipeline[0]['key'] ?? null) ?: null;
+            }
+        }
+
+        return $this->firstPipelineStatus($this->config());
     }
 
     public function orderCancellationEnabled(): bool
@@ -186,6 +205,13 @@ class OrderWorkflowService
         if ($to === 'expired') {
             return ! in_array($from, ['cancelled', 'expired'], true)
                 && ! $this->isTerminalStatus($from, $channel);
+        }
+
+        // Restore expired orders to the first pipeline step (typically booked) for reprocessing.
+        if ($from === 'expired') {
+            $restoreTarget = $this->restoreTargetStatus($channel);
+
+            return $restoreTarget !== null && $to === $restoreTarget;
         }
 
         if ($from === 'pending_approval' && in_array($to, ['booked', 'editable', 'cancelled'], true)) {

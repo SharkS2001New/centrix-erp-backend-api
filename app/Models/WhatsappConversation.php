@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToOrganizationCustomer;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class WhatsappConversation extends Model
 {
+    use BelongsToOrganizationCustomer;
+
     protected $table = 'whatsapp_conversations';
 
     protected $fillable = [
@@ -25,11 +27,6 @@ class WhatsappConversation extends Model
         'last_message_at' => 'datetime',
         'expires_at' => 'datetime',
     ];
-
-    public function customer(): BelongsTo
-    {
-        return $this->belongsTo(Customer::class, 'customer_num', 'customer_num');
-    }
 
     public function messageLogs(): HasMany
     {

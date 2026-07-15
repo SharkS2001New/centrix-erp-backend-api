@@ -50,10 +50,13 @@ class CustomerInvoiceService
                 $existing->update($updates);
             }
 
-            return $existing->fresh();
+            $invoice = $existing->fresh();
+            $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
+
+            return $invoice;
         }
 
-        return CustomerInvoice::create([
+        $invoice = CustomerInvoice::create([
             'invoice_number' => $this->allocateInvoiceNumber($sale),
             'sale_id' => $sale->id,
             'customer_num' => $sale->customer_num,
@@ -66,6 +69,10 @@ class CustomerInvoiceService
             'amount_paid' => $paid,
             'payment_status' => $paymentStatus,
         ]);
+
+        $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
+
+        return $invoice;
     }
 
     protected function paymentStatus(float $total, float $paid): int
@@ -106,7 +113,7 @@ class CustomerInvoiceService
         $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
     }
 
-    protected function refreshCustomerBalance(int $organizationId, int $customerNum): void
+    public function refreshCustomerBalance(int $organizationId, int $customerNum): void
     {
         $balance = CustomerInvoice::query()
             ->where('organization_id', $organizationId)

@@ -272,6 +272,26 @@ class OrderWorkflowController extends Controller
             return $sale;
         }
 
+        if ($from === 'expired') {
+            $updates = [
+                'status' => $toStatus,
+                'expired_at' => null,
+                'expired_by' => null,
+            ];
+
+            if ($gate->shouldDeductStockOnWorkflowTransition($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
+                $this->deductSaleStockIfNeeded($sale, $user);
+            } elseif ($gate->shouldReserveStockOnTransition($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
+                $this->reserveSaleStockIfNeeded($sale, $user, $gate);
+            }
+
+            $sale->update($updates);
+            $sale = $sale->fresh();
+            $this->notifyWorkflowTransition($sale, $from, $toStatus, $user);
+
+            return $sale;
+        }
+
         $salesSettings = $gate->moduleSettings('sales');
         $distributionSettings = $gate->distributionSettings();
         $distributionEnabled = $gate->distributionOpsEnabled();

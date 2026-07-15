@@ -1,12 +1,14 @@
 <?php
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToOrganizationCustomer;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class Sale extends Model
 {
     use HasFactory;
+    use BelongsToOrganizationCustomer;
 
     protected $table = 'sales';
     const UPDATED_AT = null;
@@ -19,11 +21,6 @@ class Sale extends Model
     public function payments()
     {
         return $this->hasMany(SalePayment::class, 'sale_id');
-    }
-
-    public function customer()
-    {
-        return $this->belongsTo(Customer::class, 'customer_num', 'customer_num');
     }
 
     public function cashier()
@@ -88,6 +85,39 @@ class Sale extends Model
     public function isOfflineMobileOrder(): bool
     {
         return $this->mobileOrderConnectivity() === 'offline';
+    }
+
+    /**
+     * Display name for this order. Registered customers use the org-scoped
+     * customer relation (customer_num is only unique within an organization).
+     * Walk-in / free-text names use customer_name_override.
+     */
+    public function customerDisplayName(): string
+    {
+        if ($this->customer_num) {
+            if ($this->relationLoaded('customer')) {
+                $related = trim((string) ($this->customer?->customer_name ?? ''));
+                if ($related !== '') {
+                    return $related;
+                }
+            } else {
+                $related = trim((string) ($this->customer()?->first()?->customer_name ?? ''));
+                if ($related !== '') {
+                    return $related;
+                }
+            }
+        }
+
+        $override = trim((string) ($this->customer_name_override ?? ''));
+        if ($override !== '') {
+            return $override;
+        }
+
+        if ($this->customer_num) {
+            return 'Customer #'.$this->customer_num;
+        }
+
+        return 'Walk-in';
     }
 
     public function scopeCentrixMetrics($query)

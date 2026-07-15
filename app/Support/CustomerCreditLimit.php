@@ -11,6 +11,7 @@ class CustomerCreditLimit
     public static function outstandingReceivable(Customer $customer): float
     {
         return (float) CustomerInvoice::query()
+            ->where('organization_id', $customer->organization_id)
             ->where('customer_num', $customer->customer_num)
             ->whereIn('payment_status', [0, 1])
             ->whereNull('deleted_at')
@@ -27,8 +28,12 @@ class CustomerCreditLimit
     /**
      * @throws InvalidArgumentException
      */
-    public static function assertCreditSaleAllowed(?int $customerNum, float $creditAmount, bool $isCredit): void
-    {
+    public static function assertCreditSaleAllowed(
+        ?int $customerNum,
+        float $creditAmount,
+        bool $isCredit,
+        ?int $organizationId = null,
+    ): void {
         if (! $isCredit) {
             return;
         }
@@ -43,11 +48,16 @@ class CustomerCreditLimit
             return;
         }
 
-        $customer = Customer::query()
+        $query = Customer::query()
             ->where('customer_num', $customerNum)
             ->whereNull('deleted_at')
-            ->lockForUpdate()
-            ->first();
+            ->lockForUpdate();
+
+        if ($organizationId) {
+            $query->where('organization_id', $organizationId);
+        }
+
+        $customer = $query->first();
 
         if (! $customer) {
             throw new InvalidArgumentException('Select a valid registered customer for credit.');

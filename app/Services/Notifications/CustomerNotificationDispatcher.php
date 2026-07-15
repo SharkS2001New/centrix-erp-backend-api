@@ -92,6 +92,7 @@ class CustomerNotificationDispatcher
 
         $phone = Customer::query()
             ->where('customer_num', $sale->customer_num)
+            ->where('organization_id', $sale->organization_id)
             ->value('phone_number');
 
         return $phone ? trim((string) $phone) : null;
@@ -105,6 +106,7 @@ class CustomerNotificationDispatcher
 
         $email = Customer::query()
             ->where('customer_num', $sale->customer_num)
+            ->where('organization_id', $sale->organization_id)
             ->value('email');
 
         $email = trim((string) ($email ?? ''));

@@ -53,7 +53,7 @@ class SaleController extends BaseResourceController
             $query->with(['items.product.unit']);
         }
 
-        $query->with(['cashier:id,username,full_name', 'customer:customer_num,customer_name,route_id']);
+        $query->with(['cashier:id,username,full_name', 'customer:customer_num,customer_name,route_id,organization_id']);
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if ($col === 'status') {
@@ -241,7 +241,7 @@ class SaleController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        $sale = $this->baseQuery($request)->with(['items.product.unit', 'customer:customer_num,customer_name'])->findOrFail($id);
+        $sale = $this->baseQuery($request)->with(['items.product.unit', 'customer:customer_num,customer_name,organization_id'])->findOrFail($id);
         $gate = $this->erp->gateForUser($request->user());
         $permissions = app(UserPermissionService::class);
         if (! SalesOrderQueuePermissions::userCanViewSale($request->user(), $sale, $gate, $permissions)) {

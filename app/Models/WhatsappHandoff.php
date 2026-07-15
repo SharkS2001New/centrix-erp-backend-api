@@ -2,11 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToOrganizationCustomer;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class WhatsappHandoff extends Model
 {
+    use BelongsToOrganizationCustomer;
+
     protected $table = 'whatsapp_handoffs';
 
     protected $fillable = [
@@ -27,11 +30,6 @@ class WhatsappHandoff extends Model
     public function conversation(): BelongsTo
     {
         return $this->belongsTo(WhatsappConversation::class, 'conversation_id');
-    }
-
-    public function customer(): BelongsTo
-    {
-        return $this->belongsTo(Customer::class, 'customer_num', 'customer_num');
     }
 
     public function resolver(): BelongsTo

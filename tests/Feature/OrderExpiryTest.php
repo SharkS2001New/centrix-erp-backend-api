@@ -152,4 +152,34 @@ class OrderExpiryTest extends TestCase
         $ids = collect($res->json('data'))->pluck('id')->all();
         $this->assertContains($expired->id, $ids);
     }
+
+    public function test_expired_order_can_be_restored_to_booked(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $template = Sale::query()->firstOrFail();
+        $sale = Sale::create([
+            'order_num' => 96099,
+            'branch_id' => $admin->branch_id ?? $template->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'status' => 'expired',
+            'total_vat' => 0,
+            'order_total' => 400,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'expired_at' => now()->subDay(),
+            'expired_by' => $admin->id,
+        ]);
+
+        $controller = app(\App\Http\Controllers\Api\V1\Operations\OrderWorkflowController::class);
+        $updated = $controller->transitionSaleForUser($sale, 'booked', $admin);
+
+        $this->assertSame('booked', $updated->status);
+        $this->assertNull($updated->expired_at);
+        $this->assertNull($updated->expired_by);
+    }
 }

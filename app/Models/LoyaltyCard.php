@@ -2,12 +2,14 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToOrganizationCustomer;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 
 class LoyaltyCard extends Model
 {
     use HasFactory;
+    use BelongsToOrganizationCustomer;
 
     protected $table = 'loyalty_cards';
 
@@ -28,8 +30,4 @@ class LoyaltyCard extends Model
         'issued_at' => 'date',
     ];
 
-    public function customer()
-    {
-        return $this->belongsTo(Customer::class, 'customer_num', 'customer_num');
-    }
 }

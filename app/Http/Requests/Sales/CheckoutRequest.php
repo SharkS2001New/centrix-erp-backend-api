@@ -3,6 +3,7 @@
 namespace App\Http\Requests\Sales;
 
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
 class CheckoutRequest extends FormRequest
 {
@@ -13,10 +14,21 @@ class CheckoutRequest extends FormRequest
 
     public function rules(): array
     {
+        $organizationId = (int) ($this->user()?->organization_id ?? 0);
+
         return [
             'order_num' => 'nullable|integer',
             'status' => 'nullable|in:draft,held,booked,pending,unpaid,processed,pending_payment,paid,delivered,completed,cancelled',
-            'customer_num' => 'nullable|integer|exists:customers,customer_num',
+            'customer_num' => [
+                'nullable',
+                'integer',
+                Rule::exists('customers', 'customer_num')->where(function ($query) use ($organizationId) {
+                    $query->whereNull('deleted_at');
+                    if ($organizationId > 0) {
+                        $query->where('organization_id', $organizationId);
+                    }
+                }),
+            ],
             'customer_name_override' => 'nullable|string|max:500',
             'float_session_id' => 'nullable|integer',
             'sales_workspace' => 'nullable|in:pos,backoffice',

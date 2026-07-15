@@ -246,7 +246,7 @@ class MobileSalesService
 
         $query = $this->mobileSalesQuery($user, $allChannels)
             ->select($this->orderListColumns())
-            ->with(['customer:customer_num,customer_name'])
+            ->with(['customer:customer_num,customer_name,organization_id'])
             ->withSum('items', 'discount_given');
 
         $workflowStatus = in_array((string) ($filters['status'] ?? ''), ['pending_approval', 'editable'], true)
@@ -333,7 +333,7 @@ class MobileSalesService
                 'items.product:product_code,product_name,unit_id,organization_id',
                 'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label',
                 'cashier:id,username',
-                'customer:customer_num,customer_name',
+                'customer:customer_num,customer_name,organization_id',
             ])
             ->findOrFail($saleId);
 
@@ -469,7 +469,7 @@ class MobileSalesService
 
         return $this->mobileSalesQuery($user, $allChannels)
             ->select($this->orderListColumns())
-            ->with(['customer:customer_num,customer_name'])
+            ->with(['customer:customer_num,customer_name,organization_id'])
             ->withSum('items', 'discount_given')
             ->tap(fn (Builder $q) => $this->applyCreatedAtDayRange($q, $from, $to))
             ->where('status', '!=', 'cancelled')
@@ -633,7 +633,7 @@ class MobileSalesService
         ?User $viewer = null,
         ?SaleOrderPresentationService $presentation = null,
     ): array {
-        $sale->loadMissing(['customer:customer_num,customer_name']);
+        $sale->loadMissing(['customer:customer_num,customer_name,organization_id']);
         if (! $viewer || (int) ($sale->cashier_id ?? 0) !== (int) $viewer->id) {
             $sale->loadMissing(['cashier:id,username']);
         }
@@ -645,9 +645,7 @@ class MobileSalesService
             'id' => $sale->id,
             'order_no' => (int) $sale->order_num,
             'customer_num' => $sale->customer_num ? (int) $sale->customer_num : null,
-            'customer_name' => $sale->customer?->customer_name
-                ?? $sale->customer_name_override
-                ?? 'Walk-in',
+            'customer_name' => $sale->customerDisplayName(),
             'orderTotals' => round((float) $sale->order_total, 2),
             'order_discount' => round((float) ($sale->order_discount ?? 0), 2),
             'total_discount' => $presentation->totalDiscount($sale),

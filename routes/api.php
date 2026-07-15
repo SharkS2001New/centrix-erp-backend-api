@@ -869,6 +869,8 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('customer-invoice-payments', CustomerInvoicePaymentController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:payments.view|accounting.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:payments.manage|accounting.manage']);
+            Route::post('customers/{customer}/payments', [CustomerController::class, 'storePayment'])
+                ->middleware('erp.permission:payments.manage|accounting.manage');
         });
 
         Route::middleware(['erp.module:accounting'])->group(function () {

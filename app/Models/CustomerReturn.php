@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToOrganizationCustomer;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -11,6 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class CustomerReturn extends Model
 {
     use HasFactory;
+    use BelongsToOrganizationCustomer;
 
     protected $fillable = [
         'return_no',
@@ -55,11 +57,6 @@ class CustomerReturn extends Model
     public function sale(): BelongsTo
     {
         return $this->belongsTo(Sale::class, 'sale_id');
-    }
-
-    public function customer(): BelongsTo
-    {
-        return $this->belongsTo(Customer::class, 'customer_num', 'customer_num');
     }
 
     public function returnedByUser(): BelongsTo

@@ -459,7 +459,10 @@ class AiSystemContextBuilder
 
         $openInvoices = DB::table('customer_invoices as ci')
             ->join('sales as s', 's.id', '=', 'ci.sale_id')
-            ->join('customers as c', 'c.customer_num', '=', 'ci.customer_num')
+            ->join('customers as c', function ($join) {
+                $join->on('c.customer_num', '=', 'ci.customer_num')
+                    ->on('c.organization_id', '=', 'ci.organization_id');
+            })
             ->where('ci.organization_id', $orgId)
             ->whereNull('ci.deleted_at')
             ->where('ci.balance_due', '>', 0)

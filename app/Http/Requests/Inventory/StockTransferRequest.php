@@ -18,7 +18,7 @@ class StockTransferRequest extends FormRequest
             'product_code' => 'required|string|exists:products,product_code',
             'quantity' => 'required|numeric|min:0.001',
             'from_location' => 'required|in:shop,store',
-            'to_location' => 'required|in:shop,store|different:from_location',
+            'to_location' => 'required|in:shop,store,internal_use,donations,staff_consumption,charity,sample,production,display|different:from_location',
             'notes' => 'sometimes|nullable|string|max:500',
         ];
     }

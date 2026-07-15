@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Models\Concerns\BelongsToOrganizationCustomer;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
@@ -9,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class CreditNote extends Model
 {
     use HasFactory;
+    use BelongsToOrganizationCustomer;
 
     protected $fillable = [
         'credit_note_no',
@@ -53,8 +55,4 @@ class CreditNote extends Model
         return $this->belongsTo(Sale::class, 'sale_id');
     }
 
-    public function customer(): BelongsTo
-    {
-        return $this->belongsTo(Customer::class, 'customer_num', 'customer_num');
-    }
 }

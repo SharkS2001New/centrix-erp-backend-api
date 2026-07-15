@@ -173,6 +173,7 @@ class SaleOrderPresentationService
         $rejection = $this->discountRejectionPresentation($sale);
         $sale->setAttribute('discount_rejection', $rejection);
         $sale->setAttribute('discount_rejected', $rejection !== null);
+        $sale->setAttribute('customer_display_name', $sale->customerDisplayName());
 
         return $sale;
     }
