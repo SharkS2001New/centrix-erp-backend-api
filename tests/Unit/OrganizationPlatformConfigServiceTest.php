@@ -36,7 +36,21 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertSame('order_created', $config['stock_deduct_on']['pos']);
         $this->assertSame('order_completed', $config['stock_deduct_on']['mobile']);
         $this->assertSame(7, $config['orders_list_default_days']);
+        $this->assertSame(30, $config['orders_list_search_days']);
         $this->assertSame('-order_num', $config['orders_list_sort']);
         $this->assertTrue($config['order_cancellation_enabled']);
+    }
+
+    public function test_default_sales_platform_config_varies_by_deployment_profile(): void
+    {
+        $service = app(OrganizationPlatformConfigService::class);
+
+        $wholesale = $service->defaultSalesPlatformConfig('wholesale_retail');
+        $this->assertSame(14, $wholesale['orders_list_default_days']);
+        $this->assertSame(30, $wholesale['orders_list_search_days']);
+
+        $distribution = $service->defaultSalesPlatformConfig('distribution');
+        $this->assertSame(30, $distribution['orders_list_default_days']);
+        $this->assertSame(60, $distribution['orders_list_search_days']);
     }
 }

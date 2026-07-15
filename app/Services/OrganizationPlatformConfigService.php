@@ -186,6 +186,12 @@ class OrganizationPlatformConfigService
         if (array_key_exists('orders_list_default_days', $nextSales)) {
             $nextSales['orders_list_default_days'] = $this->normalizeOrdersListDefaultDays($nextSales['orders_list_default_days']);
         }
+        if (array_key_exists('orders_list_search_days', $nextSales)) {
+            $nextSales['orders_list_search_days'] = $this->normalizeOrdersListSearchDays(
+                $nextSales['orders_list_search_days'],
+                (int) ($nextSales['orders_list_default_days'] ?? 14),
+            );
+        }
         if (array_key_exists('orders_list_sort', $nextSales)) {
             $nextSales['orders_list_sort'] = $this->normalizeOrdersListSort($nextSales['orders_list_sort']);
         }
@@ -202,6 +208,8 @@ class OrganizationPlatformConfigService
      */
     public function defaultSalesPlatformConfig(string $deploymentProfile = 'wholesale_retail'): array
     {
+        $isDistribution = $deploymentProfile === 'distribution';
+
         return [
             'show_checkout_on_create_order' => true,
             'enable_mobile_orders' => ! in_array($deploymentProfile, ['small_shop', 'supermarket'], true),
@@ -225,7 +233,9 @@ class OrganizationPlatformConfigService
             'enable_backoffice_order_edit' => true,
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
-            'orders_list_default_days' => 6,
+            // Wholesale/retail: 2 weeks list / 1 month search. Distribution: wider operational window.
+            'orders_list_default_days' => $isDistribution ? 30 : 14,
+            'orders_list_search_days' => $isDistribution ? 60 : 30,
             'orders_list_sort' => '-created_at',
         ];
     }
@@ -280,6 +290,10 @@ class OrganizationPlatformConfigService
             'order_expiry_before_status' => (string) ($sales['order_expiry_before_status'] ?? 'processed'),
             'order_cancellation_enabled' => ($sales['order_cancellation_enabled'] ?? true) !== false,
             'orders_list_default_days' => $this->normalizeOrdersListDefaultDays($sales['orders_list_default_days'] ?? null),
+            'orders_list_search_days' => $this->normalizeOrdersListSearchDays(
+                $sales['orders_list_search_days'] ?? null,
+                $this->normalizeOrdersListDefaultDays($sales['orders_list_default_days'] ?? null),
+            ),
             'orders_list_sort' => $this->normalizeOrdersListSort($sales['orders_list_sort'] ?? null),
         ];
     }
@@ -513,10 +527,25 @@ class OrganizationPlatformConfigService
         $days = (int) $value;
 
         if ($days < 1) {
-            return 6;
+            return 14;
         }
 
         return min(90, $days);
+    }
+
+    /**
+     * Search window (days). Never narrower than the default list filter window.
+     */
+    public function normalizeOrdersListSearchDays(mixed $value, ?int $defaultListDays = null): int
+    {
+        $minDays = max(1, (int) ($defaultListDays ?? 14));
+        $days = (int) $value;
+
+        if ($days < 1) {
+            $days = max(30, $minDays);
+        }
+
+        return min(90, max($minDays, $days));
     }
 
     public function normalizeOrdersListSort(mixed $value): string

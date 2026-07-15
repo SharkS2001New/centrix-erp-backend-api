@@ -171,6 +171,7 @@ return [
             'order_expiry_before_status',
             'order_cancellation_enabled',
             'orders_list_default_days',
+            'orders_list_search_days',
             'orders_list_sort',
         ],
         'distribution' => [
@@ -427,7 +428,8 @@ return [
                 'mobile' => 'order_completed',
                 'backend' => 'order_completed',
             ],
-            'orders_list_default_days' => 6,
+            'orders_list_default_days' => 14,
+            'orders_list_search_days' => 30,
             'orders_list_sort' => '-created_at',
         ],
         'distribution' => [

@@ -112,6 +112,7 @@ class ErpSettingsController extends Controller
             'show_branch_on_receipt',
             'stock_deduct_on',
             'orders_list_default_days',
+            'orders_list_search_days',
             'orders_list_sort',
             'show_receipt_payment_details',
             'show_invoice_payment_details',
@@ -165,6 +166,7 @@ class ErpSettingsController extends Controller
             'stock_deduct_on.mobile' => 'sometimes|in:order_created,order_completed,trip_pick,trip_load,trip_depart',
             'stock_deduct_on.backend' => 'sometimes|in:order_created,order_completed,trip_pick,trip_load,trip_depart',
             'orders_list_default_days' => 'sometimes|integer|min:1|max:90',
+            'orders_list_search_days' => 'sometimes|integer|min:1|max:90',
             'discount_approval_threshold_percent' => 'sometimes|numeric|min:0|max:100',
             'orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
@@ -274,6 +276,12 @@ class ErpSettingsController extends Controller
         if (array_key_exists('orders_list_default_days', $data)) {
             $nextSales['orders_list_default_days'] = $this->platformConfig->normalizeOrdersListDefaultDays(
                 $data['orders_list_default_days'],
+            );
+        }
+        if (array_key_exists('orders_list_search_days', $data) || array_key_exists('orders_list_default_days', $data)) {
+            $nextSales['orders_list_search_days'] = $this->platformConfig->normalizeOrdersListSearchDays(
+                $data['orders_list_search_days'] ?? ($nextSales['orders_list_search_days'] ?? null),
+                (int) ($nextSales['orders_list_default_days'] ?? 14),
             );
         }
         if (array_key_exists('orders_list_sort', $data)) {

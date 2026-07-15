@@ -269,12 +269,12 @@ class SaleOrderListDateFilterTest extends TestCase
         $this->assertFalse($ids->contains($old->id));
     }
 
-    public function test_sales_list_search_finds_orders_outside_hot_window(): void
+    public function test_sales_list_search_expands_to_one_month_window(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
 
-        $old = Sale::query()->create([
+        $withinMonth = Sale::query()->create([
             'order_num' => 993301,
             'branch_id' => $admin->branch_id,
             'organization_id' => $admin->organization_id,
@@ -284,21 +284,109 @@ class SaleOrderListDateFilterTest extends TestCase
             'payment_status' => 'paid',
             'order_total' => 55,
             'amount_paid' => 55,
-            'completed_at' => now()->subDays(40),
+            'completed_at' => now()->subDays(20),
+            'archived' => 0,
+            'customer_name_override' => 'Within Month Co',
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $withinMonth->id)->update([
+            'created_at' => now()->subDays(20),
+            'completed_at' => now()->subDays(20),
+        ]);
+
+        $tooOld = Sale::query()->create([
+            'order_num' => 993302,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 60,
+            'amount_paid' => 60,
+            'completed_at' => now()->subDays(45),
+            'archived' => 0,
+            'customer_name_override' => 'Too Old Co',
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $tooOld->id)->update([
+            'created_at' => now()->subDays(45),
+            'completed_at' => now()->subDays(45),
+        ]);
+
+        // Free-text search stays inside the platform search window (~1 month).
+        $today = now()->toDateString();
+        $response = $this->getJson("/api/v1/sales?q=Within%20Month&from_date={$today}&to_date={$today}&per_page=50&date_field=placed");
+
+        $response->assertOk()
+            ->assertJsonPath('list_scope.skipped_for_search', false)
+            ->assertJsonPath('list_scope.search_window', true);
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($withinMonth->id));
+
+        $oldName = $this->getJson("/api/v1/sales?q=Too%20Old&from_date={$today}&to_date={$today}&per_page=50&date_field=placed");
+        $oldIds = collect($oldName->json('data'))->pluck('id');
+        $this->assertFalse($oldIds->contains($tooOld->id));
+    }
+
+    public function test_sales_list_exact_order_number_lookup_skips_date_window(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $old = Sale::query()->create([
+            'order_num' => 168,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'paid',
+            'payment_status' => 'paid',
+            'order_total' => 55,
+            'amount_paid' => 55,
+            'completed_at' => now()->subDays(45),
             'archived' => 0,
         ]);
         \Illuminate\Support\Facades\DB::table('sales')->where('id', $old->id)->update([
-            'created_at' => now()->subDays(40),
-            'completed_at' => now()->subDays(40),
+            'created_at' => now()->subDays(45),
+            'completed_at' => now()->subDays(45),
         ]);
 
-        $today = now()->toDateString();
-        $response = $this->getJson("/api/v1/sales?q=993301&from_date={$today}&to_date={$today}&per_page=50&date_field=placed");
+        foreach (['168', 's0168', 'S0168'] as $q) {
+            $response = $this->getJson('/api/v1/sales?q='.urlencode($q).'&per_page=50&date_field=placed');
+            $response->assertOk()
+                ->assertJsonPath('list_scope.skipped_for_search', true);
+            $ids = collect($response->json('data'))->pluck('id');
+            $this->assertTrue($ids->contains($old->id), "Expected order 168 for query {$q}");
+        }
+    }
 
-        $response->assertOk()
-            ->assertJsonPath('list_scope.skipped_for_search', true);
+    public function test_sales_list_search_accepts_s_prefixed_order_number(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
 
+        $sale = Sale::query()->create([
+            'order_num' => 34,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 40,
+            'amount_paid' => 40,
+            'completed_at' => now()->subDays(3),
+            'archived' => 0,
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $sale->id)->update([
+            'created_at' => now()->subDays(3),
+            'completed_at' => now()->subDays(3),
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?q=s0034&per_page=50&date_field=placed');
+
+        $response->assertOk();
         $ids = collect($response->json('data'))->pluck('id');
-        $this->assertTrue($ids->contains($old->id));
+        $this->assertTrue($ids->contains($sale->id));
     }
 }

@@ -13,6 +13,9 @@ class SalesListDateScope
 {
     public const MAX_RANGE_DAYS = 90;
 
+    /** Fallback when platform has not configured a search window. */
+    public const DEFAULT_SEARCH_WINDOW_DAYS = 30;
+
     /**
      * @return array{
      *   from: ?string,
@@ -20,7 +23,8 @@ class SalesListDateScope
      *   applied: bool,
      *   skipped_for_search: bool,
      *   from_archive: bool,
-     *   hot_window_days: int
+     *   hot_window_days: int,
+     *   search_window: bool
      * }
      */
     public function apply(
@@ -30,29 +34,45 @@ class SalesListDateScope
         string $dateField,
         ?string $search,
         int $hotWindowDays,
+        ?int $searchWindowDays = null,
     ): array {
         $hotWindowDays = max(1, min(self::MAX_RANGE_DAYS, $hotWindowDays));
+        $searchWindowDays = max(
+            $hotWindowDays,
+            min(self::MAX_RANGE_DAYS, (int) ($searchWindowDays ?? self::DEFAULT_SEARCH_WINDOW_DAYS)),
+        );
         $search = trim((string) $search);
-        // Only unbounded exact order-number lookup skips the date window (digits-only tokens).
-        // Free-text / name search stays inside the hot window to avoid full-table LIKE scans.
-        $skippedForSearch = $search !== '' && $this->isExactOrderNumberLookup($search);
+        $searching = $search !== '';
 
-        if ($skippedForSearch) {
+        // Exact order # (168 / S0168) must resolve at any age — returns and invoice lookups.
+        // Free-text / customer search stays inside the platform search window.
+        if ($searching && $this->isExactOrderNumberLookup($search)) {
             return [
                 'from' => null,
                 'to' => null,
                 'applied' => false,
                 'skipped_for_search' => true,
                 'from_archive' => true,
-                'hot_window_days' => $hotWindowDays,
+                'hot_window_days' => $searchWindowDays,
+                'search_window' => false,
             ];
         }
 
         $to = $this->normalizeDate($toDate) ?? now()->toDateString();
         $from = $this->normalizeDate($fromDate);
 
-        if ($from === null) {
-            $from = Carbon::parse($to)->subDays($hotWindowDays - 1)->toDateString();
+        if ($searching) {
+            // Name / free-text search: platform search window (default 1 month).
+            $searchFrom = Carbon::parse($to)->subDays($searchWindowDays - 1)->toDateString();
+            if ($from === null || $from > $searchFrom) {
+                $from = $searchFrom;
+            }
+            $effectiveHotDays = $searchWindowDays;
+        } else {
+            if ($from === null) {
+                $from = Carbon::parse($to)->subDays($hotWindowDays - 1)->toDateString();
+            }
+            $effectiveHotDays = $hotWindowDays;
         }
 
         // Cap very wide ranges so a mistaken filter cannot force a multi-year scan.
@@ -69,7 +89,7 @@ class SalesListDateScope
             $from = $fromCarbon->toDateString();
         }
 
-        $hotFrom = now()->subDays($hotWindowDays - 1)->toDateString();
+        $hotFrom = now()->subDays($effectiveHotDays - 1)->toDateString();
         $fromArchive = $from < $hotFrom;
 
         $field = strtolower(trim($dateField));
@@ -85,7 +105,8 @@ class SalesListDateScope
             'applied' => true,
             'skipped_for_search' => false,
             'from_archive' => $fromArchive,
-            'hot_window_days' => $hotWindowDays,
+            'hot_window_days' => $effectiveHotDays,
+            'search_window' => $searching,
         ];
     }
 
@@ -113,12 +134,15 @@ class SalesListDateScope
     }
 
     /**
-     * Digits-only (optionally with spaces/dashes/hash) — treat as order_num lookup of any age.
+     * Digits-only or S0168 / #S168 — treat as exact order_num lookup of any age.
      */
     protected function isExactOrderNumberLookup(string $search): bool
     {
         $compact = preg_replace('/[\s#\-]+/', '', $search) ?? '';
+        if ($compact !== '' && ctype_digit($compact)) {
+            return true;
+        }
 
-        return $compact !== '' && ctype_digit($compact) && strlen($compact) >= 3;
+        return (bool) preg_match('/^S0*\d+$/i', $compact);
     }
 }

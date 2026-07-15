@@ -89,13 +89,22 @@ class SaleController extends BaseResourceController
         $gate = $this->erp->gateForUser($request->user());
         $workflow = OrderWorkflowService::forGate($gate);
         $channel = (string) ($request->input('channel') ?: 'backend');
-        SalesOrderQueuePermissions::applyIndexScope(
-            $query,
-            $request->user(),
-            $gate,
-            app(UserPermissionService::class),
-            $channel,
+        $searchQ = trim((string) $request->input('q', ''));
+        $isExactOrderLookup = $searchQ !== '' && (
+            preg_match('/^#?S0*\d+$/i', $searchQ) === 1
+            || ctype_digit($searchQ)
         );
+        // Exact order # lookups (returns / invoice load) must see the sale regardless of
+        // which sales queue permissions the user has for list browsing.
+        if (! $isExactOrderLookup) {
+            SalesOrderQueuePermissions::applyIndexScope(
+                $query,
+                $request->user(),
+                $gate,
+                app(UserPermissionService::class),
+                $channel,
+            );
+        }
         $statusFilter = data_get($request->input('filter', []), 'status');
         if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {
             $statuses = $workflow->statusesForQueueFilter((string) $statusFilter, $channel);
@@ -123,8 +132,14 @@ class SaleController extends BaseResourceController
         }
 
         $dateField = strtolower(trim((string) $request->input('date_field', 'effective')));
-        $hotWindowDays = app(OrganizationPlatformConfigService::class)->normalizeOrdersListDefaultDays(
-            $gate->moduleSettings('sales')['orders_list_default_days'] ?? 6,
+        $platformConfig = app(OrganizationPlatformConfigService::class);
+        $salesSettings = $gate->moduleSettings('sales');
+        $hotWindowDays = $platformConfig->normalizeOrdersListDefaultDays(
+            $salesSettings['orders_list_default_days'] ?? 14,
+        );
+        $searchWindowDays = $platformConfig->normalizeOrdersListSearchDays(
+            $salesSettings['orders_list_search_days'] ?? null,
+            $hotWindowDays,
         );
         $listScope = app(SalesListDateScope::class)->apply(
             $query,
@@ -133,6 +148,7 @@ class SaleController extends BaseResourceController
             $dateField,
             $request->filled('q') ? (string) $request->input('q') : null,
             $hotWindowDays,
+            $searchWindowDays,
         );
 
         if ($request->filled('min_order_total')) {
@@ -188,12 +204,23 @@ class SaleController extends BaseResourceController
         }
 
         if ($q = $request->input('q')) {
-            $query->where(function ($sub) use ($q) {
-                $sub->where('sales.order_num', 'like', "%{$q}%")
-                    ->orWhere('sales.customer_name_override', 'like', "%{$q}%")
-                    ->orWhere('sales.customer_num', 'like', "%{$q}%");
-            });
+            $q = trim((string) $q);
+            if (preg_match('/^#?S0*(\d+)$/i', $q, $matches)) {
+                $query->where('sales.order_num', (int) $matches[1]);
+            } elseif (ctype_digit($q)) {
+                // Exact order number (e.g. returns lookup for 168 / padded 0168).
+                $query->where('sales.order_num', (int) $q);
+            } else {
+                $query->where(function ($sub) use ($q) {
+                    $sub->where('sales.order_num', 'like', "%{$q}%")
+                        ->orWhere('sales.customer_name_override', 'like', "%{$q}%")
+                        ->orWhere('sales.customer_num', 'like', "%{$q}%")
+                        ->orWhereHas('customer', fn ($c) => $c->where('customer_name', 'like', "%{$q}%"));
+                });
+            }
         }
+
+        $this->applyColumnFilters($query, $request);
 
         if (! empty($query->getQuery()->joins)) {
             $query->select('sales.*');
@@ -201,10 +228,7 @@ class SaleController extends BaseResourceController
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        $sort = app(OrganizationPlatformConfigService::class)->normalizeOrdersListSort(
-            $request->input('sort')
-                ?: ($gate->moduleSettings('sales')['orders_list_sort'] ?? '-created_at'),
-        );
+        $sort = $this->resolveOrdersListSort($request, $gate);
         $this->applyOrdersListSort($query, $sort);
 
         $paginator = $query->paginate($perPage);
@@ -296,6 +320,21 @@ class SaleController extends BaseResourceController
     {
         $orderDate = 'COALESCE(sales.completed_at, sales.created_at)';
 
+        if (in_array($sort, ['customer_name', '-customer_name'], true)) {
+            RouteOrderScope::withCustomerRouteJoin($query);
+            if (empty($query->getQuery()->columns)) {
+                $query->select('sales.*');
+            }
+            $customerExpr = 'COALESCE('.RouteOrderScope::CUSTOMER_JOIN_ALIAS.'.customer_name, sales.customer_name_override)';
+            if ($sort === '-customer_name') {
+                $query->orderByRaw("{$customerExpr} desc")->orderByDesc('sales.id');
+            } else {
+                $query->orderByRaw("{$customerExpr} asc")->orderBy('sales.id');
+            }
+
+            return;
+        }
+
         match ($sort) {
             'created_at' => $query
                 ->orderByRaw("{$orderDate} asc")
@@ -306,9 +345,118 @@ class SaleController extends BaseResourceController
             'order_num' => $query
                 ->orderBy('sales.order_num')
                 ->orderBy('sales.id'),
+            '-order_total' => $query
+                ->orderByDesc('sales.order_total')
+                ->orderByDesc('sales.id'),
+            'order_total' => $query
+                ->orderBy('sales.order_total')
+                ->orderBy('sales.id'),
+            '-status' => $query
+                ->orderByDesc('sales.status')
+                ->orderByDesc('sales.id'),
+            'status' => $query
+                ->orderBy('sales.status')
+                ->orderBy('sales.id'),
+            '-channel' => $query
+                ->orderByDesc('sales.channel')
+                ->orderByDesc('sales.id'),
+            'channel' => $query
+                ->orderBy('sales.channel')
+                ->orderBy('sales.id'),
             default => $query
                 ->orderByRaw("{$orderDate} desc")
                 ->orderByDesc('sales.id'),
         };
+    }
+
+    /**
+     * @param  Builder<\App\Models\Sale>  $query
+     */
+    protected function applyColumnFilters(Builder $query, Request $request): void
+    {
+        $order = trim((string) $request->input('filter_order', ''));
+        if ($order !== '') {
+            if (preg_match('/^#?S0*(\d+)$/i', $order, $matches)) {
+                $query->where('sales.order_num', (int) $matches[1]);
+            } else {
+                $query->where(function ($sub) use ($order) {
+                    $sub->where('sales.order_num', 'like', "%{$order}%")
+                        ->orWhereRaw('CAST(sales.order_num AS CHAR) LIKE ?', ["%{$order}%"]);
+                });
+            }
+        }
+
+        $customer = trim((string) $request->input('filter_customer', ''));
+        if ($customer !== '') {
+            $like = '%'.$customer.'%';
+            $query->where(function ($sub) use ($like, $customer) {
+                $sub->where('sales.customer_name_override', 'like', $like)
+                    ->orWhere('sales.customer_num', 'like', $like)
+                    ->orWhereHas('customer', fn ($c) => $c->where('customer_name', 'like', $like));
+                if (ctype_digit($customer)) {
+                    $sub->orWhere('sales.customer_num', (int) $customer);
+                }
+            });
+        }
+
+        $amount = trim((string) $request->input('filter_amount', ''));
+        if ($amount !== '') {
+            $numeric = (float) preg_replace('/[^\d.]/', '', $amount);
+            if ($numeric > 0) {
+                $query->whereBetween('sales.order_total', [
+                    round($numeric - 0.009, 2),
+                    round($numeric + 0.009, 2),
+                ]);
+            }
+        }
+
+        $method = trim((string) $request->input('filter_method', ''));
+        if ($method !== '') {
+            $like = '%'.$method.'%';
+            $query->where(function ($sub) use ($like) {
+                $sub->where('sales.payment_method_code', 'like', $like)
+                    ->orWhere('sales.payment_status', 'like', $like);
+            });
+        }
+
+        $placedBy = trim((string) $request->input('filter_placed_by', ''));
+        if ($placedBy !== '') {
+            $like = '%'.$placedBy.'%';
+            $query->whereHas('cashier', function ($c) use ($like) {
+                $c->where('full_name', 'like', $like)
+                    ->orWhere('username', 'like', $like);
+            });
+        }
+
+        $source = trim((string) $request->input('filter_source', ''));
+        if ($source !== '' && strtolower($source) !== 'all') {
+            $query->where(function ($sub) use ($source) {
+                $sub->where('sales.order_source', $source)
+                    ->orWhere('sales.channel', $source);
+            });
+        }
+    }
+
+    /**
+     * @param  \App\Services\Erp\CapabilityGate  $gate
+     */
+    protected function resolveOrdersListSort(Request $request, $gate): string
+    {
+        $requested = trim((string) $request->input('sort', ''));
+        $allowed = [
+            '-created_at', 'created_at',
+            '-order_num', 'order_num',
+            '-order_total', 'order_total',
+            '-status', 'status',
+            '-channel', 'channel',
+            '-customer_name', 'customer_name',
+        ];
+        if (in_array($requested, $allowed, true)) {
+            return $requested;
+        }
+
+        return app(OrganizationPlatformConfigService::class)->normalizeOrdersListSort(
+            $gate->moduleSettings('sales')['orders_list_sort'] ?? '-created_at',
+        );
     }
 }
