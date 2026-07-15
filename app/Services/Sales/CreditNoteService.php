@@ -26,7 +26,35 @@ class CreditNoteService
             $next = ((int) $matches[1]) + 1;
         }
 
-        return 'CN-' . str_pad((string) $next, 4, '0', STR_PAD_LEFT);
+        // Prefer org-local sequence, but also skip CN numbers already used by any
+        // other tenant while a leftover global unique index remains in production.
+        while ($this->isCreditNoteNoUnavailable($organizationId, $next)) {
+            $next++;
+        }
+
+        return $this->formatCreditNoteNo($next);
+    }
+
+    public function formatCreditNoteNo(int $sequence): string
+    {
+        return 'CN-' . str_pad((string) $sequence, 4, '0', STR_PAD_LEFT);
+    }
+
+    protected function isCreditNoteNoUnavailable(int $organizationId, int $seq): bool
+    {
+        $creditNoteNo = $this->formatCreditNoteNo($seq);
+
+        if (CreditNote::query()
+            ->where('organization_id', $organizationId)
+            ->where('credit_note_no', $creditNoteNo)
+            ->exists()) {
+            return true;
+        }
+
+        return CreditNote::query()
+            ->where('credit_note_no', $creditNoteNo)
+            ->where('organization_id', '!=', $organizationId)
+            ->exists();
     }
 
     public function createForReturn(CustomerReturn $return, User $user, array $financeSettings): CreditNote
