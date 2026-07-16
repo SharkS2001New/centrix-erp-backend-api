@@ -245,6 +245,16 @@ class PlatformMailController extends Controller
             if (($fetched['ok'] ?? false) && is_string($fetched['body'] ?? null) && $fetched['body'] !== '') {
                 $displayBody = $fetched['body'];
                 $bodyFromImap = true;
+                // Persist so reopen does not depend on IMAP UID/sequence drift.
+                $message->update([
+                    'body_text' => $displayBody,
+                    'meta' => array_merge($meta, [
+                        'body_storage' => 'local',
+                        'body_fetched_at' => now()->toIso8601String(),
+                        'body_snippet_len' => null,
+                    ]),
+                ]);
+                $meta = is_array($message->meta) ? $message->meta : $meta;
             }
         }
 

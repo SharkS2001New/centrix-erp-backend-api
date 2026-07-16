@@ -62,4 +62,32 @@ class CapabilityGateApplicationOverridesTest extends TestCase
         $this->assertTrue($gate->enabled('hr_payroll'));
         $this->assertTrue($gate->enabled('admin'));
     }
+
+    public function test_sparse_distribution_without_sales_mobile_stays_enabled(): void
+    {
+        $org = new Organization([
+            'company_code' => 'DEMO',
+            'deployment_profile' => 'distribution',
+            'enabled_modules' => [
+                'sales' => true,
+                'sales.backend' => true,
+                'sales.dashboard' => true,
+                'sales.reports' => true,
+                'inventory' => true,
+                'customers_suppliers' => true,
+                'distribution' => true,
+                'distribution.dashboard' => true,
+                'distribution.reports' => true,
+                'admin' => true,
+            ],
+            'module_settings' => [],
+        ]);
+
+        $gate = app(CapabilityGate::class)->forOrganization($org);
+
+        $this->assertTrue($gate->enabled('distribution'));
+        $this->assertTrue($gate->enabled('sales.mobile'));
+        $this->assertTrue($gate->enabled('customers_suppliers'));
+        $this->assertTrue($gate->distributionOpsEnabled());
+    }
 }

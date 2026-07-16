@@ -206,6 +206,14 @@ class ModuleRegistry
      */
     public static function applyModuleDependencies(array $modules): array
     {
+        // Sparse enabled_modules maps often list distribution without repeating sales.mobile.
+        // Prefer enabling the dependency over silently turning distribution off — that caused
+        // "This feature is not enabled for your organization" after profile merge was removed.
+        if ($modules['distribution'] ?? false) {
+            $modules['sales.mobile'] = true;
+            $modules['sales'] = true;
+        }
+
         // Distribution requires mobile field sales; mobile alone is valid without distribution.
         if (! ($modules['sales.mobile'] ?? false)) {
             $modules['distribution'] = false;

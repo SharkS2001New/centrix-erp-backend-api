@@ -336,16 +336,27 @@ class PlatformMailboxService
         $skipped = 0;
         try {
             $criteria = $this->imapSearchCriteria($account);
-            $emails = @imap_search($inbox, $criteria) ?: [];
+            // Prefer stable UIDs (SE_UID). Sequence numbers drift as messages are deleted.
+            $emails = @imap_search($inbox, $criteria, SE_UID) ?: [];
             // Fallback if Gmail category search is unsupported on this server build.
             if ($emails === [] && str_starts_with($criteria, 'X-GM-RAW')) {
-                $emails = @imap_search($inbox, 'ALL') ?: [];
+                $emails = @imap_search($inbox, 'ALL', SE_UID) ?: [];
+            }
+            // Legacy servers that ignore SE_UID still return sequence numbers — flag as such.
+            $usingUids = $emails !== [];
+            if ($emails === []) {
+                $emails = @imap_search($inbox, $criteria) ?: [];
+                if ($emails === [] && str_starts_with($criteria, 'X-GM-RAW')) {
+                    $emails = @imap_search($inbox, 'ALL') ?: [];
+                }
+                $usingUids = false;
             }
             rsort($emails);
             $emails = array_slice($emails, 0, max(1, min($limit, 100)));
+            $ftUid = $usingUids ? FT_UID : 0;
 
             foreach ($emails as $uid) {
-                $overview = imap_fetch_overview($inbox, (string) $uid, 0);
+                $overview = imap_fetch_overview($inbox, (string) $uid, $ftUid);
                 $header = $overview[0] ?? null;
                 if (! $header) {
                     $skipped++;
@@ -372,8 +383,8 @@ class PlatformMailboxService
                     continue;
                 }
 
-                $structure = imap_fetchstructure($inbox, $uid);
-                $fullBody = $this->getBody($inbox, $uid, $structure);
+                $structure = imap_fetchstructure($inbox, $uid, $ftUid);
+                $fullBody = $this->getBody($inbox, (int) $uid, $structure, $usingUids);
                 $snippet = $this->snippetBody($fullBody);
                 $from = $this->parseAddress($header->from ?? '');
                 $to = $this->parseAddressList($header->to ?? '');
@@ -400,6 +411,7 @@ class PlatformMailboxService
                     'meta' => [
                         'body_storage' => 'imap_snippet',
                         'body_snippet_len' => mb_strlen($snippet),
+                        'imap_uid_mode' => $usingUids ? 'uid' : 'sequence',
                     ],
                 ]);
                 $imported++;
@@ -476,18 +488,35 @@ class PlatformMailboxService
         }
 
         try {
+            $meta = is_array($message->meta) ? $message->meta : [];
+            $preferUid = ($meta['imap_uid_mode'] ?? '') === 'uid';
             $seq = null;
+            $useUid = false;
             $messageId = trim((string) ($message->message_id ?? ''));
+
             if ($messageId !== '' && ! str_ends_with($messageId, '@local')) {
                 $needle = trim($messageId, " \t<>");
                 $found = @imap_search($inbox, 'HEADER Message-ID "'.$needle.'"')
                     ?: @imap_search($inbox, 'HEADER Message-ID "<'.$needle.'>"')
                     ?: [];
-                $seq = $found[0] ?? null;
+                if ($found) {
+                    $seq = (int) $found[0];
+                    $useUid = false;
+                }
             }
+
             if ($seq === null && trim((string) ($message->imap_uid ?? '')) !== '') {
-                $seq = (int) $message->imap_uid;
+                $candidate = (int) $message->imap_uid;
+                foreach ($preferUid ? [true, false] : [false, true] as $tryUid) {
+                    $probe = @imap_fetchstructure($inbox, $candidate, $tryUid ? FT_UID : 0);
+                    if ($probe) {
+                        $seq = $candidate;
+                        $useUid = $tryUid;
+                        break;
+                    }
+                }
             }
+
             if ($seq === null) {
                 return [
                     'ok' => false,
@@ -496,13 +525,15 @@ class PlatformMailboxService
                 ];
             }
 
-            $structure = imap_fetchstructure($inbox, $seq);
-            $body = $this->getBody($inbox, (int) $seq, $structure);
+            $structure = @imap_fetchstructure($inbox, $seq, $useUid ? FT_UID : 0);
+            $body = $this->getBody($inbox, $seq, $structure, $useUid);
 
             return [
-                'ok' => true,
-                'body' => $body,
-                'message' => 'Loaded full body from IMAP.',
+                'ok' => $body !== '',
+                'body' => $body !== '' ? $body : (string) ($message->body_text ?? ''),
+                'message' => $body !== ''
+                    ? 'Loaded full body from IMAP.'
+                    : 'IMAP message found but body parts were empty.',
             ];
         } finally {
             imap_close($inbox);
@@ -544,7 +575,11 @@ class PlatformMailboxService
 
     public function snippetBody(?string $text, int $max = 500): string
     {
-        $clean = trim(preg_replace('/\s+/u', ' ', (string) $text) ?? '');
+        $raw = $this->ensureUtf8((string) $text);
+        $clean = trim(preg_replace('/\s+/u', ' ', $raw) ?? '');
+        if ($clean === '') {
+            $clean = trim(preg_replace('/\s+/', ' ', $raw) ?? $raw);
+        }
         if ($clean === '') {
             return '';
         }
@@ -620,7 +655,14 @@ class PlatformMailboxService
             }
 
             if (! $deleted && $imapUid !== '') {
-                $deleted = (bool) @imap_delete($inbox, $imapUid);
+                $meta = is_array($message->meta) ? $message->meta : [];
+                $preferUid = ($meta['imap_uid_mode'] ?? '') === 'uid';
+                foreach ($preferUid ? [true, false] : [false, true] as $tryUid) {
+                    if (@imap_delete($inbox, $imapUid, $tryUid ? FT_UID : 0)) {
+                        $deleted = true;
+                        break;
+                    }
+                }
             }
 
             if ($deleted) {
@@ -731,54 +773,136 @@ class PlatformMailboxService
         return $out !== '' ? $out : $value;
     }
 
-    protected function getBody($inbox, int $uid, $structure): string
+    protected function getBody($inbox, int $msgNo, $structure, bool $useUid = false): string
     {
         if (! $structure) {
-            return (string) imap_body($inbox, $uid);
+            $raw = (string) @imap_body($inbox, $msgNo, $useUid ? FT_UID : 0);
+
+            return $this->stripHtml($this->ensureUtf8($raw));
         }
+
+        $parts = $this->collectTextParts($inbox, $msgNo, $structure, '', $useUid);
+        if (($parts['plain'] ?? '') !== '') {
+            return $this->ensureUtf8($parts['plain']);
+        }
+        if (($parts['html'] ?? '') !== '') {
+            return $this->stripHtml($this->ensureUtf8($parts['html']));
+        }
+
+        $raw = (string) @imap_body($inbox, $msgNo, $useUid ? FT_UID : 0);
+
+        return $this->stripHtml($this->ensureUtf8($raw));
+    }
+
+    /**
+     * Recursively collect text/plain and text/html from nested MIME parts.
+     *
+     * @return array{plain: string, html: string}
+     */
+    protected function collectTextParts($inbox, int $msgNo, $structure, string $prefix, bool $useUid): array
+    {
+        $plain = '';
+        $html = '';
 
         if (empty($structure->parts)) {
-            $body = imap_body($inbox, $uid);
-            if (! empty($structure->encoding) && (int) $structure->encoding === 3) {
-                $body = base64_decode($body) ?: $body;
-            } elseif (! empty($structure->encoding) && (int) $structure->encoding === 4) {
-                $body = quoted_printable_decode($body);
+            $section = $prefix !== '' ? $prefix : '1';
+            $body = $this->fetchDecodedPart($inbox, $msgNo, $section, $structure, $useUid);
+            $subtype = strtoupper((string) ($structure->subtype ?? 'PLAIN'));
+            if ($subtype === 'HTML') {
+                $html = $body;
+            } else {
+                $plain = $body;
             }
 
-            return $this->stripHtml((string) $body);
+            return ['plain' => $plain, 'html' => $html];
         }
 
         foreach ($structure->parts as $index => $part) {
-            $type = (int) ($part->type ?? 0);
+            $section = $prefix === '' ? (string) ($index + 1) : $prefix.'.'.($index + 1);
+            $type = (int) ($part->type ?? -1);
             $subtype = strtoupper((string) ($part->subtype ?? ''));
-            if ($type === 0 && $subtype === 'PLAIN') {
-                $body = imap_fetchbody($inbox, $uid, (string) ($index + 1));
-                if ((int) ($part->encoding ?? 0) === 3) {
-                    $body = base64_decode($body) ?: $body;
-                } elseif ((int) ($part->encoding ?? 0) === 4) {
-                    $body = quoted_printable_decode($body);
-                }
 
-                return (string) $body;
+            // Multipart — recurse into children (paths like 1.1 / 1.2).
+            if ($type === 1 || ! empty($part->parts)) {
+                $nested = $this->collectTextParts($inbox, $msgNo, $part, $section, $useUid);
+                if ($plain === '' && $nested['plain'] !== '') {
+                    $plain = $nested['plain'];
+                }
+                if ($html === '' && $nested['html'] !== '') {
+                    $html = $nested['html'];
+                }
+                continue;
+            }
+
+            if ($type !== 0) {
+                continue;
+            }
+
+            $body = $this->fetchDecodedPart($inbox, $msgNo, $section, $part, $useUid);
+            if ($subtype === 'PLAIN' && $plain === '') {
+                $plain = $body;
+            } elseif ($subtype === 'HTML' && $html === '') {
+                $html = $body;
             }
         }
 
-        foreach ($structure->parts as $index => $part) {
-            $type = (int) ($part->type ?? 0);
-            $subtype = strtoupper((string) ($part->subtype ?? ''));
-            if ($type === 0 && $subtype === 'HTML') {
-                $body = imap_fetchbody($inbox, $uid, (string) ($index + 1));
-                if ((int) ($part->encoding ?? 0) === 3) {
-                    $body = base64_decode($body) ?: $body;
-                } elseif ((int) ($part->encoding ?? 0) === 4) {
-                    $body = quoted_printable_decode($body);
-                }
+        return ['plain' => $plain, 'html' => $html];
+    }
 
-                return $this->stripHtml((string) $body);
+    protected function fetchDecodedPart($inbox, int $msgNo, string $section, $part, bool $useUid): string
+    {
+        $flags = ($useUid ? FT_UID : 0) | FT_PEEK;
+        $body = (string) @imap_fetchbody($inbox, $msgNo, $section, $flags);
+        $encoding = (int) ($part->encoding ?? 0);
+        if ($encoding === 3) {
+            $decoded = base64_decode($body, true);
+            $body = $decoded !== false ? $decoded : $body;
+        } elseif ($encoding === 4) {
+            $body = quoted_printable_decode($body);
+        }
+
+        return $this->decodePartCharset($body, $part);
+    }
+
+    protected function decodePartCharset(string $text, $part): string
+    {
+        $charset = null;
+        foreach (array_merge($part->parameters ?? [], $part->dparameters ?? []) as $param) {
+            if (strtoupper((string) ($param->attribute ?? '')) === 'CHARSET') {
+                $charset = (string) ($param->value ?? '');
+                break;
             }
         }
 
-        return $this->stripHtml((string) imap_body($inbox, $uid));
+        if ($charset && strtoupper($charset) !== 'UTF-8' && strtoupper($charset) !== 'UTF8') {
+            $converted = @iconv($charset, 'UTF-8//IGNORE', $text);
+            if (is_string($converted) && $converted !== '') {
+                return $converted;
+            }
+            $converted = @mb_convert_encoding($text, 'UTF-8', $charset);
+            if (is_string($converted) && $converted !== '') {
+                return $converted;
+            }
+        }
+
+        return $this->ensureUtf8($text);
+    }
+
+    protected function ensureUtf8(string $text): string
+    {
+        if ($text === '') {
+            return '';
+        }
+        if (mb_check_encoding($text, 'UTF-8')) {
+            return $text;
+        }
+        $converted = @mb_convert_encoding($text, 'UTF-8', 'UTF-8, ISO-8859-1, Windows-1252, ASCII');
+        if (is_string($converted) && $converted !== '') {
+            return $converted;
+        }
+        $converted = @iconv('UTF-8', 'UTF-8//IGNORE', $text);
+
+        return is_string($converted) ? $converted : $text;
     }
 
     protected function stripHtml(string $html): string

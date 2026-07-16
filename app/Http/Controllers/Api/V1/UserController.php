@@ -91,7 +91,12 @@ class UserController extends BaseResourceController
         } else {
             unset($data['must_change_password']);
         }
-        $model = User::create($data);
+        try {
+            $model = User::create($data);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            app(UsernameValidator::class)->rethrowIfDuplicateUsername($e);
+            throw $e;
+        }
 
         return response()->json($model, 201);
     }
@@ -183,7 +188,12 @@ class UserController extends BaseResourceController
             app(UserLoginService::class)->assertCanEnableLogin($model);
         }
         $deactivate = array_key_exists('is_active', $data) && ! $data['is_active'];
-        $model->update($data);
+        try {
+            $model->update($data);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            app(UsernameValidator::class)->rethrowIfDuplicateUsername($e);
+            throw $e;
+        }
         if ($deactivate) {
             $model = app(UserLoginService::class)->disableLogin($model);
         }
@@ -274,16 +284,21 @@ class UserController extends BaseResourceController
             ]);
         }
 
-        $membership = UserMembership::create([
-            'user_id' => $source->id,
-            'organization_id' => $data['organization_id'],
-            'branch_id' => $data['branch_id'] ?? null,
-            'role_id' => $data['role_id'],
-            'username' => $data['username'],
-            'access_scope' => $data['access_scope'],
-            'is_admin' => (bool) ($data['is_admin'] ?? false),
-            'is_active' => true,
-        ]);
+        try {
+            $membership = UserMembership::create([
+                'user_id' => $source->id,
+                'organization_id' => $data['organization_id'],
+                'branch_id' => $data['branch_id'] ?? null,
+                'role_id' => $data['role_id'],
+                'username' => $data['username'],
+                'access_scope' => $data['access_scope'],
+                'is_admin' => (bool) ($data['is_admin'] ?? false),
+                'is_active' => true,
+            ]);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            app(UsernameValidator::class)->rethrowIfDuplicateUsername($e);
+            throw $e;
+        }
 
         return response()->json($membership->load('organization', 'branch', 'role'), 201);
     }

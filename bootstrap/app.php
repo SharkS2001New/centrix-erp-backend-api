@@ -88,6 +88,28 @@ return Application::configure(basePath: dirname(__DIR__))
                 return response()->json(['message' => 'Unauthenticated.'], 401);
             }
         });
+        $exceptions->renderable(function (\Illuminate\Database\UniqueConstraintViolationException $e, Request $request) {
+            if (! $request->is('api/*') || ! $request->expectsJson()) {
+                return null;
+            }
+
+            $detail = $e->getMessage();
+            if (str_contains($detail, 'uq_org_username')
+                || (str_contains($detail, 'Duplicate entry')
+                    && str_contains($detail, 'username')
+                    && str_contains($detail, 'users'))) {
+                $message = \App\Services\Auth\UsernameValidator::DUPLICATE_MESSAGE;
+
+                return response()->json([
+                    'message' => $message,
+                    'errors' => [
+                        'username' => [$message],
+                    ],
+                ], 422);
+            }
+
+            return null;
+        });
         $exceptions->renderable(function (\Throwable $e, Request $request) {
             if (! $request->is('api/*') || ! $request->expectsJson()) {
                 return null;
@@ -95,7 +117,10 @@ return Application::configure(basePath: dirname(__DIR__))
 
             if ($e instanceof AuthenticationException
                 || $e instanceof \Illuminate\Validation\ValidationException
-                || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                || $e instanceof \Illuminate\Http\Exceptions\HttpResponseException
+                || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
+                || $e instanceof \App\Exceptions\MissingProductWeightsException
+                || $e instanceof \InvalidArgumentException) {
                 return null;
             }
 
@@ -156,6 +181,8 @@ return Application::configure(basePath: dirname(__DIR__))
 
             if ($e instanceof AuthenticationException
                 || $e instanceof \Illuminate\Validation\ValidationException
+                || $e instanceof \Illuminate\Http\Exceptions\HttpResponseException
+                || $e instanceof \Illuminate\Database\UniqueConstraintViolationException
                 || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
                 || $e instanceof \App\Exceptions\MissingProductWeightsException
                 || $e instanceof \InvalidArgumentException) {
