@@ -179,4 +179,45 @@ class RolePermissionTest extends TestCase
         $this->assertTrue($groups->contains('customers'));
         $this->assertTrue($groups->contains('purchasing'));
     }
+
+    public function test_platform_admin_acting_as_still_sees_admin_permissions_when_admin_module_disabled(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+        PermissionMatrixService::ensure();
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'NOADMIN',
+            'org_name' => 'No Admin Module Org',
+            'org_email' => 'noadmin@org.com',
+            'primary_tel' => '0711000088',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+            'enabled_modules' => [
+                'sales' => true,
+                'sales.backend' => true,
+                'inventory' => true,
+                'customers_suppliers' => true,
+                'admin' => false,
+            ],
+            'admin_username' => 'noadmin_user',
+            'admin_email' => 'noadmin@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'No Admin User',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+
+        $matrix = $this->getJson("/api/v1/admin/organizations/{$orgId}/roles/permissions/matrix")
+            ->assertOk();
+
+        $groups = collect($matrix->json('groups'))->pluck('module');
+        $applications = collect($matrix->json('applications'))->pluck('id');
+
+        $this->assertTrue($groups->contains('admin'), 'Administration permissions must remain visible while acting as');
+        $this->assertTrue($applications->contains('admin'));
+        $this->assertTrue($groups->contains('sales'));
+    }
 }

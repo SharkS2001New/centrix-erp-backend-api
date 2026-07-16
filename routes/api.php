@@ -591,8 +591,8 @@ Route::prefix('v1')->group(function () {
             Route::delete('organizations/{organization}/logo', [OrganizationController::class, 'deleteLogo'])
                 ->middleware(['erp.permission:admin.company.edit|admin.manage']);
             Route::apiResource('branches', BranchController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:admin.view|fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
+                ->only(['store', 'update', 'destroy'])
+                ->middleware(['erp.permission:admin.manage']);
             Route::get('roles/permissions/matrix', [RoleController::class, 'permissionMatrix'])
                 ->middleware('erp.permission:admin.view');
             Route::get('roles/{role}/permissions', [RoleController::class, 'permissions'])
@@ -615,6 +615,14 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('kra-responses', KraResponseController::class)
                 ->middleware('erp.permission:admin.view');
         });
+
+        // List/show branches for operational screens (stock, POS, sales) — not admin-module-only.
+        Route::apiResource('branches', BranchController::class)
+            ->only(['index', 'show'])
+            ->middleware([
+                'erp.module:admin,sales,inventory,payments,accounting,distribution,customers_suppliers,hr_payroll,purchasing',
+                'erp.permission:admin.view|fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|sales.orders.view|inventory.view|inventory.stock.view|accounting.view|reports.view|pos.checkout.create|pos.terminal.view|catalogue.view|purchasing.view|driver.mobile',
+            ]);
 
         // List/show for checkout, collect-payment, drivers — not admin-module-only.
         Route::apiResource('payment-methods', PaymentMethodController::class)
@@ -648,16 +656,16 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware(['erp.module:inventory'])->group(function () {
             Route::apiResource('vats', VatController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view|inventory.view|inventory.stock.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('uoms', UomController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view|inventory.view|inventory.stock.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('categories', CategoryController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|inventory.stock.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('sub-categories', SubCategoryController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|inventory.stock.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::post('vats/import-batch', [VatImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
@@ -668,26 +676,26 @@ Route::prefix('v1')->group(function () {
             Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::get('products/catalog-summary', [ProductController::class, 'catalogSummary'])
-                ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
+                ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view|inventory.view|inventory.stock.view']);
             Route::get('products/group-counts', [ProductController::class, 'groupCounts'])
-                ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
+                ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view|inventory.view|inventory.stock.view']);
             Route::post('products/import-batch', [ProductImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::post('retail-package-settings/import-batch', [RetailPackageImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view|inventory.view|inventory.stock.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('retail-package-settings', RetailPackageSettingController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view|inventory.view|inventory.stock.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('price-history', PriceHistoryController::class)
-                ->middleware('erp.permission:catalogue.view');
+                ->middleware('erp.permission:catalogue.view|inventory.view|inventory.stock.view');
             Route::apiResource('current-stock', CurrentStockController::class)
                 ->only(['index', 'show'])
-                ->middleware('erp.permission:inventory.view');
+                ->middleware('erp.permission:inventory.view|inventory.stock.view');
             Route::apiResource('inventory-transactions', InventoryTransactionController::class)
-                ->middleware('erp.permission:inventory.view');
+                ->middleware('erp.permission:inventory.view|inventory.movements.view');
             Route::apiResource('damages', DamageController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage|inventory.damages.create']);
@@ -755,8 +763,6 @@ Route::prefix('v1')->group(function () {
         });
 
         Route::middleware(['erp.module:customers_suppliers'])->group(function () {
-            Route::get('branches', [BranchController::class, 'index'])
-                ->middleware('erp.permission:fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view|admin.view');
             Route::get('supplier-payments', [SupplierPaymentController::class, 'index'])
                 ->middleware('erp.permission:purchasing.view');
 

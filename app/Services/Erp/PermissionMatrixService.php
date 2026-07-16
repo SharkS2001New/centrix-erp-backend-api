@@ -121,8 +121,19 @@ class PermissionMatrixService
         return config('permission_module_map', []);
     }
 
-    public static function isRegistryModuleEnabled(string $registryModule, CapabilityGate $gate): bool
-    {
+    /**
+     * @param  bool  $includeAdminWhenDisabled  When true (platform admin acting as tenant), keep
+     *                                          Administration permissions visible even if the tenant
+     *                                          has the Administration workspace disabled.
+     */
+    public static function isRegistryModuleEnabled(
+        string $registryModule,
+        CapabilityGate $gate,
+        bool $includeAdminWhenDisabled = false,
+    ): bool {
+        if ($includeAdminWhenDisabled && $registryModule === 'admin') {
+            return true;
+        }
         if ($registryModule === 'ai') {
             return $gate->aiPlatformEnabled();
         }
@@ -148,13 +159,17 @@ class PermissionMatrixService
     }
 
     /** @return list<int> Permission ids whose registry module is enabled for the org. */
-    public static function enabledPermissionIds(CapabilityGate $gate): array
+    public static function enabledPermissionIds(CapabilityGate $gate, bool $includeAdminWhenDisabled = false): array
     {
         self::ensure();
 
         return Permission::query()
             ->get()
-            ->filter(fn (Permission $permission) => self::isRegistryModuleEnabled((string) $permission->module, $gate))
+            ->filter(fn (Permission $permission) => self::isRegistryModuleEnabled(
+                (string) $permission->module,
+                $gate,
+                $includeAdminWhenDisabled,
+            ))
             ->pluck('id')
             ->map(fn ($id) => (int) $id)
             ->values()
@@ -162,7 +177,7 @@ class PermissionMatrixService
     }
 
     /** @return list<array<string, mixed>> */
-    public static function groupedForUi(?CapabilityGate $gate = null): array
+    public static function groupedForUi(?CapabilityGate $gate = null, bool $includeAdminWhenDisabled = false): array
     {
         self::ensure();
 
@@ -170,7 +185,7 @@ class PermissionMatrixService
         $groups = [];
 
         foreach (config('permission_registry.groups', []) as $moduleKey => $groupDef) {
-            if ($gate !== null && ! self::isRegistryModuleEnabled($moduleKey, $gate)) {
+            if ($gate !== null && ! self::isRegistryModuleEnabled($moduleKey, $gate, $includeAdminWhenDisabled)) {
                 continue;
             }
             $features = [];
@@ -214,9 +229,9 @@ class PermissionMatrixService
     }
 
     /** @return list<array<string, mixed>> */
-    public static function applicationsGroupedForUi(?CapabilityGate $gate = null): array
+    public static function applicationsGroupedForUi(?CapabilityGate $gate = null, bool $includeAdminWhenDisabled = false): array
     {
-        $groupsByModule = collect(self::groupedForUi($gate))->keyBy('module');
+        $groupsByModule = collect(self::groupedForUi($gate, $includeAdminWhenDisabled))->keyBy('module');
         $applications = [];
 
         foreach (config('permission_applications.order', []) as $appId) {

@@ -350,9 +350,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('discount-summary', [ReportController::class, 'discountSummary']);
             Route::get('payment-collection', [ReportController::class, 'paymentCollection']);
             Route::get('credit-outstanding', [ReportController::class, 'creditOutstanding']);
-            Route::get('stock-on-hand', [ReportController::class, 'stockOnHand']);
-            Route::get('items-currently-in-stock', [ReportController::class, 'stockOnHand']);
-            Route::get('low-stock', [ReportController::class, 'lowStock']);
             Route::get('stock-movement', [ReportController::class, 'stockMovement']);
             Route::get('stock-chain', [ReportController::class, 'stockChain']);
             Route::get('stock-valuation', [ReportController::class, 'stockValuation']);
@@ -391,6 +388,13 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::post('sales/materialize', [LegacyArchiveController::class, 'materialize'])
                     ->middleware('erp.permission:sales.manage');
             });
+        });
+
+        // Inventory stock screens — allow inventory.stock.view (not only reports.view).
+        Route::middleware('erp.permission:reports.view|reports.stock_on_hand.view|inventory.view|inventory.stock.view')->group(function () {
+            Route::get('stock-on-hand', [ReportController::class, 'stockOnHand']);
+            Route::get('items-currently-in-stock', [ReportController::class, 'stockOnHand']);
+            Route::get('low-stock', [ReportController::class, 'lowStock']);
         });
 
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {

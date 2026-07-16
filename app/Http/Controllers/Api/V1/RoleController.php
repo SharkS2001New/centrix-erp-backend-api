@@ -56,8 +56,9 @@ class RoleController extends BaseResourceController
     {
         $role = $this->findRoleOrFail($request, $this->resolveResourceId($id, $nestedId));
         $gate = app(ErpContext::class)->gateForRequest($request);
+        $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
 
-        return response()->json($this->rolePermissionsPayload($role, $gate));
+        return response()->json($this->rolePermissionsPayload($role, $gate, $includeAdmin));
     }
 
     public function syncPermissions(Request $request, string $id, ?string $nestedId = null)
@@ -76,7 +77,8 @@ class RoleController extends BaseResourceController
             ->all();
 
         $gate = app(ErpContext::class)->gateForRequest($request);
-        $allowedIds = PermissionMatrixService::enabledPermissionIds($gate);
+        $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
+        $allowedIds = PermissionMatrixService::enabledPermissionIds($gate, $includeAdmin);
         $permissionIds = array_values(array_intersect($permissionIds, $allowedIds));
 
         DB::transaction(function () use ($role, $permissionIds) {
@@ -91,7 +93,7 @@ class RoleController extends BaseResourceController
 
         CapabilitiesCacheInvalidator::forRole($role->fresh());
 
-        return response()->json($this->rolePermissionsPayload($role, $gate));
+        return response()->json($this->rolePermissionsPayload($role, $gate, $includeAdmin));
     }
 
     public function permissionMatrix(Request $request)
@@ -99,18 +101,25 @@ class RoleController extends BaseResourceController
         PermissionMatrixService::ensure();
 
         $gate = app(ErpContext::class)->gateForRequest($request);
+        $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
         $permissions = Permission::query()->orderBy('module')->orderBy('permission_name')->get();
-        $allowedIds = collect(PermissionMatrixService::enabledPermissionIds($gate))->flip();
+        $allowedIds = collect(PermissionMatrixService::enabledPermissionIds($gate, $includeAdmin))->flip();
 
         return response()->json([
             'permissions' => $permissions
                 ->filter(fn (Permission $permission) => $allowedIds->has((int) $permission->id))
                 ->values(),
-            'applications' => PermissionMatrixService::applicationsGroupedForUi($gate),
-            'groups' => PermissionMatrixService::groupedForUi($gate),
+            'applications' => PermissionMatrixService::applicationsGroupedForUi($gate, $includeAdmin),
+            'groups' => PermissionMatrixService::groupedForUi($gate, $includeAdmin),
             'modules' => PermissionMatrixService::modules(),
             'actions' => PermissionMatrixService::actions(),
         ]);
+    }
+
+    /** Platform acting-as runs when Administration is off — still show admin.* in the matrix. */
+    private function includeAdminPermissionsWhenActing(Request $request): bool
+    {
+        return (bool) $request->attributes->get('acting_organization_id');
     }
 
     public function destroy(Request $request, string $id, ?string $nestedId = null)
@@ -150,8 +159,11 @@ class RoleController extends BaseResourceController
     }
 
     /** @return array{role_id: int, permission_ids: list<int>} */
-    private function rolePermissionsPayload(Role $role, ?\App\Services\Erp\CapabilityGate $gate = null): array
-    {
+    private function rolePermissionsPayload(
+        Role $role,
+        ?\App\Services\Erp\CapabilityGate $gate = null,
+        bool $includeAdminWhenDisabled = false,
+    ): array {
         $permissionIds = DB::table('role_permissions')
             ->where('role_id', $role->id)
             ->pluck('permission_id')
@@ -160,7 +172,7 @@ class RoleController extends BaseResourceController
             ->all();
 
         if ($gate !== null) {
-            $allowed = array_flip(PermissionMatrixService::enabledPermissionIds($gate));
+            $allowed = array_flip(PermissionMatrixService::enabledPermissionIds($gate, $includeAdminWhenDisabled));
             $permissionIds = array_values(array_filter(
                 $permissionIds,
                 fn (int $id) => isset($allowed[$id]),
