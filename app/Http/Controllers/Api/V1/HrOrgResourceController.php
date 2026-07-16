@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 
 abstract class HrOrgResourceController extends Controller
 {
+    use FindsOrganizationEmployee;
+
     abstract protected function modelClass(): string;
 
     /** @return list<string> */
@@ -23,10 +26,20 @@ abstract class HrOrgResourceController extends Controller
         $query = ($this->modelClass())::query();
 
         if ($orgId = $request->user()?->organization_id) {
-            $query->where('organization_id', $orgId);
+            if (in_array('organization_id', (new ($this->modelClass()))->getFillable(), true)) {
+                $query->where('organization_id', $orgId);
+            }
+        }
+
+        if ($request->user() && in_array('branch_id', (new ($this->modelClass()))->getFillable(), true)) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($query, $request->user(), $request);
         }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'branch_id') {
+                continue;
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
             }
@@ -44,7 +57,8 @@ abstract class HrOrgResourceController extends Controller
     public function store(Request $request)
     {
         $data = $this->validated($request);
-        if ($request->user()?->organization_id && empty($data['organization_id'])) {
+        if ($request->user()?->organization_id && empty($data['organization_id'])
+            && in_array('organization_id', (new ($this->modelClass()))->getFillable(), true)) {
             $data['organization_id'] = $request->user()->organization_id;
         }
         $model = ($this->modelClass())::create($data);

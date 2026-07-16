@@ -95,6 +95,12 @@ class ExpenseApprovalService
     }
 
     /** @param  array<string, mixed>  $data */
+    public function validateCreateDataForUser(User $user, array $data): void
+    {
+        $this->validateCreateData($user, $data);
+    }
+
+    /** @param  array<string, mixed>  $data */
     protected function validateCreateData(User $user, array $data): void
     {
         $branchId = (int) ($data['branch_id'] ?? 0);
@@ -124,6 +130,9 @@ class ExpenseApprovalService
 
         return DB::transaction(function () use ($data, $requester, $approver) {
             $data['recorded_by'] = $requester->id;
+            $data['organization_id'] = (int) (
+                \App\Support\OrganizationIdResolver::requireForBranch((int) $data['branch_id'])
+            );
             $expense = Expense::create($data);
             $gate = $this->erp->gateForUser($approver);
             app(ExpenseJournalService::class)->postIfEnabled($expense, $approver, $gate);

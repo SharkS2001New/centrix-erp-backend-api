@@ -15,6 +15,7 @@ class EmployeeOvertime extends Model
     protected $fillable = [
         'employee_id',
         'organization_id',
+        'branch_id',
         'work_date',
         'hours',
         'rate_mode',

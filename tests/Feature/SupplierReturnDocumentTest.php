@@ -44,7 +44,10 @@ class SupplierReturnDocumentTest extends TestCase
 
         $response->assertCreated()
             ->assertJsonPath('data.status', 'pending_approval')
-            ->assertJsonPath('data.supplier_id', $supplier->id);
+            ->assertJsonPath('data.supplier_id', $supplier->id)
+            ->assertJsonPath('data.organization_id', $admin->organization_id)
+            ->assertJsonPath('data.branch_id', $admin->branch_id)
+            ->assertJsonPath('data.document_no', 'SR-0001');
 
         $this->getJson('/api/v1/supplier-return-documents?supplier_id='.$supplier->id)
             ->assertOk()

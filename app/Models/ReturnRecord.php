@@ -11,7 +11,7 @@ class ReturnRecord extends Model
     protected $table = 'returns';
     public $timestamps = false;
     protected $fillable = [
-        'sale_id', 'branch_id', 'product_code', 'quantity', 'uom', 'amount', 'reason',
+        'organization_id', 'sale_id', 'branch_id', 'product_code', 'quantity', 'uom', 'amount', 'reason',
         'return_type', 'item_code', 'returned_by', 'is_mobile',
     ];
 }

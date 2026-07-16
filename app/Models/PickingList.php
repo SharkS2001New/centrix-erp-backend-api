@@ -9,6 +9,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class PickingList extends Model
 {
     protected $fillable = [
+        'organization_id',
         'branch_id',
         'trip_id',
         'route_id',

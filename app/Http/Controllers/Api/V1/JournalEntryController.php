@@ -20,7 +20,12 @@ class JournalEntryController extends BaseResourceController
         $query = JournalEntry::query()
             ->where('organization_id', $request->user()->organization_id);
 
+        $this->access()->applyBranchListFilter($query, $request->user(), $request);
+
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'branch_id') {
+                continue; // already applied via applyBranchListFilter
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
             }

@@ -98,6 +98,10 @@ class DamageApprovalService
         return DB::transaction(function () use ($data, $requester, $allowBelowStock, $approver, $request) {
             $damage = Damage::create([
                 ...$data,
+                'organization_id' => (int) (
+                    $data['organization_id']
+                    ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $data['branch_id'])
+                ),
                 'reported_by' => $requester->id,
             ]);
 

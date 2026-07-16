@@ -37,6 +37,7 @@ class StockTakeBalanceTest extends TestCase
         );
 
         $session = StockTakeSession::create([
+            'organization_id' => $this->user->organization_id,
             'branch_id' => $this->user->branch_id,
             'session_code' => 'ST-BAL-'.uniqid(),
             'status' => 'in_progress',

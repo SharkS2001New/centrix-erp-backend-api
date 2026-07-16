@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class RouteSchedule extends Model
 {
     protected $fillable = [
+        'organization_id',
         'branch_id',
         'route_id',
         'day_of_week',

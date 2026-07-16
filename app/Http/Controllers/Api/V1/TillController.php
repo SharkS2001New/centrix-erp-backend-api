@@ -84,6 +84,13 @@ class TillController extends BaseResourceController
         $user = $request->user();
         if ($user) {
             $this->access()->assertBranchAccess($user, $branchId);
+            $this->access()->assertBranchInOrganization($user, $branchId, $request);
+            $orgId = $this->access()->organizationId($user, $request);
+            if ($orgId) {
+                $data['organization_id'] = $orgId;
+            } else {
+                $data['organization_id'] = \App\Support\OrganizationIdResolver::requireForBranch($branchId);
+            }
         }
 
         $label = $this->suggestNextTillLabel($branchId);

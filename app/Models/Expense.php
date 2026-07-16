@@ -12,6 +12,7 @@ class Expense extends Model
     protected $table = 'expenses';
 
     protected $fillable = [
+        'organization_id',
         'branch_id',
         'expense_group_id',
         'float_session_id',

@@ -20,6 +20,11 @@ class EmployeeAllowanceController extends HrOrgResourceController
             $query->where('organization_id', $orgId);
         }
 
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($query, $request->user(), $request);
+        }
+
         if ($empId = $request->input('employee_id')) {
             $query->where('employee_id', $empId);
         }
@@ -32,8 +37,9 @@ class EmployeeAllowanceController extends HrOrgResourceController
     public function store(\Illuminate\Http\Request $request)
     {
         $data = $this->validated($request);
-        $employee = Employee::findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id'], $request);
         $data['organization_id'] = $data['organization_id'] ?? $employee->organization_id;
+        $data['branch_id'] = $data['branch_id'] ?? $employee->branch_id;
 
         return response()->json(
             EmployeeAllowance::create($data)->load('employee'),

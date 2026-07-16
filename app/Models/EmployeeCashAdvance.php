@@ -15,6 +15,7 @@ class EmployeeCashAdvance extends Model
     protected $fillable = [
         'employee_id',
         'organization_id',
+        'branch_id',
         'advance_date',
         'amount',
         'balance',

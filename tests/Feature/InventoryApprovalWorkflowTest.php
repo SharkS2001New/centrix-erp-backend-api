@@ -82,6 +82,7 @@ class InventoryApprovalWorkflowTest extends TestCase
         $product = Product::query()->firstOrFail();
 
         $session = StockTakeSession::create([
+            'organization_id' => $clerk->organization_id,
             'branch_id' => $clerk->branch_id,
             'session_code' => 'ST-APPR-'.uniqid(),
             'status' => 'in_progress',

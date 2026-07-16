@@ -16,6 +16,14 @@ class ApplicationProvisioner
     ];
 
     /** @var list<string> */
+    protected const HOSPITALITY_CHILDREN = [
+        'hospitality.bar_pos',
+        'hospitality.backend',
+        'hospitality.dashboard',
+        'hospitality.reports',
+    ];
+
+    /** @var list<string> */
     protected const DISTRIBUTION_MODULE_KEYS = [
         'distribution',
         'distribution.dashboard',
@@ -85,6 +93,21 @@ class ApplicationProvisioner
             $modules = $this->applyDomainDisableRules($modules, $this->disablePatch('backoffice'));
         }
 
+        if ($applications['hotel_bar_pos']) {
+            $modules = $this->mergeModulePatch($modules, $this->enablePatch('hotel_bar_pos'));
+        } elseif ($applications['hospitality_backoffice']) {
+            $modules = $this->mergeModulePatch($modules, $this->enablePatch('hospitality_backoffice'));
+        }
+
+        if (! $applications['hotel_bar_pos']) {
+            $modules = $this->mergeModulePatch($modules, $this->disablePatch('hotel_bar_pos'));
+        }
+
+        if (! $applications['hospitality_backoffice'] && ! $applications['hotel_bar_pos']) {
+            $modules = $this->mergeModulePatch($modules, $this->disablePatch('hospitality_backoffice'));
+            $modules = $this->applyDomainDisableRules($modules, $this->disablePatch('hospitality_backoffice'));
+        }
+
         foreach (['distribution', 'accounting', 'hr', 'admin'] as $id) {
             if ($applications[$id]) {
                 $modules = $this->mergeModulePatch($modules, $this->enablePatch($id));
@@ -95,6 +118,7 @@ class ApplicationProvisioner
         }
 
         $modules = $this->syncSalesDomain($modules);
+        $modules = $this->syncHospitalityDomain($modules);
 
         $distributionPatch = $applications['distribution']
             ? ['distribution' => true]
@@ -163,6 +187,9 @@ class ApplicationProvisioner
             'backoffice' => (bool) ($enabledModules['sales.backend'] ?? false)
                 || (bool) ($enabledModules['inventory'] ?? false)
                 || (bool) ($enabledModules['customers_suppliers'] ?? false),
+            'hotel_bar_pos' => (bool) ($enabledModules['hospitality.bar_pos'] ?? false),
+            'hospitality_backoffice' => (bool) ($enabledModules['hospitality.backend'] ?? false)
+                || (bool) ($enabledModules['hospitality.dashboard'] ?? false),
             'distribution' => (bool) ($enabledModules['distribution'] ?? false),
             'accounting' => (bool) ($enabledModules['accounting'] ?? false)
                 || (bool) ($enabledModules['payments'] ?? false),
@@ -208,6 +235,21 @@ class ApplicationProvisioner
                 'customers_suppliers' => true,
                 'customers_suppliers.reports' => true,
             ],
+            // Hotel POS enables hospitality backoffice + shared inventory (products/stock only).
+            // Does NOT enable sales.pos / temporary_carts / sales tables.
+            'hotel_bar_pos' => array_merge(
+                [
+                    'hospitality' => true,
+                    'hospitality.bar_pos' => true,
+                ],
+                $this->enablePatch('hospitality_backoffice'),
+            ),
+            'hospitality_backoffice' => [
+                'hospitality' => true,
+                'hospitality.backend' => true,
+                'hospitality.dashboard' => true,
+                'hospitality.reports' => true,
+            ],
             'distribution' => [
                 'distribution' => true,
                 'distribution.dashboard' => true,
@@ -244,6 +286,13 @@ class ApplicationProvisioner
                 'customers_suppliers' => false,
                 'customers_suppliers.dashboard' => false,
                 'customers_suppliers.reports' => false,
+            ],
+            'hotel_bar_pos' => ['hospitality.bar_pos' => false],
+            'hospitality_backoffice' => [
+                'hospitality' => false,
+                'hospitality.backend' => false,
+                'hospitality.dashboard' => false,
+                'hospitality.reports' => false,
             ],
             'distribution' => [
                 'distribution' => false,
@@ -331,6 +380,15 @@ class ApplicationProvisioner
     protected function syncSalesDomain(array $modules): array
     {
         $modules['sales'] = collect(self::SALES_CHILDREN)
+            ->contains(fn (string $key) => (bool) ($modules[$key] ?? false));
+
+        return $modules;
+    }
+
+    /** @param  array<string, bool>  $modules */
+    protected function syncHospitalityDomain(array $modules): array
+    {
+        $modules['hospitality'] = collect(self::HOSPITALITY_CHILDREN)
             ->contains(fn (string $key) => (bool) ($modules[$key] ?? false));
 
         return $modules;

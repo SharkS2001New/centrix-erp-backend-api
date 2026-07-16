@@ -3,15 +3,18 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Models\Employee;
 use App\Models\EmployeeEmergencyContact;
 use Illuminate\Http\Request;
 
 class EmployeeEmergencyContactController extends Controller
 {
+    use FindsOrganizationEmployee;
+
     public function index(int $employee)
     {
-        Employee::findOrFail($employee);
+        $this->findOrgEmployee($employee);
 
         return response()->json(
             EmployeeEmergencyContact::where('employee_id', $employee)->orderByDesc('is_primary')->get()
@@ -20,7 +23,7 @@ class EmployeeEmergencyContactController extends Controller
 
     public function store(Request $request, int $employee)
     {
-        Employee::findOrFail($employee);
+        $this->findOrgEmployee($employee);
         $data = $request->validate([
             'full_name' => 'required|string|max:200',
             'relationship' => 'nullable|string|max:100',

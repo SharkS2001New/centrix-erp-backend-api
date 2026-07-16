@@ -10,7 +10,7 @@ class Till extends Model
 
     protected $table = 'tills';
     protected $fillable = [
-        'branch_id', 'till_number', 'till_name', 'description', 'is_active',
+        'organization_id', 'branch_id', 'till_number', 'till_name', 'description', 'is_active',
         'ip_address', 'cashier_id',
     ];
     protected $casts = ['is_active' => 'boolean'];

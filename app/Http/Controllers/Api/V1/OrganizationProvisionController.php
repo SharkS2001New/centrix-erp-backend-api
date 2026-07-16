@@ -19,6 +19,7 @@ use App\Services\Auth\UserDeletionService;
 use App\Services\Auth\UsernameValidator;
 use App\Services\Erp\ModuleRegistry;
 use App\Services\Erp\ApplicationProvisioner;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Ai\AiSettingsResolver;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
@@ -51,10 +52,13 @@ class OrganizationProvisionController extends Controller
         $data = $organizations->map(function (Organization $org) {
             $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
             $effectiveModules = $gate->allModules();
+            $industry = IndustryRegistry::summaryForOrganization($org->deployment_profile);
 
             return array_merge($org->only([
                 'id', 'company_code', 'org_name', 'org_email', 'deployment_profile', 'is_active', 'created_at',
             ]), [
+                'industry' => $industry['id'],
+                'industry_label' => $industry['label'],
                 'administration_enabled' => (bool) ($effectiveModules['admin'] ?? false),
             ]);
         });
@@ -72,12 +76,17 @@ class OrganizationProvisionController extends Controller
             ->map(fn (array $profile, string $key) => [
                 'key' => $key,
                 'label' => $profile['label'] ?? $key,
+                'industry' => $profile['industry'] ?? IndustryRegistry::industryForProfile($key),
                 'modules' => $profile['modules'] ?? [],
                 'applications' => $this->applications->applicationsFromProfileModules($profile['modules'] ?? []),
+                'application_ids' => array_key_exists('application_ids', $profile)
+                    ? $profile['application_ids']
+                    : ApplicationProvisioner::ids(),
             ])
             ->values();
 
         return response()->json([
+            'industries' => IndustryRegistry::optionsPayload(),
             'applications' => $this->applications->optionsPayload(),
             'profiles' => $tenantProfiles,
             'modules' => collect(ModuleRegistry::optionsPayload())->values(),
@@ -86,8 +95,9 @@ class OrganizationProvisionController extends Controller
                 ->orderBy('name')
                 ->get(['id', 'name', 'description', 'deployment_profile', 'enabled_modules', 'sales_platform']),
             'notes' => [
-                'applications' => 'Enable or disable the six tenant applications (External ERP, Backoffice, Accounting, Human Resources, Distribution, Administration). The API stores the underlying module keys automatically.',
-                'custom_profile' => 'Choose Custom setup to start from a blank module map and enable only the applications you need.',
+                'industry' => 'Select industry first (Retail & Distribution vs Hotel & Hospitality). Applications and roles follow that industry.',
+                'applications' => 'Enable or disable tenant applications for this setup type. Hotel & Hospitality only exposes Hotel & Bar POS and Hospitality Backoffice.',
+                'custom_profile' => 'Within Retail & Distribution, Custom setup starts from a blank module map.',
                 'sales_platform' => 'Checkout vs save order, order workflow, and stock timing are configured by the platform super admin — not the organization manager.',
                 'org_settings' => 'Organization managers configure day-to-day preferences (payment fields, receipts, SMTP, M-Pesa, etc.) under Administration → Organization settings when Administration is enabled.',
                 'role_templates' => 'Recommended staff roles are seeded globally and suggested per profile when an organization is registered.',
@@ -498,9 +508,13 @@ class OrganizationProvisionController extends Controller
     protected function organizationPayload(Organization $org): array
     {
         $gate = app(\App\Services\Erp\CapabilityGate::class)->forOrganization($org);
+        $industry = IndustryRegistry::summaryForOrganization($org->deployment_profile);
 
         return [
-            'organization' => $org->toProfileArray(),
+            'organization' => array_merge($org->toProfileArray(), [
+                'industry' => $industry['id'],
+                'industry_label' => $industry['label'],
+            ]),
             'applications' => $this->applications->applicationsFromEnabledModules($gate->allModules()),
             'effective_modules' => $gate->allModules(),
             'capabilities' => array_merge([
@@ -518,6 +532,8 @@ class OrganizationProvisionController extends Controller
                 'platform_advanced_data_import_enabled' => $gate->advancedDataImportPlatformEnabled(),
                 'platform_tab_workspace_enabled' => $gate->tabWorkspacePlatformEnabled(),
                 'ai_assistant' => AiSettingsResolver::clientCapabilities($gate),
+                'industry' => $industry['id'],
+                'industry_label' => $industry['label'],
             ]),
             'sales_platform' => $this->platformConfig->salesPlatformConfigForOrganization($org),
         ];

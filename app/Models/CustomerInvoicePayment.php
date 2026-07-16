@@ -14,7 +14,7 @@ class CustomerInvoicePayment extends Model
     protected $fillable = [
         'customer_invoice_id', 'customer_num', 'payment_method_id', 'amount_paid',
         'amount_due_snapshot', 'cheque_number', 'reference_number', 'date_paid',
-        'received_by', 'organization_id', 'notes',
+        'received_by', 'organization_id', 'branch_id', 'notes',
     ];
 
     public function customerInvoice()

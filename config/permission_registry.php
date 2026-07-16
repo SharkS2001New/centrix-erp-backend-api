@@ -15,6 +15,14 @@ return [
                     'label' => 'Business summary',
                     'actions' => ['view'],
                 ],
+                'sales' => [
+                    'label' => 'Sales analytics',
+                    'actions' => ['view'],
+                ],
+                'inventory' => [
+                    'label' => 'Inventory analytics',
+                    'actions' => ['view'],
+                ],
             ],
         ],
         'catalogue' => [
@@ -38,7 +46,6 @@ return [
         'sales' => [
             'label' => 'Sales & orders',
             'features' => [
-                'dashboard' => ['label' => 'Sales analytics', 'actions' => ['view']],
                 'orders' => ['label' => 'Order actions', 'actions' => ['view', 'create', 'edit', 'delete', 'approve']],
                 'discounts' => ['label' => 'Discounts', 'actions' => ['give']],
                 ...\App\Support\SalesOrderQueuePermissions::registryFeatures(),
@@ -92,6 +99,30 @@ return [
                 'checkout' => ['label' => 'Create order', 'actions' => ['create']],
                 'till_management' => ['label' => 'Till management', 'actions' => ['view', 'create', 'edit']],
                 'end_of_day' => ['label' => 'End of day report', 'actions' => ['view']],
+            ],
+        ],
+        'hotel_bar_pos' => [
+            'label' => 'Hotel & Bar POS',
+            'features' => [
+                'terminal' => ['label' => 'Hotel & Bar terminal', 'actions' => ['view']],
+                'checks' => ['label' => 'Open / close checks', 'actions' => ['view', 'create', 'edit']],
+                'room_charge' => ['label' => 'Post to guest folio', 'actions' => ['create']],
+                'shift' => ['label' => 'Shift close', 'actions' => ['view', 'create']],
+            ],
+        ],
+        'hospitality' => [
+            'label' => 'Hospitality Backoffice',
+            'features' => [
+                'dashboard' => ['label' => 'Hospitality dashboard', 'actions' => ['view']],
+                'outlets' => ['label' => 'Outlets & floor', 'actions' => ['view', 'create', 'edit']],
+                'rooms' => ['label' => 'Rooms & rate plans', 'actions' => ['view', 'create', 'edit']],
+                'reservations' => ['label' => 'Reservations', 'actions' => ['view', 'create', 'edit']],
+                'frontdesk' => ['label' => 'Front desk', 'actions' => ['view', 'edit']],
+                'folios' => ['label' => 'Guest folios', 'actions' => ['view', 'create', 'edit']],
+                'housekeeping' => ['label' => 'Housekeeping', 'actions' => ['view', 'edit']],
+                'night_audit' => ['label' => 'Night audit', 'actions' => ['view', 'create']],
+                'reports' => ['label' => 'Hospitality reports', 'actions' => ['view']],
+                'settings' => ['label' => 'Hospitality settings', 'actions' => ['view', 'edit']],
             ],
         ],
         'payments' => [

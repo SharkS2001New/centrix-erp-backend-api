@@ -217,6 +217,7 @@ class CustomerReturnService
                 ]);
 
                 $legacy = ReturnRecord::create([
+                    'organization_id' => (int) $return->organization_id,
                     'sale_id' => $return->sale_id,
                     'branch_id' => $return->branch_id,
                     'product_code' => $line->product_code,

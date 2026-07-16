@@ -12,6 +12,7 @@ class Vehicle extends Model
     public $timestamps = false;
 
     protected $fillable = [
+        'organization_id',
         'branch_id',
         'vehicle_code',
         'vehicle_name',

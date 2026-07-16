@@ -26,7 +26,7 @@ class DamageController extends BaseResourceController
     protected function baseQuery(Request $request)
     {
         return parent::baseQuery($request)
-            ->with(['product:product_code,product_name,unit_id']);
+            ->with(['product:product_code,product_name,unit_id,organization_id']);
     }
 
     public function store(Request $request)
@@ -55,6 +55,10 @@ class DamageController extends BaseResourceController
             return DB::transaction(function () use ($data, $user, $request) {
                 $damage = Damage::create([
                     ...$data,
+                    'organization_id' => (int) (
+                        $data['organization_id']
+                        ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $data['branch_id'])
+                    ),
                     'reported_by' => $user->id,
                 ]);
 

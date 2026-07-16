@@ -24,7 +24,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
             'employee_id' => 'required|integer|exists:employees,id',
             'attendance_date' => 'required|date',
         ]);
-        $employee = Employee::with('shift')->findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id'], $request)->load('shift');
         $eval = app(AttendanceDayPolicy::class)->evaluate($employee, $data['attendance_date']);
         $existing = EmployeeAttendance::query()
             ->where('employee_id', $data['employee_id'])
@@ -50,7 +50,15 @@ class EmployeeAttendanceController extends HrOrgResourceController
             $query->where('organization_id', $orgId);
         }
 
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($query, $request->user(), $request);
+        }
+
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'branch_id') {
+                continue;
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
             }
@@ -65,7 +73,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
     {
         $request->merge(AttendanceTime::normalizePayload($request->all()));
         $data = $this->applyHours($this->validated($request));
-        $employee = Employee::with('shift')->findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id'], $request)->load('shift');
         $data = $this->applyDayPolicy($employee, $data);
         $data['organization_id'] = $data['organization_id'] ?? $employee->organization_id;
         if (empty($data['branch_id'])) {
@@ -90,7 +98,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'attendance record');
         $request->merge(AttendanceTime::normalizePayload($request->all()));
         $data = $this->applyHours($this->validated($request, updating: true));
-        $employee = Employee::with('shift')->findOrFail($data['employee_id'] ?? $row->employee_id);
+        $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id, $request)->load('shift');
         $data['attendance_date'] = $data['attendance_date'] ?? $row->attendance_date->format('Y-m-d');
         $this->assertUniqueAttendanceDate(
             (int) ($data['employee_id'] ?? $row->employee_id),

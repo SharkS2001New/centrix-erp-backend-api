@@ -28,6 +28,11 @@ class EmployeeLeaveDayController extends HrOrgResourceController
             $query->where('organization_id', $orgId);
         }
 
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($query, $request->user(), $request);
+        }
+
         if ($empId = $request->input('employee_id')) {
             $query->where('employee_id', $empId);
         }
@@ -71,11 +76,7 @@ class EmployeeLeaveDayController extends HrOrgResourceController
     /** GET /employees/{employee}/leave-balances */
     public function balances(string $employeeId)
     {
-        $employee = Employee::findOrFail($employeeId);
-        $orgId = request()->user()?->organization_id;
-        if ($orgId && (int) $employee->organization_id !== (int) $orgId) {
-            return response()->json(['message' => 'Employee not in your organization.'], 403);
-        }
+        $employee = $this->findOrgEmployee($employeeId);
 
         $service = app(LeaveBalanceService::class);
         $balance = \App\Models\EmployeeLeaveBalance::forEmployee($employee);
@@ -112,7 +113,7 @@ class EmployeeLeaveDayController extends HrOrgResourceController
             'except_leave_id' => 'nullable|integer|exists:employee_leave_days,id',
         ]);
 
-        $employee = Employee::findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id']);
         $deductFrom = $this->resolveDeductFrom($data);
         $exceptLeaveId = isset($data['except_leave_id']) ? (int) $data['except_leave_id'] : null;
 
@@ -151,8 +152,9 @@ class EmployeeLeaveDayController extends HrOrgResourceController
     public function store(Request $request)
     {
         $data = $this->validated($request);
-        $employee = Employee::findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id']);
         $data['organization_id'] = $employee->organization_id;
+        $data['branch_id'] = $employee->branch_id;
         $data = $this->applyTotals($employee, $data);
         $data = $this->applyDeductionMeta($data);
         $this->assertNoOverlap($employee->id, $data['start_date'], $data['end_date'], null);
@@ -212,7 +214,7 @@ class EmployeeLeaveDayController extends HrOrgResourceController
         $row = EmployeeLeaveDay::findOrFail($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'leave assignment');
         $data = $this->validated($request, updating: true);
-        $employee = Employee::findOrFail($data['employee_id'] ?? $row->employee_id);
+        $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id);
         $merged = array_merge($row->only([
             'employee_id', 'start_date', 'end_date', 'duration_type', 'half_day_period',
             'leave_type', 'assignment_kind', 'deduct_from', 'notes',

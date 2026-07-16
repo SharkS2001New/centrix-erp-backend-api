@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 class PodRecord extends Model
 {
     protected $fillable = [
+        'organization_id',
         'branch_id',
         'sale_id',
         'trip_id',

@@ -56,6 +56,14 @@ class RouteScheduleController extends BaseResourceController
         if (empty($data['branch_id'])) {
             $data['branch_id'] = $user->branch_id;
         }
+        if (! empty($data['branch_id'])) {
+            $this->access()->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
+        }
+        if ($orgId > 0) {
+            $data['organization_id'] = $orgId;
+        } elseif (! empty($data['branch_id'])) {
+            $data['organization_id'] = \App\Support\OrganizationIdResolver::requireForBranch((int) $data['branch_id']);
+        }
 
         $schedule = RouteSchedule::create($data);
 
@@ -105,7 +113,9 @@ class RouteScheduleController extends BaseResourceController
             ->where('is_active', true)
             ->where('day_of_week', $dayOfWeek);
 
+        $this->userAccess()->scopeOrganization($query, $user);
         if ($branchId) {
+            $this->userAccess()->assertBranchInOrganization($user, $branchId, $request);
             $query->where('branch_id', $branchId);
         }
         $this->userAccess()->scopeBranchIfLimited($query, $user);

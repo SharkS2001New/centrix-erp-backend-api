@@ -106,6 +106,7 @@ class SalePaymentAllocationService
                         'date_paid' => now()->toDateString(),
                         'received_by' => $payment['received_by'] ?? $user->id,
                         'organization_id' => $sale->organization_id,
+                        'branch_id' => $sale->branch_id ? (int) $sale->branch_id : null,
                         'reference_number' => $payment['reference_number'] ?? null,
                     ]);
                 }

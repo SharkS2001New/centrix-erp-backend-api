@@ -10,6 +10,7 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 class DispatchTrip extends Model
 {
     protected $fillable = [
+        'organization_id',
         'branch_id',
         'trip_code',
         'route_id',

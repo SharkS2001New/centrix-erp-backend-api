@@ -8,6 +8,12 @@ use App\Support\SalesOrderQueuePermissions;
 $salesOrderQueueViewAliases = SalesOrderQueuePermissions::allViewPermissionCodes();
 
 return [
+    'sales.dashboard.view' => [
+        'dashboard.sales.view',
+    ],
+    'dashboard.sales.view' => [
+        'sales.dashboard.view',
+    ],
     'sales.create' => [
         'sales.orders.create',
         'pos.checkout.create',
@@ -74,6 +80,7 @@ return [
             'sales.loading_sheets.view',
             'sales.field_attendance.view',
             'sales.legacy_orders.view',
+            'dashboard.sales.view',
         ],
     ),
     'payments.manage' => [
@@ -109,6 +116,7 @@ return [
         'inventory.adjustments.view',
         'inventory.stock_take.view',
         'mobile_sales.stock.view',
+        'dashboard.inventory.view',
     ],
     'inventory.manage' => [
         'inventory.receipts.create',

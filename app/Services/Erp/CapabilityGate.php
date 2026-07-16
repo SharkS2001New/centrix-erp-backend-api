@@ -623,6 +623,8 @@ class CapabilityGate
             'organization_id' => $this->organization?->id,
             'deployment_profile' => $profile,
             'profile_label' => $profileConfig['label'] ?? $profile,
+            'industry' => IndustryRegistry::industryForProfile($profile),
+            'industry_label' => IndustryRegistry::labelForProfile($profile),
             'distribution_ops_enabled' => $this->distributionOpsEnabled(),
             'product_shelf_location_enabled' => $this->productShelfLocationEnabled(),
             'driver_mobile_enabled' => $this->driverMobileEnabled(),

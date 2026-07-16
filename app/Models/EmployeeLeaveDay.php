@@ -15,6 +15,7 @@ class EmployeeLeaveDay extends Model
     protected $fillable = [
         'employee_id',
         'organization_id',
+        'branch_id',
         'start_date',
         'end_date',
         'leave_type',

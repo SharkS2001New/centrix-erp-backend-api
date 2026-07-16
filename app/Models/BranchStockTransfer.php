@@ -2,11 +2,13 @@
 
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Model;
+use App\Models\Concerns\BelongsToOrganizationProduct;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Model;
 
 class BranchStockTransfer extends Model
 {
+    use BelongsToOrganizationProduct;
     use HasFactory;
 
     protected $table = 'branch_stock_transfers';
@@ -35,11 +37,6 @@ class BranchStockTransfer extends Model
     public function toBranch()
     {
         return $this->belongsTo(Branch::class, 'to_branch_id');
-    }
-
-    public function product()
-    {
-        return $this->belongsTo(Product::class, 'product_code', 'product_code');
     }
 
     public function creator()

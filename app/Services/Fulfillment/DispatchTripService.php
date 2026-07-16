@@ -73,6 +73,10 @@ class DispatchTripService
 
         return DB::transaction(function () use ($user, $branchId, $scheduledDate, $routeId, $routeIds, $driverId, $vehicleId, $data) {
             $trip = DispatchTrip::create([
+                'organization_id' => (int) (
+                    $user->organization_id
+                    ?? \App\Support\OrganizationIdResolver::requireForBranch($branchId)
+                ),
                 'branch_id' => $branchId,
                 'trip_code' => $this->generateTripCode($branchId, $scheduledDate),
                 'route_id' => $routeId,
@@ -158,6 +162,10 @@ class DispatchTripService
                     ->all();
 
                 $target = DispatchTrip::create([
+                    'organization_id' => (int) (
+                        $user->organization_id
+                        ?? \App\Support\OrganizationIdResolver::requireForBranch($branchId)
+                    ),
                     'branch_id' => $branchId,
                     'trip_code' => $this->generateTripCode($branchId, $scheduledDate),
                     'route_id' => $routeIds[0] ?? null,

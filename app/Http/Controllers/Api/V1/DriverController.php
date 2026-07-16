@@ -97,16 +97,20 @@ class DriverController extends BaseResourceController
             'is_active' => 'nullable|boolean',
         ]);
 
+        if ($orgId > 0) {
+            $data['organization_id'] = $orgId;
+        }
+
+        if (! empty($data['branch_id'])) {
+            $this->access()->assertBranchInOrganization($request->user(), (int) $data['branch_id'], $request);
+        }
+
         $employeeId = (int) ($data['employee_id'] ?? 0);
         if ($employeeId > 0) {
-            $employee = Employee::query()->findOrFail($employeeId);
-            $orgId = $this->access()->organizationId($request->user(), $request);
-
-            if ((int) $employee->organization_id !== (int) $orgId) {
-                throw ValidationException::withMessages([
-                    'employee_id' => ['Selected employee does not belong to this organization.'],
-                ]);
-            }
+            $employee = Employee::query()
+                ->whereKey($employeeId)
+                ->when($orgId > 0, fn ($q) => $q->where('organization_id', $orgId))
+                ->firstOrFail();
 
             if ($employee->user_id && ! empty($data['user_id']) && (int) $data['user_id'] !== (int) $employee->user_id) {
                 throw ValidationException::withMessages([
@@ -123,6 +127,9 @@ class DriverController extends BaseResourceController
                 $data['full_name'] ?? null,
             );
             $data['phone'] = $employee->phone ?: ($data['phone'] ?? null);
+            if ($employee->organization_id) {
+                $data['organization_id'] = (int) $employee->organization_id;
+            }
         }
 
         return $data;

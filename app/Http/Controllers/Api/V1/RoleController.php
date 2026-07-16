@@ -7,6 +7,7 @@ use App\Models\Role;
 use App\Models\User;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\ErpContext;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\PermissionMatrixService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -105,14 +106,22 @@ class RoleController extends BaseResourceController
         $permissions = Permission::query()->orderBy('module')->orderBy('permission_name')->get();
         $allowedIds = collect(PermissionMatrixService::enabledPermissionIds($gate, $includeAdmin))->flip();
 
+        $profile = (string) ($gate->organization()?->deployment_profile ?? 'wholesale_retail');
+        $industryAppIds = IndustryRegistry::permissionApplicationIdsForProfile($profile);
+        $applications = collect(PermissionMatrixService::applicationsGroupedForUi($gate, $includeAdmin))
+            ->filter(fn (array $app) => $industryAppIds === [] || in_array((string) ($app['id'] ?? ''), $industryAppIds, true))
+            ->values()
+            ->all();
+
         return response()->json([
             'permissions' => $permissions
                 ->filter(fn (Permission $permission) => $allowedIds->has((int) $permission->id))
                 ->values(),
-            'applications' => PermissionMatrixService::applicationsGroupedForUi($gate, $includeAdmin),
+            'applications' => $applications,
             'groups' => PermissionMatrixService::groupedForUi($gate, $includeAdmin),
             'modules' => PermissionMatrixService::modules(),
             'actions' => PermissionMatrixService::actions(),
+            'industry' => IndustryRegistry::industryForProfile($profile),
         ]);
     }
 

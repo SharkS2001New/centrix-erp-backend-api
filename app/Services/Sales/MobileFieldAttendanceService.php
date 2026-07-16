@@ -339,6 +339,12 @@ class MobileFieldAttendanceService
 
         $this->access->scopeBranchIfLimited($query, $viewer);
 
+        if (! empty($filters['branch_id']) && $this->access->branchId($viewer) === null) {
+            $branchId = (int) $filters['branch_id'];
+            $this->access->assertBranchInOrganization($viewer, $branchId);
+            $query->where('branch_id', $branchId);
+        }
+
         if (! empty($filters['user_id'])) {
             $query->where('user_id', (int) $filters['user_id']);
         }

@@ -11,7 +11,7 @@ class SupplierReturn extends Model
     protected $table = 'supplier_returns';
     const UPDATED_AT = null;
     protected $fillable = [
-        'supplier_id', 'branch_id', 'product_code', 'quantity', 'package_type',
+        'organization_id', 'supplier_id', 'branch_id', 'product_code', 'quantity', 'package_type',
         'uom_label', 'stock_location', 'reason', 'reference_type', 'reference_id',
         'returned_by',
     ];

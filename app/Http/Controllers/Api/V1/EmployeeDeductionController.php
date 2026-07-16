@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\EmployeeDeduction;
@@ -9,6 +10,8 @@ use Illuminate\Http\Request;
 
 class EmployeeDeductionController extends Controller
 {
+    use FindsOrganizationEmployee;
+
     public function index(Request $request)
     {
         $query = EmployeeDeduction::query()->with(['employee', 'deductionType']);
@@ -21,6 +24,11 @@ class EmployeeDeductionController extends Controller
             $query->whereHas('employee', fn ($q) => $q->where('organization_id', $orgId));
         }
 
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($query, $request->user(), $request);
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         return response()->json($query->orderByDesc('id')->paginate($perPage));
@@ -29,7 +37,8 @@ class EmployeeDeductionController extends Controller
     public function store(Request $request)
     {
         $data = $this->validated($request);
-        Employee::findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id'], $request);
+        $data['branch_id'] = $data['branch_id'] ?? $employee->branch_id;
 
         return response()->json(
             EmployeeDeduction::create($data)->load(['employee', 'deductionType']),
@@ -37,26 +46,36 @@ class EmployeeDeductionController extends Controller
         );
     }
 
-    public function show(string $id)
+    public function show(Request $request, string $id)
     {
         return response()->json(
-            EmployeeDeduction::with(['employee', 'deductionType'])->findOrFail((int) $id),
+            $this->findScopedDeduction($request, (int) $id)->load(['employee', 'deductionType']),
         );
     }
 
     public function update(Request $request, string $id)
     {
-        $row = EmployeeDeduction::findOrFail((int) $id);
+        $row = $this->findScopedDeduction($request, (int) $id);
         $row->update($this->validated($request, updating: true));
 
         return response()->json($row->fresh(['employee', 'deductionType']));
     }
 
-    public function destroy(string $id)
+    public function destroy(Request $request, string $id)
     {
-        EmployeeDeduction::findOrFail((int) $id)->delete();
+        $this->findScopedDeduction($request, (int) $id)->delete();
 
         return response()->json(null, 204);
+    }
+
+    protected function findScopedDeduction(Request $request, int $id): EmployeeDeduction
+    {
+        $query = EmployeeDeduction::query()->whereKey($id);
+        if ($orgId = $request->user()?->organization_id) {
+            $query->whereHas('employee', fn ($q) => $q->where('organization_id', $orgId));
+        }
+
+        return $query->firstOrFail();
     }
 
     protected function validated(Request $request, bool $updating = false): array

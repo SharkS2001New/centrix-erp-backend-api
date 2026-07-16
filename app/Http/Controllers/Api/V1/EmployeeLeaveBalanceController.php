@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\EmployeeLeaveBalance;
@@ -10,6 +11,8 @@ use Illuminate\Http\Request;
 
 class EmployeeLeaveBalanceController extends Controller
 {
+    use FindsOrganizationEmployee;
+
     /** GET /employee-leave-balances — remaining balances for all employees in org */
     public function index(Request $request)
     {
@@ -65,7 +68,7 @@ class EmployeeLeaveBalanceController extends Controller
             'notes' => 'nullable|string|max:500',
         ]);
 
-        $employee = Employee::findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id'], $request);
         $balance = EmployeeLeaveBalance::forEmployee($employee);
         $balance->off_days_allocated = (float) $balance->off_days_allocated + (float) $data['days'];
         if (! empty($data['notes'])) {
@@ -83,11 +86,7 @@ class EmployeeLeaveBalanceController extends Controller
             return response()->json(['message' => 'Admin access required.'], 403);
         }
 
-        $employee = Employee::findOrFail($employeeId);
-        $orgId = $request->user()?->organization_id;
-        if ($orgId && (int) $employee->organization_id !== (int) $orgId) {
-            return response()->json(['message' => 'Employee not in your organization.'], 403);
-        }
+        $employee = $this->findOrgEmployee($employeeId, $request);
 
         $data = $request->validate([
             'annual_entitled' => 'nullable|numeric|min:0|max:365',

@@ -12,6 +12,7 @@ class Driver extends Model
     public $timestamps = false;
 
     protected $fillable = [
+        'organization_id',
         'branch_id',
         'user_id',
         'employee_id',

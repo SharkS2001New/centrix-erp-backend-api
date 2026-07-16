@@ -2,12 +2,14 @@
 
 namespace App\Http\Controllers\Api\V1\Operations;
 
+use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
 use App\Services\Accounting\PayrollJournalService;
 use App\Services\Erp\ErpContext;
+use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Payroll\KenyaStatutoryCalculator;
@@ -25,6 +27,8 @@ use Illuminate\Support\Facades\DB;
 
 class PayrollOperationsController extends Controller
 {
+    use FindsOrganizationEmployee;
+
     public function __construct(
         protected KenyaStatutoryCalculator $calculator,
         protected PayrollEarningsService $earnings,
@@ -33,6 +37,17 @@ class PayrollOperationsController extends Controller
         protected ErpContext $erp,
         protected BackgroundTaskService $tasks,
     ) {}
+
+    protected function findScopedPayrollRun(Request $request, int|string $runId, array $with = ['payPeriod']): PayrollRun
+    {
+        $query = PayrollRun::query()->with($with)->whereKey((int) $runId);
+        $user = $request->user();
+        if ($user) {
+            app(UserAccessService::class)->scopeOrganization($query, $user, 'organization_id', $request);
+        }
+
+        return $query->firstOrFail();
+    }
 
     /** GET /payroll/kenya-statutory — formulas and rates for UI */
     public function kenyaStatutory()
@@ -77,7 +92,7 @@ class PayrollOperationsController extends Controller
      */
     public function processRun(Request $request, string $runId)
     {
-        $run = PayrollRun::with('payPeriod')->findOrFail((int) $runId);
+        $run = $this->findScopedPayrollRun($request, $runId);
         if ($run->payPeriod) {
             app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($run->payPeriod);
         }
@@ -121,7 +136,7 @@ class PayrollOperationsController extends Controller
             $netTotal = 0;
 
             foreach ($payload['lines'] as $lineInput) {
-                $employee = Employee::findOrFail($lineInput['employee_id']);
+                $employee = $this->findOrgEmployee($lineInput['employee_id'], $request);
                 $basic = (float) ($lineInput['basic_salary'] ?? $employee->base_salary ?? 0);
                 $allowances = (float) ($lineInput['allowances'] ?? 0);
                 $meta = $lineInput['payroll_meta'] ?? [];
@@ -195,7 +210,7 @@ class PayrollOperationsController extends Controller
      */
     public function processAuto(Request $request, string $runId)
     {
-        $run = PayrollRun::with('payPeriod')->findOrFail((int) $runId);
+        $run = $this->findScopedPayrollRun($request, $runId);
         $period = $run->payPeriod;
         if (! $period) {
             return response()->json(['message' => 'Payroll run has no pay period.'], 422);
@@ -281,7 +296,7 @@ class PayrollOperationsController extends Controller
     /** POST /payroll/runs/{runId}/approve */
     public function approveRun(Request $request, string $runId)
     {
-        $run = PayrollRun::with('payPeriod')->findOrFail((int) $runId);
+        $run = $this->findScopedPayrollRun($request, $runId);
         $orgId = (int) ($request->user()?->organization_id ?? 0);
         $this->assertPayrollApprovalPermission($request->user(), $orgId);
 
@@ -308,7 +323,7 @@ class PayrollOperationsController extends Controller
     /** POST /payroll/runs/{runId}/reject */
     public function rejectRun(Request $request, string $runId)
     {
-        $run = PayrollRun::with('payPeriod')->findOrFail((int) $runId);
+        $run = $this->findScopedPayrollRun($request, $runId);
         $orgId = (int) ($request->user()?->organization_id ?? 0);
         $this->assertPayrollApprovalPermission($request->user(), $orgId);
 
@@ -331,7 +346,7 @@ class PayrollOperationsController extends Controller
     /** POST /payroll/runs/{runId}/mark-paid */
     public function markPaidRun(Request $request, string $runId)
     {
-        $run = PayrollRun::with(['payPeriod', 'lines'])->findOrFail((int) $runId);
+        $run = $this->findScopedPayrollRun($request, $runId, ['payPeriod', 'lines']);
         $orgId = (int) ($request->user()?->organization_id ?? 0);
         $this->assertPayrollApprovalPermission($request->user(), $orgId);
 
@@ -359,7 +374,12 @@ class PayrollOperationsController extends Controller
 
     protected function assertPayrollRunProcessable(PayrollRun $run, int $orgId): void
     {
-        $hr = HrPayrollSettingsResolver::forOrganizationId($orgId);
+        $runOrg = (int) ($run->organization_id ?: $run->payPeriod?->organization_id ?? 0);
+        if ($orgId > 0 && $runOrg > 0 && $runOrg !== $orgId) {
+            abort(404);
+        }
+
+        $hr = HrPayrollSettingsResolver::forOrganizationId($orgId ?: $runOrg);
         if (! ($hr['require_payroll_approval'] ?? false)) {
             if (! in_array($run->status, ['draft', 'approved'], true)) {
                 abort(422, 'Payroll run cannot be processed in its current status.');

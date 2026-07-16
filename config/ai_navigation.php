@@ -10,10 +10,10 @@ return [
             'id' => 'dashboard',
             'label' => 'Dashboard',
             'items' => [
-                ['label' => 'Overview', 'path' => '/dashboard', 'permission' => 'dashboard.overview.view'],
-                ['label' => 'Sales dashboard', 'path' => '/sales', 'module' => 'sales.backend', 'permission' => 'sales.dashboard.view'],
-                ['label' => 'Inventory dashboard', 'path' => '/inventory', 'module' => 'inventory', 'permission' => 'inventory.stock.view'],
-                ['label' => 'Fulfillment dashboard', 'path' => '/fulfillment', 'module' => 'customers_suppliers', 'permission' => 'fulfillment.drivers.view', 'requires_distribution_ops' => true],
+                ['label' => 'Business summary', 'path' => '/dashboard', 'permission' => 'dashboard.overview.view'],
+                ['label' => 'Sales analytics', 'path' => '/sales', 'module' => 'sales.dashboard', 'permission' => 'dashboard.sales.view'],
+                ['label' => 'Inventory analytics', 'path' => '/inventory', 'module' => 'inventory.dashboard', 'permission' => 'dashboard.inventory.view'],
+                ['label' => 'Fulfillment dashboard', 'path' => '/fulfillment', 'module' => 'customers_suppliers', 'permission' => 'fulfillment.overview.view', 'requires_distribution_ops' => true],
                 ['label' => 'Report overview', 'path' => '/reports', 'module' => 'reports', 'permission' => 'reports.hub.view'],
             ],
         ],
@@ -111,7 +111,7 @@ return [
             'label' => 'Administration & settings',
             'items' => [
                 ['label' => 'Admin home', 'path' => '/admin', 'module' => 'admin', 'permission' => 'admin.overview.view'],
-                ['label' => 'Users', 'path' => '/admin/users', 'module' => 'admin', 'permission' => 'admin.users.view', 'requires_admin' => true],
+                ['label' => 'Users', 'path' => '/admin/users', 'module' => 'admin', 'permission' => 'admin.users.view'],
                 ['label' => 'Roles and permissions', 'path' => '/admin/roles', 'module' => 'admin', 'permission' => 'admin.roles.view'],
             ],
         ],

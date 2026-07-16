@@ -29,6 +29,11 @@ class ReturnOperationsController extends Controller
         return DB::transaction(function () use ($data, $request) {
             $return = ReturnRecord::create([
                 ...$data,
+                'organization_id' => (int) (
+                    $data['organization_id']
+                    ?? $request->user()->organization_id
+                    ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $data['branch_id'])
+                ),
                 'returned_by' => $request->user()->id,
                 'is_mobile' => $data['return_type'] === 'MOBILE' ? 1 : 0,
             ]);

@@ -212,6 +212,7 @@ class MobileDriverApiTest extends TestCase
         ]);
 
         $driver = Driver::create([
+            'organization_id' => $admin->organization_id,
             'branch_id' => $admin->branch_id,
             'user_id' => $user->id,
             'driver_code' => 'DRV-'.uniqid(),

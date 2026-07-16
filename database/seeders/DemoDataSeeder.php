@@ -364,6 +364,7 @@ class DemoDataSeeder extends Seeder
         ]);
 
         $vehicle = Vehicle::create([
+            'organization_id' => $org->id,
             'branch_id' => $hq->id,
             'vehicle_code' => 'KCA-123A',
             'vehicle_name' => 'Delivery Van 1',
@@ -372,6 +373,7 @@ class DemoDataSeeder extends Seeder
         ]);
 
         $driver = Driver::create([
+            'organization_id' => $org->id,
             'branch_id' => $hq->id,
             'default_vehicle_id' => $vehicle->id,
             'default_route_id' => $route->id,
@@ -394,12 +396,14 @@ class DemoDataSeeder extends Seeder
         ]);
 
         $till = Till::create([
+            'organization_id' => $org->id,
             'branch_id' => $hq->id,
             'till_number' => 'TILL-01',
             'cashier_id' => $admin->id,
         ]);
 
         $session = TillFloatSession::create([
+            'organization_id' => $org->id,
             'till_id' => $till->id,
             'branch_id' => $hq->id,
             'cashier_id' => $admin->id,

@@ -23,9 +23,11 @@ class SupplierReturnDocumentController extends Controller
     public function index(Request $request)
     {
         $filters = $request->only([
-            'supplier_id', 'status', 'date_from', 'date_to', 'per_page',
+            'supplier_id', 'status', 'date_from', 'date_to', 'per_page', 'branch_id',
         ]);
-
+        if ($request->filled('filter.branch_id')) {
+            $filters['branch_id'] = $request->input('filter.branch_id');
+        }
         $rows = $this->service->listForUser($request->user(), $filters);
 
         return response()->json(['data' => $rows]);

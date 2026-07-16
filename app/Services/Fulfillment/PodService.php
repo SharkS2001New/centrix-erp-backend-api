@@ -61,6 +61,10 @@ class PodService
             }
 
             $record = PodRecord::create([
+                'organization_id' => (int) (
+                    $sale->organization_id
+                    ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $sale->branch_id)
+                ),
                 'branch_id' => $sale->branch_id,
                 'sale_id' => $sale->id,
                 'trip_id' => $tripId > 0 ? $tripId : null,

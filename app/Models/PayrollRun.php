@@ -15,6 +15,7 @@ class PayrollRun extends Model
     public const UPDATED_AT = null;
 
     protected $fillable = [
+        'organization_id',
         'pay_period_id',
         'run_date',
         'status',

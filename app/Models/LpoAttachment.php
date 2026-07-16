@@ -25,4 +25,9 @@ class LpoAttachment extends Model
     protected $casts = [
         'created_at' => 'datetime',
     ];
+
+    public function lpo()
+    {
+        return $this->belongsTo(LpoMst::class, 'lpo_no', 'lpo_no');
+    }
 }

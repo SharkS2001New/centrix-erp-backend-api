@@ -42,6 +42,12 @@ class SupplierReturnDocumentService
 
         $this->access->scopeBranchIfLimited($query, $user);
 
+        if (! empty($filters['branch_id']) && $this->access->branchId($user) === null) {
+            $branchId = (int) $filters['branch_id'];
+            $this->access->assertBranchInOrganization($user, $branchId);
+            $query->where('branch_id', $branchId);
+        }
+
         if (! empty($filters['supplier_id'])) {
             $query->where('supplier_id', (int) $filters['supplier_id']);
         }

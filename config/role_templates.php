@@ -14,7 +14,8 @@ return [
             'description' => 'Day-to-day branch operations: sales, inventory, purchasing, and basic reports.',
             'permissions' => [
                 'dashboard.overview.view',
-                'sales.dashboard.view',
+                'dashboard.sales.view',
+                'dashboard.inventory.view',
                 'sales.orders.view',
                 'sales.orders.create',
                 'sales.orders.edit',
@@ -75,6 +76,7 @@ return [
             'requires_modules' => ['inventory'],
             'permissions' => [
                 'dashboard.overview.view',
+                'dashboard.inventory.view',
                 'inventory.stock.view',
                 'inventory.receipts.view',
                 'inventory.receipts.create',
@@ -243,8 +245,9 @@ return [
                 'dashboard.overview.view',
                 'catalogue.products.view',
                 'catalogue.categories.view',
-                'sales.dashboard.view',
+                'dashboard.sales.view',
                 'sales.orders.view',
+                'dashboard.inventory.view',
                 'inventory.stock.view',
                 'purchasing.lpo.view',
                 'purchasing.suppliers.view',

@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Models\Employee;
 use App\Models\EmployeeDocument;
 use Illuminate\Http\Request;
@@ -12,9 +13,11 @@ use Symfony\Component\HttpFoundation\Response;
 
 class EmployeeDocumentController extends Controller
 {
+    use FindsOrganizationEmployee;
+
     public function index(string $employee)
     {
-        Employee::findOrFail((int) $employee);
+        $this->findOrgEmployee((int) $employee);
 
         return response()->json(
             EmployeeDocument::where('employee_id', (int) $employee)->orderByDesc('id')->get(),
@@ -23,7 +26,7 @@ class EmployeeDocumentController extends Controller
 
     public function store(Request $request, string $employee)
     {
-        $emp = Employee::findOrFail((int) $employee);
+        $emp = $this->findOrgEmployee((int) $employee);
 
         $data = $request->validate([
             'document_type' => 'nullable|in:contract,national_id,passport,kra_pin,offer_letter,certificate,other',

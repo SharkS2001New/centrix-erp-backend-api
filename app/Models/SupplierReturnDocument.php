@@ -10,6 +10,8 @@ class SupplierReturnDocument extends Model
 {
     protected $fillable = [
         'organization_id',
+        'document_seq',
+        'document_no',
         'supplier_id',
         'branch_id',
         'source_type',

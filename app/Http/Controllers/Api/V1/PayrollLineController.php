@@ -16,7 +16,7 @@ class PayrollLineController extends BaseResourceController
 
     protected function parentOrganizationScope(): array
     {
-        return ['relation' => 'payrollRun.payPeriod'];
+        return ['relation' => 'payrollRun', 'column' => 'organization_id'];
     }
 
     protected function baseQuery(Request $request)

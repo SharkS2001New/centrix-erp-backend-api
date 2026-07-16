@@ -13,6 +13,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Audit\OperationalAuditService;
 use App\Services\Notifications\AdminNotificationService;
 use App\Services\Notifications\InAppNotificationEvents;
+use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -20,21 +21,39 @@ class BranchStockTransferController extends Controller
 {
     use HandlesInventory;
 
-    public function index()
+    public function index(Request $request)
     {
-        $user = request()->user();
+        $user = $request->user();
         $orgId = (int) $user->organization_id;
+        $access = app(UserAccessService::class);
 
         $query = BranchStockTransfer::query()
             ->with(['fromBranch:id,branch_name,branch_code', 'toBranch:id,branch_name,branch_code', 'product:product_code,product_name'])
             ->where('organization_id', $orgId)
             ->orderByDesc('id');
 
-        if ($user->branch_id && ! $user->is_admin) {
-            $branchId = (int) $user->branch_id;
-            $query->where(function ($q) use ($branchId) {
-                $q->where('from_branch_id', $branchId)->orWhere('to_branch_id', $branchId);
+        $limitedBranch = $access->branchId($user);
+        if ($limitedBranch !== null) {
+            $query->where(function ($q) use ($limitedBranch) {
+                $q->where('from_branch_id', $limitedBranch)->orWhere('to_branch_id', $limitedBranch);
             });
+        } else {
+            $branchId = $request->input('filter.branch_id', $request->input('branch_id'));
+            if ($branchId !== null && $branchId !== '') {
+                $branchId = (int) $branchId;
+                $access->assertBranchInOrganization($user, $branchId, $request);
+                $query->where(function ($q) use ($branchId) {
+                    $q->where('from_branch_id', $branchId)->orWhere('to_branch_id', $branchId);
+                });
+            }
+            if ($from = $request->input('filter.from_branch_id', $request->input('from_branch_id'))) {
+                $access->assertBranchInOrganization($user, (int) $from, $request);
+                $query->where('from_branch_id', (int) $from);
+            }
+            if ($to = $request->input('filter.to_branch_id', $request->input('to_branch_id'))) {
+                $access->assertBranchInOrganization($user, (int) $to, $request);
+                $query->where('to_branch_id', (int) $to);
+            }
         }
 
         return response()->json([

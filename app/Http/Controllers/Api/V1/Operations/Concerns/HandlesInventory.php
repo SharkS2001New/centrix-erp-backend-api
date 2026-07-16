@@ -13,6 +13,7 @@ use App\Models\SystemSetting;
 use App\Services\Inventory\ProductStockDenormService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Inventory\StockValuationService;
+use App\Support\OrganizationIdResolver;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -91,7 +92,11 @@ trait HandlesInventory
         }
 
         return DB::transaction(function () use ($data, $branchId, $productCode, $location, $change, $before, $after) {
+            $organizationId = (int) ($data['organization_id']
+                ?? OrganizationIdResolver::requireForBranch($branchId));
+
             $txn = InventoryTransaction::create([
+                'organization_id' => $organizationId,
                 'branch_id' => $branchId,
                 'product_code' => $productCode,
                 'stock_location' => $location,
@@ -232,6 +237,7 @@ trait HandlesInventory
         }
 
         return StockReservation::create([
+            'organization_id' => OrganizationIdResolver::requireForBranch($branchId),
             'branch_id' => $branchId,
             'product_code' => $productCode,
             'stock_location' => $location,

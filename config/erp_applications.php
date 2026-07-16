@@ -10,6 +10,8 @@ return [
     'order' => [
         'pos',
         'backoffice',
+        'hotel_bar_pos',
+        'hospitality_backoffice',
         'distribution',
         'accounting',
         'hr',
@@ -25,6 +27,16 @@ return [
         'backoffice' => [
             'label' => 'Backoffice',
             'description' => 'Sales, inventory, purchasing, and day-to-day operations.',
+            'icon' => 'building',
+        ],
+        'hotel_bar_pos' => [
+            'label' => 'Hotel & Bar POS',
+            'description' => 'Kenya-ready hospitality front POS (bar, restaurant, room charge). Uses hospitality checks — not retail sales tables. Turning this on also enables Hospitality Backoffice. Enable Inventory separately to share stock/products.',
+            'icon' => 'pos',
+        ],
+        'hospitality_backoffice' => [
+            'label' => 'Hospitality Backoffice',
+            'description' => 'Rooms, reservations, front desk, folios, housekeeping, and hotel reports. Does not use retail sales order tables.',
             'icon' => 'building',
         ],
         'distribution' => [

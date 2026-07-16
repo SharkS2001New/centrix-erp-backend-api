@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Controller;
+use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Models\Employee;
 use App\Models\EmployeeKpi;
 use App\Services\Hr\EmployeeKpiService;
@@ -10,18 +11,20 @@ use Illuminate\Http\Request;
 
 class EmployeeKpiController extends Controller
 {
+    use FindsOrganizationEmployee;
+
     public function __construct(private readonly EmployeeKpiService $kpiService) {}
 
     public function summary(int $employee)
     {
-        $model = Employee::findOrFail($employee);
+        $model = $this->findOrgEmployee($employee);
 
         return response()->json($this->kpiService->summary($model));
     }
 
     public function store(Request $request, int $employee)
     {
-        $emp = Employee::findOrFail($employee);
+        $emp = $this->findOrgEmployee($employee);
         $data = $this->validated($request);
         $data['employee_id'] = $emp->id;
         if ($orgId = $request->user()?->organization_id) {

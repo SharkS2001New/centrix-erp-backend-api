@@ -783,6 +783,10 @@ class CartOperationsController extends Controller
                 'channel' => $channel,
             ],
             [
+                'organization_id' => (int) (
+                    $user->organization_id
+                    ?? \App\Support\OrganizationIdResolver::forBranch($branchId)
+                ),
                 'branch_id' => $branchId,
                 'order_source' => $orderSource,
                 'till_id' => $input['till_id'] ?? null,
@@ -790,6 +794,10 @@ class CartOperationsController extends Controller
                 'update_no' => 0,
             ]
         );
+
+        if (! $cart->organization_id && $user->organization_id) {
+            $cart->update(['organization_id' => (int) $user->organization_id]);
+        }
 
         if ($cart->branch_id) {
             $this->userAccess()->assertBranchAccess($user, (int) $cart->branch_id);

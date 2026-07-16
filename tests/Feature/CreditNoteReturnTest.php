@@ -69,9 +69,60 @@ class CreditNoteReturnTest extends TestCase
         $this->assertDatabaseHas('credit_notes', [
             'customer_return_id' => $returnId,
             'sale_id' => $sale->id,
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $sale->branch_id ?? $this->user->branch_id,
             'total_amount' => 100,
             'kra_status' => 'skipped',
         ]);
+    }
+
+    public function test_credit_note_numbers_restart_per_organization(): void
+    {
+        $service = app(\App\Services\Sales\CreditNoteService::class);
+        $orgA = Organization::create([
+            'company_code' => 'CNORGA',
+            'org_name' => 'CN Org A',
+            'org_email' => 'cnorga@test.com',
+            'primary_tel' => '0700222001',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+        ]);
+        $orgB = Organization::create([
+            'company_code' => 'CNORGB',
+            'org_name' => 'CN Org B',
+            'org_email' => 'cnorgb@test.com',
+            'primary_tel' => '0700222002',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+        ]);
+
+        $returnId = \Illuminate\Support\Facades\DB::table('customer_returns')->insertGetId([
+            'return_no' => 'RET-CN-A1',
+            'return_seq' => 1,
+            'organization_id' => $orgA->id,
+            'branch_id' => $this->user->branch_id,
+            'return_date' => now()->toDateString(),
+            'status' => 'approved',
+            'total_amount' => 10,
+            'returned_by' => $this->user->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        \Illuminate\Support\Facades\DB::table('credit_notes')->insert([
+            'credit_note_no' => 'CN-0001',
+            'customer_return_id' => $returnId,
+            'organization_id' => $orgA->id,
+            'branch_id' => $this->user->branch_id,
+            'credit_date' => now()->toDateString(),
+            'total_amount' => 10,
+            'kra_status' => 'skipped',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $this->assertSame('CN-0001', $service->nextCreditNoteNo((int) $orgB->id));
+        $this->assertSame('CN-0002', $service->nextCreditNoteNo((int) $orgA->id));
     }
 
     public function test_approve_return_submits_kra_credit_note_when_original_sale_fiscalized(): void

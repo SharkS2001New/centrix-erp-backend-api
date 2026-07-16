@@ -350,6 +350,9 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('discount-summary', [ReportController::class, 'discountSummary']);
             Route::get('payment-collection', [ReportController::class, 'paymentCollection']);
             Route::get('credit-outstanding', [ReportController::class, 'creditOutstanding']);
+            Route::get('stock-on-hand', [ReportController::class, 'stockOnHand']);
+            Route::get('items-currently-in-stock', [ReportController::class, 'stockOnHand']);
+            Route::get('low-stock', [ReportController::class, 'lowStock']);
             Route::get('stock-movement', [ReportController::class, 'stockMovement']);
             Route::get('stock-chain', [ReportController::class, 'stockChain']);
             Route::get('stock-valuation', [ReportController::class, 'stockValuation']);
@@ -390,13 +393,6 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
-        // Inventory stock screens — allow inventory.stock.view (not only reports.view).
-        Route::middleware('erp.permission:reports.view|reports.stock_on_hand.view|inventory.view|inventory.stock.view')->group(function () {
-            Route::get('stock-on-hand', [ReportController::class, 'stockOnHand']);
-            Route::get('items-currently-in-stock', [ReportController::class, 'stockOnHand']);
-            Route::get('low-stock', [ReportController::class, 'lowStock']);
-        });
-
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {
             Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
             Route::get('leave-balance', [HrReportController::class, 'leaveBalance']);
@@ -408,7 +404,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('hr-dashboard-kpi', [HrReportController::class, 'hrDashboardKpi']);
         });
 
-        Route::middleware('erp.permission:reports.view|accounting.view|accounting.profit_loss.view|accounting.trial_balance.view|accounting.balance_sheet.view|accounting.cash_flow.view|accounting.general_ledger.view')->group(function () {
+        Route::middleware('erp.permission:reports.view|accounting.view')->group(function () {
             Route::get('journal-register', [ReportController::class, 'journalRegister']);
             Route::get('general-ledger', [AccountingReportController::class, 'generalLedger']);
             Route::get('trial-balance', [AccountingReportController::class, 'trialBalance']);

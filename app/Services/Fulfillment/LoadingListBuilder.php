@@ -465,6 +465,8 @@ class LoadingListBuilder
 
         $loadingList = LoadingList::query()->firstOrNew(['trip_id' => $trip->id]);
         if (! $loadingList->exists) {
+            $loadingList->organization_id = $trip->organization_id
+                ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $trip->branch_id);
             $loadingList->branch_id = $trip->branch_id;
             $loadingList->route_id = $trip->route_id;
             $loadingList->list_date = $trip->scheduled_date;

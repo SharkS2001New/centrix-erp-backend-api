@@ -104,6 +104,37 @@ class UserAccessService
         return $query;
     }
 
+    /**
+     * Branch-limited users: forced to their branch.
+     * Org-wide users: optional filter via filter[branch_id] or branch_id (must belong to org).
+     *
+     * @param  Builder<\Illuminate\Database\Eloquent\Model>  $query
+     */
+    public function applyBranchListFilter(
+        Builder $query,
+        User $user,
+        ?Request $request = null,
+        string $column = 'branch_id',
+    ): Builder {
+        $this->scopeBranchIfLimited($query, $user, $column);
+
+        $request ??= request();
+        if ($this->branchId($user) !== null) {
+            return $query;
+        }
+
+        $raw = $request->input('filter.branch_id', $request->input('branch_id'));
+        if ($raw === null || $raw === '') {
+            return $query;
+        }
+
+        $branchId = (int) $raw;
+        $this->assertBranchInOrganization($user, $branchId, $request);
+        $query->where($column, $branchId);
+
+        return $query;
+    }
+
     public function assertBranchAccess(User $user, ?int $branchId, string $message = 'You do not have access to this branch.'): void
     {
         if ($branchId === null) {

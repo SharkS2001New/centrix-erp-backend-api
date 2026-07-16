@@ -85,7 +85,7 @@ class RolePermissionTest extends TestCase
         $applications = collect($res->json('applications'));
 
         $this->assertSame(
-            ['pos', 'mobile', 'backoffice', 'accounting', 'hr', 'distribution', 'admin'],
+            ['pos', 'hotel_bar_pos', 'mobile', 'manager', 'backoffice', 'hospitality_backoffice', 'accounting', 'hr', 'distribution', 'admin'],
             $applications->pluck('id')->all(),
         );
 

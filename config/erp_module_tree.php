@@ -156,6 +156,44 @@ return [
         'children' => [],
     ],
 
+    'hospitality' => [
+        'label' => 'Hospitality',
+        'nav_group' => 'Hospitality',
+        'kind' => 'domain',
+        'children' => [
+            'hospitality.bar_pos',
+            'hospitality.backend',
+            'hospitality.dashboard',
+            'hospitality.reports',
+        ],
+    ],
+    'hospitality.bar_pos' => [
+        'label' => 'Hotel & Bar POS',
+        'nav_group' => 'Hospitality',
+        'parent' => 'hospitality',
+        'kind' => 'feature',
+        'channel' => 'backend',
+    ],
+    'hospitality.backend' => [
+        'label' => 'Hospitality backoffice',
+        'nav_group' => 'Hospitality',
+        'parent' => 'hospitality',
+        'kind' => 'feature',
+        'channel' => 'backend',
+    ],
+    'hospitality.dashboard' => [
+        'label' => 'Hospitality dashboard',
+        'nav_group' => 'Hospitality',
+        'parent' => 'hospitality',
+        'kind' => 'dashboard',
+    ],
+    'hospitality.reports' => [
+        'label' => 'Hospitality reports',
+        'nav_group' => 'Hospitality',
+        'parent' => 'hospitality',
+        'kind' => 'reports',
+    ],
+
     /** Report API slug => reports module key */
     'report_modules' => [
         'daily-sales' => 'sales.reports',

@@ -89,6 +89,7 @@ class PayrollRunWorkflowTest extends TestCase
         ]);
 
         return PayrollRun::create([
+            'organization_id' => $orgId,
             'pay_period_id' => $period->id,
             'run_date' => now()->toDateString(),
             'status' => $status,

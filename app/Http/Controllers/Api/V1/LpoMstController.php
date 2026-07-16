@@ -144,6 +144,10 @@ class LpoMstController extends BaseResourceController
         $org = Organization::findOrFail($user->organization_id);
         $settings = ProcurementSettingsResolver::forOrganization($org);
 
+        if (! empty($payload['branch_id'])) {
+            $this->access()->assertBranchInOrganization($user, (int) $payload['branch_id'], $request);
+        }
+
         $lpo = DB::transaction(function () use ($payload, $user, $settings, $org) {
             Supplier::query()
                 ->where('id', $payload['supplier_id'])
@@ -156,6 +160,7 @@ class LpoMstController extends BaseResourceController
 
             $lpo = LpoMst::create([
                 'organization_id' => $org->id,
+                'branch_id' => $payload['branch_id'] ?? $user->branch_id,
                 'lpo_seq' => $this->lpoNumbers->nextForOrganization((int) $org->id),
                 'supplier_id' => $payload['supplier_id'],
                 'reference_number' => $payload['reference_number'] ?? null,
@@ -275,6 +280,7 @@ class LpoMstController extends BaseResourceController
 
         return $request->validate([
             'supplier_id' => $req.'integer|exists:suppliers,id',
+            'branch_id' => 'nullable|integer|exists:branches,id',
             'reference_number' => 'nullable|string|max:120',
             'due_date' => 'nullable|date',
             'delivery_address' => 'nullable|string|max:500',

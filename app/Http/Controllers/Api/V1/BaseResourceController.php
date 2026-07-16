@@ -163,6 +163,9 @@ abstract class BaseResourceController extends Controller
     {
         $query = $this->baseQuery($request);
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'branch_id' && $request->user()) {
+                $this->access()->assertBranchInOrganization($request->user(), (int) $val, $request);
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
             }

@@ -10,9 +10,11 @@
 return [
     'order' => [
         'pos',
+        'hotel_bar_pos',
         'mobile',
         'manager',
         'backoffice',
+        'hospitality_backoffice',
         'accounting',
         'hr',
         'distribution',
@@ -24,6 +26,11 @@ return [
             'label' => 'External ERP',
             'description' => 'External POS terminal, till sessions, and end of day.',
             'registry_modules' => ['pos'],
+        ],
+        'hotel_bar_pos' => [
+            'label' => 'Hotel & Bar POS',
+            'description' => 'Hospitality front POS (checks, outlets, room charge) — separate from retail sales.',
+            'registry_modules' => ['hotel_bar_pos'],
         ],
         'mobile' => [
             'label' => 'Mobile application',
@@ -50,6 +57,11 @@ return [
                 'reports',
                 'ai',
             ],
+        ],
+        'hospitality_backoffice' => [
+            'label' => 'Hospitality Backoffice',
+            'description' => 'Rooms, front desk, folios, housekeeping, and hotel operations.',
+            'registry_modules' => ['hospitality'],
         ],
         'accounting' => [
             'label' => 'Accounting',

@@ -2,13 +2,11 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Expense;
-use App\Models\TillFloatSession;
 use App\Services\Accounting\ExpenseApprovalService;
 use App\Services\Accounting\ExpenseJournalService;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
-use InvalidArgumentException;
 
 class ExpenseController extends BaseResourceController
 {
@@ -107,6 +105,9 @@ class ExpenseController extends BaseResourceController
         $user = $request->user();
         abort_unless($user, 401);
 
+        // Same org/branch checks as the approval path — never allow posting to another tenant's branch.
+        app(ExpenseApprovalService::class)->validateCreateDataForUser($user, $data);
+
         if (! app(ExpenseApprovalService::class)->canApprove($user)) {
             $actionRequest = app(ExpenseApprovalService::class)->requestCreate($user, $data);
 
@@ -117,17 +118,10 @@ class ExpenseController extends BaseResourceController
             ], 202);
         }
 
-        if (! empty($data['float_session_id'])) {
-            $session = TillFloatSession::find($data['float_session_id']);
-            if (! $session || strtolower((string) $session->status) !== 'open') {
-                throw new InvalidArgumentException('Expenses can only be linked to an open till session.');
-            }
-            if ((int) $session->branch_id !== (int) $data['branch_id']) {
-                throw new InvalidArgumentException('Expense branch must match the till session branch.');
-            }
-        }
-
         $data['recorded_by'] = $user->id;
+        $data['organization_id'] = (int) (
+            \App\Support\OrganizationIdResolver::requireForBranch((int) $data['branch_id'])
+        );
         $expense = Expense::create($data);
 
         $gate = $this->erp->gateForUser($user);

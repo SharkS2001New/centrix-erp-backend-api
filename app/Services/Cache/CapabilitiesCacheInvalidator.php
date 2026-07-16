@@ -31,6 +31,16 @@ class CapabilitiesCacheInvalidator
             ->map(fn ($id) => (int) $id)
             ->all();
 
+        $membershipOrgIds = \App\Models\UserMembership::query()
+            ->where('role_id', $role->id)
+            ->distinct()
+            ->pluck('organization_id')
+            ->filter()
+            ->map(fn ($id) => (int) $id)
+            ->all();
+
+        $orgIds = array_merge($orgIds, $membershipOrgIds);
+
         if ($role->organization_id) {
             $orgIds[] = (int) $role->organization_id;
         }

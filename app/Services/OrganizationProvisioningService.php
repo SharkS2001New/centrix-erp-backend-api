@@ -182,6 +182,20 @@ class OrganizationProvisioningService
             ];
         }
 
+        if ($profile === 'hotel_bar') {
+            $settings['hospitality'] = [
+                'enable_rooms' => true,
+                'enable_reservations' => true,
+                'enable_housekeeping' => true,
+                'enable_night_audit' => false,
+                'enable_dining_outlet' => true,
+                'enable_bar_outlet' => true,
+                'enable_room_service' => true,
+                'enable_takeaway' => true,
+                'enable_tables' => true,
+            ];
+        }
+
         return $settings;
     }
 

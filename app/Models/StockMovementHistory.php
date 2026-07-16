@@ -13,7 +13,7 @@ class StockMovementHistory extends Model
     public const UPDATED_AT = null;
 
     protected $fillable = [
-        'product_code', 'branch_id', 'quantity_moved', 'from_location', 'to_location',
+        'organization_id', 'product_code', 'branch_id', 'quantity_moved', 'from_location', 'to_location',
         'notes', 'moved_by', 'move_status',
     ];
 }

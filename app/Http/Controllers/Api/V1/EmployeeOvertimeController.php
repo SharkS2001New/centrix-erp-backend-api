@@ -27,7 +27,15 @@ class EmployeeOvertimeController extends HrOrgResourceController
             $query->where('organization_id', $orgId);
         }
 
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($query, $request->user(), $request);
+        }
+
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'branch_id') {
+                continue;
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
             }
@@ -41,13 +49,14 @@ class EmployeeOvertimeController extends HrOrgResourceController
     public function store(Request $request)
     {
         $data = $this->validated($request);
-        $employee = Employee::findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id'], $request);
         if (! $employee->shift_id) {
             throw ValidationException::withMessages([
                 'employee_id' => ['Employee must be assigned to a work shift before recording overtime.'],
             ]);
         }
         $data['organization_id'] = $data['organization_id'] ?? $employee->organization_id;
+        $data['branch_id'] = $data['branch_id'] ?? $employee->branch_id;
         $data = $this->computeAmount($data, $employee);
 
         return response()->json(EmployeeOvertime::create($data)->load('employee'), 201);
@@ -58,7 +67,7 @@ class EmployeeOvertimeController extends HrOrgResourceController
         $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'overtime entry');
         $data = $this->validated($request, updating: true);
-        $employee = Employee::find($data['employee_id'] ?? $row->employee_id);
+        $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id, $request);
         if ($employee && ! $employee->shift_id) {
             throw ValidationException::withMessages([
                 'employee_id' => ['Employee must be assigned to a work shift before recording overtime.'],

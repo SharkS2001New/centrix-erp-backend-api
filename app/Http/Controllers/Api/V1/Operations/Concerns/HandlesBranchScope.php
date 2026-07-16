@@ -28,6 +28,7 @@ trait HandlesBranchScope
     protected function findScopedTillSession(int $sessionId, User $user): TillFloatSession
     {
         $query = TillFloatSession::query()->where('id', $sessionId);
+        $this->userAccess()->scopeOrganization($query, $user);
         $this->userAccess()->scopeBranchIfLimited($query, $user);
 
         return $query->firstOrFail();
@@ -36,6 +37,7 @@ trait HandlesBranchScope
     protected function findScopedStockTakeSession(int $sessionId, User $user): StockTakeSession
     {
         $query = StockTakeSession::query()->where('id', $sessionId);
+        $this->userAccess()->scopeOrganization($query, $user);
         $this->userAccess()->scopeBranchIfLimited($query, $user);
 
         return $query->firstOrFail();
@@ -45,10 +47,15 @@ trait HandlesBranchScope
     protected function findBranchScopedModel(string $modelClass, int|string $id, User $user, string $column = 'id'): Model
     {
         $query = $modelClass::query()->where($column, $id);
-        if (in_array('organization_id', (new $modelClass)->getFillable(), true)) {
+        $fillable = (new $modelClass)->getFillable();
+
+        if (in_array('organization_id', $fillable, true)) {
             $this->userAccess()->scopeOrganization($query, $user);
+        } elseif (in_array('branch_id', $fillable, true)) {
+            $this->userAccess()->scopeOrganizationViaBranch($query, $user);
         }
-        if (in_array('branch_id', (new $modelClass)->getFillable(), true)) {
+
+        if (in_array('branch_id', $fillable, true)) {
             $this->userAccess()->scopeBranchIfLimited($query, $user);
         }
 

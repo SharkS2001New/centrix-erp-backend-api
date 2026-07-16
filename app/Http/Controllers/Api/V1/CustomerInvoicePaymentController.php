@@ -77,6 +77,7 @@ class CustomerInvoicePaymentController extends BaseResourceController
             'date_paid' => $data['date_paid'] ?? now()->toDateString(),
             'received_by' => $user->id,
             'organization_id' => $organizationId,
+            'branch_id' => $invoice->branch_id ? (int) $invoice->branch_id : ($user->branch_id ? (int) $user->branch_id : null),
             'notes' => $data['notes'] ?? null,
         ]);
 

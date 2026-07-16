@@ -373,6 +373,10 @@ class WhatsAppOrderService
                 'channel' => 'whatsapp',
             ],
             [
+                'organization_id' => (int) (
+                    $botUser->organization_id
+                    ?? \App\Support\OrganizationIdResolver::forBranch($branchId ? (int) $branchId : null)
+                ),
                 'branch_id' => $branchId,
                 'order_source' => 'whatsapp',
                 'route_id' => $customer->route_id,
@@ -381,6 +385,8 @@ class WhatsAppOrderService
         );
 
         $cart->fill([
+            'organization_id' => $cart->organization_id
+                ?: ($botUser->organization_id ? (int) $botUser->organization_id : $cart->organization_id),
             'order_source' => 'whatsapp',
             'branch_id' => $branchId ?: $cart->branch_id,
             'route_id' => $customer->route_id ?? $cart->route_id,

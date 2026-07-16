@@ -14,6 +14,7 @@ class EmployeeDeduction extends Model
 
     protected $fillable = [
         'employee_id',
+        'branch_id',
         'deduction_type_id',
         'name',
         'calc_type',

@@ -26,7 +26,15 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             $query->where('organization_id', $orgId);
         }
 
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($query, $request->user(), $request);
+        }
+
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'branch_id') {
+                continue;
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
             }
@@ -50,7 +58,7 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
     public function store(Request $request)
     {
         $data = $this->validated($request);
-        $employee = Employee::findOrFail($data['employee_id']);
+        $employee = $this->findOrgEmployee($data['employee_id'], $request);
         $hr = HrPayrollSettingsResolver::forOrganizationId((int) $employee->organization_id);
         if (! $hr['enable_cash_advance_deductions']) {
             throw ValidationException::withMessages([
@@ -58,6 +66,7 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             ]);
         }
         $data['organization_id'] = $data['organization_id'] ?? $employee->organization_id;
+        $data['branch_id'] = $data['branch_id'] ?? $employee->branch_id;
         $data['balance'] = $data['balance'] ?? $data['amount'];
         $data['repayment_mode'] = $data['repayment_mode'] ?? 'full_next_cycle';
         if (! isset($data['status'])) {

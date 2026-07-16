@@ -16,7 +16,7 @@ class StockTakeLineController extends BaseResourceController
 
     protected function parentOrganizationScope(): array
     {
-        return ['relation' => 'session', 'via_branch' => true];
+        return ['relation' => 'session', 'column' => 'organization_id'];
     }
 
     public function index(Request $request)

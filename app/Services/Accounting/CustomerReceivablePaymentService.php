@@ -111,6 +111,7 @@ class CustomerReceivablePaymentService
                     'date_paid' => $datePaid,
                     'received_by' => $user->id,
                     'organization_id' => $organizationId,
+                    'branch_id' => $invoice->branch_id ? (int) $invoice->branch_id : ($user->branch_id ? (int) $user->branch_id : null),
                     'notes' => $notes,
                 ]);
 

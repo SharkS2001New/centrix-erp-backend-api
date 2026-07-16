@@ -85,7 +85,7 @@ class StockTransferService
             ? "Transfer in from {$from}: {$noteText}"
             : "Transfer in from {$from}";
 
-        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $to, $user, $outNote, $inNote, $noteText) {
+        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $to, $user, $outNote, $inNote) {
             $orgId = (int) $user->organization_id;
             $out = $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $branchId,
@@ -116,7 +116,6 @@ class StockTransferService
                 'quantity_moved' => $quantity,
                 'from_location' => $from,
                 'to_location' => $to,
-                'notes' => $noteText !== '' ? $noteText : null,
                 'moved_by' => $user->id,
             ]);
 
@@ -153,7 +152,7 @@ class StockTransferService
             ? "Transfer out for {$label}: {$noteText}"
             : "Transfer out for {$label}";
 
-        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $purpose, $user, $outNote, $label, $noteText) {
+        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $purpose, $user, $outNote, $label) {
             $orgId = (int) $user->organization_id;
             $out = $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $branchId,
@@ -166,16 +165,7 @@ class StockTransferService
                 'notes' => $outNote,
             ], $orgId));
 
-            StockMovementHistory::create([
-                'product_code' => $productCode,
-                'branch_id' => $branchId,
-                'quantity_moved' => $quantity,
-                'from_location' => $from,
-                'to_location' => $purpose,
-                'notes' => $noteText !== '' ? $noteText : null,
-                'moved_by' => $user->id,
-            ]);
-
+            // stock_movement_history.to_location is ENUM(shop,store) — skip for purpose dests.
             app(\App\Services\Audit\OperationalAuditService::class)->logStockMovement($user, 'transfer', [
                 'product_code' => $productCode,
                 'branch_id' => $branchId,

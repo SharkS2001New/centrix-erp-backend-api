@@ -12,6 +12,7 @@ use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollRunScheduleService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class PayrollRunController extends BaseResourceController
 {
@@ -20,14 +21,26 @@ class PayrollRunController extends BaseResourceController
         return PayrollRun::class;
     }
 
+    protected function findScopedRun(Request $request, string $id): PayrollRun
+    {
+        $query = PayrollRun::query()->whereKey($id);
+        $user = $request->user();
+        if ($user) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
+        }
+
+        return $query->firstOrFail();
+    }
+
     public function index(Request $request)
     {
         $query = PayrollRun::query()
             ->with(['payPeriod', 'approvedByUser:id,full_name,username', 'paidByUser:id,full_name,username'])
             ->withCount('lines as employee_count');
 
-        if ($orgId = $request->user()?->organization_id) {
-            $query->whereHas('payPeriod', fn ($q) => $q->where('organization_id', $orgId));
+        $user = $request->user();
+        if ($user) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
         }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
@@ -56,12 +69,21 @@ class PayrollRunController extends BaseResourceController
         ]);
 
         $period = PayPeriod::findOrFail((int) $data['pay_period_id']);
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
+        if ($orgId > 0 && (int) $period->organization_id !== $orgId) {
+            throw ValidationException::withMessages([
+                'pay_period_id' => ['Selected pay period does not belong to this organization.'],
+            ]);
+        }
+
         app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($period);
 
         if (! isset($data['status'])) {
             $hr = HrPayrollSettingsResolver::forOrganizationId((int) $period->organization_id);
             $data['status'] = ($hr['require_payroll_approval'] ?? false) ? 'pending_approval' : 'draft';
         }
+
+        $data['organization_id'] = (int) $period->organization_id;
 
         $run = PayrollRun::create($data);
         if ($run->status === 'pending_approval' && $request->user()) {
@@ -73,14 +95,12 @@ class PayrollRunController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        $run = PayrollRun::with([
+        $run = $this->findScopedRun($request, $id)->load([
             'payPeriod',
             'approvedByUser:id,full_name,username',
             'paidByUser:id,full_name,username',
             'processedByUser:id,full_name,username',
-        ])
-            ->withCount('lines as employee_count')
-            ->findOrFail($id);
+        ])->loadCount('lines as employee_count');
 
         return response()->json($this->runWithMeta($run, $request->user()));
     }
@@ -94,8 +114,8 @@ class PayrollRunController extends BaseResourceController
             return response()->json(['message' => 'Only administrators can delete payroll runs.'], 403);
         }
 
-        $run = PayrollRun::with('payPeriod')->findOrFail($id);
-        $orgId = (int) ($run->payPeriod?->organization_id ?? 0);
+        $run = $this->findScopedRun($request, $id)->load('payPeriod');
+        $orgId = (int) ($run->organization_id ?: $run->payPeriod?->organization_id ?? 0);
         $schedule = app(PayrollRunScheduleService::class);
 
         if (! $schedule->canDeletePayrollRun($run->created_at, $run->run_date, $orgId ?: null)) {

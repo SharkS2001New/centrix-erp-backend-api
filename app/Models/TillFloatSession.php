@@ -10,6 +10,7 @@ class TillFloatSession extends Model
     protected $table = 'till_float_sessions';
     public $timestamps = false;
     protected $fillable = [
+        'organization_id',
         'till_id',
         'branch_id',
         'cashier_id',

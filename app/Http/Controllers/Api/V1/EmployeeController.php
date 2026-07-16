@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Models\Employee;
 use App\Models\PayrollLine;
 use App\Services\Auth\UserLoginService;
@@ -15,6 +16,8 @@ use Symfony\Component\HttpFoundation\Response;
 
 class EmployeeController extends BaseResourceController
 {
+    use FindsOrganizationEmployee;
+
     protected function employeeRelations(): array
     {
         return [
@@ -156,7 +159,7 @@ class EmployeeController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        $employee = Employee::with($this->employeeRelations())->findOrFail($id);
+        $employee = $this->findOrgEmployee($id, $request)->load($this->employeeRelations());
 
         return response()->json($employee);
     }
@@ -173,7 +176,7 @@ class EmployeeController extends BaseResourceController
 
     public function update(Request $request, string $id)
     {
-        $employee = Employee::findOrFail($id);
+        $employee = $this->findOrgEmployee($id, $request);
         $employee->update($this->prepareEmployeeData($request, $employee));
         $employee = $employee->fresh($this->employeeRelations());
         app(UserLoginService::class)->syncFromEmployee($employee);
@@ -183,7 +186,7 @@ class EmployeeController extends BaseResourceController
 
     public function payrollLines(Request $request, int $employee)
     {
-        Employee::findOrFail($employee);
+        $this->findOrgEmployee($employee, $request);
 
         $query = PayrollLine::query()
             ->where('employee_id', $employee)
@@ -195,9 +198,9 @@ class EmployeeController extends BaseResourceController
     }
 
     /** GET /employees/{id}/photo/file */
-    public function photoFile(int $employee)
+    public function photoFile(Request $request, int $employee)
     {
-        $model = Employee::findOrFail($employee);
+        $model = $this->findOrgEmployee($employee, $request);
 
         if (! StoredPublicFile::exists($model->photo_path)) {
             abort(Response::HTTP_NOT_FOUND);
@@ -209,7 +212,7 @@ class EmployeeController extends BaseResourceController
     /** POST /employees/{id}/photo */
     public function uploadPhoto(Request $request, int $employee)
     {
-        $model = Employee::findOrFail($employee);
+        $model = $this->findOrgEmployee($employee, $request);
 
         $request->validate([
             'image' => 'required|image|mimes:jpeg,jpg,png,webp|max:5120',
@@ -229,9 +232,9 @@ class EmployeeController extends BaseResourceController
     }
 
     /** DELETE /employees/{id}/photo */
-    public function deletePhoto(int $employee)
+    public function deletePhoto(Request $request, int $employee)
     {
-        $model = Employee::findOrFail($employee);
+        $model = $this->findOrgEmployee($employee, $request);
 
         if ($model->photo_path) {
             Storage::disk('public')->delete($model->photo_path);
@@ -244,6 +247,24 @@ class EmployeeController extends BaseResourceController
     protected function prepareEmployeeData(Request $request, ?Employee $existing = null): array
     {
         $data = $this->validatedEmployee($request, $existing);
+
+        $user = $request->user();
+        if ($user) {
+            $orgId = (int) ($this->access()->organizationId($user, $request) ?? 0);
+            if ($orgId > 0) {
+                $data['organization_id'] = $orgId;
+            }
+            if (! empty($data['branch_id'])) {
+                $this->access()->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
+            }
+            $limitedBranch = $this->access()->branchId($user);
+            if ($limitedBranch !== null) {
+                if (! empty($data['branch_id']) && (int) $data['branch_id'] !== $limitedBranch) {
+                    abort(403, 'You can only operate within your assigned branch.');
+                }
+                $data['branch_id'] = $limitedBranch;
+            }
+        }
 
         $data['nationality'] = 'Kenyan';
         $data['country'] = 'Kenya';
@@ -295,7 +316,7 @@ class EmployeeController extends BaseResourceController
     protected function validatedEmployee(Request $request, ?Employee $existing = null): array
     {
         return $request->validate([
-            'organization_id' => $existing ? 'sometimes|integer|exists:organizations,id' : 'required|integer|exists:organizations,id',
+            'organization_id' => 'nullable|integer|exists:organizations,id',
             'branch_id' => 'nullable|integer|exists:branches,id',
             'department_id' => 'nullable|integer|exists:departments,id',
             'position_id' => 'nullable|integer|exists:positions,id',

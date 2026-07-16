@@ -148,7 +148,7 @@ class TillOperationsController extends Controller
             );
         }
 
-        $till = Till::findOrFail($data['till_id']);
+        $till = $this->findBranchScopedModel(Till::class, (int) $data['till_id'], $request->user());
         $userId = (int) $request->user()->id;
 
         $this->assertTillAssignedToCashier($till, $userId);
@@ -177,6 +177,8 @@ class TillOperationsController extends Controller
         }
 
         $session = TillFloatSession::create([
+            'organization_id' => (int) ($till->organization_id
+                ?: \App\Support\OrganizationIdResolver::requireForBranch((int) $data['branch_id'])),
             'till_id' => $data['till_id'],
             'branch_id' => $data['branch_id'],
             'working_amount' => (int) round($this->sumFloatEntries($floatBreakdown)),
@@ -276,6 +278,10 @@ class TillOperationsController extends Controller
         }
 
         $expense = Expense::create([
+            'organization_id' => (int) (
+                $request->user()->organization_id
+                ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $session->branch_id)
+            ),
             'branch_id' => $session->branch_id,
             'expense_group_id' => $data['expense_group_id'],
             'float_session_id' => $session->id,

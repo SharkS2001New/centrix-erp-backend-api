@@ -28,6 +28,7 @@ class TenantIsolationTest extends TestCase
         ]);
 
         Driver::create([
+            'organization_id' => $orgB->id,
             'branch_id' => $branchB->id,
             'driver_code' => 'DRV-ISO',
             'full_name' => 'Other Org Driver',
@@ -55,6 +56,7 @@ class TenantIsolationTest extends TestCase
         ]);
 
         Vehicle::create([
+            'organization_id' => $orgB->id,
             'branch_id' => $branchB->id,
             'vehicle_code' => 'V-ISO',
             'vehicle_name' => 'Other Org Van',

@@ -6,6 +6,7 @@ use App\Models\LpoAttachment;
 use App\Models\LpoMst;
 use App\Models\Supplier;
 use App\Models\SupplierPayment;
+use App\Services\Auth\UserAccessService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
@@ -198,13 +199,18 @@ class SupplierModuleService
             ->orderByDesc('date_paid')
             ->orderByDesc('id');
 
-        if ($supplierId = $request->input('supplier_id')) {
+        $user = $request->user();
+        if ($user) {
+            app(UserAccessService::class)->applyBranchListFilter($query, $user, $request);
+        }
+
+        if ($supplierId = $request->input('supplier_id') ?? $request->input('filter.supplier_id')) {
             $query->where('supplier_id', (int) $supplierId);
         }
-        if ($from = $request->input('date_from')) {
+        if ($from = $request->input('date_from') ?? $request->input('filter.date_from')) {
             $query->whereDate('date_paid', '>=', $from);
         }
-        if ($to = $request->input('date_to')) {
+        if ($to = $request->input('date_to') ?? $request->input('filter.date_to')) {
             $query->whereDate('date_paid', '<=', $to);
         }
 
@@ -218,6 +224,7 @@ class SupplierModuleService
     {
         $data = $request->validate([
             'lpo_no' => 'nullable|integer',
+            'branch_id' => 'nullable|integer|exists:branches,id',
             'payment_method_id' => 'required|integer|exists:payment_methods,id',
             'amount_paid' => 'required|numeric|min:0.01',
             'manual_amount' => 'nullable|boolean',
@@ -229,9 +236,12 @@ class SupplierModuleService
             'notes' => 'nullable|string',
         ]);
 
+        $user = $request->user();
+        $access = app(UserAccessService::class);
         $manual = (bool) ($data['manual_amount'] ?? false);
         $amount = (float) $data['amount_paid'];
         $lpoNo = isset($data['lpo_no']) ? (int) $data['lpo_no'] : null;
+        $lpo = null;
 
         if ($lpoNo) {
             $lpo = LpoMst::query()
@@ -277,9 +287,22 @@ class SupplierModuleService
             ]);
         }
 
-        return DB::transaction(function () use ($request, $supplier, $data, $manual, $amount, $lpoNo) {
+        $branchId = isset($data['branch_id']) ? (int) $data['branch_id'] : null;
+        if (! $branchId && $lpo?->branch_id) {
+            $branchId = (int) $lpo->branch_id;
+        }
+        if (! $branchId && $user?->branch_id) {
+            $branchId = (int) $user->branch_id;
+        }
+        if ($branchId && $user) {
+            $access->assertBranchInOrganization($user, $branchId, $request);
+            $access->assertBranchAccess($user, $branchId);
+        }
+
+        return DB::transaction(function () use ($request, $supplier, $data, $manual, $amount, $lpoNo, $branchId) {
             $payment = SupplierPayment::create([
                 'organization_id' => $supplier->organization_id,
+                'branch_id' => $branchId,
                 'supplier_id' => $supplier->id,
                 'lpo_no' => $lpoNo,
                 'payment_method_id' => (int) $data['payment_method_id'],
@@ -366,6 +389,8 @@ class SupplierModuleService
 
         return [
             'id' => (int) $payment->id,
+            'organization_id' => (int) $payment->organization_id,
+            'branch_id' => $payment->branch_id ? (int) $payment->branch_id : null,
             'supplier_id' => (int) $payment->supplier_id,
             'supplier_name' => $payment->supplier?->supplier_name,
             'lpo_no' => $payment->lpo_no ? (int) $payment->lpo_no : null,

@@ -104,6 +104,8 @@ class PickingListBuilder
 
         $pickingList = PickingList::query()->firstOrNew(['trip_id' => $trip->id]);
         if (! $pickingList->exists) {
+            $pickingList->organization_id = $trip->organization_id
+                ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $trip->branch_id);
             $pickingList->branch_id = $trip->branch_id;
             $pickingList->route_id = $trip->route_id;
             $pickingList->list_date = $trip->scheduled_date;

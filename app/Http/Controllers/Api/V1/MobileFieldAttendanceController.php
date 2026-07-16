@@ -26,6 +26,7 @@ class MobileFieldAttendanceController extends Controller
 
         $filters = $request->validate([
             'user_id' => 'nullable|integer|min:1',
+            'branch_id' => 'nullable|integer|min:1',
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date',
             'open_only' => 'nullable|boolean',
