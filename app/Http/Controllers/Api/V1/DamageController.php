@@ -7,6 +7,7 @@ use App\Models\Damage;
 use App\Models\User;
 use App\Services\Accounting\InventoryMovementJournalService;
 use App\Services\Audit\OperationalAuditService;
+use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\ErpContext;
 use App\Services\Inventory\DamageApprovalService;
 use Illuminate\Http\Request;
@@ -166,7 +167,7 @@ class DamageController extends BaseResourceController
     protected function validateDamagePayload(Request $request, bool $partial = false): array
     {
         $rules = [
-            'product_code' => ($partial ? 'sometimes|' : '').'required|string|exists:products,product_code',
+            'product_code' => ($partial ? 'sometimes|' : '').'required|string',
             'branch_id' => ($partial ? 'sometimes|' : '').'required|integer|exists:branches,id',
             'quantity' => ($partial ? 'sometimes|' : '').'required|numeric|min:0.001',
             'package_type' => 'nullable|string',
@@ -179,6 +180,20 @@ class DamageController extends BaseResourceController
 
         if (isset($data['package_type'])) {
             $data['package_type'] = $this->normalizePackageType((string) $data['package_type']);
+        }
+
+        $user = $request->user();
+        if ($user && isset($data['product_code'])) {
+            $orgId = (int) ($this->access()->organizationId($user, $request) ?? $user->organization_id ?? 0);
+            $branchId = isset($data['branch_id'])
+                ? (int) $data['branch_id']
+                : (int) ($request->input('branch_id') ?? $user->branch_id ?? 0);
+            $product = app(ProductCatalogScopeService::class)->findAccessibleProduct(
+                (string) $data['product_code'],
+                $orgId,
+                $branchId,
+            );
+            $data['product_code'] = (string) $product->product_code;
         }
 
         return $data;

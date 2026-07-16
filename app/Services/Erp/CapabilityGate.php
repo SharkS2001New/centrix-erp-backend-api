@@ -155,7 +155,16 @@ class CapabilityGate
         $profileModules = config("erp.profiles.{$profile}.modules", []);
         $overrides = $this->organizationModuleOverrides();
 
-        $merged = array_merge($profileModules, $overrides);
+        // When the org has an explicit enabled_modules map (sparse "on" keys from
+        // Applications / provisioning), that map is the full source of truth.
+        // Merging the deployment profile afterwards re-enabled unchecked apps
+        // because false flags are not stored in the sparse map.
+        $hasExplicitModules = is_array($this->organization->enabled_modules)
+            && $this->organization->enabled_modules !== [];
+
+        $merged = $hasExplicitModules
+            ? $overrides
+            : $profileModules;
 
         $cascaded = ModuleRegistry::cascade(ModuleRegistry::sanitizeModuleMap($merged));
 
@@ -177,40 +186,7 @@ class CapabilityGate
             }
         }
 
-        if (! $this->isPlatformShellOrganization() && $this->tradingTenantHasOperationalModule($cascaded)) {
-            $cascaded['admin'] = true;
-        }
-
         return $cascaded;
-    }
-
-    protected function isPlatformShellOrganization(): bool
-    {
-        if (! $this->organization) {
-            return false;
-        }
-
-        if (strtoupper((string) $this->organization->company_code) === 'PLATFORM') {
-            return true;
-        }
-
-        $settings = is_array($this->organization->module_settings)
-            ? $this->organization->module_settings
-            : [];
-
-        return (bool) ($settings['platform'] ?? false);
-    }
-
-    /** @param  array<string, bool>  $modules */
-    protected function tradingTenantHasOperationalModule(array $modules): bool
-    {
-        foreach (['sales', 'sales.pos', 'sales.backend', 'sales.mobile', 'inventory', 'customers_suppliers', 'accounting', 'payments', 'hr_payroll', 'distribution'] as $key) {
-            if ($modules[$key] ?? false) {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     /** @return array<string, bool> */

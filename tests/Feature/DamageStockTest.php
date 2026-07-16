@@ -134,6 +134,31 @@ class DamageStockTest extends TestCase
         ])->assertNotFound();
     }
 
+    public function test_recording_damage_rejects_product_not_visible_at_branch(): void
+    {
+        $otherBranch = \App\Models\Branch::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('id', '!=', $this->user->branch_id)
+            ->first();
+
+        if (! $otherBranch) {
+            $this->markTestSkipped('Needs a second branch in the seeded organization.');
+        }
+
+        $product = Product::query()->where('product_code', $this->productCode)->firstOrFail();
+        $product->update(['branch_id' => $otherBranch->id]);
+
+        $this->postJson('/api/v1/damages', [
+            'product_code' => $this->productCode,
+            'branch_id' => $this->user->branch_id,
+            'quantity' => 1,
+            'package_type' => 'partial',
+            'stock_location' => 'shop',
+            'reason' => 'Wrong branch product',
+        ])->assertStatus(422)
+            ->assertJsonValidationErrors(['product_code']);
+    }
+
     protected function onHandShop(): float
     {
         return (float) CurrentStock::where('product_code', $this->productCode)

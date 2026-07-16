@@ -78,6 +78,10 @@ class AccountingReportTest extends TestCase
             ->json();
 
         $this->assertSame(1000.0, (float) $pl['summary']['total_revenue']);
+        $this->assertSame(1000.0, (float) $pl['summary']['net_income']);
+        $this->assertNotEmpty($pl['data']);
+        $this->assertTrue(collect($pl['data'])->contains(fn ($row) => ($row['is_header'] ?? false) === true));
+        $this->assertTrue(collect($pl['data'])->contains(fn ($row) => ($row['account_name'] ?? null) === 'Net income'));
     }
 
     public function test_general_ledger_endpoint_returns_lines(): void

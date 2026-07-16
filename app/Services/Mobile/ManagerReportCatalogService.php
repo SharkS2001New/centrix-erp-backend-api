@@ -99,7 +99,7 @@ class ManagerReportCatalogService
         'stock-on-hand' => 'reports.stock_on_hand.view',
         'stock-movement' => 'reports.stock_movement.view',
         'profit-loss' => 'reports.profit_loss.view',
-        'profit-loss-gl' => 'reports.profit_loss.view',
+        'profit-loss-gl' => 'accounting.profit_loss.view',
         'top-debtors' => 'reports.top_debtors.view',
         'vat-collected' => 'reports.vat_collected.view',
         'till-sessions' => 'reports.till_sessions.view',

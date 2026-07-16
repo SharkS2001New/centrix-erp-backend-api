@@ -404,7 +404,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('hr-dashboard-kpi', [HrReportController::class, 'hrDashboardKpi']);
         });
 
-        Route::middleware('erp.permission:reports.view|accounting.view')->group(function () {
+        Route::middleware('erp.permission:reports.view|accounting.view|accounting.profit_loss.view|accounting.trial_balance.view|accounting.balance_sheet.view|accounting.cash_flow.view|accounting.general_ledger.view')->group(function () {
             Route::get('journal-register', [ReportController::class, 'journalRegister']);
             Route::get('general-ledger', [AccountingReportController::class, 'generalLedger']);
             Route::get('trial-balance', [AccountingReportController::class, 'trialBalance']);

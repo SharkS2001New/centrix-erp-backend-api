@@ -257,7 +257,7 @@ class AccountingReportService
             ->where('organization_id', $orgId)
             ->whereIn('account_type', ['revenue', 'expense'])
             ->where('is_active', true)
-            ->orderBy('account_type')
+            ->orderByRaw("CASE WHEN account_type = 'revenue' THEN 0 ELSE 1 END")
             ->orderBy('account_code')
             ->get();
 
@@ -275,45 +275,85 @@ class AccountingReportService
             ->groupBy('jel.account_id')
             ->selectRaw('jel.account_id, SUM(jel.debit) as total_debit, SUM(jel.credit) as total_credit')
             ->get()
-            ->keyBy('account_id');
+            ->keyBy(fn ($row) => (int) $row->account_id);
 
-        $rows = collect();
-        $totalRevenue = 0.0;
-        $totalExpenses = 0.0;
+        $sections = [
+            'revenue' => ['label' => 'Revenue', 'rows' => collect(), 'total' => 0.0],
+            'expense' => ['label' => 'Expenses', 'rows' => collect(), 'total' => 0.0],
+        ];
 
         foreach ($accounts as $account) {
-            $raw = $movements->get($account->id);
+            $raw = $movements->get((int) $account->id);
             $debit = (float) ($raw->total_debit ?? 0);
             $credit = (float) ($raw->total_credit ?? 0);
-            $amount = $account->account_type === 'revenue'
+            $type = (string) $account->account_type;
+            $amount = $type === 'revenue'
                 ? round($credit - $debit, 2)
                 : round($debit - $credit, 2);
 
-            if (abs($amount) < 0.005) {
+            if (abs($amount) < 0.005 || ! isset($sections[$type])) {
                 continue;
             }
 
-            if ($account->account_type === 'revenue') {
-                $totalRevenue += $amount;
-            } else {
-                $totalExpenses += $amount;
-            }
-
-            $rows->push((object) [
+            $sections[$type]['rows']->push((object) [
                 'account_code' => $account->account_code,
                 'account_name' => $account->account_name,
-                'account_type' => $account->account_type,
                 'amount' => $amount,
+            ]);
+            $sections[$type]['total'] += $amount;
+        }
+
+        $totalRevenue = round($sections['revenue']['total'], 2);
+        $totalExpenses = round($sections['expense']['total'], 2);
+        $netIncome = round($totalRevenue - $totalExpenses, 2);
+
+        $flatRows = collect();
+        foreach ($sections as $section) {
+            if ($section['rows']->isEmpty()) {
+                continue;
+            }
+            $flatRows->push((object) [
+                'section' => $section['label'],
+                'account_code' => '',
+                'account_name' => '',
+                'account_type' => null,
+                'amount' => null,
+                'is_header' => true,
+            ]);
+            foreach ($section['rows'] as $line) {
+                $flatRows->push((object) [
+                    'section' => $section['label'],
+                    'account_code' => $line->account_code,
+                    'account_name' => $line->account_name,
+                    'account_type' => $section['label'] === 'Revenue' ? 'revenue' : 'expense',
+                    'amount' => $line->amount,
+                    'is_header' => false,
+                ]);
+            }
+            $flatRows->push((object) [
+                'section' => $section['label'],
+                'account_code' => '',
+                'account_name' => 'Total '.$section['label'],
+                'account_type' => null,
+                'amount' => round($section['total'], 2),
+                'is_total' => true,
             ]);
         }
 
-        $netIncome = round($totalRevenue - $totalExpenses, 2);
+        $flatRows->push((object) [
+            'section' => 'Net income',
+            'account_code' => '',
+            'account_name' => 'Net income',
+            'account_type' => null,
+            'amount' => $netIncome,
+            'is_total' => true,
+        ]);
 
         return [
-            'rows' => $rows->values(),
+            'rows' => $flatRows->values()->all(),
             'summary' => [
-                'total_revenue' => round($totalRevenue, 2),
-                'total_expenses' => round($totalExpenses, 2),
+                'total_revenue' => $totalRevenue,
+                'total_expenses' => $totalExpenses,
                 'net_income' => $netIncome,
             ],
         ];

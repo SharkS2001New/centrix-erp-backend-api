@@ -773,9 +773,91 @@ class ReportController extends Controller
 
     public function profitLoss(Request $request)
     {
-        return response()->json($this->reportFromView('v_profit_loss_summary', $this->filters($request), [
-            'period', 'branch_id',
-        ]));
+        $filters = $this->filters($request);
+        $from = ! empty($filters['from_date']) ? (string) $filters['from_date'] : null;
+        $to = ! empty($filters['to_date']) ? (string) $filters['to_date'] : null;
+        $branchId = isset($filters['branch_id']) && $filters['branch_id'] !== ''
+            ? (int) $filters['branch_id']
+            : null;
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+
+        // Date-bounded aggregates — avoid v_profit_loss_summary, which materializes
+        // all-time sales/receipts/expenses before the period filter can apply.
+        $salesQuery = CentrixSalesScope::excludeLegacyMaterialized(
+            DB::table('sales')
+                ->where('status', 'completed')
+                ->where('archived', 0),
+        );
+        $this->applySalesTenantScope($salesQuery, $orgId, $branchId);
+        if ($from) {
+            $salesQuery->whereDate('completed_at', '>=', $from);
+        }
+        if ($to) {
+            $salesQuery->whereDate('completed_at', '<=', $to);
+        }
+
+        $sales = $salesQuery
+            ->selectRaw('COALESCE(SUM(order_total), 0) as gross_revenue, COALESCE(SUM(total_vat), 0) as vat_collected')
+            ->first();
+
+        $grossRevenue = (float) ($sales->gross_revenue ?? 0);
+        $vatCollected = (float) ($sales->vat_collected ?? 0);
+        $netRevenue = $grossRevenue - $vatCollected;
+
+        $cogsQuery = DB::table('stock_receipts');
+        $this->applyBranchTenantScope($cogsQuery, $orgId, $branchId);
+        if ($orgId && Schema::hasColumn('stock_receipts', 'organization_id')) {
+            $cogsQuery->where('organization_id', $orgId);
+        }
+        if ($from) {
+            $cogsQuery->whereDate('created_at', '>=', $from);
+        }
+        if ($to) {
+            $cogsQuery->whereDate('created_at', '<=', $to);
+        }
+        $cogs = (float) $cogsQuery
+            ->selectRaw('COALESCE(SUM(units_received * COALESCE(cost_price, 0)), 0) as total_cost')
+            ->value('total_cost');
+
+        $expenseQuery = DB::table('expenses')->whereNull('deleted_at');
+        $this->applyBranchTenantScope($expenseQuery, $orgId, $branchId);
+        if ($orgId && Schema::hasColumn('expenses', 'organization_id')) {
+            $expenseQuery->where('organization_id', $orgId);
+        }
+        if ($from) {
+            $expenseQuery->whereDate('expense_date', '>=', $from);
+        }
+        if ($to) {
+            $expenseQuery->whereDate('expense_date', '<=', $to);
+        }
+        $totalExpenses = (float) $expenseQuery->sum('expense_amount');
+
+        $grossProfit = $netRevenue - $cogs;
+        $netProfit = $grossProfit - $totalExpenses;
+
+        $row = [
+            'period' => $from,
+            'period_end' => $to,
+            'branch_id' => $branchId,
+            'branch_name' => null,
+            'gross_revenue' => round($grossRevenue, 2),
+            'vat_collected' => round($vatCollected, 2),
+            'net_revenue' => round($netRevenue, 2),
+            'cogs' => round($cogs, 2),
+            'gross_profit' => round($grossProfit, 2),
+            'total_expenses' => round($totalExpenses, 2),
+            'net_profit' => round($netProfit, 2),
+        ];
+
+        return response()->json([
+            'data' => [$row],
+            'current_page' => 1,
+            'last_page' => 1,
+            'per_page' => 1,
+            'total' => 1,
+            'from' => 1,
+            'to' => 1,
+        ]);
     }
 
     public function eodCashier(Request $request)
@@ -1035,11 +1117,11 @@ class ReportController extends Controller
         }
         $this->applyBranchTenantScope($creditPaymentsQuery, $orgId, $branchId, 'ci.branch_id');
         if ($isMonthly) {
-            $creditPaymentsQuery->whereBetween('date_paid', [$periodStartDate, $periodEndDate]);
+            $creditPaymentsQuery->whereBetween('cip.date_paid', [$periodStartDate, $periodEndDate]);
         } else {
-            $creditPaymentsQuery->whereDate('date_paid', $date);
+            $creditPaymentsQuery->whereDate('cip.date_paid', $date);
         }
-        $creditPayments = (float) $creditPaymentsQuery->sum('amount_paid');
+        $creditPayments = (float) $creditPaymentsQuery->sum('cip.amount_paid');
 
         $closingDebtors = (float) DB::table('customers')
             ->whereNull('deleted_at')
