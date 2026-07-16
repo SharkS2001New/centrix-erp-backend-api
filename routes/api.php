@@ -610,11 +610,19 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
             Route::apiResource('payment-methods', PaymentMethodController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:admin.view|purchasing.view|payments.view|payments.manage|driver.mobile'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
+                ->only(['store', 'update', 'destroy'])
+                ->middleware(['erp.permission:admin.manage|admin.payment_methods.create|admin.payment_methods.edit|admin.payment_methods.delete']);
             Route::apiResource('kra-responses', KraResponseController::class)
                 ->middleware('erp.permission:admin.view');
         });
+
+        // List/show for checkout, collect-payment, drivers — not admin-module-only.
+        Route::apiResource('payment-methods', PaymentMethodController::class)
+            ->only(['index', 'show'])
+            ->middleware([
+                'erp.module:admin,sales,payments,purchasing,distribution',
+                'erp.permission:admin.view|admin.payment_methods.view|purchasing.view|payments.view|payments.manage|payments.sale_payments.view|payments.sale_payments.create|sales.orders.view|sales.orders.edit|pos.checkout.create|driver.mobile',
+            ]);
         Route::apiResource('users', UserController::class)
             ->middleware(['erp.module:admin'])
             ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])

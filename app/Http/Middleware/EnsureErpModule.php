@@ -11,13 +11,27 @@ class EnsureErpModule
 {
     public function __construct(protected ErpContext $erp) {}
 
-    public function handle(Request $request, Closure $next, string $module): Response
+    /**
+     * Laravel splits middleware parameters on commas, so erp.module:sales,payments
+     * arrives as separate arguments — accept them via variadic + legacy comma strings.
+     */
+    public function handle(Request $request, Closure $next, string ...$moduleParams): Response
     {
         $gate = $request->user()
             ? $this->erp->gateForRequest($request)
             : $this->erp->gateForUser(null);
 
-        $modules = array_values(array_filter(array_map('trim', explode(',', $module))));
+        $modules = [];
+        foreach ($moduleParams as $param) {
+            foreach (explode(',', $param) as $key) {
+                $key = trim($key);
+                if ($key !== '') {
+                    $modules[] = $key;
+                }
+            }
+        }
+        $modules = array_values(array_unique($modules));
+
         $enabled = false;
         foreach ($modules as $key) {
             if ($gate->enabled($key)) {
@@ -29,7 +43,7 @@ class EnsureErpModule
         if (! $enabled) {
             return response()->json([
                 'message' => 'This feature is not enabled for your organization.',
-                'module' => $module,
+                'module' => implode(',', $modules) ?: null,
             ], 403);
         }
 

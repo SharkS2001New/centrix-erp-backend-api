@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Organization;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
@@ -124,5 +125,58 @@ class RolePermissionTest extends TestCase
             ->assertJsonPath('permission_ids', []);
 
         $this->assertSame(0, DB::table('role_permissions')->where('role_id', $role->id)->count());
+    }
+
+    public function test_platform_admin_permission_matrix_uses_acting_organization_modules(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+        PermissionMatrixService::ensure();
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        $platformOrg = Organization::query()
+            ->where('company_code', config('erp.platform_company_code', 'PLATFORM'))
+            ->first();
+        if ($platformOrg) {
+            // Platform shell typically has few operational modules; AI can still appear via settings.
+            $platformOrg->update([
+                'enabled_modules' => ['admin' => true],
+            ]);
+        }
+
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'PERMORG',
+            'org_name' => 'Permission Matrix Org',
+            'org_email' => 'perm@org.com',
+            'primary_tel' => '0711000099',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'wholesale_retail',
+            'enabled_modules' => [
+                'sales' => true,
+                'sales.backend' => true,
+                'inventory' => true,
+                'customers_suppliers' => true,
+                'admin' => true,
+            ],
+            'admin_username' => 'perm_admin',
+            'admin_email' => 'perm@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Perm Admin',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+
+        $groups = collect(
+            $this->getJson("/api/v1/admin/organizations/{$orgId}/roles/permissions/matrix")
+                ->assertOk()
+                ->json('groups'),
+        )->pluck('module');
+
+        $this->assertTrue($groups->contains('sales'));
+        $this->assertTrue($groups->contains('inventory'));
+        $this->assertTrue($groups->contains('catalogue'));
+        $this->assertTrue($groups->contains('customers'));
+        $this->assertTrue($groups->contains('purchasing'));
     }
 }

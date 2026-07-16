@@ -55,7 +55,7 @@ class RoleController extends BaseResourceController
     public function permissions(Request $request, string $id, ?string $nestedId = null)
     {
         $role = $this->findRoleOrFail($request, $this->resolveResourceId($id, $nestedId));
-        $gate = app(ErpContext::class)->gateForUser($request->user());
+        $gate = app(ErpContext::class)->gateForRequest($request);
 
         return response()->json($this->rolePermissionsPayload($role, $gate));
     }
@@ -75,7 +75,7 @@ class RoleController extends BaseResourceController
             ->values()
             ->all();
 
-        $gate = app(ErpContext::class)->gateForUser($request->user());
+        $gate = app(ErpContext::class)->gateForRequest($request);
         $allowedIds = PermissionMatrixService::enabledPermissionIds($gate);
         $permissionIds = array_values(array_intersect($permissionIds, $allowedIds));
 
@@ -98,7 +98,7 @@ class RoleController extends BaseResourceController
     {
         PermissionMatrixService::ensure();
 
-        $gate = app(ErpContext::class)->gateForUser($request->user());
+        $gate = app(ErpContext::class)->gateForRequest($request);
         $permissions = Permission::query()->orderBy('module')->orderBy('permission_name')->get();
         $allowedIds = collect(PermissionMatrixService::enabledPermissionIds($gate))->flip();
 

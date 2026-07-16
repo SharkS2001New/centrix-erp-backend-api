@@ -531,7 +531,23 @@ class CheckoutController extends Controller
             }
 
             if ($payNow > 0) {
-                $method = PaymentMethod::where('method_code', $sale->payment_method_code)->first();
+                $method = PaymentMethod::query()
+                    ->where('organization_id', $sale->organization_id)
+                    ->where('method_code', $sale->payment_method_code)
+                    ->first();
+                if (! $method) {
+                    $aliases = match (strtoupper((string) $sale->payment_method_code)) {
+                        'EQUITY', 'KCB', 'OTHER' => ['BANK', 'BANK_TRANSFER'],
+                        'M-PESA', 'M_PESA' => ['MPESA'],
+                        default => [],
+                    };
+                    if ($aliases !== []) {
+                        $method = PaymentMethod::query()
+                            ->where('organization_id', $sale->organization_id)
+                            ->whereIn('method_code', $aliases)
+                            ->first();
+                    }
+                }
                 if ($method) {
                     SalePayment::create([
                         'sale_id' => $sale->id,

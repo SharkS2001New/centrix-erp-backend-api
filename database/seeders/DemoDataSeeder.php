@@ -51,7 +51,7 @@ class DemoDataSeeder extends Seeder
 
         $this->truncateDemoTables();
 
-        $enabledModules = config('erp.deployment_profiles.wholesale_retail.modules', []);
+        $enabledModules = config('erp.profiles.wholesale_retail.modules', []);
         $enabledModules['distribution'] = true;
 
         $org = Organization::create([

@@ -11,12 +11,25 @@ class EnsureAnyErpModule
 {
     public function __construct(protected ErpContext $erp) {}
 
-    public function handle(Request $request, Closure $next, string $modules): Response
+    /**
+     * Laravel splits middleware parameters on commas, so accept variadic module keys.
+     */
+    public function handle(Request $request, Closure $next, string ...$moduleParams): Response
     {
         $gate = $request->user()
             ? $this->erp->gateForRequest($request)
             : $this->erp->gateForUser(null);
-        $keys = array_values(array_filter(array_map('trim', explode(',', $modules))));
+
+        $keys = [];
+        foreach ($moduleParams as $param) {
+            foreach (explode(',', $param) as $module) {
+                $module = trim($module);
+                if ($module !== '') {
+                    $keys[] = $module;
+                }
+            }
+        }
+        $keys = array_values(array_unique($keys));
 
         foreach ($keys as $module) {
             if ($gate->enabled($module)) {
