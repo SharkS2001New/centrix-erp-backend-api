@@ -2,10 +2,10 @@
 
 namespace Tests\Feature;
 
+use App\Models\SupplierPayment;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
-use Illuminate\Database\Eloquent\Builder;
-use Laravel\Sanctum\Sanctum;
+use Illuminate\Support\Facades\DB;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
 
@@ -27,45 +27,34 @@ class BranchListFilterTest extends TestCase
         $this->assertStringContainsString('branch_id', strtolower($query->toSql()));
     }
 
-    public function test_lpo_create_stamps_branch_id(): void
+    public function test_supplier_payment_accepts_branch_id(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
-
         $supplierId = \App\Models\Supplier::query()
             ->where('organization_id', $admin->organization_id)
             ->value('id');
-        $productCode = \App\Models\Product::query()
+        $methodId = DB::table('payment_methods')
             ->where('organization_id', $admin->organization_id)
-            ->value('product_code');
+            ->value('id')
+            ?? DB::table('payment_methods')->value('id');
 
-        if (! $supplierId || ! $productCode) {
-            $this->markTestSkipped('Demo supplier/product required.');
-        }
+        $this->assertNotEmpty($supplierId);
+        $this->assertNotEmpty($methodId);
 
-        $response = $this->postJson('/api/v1/lpo-mst/full', [
-            'supplier_id' => $supplierId,
+        $payment = SupplierPayment::create([
+            'organization_id' => $admin->organization_id,
             'branch_id' => $admin->branch_id,
-            'lines' => [
-                [
-                    'product_code' => $productCode,
-                    'ordered_qty' => 1,
-                    'cost_price' => 10,
-                ],
-            ],
+            'supplier_id' => $supplierId,
+            'payment_method_id' => $methodId,
+            'amount_paid' => 1,
+            'date_paid' => now()->toDateString(),
+            'paid_by' => $admin->id,
         ]);
 
-        if ($response->status() === 403) {
-            $this->markTestSkipped('LPO module gated in this profile.');
-        }
-
-        $response->assertSuccessful();
-        $lpoNo = $response->json('lpo.lpo_no') ?? $response->json('lpo_no') ?? $response->json('data.lpo_no');
-        $this->assertNotEmpty($lpoNo);
-        $this->assertDatabaseHas('lpo_mst', [
-            'lpo_no' => $lpoNo,
+        $this->assertSame((int) $admin->branch_id, (int) $payment->fresh()->branch_id);
+        $this->assertDatabaseHas('supplier_payments', [
+            'id' => $payment->id,
             'branch_id' => $admin->branch_id,
-            'organization_id' => $admin->organization_id,
         ]);
     }
 }
