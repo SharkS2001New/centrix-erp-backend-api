@@ -65,7 +65,10 @@ class RouteScheduleController extends BaseResourceController
     public function update(Request $request, string $id)
     {
         $schedule = $this->findBranchScopedModel(RouteSchedule::class, $id, $request->user());
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $data = $request->validate([
+            'route_id' => ['sometimes', 'integer', TenantRouteRules::exists($orgId ?: null)],
+            'day_of_week' => 'sometimes|integer|min:0|max:6',
             'default_driver_id' => 'sometimes|nullable|integer|exists:drivers,id',
             'default_vehicle_id' => 'sometimes|nullable|integer|exists:vehicles,id',
             'departure_time' => 'sometimes|nullable|date_format:H:i',
