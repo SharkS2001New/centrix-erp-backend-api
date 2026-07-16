@@ -48,8 +48,8 @@ CREATE TABLE organizations (
     org_address     VARCHAR(400)  NOT NULL,
     org_pin         VARCHAR(45),
     vat_regno            VARCHAR(50),
-    deployment_profile   ENUM('small_shop','wholesale_retail','distribution')
-                         NOT NULL DEFAULT 'wholesale_retail',
+    deployment_profile   VARCHAR(60) NOT NULL DEFAULT 'wholesale_retail',
+    -- Profiles: small_shop, wholesale_retail, distribution, supermarket, custom, hotel_bar, …
     enabled_modules      JSON          NULL,  -- override profile defaults per module key
     module_settings      JSON          NULL,  -- per-module options (auto truck, stages, etc.)
     created_at           TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
