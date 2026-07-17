@@ -47,6 +47,7 @@ class PermissionMatrixService
         self::ensureSalesOrderApproveForAdminRoles();
         self::ensureDiscountApprovalsForAdminRoles();
         self::ensureLpoApproveForAdminRoles();
+        self::ensureNotificationsForBackofficeRoles();
     }
 
     public static function ensureRegistryPermissions(): void
@@ -402,6 +403,39 @@ class PermissionMatrixService
             \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
                 'role_id' => $roleId,
                 'permission_id' => $approveId,
+            ]);
+        }
+    }
+
+    /**
+     * Notifications were previously ungated; grant view to any role that already
+     * has business-summary access so existing backoffice users keep the link.
+     */
+    public static function ensureNotificationsForBackofficeRoles(): void
+    {
+        $notificationId = Permission::query()
+            ->where('permission_code', 'admin.notifications.view')
+            ->value('id');
+        $overviewId = Permission::query()
+            ->where('permission_code', 'dashboard.overview.view')
+            ->value('id');
+
+        if (! $notificationId || ! $overviewId) {
+            return;
+        }
+
+        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+            ->where('permission_id', $overviewId)
+            ->pluck('role_id');
+
+        $adminRoleIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Administrator', 'Admin'])
+            ->pluck('id');
+
+        foreach ($roleIds->merge($adminRoleIds)->unique() as $roleId) {
+            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                'role_id' => $roleId,
+                'permission_id' => $notificationId,
             ]);
         }
     }

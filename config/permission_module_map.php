@@ -5,6 +5,8 @@
  * A registry module is considered enabled when any mapped ERP module is enabled for the org.
  */
 return [
+    // Dashboard analytics: child .dashboard keys plus parent domains so the Roles
+    // matrix matches sidebar nav (parent inventory/sales/… also unlocks analytics).
     'dashboard' => [
         'sales.dashboard',
         'inventory.dashboard',
@@ -12,6 +14,12 @@ return [
         'hr_payroll.dashboard',
         'distribution.dashboard',
         'hospitality.dashboard',
+        'sales',
+        'inventory',
+        'accounting',
+        'hr_payroll',
+        'distribution',
+        'hospitality',
     ],
     'catalogue' => ['inventory', 'sales.backend', 'sales.pos', 'hospitality.bar_pos', 'hospitality.backend'],
     'customers' => ['customers_suppliers', 'sales.backend', 'sales.mobile'],
