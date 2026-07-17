@@ -662,7 +662,7 @@ class OrganizationPlatformConfigService
             return [];
         }
 
-        $allowed = OrderWorkflowService::ALL_STATUSES;
+        $allowed = OrderWorkflowService::actionStageKeys();
         $out = [];
         $seen = [];
         foreach ($value as $status) {

@@ -34,6 +34,24 @@ class OrderWorkflowService
         'editable',
     ];
 
+    /**
+     * Pseudo-stage for Order actions by stage: Mobile Orders / mobile channel.
+     * Not a workflow pipeline status.
+     *
+     * @var list<string>
+     */
+    public const ACTION_PSEUDO_STAGES = ['mobile'];
+
+    /**
+     * Allowed values for edit/print/collect/cancel/return stage lists.
+     *
+     * @return list<string>
+     */
+    public static function actionStageKeys(): array
+    {
+        return array_values(array_unique(array_merge(self::ALL_STATUSES, self::ACTION_PSEUDO_STAGES)));
+    }
+
     public function __construct(protected CapabilityGate $gate) {}
 
     public static function forGate(CapabilityGate $gate): self
@@ -191,6 +209,10 @@ class OrderWorkflowService
             return true;
         }
 
+        if ($this->actionStagesAllowMobileChannel($allowed, $channel)) {
+            return true;
+        }
+
         $aligned = $this->alignStatusToPipeline($status, $channel);
 
         return in_array($aligned, $allowed, true);
@@ -231,6 +253,10 @@ class OrderWorkflowService
         $allowed = $this->customerReturnStatuses();
 
         if (in_array($status, $allowed, true)) {
+            return true;
+        }
+
+        if ($this->actionStagesAllowMobileChannel($allowed, $channel)) {
             return true;
         }
 
@@ -366,6 +392,10 @@ class OrderWorkflowService
             return true;
         }
 
+        if ($this->actionStagesAllowMobileChannel($allowed, $channel)) {
+            return true;
+        }
+
         $aligned = $this->alignStatusToPipeline($status, $channel);
 
         return in_array($aligned, $allowed, true);
@@ -425,6 +455,10 @@ class OrderWorkflowService
             return true;
         }
 
+        if ($this->actionStagesAllowMobileChannel($allowed, $channel)) {
+            return true;
+        }
+
         $aligned = $this->alignStatusToPipeline($status, $channel);
 
         return in_array($aligned, $allowed, true);
@@ -442,9 +476,25 @@ class OrderWorkflowService
             return true;
         }
 
+        if ($this->actionStagesAllowMobileChannel($allowed, $channel)) {
+            return true;
+        }
+
         $aligned = $this->alignStatusToPipeline($status, $channel);
 
         return in_array($aligned, $allowed, true);
+    }
+
+    /**
+     * @param  list<string>  $allowed
+     */
+    protected function actionStagesAllowMobileChannel(array $allowed, ?string $channel): bool
+    {
+        if (! in_array('mobile', $allowed, true)) {
+            return false;
+        }
+
+        return $this->normalizeSalesChannel((string) ($channel ?? '')) === 'mobile';
     }
 
     /**
@@ -481,7 +531,7 @@ class OrderWorkflowService
         $seen = [];
         foreach ($value as $status) {
             $key = strtolower(trim((string) $status));
-            if ($key === '' || isset($seen[$key]) || ! in_array($key, self::ALL_STATUSES, true)) {
+            if ($key === '' || isset($seen[$key]) || ! in_array($key, self::actionStageKeys(), true)) {
                 continue;
             }
             $seen[$key] = true;

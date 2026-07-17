@@ -318,6 +318,36 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertFalse($service->isCustomerReturnStatus('cancelled'));
     }
 
+    public function test_mobile_pseudo_stage_allows_actions_on_mobile_channel(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'edit_order_statuses' => ['mobile'],
+                    'print_invoice_statuses' => ['mobile'],
+                    'collect_payment_statuses' => ['mobile'],
+                    'cancel_order_statuses' => ['mobile'],
+                    'customer_return_statuses' => ['mobile'],
+                    'order_cancellation_enabled' => true,
+                ],
+            ],
+        ]);
+
+        $service = OrderWorkflowService::forGate(new \App\Services\Erp\CapabilityGate($org));
+
+        $this->assertSame(['mobile'], $service->editOrderStatuses());
+        $this->assertTrue($service->isEditableLineStatus('booked', 'mobile'));
+        $this->assertFalse($service->isEditableLineStatus('booked', 'backend'));
+        $this->assertTrue($service->isPrintInvoiceStatus('booked', 'mobile'));
+        $this->assertFalse($service->isPrintInvoiceStatus('booked', 'backend'));
+        $this->assertTrue($service->isCollectPaymentStatus('booked', 'mobile'));
+        $this->assertFalse($service->isCollectPaymentStatus('booked', 'backend'));
+        $this->assertTrue($service->isCancellableStatus('booked', 'mobile'));
+        $this->assertFalse($service->isCancellableStatus('booked', 'backend'));
+        $this->assertTrue($service->isCustomerReturnStatus('processed', 'mobile'));
+        $this->assertFalse($service->isCustomerReturnStatus('processed', 'backend'));
+    }
+
     public function test_mobile_order_capability_flags_include_print_and_collect(): void
     {
         $org = new \App\Models\Organization([

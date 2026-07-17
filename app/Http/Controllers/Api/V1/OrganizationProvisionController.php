@@ -648,6 +648,7 @@ class OrganizationProvisionController extends Controller
     protected function salesPlatformRules(): array
     {
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
+        $actionStageRule = Rule::in(OrderWorkflowService::actionStageKeys());
 
         return [
             'sales_platform' => 'sometimes|array',
@@ -692,15 +693,15 @@ class OrganizationProvisionController extends Controller
             'sales_platform.order_expiry_before_status' => ['sometimes', 'string', $statusRule],
             'sales_platform.order_cancellation_enabled' => 'sometimes|boolean',
             'sales_platform.edit_order_statuses' => 'sometimes|array|min:1',
-            'sales_platform.edit_order_statuses.*' => ['required', 'string', $statusRule],
+            'sales_platform.edit_order_statuses.*' => ['required', 'string', $actionStageRule],
             'sales_platform.print_invoice_statuses' => 'sometimes|nullable|array',
-            'sales_platform.print_invoice_statuses.*' => ['required', 'string', $statusRule],
+            'sales_platform.print_invoice_statuses.*' => ['required', 'string', $actionStageRule],
             'sales_platform.collect_payment_statuses' => 'sometimes|array|min:1',
-            'sales_platform.collect_payment_statuses.*' => ['required', 'string', $statusRule],
+            'sales_platform.collect_payment_statuses.*' => ['required', 'string', $actionStageRule],
             'sales_platform.cancel_order_statuses' => 'sometimes|array|min:1',
-            'sales_platform.cancel_order_statuses.*' => ['required', 'string', $statusRule],
+            'sales_platform.cancel_order_statuses.*' => ['required', 'string', $actionStageRule],
             'sales_platform.customer_return_statuses' => 'sometimes|array|min:1',
-            'sales_platform.customer_return_statuses.*' => ['required', 'string', $statusRule],
+            'sales_platform.customer_return_statuses.*' => ['required', 'string', $actionStageRule],
             'sales_platform.orders_list_default_days' => 'sometimes|integer|min:1|max:90',
             'sales_platform.orders_list_search_days' => 'sometimes|integer|min:1|max:90',
             'sales_platform.orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
