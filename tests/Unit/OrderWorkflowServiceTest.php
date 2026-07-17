@@ -245,4 +245,116 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($service->isRestorableToCartStatus('paid', 'pos', true));
         $this->assertFalse($service->isRestorableToCartStatus('paid', 'pos', false));
     }
+
+    public function test_order_action_status_helpers_use_defaults_when_unset(): void
+    {
+        $service = OrderWorkflowService::forGate(
+            new \App\Services\Erp\CapabilityGate(new \App\Models\Organization([
+                'module_settings' => ['sales' => []],
+            ]))
+        );
+
+        $this->assertSame(['booked', 'pending', 'editable'], $service->editOrderStatuses());
+        $this->assertNull($service->printInvoiceStatuses());
+        $this->assertSame(['unpaid', 'pending_payment'], $service->collectPaymentStatuses());
+        $this->assertSame(
+            ['booked', 'pending', 'unpaid', 'processed', 'pending_approval', 'editable'],
+            $service->cancelOrderStatuses(),
+        );
+        $this->assertSame(
+            ['paid', 'processed', 'delivered', 'completed'],
+            $service->customerReturnStatuses(),
+        );
+
+        $this->assertTrue($service->isEditableLineStatus('booked'));
+        $this->assertFalse($service->isEditableLineStatus('paid'));
+        $this->assertTrue($service->isPrintInvoiceStatus('paid'));
+        $this->assertTrue($service->isCollectPaymentStatus('unpaid'));
+        $this->assertFalse($service->isCollectPaymentStatus('paid'));
+        $this->assertTrue($service->isCancellableStatus('booked'));
+        $this->assertFalse($service->isCancellableStatus('paid'));
+        $this->assertTrue($service->isCustomerReturnStatus('paid'));
+        $this->assertFalse($service->isCustomerReturnStatus('unpaid'));
+    }
+
+    public function test_order_action_status_helpers_respect_configured_lists(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'edit_order_statuses' => ['unpaid', 'pending_payment'],
+                    'print_invoice_statuses' => ['paid', 'completed'],
+                    'collect_payment_statuses' => ['delivered'],
+                    'cancel_order_statuses' => ['unpaid', 'booked'],
+                    'customer_return_statuses' => ['completed'],
+                ],
+            ],
+        ]);
+
+        $service = OrderWorkflowService::forGate(new \App\Services\Erp\CapabilityGate($org));
+
+        $this->assertSame(['unpaid', 'pending_payment'], $service->editOrderStatuses());
+        $this->assertSame(['paid', 'completed'], $service->printInvoiceStatuses());
+        $this->assertSame(['delivered'], $service->collectPaymentStatuses());
+
+        $this->assertTrue($service->isEditableLineStatus('unpaid'));
+        $this->assertFalse($service->isEditableLineStatus('booked'));
+        $this->assertTrue($service->isPrintInvoiceStatus('paid'));
+        $this->assertFalse($service->isPrintInvoiceStatus('unpaid'));
+        $this->assertTrue($service->isCollectPaymentStatus('delivered'));
+        $this->assertFalse($service->isCollectPaymentStatus('unpaid'));
+        $this->assertFalse($service->isPrintInvoiceStatus('cancelled'));
+        $this->assertFalse($service->isCollectPaymentStatus('cancelled'));
+
+        $this->assertSame(['unpaid', 'booked'], $service->cancelOrderStatuses());
+        $this->assertTrue($service->isCancellableStatus('unpaid'));
+        $this->assertTrue($service->isCancellableStatus('booked'));
+        $this->assertFalse($service->isCancellableStatus('processed'));
+        $this->assertFalse($service->isCancellableStatus('paid'));
+
+        $this->assertSame(['completed'], $service->customerReturnStatuses());
+        $this->assertTrue($service->isCustomerReturnStatus('completed'));
+        $this->assertFalse($service->isCustomerReturnStatus('paid'));
+        $this->assertFalse($service->isCustomerReturnStatus('cancelled'));
+    }
+
+    public function test_mobile_order_capability_flags_include_print_and_collect(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'edit_order_statuses' => ['booked'],
+                    'print_invoice_statuses' => ['paid'],
+                    'collect_payment_statuses' => ['unpaid'],
+                ],
+            ],
+        ]);
+        $org->id = 1;
+
+        $sale = new \App\Models\Sale([
+            'status' => 'unpaid',
+            'channel' => 'mobile',
+            'organization_id' => 1,
+            'created_at' => now(),
+        ]);
+        $sale->setRelation('organization', $org);
+
+        $user = new \App\Models\User(['organization_id' => 1]);
+        $user->setRelation('organization', $org);
+
+        $gate = (new \App\Services\Erp\CapabilityGate($org))->forOrganization($org);
+        $flags = app(\App\Services\Sales\MobileSalesService::class)
+            ->orderCapabilityFlags($sale, $user, $gate);
+
+        $this->assertArrayHasKey('can_print_invoice', $flags);
+        $this->assertArrayHasKey('can_collect_payment', $flags);
+        $this->assertFalse($flags['can_print_invoice']);
+        $this->assertTrue($flags['can_collect_payment']);
+
+        $sale->status = 'paid';
+        $flagsPaid = app(\App\Services\Sales\MobileSalesService::class)
+            ->orderCapabilityFlags($sale, $user, $gate);
+        $this->assertTrue($flagsPaid['can_print_invoice']);
+        $this->assertFalse($flagsPaid['can_collect_payment']);
+    }
 }

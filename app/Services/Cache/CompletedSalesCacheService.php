@@ -356,10 +356,15 @@ class CompletedSalesCacheService
         $gate = app(ErpContext::class)->gateForUser($user);
         $editService = app(PosOrderEditService::class);
         $lineEditService = app(BackofficeOrderLineEditService::class);
+        $workflow = OrderWorkflowService::forGate($gate);
+        $status = (string) $sale->status;
+        $channel = $sale->channel ?: 'backend';
 
         return array_merge($cached, [
             'can_edit' => $editService->canRestoreSaleToCart($sale, $user, $gate),
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $user, $gate),
+            'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel),
+            'can_collect_payment' => $workflow->isCollectPaymentStatus($status, $channel),
         ]);
     }
 

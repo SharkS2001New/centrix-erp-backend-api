@@ -10,8 +10,11 @@ class OrderWorkflowService
     /** Terminal or settled statuses that must never be cancelled. */
     public const NON_CANCELLABLE_ORDER_STATUSES = ['paid', 'delivered', 'completed', 'pending_payment'];
 
-    /** Statuses that allow backoffice line-quantity edits (Edit Order). */
+    /** Default statuses that allow backoffice line-quantity edits (Edit Order). */
     public const EDITABLE_LINE_STATUSES = ['booked', 'pending', 'editable'];
+
+    /** Default workflow statuses where Collect payment is offered. */
+    public const COLLECT_PAYMENT_STATUSES = ['unpaid', 'pending_payment'];
 
     /** @var list<string> */
     public const ALL_STATUSES = [
@@ -182,18 +185,58 @@ class OrderWorkflowService
             return false;
         }
 
-        if (in_array($status, self::NON_CANCELLABLE_ORDER_STATUSES, true)) {
-            return false;
+        $allowed = $this->cancelOrderStatuses();
+
+        if (in_array($status, $allowed, true)) {
+            return true;
         }
 
         $aligned = $this->alignStatusToPipeline($status, $channel);
 
-        if (in_array($aligned, self::NON_CANCELLABLE_ORDER_STATUSES, true)) {
+        return in_array($aligned, $allowed, true);
+    }
+
+    /**
+     * Workflow statuses where Cancel order is allowed for this tenant.
+     *
+     * @return list<string>
+     */
+    public function cancelOrderStatuses(): array
+    {
+        return $this->normalizeRequiredStatusList(
+            $this->gate->moduleSettings('sales')['cancel_order_statuses'] ?? null,
+            self::CANCELLABLE_ORDER_STATUSES,
+        );
+    }
+
+    /**
+     * Workflow statuses where a customer return may be created against the sale.
+     *
+     * @return list<string>
+     */
+    public function customerReturnStatuses(): array
+    {
+        return $this->normalizeRequiredStatusList(
+            $this->gate->moduleSettings('sales')['customer_return_statuses'] ?? null,
+            ['paid', 'processed', 'delivered', 'completed'],
+        );
+    }
+
+    public function isCustomerReturnStatus(string $status, ?string $channel = null): bool
+    {
+        if (in_array($status, ['cancelled', 'expired', 'held', 'draft', 'pending_approval'], true)) {
             return false;
         }
 
-        return in_array($status, self::CANCELLABLE_ORDER_STATUSES, true)
-            || in_array($aligned, self::CANCELLABLE_ORDER_STATUSES, true);
+        $allowed = $this->customerReturnStatuses();
+
+        if (in_array($status, $allowed, true)) {
+            return true;
+        }
+
+        $aligned = $this->alignStatusToPipeline($status, $channel);
+
+        return in_array($aligned, $allowed, true);
     }
 
     public function canTransition(string $from, string $to, ?string $channel = null): bool
@@ -317,13 +360,135 @@ class OrderWorkflowService
             return false;
         }
 
-        if (in_array($status, self::EDITABLE_LINE_STATUSES, true)) {
+        $allowed = $this->editOrderStatuses();
+
+        if (in_array($status, $allowed, true)) {
             return true;
         }
 
         $aligned = $this->alignStatusToPipeline($status, $channel);
 
-        return in_array($aligned, self::EDITABLE_LINE_STATUSES, true);
+        return in_array($aligned, $allowed, true);
+    }
+
+    /**
+     * Workflow statuses where Edit order is allowed for this tenant.
+     *
+     * @return list<string>
+     */
+    public function editOrderStatuses(): array
+    {
+        return $this->normalizeRequiredStatusList(
+            $this->gate->moduleSettings('sales')['edit_order_statuses'] ?? null,
+            self::EDITABLE_LINE_STATUSES,
+        );
+    }
+
+    /**
+     * Workflow statuses where Print invoice is allowed.
+     * Null / empty means all stages (current default behaviour).
+     *
+     * @return list<string>|null
+     */
+    public function printInvoiceStatuses(): ?array
+    {
+        return $this->normalizeOptionalStatusList(
+            $this->gate->moduleSettings('sales')['print_invoice_statuses'] ?? null,
+        );
+    }
+
+    /**
+     * Workflow statuses where Collect payment is offered.
+     *
+     * @return list<string>
+     */
+    public function collectPaymentStatuses(): array
+    {
+        return $this->normalizeRequiredStatusList(
+            $this->gate->moduleSettings('sales')['collect_payment_statuses'] ?? null,
+            self::COLLECT_PAYMENT_STATUSES,
+        );
+    }
+
+    public function isPrintInvoiceStatus(string $status, ?string $channel = null): bool
+    {
+        if (in_array($status, ['cancelled', 'expired', 'draft'], true)) {
+            return false;
+        }
+
+        $allowed = $this->printInvoiceStatuses();
+        if ($allowed === null) {
+            return true;
+        }
+
+        if (in_array($status, $allowed, true)) {
+            return true;
+        }
+
+        $aligned = $this->alignStatusToPipeline($status, $channel);
+
+        return in_array($aligned, $allowed, true);
+    }
+
+    public function isCollectPaymentStatus(string $status, ?string $channel = null): bool
+    {
+        if (in_array($status, ['cancelled', 'expired', 'completed'], true)) {
+            return false;
+        }
+
+        $allowed = $this->collectPaymentStatuses();
+
+        if (in_array($status, $allowed, true)) {
+            return true;
+        }
+
+        $aligned = $this->alignStatusToPipeline($status, $channel);
+
+        return in_array($aligned, $allowed, true);
+    }
+
+    /**
+     * @param  list<string>  $fallback
+     * @return list<string>
+     */
+    protected function normalizeRequiredStatusList(mixed $value, array $fallback): array
+    {
+        $normalized = $this->normalizeStatusList($value);
+
+        return $normalized === [] ? array_values($fallback) : $normalized;
+    }
+
+    /** @return list<string>|null */
+    protected function normalizeOptionalStatusList(mixed $value): ?array
+    {
+        if ($value === null || $value === [] || $value === '') {
+            return null;
+        }
+
+        $normalized = $this->normalizeStatusList($value);
+
+        return $normalized === [] ? null : $normalized;
+    }
+
+    /** @return list<string> */
+    protected function normalizeStatusList(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $out = [];
+        $seen = [];
+        foreach ($value as $status) {
+            $key = strtolower(trim((string) $status));
+            if ($key === '' || isset($seen[$key]) || ! in_array($key, self::ALL_STATUSES, true)) {
+                continue;
+            }
+            $seen[$key] = true;
+            $out[] = $key;
+        }
+
+        return $out;
     }
 
     /** @return list<string> */

@@ -12,26 +12,25 @@ use InvalidArgumentException;
 
 class PosOrderEditService
 {
-    /** @var list<string> */
-    private const DIRECT_RESTORE_STATUSES = ['booked', 'pending'];
-
-    /** @var list<string> */
-    private const MOBILE_PREVIOUS_DAY_MUTABLE_STATUSES = ['editable', 'booked', 'pending'];
-
-    public function allowsPreviousDayMobileMutation(Sale $sale): bool
+    public function allowsPreviousDayMobileMutation(Sale $sale, ?CapabilityGate $gate = null): bool
     {
         if (($sale->channel ?? '') !== 'mobile') {
             return true;
         }
 
-        return in_array((string) $sale->status, self::MOBILE_PREVIOUS_DAY_MUTABLE_STATUSES, true);
+        $status = (string) $sale->status;
+        if ($gate) {
+            return OrderWorkflowService::forGate($gate)->isEditableLineStatus($status, 'mobile');
+        }
+
+        return in_array($status, OrderWorkflowService::EDITABLE_LINE_STATUSES, true);
     }
 
-    public function blocksPreviousDayMobileMutation(Sale $sale): bool
+    public function blocksPreviousDayMobileMutation(Sale $sale, ?CapabilityGate $gate = null): bool
     {
         return ($sale->channel ?? '') === 'mobile'
             && ! $sale->created_at?->isSameDay(now())
-            && ! $this->allowsPreviousDayMobileMutation($sale);
+            && ! $this->allowsPreviousDayMobileMutation($sale, $gate);
     }
 
     public function __construct(
@@ -84,14 +83,15 @@ class PosOrderEditService
 
         $channel = $sale->channel ?: 'pos';
         $workflowService = OrderWorkflowService::forGate($gate);
-        $normalized = $workflowService->normalizeSalesChannel($channel);
         $status = (string) $sale->status;
+        $allowed = $workflowService->editOrderStatuses();
 
-        if ($status === 'editable') {
+        if (in_array($status, $allowed, true)) {
             return;
         }
 
-        if (in_array($status, self::DIRECT_RESTORE_STATUSES, true)) {
+        $aligned = $workflowService->alignStatusToPipeline($status, $channel);
+        if (in_array($aligned, $allowed, true)) {
             return;
         }
 

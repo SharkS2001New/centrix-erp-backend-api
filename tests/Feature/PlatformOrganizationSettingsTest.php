@@ -191,6 +191,103 @@ class PlatformOrganizationSettingsTest extends TestCase
         $this->assertSame(7, $org->module_settings['inventory']['cart_reservation_ttl_minutes']);
     }
 
+    public function test_super_admin_can_configure_order_action_status_gates(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'ACTGATE',
+            'org_name' => 'Action Gates Org',
+            'org_email' => 'gates@org.com',
+            'primary_tel' => '0711000088',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'enabled_modules' => ['sales' => true],
+            'admin_username' => 'gates_admin',
+            'admin_email' => 'gates@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Gates Admin',
+        ])->assertCreated();
+
+        $orgId = (int) $create->json('organization.id');
+        $versionBefore = \App\Services\Cache\OrganizationCache::capabilitiesVersion($orgId);
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'sales_platform' => [
+                'edit_order_statuses' => ['booked', 'unpaid'],
+                'print_invoice_statuses' => ['paid', 'completed'],
+                'collect_payment_statuses' => ['unpaid'],
+                'cancel_order_statuses' => ['unpaid', 'booked'],
+                'customer_return_statuses' => ['completed', 'delivered'],
+            ],
+        ])->assertOk()
+            ->assertJsonPath('sales_platform.edit_order_statuses', ['booked', 'unpaid'])
+            ->assertJsonPath('sales_platform.print_invoice_statuses', ['paid', 'completed'])
+            ->assertJsonPath('sales_platform.collect_payment_statuses', ['unpaid'])
+            ->assertJsonPath('sales_platform.cancel_order_statuses', ['unpaid', 'booked'])
+            ->assertJsonPath('sales_platform.customer_return_statuses', ['completed', 'delivered']);
+
+        $org = Organization::findOrFail($orgId);
+        $this->assertSame(['booked', 'unpaid'], $org->module_settings['sales']['edit_order_statuses']);
+        $this->assertSame(['paid', 'completed'], $org->module_settings['sales']['print_invoice_statuses']);
+        $this->assertSame(['unpaid'], $org->module_settings['sales']['collect_payment_statuses']);
+        $this->assertSame(['unpaid', 'booked'], $org->module_settings['sales']['cancel_order_statuses']);
+        $this->assertSame(['completed', 'delivered'], $org->module_settings['sales']['customer_return_statuses']);
+
+        $versionAfter = \App\Services\Cache\OrganizationCache::capabilitiesVersion($orgId);
+        $this->assertNotSame($versionBefore, $versionAfter);
+
+        $workflow = \App\Services\Erp\OrderWorkflowService::forGate(
+            (new \App\Services\Erp\CapabilityGate($org))->forOrganization($org)
+        );
+        $this->assertSame(['booked', 'unpaid'], $workflow->editOrderStatuses());
+        $this->assertSame(['paid', 'completed'], $workflow->printInvoiceStatuses());
+        $this->assertSame(['unpaid'], $workflow->collectPaymentStatuses());
+        $this->assertTrue($workflow->isEditableLineStatus('unpaid'));
+        $this->assertFalse($workflow->isEditableLineStatus('pending'));
+        $this->assertTrue($workflow->isPrintInvoiceStatus('paid'));
+        $this->assertFalse($workflow->isPrintInvoiceStatus('unpaid'));
+        $this->assertTrue($workflow->isCollectPaymentStatus('unpaid'));
+        $this->assertFalse($workflow->isCollectPaymentStatus('delivered'));
+        $this->assertTrue($workflow->isCancellableStatus('unpaid'));
+        $this->assertFalse($workflow->isCancellableStatus('processed'));
+        $this->assertTrue($workflow->isCustomerReturnStatus('completed'));
+        $this->assertFalse($workflow->isCustomerReturnStatus('paid'));
+    }
+
+    public function test_order_action_status_gates_reject_empty_edit_list(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $create = $this->postJson('/api/v1/admin/organizations/provision', [
+            'company_code' => 'ACTBAD',
+            'org_name' => 'Action Gates Bad Org',
+            'org_email' => 'badgates@org.com',
+            'primary_tel' => '0711000077',
+            'org_address' => 'Nairobi',
+            'deployment_profile' => 'small_shop',
+            'enabled_modules' => ['sales' => true],
+            'admin_username' => 'badgates_admin',
+            'admin_email' => 'badgates@org.com',
+            'admin_password' => 'password123',
+            'admin_full_name' => 'Bad Gates Admin',
+        ])->assertCreated();
+
+        $orgId = $create->json('organization.id');
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'sales_platform' => [
+                'edit_order_statuses' => [],
+            ],
+        ])->assertStatus(422);
+    }
+
     public function test_tenant_org_admin_can_use_erp_module_settings_routes(): void
     {
         $orgAdmin = User::where('username', 'admin')->firstOrFail();

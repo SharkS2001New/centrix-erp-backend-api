@@ -255,6 +255,167 @@ class AuthController extends Controller
         ]);
     }
 
+    public function passkeyLoginOptions(Request $request)
+    {
+        $data = $request->validate([
+            'company_code' => 'nullable|string|max:45',
+            'username' => 'nullable|string|max:120',
+        ]);
+
+        return response()->json(
+            app(\App\Services\Auth\PasskeyService::class)->beginLogin(
+                $data['username'] ?? null,
+                $data['company_code'] ?? null,
+            )
+        );
+    }
+
+    public function passkeyLogin(Request $request)
+    {
+        $data = $request->validate([
+            'challenge_token' => 'required|string|max:128',
+            'credential' => 'required|array',
+            'client_id' => 'required|string',
+            'login_channel' => 'sometimes|in:backoffice,pos,mobile,manager',
+            'force_logout' => 'sometimes|boolean',
+        ]);
+
+        try {
+            $result = $this->sessions->loginWithPasskey(
+                $data['challenge_token'],
+                $data['credential'],
+                $data['client_id'],
+                (bool) ($data['force_logout'] ?? false),
+                $data['login_channel'] ?? 'backoffice',
+            );
+        } catch (ValidationException $e) {
+            if ($e->errors()['session'] ?? null) {
+                return response()->json([
+                    'message' => 'This user is already logged in on another device.',
+                    'code' => 'session_active_elsewhere',
+                ], 403);
+            }
+            throw $e;
+        }
+
+        return $this->respondWithAuthSession($result, $request);
+    }
+
+    public function passkeyTwoFactorOptions(Request $request)
+    {
+        $data = $request->validate([
+            'challenge_token' => 'required|string|max:128',
+        ]);
+
+        return response()->json(
+            app(\App\Services\Auth\PasskeyService::class)->beginTwoFactorAssertion($data['challenge_token'])
+        );
+    }
+
+    public function passkeyTwoFactorVerify(Request $request)
+    {
+        $data = $request->validate([
+            'challenge_token' => 'required|string|max:128',
+            'credential' => 'required|array',
+        ]);
+
+        try {
+            $result = $this->sessions->completeTwoFactorLoginWithPasskey(
+                $data['challenge_token'],
+                $data['credential'],
+            );
+        } catch (ValidationException $e) {
+            if ($e->errors()['session'] ?? null) {
+                return response()->json([
+                    'message' => 'This user is already logged in on another device.',
+                    'code' => 'session_active_elsewhere',
+                ], 403);
+            }
+            throw $e;
+        }
+
+        return $this->respondWithAuthSession($result, $request);
+    }
+
+    public function listPasskeys(Request $request)
+    {
+        return response()->json([
+            'passkeys' => app(\App\Services\Auth\PasskeyService::class)->listForUser($request->user()),
+        ]);
+    }
+
+    public function beginPasskeyRegistration(Request $request)
+    {
+        $data = $request->validate([
+            'name' => 'nullable|string|max:120',
+        ]);
+
+        return response()->json(
+            app(\App\Services\Auth\PasskeyService::class)->beginRegistration(
+                $request->user(),
+                $data['name'] ?? null,
+            )
+        );
+    }
+
+    public function completePasskeyRegistration(Request $request)
+    {
+        $data = $request->validate([
+            'challenge_token' => 'required|string|max:128',
+            'credential' => 'required|array',
+            'name' => 'nullable|string|max:120',
+        ]);
+
+        $credential = app(\App\Services\Auth\PasskeyService::class)->completeRegistration(
+            $request->user(),
+            $data['challenge_token'],
+            $data['credential'],
+            $data['name'] ?? null,
+        );
+
+        return response()->json([
+            'ok' => true,
+            'passkey' => [
+                'id' => $credential->id,
+                'name' => $credential->name,
+                'created_at' => $credential->created_at?->toIso8601String(),
+            ],
+            'passkeys' => app(\App\Services\Auth\PasskeyService::class)->listForUser($request->user()),
+        ]);
+    }
+
+    public function renamePasskey(Request $request, int $id)
+    {
+        $data = $request->validate([
+            'name' => 'required|string|max:120',
+        ]);
+
+        $credential = app(\App\Services\Auth\PasskeyService::class)->rename(
+            $request->user(),
+            $id,
+            $data['name'],
+        );
+
+        return response()->json([
+            'ok' => true,
+            'passkey' => [
+                'id' => $credential->id,
+                'name' => $credential->name,
+            ],
+            'passkeys' => app(\App\Services\Auth\PasskeyService::class)->listForUser($request->user()),
+        ]);
+    }
+
+    public function deletePasskey(Request $request, int $id)
+    {
+        app(\App\Services\Auth\PasskeyService::class)->delete($request->user(), $id);
+
+        return response()->json([
+            'ok' => true,
+            'passkeys' => app(\App\Services\Auth\PasskeyService::class)->listForUser($request->user()),
+        ]);
+    }
+
     public function switchWorkspace(Request $request)
     {
         $data = $request->validate([

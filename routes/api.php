@@ -160,9 +160,17 @@ Route::prefix('v1')->group(function () {
     });
     Route::post('auth/login', [AuthController::class, 'login'])
         ->middleware('throttle:auth-login');
+    Route::post('auth/passkeys/login/options', [AuthController::class, 'passkeyLoginOptions'])
+        ->middleware('throttle:auth-login');
+    Route::post('auth/passkeys/login', [AuthController::class, 'passkeyLogin'])
+        ->middleware('throttle:auth-login');
     Route::post('auth/2fa/verify', [AuthController::class, 'verifyTwoFactor'])
         ->middleware('throttle:auth-login');
     Route::post('auth/2fa/resend', [AuthController::class, 'resendTwoFactorEmail'])
+        ->middleware('throttle:auth-login');
+    Route::post('auth/2fa/passkey/options', [AuthController::class, 'passkeyTwoFactorOptions'])
+        ->middleware('throttle:auth-login');
+    Route::post('auth/2fa/passkey/verify', [AuthController::class, 'passkeyTwoFactorVerify'])
         ->middleware('throttle:auth-login');
     Route::post('auth/logout', [AuthController::class, 'logout'])
         ->middleware('throttle:auth-login');
@@ -195,6 +203,11 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/2fa/totp/begin', [AuthController::class, 'beginTotpTwoFactor']);
         Route::post('auth/2fa/totp/confirm', [AuthController::class, 'confirmTotpTwoFactor']);
         Route::post('auth/2fa/disable', [AuthController::class, 'disableTwoFactor']);
+        Route::get('auth/passkeys', [AuthController::class, 'listPasskeys']);
+        Route::post('auth/passkeys/register/options', [AuthController::class, 'beginPasskeyRegistration']);
+        Route::post('auth/passkeys/register', [AuthController::class, 'completePasskeyRegistration']);
+        Route::patch('auth/passkeys/{id}', [AuthController::class, 'renamePasskey'])->whereNumber('id');
+        Route::delete('auth/passkeys/{id}', [AuthController::class, 'deletePasskey'])->whereNumber('id');
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
         Route::post('auth/skip-password-expiry', [AuthController::class, 'skipPasswordExpiry']);
         Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);

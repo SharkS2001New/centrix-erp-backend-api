@@ -291,9 +291,10 @@ class SaleController extends BaseResourceController
         );
         $paginator->getCollection()->transform(function (Sale $sale) use ($workflow, $editService, $lineEditService, $request, $gate) {
             $channel = $sale->channel ?: 'backend';
+            $status = (string) $sale->status;
             $sale->setAttribute(
                 'workflow_status',
-                $workflow->alignStatusToPipeline((string) $sale->status, $channel),
+                $workflow->alignStatusToPipeline($status, $channel),
             );
             $sale->setAttribute(
                 'can_edit',
@@ -303,6 +304,8 @@ class SaleController extends BaseResourceController
                 'can_edit_lines',
                 $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
             );
+            $sale->setAttribute('can_print_invoice', $workflow->isPrintInvoiceStatus($status, $channel));
+            $sale->setAttribute('can_collect_payment', $workflow->isCollectPaymentStatus($status, $channel));
             $sale->setAttribute('order_connectivity', $sale->mobileOrderConnectivity());
             $sale->setAttribute('is_offline_order', $sale->isOfflineMobileOrder());
 
@@ -334,18 +337,19 @@ class SaleController extends BaseResourceController
 
         $sale = app(SaleOrderPresentationService::class)->enrichSale($sale, $request->user(), $gate);
         $channel = $sale->channel ?: 'backend';
-        $workflow = OrderWorkflowService::forGate($gate)->forChannel($channel);
+        $workflowService = OrderWorkflowService::forGate($gate);
+        $workflow = $workflowService->forChannel($channel);
         $editService = app(PosOrderEditService::class);
         $lineEditService = app(BackofficeOrderLineEditService::class);
+        $status = (string) $sale->status;
 
         $payload = array_merge($sale->toArray(), [
             'workflow' => $workflow,
-            'workflow_status' => OrderWorkflowService::forGate($gate)->alignStatusToPipeline(
-                (string) $sale->status,
-                $channel,
-            ),
+            'workflow_status' => $workflowService->alignStatusToPipeline($status, $channel),
             'can_edit' => $editService->canRestoreSaleToCart($sale, $request->user(), $gate),
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
+            'can_print_invoice' => $workflowService->isPrintInvoiceStatus($status, $channel),
+            'can_collect_payment' => $workflowService->isCollectPaymentStatus($status, $channel),
             'order_connectivity' => $sale->mobileOrderConnectivity(),
             'is_offline_order' => $sale->isOfflineMobileOrder(),
         ]);
@@ -354,7 +358,7 @@ class SaleController extends BaseResourceController
             $orgId = (int) ($sale->organization_id ?? 0);
             if ($orgId > 0) {
                 $cache->putSaleDetail($orgId, (int) $sale->id, 'web', collect($payload)->except([
-                    'can_edit', 'can_edit_lines',
+                    'can_edit', 'can_edit_lines', 'can_print_invoice', 'can_collect_payment',
                 ])->all());
             }
         }

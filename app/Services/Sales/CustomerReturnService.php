@@ -78,6 +78,9 @@ class CustomerReturnService
     {
         return DB::transaction(function () use ($user, $data, $proof) {
             $saleId = isset($data['sale_id']) ? (int) $data['sale_id'] : null;
+            if ($saleId) {
+                $this->assertSaleEligibleForCustomerReturn($saleId, $user);
+            }
             $lines = $this->normalizeLines($data['lines'] ?? [], $saleId);
             $total = round(array_sum(array_column($lines, 'amount')), 2);
 
@@ -1207,6 +1210,28 @@ class CustomerReturnService
             CustomerReturnLine::create([
                 'customer_return_id' => $return->id,
                 ...$line,
+            ]);
+        }
+    }
+
+    protected function assertSaleEligibleForCustomerReturn(int $saleId, User $user): void
+    {
+        $sale = Sale::query()
+            ->where('organization_id', $user->organization_id)
+            ->find($saleId);
+
+        if (! $sale) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'Sale not found for this return.',
+            ]);
+        }
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
+        $workflow = \App\Services\Erp\OrderWorkflowService::forGate($gate);
+
+        if (! $workflow->isCustomerReturnStatus((string) $sale->status, $sale->channel)) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'Customer returns are not allowed for orders in this stage.',
             ]);
         }
     }

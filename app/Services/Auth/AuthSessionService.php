@@ -105,6 +105,58 @@ class AuthSessionService
     }
 
     /**
+     * Passwordless passkey login (GitHub-style). User verification on the authenticator
+     * satisfies MFA — no separate 2FA challenge.
+     *
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    public function loginWithPasskey(
+        string $challengeToken,
+        array $credential,
+        string $clientId,
+        bool $forceLogout = false,
+        string $loginChannel = UserLoginChannelService::BACKOFFICE,
+    ): array {
+        $verified = app(PasskeyService::class)->completeLogin($challengeToken, $credential);
+        $user = $verified['user'];
+        $org = \App\Models\Organization::query()->findOrFail($user->organization_id);
+        $account = $this->resolver->resolveForCanonicalUser($org, (int) $user->id);
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'credential' => ['Unable to complete sign-in for this account.'],
+            ]);
+        }
+
+        return $this->issueSession($account, $clientId, $forceLogout, $loginChannel);
+    }
+
+    /**
+     * Complete MFA using a registered passkey instead of TOTP/email code.
+     *
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    public function completeTwoFactorLoginWithPasskey(
+        string $passkeyChallengeToken,
+        array $credential,
+    ): array {
+        $verified = app(PasskeyService::class)->completeTwoFactorAssertion($passkeyChallengeToken, $credential);
+        $org = \App\Models\Organization::query()->findOrFail($verified['organization_id']);
+        $account = $this->resolver->resolveForCanonicalUser($org, (int) $verified['user_id']);
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'credential' => ['Unable to complete sign-in for this account.'],
+            ]);
+        }
+
+        return $this->issueSession(
+            $account,
+            $verified['client_id'],
+            $verified['force_logout'],
+            $verified['login_channel'],
+        );
+    }
+
+    /**
      * Complete login after a successful 2FA challenge.
      *
      * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}

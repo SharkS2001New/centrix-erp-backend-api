@@ -114,6 +114,40 @@ class OrganizationPlatformConfigService
             $nextSales['enable_backoffice_order_edit'] = (bool) $salesPlatform['enable_backoffice_order_edit'];
         }
 
+        if (array_key_exists('edit_order_statuses', $salesPlatform)) {
+            $nextSales['edit_order_statuses'] = $this->normalizeRequiredActionStatuses(
+                $salesPlatform['edit_order_statuses'],
+                config('erp.module_settings_defaults.sales.edit_order_statuses', ['booked', 'pending', 'editable']),
+            );
+        }
+
+        if (array_key_exists('print_invoice_statuses', $salesPlatform)) {
+            $nextSales['print_invoice_statuses'] = $this->normalizeOptionalActionStatuses(
+                $salesPlatform['print_invoice_statuses'],
+            );
+        }
+
+        if (array_key_exists('collect_payment_statuses', $salesPlatform)) {
+            $nextSales['collect_payment_statuses'] = $this->normalizeRequiredActionStatuses(
+                $salesPlatform['collect_payment_statuses'],
+                config('erp.module_settings_defaults.sales.collect_payment_statuses', ['unpaid', 'pending_payment']),
+            );
+        }
+
+        if (array_key_exists('cancel_order_statuses', $salesPlatform)) {
+            $nextSales['cancel_order_statuses'] = $this->normalizeRequiredActionStatuses(
+                $salesPlatform['cancel_order_statuses'],
+                config('erp.module_settings_defaults.sales.cancel_order_statuses', OrderWorkflowService::CANCELLABLE_ORDER_STATUSES),
+            );
+        }
+
+        if (array_key_exists('customer_return_statuses', $salesPlatform)) {
+            $nextSales['customer_return_statuses'] = $this->normalizeRequiredActionStatuses(
+                $salesPlatform['customer_return_statuses'],
+                config('erp.module_settings_defaults.sales.customer_return_statuses', ['paid', 'processed', 'delivered', 'completed']),
+            );
+        }
+
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['sales'] = $nextSales;
 
@@ -237,6 +271,11 @@ class OrganizationPlatformConfigService
             'orders_list_default_days' => $isDistribution ? 30 : 14,
             'orders_list_search_days' => $isDistribution ? 60 : 30,
             'orders_list_sort' => '-created_at',
+            'edit_order_statuses' => ['booked', 'pending', 'editable'],
+            'print_invoice_statuses' => null,
+            'collect_payment_statuses' => ['unpaid', 'pending_payment'],
+            'cancel_order_statuses' => ['booked', 'pending', 'unpaid', 'processed', 'pending_approval', 'editable'],
+            'customer_return_statuses' => ['paid', 'processed', 'delivered', 'completed'],
         ];
     }
 
@@ -279,6 +318,25 @@ class OrganizationPlatformConfigService
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
+            'edit_order_statuses' => $this->normalizeRequiredActionStatuses(
+                $sales['edit_order_statuses'] ?? null,
+                config('erp.module_settings_defaults.sales.edit_order_statuses', ['booked', 'pending', 'editable']),
+            ),
+            'print_invoice_statuses' => $this->normalizeOptionalActionStatuses(
+                $sales['print_invoice_statuses'] ?? null,
+            ),
+            'collect_payment_statuses' => $this->normalizeRequiredActionStatuses(
+                $sales['collect_payment_statuses'] ?? null,
+                config('erp.module_settings_defaults.sales.collect_payment_statuses', ['unpaid', 'pending_payment']),
+            ),
+            'cancel_order_statuses' => $this->normalizeRequiredActionStatuses(
+                $sales['cancel_order_statuses'] ?? null,
+                config('erp.module_settings_defaults.sales.cancel_order_statuses', OrderWorkflowService::CANCELLABLE_ORDER_STATUSES),
+            ),
+            'customer_return_statuses' => $this->normalizeRequiredActionStatuses(
+                $sales['customer_return_statuses'] ?? null,
+                config('erp.module_settings_defaults.sales.customer_return_statuses', ['paid', 'processed', 'delivered', 'completed']),
+            ),
             'order_workflow' => $workflow,
             'reserve_stock_on_cart' => ($inventory['reserve_stock_on_cart'] ?? true) !== false,
             'cart_reservation_ttl_minutes' => min(
@@ -356,6 +414,13 @@ class OrganizationPlatformConfigService
             unset($data[$key]);
         }
         unset($data['order_workflow']);
+        unset(
+            $data['edit_order_statuses'],
+            $data['print_invoice_statuses'],
+            $data['collect_payment_statuses'],
+            $data['cancel_order_statuses'],
+            $data['customer_return_statuses'],
+        );
 
         if ($gate && ! $gate->mobileSalesEnabled()) {
             foreach (array_keys($data) as $key) {
@@ -554,6 +619,62 @@ class OrganizationPlatformConfigService
         $sort = (string) ($value ?? '-created_at');
 
         return in_array($sort, $allowed, true) ? $sort : '-created_at';
+    }
+
+    /**
+     * Required action stage list (edit / collect). Empty input falls back to defaults.
+     *
+     * @param  list<string>|null  $fallback
+     * @return list<string>
+     */
+    public function normalizeRequiredActionStatuses(mixed $value, array $fallback): array
+    {
+        $normalized = $this->normalizeActionStatusList($value);
+        if ($normalized === []) {
+            return array_values(array_unique(array_map('strval', $fallback)));
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * Optional action stage list (print). Empty / null means all stages allowed.
+     *
+     * @return list<string>|null
+     */
+    public function normalizeOptionalActionStatuses(mixed $value): ?array
+    {
+        if ($value === null || $value === '' || $value === []) {
+            return null;
+        }
+
+        $normalized = $this->normalizeActionStatusList($value);
+
+        return $normalized === [] ? null : $normalized;
+    }
+
+    /**
+     * @return list<string>
+     */
+    protected function normalizeActionStatusList(mixed $value): array
+    {
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $allowed = OrderWorkflowService::ALL_STATUSES;
+        $out = [];
+        $seen = [];
+        foreach ($value as $status) {
+            $key = strtolower(trim((string) $status));
+            if ($key === '' || isset($seen[$key]) || ! in_array($key, $allowed, true)) {
+                continue;
+            }
+            $seen[$key] = true;
+            $out[] = $key;
+        }
+
+        return $out;
     }
 
     /**

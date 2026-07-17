@@ -10,6 +10,7 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\Cache\OrganizationCache;
+use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Support\SqlLikeSearch;
@@ -162,13 +163,24 @@ class MobileSalesService
         $cachedList = $cache->getMobileListFromCache($user, $filters);
         if ($cachedList !== null) {
             // Past-day cache only — previous-day mobile mutations are blocked, so edit/cancel stay off.
+            // Print / collect still follow configured workflow stages (non-mutating).
+            $gate = $this->erp->gateForUser($user);
+            $workflow = OrderWorkflowService::forGate($gate);
             $cachedList['data'] = collect($cachedList['data'] ?? [])
-                ->map(fn (array $row) => array_merge($row, [
-                    'can_edit' => false,
-                    'can_cancel' => false,
-                    'can_direct_cancel' => false,
-                    'can_request_cancellation' => false,
-                ]))
+                ->map(function (array $row) use ($workflow) {
+                    $status = (string) ($row['status'] ?? '');
+                    $channel = (string) ($row['channel'] ?? 'mobile');
+
+                    return array_merge($row, [
+                        'can_edit' => false,
+                        'can_cancel' => false,
+                        'can_direct_cancel' => false,
+                        'can_request_cancellation' => false,
+                        'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel),
+                        'can_collect_payment' => $workflow->isCollectPaymentStatus($status, $channel),
+                        'can_return' => $workflow->isCustomerReturnStatus($status, $channel),
+                    ]);
+                })
                 ->values()
                 ->all();
 
@@ -284,10 +296,7 @@ class MobileSalesService
             'data' => collect($page->items())
                 ->map(fn (Sale $sale) => array_merge(
                     $this->presentOrderSummary($sale, $user, $presentation),
-                    [
-                        'can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
-                        ...$this->cancellationCapabilitiesForSale($sale, $user, $gate, $cancelCaps),
-                    ],
+                    $this->orderCapabilityFlags($sale, $user, $gate, $cancelCaps),
                 ))
                 ->values()
                 ->all(),
@@ -310,7 +319,15 @@ class MobileSalesService
                 $allChannelsFlag = filter_var($filters['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
                 $cache->putMobileDayList($orgId, (int) $user->id, $date, $allChannelsFlag, [
                     'data' => collect($result['data'])
-                        ->map(fn (array $row) => collect($row)->except(['can_edit', 'can_cancel', 'can_direct_cancel', 'can_request_cancellation'])->all())
+                        ->map(fn (array $row) => collect($row)->except([
+                            'can_edit',
+                            'can_cancel',
+                            'can_direct_cancel',
+                            'can_request_cancellation',
+                            'can_print_invoice',
+                            'can_collect_payment',
+                            'can_return',
+                        ])->all())
                         ->values()
                         ->all(),
                     'meta' => $result['meta'],
@@ -357,7 +374,13 @@ class MobileSalesService
             $orgId = (int) ($user->organization_id ?? 0);
             if ($orgId > 0) {
                 $cache->putSaleDetail($orgId, $saleId, 'mobile', collect($detail)->except([
-                    'can_edit', 'can_cancel', 'can_direct_cancel', 'can_request_cancellation',
+                    'can_edit',
+                    'can_cancel',
+                    'can_direct_cancel',
+                    'can_request_cancellation',
+                    'can_print_invoice',
+                    'can_collect_payment',
+                    'can_return',
                 ])->all());
             }
         }
@@ -366,28 +389,42 @@ class MobileSalesService
     }
 
     /**
+     * @param  array{can_cancel: bool, can_direct_cancel: bool, can_request_cancellation: bool}|null  $cancelCaps
      * @return array{
      *     can_edit: bool,
      *     can_cancel: bool,
      *     can_direct_cancel: bool,
-     *     can_request_cancellation: bool
+     *     can_request_cancellation: bool,
+     *     can_print_invoice: bool,
+     *     can_collect_payment: bool,
+     *     can_return: bool
      * }
      */
-    public function orderCapabilityFlags(Sale $sale, User $user): array
-    {
-        $gate = $this->erp->gateForUser($user);
+    public function orderCapabilityFlags(
+        Sale $sale,
+        User $user,
+        ?CapabilityGate $gate = null,
+        ?array $cancelCaps = null,
+    ): array {
+        $gate ??= $this->erp->gateForUser($user);
+        $workflow = OrderWorkflowService::forGate($gate);
+        $status = (string) $sale->status;
+        $channel = $sale->channel ?: 'mobile';
 
         return array_merge(
             [
                 'can_edit' => $this->posOrderEdit->blocksPreviousDayMobileMutation($sale)
                     ? false
                     : $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
+                'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel),
+                'can_collect_payment' => $workflow->isCollectPaymentStatus($status, $channel),
+                'can_return' => $workflow->isCustomerReturnStatus($status, $channel),
             ],
             $this->cancellationCapabilitiesForSale(
                 $sale,
                 $user,
                 $gate,
-                $this->cancellationCapabilitiesTemplate($user, $gate),
+                $cancelCaps ?? $this->cancellationCapabilitiesTemplate($user, $gate),
             ),
         );
     }
@@ -479,7 +516,7 @@ class MobileSalesService
             ->get()
             ->map(fn (Sale $sale) => array_merge(
                 $this->presentOrderSummary($sale, $user, $presentation),
-                ['can_edit' => $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate)],
+                $this->orderCapabilityFlags($sale, $user, $gate),
             ))
             ->values()
             ->all();
@@ -875,6 +912,13 @@ class MobileSalesService
         if (! $sale->created_at?->isSameDay(now())) {
             throw ValidationException::withMessages([
                 'sale_id' => 'Returns are only allowed for orders placed today.',
+            ]);
+        }
+
+        $gate = $this->erp->gateForUser($user);
+        if (! OrderWorkflowService::forGate($gate)->isCustomerReturnStatus((string) $sale->status, $sale->channel)) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'Customer returns are not allowed for orders in this stage.',
             ]);
         }
 

@@ -3,6 +3,7 @@
 namespace App\Services\Auth;
 
 use App\Models\User;
+use App\Models\WebAuthnCredential;
 use App\Services\Platform\PlatformMailSettingsResolver;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
@@ -40,6 +41,8 @@ class TwoFactorService
             'has_email' => $emailStatus['has_email'],
             'email_verified' => $emailStatus['email_verified'],
             'allowed_methods' => [self::METHOD_EMAIL, self::METHOD_TOTP],
+            'passkeys' => app(PasskeyService::class)->listForUser($user),
+            'passkey_count' => WebAuthnCredential::query()->where('user_id', $user->id)->count(),
         ];
     }
 
@@ -92,6 +95,7 @@ class TwoFactorService
             'method' => $user->two_factor_method,
             'email_hint' => $this->emailHint($user->email),
             'expires_in' => 600,
+            'passkey_available' => app(PasskeyService::class)->userHasPasskeys($user),
         ];
     }
 
