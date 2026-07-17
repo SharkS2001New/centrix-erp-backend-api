@@ -163,6 +163,59 @@ class SalesReportsTest extends TestCase
         $this->assertContains($order->id, $ids);
     }
 
+    public function test_dispatch_orders_accept_required_date_range(): void
+    {
+        $route = RouteModel::query()->firstOrFail();
+        $from = now()->subDay()->toDateString();
+        $to = now()->addDay()->toDateString();
+        $inRange = now()->toDateString();
+        $outOfRange = now()->addDays(5)->toDateString();
+
+        $included = Sale::query()->create([
+            'order_num' => 995010,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $this->admin->id,
+            'customer_num' => Sale::query()->whereNotNull('customer_num')->value('customer_num'),
+            'route_id' => $route->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'order_total' => 1200,
+            'total_vat' => 100,
+            'amount_paid' => 0,
+            'archived' => 0,
+            'required_date' => $inRange,
+            'created_at' => now(),
+        ]);
+
+        $excluded = Sale::query()->create([
+            'order_num' => 995011,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $this->admin->id,
+            'customer_num' => Sale::query()->whereNotNull('customer_num')->value('customer_num'),
+            'route_id' => $route->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'order_total' => 1200,
+            'total_vat' => 100,
+            'amount_paid' => 0,
+            'archived' => 0,
+            'required_date' => $outOfRange,
+            'created_at' => now(),
+        ]);
+
+        $res = $this->getJson(
+            "/api/v1/sales?dispatch_orders=1&required_date_from={$from}&required_date_to={$to}&per_page=200"
+        )->assertOk();
+
+        $ids = collect($res->json('data'))->pluck('id')->all();
+        $this->assertContains($included->id, $ids);
+        $this->assertNotContains($excluded->id, $ids);
+    }
+
     public function test_dispatch_trips_report_scopes_by_organization(): void
     {
         $response = $this->getJson('/api/v1/reports/dispatch-trips?per_page=5')

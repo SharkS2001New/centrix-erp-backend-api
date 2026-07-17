@@ -25,9 +25,9 @@ class GeneralSettingsResolver
             'footer_scale' => 'standard', 'footer_weight' => 'semibold',
         ],
         'invoice' => [
-            'family' => 'arial', 'scale' => 'standard', 'size_px' => 9, 'weight' => 'normal',
-            'header_scale' => 'standard', 'header_weight' => 'bold', 'header_size_px' => 16,
-            'footer_scale' => 'standard', 'footer_weight' => 'normal', 'footer_size_px' => 8,
+            'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
         ],
         'lpo' => [
             'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
@@ -142,14 +142,14 @@ class GeneralSettingsResolver
     {
         $legacyFamily = in_array($out['print_font_family'] ?? '', self::PRINT_FONT_FAMILIES, true)
             ? $out['print_font_family']
-            : 'arial';
+            : 'times';
         $legacyScale = in_array($out['print_font_scale'] ?? '', self::PRINT_FONT_SCALES, true)
             ? $out['print_font_scale']
             : 'standard';
-        $legacySizePx = max(8, min(24, (int) ($out['print_font_size_px'] ?? 9)));
+        $legacySizePx = max(8, min(24, (int) ($out['print_font_size_px'] ?? 14)));
         $legacyWeight = in_array($out['print_font_weight'] ?? '', self::PRINT_FONT_WEIGHTS, true)
             ? $out['print_font_weight']
-            : 'normal';
+            : 'semibold';
 
         $out['print_font_family'] = $legacyFamily;
         $out['print_font_scale'] = $legacyScale;

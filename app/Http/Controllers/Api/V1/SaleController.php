@@ -15,6 +15,7 @@ use App\Services\Sales\SaleOrderPresentationService;
 use App\Services\Sales\SalesListDateScope;
 use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\OrganizationPlatformConfigService;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -144,15 +145,30 @@ class SaleController extends BaseResourceController
             $salesSettings['orders_list_search_days'] ?? null,
             $hotWindowDays,
         );
-        $listScope = app(SalesListDateScope::class)->apply(
-            $query,
-            $request->filled('from_date') ? (string) $request->input('from_date') : null,
-            $request->filled('to_date') ? (string) $request->input('to_date') : null,
-            $dateField,
-            $request->filled('q') ? (string) $request->input('q') : null,
-            $hotWindowDays,
-            $searchWindowDays,
-        );
+        $hasRequiredDateFilter = $request->filled('required_date')
+            || $request->filled('required_date_from')
+            || $request->filled('required_date_to');
+
+        // Dispatch / delivery-date filters bound the list; skip the default effective-sale hot window.
+        $listScope = $hasRequiredDateFilter
+            ? [
+                'from' => null,
+                'to' => null,
+                'applied' => false,
+                'skipped_for_search' => false,
+                'from_archive' => false,
+                'hot_window_days' => $hotWindowDays,
+                'search_window' => false,
+            ]
+            : app(SalesListDateScope::class)->apply(
+                $query,
+                $request->filled('from_date') ? (string) $request->input('from_date') : null,
+                $request->filled('to_date') ? (string) $request->input('to_date') : null,
+                $dateField,
+                $request->filled('q') ? (string) $request->input('q') : null,
+                $hotWindowDays,
+                $searchWindowDays,
+            );
 
         if ($request->filled('min_order_total')) {
             $query->where('sales.order_total', '>=', (float) $request->input('min_order_total'));
@@ -162,12 +178,28 @@ class SaleController extends BaseResourceController
             $query->where('sales.order_total', '<=', (float) $request->input('max_order_total'));
         }
 
+        $deliveryDateExpr = 'COALESCE(sales.required_date, sales.delivery_date, DATE(sales.created_at))';
         if ($request->filled('required_date')) {
-            $date = $request->input('required_date');
-            $query->whereDate(
-                DB::raw('COALESCE(sales.required_date, sales.delivery_date, DATE(sales.created_at))'),
-                $date,
-            );
+            $query->whereDate(DB::raw($deliveryDateExpr), $request->input('required_date'));
+        } elseif ($request->filled('required_date_from') || $request->filled('required_date_to')) {
+            $from = $request->filled('required_date_from')
+                ? (string) $request->input('required_date_from')
+                : (string) $request->input('required_date_to');
+            $to = $request->filled('required_date_to')
+                ? (string) $request->input('required_date_to')
+                : (string) $request->input('required_date_from');
+            if ($from > $to) {
+                [$from, $to] = [$to, $from];
+            }
+            $maxDays = SalesListDateScope::MAX_RANGE_DAYS;
+            $fromCarbon = Carbon::parse($from)->startOfDay();
+            $toCarbon = Carbon::parse($to)->startOfDay();
+            if ($fromCarbon->diffInDays($toCarbon) + 1 > $maxDays) {
+                $fromCarbon = $toCarbon->copy()->subDays($maxDays - 1);
+                $from = $fromCarbon->toDateString();
+            }
+            $query->whereDate(DB::raw($deliveryDateExpr), '>=', $from)
+                ->whereDate(DB::raw($deliveryDateExpr), '<=', $to);
         }
 
         if ($request->filled('route_id')) {
