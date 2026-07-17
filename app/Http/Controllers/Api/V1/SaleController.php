@@ -149,18 +149,48 @@ class SaleController extends BaseResourceController
             || $request->filled('required_date_from')
             || $request->filled('required_date_to');
 
-        // Dispatch / delivery-date filters bound the list; skip the default effective-sale hot window.
-        $listScope = $hasRequiredDateFilter
-            ? [
-                'from' => null,
-                'to' => null,
-                'applied' => false,
+        $deliveryDateExpr = 'COALESCE(sales.required_date, sales.delivery_date, DATE(sales.created_at))';
+        $deliveryFrom = null;
+        $deliveryTo = null;
+        if ($request->filled('required_date')) {
+            $deliveryFrom = $deliveryTo = (string) $request->input('required_date');
+        } elseif ($hasRequiredDateFilter) {
+            $deliveryFrom = $request->filled('required_date_from')
+                ? (string) $request->input('required_date_from')
+                : (string) $request->input('required_date_to');
+            $deliveryTo = $request->filled('required_date_to')
+                ? (string) $request->input('required_date_to')
+                : (string) $request->input('required_date_from');
+            if ($deliveryFrom > $deliveryTo) {
+                [$deliveryFrom, $deliveryTo] = [$deliveryTo, $deliveryFrom];
+            }
+            $maxDays = SalesListDateScope::MAX_RANGE_DAYS;
+            $fromCarbon = Carbon::parse($deliveryFrom)->startOfDay();
+            $toCarbon = Carbon::parse($deliveryTo)->startOfDay();
+            if ($fromCarbon->diffInDays($toCarbon) + 1 > $maxDays) {
+                $fromCarbon = $toCarbon->copy()->subDays($maxDays - 1);
+                $deliveryFrom = $fromCarbon->toDateString();
+            }
+        }
+
+        if ($hasRequiredDateFilter && $deliveryFrom !== null && $deliveryTo !== null) {
+            // Delivery-date filters are authoritative; still bound created_at so MySQL
+            // does not scan the full sales table for the COALESCE expression.
+            $createdFrom = Carbon::parse($deliveryFrom)
+                ->subDays(SalesListDateScope::MAX_RANGE_DAYS - 1)
+                ->toDateString();
+            app(SalesListDateScope::class)->applyCreatedAtRange($query, $createdFrom, $deliveryTo);
+            $listScope = [
+                'from' => $createdFrom,
+                'to' => $deliveryTo,
+                'applied' => true,
                 'skipped_for_search' => false,
-                'from_archive' => false,
+                'from_archive' => true,
                 'hot_window_days' => $hotWindowDays,
                 'search_window' => false,
-            ]
-            : app(SalesListDateScope::class)->apply(
+            ];
+        } else {
+            $listScope = app(SalesListDateScope::class)->apply(
                 $query,
                 $request->filled('from_date') ? (string) $request->input('from_date') : null,
                 $request->filled('to_date') ? (string) $request->input('to_date') : null,
@@ -169,6 +199,7 @@ class SaleController extends BaseResourceController
                 $hotWindowDays,
                 $searchWindowDays,
             );
+        }
 
         if ($request->filled('min_order_total')) {
             $query->where('sales.order_total', '>=', (float) $request->input('min_order_total'));
@@ -178,28 +209,13 @@ class SaleController extends BaseResourceController
             $query->where('sales.order_total', '<=', (float) $request->input('max_order_total'));
         }
 
-        $deliveryDateExpr = 'COALESCE(sales.required_date, sales.delivery_date, DATE(sales.created_at))';
-        if ($request->filled('required_date')) {
-            $query->whereDate(DB::raw($deliveryDateExpr), $request->input('required_date'));
-        } elseif ($request->filled('required_date_from') || $request->filled('required_date_to')) {
-            $from = $request->filled('required_date_from')
-                ? (string) $request->input('required_date_from')
-                : (string) $request->input('required_date_to');
-            $to = $request->filled('required_date_to')
-                ? (string) $request->input('required_date_to')
-                : (string) $request->input('required_date_from');
-            if ($from > $to) {
-                [$from, $to] = [$to, $from];
+        if ($deliveryFrom !== null && $deliveryTo !== null) {
+            if ($deliveryFrom === $deliveryTo) {
+                $query->whereDate(DB::raw($deliveryDateExpr), $deliveryFrom);
+            } else {
+                $query->whereDate(DB::raw($deliveryDateExpr), '>=', $deliveryFrom)
+                    ->whereDate(DB::raw($deliveryDateExpr), '<=', $deliveryTo);
             }
-            $maxDays = SalesListDateScope::MAX_RANGE_DAYS;
-            $fromCarbon = Carbon::parse($from)->startOfDay();
-            $toCarbon = Carbon::parse($to)->startOfDay();
-            if ($fromCarbon->diffInDays($toCarbon) + 1 > $maxDays) {
-                $fromCarbon = $toCarbon->copy()->subDays($maxDays - 1);
-                $from = $fromCarbon->toDateString();
-            }
-            $query->whereDate(DB::raw($deliveryDateExpr), '>=', $from)
-                ->whereDate(DB::raw($deliveryDateExpr), '<=', $to);
         }
 
         if ($request->filled('route_id')) {
