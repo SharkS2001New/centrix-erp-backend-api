@@ -360,6 +360,59 @@ class SaleOrderListDateFilterTest extends TestCase
         }
     }
 
+    public function test_sales_list_exact_order_lookup_includes_archived_sales(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $archived = Sale::query()->create([
+            'order_num' => 60,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 120,
+            'amount_paid' => 120,
+            'completed_at' => now()->subDays(120),
+            'archived' => 1,
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $archived->id)->update([
+            'created_at' => now()->subDays(120),
+            'completed_at' => now()->subDays(120),
+            'archived' => 1,
+        ]);
+
+        // Default list browse still hides archived rows.
+        $browse = $this->getJson('/api/v1/sales?per_page=50&date_field=placed');
+        $browse->assertOk();
+        $this->assertFalse(
+            collect($browse->json('data'))->pluck('id')->contains($archived->id),
+            'Archived sales must stay hidden from default sales list browse',
+        );
+
+        // Returns / invoice exact lookup must find S0060 even when archived.
+        foreach (['60', 'S0060', 's0060', 'S60'] as $q) {
+            $response = $this->getJson(
+                '/api/v1/sales?q='.urlencode($q)
+                .'&per_page=15'
+                .'&exclude_statuses='.urlencode('cancelled,expired,held,draft,pending_approval')
+                .'&date_field=placed',
+            );
+            $response->assertOk();
+            $ids = collect($response->json('data'))->pluck('id');
+            $this->assertTrue($ids->contains($archived->id), "Expected archived order 60 for query {$q}");
+        }
+
+        // Explicit include_archived also works for free-text / status-filtered return search.
+        $withFlag = $this->getJson(
+            '/api/v1/sales?q=S0060&include_archived=1&per_page=15&date_field=placed',
+        );
+        $withFlag->assertOk();
+        $this->assertTrue(collect($withFlag->json('data'))->pluck('id')->contains($archived->id));
+    }
+
     public function test_sales_list_search_accepts_s_prefixed_order_number(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

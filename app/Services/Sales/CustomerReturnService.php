@@ -12,6 +12,7 @@ use App\Models\ReturnRecord;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\ReturnJournalService;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
@@ -257,6 +258,14 @@ class CustomerReturnService
             $finance = $gate?->moduleSettings('finance') ?? [];
             $this->creditNoteService->createForReturn($return, $user, $finance);
 
+            if ($return->sale_id) {
+                $sale = Sale::query()->find($return->sale_id);
+                if ($sale) {
+                    app(CustomerInvoiceService::class)
+                        ->preserveOriginalTotalAfterReturn($sale);
+                }
+            }
+
             if ($gate) {
                 $this->returnJournal->postIfEnabled($return->fresh(['sale']), $user, $gate);
             }
@@ -410,7 +419,8 @@ class CustomerReturnService
         $legacy = $mode === 'legacy';
 
         return $sale->items->map(function ($item) use ($returned, $sale, $legacy) {
-            $currentQty = (float) ($item->quantity ?? 0);
+            $storedQty = (float) ($item->quantity ?? 0);
+            $currentQty = $this->saleItemQuantityAsBase($item, $storedQty);
             $alreadyReturned = $this->returnedQtyForLine($returned, (int) $item->id, (string) $item->product_code);
             $originalQty = $currentQty + $alreadyReturned;
             $lineAmount = round((float) ($item->amount ?? 0), 2);
@@ -530,7 +540,7 @@ class CustomerReturnService
                 continue;
             }
 
-            $currentQty = (float) $saleItem->quantity;
+            $currentQty = $this->saleItemQuantityAsBase($saleItem, (float) $saleItem->quantity);
             $returnAmount = (float) $line->amount;
             $vatReduction = $this->proportionalShare((float) ($saleItem->product_vat ?? 0), $returnQty, $currentQty);
             $discountReduction = $this->proportionalShare((float) ($saleItem->discount_given ?? 0), $returnQty, $currentQty);
@@ -715,7 +725,76 @@ class CustomerReturnService
             (string) $saleItem->product_code,
         );
 
-        return max(0, round((float) $saleItem->quantity - $pendingQty, 4));
+        $baseQty = $this->saleItemQuantityAsBase($saleItem, (float) $saleItem->quantity);
+
+        return max(0, round($baseQty - $pendingQty, 4));
+    }
+
+    /**
+     * Sale line quantities must be base (smallest) units for returns and stock.
+     * Some older lines stored pack/entry qty, or one pack's pieces while the
+     * line amount reflects multiple packs — expand those to base for validation.
+     */
+    protected function saleItemQuantityAsBase(SaleItem $saleItem, float $storedQty): float
+    {
+        if ($storedQty <= 0) {
+            return 0.0;
+        }
+
+        $saleItem->loadMissing('product.unit');
+        $product = $saleItem->product;
+        if (! $product || (bool) ($saleItem->on_wholesale_retail ?? false)) {
+            return $storedQty;
+        }
+
+        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+        if ($factor <= 1) {
+            return $storedQty;
+        }
+
+        $lineAmount = round((float) ($saleItem->amount ?? 0), 2);
+        if ($lineAmount <= 0) {
+            return $storedQty;
+        }
+
+        $displayPrice = $this->lineQuantityDisplay->displayUnitPrice(
+            $storedQty,
+            $lineAmount,
+            $product,
+            false,
+            (float) ($saleItem->discount_given ?? 0),
+            (float) ($saleItem->selling_price ?? 0),
+            $saleItem->display_unit_price !== null ? (float) $saleItem->display_unit_price : null,
+        );
+
+        if ($displayPrice <= 0) {
+            return $storedQty;
+        }
+
+        $impliedPacks = round(($lineAmount + max(0.0, (float) ($saleItem->discount_given ?? 0))) / $displayPrice, 4);
+        if ($impliedPacks <= 0) {
+            return $storedQty;
+        }
+
+        $impliedBase = round($impliedPacks * $factor, 4);
+
+        // Already stored in base units (N packs × factor).
+        if (abs($storedQty - $impliedBase) <= 0.05) {
+            return $storedQty;
+        }
+
+        // Stored as pack/entry count (matches sold pack qty from money).
+        if (abs($storedQty - $impliedPacks) <= 0.05) {
+            return $impliedBase;
+        }
+
+        // Stored as a single pack in pieces while amount is for multiple packs
+        // (e.g. qty=18 for an 18×500ml carton line priced as 10 cartons).
+        if ($impliedPacks >= 1.999 && abs($storedQty - $factor) <= 0.05) {
+            return $impliedBase;
+        }
+
+        return $storedQty;
     }
 
     protected function reverseApprovedStock(CustomerReturn $return, User $user): void
@@ -914,8 +993,17 @@ class CustomerReturnService
             $maxReturnQty = $this->maxReturnQtyForSaleItem($saleItem, $saleId, $excludeReturnId);
 
             if ($returnQty > $maxReturnQty + 0.0001) {
+                $saleItem->loadMissing('product.unit');
+                $product = $saleItem->product ?? new Product(['product_code' => $saleItem->product_code]);
+                $remainingLabel = $this->lineQuantityDisplay->formatLineQtyDisplay(
+                    $maxReturnQty,
+                    $product,
+                    (bool) ($saleItem->on_wholesale_retail ?? false),
+                    trim((string) ($saleItem->uom ?? '')) ?: null,
+                );
+
                 throw ValidationException::withMessages([
-                    'lines' => "Return quantity for {$line['product_code']} exceeds remaining returnable quantity ({$maxReturnQty}).",
+                    'lines' => "Return quantity for {$line['product_code']} exceeds remaining returnable quantity ({$remainingLabel}).",
                 ]);
             }
 
@@ -1001,14 +1089,25 @@ class CustomerReturnService
             }
 
             $qtySold = (float) ($line['quantity_sold'] ?? $returnQty);
-            $maxReturnQty = isset($line['max_return_qty'])
-                ? (float) $line['max_return_qty']
-                : $qtySold;
+            $maxReturnQty = $saleItem
+                ? $this->maxReturnQtyForSaleItem($saleItem, (int) $saleId, $excludeReturnId)
+                : (isset($line['max_return_qty'])
+                    ? (float) $line['max_return_qty']
+                    : $qtySold);
 
             if ($returnQty > $maxReturnQty + 0.0001) {
                 throw ValidationException::withMessages([
                     'lines' => "Return quantity cannot exceed remaining returnable quantity for {$line['product_code']}.",
                 ]);
+            }
+
+            if ($saleItem) {
+                $qtySold = $this->saleItemQuantityAsBase($saleItem, (float) ($saleItem->quantity ?? 0))
+                    + ($saleId ? $this->returnedQtyForLine(
+                        $this->approvedReturnQuantities((int) $saleId, $excludeReturnId),
+                        (int) $saleItem->id,
+                        (string) $saleItem->product_code,
+                    ) : 0.0);
             }
 
             if ($returnQty > $qtySold + 0.0001) {

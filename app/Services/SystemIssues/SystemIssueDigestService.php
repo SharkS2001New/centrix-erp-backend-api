@@ -3,8 +3,9 @@
 namespace App\Services\SystemIssues;
 
 use App\Models\SystemIssueReport;
+use App\Services\Platform\PlatformMailSettingsResolver;
 use Illuminate\Support\Collection;
-use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Log;
 
 class SystemIssueDigestService
 {
@@ -171,9 +172,22 @@ class SystemIssueDigestService
 
         $body = $this->buildDigestBody($summary, $issues, $highPriorityGroups);
 
-        Mail::raw($body, function ($message) use ($to, $subject) {
-            $message->to($to)->subject($subject);
-        });
+        $from = trim((string) (PlatformMailSettingsResolver::resolve()['from_address'] ?? ''));
+        if ($from === '') {
+            $from = trim((string) config('mail.from.address', ''));
+        }
+        if ($from === '' || filter_var($from, FILTER_VALIDATE_EMAIL) === false) {
+            Log::warning('system_issue.digest_email_skipped', [
+                'reason' => 'missing_from_address',
+                'hint' => 'Set From address under Platform → Settings → Email delivery (or MAIL_FROM_ADDRESS).',
+            ]);
+
+            return false;
+        }
+
+        PlatformMailSettingsResolver::sendRaw($to, $subject, $body, null, [
+            'kind' => 'system_issue_digest',
+        ]);
 
         return true;
     }

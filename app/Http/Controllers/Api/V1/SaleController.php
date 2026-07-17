@@ -82,18 +82,21 @@ class SaleController extends BaseResourceController
             CentrixSalesScope::excludeLegacyMaterialized($query, 'sales');
         }
 
-        if (! $request->boolean('include_archived')) {
+        $searchQ = trim((string) $request->input('q', ''));
+        $isExactOrderLookup = $searchQ !== '' && (
+            preg_match('/^#?S0*\d+$/i', $searchQ) === 1
+            || ctype_digit($searchQ)
+        );
+
+        // Returns / invoice exact lookups must find archived sales (cold storage).
+        // List browsing still hides archived unless include_archived is set.
+        if (! $request->boolean('include_archived') && ! $isExactOrderLookup) {
             $query->where('sales.archived', 0);
         }
 
         $gate = $this->erp->gateForUser($request->user());
         $workflow = OrderWorkflowService::forGate($gate);
         $channel = (string) ($request->input('channel') ?: 'backend');
-        $searchQ = trim((string) $request->input('q', ''));
-        $isExactOrderLookup = $searchQ !== '' && (
-            preg_match('/^#?S0*\d+$/i', $searchQ) === 1
-            || ctype_digit($searchQ)
-        );
         // Exact order # lookups (returns / invoice load) must see the sale regardless of
         // which sales queue permissions the user has for list browsing.
         if (! $isExactOrderLookup) {

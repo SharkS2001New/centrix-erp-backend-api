@@ -2,11 +2,13 @@
 
 namespace App\Services\Accounting;
 
+use App\Models\CreditNote;
 use App\Models\Customer;
 use App\Models\CustomerInvoice;
 use App\Models\CustomerInvoicePayment;
 use App\Models\Sale;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 class CustomerInvoiceService
@@ -133,20 +135,120 @@ class CustomerInvoiceService
         $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
     }
 
+    /**
+     * Customer returns shrink sale.order_total (and the observer may sync that into AR).
+     * Restore the invoice to the original gross so statements can show Invoice + Credit note separately.
+     */
+    public function preserveOriginalTotalAfterReturn(Sale $sale): void
+    {
+        if (! $sale->customer_num) {
+            return;
+        }
+
+        $invoice = CustomerInvoice::query()
+            ->where('sale_id', $sale->id)
+            ->whereNull('deleted_at')
+            ->first();
+
+        if (! $invoice) {
+            return;
+        }
+
+        $credits = $this->statementCreditTotalForSale((int) $sale->id);
+        $gross = round((float) $sale->order_total + $credits, 2);
+        if ($gross <= 0.01) {
+            return;
+        }
+
+        $paid = round((float) ($sale->amount_paid ?? $invoice->amount_paid), 2);
+        $effectiveDue = max(0, round($gross - $paid - $credits, 2));
+        $paymentStatus = $effectiveDue <= 0.01 ? 2 : ($paid > 0.01 ? 1 : 0);
+        $updates = [];
+        if (round((float) $invoice->invoice_total, 2) !== $gross) {
+            $updates['invoice_total'] = $gross;
+        }
+        if (round((float) $invoice->amount_paid, 2) !== $paid) {
+            $updates['amount_paid'] = $paid;
+        }
+        if ((int) $invoice->payment_status !== $paymentStatus) {
+            $updates['payment_status'] = $paymentStatus;
+        }
+        if ($updates !== []) {
+            $invoice->update($updates);
+        }
+
+        $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
+    }
+
     public function refreshCustomerBalance(int $organizationId, int $customerNum): void
     {
-        $balance = CustomerInvoice::query()
+        $invoices = CustomerInvoice::query()
             ->where('organization_id', $organizationId)
             ->where('customer_num', $customerNum)
             ->whereIn('payment_status', [0, 1])
             ->whereNull('deleted_at')
-            ->selectRaw('COALESCE(SUM(invoice_total - amount_paid), 0) as balance')
-            ->value('balance');
+            ->get(['id', 'sale_id', 'invoice_total', 'amount_paid']);
+
+        $saleIds = $invoices->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->unique()->values();
+        $saleTotals = $saleIds->isEmpty()
+            ? collect()
+            : Sale::query()->whereIn('id', $saleIds)->pluck('order_total', 'id');
+        $creditsBySale = $this->statementCreditsBySaleId($saleIds->all());
+
+        $balance = 0.0;
+        foreach ($invoices as $invoice) {
+            $saleId = $invoice->sale_id ? (int) $invoice->sale_id : null;
+            $credits = $saleId ? (float) ($creditsBySale[$saleId] ?? 0) : 0.0;
+            $netSale = $saleId !== null
+                ? (float) ($saleTotals[$saleId] ?? $invoice->invoice_total)
+                : (float) $invoice->invoice_total;
+            $gross = round(max((float) $invoice->invoice_total, $netSale + $credits), 2);
+            $balance += max(0, round($gross - (float) $invoice->amount_paid - $credits, 2));
+        }
 
         Customer::query()
             ->where('organization_id', $organizationId)
             ->where('customer_num', $customerNum)
-            ->update(['current_balance' => round((float) $balance, 2)]);
+            ->update(['current_balance' => round($balance, 2)]);
+    }
+
+    /** @param  list<int>  $saleIds */
+    public function statementCreditsBySaleId(array $saleIds): array
+    {
+        if ($saleIds === [] || ! Schema::hasTable('credit_notes')) {
+            return [];
+        }
+
+        $query = CreditNote::query()
+            ->whereIn('sale_id', $saleIds)
+            ->selectRaw('sale_id, COALESCE(SUM(total_amount), 0) as total')
+            ->groupBy('sale_id');
+
+        if (Schema::hasTable('customer_returns') && Schema::hasColumn('customer_returns', 'return_kind')) {
+            $query->where(function ($q) {
+                $q->whereNull('customer_return_id')
+                    ->orWhereNotExists(function ($sub) {
+                        $sub->select(DB::raw(1))
+                            ->from('customer_returns')
+                            ->whereColumn('customer_returns.id', 'credit_notes.customer_return_id')
+                            ->where('customer_returns.return_kind', 'pos_edit');
+                    });
+            });
+        }
+
+        return $query->pluck('total', 'sale_id')
+            ->map(fn ($total) => (float) $total)
+            ->all();
+    }
+
+    public function statementCreditTotalForSale(int $saleId): float
+    {
+        return (float) ($this->statementCreditsBySaleId([$saleId])[$saleId] ?? 0);
+    }
+
+    public function statementDebitForInvoice(float $invoiceTotal, float $netSaleTotal, float $credits): float
+    {
+        return round(max($invoiceTotal, $netSaleTotal + $credits), 2);
     }
 
     /**

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
 use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Catalog\ProductPriceSheetService;
@@ -1867,6 +1868,7 @@ class ReportController extends Controller
     protected function buildCustomerStatement(Request $request, int $customerNum): array
     {
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        $invoiceService = app(CustomerInvoiceService::class);
 
         $customerQuery = Customer::query()
             ->where('customer_num', $customerNum)
@@ -1897,6 +1899,73 @@ class ReportController extends Controller
             ->orderBy('date_paid')
             ->get();
 
+        $creditNotes = collect();
+        if (Schema::hasTable('credit_notes')) {
+            $creditQuery = DB::table('credit_notes as cn')
+                ->where('cn.customer_num', $customerNum)
+                ->when($orgId, fn ($q) => $q->where('cn.organization_id', $orgId))
+                ->orderBy('cn.credit_date')
+                ->orderBy('cn.id');
+
+            if (Schema::hasTable('customer_returns') && Schema::hasColumn('customer_returns', 'return_kind')) {
+                $creditQuery
+                    ->leftJoin('customer_returns as cr', 'cr.id', '=', 'cn.customer_return_id')
+                    ->where(function ($q) {
+                        $q->whereNull('cr.id')
+                            ->orWhereNull('cr.return_kind')
+                            ->orWhere('cr.return_kind', '!=', 'pos_edit');
+                    })
+                    ->select([
+                        'cn.id',
+                        'cn.credit_note_no',
+                        'cn.customer_return_id',
+                        'cn.sale_id',
+                        'cn.customer_num',
+                        'cn.credit_date',
+                        'cn.total_amount',
+                        'cn.refund_method',
+                        'cn.reason',
+                        'cr.return_no',
+                    ]);
+            } else {
+                $creditQuery->select([
+                    'cn.id',
+                    'cn.credit_note_no',
+                    'cn.customer_return_id',
+                    'cn.sale_id',
+                    'cn.customer_num',
+                    'cn.credit_date',
+                    'cn.total_amount',
+                    'cn.refund_method',
+                    'cn.reason',
+                ]);
+            }
+
+            $creditNotes = $creditQuery->get();
+        }
+
+        $saleIds = $invoices->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $creditsBySale = $invoiceService->statementCreditsBySaleId($saleIds);
+        $saleTotals = $saleIds === []
+            ? collect()
+            : DB::table('sales')->whereIn('id', $saleIds)->pluck('order_total', 'id');
+
+        $invoices = $invoices->map(function ($row) use ($invoiceService, $creditsBySale, $saleTotals) {
+            $saleId = $row->sale_id ? (int) $row->sale_id : null;
+            $credits = $saleId ? (float) ($creditsBySale[$saleId] ?? 0) : 0.0;
+            $netSale = $saleId !== null
+                ? (float) ($saleTotals[$saleId] ?? $row->invoice_total)
+                : (float) $row->invoice_total;
+            $row->return_credit_total = round($credits, 2);
+            $row->statement_debit = $invoiceService->statementDebitForInvoice(
+                (float) $row->invoice_total,
+                $netSale,
+                $credits,
+            );
+
+            return $row;
+        });
+
         $sales = DB::table('sales')
             ->where('customer_num', $customerNum)
             ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
@@ -1905,7 +1974,8 @@ class ReportController extends Controller
             ->limit(100)
             ->get();
 
-        $totalInvoiced = $invoices->sum(fn ($row) => (float) $row->invoice_total);
+        $totalInvoiced = $invoices->sum(fn ($row) => (float) $row->statement_debit);
+        $totalCredits = $creditNotes->sum(fn ($row) => (float) $row->total_amount);
         $totalPaid = $payments->sum(fn ($row) => (float) $row->amount_paid);
 
         return [
@@ -1925,11 +1995,13 @@ class ReportController extends Controller
                 'route_id' => $customer->route_id,
                 'route_name' => $routeName,
             ],
-            'invoices' => $invoices,
+            'invoices' => $invoices->values(),
+            'credit_notes' => $creditNotes->values(),
             'payments' => $payments,
             'sales' => $sales,
             'summary' => [
                 'total_invoiced' => round($totalInvoiced, 2),
+                'total_credits' => round($totalCredits, 2),
                 'total_paid' => round($totalPaid, 2),
                 'outstanding_balance' => (float) $customer->current_balance,
                 'credit_limit' => (float) $customer->credit_limit,

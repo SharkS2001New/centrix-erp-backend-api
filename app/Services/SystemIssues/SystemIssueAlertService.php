@@ -4,11 +4,11 @@ namespace App\Services\SystemIssues;
 
 use App\Models\SystemIssueReport;
 use App\Models\WhatsappConfig;
+use App\Services\Platform\PlatformMailSettingsResolver;
 use App\Services\WhatsApp\MetaWhatsAppClient;
 use App\Services\WhatsApp\ResolvedWhatsAppConfig;
 use App\Services\WhatsApp\WhatsAppSettingsResolver;
 use Illuminate\Support\Facades\Log;
-use Illuminate\Support\Facades\Mail;
 use Throwable;
 
 class SystemIssueAlertService
@@ -127,11 +127,33 @@ class SystemIssueAlertService
             mb_substr((string) $report->message, 0, 80),
         );
 
-        Mail::raw($plainBody, function ($message) use ($to, $subject) {
-            $message->to($to)->subject($subject);
-        });
+        if (! $this->platformMailFromAddress()) {
+            Log::warning('system_issue.instant_email_skipped', [
+                'reason' => 'missing_from_address',
+                'report_id' => $report->id,
+                'hint' => 'Set From address under Platform → Settings → Email delivery (or MAIL_FROM_ADDRESS).',
+            ]);
+
+            return false;
+        }
+
+        PlatformMailSettingsResolver::sendRaw($to, $subject, $plainBody, null, [
+            'kind' => 'system_issue_alert',
+            'organization_id' => $report->organization_id,
+        ]);
 
         return true;
+    }
+
+    protected function platformMailFromAddress(): string
+    {
+        $settings = PlatformMailSettingsResolver::resolve();
+        $from = trim((string) ($settings['from_address'] ?? ''));
+        if ($from === '') {
+            $from = trim((string) config('mail.from.address', ''));
+        }
+
+        return filter_var($from, FILTER_VALIDATE_EMAIL) ? $from : '';
     }
 
     protected function resolveWhatsAppConfig(): ?ResolvedWhatsAppConfig

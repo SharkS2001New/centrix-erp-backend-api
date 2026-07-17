@@ -3,6 +3,8 @@
 namespace Tests\Feature;
 
 use App\Models\CustomerReturn;
+use App\Models\Organization;
+use App\Models\PlatformSubscription;
 use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
@@ -21,7 +23,27 @@ class CustomerReturnTest extends TestCase
     {
         parent::setUp();
         $this->user = User::where('username', 'admin')->firstOrFail();
+        $this->ensureActiveSubscription($this->user);
         Sanctum::actingAs($this->user);
+    }
+
+    protected function ensureActiveSubscription(User $user): void
+    {
+        $org = Organization::query()->find($user->organization_id);
+        if (! $org) {
+            return;
+        }
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $org->id],
+            [
+                'status' => 'active',
+                'seat_count' => 5,
+                'current_period_start' => now()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'is_trial' => false,
+            ],
+        );
     }
 
     public function test_create_and_approve_customer_return_restock(): void
@@ -122,6 +144,7 @@ class CustomerReturnTest extends TestCase
 
         $first = $this->postJson('/api/v1/customer-returns', [
             'sale_id' => $sale->id,
+            'reason' => 'Damaged Product',
             'lines' => [
                 [
                     'product_code' => $product->product_code,
@@ -137,6 +160,7 @@ class CustomerReturnTest extends TestCase
 
         $this->postJson('/api/v1/customer-returns', [
             'sale_id' => $sale->id,
+            'reason' => 'Damaged Product',
             'lines' => [
                 [
                     'product_code' => $product->product_code,
@@ -147,6 +171,141 @@ class CustomerReturnTest extends TestCase
                 ],
             ],
         ])->assertStatus(422);
+    }
+
+    public function test_pack_uom_return_expands_single_carton_qty_when_line_amount_is_multi_pack(): void
+    {
+        $product = Product::query()->whereNotNull('unit_id')->first() ?? Product::firstOrFail();
+        $originalUnitId = $product->unit_id;
+
+        $uom = \App\Models\Uom::query()->create([
+            'organization_id' => $product->organization_id,
+            'conversion_factor' => 18,
+            'full_name' => 'Carton',
+            'measure_name' => 'piece',
+            'small_packaging_label' => 'piece',
+            'uses_small_packaging' => true,
+            'uom_type' => 'carton',
+            'is_base_unit' => false,
+            'is_active' => true,
+            'created_by' => $this->user->id,
+        ]);
+        $product->update(['unit_id' => $uom->id]);
+        $product->unsetRelation('unit');
+        $product->load('unit');
+
+        $sale = Sale::query()->where('status', 'completed')->first() ?? Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed']);
+
+        // Corrupt/legacy storage: qty looks like one carton in pieces, but money is 10 cartons.
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 18,
+                'selling_price' => 50.5556,
+                'display_unit_price' => 910,
+                'amount' => 9100,
+                'product_vat' => 0,
+                'discount_given' => 0,
+                'on_wholesale_retail' => 0,
+                'uom' => 'Carton',
+            ],
+        );
+        $sale->update(['order_total' => 9100, 'amount_paid' => 9100, 'payment_status' => 'paid']);
+
+        try {
+            $lines = $this->getJson('/api/v1/sales/'.$sale->id.'/return-lines')
+                ->assertOk()
+                ->json('lines');
+
+            $line = collect($lines)->firstWhere('product_code', $product->product_code);
+            $this->assertNotNull($line);
+            $this->assertEqualsWithDelta(180.0, (float) $line['max_return_qty'], 0.01);
+            $this->assertEqualsWithDelta(910.0, (float) $line['unit_price'], 0.01);
+
+            $created = $this->postJson('/api/v1/customer-returns', [
+                'sale_id' => $sale->id,
+                'return_date' => '2026-07-17',
+                'refund_method' => 'CASH',
+                'reason' => 'Damaged Product',
+                'lines' => [
+                    [
+                        'sale_item_id' => $line['sale_item_id'],
+                        'product_code' => $product->product_code,
+                        'product_name' => $product->product_name,
+                        'quantity_sold' => 180,
+                        'return_qty' => 162,
+                        'unit_price' => 910,
+                        'amount' => 8190,
+                    ],
+                ],
+            ])->assertCreated();
+
+            $this->assertEqualsWithDelta(8190.0, (float) $created->json('total_amount'), 0.01);
+        } finally {
+            $product->update(['unit_id' => $originalUnitId]);
+        }
+    }
+
+    public function test_pack_uom_return_rejects_over_qty_for_true_single_carton_line(): void
+    {
+        $product = Product::query()->whereNotNull('unit_id')->first() ?? Product::firstOrFail();
+        $originalUnitId = $product->unit_id;
+
+        $uom = \App\Models\Uom::query()->create([
+            'organization_id' => $product->organization_id,
+            'conversion_factor' => 18,
+            'full_name' => 'Carton',
+            'measure_name' => 'piece',
+            'small_packaging_label' => 'piece',
+            'uses_small_packaging' => true,
+            'uom_type' => 'carton',
+            'is_base_unit' => false,
+            'is_active' => true,
+            'created_by' => $this->user->id,
+        ]);
+        $product->update(['unit_id' => $uom->id]);
+        $product->unsetRelation('unit');
+        $product->load('unit');
+
+        $sale = Sale::query()->where('status', 'completed')->first() ?? Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed']);
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 18,
+                'selling_price' => 50.5556,
+                'display_unit_price' => 910,
+                'amount' => 910,
+                'product_vat' => 0,
+                'discount_given' => 0,
+                'on_wholesale_retail' => 0,
+                'uom' => 'Carton',
+            ],
+        );
+        $sale->update(['order_total' => 910, 'amount_paid' => 910, 'payment_status' => 'paid']);
+
+        try {
+            $this->postJson('/api/v1/customer-returns', [
+                'sale_id' => $sale->id,
+                'reason' => 'Damaged Product',
+                'lines' => [
+                    [
+                        'product_code' => $product->product_code,
+                        'quantity_sold' => 18,
+                        'return_qty' => 162,
+                        'unit_price' => 910,
+                        'amount' => 8190,
+                    ],
+                ],
+            ])->assertStatus(422)
+                ->assertJsonValidationErrors(['lines']);
+        } finally {
+            $product->update(['unit_id' => $originalUnitId]);
+        }
     }
 
     public function test_reject_pending_return(): void
@@ -169,6 +328,7 @@ class CustomerReturnTest extends TestCase
 
         $created = $this->postJson('/api/v1/customer-returns', [
             'sale_id' => $sale->id,
+            'reason' => 'Damaged Product',
             'lines' => [
                 [
                     'product_code' => $product->product_code,
