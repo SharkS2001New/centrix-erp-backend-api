@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Support\OrganizationIdResolver;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\BelongsToMany;
@@ -9,6 +10,19 @@ use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class DispatchTrip extends Model
 {
+    protected static function booted(): void
+    {
+        static::saving(function (DispatchTrip $trip) {
+            if (! $trip->branch_id) {
+                return;
+            }
+
+            if (! $trip->organization_id || $trip->isDirty('branch_id')) {
+                $trip->organization_id = OrganizationIdResolver::requireForBranch((int) $trip->branch_id);
+            }
+        });
+    }
+
     protected $fillable = [
         'organization_id',
         'branch_id',

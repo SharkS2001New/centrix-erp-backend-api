@@ -127,7 +127,9 @@ abstract class BaseResourceController extends Controller
         $hasBranch = in_array('branch_id', $fillable, true);
 
         if ($this->scopesByOrganization()) {
-            if ($hasOrganization) {
+            if ($hasOrganization && $hasBranch) {
+                $this->access()->scopeOrganizationWithBranchFallback($query, $user, $request);
+            } elseif ($hasOrganization) {
                 $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
             } elseif ($hasBranch) {
                 $this->access()->scopeOrganizationViaBranch($query, $user, 'branch_id', $request);

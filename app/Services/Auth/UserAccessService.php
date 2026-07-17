@@ -92,6 +92,34 @@ class UserAccessService
     }
 
     /**
+     * Branch-owned rows may carry a stale denormalized organization_id; allow access
+     * when either the column matches or the branch belongs to the user's organization.
+     *
+     * @param  Builder<\Illuminate\Database\Eloquent\Model>  $query
+     */
+    public function scopeOrganizationWithBranchFallback(
+        Builder $query,
+        User $user,
+        ?Request $request = null,
+        string $orgColumn = 'organization_id',
+        string $branchColumn = 'branch_id',
+    ): Builder {
+        $orgId = $this->organizationId($user, $request);
+        if (! $orgId) {
+            return $query;
+        }
+
+        return $query->where(function (Builder $scoped) use ($orgId, $orgColumn, $branchColumn) {
+            $scoped->where($orgColumn, $orgId)
+                ->orWhereIn($branchColumn, function ($sub) use ($orgId) {
+                    $sub->select('id')
+                        ->from('branches')
+                        ->where('organization_id', $orgId);
+                });
+        });
+    }
+
+    /**
      * @param  Builder<\Illuminate\Database\Eloquent\Model>  $query
      */
     public function scopeBranchIfLimited(Builder $query, User $user, string $column = 'branch_id'): Builder

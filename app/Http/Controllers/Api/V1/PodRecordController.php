@@ -45,7 +45,7 @@ class PodRecordController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        $record = $this->findBranchScopedModel(PodRecord::class, $id, $request->user());
+        $record = $this->findBranchScopedModel(PodRecord::class, $id, $request->user(), 'id', $request);
 
         return response()->json($record->load(['lines.saleItem', 'sale', 'trip', 'capturedByUser']));
     }
@@ -53,7 +53,7 @@ class PodRecordController extends BaseResourceController
     /** POST /sales/orders/{saleId}/pod — JSON or multipart */
     public function storeForSale(Request $request, int $saleId)
     {
-        $sale = $this->findScopedSale($saleId, $request->user());
+        $sale = $this->findScopedSale($saleId, $request->user(), $request);
 
         $request->validate([
             'recipient_name' => 'sometimes|string|max:200',
@@ -111,7 +111,7 @@ class PodRecordController extends BaseResourceController
 
     protected function serveFile(Request $request, int $podRecord, string $column)
     {
-        $record = $this->findBranchScopedModel(PodRecord::class, $podRecord, $request->user());
+        $record = $this->findBranchScopedModel(PodRecord::class, $podRecord, $request->user(), 'id', $request);
         $path = $record->{$column};
 
         if (! StoredPublicFile::exists($path)) {

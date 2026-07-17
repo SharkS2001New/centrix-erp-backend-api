@@ -148,7 +148,7 @@ class TillOperationsController extends Controller
             );
         }
 
-        $till = $this->findBranchScopedModel(Till::class, (int) $data['till_id'], $request->user());
+        $till = $this->findBranchScopedModel(Till::class, (int) $data['till_id'], $request->user(), 'id', $request);
         $userId = (int) $request->user()->id;
 
         $this->assertTillAssignedToCashier($till, $userId);

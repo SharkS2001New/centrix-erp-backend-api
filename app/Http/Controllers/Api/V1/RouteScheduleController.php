@@ -34,7 +34,7 @@ class RouteScheduleController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        $schedule = $this->findBranchScopedModel(RouteSchedule::class, $id, $request->user());
+        $schedule = $this->findBranchScopedModel(RouteSchedule::class, $id, $request->user(), 'id', $request);
 
         return response()->json($schedule->load(['route', 'defaultDriver', 'defaultVehicle']));
     }
@@ -72,7 +72,7 @@ class RouteScheduleController extends BaseResourceController
 
     public function update(Request $request, string $id)
     {
-        $schedule = $this->findBranchScopedModel(RouteSchedule::class, $id, $request->user());
+        $schedule = $this->findBranchScopedModel(RouteSchedule::class, $id, $request->user(), 'id', $request);
         $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $data = $request->validate([
             'route_id' => ['sometimes', 'integer', TenantRouteRules::exists($orgId ?: null)],
@@ -90,7 +90,7 @@ class RouteScheduleController extends BaseResourceController
 
     public function destroy(Request $request, string $id)
     {
-        $schedule = $this->findBranchScopedModel(RouteSchedule::class, $id, $request->user());
+        $schedule = $this->findBranchScopedModel(RouteSchedule::class, $id, $request->user(), 'id', $request);
         $schedule->delete();
 
         return response()->json(null, 204);
