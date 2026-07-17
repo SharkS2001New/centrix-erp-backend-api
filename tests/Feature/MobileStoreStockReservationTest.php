@@ -90,6 +90,7 @@ class MobileStoreStockReservationTest extends TestCase
             ->assertCreated();
 
         $this->assertDatabaseHas('stock_reservations', [
+            'organization_id' => $user->organization_id,
             'cart_id' => $cart['id'],
             'product_code' => $product->product_code,
             'stock_location' => 'store',
@@ -157,6 +158,7 @@ class MobileStoreStockReservationTest extends TestCase
             ->assertCreated();
 
         $this->assertDatabaseHas('stock_reservations', [
+            'organization_id' => $user->organization_id,
             'cart_id' => $cart['id'],
             'product_code' => $product->product_code,
             'stock_location' => 'store',
@@ -204,6 +206,7 @@ class MobileStoreStockReservationTest extends TestCase
             ->assertCreated();
 
         $this->assertDatabaseHas('stock_reservations', [
+            'organization_id' => $user->organization_id,
             'cart_id' => $cart['id'],
             'product_code' => $product->product_code,
             'stock_location' => 'store',
