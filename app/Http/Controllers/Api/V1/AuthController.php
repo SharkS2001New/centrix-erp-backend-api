@@ -270,6 +270,21 @@ class AuthController extends Controller
         );
     }
 
+    public function passkeyLoginAvailability(Request $request)
+    {
+        $data = $request->validate([
+            'company_code' => 'nullable|string|max:45',
+            'username' => 'nullable|string|max:120',
+        ]);
+
+        return response()->json(
+            app(\App\Services\Auth\PasskeyService::class)->loginAvailability(
+                $data['username'] ?? null,
+                $data['company_code'] ?? null,
+            )
+        );
+    }
+
     public function passkeyLogin(Request $request)
     {
         $data = $request->validate([
@@ -652,6 +667,34 @@ class AuthController extends Controller
                 'password' => 'Incorrect password.',
             ]);
         }
+
+        $token = $request->user()->currentAccessToken();
+        if ($token instanceof \App\Models\PersonalAccessToken) {
+            $token->forceFill(['last_used_at' => now()])->save();
+        }
+
+        return response()->json(['verified' => true]);
+    }
+
+    public function passkeyUnlockOptions(Request $request)
+    {
+        return response()->json(
+            app(\App\Services\Auth\PasskeyService::class)->beginUnlockAssertion($request->user())
+        );
+    }
+
+    public function passkeyUnlock(Request $request)
+    {
+        $data = $request->validate([
+            'challenge_token' => 'required|string|max:128',
+            'credential' => 'required|array',
+        ]);
+
+        app(\App\Services\Auth\PasskeyService::class)->completeUnlockAssertion(
+            $request->user(),
+            $data['challenge_token'],
+            $data['credential'],
+        );
 
         $token = $request->user()->currentAccessToken();
         if ($token instanceof \App\Models\PersonalAccessToken) {

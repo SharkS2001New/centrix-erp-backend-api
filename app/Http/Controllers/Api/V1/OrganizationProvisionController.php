@@ -658,6 +658,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.mobile_enable_driver_app' => 'sometimes|boolean',
             'sales_platform.mobile_enable_driver_attendance' => 'sometimes|boolean',
             'sales_platform.require_pos_till_float' => 'sometimes|boolean',
+            'sales_platform.external_pos_layout' => 'sometimes|in:modern,classic',
             'sales_platform.enable_pos_order_edit' => 'sometimes|boolean',
             'sales_platform.enable_backoffice_order_edit' => 'sometimes|boolean',
             'sales_platform.enable_mpesa_stk' => 'sometimes|boolean',

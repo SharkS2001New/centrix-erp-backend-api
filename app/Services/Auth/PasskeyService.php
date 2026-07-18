@@ -169,32 +169,45 @@ class PasskeyService
     }
 
     /**
-     * Discoverable / conditional UI options (GitHub-style “Sign in with a passkey”).
+     * Whether a passkey login is available for this org + username (no ceremony started).
      *
-     * @return array{options: array<string, mixed>, challenge_token: string}
+     * @return array{available: bool}
+     */
+    public function loginAvailability(?string $username = null, ?string $companyCode = null): array
+    {
+        $user = $this->resolveLoginUser($username, $companyCode);
+
+        return [
+            'available' => $user !== null && $this->userHasPasskeys($user),
+        ];
+    }
+
+    /**
+     * Org-scoped passkey options. Requires company_code + username when probing a tenant account.
+     * Empty allowCredentials is never returned for a resolved user without passkeys (avoids
+     * discoverable “any account” prompts for the wrong org).
+     *
+     * @return array{has_credentials: bool, options?: array<string, mixed>, challenge_token?: string}
      */
     public function beginLogin(?string $username = null, ?string $companyCode = null): array
     {
-        $allowCredentials = [];
-        $hintUserId = null;
+        $user = $this->resolveLoginUser($username, $companyCode);
+        if (! $user) {
+            return ['has_credentials' => false];
+        }
 
-        if ($username && $companyCode) {
-            $org = \App\Models\Organization::findByCompanyCodeIdentifier(strtoupper(trim($companyCode)));
-            if ($org) {
-                $account = app(TenantAccountResolver::class)->resolve($org, trim($username));
-                if ($account) {
-                    $hintUserId = (int) $account->effectiveUser()->id;
-                    $allowCredentials = WebAuthnCredential::query()
-                        ->where('user_id', $hintUserId)
-                        ->get()
-                        ->map(fn (WebAuthnCredential $c) => PublicKeyCredentialDescriptor::create(
-                            PublicKeyCredentialDescriptor::CREDENTIAL_TYPE_PUBLIC_KEY,
-                            WebAuthnCredential::base64UrlDecode($c->credential_id),
-                            is_array($c->transports) ? $c->transports : [],
-                        ))
-                        ->all();
-                }
-            }
+        $allowCredentials = WebAuthnCredential::query()
+            ->where('user_id', $user->id)
+            ->get()
+            ->map(fn (WebAuthnCredential $c) => PublicKeyCredentialDescriptor::create(
+                PublicKeyCredentialDescriptor::CREDENTIAL_TYPE_PUBLIC_KEY,
+                WebAuthnCredential::base64UrlDecode($c->credential_id),
+                is_array($c->transports) ? $c->transports : [],
+            ))
+            ->all();
+
+        if ($allowCredentials === []) {
+            return ['has_credentials' => false];
         }
 
         $challenge = random_bytes(32);
@@ -209,13 +222,92 @@ class PasskeyService
         $token = Str::random(64);
         Cache::put($this->loginCacheKey($token), [
             'options' => $this->serialize($options),
-            'hint_user_id' => $hintUserId,
+            'hint_user_id' => (int) $user->id,
+        ], now()->addMinutes(10));
+
+        return [
+            'has_credentials' => true,
+            'challenge_token' => $token,
+            'options' => $this->normalizeForBrowser($options),
+        ];
+    }
+
+    /**
+     * Authenticated unlock: assert a passkey for the current user without issuing a new session.
+     *
+     * @return array{options: array<string, mixed>, challenge_token: string}
+     */
+    public function beginUnlockAssertion(User $user): array
+    {
+        $allowCredentials = WebAuthnCredential::query()
+            ->where('user_id', $user->id)
+            ->get()
+            ->map(fn (WebAuthnCredential $c) => PublicKeyCredentialDescriptor::create(
+                PublicKeyCredentialDescriptor::CREDENTIAL_TYPE_PUBLIC_KEY,
+                WebAuthnCredential::base64UrlDecode($c->credential_id),
+                is_array($c->transports) ? $c->transports : [],
+            ))
+            ->all();
+
+        if ($allowCredentials === []) {
+            throw ValidationException::withMessages([
+                'credential' => ['No passkeys are registered for this account.'],
+            ]);
+        }
+
+        $challenge = random_bytes(32);
+        $options = PublicKeyCredentialRequestOptions::create(
+            $challenge,
+            (string) config('webauthn.rp_id'),
+            $allowCredentials,
+            PublicKeyCredentialRequestOptions::USER_VERIFICATION_REQUIREMENT_REQUIRED,
+            (int) config('webauthn.timeout_ms', 60_000),
+        );
+
+        $token = Str::random(64);
+        Cache::put($this->unlockCacheKey($token), [
+            'options' => $this->serialize($options),
+            'user_id' => (int) $user->id,
         ], now()->addMinutes(10));
 
         return [
             'challenge_token' => $token,
             'options' => $this->normalizeForBrowser($options),
         ];
+    }
+
+    public function completeUnlockAssertion(User $user, string $challengeToken, array $credentialJson): void
+    {
+        $cached = Cache::pull($this->unlockCacheKey($challengeToken));
+        if (! is_array($cached) || (int) ($cached['user_id'] ?? 0) !== (int) $user->id) {
+            throw ValidationException::withMessages([
+                'credential' => ['Passkey unlock expired. Try again.'],
+            ]);
+        }
+
+        $this->completeLoginWithCachedOptions(
+            (string) $cached['options'],
+            $credentialJson,
+            (int) $user->id,
+        );
+    }
+
+    protected function resolveLoginUser(?string $username, ?string $companyCode): ?User
+    {
+        $username = trim((string) $username);
+        $companyCode = strtoupper(trim((string) $companyCode));
+        if ($username === '' || $companyCode === '') {
+            return null;
+        }
+
+        $org = \App\Models\Organization::findByCompanyCodeIdentifier($companyCode);
+        if (! $org) {
+            return null;
+        }
+
+        $account = app(TenantAccountResolver::class)->resolve($org, $username);
+
+        return $account?->effectiveUser();
     }
 
     /**
@@ -519,6 +611,11 @@ class PasskeyService
     protected function loginCacheKey(string $token): string
     {
         return 'webauthn:login:'.$token;
+    }
+
+    protected function unlockCacheKey(string $token): string
+    {
+        return 'webauthn:unlock:'.$token;
     }
 
     protected function mfaPasskeyCacheKey(string $token): string

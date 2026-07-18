@@ -39,6 +39,16 @@ class GeneralSettingsResolver
             'header_scale' => 'large', 'header_weight' => 'semibold',
             'footer_scale' => 'standard', 'footer_weight' => 'semibold',
         ],
+        'picking_list' => [
+            'family' => 'arial', 'scale' => 'standard', 'size_px' => 16, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
+        'trip_chart' => [
+            'family' => 'arial', 'scale' => 'standard', 'size_px' => 16, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
         'report' => [
             'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
             'header_scale' => 'large', 'header_weight' => 'semibold',
@@ -114,6 +124,8 @@ class GeneralSettingsResolver
         $out['print_footer_a4_invoice'] = self::normalizeFooterField($out['print_footer_a4_invoice'] ?? '');
         $out['print_footer_lpo'] = self::normalizeFooterField($out['print_footer_lpo'] ?? '');
         $out['print_footer_loading_sheet'] = self::normalizeFooterField($out['print_footer_loading_sheet'] ?? '');
+        $out['print_footer_picking_list'] = self::normalizeFooterField($out['print_footer_picking_list'] ?? '');
+        $out['print_footer_trip_chart'] = self::normalizeFooterField($out['print_footer_trip_chart'] ?? '');
         $out['show_organization_on_documents'] = (bool) ($out['show_organization_on_documents'] ?? true);
         $out['enable_tab_workspace'] = (bool) ($out['enable_tab_workspace'] ?? true);
         $out['document_header_display'] = in_array($out['document_header_display'] ?? '', ['auto', 'logo', 'name', 'logo_and_name'], true)

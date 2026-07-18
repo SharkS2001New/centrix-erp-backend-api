@@ -162,6 +162,8 @@ Route::prefix('v1')->group(function () {
         ->middleware('throttle:auth-login');
     Route::post('auth/passkeys/login/options', [AuthController::class, 'passkeyLoginOptions'])
         ->middleware('throttle:auth-login');
+    Route::post('auth/passkeys/login/availability', [AuthController::class, 'passkeyLoginAvailability'])
+        ->middleware('throttle:auth-login');
     Route::post('auth/passkeys/login', [AuthController::class, 'passkeyLogin'])
         ->middleware('throttle:auth-login');
     Route::post('auth/2fa/verify', [AuthController::class, 'verifyTwoFactor'])
@@ -208,6 +210,8 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/passkeys/register', [AuthController::class, 'completePasskeyRegistration']);
         Route::patch('auth/passkeys/{id}', [AuthController::class, 'renamePasskey'])->whereNumber('id');
         Route::delete('auth/passkeys/{id}', [AuthController::class, 'deletePasskey'])->whereNumber('id');
+        Route::post('auth/passkeys/unlock/options', [AuthController::class, 'passkeyUnlockOptions']);
+        Route::post('auth/passkeys/unlock', [AuthController::class, 'passkeyUnlock']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
         Route::post('auth/skip-password-expiry', [AuthController::class, 'skipPasswordExpiry']);
         Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);

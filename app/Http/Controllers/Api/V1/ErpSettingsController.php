@@ -761,6 +761,8 @@ class ErpSettingsController extends Controller
             'print_footer_a4_invoice' => 'sometimes|nullable|string|max:4000',
             'print_footer_lpo' => 'sometimes|nullable|string|max:4000',
             'print_footer_loading_sheet' => 'sometimes|nullable|string|max:4000',
+            'print_footer_picking_list' => 'sometimes|nullable|string|max:4000',
+            'print_footer_trip_chart' => 'sometimes|nullable|string|max:4000',
             'show_organization_on_documents' => 'sometimes|boolean',
             'enable_tab_workspace' => 'sometimes|boolean',
             'document_header_display' => 'sometimes|in:auto,logo,name,logo_and_name',
