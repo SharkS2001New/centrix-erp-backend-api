@@ -226,6 +226,11 @@ class UserLoginChannelService
             return true;
         }
 
+        // Receipt / Z-report cashier name — show only, never the users index.
+        if (preg_match('#^users/[^/]+$#', $path) === 1) {
+            return true;
+        }
+
         $prefixes = [
             'pos/',
             'sales',
@@ -247,6 +252,14 @@ class UserLoginChannelService
             'vats',
             'retail-package-settings',
             'payments/',
+            'notifications',
+            'action-requests/',
+            'system-issue-reports',
+            'kra-responses',
+            'legacy-orders',
+            'erp/organization',
+            'erp/settings',
+            'organizations',
         ];
 
         return $this->pathMatchesAny($path, $prefixes);

@@ -143,6 +143,18 @@ class UserLoginChannelTest extends TestCase
             ->assertOk();
 
         $this->withToken($token)
+            ->getJson('/api/v1/notifications/unread-count')
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson("/api/v1/users/{$user->id}")
+            ->assertOk();
+
+        $this->withToken($token)
+            ->getJson('/api/v1/kra-responses?per_page=1')
+            ->assertOk();
+
+        $this->withToken($token)
             ->getJson('/api/v1/users')
             ->assertStatus(403)
             ->assertJsonPath('code', 'login_channel_forbidden');

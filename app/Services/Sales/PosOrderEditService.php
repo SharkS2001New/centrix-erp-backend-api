@@ -81,10 +81,24 @@ class PosOrderEditService
             throw new InvalidArgumentException('You can only re-edit your own orders.');
         }
 
-        $channel = $sale->channel ?: 'pos';
         $workflowService = OrderWorkflowService::forGate($gate);
         $status = (string) $sale->status;
-        $allowed = $workflowService->editOrderStatuses();
+        $channel = $workflowService->normalizeSalesChannel($sale->channel ?: 'pos');
+        $orderSource = strtolower((string) ($sale->order_source ?? ''));
+        $isPosSale = $channel === 'pos' || $orderSource === 'pos';
+
+        // LightStores parity: when “Allow editing completed POS orders” is on, cashiers can
+        // pull back any non-expired POS receipt (held / unpaid / paid / completed / …),
+        // adjust lines + stock, then re-checkout under the same order number.
+        if ($isPosSale && $this->posOrderEditEnabled($gate)) {
+            if (in_array($status, ['expired'], true)) {
+                throw new InvalidArgumentException('Expired orders cannot be edited.');
+            }
+
+            return;
+        }
+
+        $allowed = $this->editableStatusesForChannel($channel, $gate);
 
         if (in_array($status, $allowed, true)) {
             return;
@@ -95,7 +109,20 @@ class PosOrderEditService
             return;
         }
 
-        throw new InvalidArgumentException('This order cannot be edited in its current status.');
+        if ($this->allowsCheckoutReEdit($channel, $gate)
+            && $workflowService->isRestorableToCartStatus($status, $channel, true)) {
+            return;
+        }
+
+        if ($isPosSale && ! $this->posOrderEditEnabled($gate)) {
+            throw new InvalidArgumentException(
+                'Editing completed POS orders is disabled. Enable “Allow editing completed POS orders” under Platform → Sales behaviour.',
+            );
+        }
+
+        throw new InvalidArgumentException(
+            "This order cannot be edited in its current status ({$status}).",
+        );
     }
 
     public function canRestoreSaleToCart(Sale $sale, User $user, CapabilityGate $gate): bool

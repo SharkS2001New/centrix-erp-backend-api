@@ -1009,6 +1009,11 @@ class ReportController extends Controller
             $sessionQ->where('tfs.cashier_id', $cashierId);
         }
         $openingFloat = (float) (clone $sessionQ)->sum('working_amount');
+        $cashMovementTotals = $this->sumSessionCashMovements(
+            (clone $sessionQ)->select('tfs.cash_movements')->get()->all(),
+        );
+        $cashMovementsIn = $cashMovementTotals['in'];
+        $cashMovementsOut = $cashMovementTotals['out'];
 
         $tillRowsQuery = DB::table('till_float_sessions as tfs')
             ->join('tills as t', 'tfs.till_id', '=', 't.id')
@@ -1135,7 +1140,8 @@ class ReportController extends Controller
             ->sum('current_balance');
 
         $creditSales = (float) ($agg->credit_sales ?? 0);
-        $netCashExpected = $openingFloat + $cash;
+        // Match till X for till cash movements (safe drop / pay out / cash in). Session expenses stay separate.
+        $netCashExpected = round($openingFloat + $cash - $cashMovementsOut + $cashMovementsIn, 2);
         $netSalesMinusFloat = max(0, round($netSales - $openingFloat, 2));
         $netPosition = $netCashExpected - $totalExpenses - $closingDebtors;
 
@@ -1205,6 +1211,8 @@ class ReportController extends Controller
                 'total_vat' => $totalVat,
                 'opening_float' => $openingFloat,
                 'net_sales_minus_float' => $netSalesMinusFloat,
+                'cash_movements_in' => round($cashMovementsIn, 2),
+                'cash_movements_out' => round($cashMovementsOut, 2),
                 'net_cash_expected' => $netCashExpected,
                 'session_expenses' => $sessionExpenses,
                 'items_sold' => (int) round($itemsSold),
@@ -2209,5 +2217,45 @@ class ReportController extends Controller
         }
 
         return $requestedBranchId !== null ? (int) $requestedBranchId : null;
+    }
+
+    /**
+     * Aggregate till session cash movements for EOD expected cash.
+     *
+     * @param  array<int, object|array>  $sessions
+     * @return array{in: float, out: float}
+     */
+    protected function sumSessionCashMovements(array $sessions): array
+    {
+        $in = 0.0;
+        $out = 0.0;
+
+        foreach ($sessions as $session) {
+            $raw = is_array($session)
+                ? ($session['cash_movements'] ?? null)
+                : ($session->cash_movements ?? null);
+            $movements = is_string($raw) ? json_decode($raw, true) : $raw;
+            if (! is_array($movements)) {
+                continue;
+            }
+
+            foreach ($movements as $row) {
+                if (! is_array($row)) {
+                    continue;
+                }
+                $amount = (float) ($row['amount'] ?? 0);
+                if ($amount <= 0) {
+                    continue;
+                }
+                if (($row['type'] ?? '') === 'pay_in') {
+                    $in += $amount;
+                } else {
+                    // drop, pay_out, and any other withdrawal from the till
+                    $out += $amount;
+                }
+            }
+        }
+
+        return ['in' => $in, 'out' => $out];
     }
 }

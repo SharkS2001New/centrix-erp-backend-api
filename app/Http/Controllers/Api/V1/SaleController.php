@@ -9,6 +9,7 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Support\SalesOrderQueuePermissions;
 use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
+use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\RouteOrderScope;
 use App\Services\Sales\SaleOrderPresentationService;
@@ -98,9 +99,14 @@ class SaleController extends BaseResourceController
         $gate = $this->erp->gateForUser($request->user());
         $workflow = OrderWorkflowService::forGate($gate);
         $channel = (string) ($request->input('channel') ?: 'backend');
+        $forPosOrderEdit = $request->boolean('for_pos_order_edit')
+            && app(PosOrderEditService::class)->posOrderEditEnabled($gate);
+
         // Exact order # lookups (returns / invoice load) must see the sale regardless of
         // which sales queue permissions the user has for list browsing.
-        if (! $isExactOrderLookup) {
+        // POS previous-order browse also skips queue gates — cashiers rarely have
+        // backoffice “Paid/Completed queue” view rights.
+        if (! $isExactOrderLookup && ! $forPosOrderEdit) {
             SalesOrderQueuePermissions::applyIndexScope(
                 $query,
                 $request->user(),
@@ -108,6 +114,22 @@ class SaleController extends BaseResourceController
                 app(UserPermissionService::class),
                 $channel,
             );
+        }
+
+        if ($forPosOrderEdit) {
+            $query->where(function ($sub) {
+                $sub->where('sales.channel', 'pos')
+                    ->orWhere('sales.order_source', 'pos');
+            });
+            // Hide tombstones from prior POS edits (order_num = 9_000_000 + sale_id).
+            $query->where('sales.order_num', '<', OrderNumberAllocator::SUPERSEDED_ORDER_NUM_BASE);
+            $query->where('sales.archived', 0);
+            $query->whereNotIn('sales.status', ['cancelled', 'expired', 'draft', 'held']);
+
+            $permissions = app(UserPermissionService::class);
+            if (! $permissions->canEditOthersSalesOrders($request->user(), $gate)) {
+                $query->where('sales.cashier_id', $request->user()->id);
+            }
         }
         $statusFilter = data_get($request->input('filter', []), 'status');
         if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {

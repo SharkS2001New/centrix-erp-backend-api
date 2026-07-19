@@ -93,6 +93,61 @@ class PosOrderEditServiceTest extends TestCase
         $this->assertNotContains('completed', $restorable);
     }
 
+    public function test_completed_pos_sale_assert_editable_when_flag_on(): void
+    {
+        $permissions = $this->createMock(\App\Services\Auth\UserPermissionService::class);
+        $permissions->method('canEditOthersSalesOrders')->willReturn(false);
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            $permissions,
+        );
+        $gate = $this->gateWithPosOrderEdit(true);
+
+        $cashier = new \App\Models\User(['is_admin' => false]);
+        $cashier->id = 10;
+
+        $sale = new \App\Models\Sale([
+            'status' => 'completed',
+            'archived' => 0,
+            'channel' => 'pos',
+            'cashier_id' => $cashier->id,
+        ]);
+
+        $service->assertSaleEditable($sale, $cashier, $gate);
+        $this->assertTrue($service->canRestoreSaleToCart($sale, $cashier, $gate));
+    }
+
+    public function test_completed_pos_sale_not_editable_when_flag_off(): void
+    {
+        $permissions = $this->createMock(\App\Services\Auth\UserPermissionService::class);
+        $permissions->method('canEditOthersSalesOrders')->willReturn(false);
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            $permissions,
+        );
+        $gate = $this->gateWithPosOrderEdit(false);
+
+        $cashier = new \App\Models\User(['is_admin' => false]);
+        $cashier->id = 10;
+
+        $sale = new \App\Models\Sale([
+            'status' => 'completed',
+            'archived' => 0,
+            'channel' => 'pos',
+            'cashier_id' => $cashier->id,
+        ]);
+
+        try {
+            $service->assertSaleEditable($sale, $cashier, $gate);
+            $this->fail('Expected InvalidArgumentException was not thrown.');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString(
+                'Editing completed POS orders is disabled',
+                $e->getMessage(),
+            );
+        }
+    }
+
     public function test_cashier_cannot_re_edit_another_cashiers_order(): void
     {
         $permissions = $this->createMock(\App\Services\Auth\UserPermissionService::class);
