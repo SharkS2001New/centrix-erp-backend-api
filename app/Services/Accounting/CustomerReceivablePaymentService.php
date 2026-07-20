@@ -8,7 +8,6 @@ use App\Models\CustomerInvoicePayment;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Erp\ErpContext;
-use App\Services\Fulfillment\TripAutoCloseService;
 use App\Services\Notifications\CustomerNotificationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -115,18 +114,11 @@ class CustomerReceivablePaymentService
                     'notes' => $notes,
                 ]);
 
-                $payment->loadMissing('customerInvoice');
-                $payment->customerInvoice?->refresh();
+                $invoice = app(CustomerInvoiceService::class)->finalizeRecordedPayment($payment, $user);
+                $payment->setRelation('customerInvoice', $invoice);
 
-                $sale = $payment->customerInvoice?->loadMissing('sale')?->sale;
+                $sale = $invoice->loadMissing('sale')?->sale;
                 if ($sale) {
-                    $sale = app(TripAutoCloseService::class)->syncSaleAfterAccountingPayment(
-                        $sale,
-                        $user,
-                        (float) $payment->amount_paid,
-                        (float) $payment->customerInvoice->amount_paid,
-                        $paymentMethodId,
-                    );
                     app(CustomerPaymentJournalService::class)->postIfEnabled(
                         $sale,
                         $user,
@@ -149,8 +141,6 @@ class CustomerReceivablePaymentService
                     'amount_paid' => ['No payment could be applied to open invoices.'],
                 ]);
             }
-
-            app(CustomerInvoiceService::class)->refreshCustomerBalance($organizationId, $customerNum);
 
             return [
                 'payments' => $created,
@@ -183,6 +173,6 @@ class CustomerReceivablePaymentService
 
     protected function balanceDue(CustomerInvoice $invoice): float
     {
-        return round(max(0, (float) $invoice->invoice_total - (float) $invoice->amount_paid), 2);
+        return app(CustomerInvoiceService::class)->balanceDueFromPayments($invoice);
     }
 }

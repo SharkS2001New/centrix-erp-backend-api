@@ -672,10 +672,10 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware(['erp.module:inventory'])->group(function () {
             Route::apiResource('vats', VatController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('uoms', UomController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('categories', CategoryController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view'])
@@ -692,15 +692,15 @@ Route::prefix('v1')->group(function () {
             Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::get('products/catalog-summary', [ProductController::class, 'catalogSummary'])
-                ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
+                ->middleware(['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view']);
             Route::get('products/group-counts', [ProductController::class, 'groupCounts'])
-                ->middleware(['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view']);
+                ->middleware(['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view']);
             Route::post('products/import-batch', [ProductImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::post('retail-package-settings/import-batch', [RetailPackageImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('retail-package-settings', RetailPackageSettingController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|pos.checkout.create|pos.terminal.view'])

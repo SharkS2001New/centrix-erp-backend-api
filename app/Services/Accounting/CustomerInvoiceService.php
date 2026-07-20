@@ -43,6 +43,9 @@ class CustomerInvoiceService
         if ($existing) {
             $oldCustomerNum = (int) ($existing->customer_num ?? 0);
             $newCustomerNum = (int) $sale->customer_num;
+            $hasPayments = CustomerInvoicePayment::query()
+                ->where('customer_invoice_id', $existing->id)
+                ->exists();
             $updates = [];
             if ($oldCustomerNum !== $newCustomerNum && $newCustomerNum > 0) {
                 $updates['customer_num'] = $newCustomerNum;
@@ -53,11 +56,13 @@ class CustomerInvoiceService
             if (round((float) ($existing->total_vat ?? 0), 2) !== round((float) $sale->total_vat, 2)) {
                 $updates['total_vat'] = $sale->total_vat;
             }
-            if (round((float) $existing->amount_paid, 2) !== $paid) {
-                $updates['amount_paid'] = $paid;
-            }
-            if ((int) $existing->payment_status !== $paymentStatus) {
-                $updates['payment_status'] = $paymentStatus;
+            if (! $hasPayments) {
+                if (round((float) $existing->amount_paid, 2) !== $paid) {
+                    $updates['amount_paid'] = $paid;
+                }
+                if ((int) $existing->payment_status !== $paymentStatus) {
+                    $updates['payment_status'] = $paymentStatus;
+                }
             }
             if ($updates !== []) {
                 $existing->update($updates);
@@ -74,6 +79,9 @@ class CustomerInvoiceService
             }
 
             $invoice = $existing->fresh();
+            if ($hasPayments) {
+                $invoice = $this->syncPaidTotalsFromPayments($invoice);
+            }
             $this->refreshCustomerBalance((int) $sale->organization_id, $newCustomerNum);
             if ($oldCustomerNum > 0 && $oldCustomerNum !== $newCustomerNum) {
                 $this->refreshCustomerBalance((int) $sale->organization_id, $oldCustomerNum);
@@ -115,9 +123,7 @@ class CustomerInvoiceService
 
     public function syncPaidTotalsFromPayments(CustomerInvoice $invoice): CustomerInvoice
     {
-        $paid = round((float) CustomerInvoicePayment::query()
-            ->where('customer_invoice_id', $invoice->id)
-            ->sum('amount_paid'), 2);
+        $paid = $this->paidTotalFromPayments($invoice);
         $invoiceTotal = round((float) $invoice->invoice_total, 2);
 
         $invoice->update([
@@ -126,6 +132,57 @@ class CustomerInvoiceService
         ]);
 
         return $invoice->fresh();
+    }
+
+    public function paidTotalFromPayments(CustomerInvoice $invoice): float
+    {
+        return round((float) CustomerInvoicePayment::query()
+            ->where('customer_invoice_id', $invoice->id)
+            ->sum('amount_paid'), 2);
+    }
+
+    public static function paidFromPaymentsSql(string $invoiceAlias = 'ci'): string
+    {
+        return "(SELECT COALESCE(SUM(cip.amount_paid), 0) FROM customer_invoice_payments cip WHERE cip.customer_invoice_id = {$invoiceAlias}.id)";
+    }
+
+    public static function balanceDueFromPaymentsSql(string $invoiceAlias = 'ci'): string
+    {
+        $paid = self::paidFromPaymentsSql($invoiceAlias);
+
+        return "GREATEST(0, ROUND({$invoiceAlias}.invoice_total - {$paid}, 2))";
+    }
+
+    public function balanceDueFromPayments(CustomerInvoice $invoice): float
+    {
+        return round(max(0, (float) $invoice->invoice_total - $this->paidTotalFromPayments($invoice)), 2);
+    }
+
+    public function finalizeRecordedPayment(CustomerInvoicePayment $payment, User $user): CustomerInvoice
+    {
+        $payment->loadMissing('customerInvoice.sale');
+        $invoice = $payment->customerInvoice;
+        if (! $invoice) {
+            throw ValidationException::withMessages([
+                'payment' => ['Invoice for this payment was not found.'],
+            ]);
+        }
+
+        $invoice = $this->syncPaidTotalsFromPayments($invoice);
+
+        $sale = $invoice->sale;
+        if ($sale) {
+            app(TripAutoCloseService::class)->syncSaleFromInvoicePaidTotal(
+                $sale,
+                $user,
+                (float) $invoice->amount_paid,
+                (int) $payment->payment_method_id,
+            );
+        }
+
+        $this->refreshCustomerBalance((int) $invoice->organization_id, (int) $invoice->customer_num);
+
+        return $invoice;
     }
 
     public function voidInvoicePayment(CustomerInvoicePayment $payment, User $user): void
@@ -228,14 +285,19 @@ class CustomerInvoiceService
         if (round((float) $invoice->invoice_total, 2) !== $gross) {
             $updates['invoice_total'] = $gross;
         }
-        if (round((float) $invoice->amount_paid, 2) !== $paid) {
-            $updates['amount_paid'] = $paid;
-        }
-        if ((int) $invoice->payment_status !== $paymentStatus) {
-            $updates['payment_status'] = $paymentStatus;
-        }
         if ($updates !== []) {
             $invoice->update($updates);
+        }
+
+        if (CustomerInvoicePayment::query()->where('customer_invoice_id', $invoice->id)->exists()) {
+            $this->syncPaidTotalsFromPayments($invoice->fresh());
+        } elseif (round((float) $invoice->amount_paid, 2) !== $paid) {
+            $invoice->update([
+                'amount_paid' => $paid,
+                'payment_status' => $paymentStatus,
+            ]);
+        } elseif ((int) $invoice->payment_status !== $paymentStatus) {
+            $invoice->update(['payment_status' => $paymentStatus]);
         }
 
         $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
+use App\Models\CustomerInvoice;
 use App\Models\LpoMst;
 use App\Models\User;
 use App\Services\Accounting\CustomerInvoiceService;
@@ -233,12 +234,29 @@ class ReportController extends Controller
         $grossProfit = (float) $plBase($from, $to)->sum('gross_profit');
         $prevGrossProfit = (float) $plBase($prevFrom, $prevTo)->sum('gross_profit');
 
-        $receivables = (float) DB::table('customer_invoices')
+        $receivables = (float) DB::table('customers')
             ->whereNull('deleted_at')
-            ->where('balance_due', '>', 0)
             ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->when($branchId, fn ($q) => $q->where('branch_id', $branchId))
-            ->sum('balance_due');
+            ->sum('current_balance');
+
+        $creditOutstanding = (float) DB::table('sales as s')
+            ->where('s.is_credit_sale', 1)
+            ->whereIn('s.payment_status', ['unpaid', 'partial'])
+            ->where('s.status', 'completed')
+            ->whereNotNull('s.customer_num')
+            ->when($orgId, fn ($q) => $q->where('s.organization_id', $orgId))
+            ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
+            ->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('customer_invoices as ci')
+                    ->whereColumn('ci.sale_id', 's.id')
+                    ->whereNull('ci.deleted_at');
+            })
+            ->selectRaw('COALESCE(SUM(s.order_total - s.amount_paid), 0) as total')
+            ->value('total');
+
+        $receivables = round($receivables + $creditOutstanding, 2);
 
         $creditIssued = (float) CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales')
@@ -1305,7 +1323,7 @@ class ReportController extends Controller
             });
         }
 
-        $invoiceBalanceSql = 'COALESCE(SUM(GREATEST(ci.invoice_total - ci.amount_paid, 0)), 0)';
+        $invoiceBalanceSql = 'COALESCE(SUM('.CustomerInvoiceService::balanceDueFromPaymentsSql('ci').'), 0)';
         $outstandingSql = $hasDateFilter
             ? $invoiceBalanceSql
             : "GREATEST(COALESCE(c.current_balance, 0), {$invoiceBalanceSql})";
@@ -1331,10 +1349,10 @@ class ReportController extends Controller
             ]);
 
         if ($hasDateFilter) {
-            $q->havingRaw('COALESCE(SUM(GREATEST(ci.invoice_total - ci.amount_paid, 0)), 0) > 0');
+            $q->havingRaw('COALESCE(SUM('.CustomerInvoiceService::balanceDueFromPaymentsSql('ci').'), 0) > 0');
         } else {
             $q->havingRaw(
-                'COALESCE(c.current_balance, 0) > 0 OR COALESCE(SUM(GREATEST(ci.invoice_total - ci.amount_paid, 0)), 0) > 0',
+                'COALESCE(c.current_balance, 0) > 0 OR COALESCE(SUM('.CustomerInvoiceService::balanceDueFromPaymentsSql('ci').'), 0) > 0',
             );
         }
 
@@ -1942,6 +1960,20 @@ class ReportController extends Controller
             $customerQuery->where('organization_id', $orgId);
         }
         $customer = $customerQuery->firstOrFail();
+
+        CustomerInvoice::query()
+            ->where('customer_num', $customerNum)
+            ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->whereNull('deleted_at')
+            ->whereExists(function ($query) {
+                $query->select(DB::raw(1))
+                    ->from('customer_invoice_payments as cip')
+                    ->whereColumn('cip.customer_invoice_id', 'customer_invoices.id');
+            })
+            ->get()
+            ->each(fn (CustomerInvoice $invoice) => $invoiceService->syncPaidTotalsFromPayments($invoice));
+
+        $customer->refresh();
 
         $branchName = DB::table('branches')
             ->where('id', $customer->branch_id)

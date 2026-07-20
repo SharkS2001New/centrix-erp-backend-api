@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Services\Accounting\AccountingReportService;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\SubledgerReconciliationService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -92,15 +93,23 @@ class AccountingReportController extends Controller
                 }
             }
 
-            return response()->json($q->orderByDesc('total_outstanding')->paginate(
+            $paginator = $q->orderByDesc('total_outstanding')->paginate(
                 min((int) $request->input('per_page', 50), 200),
-            ));
+            );
+            $totalOutstanding = (float) DB::table('v_accounts_receivable_summary')
+                ->where('organization_id', $orgId)
+                ->when($request->filled('customer_num'), fn ($query) => $query->where('customer_num', $request->input('customer_num')))
+                ->sum('total_outstanding');
+
+            return response()->json(array_merge($paginator->toArray(), [
+                'summary' => ['total_outstanding' => round($totalOutstanding, 2)],
+            ]));
         }
 
+        $balanceDueSql = CustomerInvoiceService::balanceDueFromPaymentsSql('ci');
         $invoiceSub = DB::table('customer_invoices as ci')
             ->leftJoin('sales as s', 's.id', '=', 'ci.sale_id')
             ->where('ci.organization_id', $orgId)
-            ->whereIn('ci.payment_status', [0, 1])
             ->whereNull('ci.deleted_at')
             ->where(function ($query) {
                 $query->whereNull('s.id')
@@ -112,9 +121,10 @@ class AccountingReportController extends Controller
             ->select([
                 'ci.organization_id',
                 'ci.customer_num',
-                DB::raw('SUM(ci.balance_due) AS open_invoice_total'),
+                DB::raw("SUM({$balanceDueSql}) AS open_invoice_total"),
                 DB::raw('COUNT(*) AS open_invoice_count'),
-            ]);
+            ])
+            ->havingRaw("SUM({$balanceDueSql}) > 0");
 
         $creditSub = DB::table('sales as s')
             ->where('s.organization_id', $orgId)
@@ -124,6 +134,12 @@ class AccountingReportController extends Controller
             ->whereNotNull('s.customer_num')
             ->when($fromDate, fn ($query) => $query->whereDate('s.completed_at', '>=', $fromDate))
             ->when($toDate, fn ($query) => $query->whereDate('s.completed_at', '<=', $toDate))
+            ->whereNotExists(function ($sub) {
+                $sub->select(DB::raw(1))
+                    ->from('customer_invoices as ci')
+                    ->whereColumn('ci.sale_id', 's.id')
+                    ->whereNull('ci.deleted_at');
+            })
             ->groupBy('s.organization_id', 's.customer_num')
             ->select([
                 's.organization_id',
@@ -161,9 +177,15 @@ class AccountingReportController extends Controller
             // Use the SELECT alias so Laravel's paginate() count subquery works in MySQL.
             ->havingRaw('total_outstanding > 0');
 
-        return response()->json($q->orderByDesc('total_outstanding')->paginate(
+        $paginator = $q->orderByDesc('total_outstanding')->paginate(
             min((int) $request->input('per_page', 50), 200),
-        ));
+        );
+        $totalOutstanding = (float) collect((clone $q)->get())
+            ->sum(fn ($row) => (float) ($row->total_outstanding ?? 0));
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => ['total_outstanding' => round($totalOutstanding, 2)],
+        ]));
     }
 
     public function accountsPayable(Request $request)

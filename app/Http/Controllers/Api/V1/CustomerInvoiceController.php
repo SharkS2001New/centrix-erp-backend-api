@@ -3,6 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\CustomerInvoice;
+use App\Models\CustomerInvoicePayment;
+use App\Services\Accounting\CustomerInvoiceService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 
@@ -41,12 +43,17 @@ class CustomerInvoiceController extends BaseResourceController
     /** @return array<string, mixed> */
     protected function presentInvoice(CustomerInvoice $invoice): array
     {
+        $service = app(CustomerInvoiceService::class);
+        $paidFromPayments = $invoice->paid_from_payments_sum ?? null;
+        $amountPaid = $paidFromPayments !== null
+            ? round((float) $paidFromPayments, 2)
+            : $service->paidTotalFromPayments($invoice);
+        $balanceDue = round(max(0, (float) $invoice->invoice_total - $amountPaid), 2);
+
         $payload = $invoice->toArray();
         $payload['customer_name'] = $invoice->customer?->customer_name;
-        $payload['balance_due'] = max(
-            0,
-            round((float) $invoice->invoice_total - (float) $invoice->amount_paid, 2),
-        );
+        $payload['amount_paid'] = $amountPaid;
+        $payload['balance_due'] = $balanceDue;
 
         return $payload;
     }
@@ -70,6 +77,7 @@ class CustomerInvoiceController extends BaseResourceController
     {
         $query = $this->baseQuery($request)
             ->whereNull('deleted_at')
+            ->withSum('payments as paid_from_payments_sum', 'amount_paid')
             ->with($this->customerEagerLoad($request));
 
         if ($request->filled('customer_num')) {
@@ -118,6 +126,13 @@ class CustomerInvoiceController extends BaseResourceController
     {
         $invoice = $this->findScopedModel($request, $id)
             ->load($this->customerEagerLoad($request));
+
+        if (CustomerInvoicePayment::query()->where('customer_invoice_id', $invoice->id)->exists()) {
+            $invoice = app(CustomerInvoiceService::class)->syncPaidTotalsFromPayments($invoice);
+        }
+
+        $invoice->load($this->customerEagerLoad($request));
+        $invoice->loadSum('payments as paid_from_payments_sum', 'amount_paid');
 
         return response()->json($this->presentInvoice($invoice));
     }

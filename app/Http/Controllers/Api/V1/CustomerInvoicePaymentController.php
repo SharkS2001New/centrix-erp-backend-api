@@ -53,7 +53,8 @@ class CustomerInvoicePaymentController extends BaseResourceController
             ]);
         }
 
-        $balance = round(((float) $invoice->invoice_total) - ((float) $invoice->amount_paid), 2);
+        $invoiceService = app(CustomerInvoiceService::class);
+        $balance = $invoiceService->balanceDueFromPayments($invoice);
         if ($balance <= 0) {
             throw ValidationException::withMessages([
                 'amount_paid' => ['This invoice has already been fully paid.'],
@@ -86,23 +87,16 @@ class CustomerInvoicePaymentController extends BaseResourceController
             $this->auditLogger()->logModel($user, 'create', $payment, request: $request);
         }
 
-        $payment->loadMissing('customerInvoice');
-        $payment->customerInvoice?->refresh();
+        $invoice = $invoiceService->finalizeRecordedPayment($payment, $user);
+        $payment->setRelation('customerInvoice', $invoice);
 
         $organization = Organization::find($organizationId);
         if ($organization) {
             app(CustomerNotificationService::class)->notifyInvoicePayment($payment, $organization);
         }
 
-        $sale = $payment->customerInvoice?->loadMissing('sale')?->sale;
+        $sale = $invoice->loadMissing('sale')?->sale;
         if ($sale) {
-            $sale = app(TripAutoCloseService::class)->syncSaleAfterAccountingPayment(
-                $sale,
-                $user,
-                (float) $payment->amount_paid,
-                (float) $payment->customerInvoice->amount_paid,
-                (int) $payment->payment_method_id,
-            );
             $gate = $this->erp->gateForUser($user);
             app(CustomerPaymentJournalService::class)->postIfEnabled(
                 $sale,

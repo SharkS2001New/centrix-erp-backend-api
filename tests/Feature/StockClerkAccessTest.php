@@ -321,4 +321,68 @@ class StockClerkAccessTest extends TestCase
             'branch_id' => $admin->branch_id,
         ])->assertOk();
     }
+
+    public function test_stock_clerk_can_read_catalog_reference_data_for_stock_take_view(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        Organization::query()->whereKey($admin->organization_id)->update([
+            'enabled_modules' => [
+                'inventory' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
+            ],
+        ]);
+
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'Stock Clerk Catalog Ref '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $permissionIds = Permission::query()
+            ->whereIn('permission_code', [
+                'inventory.stock_take.view',
+                'inventory.transfers.view',
+            ])
+            ->pluck('id');
+        $this->assertCount(2, $permissionIds);
+
+        foreach ($permissionIds as $permissionId) {
+            DB::table('role_permissions')->updateOrInsert(
+                ['role_id' => $role->id, 'permission_id' => $permissionId],
+                [],
+            );
+        }
+
+        $clerk = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'stock_clerk_catalog_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Stock Clerk Catalog Ref',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($clerk);
+
+        $this->getJson('/api/v1/uoms?per_page=500')->assertOk();
+        $this->getJson('/api/v1/products?per_page=20')->assertOk();
+        $this->getJson('/api/v1/vats?per_page=50')->assertOk();
+        $this->getJson('/api/v1/categories?per_page=50')->assertOk();
+    }
 }
