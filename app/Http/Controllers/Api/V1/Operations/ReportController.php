@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Models\Customer;
+use App\Models\LpoMst;
 use App\Models\User;
 use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Auth\UserAccessService;
@@ -12,6 +13,7 @@ use App\Services\Catalog\ProductPriceSheetService;
 use App\Services\Inventory\StockValuationService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
+use App\Services\LpoModuleService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Sales\CentrixSalesScope;
@@ -771,7 +773,7 @@ class ReportController extends Controller
 
     public function openLpo(Request $request)
     {
-        return response()->json($this->reportFromView(
+        $paginator = $this->reportFromView(
             'v_open_lpo_lines',
             $this->filters($request),
             ['lpo_no', 'supplier_id', 'product_code', 'lpo_status_code'],
@@ -779,7 +781,9 @@ class ReportController extends Controller
                 $query->orderByDesc('lpo_no')
                     ->orderBy('product_name');
             },
-        ));
+        );
+
+        return response()->json($this->attachLpoDisplayFields($paginator));
     }
 
     public function profitLoss(Request $request)
@@ -1426,7 +1430,7 @@ class ReportController extends Controller
 
     public function purchasesBySupplier(Request $request)
     {
-        return response()->json($this->reportFromView(
+        $paginator = $this->reportFromView(
             'v_purchases_by_supplier',
             $this->filters($request),
             ['supplier_id', 'lpo_no'],
@@ -1437,7 +1441,9 @@ class ReportController extends Controller
                     ->orderBy('lpo_no')
                     ->orderBy('product_name');
             },
-        ));
+        );
+
+        return response()->json($this->attachLpoDisplayFields($paginator));
     }
 
     public function expenses(Request $request)
@@ -1734,6 +1740,47 @@ class ReportController extends Controller
         }
 
         return $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+    }
+
+    /** Add ERP-style PO numbers to LPO report rows (open LPO, purchases by supplier). */
+    protected function attachLpoDisplayFields($paginator): array
+    {
+        $lpoModule = app(LpoModuleService::class);
+        $rows = collect($paginator->items());
+        $lpoNos = $rows->pluck('lpo_no')->filter()->map(fn ($v) => (int) $v)->unique()->values()->all();
+
+        $lpos = $lpoNos === []
+            ? collect()
+            : LpoMst::query()
+                ->whereIn('lpo_no', $lpoNos)
+                ->get(['lpo_no', 'lpo_seq', 'reference_number', 'created_at', 'sent_at'])
+                ->keyBy('lpo_no');
+
+        $payload = $paginator->toArray();
+        $payload['data'] = $rows->map(function ($row) use ($lpos, $lpoModule) {
+            $row = (array) $row;
+            $lpoNo = (int) ($row['lpo_no'] ?? 0);
+            $lpo = $lpos->get($lpoNo);
+            if (! $lpo) {
+                return $row;
+            }
+
+            $ref = trim((string) ($lpo->reference_number ?? ''));
+            $orderDate = $lpo->created_at ?? $lpo->sent_at ?? ($row['order_date'] ?? null);
+            $seq = (int) ($lpo->lpo_seq ?? $lpoNo);
+
+            $row['lpo_seq'] = $seq;
+            if ($ref !== '') {
+                $row['reference_number'] = $ref;
+            }
+            $row['po_number'] = $ref !== ''
+                ? $ref
+                : $lpoModule->formatPoNumber($seq, $orderDate);
+
+            return $row;
+        })->values()->all();
+
+        return $payload;
     }
 
     protected function applyProductSubcategoryFilter($query, Request $request, string $view): void
