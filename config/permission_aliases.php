@@ -387,6 +387,7 @@ return [
         'pos.till_management.view',
         'pos.till_management.create',
         'pos.till_management.edit',
+        'pos.end_of_day.view',
         'pos.checkout.create',
         'pos.terminal.view',
     ],

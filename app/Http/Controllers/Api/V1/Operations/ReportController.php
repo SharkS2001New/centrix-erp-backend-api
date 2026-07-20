@@ -294,34 +294,44 @@ class ReportController extends Controller
 
         $prevInventory = max(0, $inventoryValue - $receiptValue + $prevReceiptValue);
 
-        $dailyCurrent = $salesBase($from, $to)
+        $dailyCurrentRows = $salesBase($from, $to)
             ->selectRaw("{$dayExpr} as day, SUM(order_total) as total")
             ->groupBy('day')
             ->orderBy('day')
-            ->get()
-            ->keyBy('day');
+            ->get();
 
-        $dailyPrevious = $salesBase($prevFrom, $prevTo)
+        $dailyPreviousRows = $salesBase($prevFrom, $prevTo)
             ->selectRaw("{$dayExpr} as day, SUM(order_total) as total")
             ->groupBy('day')
             ->orderBy('day')
-            ->get()
-            ->values();
+            ->get();
+
+        $dailyCurrent = $dailyCurrentRows->mapWithKeys(function ($row) {
+            $key = Carbon::parse((string) $row->day)->toDateString();
+
+            return [$key => (float) ($row->total ?? 0)];
+        });
+
+        $dailyPrevious = $dailyPreviousRows->mapWithKeys(function ($row) {
+            $key = Carbon::parse((string) $row->day)->toDateString();
+
+            return [$key => (float) ($row->total ?? 0)];
+        });
 
         $salesTrend = [];
         $cursor = $from->copy();
-        $idx = 0;
+        $previousCursor = $prevFrom->copy();
         while ($cursor->lte($to)) {
             $dayKey = $cursor->toDateString();
-            $prevRow = $dailyPrevious[$idx] ?? null;
+            $previousDayKey = $previousCursor->toDateString();
             $salesTrend[] = [
                 'date' => $dayKey,
                 'label' => $cursor->format('M j'),
-                'current' => (float) ($dailyCurrent[$dayKey]->total ?? 0),
-                'previous' => (float) ($prevRow->total ?? 0),
+                'current' => (float) ($dailyCurrent[$dayKey] ?? 0),
+                'previous' => (float) ($dailyPrevious[$previousDayKey] ?? 0),
             ];
             $cursor->addDay();
-            $idx++;
+            $previousCursor->addDay();
         }
 
         $topProducts = DB::table('v_sales_by_product')

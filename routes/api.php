@@ -678,10 +678,10 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('categories', CategoryController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('sub-categories', SubCategoryController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::post('vats/import-batch', [VatImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
@@ -703,7 +703,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('retail-package-settings', RetailPackageSettingController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|pos.checkout.create|pos.terminal.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('price-history', PriceHistoryController::class)
                 ->middleware('erp.permission:catalogue.view');

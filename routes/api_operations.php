@@ -334,6 +334,45 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('product-price-sheet', [ReportController::class, 'productPriceSheet']);
         });
 
+        // POS operational screens (e.g. /sales/end-of-day) use these report endpoints.
+        Route::middleware('erp.permission:reports.view|pos.end_of_day.view|pos.till|pos.terminal.view')->group(function () {
+            Route::get('eod-cashier', [ReportController::class, 'eodCashier']);
+            Route::get('eod-report', [ReportController::class, 'eodReport']);
+            Route::get('till-sessions', [ReportController::class, 'tillSessions']);
+        });
+
+        // Sales operational and analytics reports.
+        Route::middleware('erp.permission:reports.view|sales.view')->group(function () {
+            Route::get('sales-by-product', [ReportController::class, 'salesByProduct']);
+            Route::get('sales-by-supplier', [ReportController::class, 'salesBySupplier']);
+            Route::get('sales-by-user', [ReportController::class, 'salesByUser']);
+            Route::get('sales-by-customer', [ReportController::class, 'salesByCustomer']);
+            Route::get('sales-by-channel', [ReportController::class, 'salesByChannel']);
+            Route::get('daily-sales', [ReportController::class, 'dailySales']);
+            Route::get('sales-pipeline', [ReportController::class, 'salesPipeline']);
+            Route::get('vat-collected', [ReportController::class, 'vatCollected']);
+            Route::get('category-sales', [ReportController::class, 'categorySales']);
+            Route::get('discount-summary', [ReportController::class, 'discountSummary']);
+            Route::get('payment-collection', [ReportController::class, 'paymentCollection']);
+            Route::get('returns', [ReportController::class, 'returns']);
+        });
+
+        // Distribution / fulfillment reports.
+        Route::middleware('erp.permission:reports.view|fulfillment.view')->group(function () {
+            Route::get('mobile-route-sales', [ReportController::class, 'routeSales']);
+            Route::get('dispatch-trips', [ReportController::class, 'dispatchTrips']);
+            Route::get('trip-cash-settlement', [ReportController::class, 'tripCashSettlement']);
+            Route::get('pod-compliance', [ReportController::class, 'podCompliance']);
+            Route::get('driver-deliveries', [ReportController::class, 'driverDeliveries']);
+        });
+
+        // Purchasing operational reports (e.g. open LPO from accounts payable).
+        Route::middleware('erp.permission:reports.view|purchasing.view')->group(function () {
+            Route::get('open-lpo', [ReportController::class, 'openLpo']);
+            Route::get('purchases-by-supplier', [ReportController::class, 'purchasesBySupplier']);
+            Route::get('supplier-returns', [ReportController::class, 'supplierReturns']);
+        });
+
         Route::middleware('erp.permission:reports.view')->group(function () {
             Route::get('/', [ReportController::class, 'catalog']);
             Route::get('dashboard', [ReportController::class, 'dashboard']);
@@ -351,37 +390,8 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('templates/{templateId}/run', [ReportBuilderController::class, 'runTemplate']);
             });
 
-            Route::get('sales-by-product', [ReportController::class, 'salesByProduct']);
-            Route::get('sales-by-supplier', [ReportController::class, 'salesBySupplier']);
-            Route::get('sales-by-user', [ReportController::class, 'salesByUser']);
-            Route::get('sales-by-customer', [ReportController::class, 'salesByCustomer']);
-            Route::get('sales-by-channel', [ReportController::class, 'salesByChannel']);
-            Route::get('daily-sales', [ReportController::class, 'dailySales']);
-            Route::get('mobile-route-sales', [ReportController::class, 'routeSales']);
-            Route::get('dispatch-trips', [ReportController::class, 'dispatchTrips']);
-            Route::get('trip-cash-settlement', [ReportController::class, 'tripCashSettlement']);
-            Route::get('pod-compliance', [ReportController::class, 'podCompliance']);
-            Route::get('driver-deliveries', [ReportController::class, 'driverDeliveries']);
-            Route::get('sales-pipeline', [ReportController::class, 'salesPipeline']);
-            Route::get('vat-collected', [ReportController::class, 'vatCollected']);
-            Route::get('category-sales', [ReportController::class, 'categorySales']);
-            Route::get('discount-summary', [ReportController::class, 'discountSummary']);
-            Route::get('payment-collection', [ReportController::class, 'paymentCollection']);
-            Route::get('credit-outstanding', [ReportController::class, 'creditOutstanding']);
-            Route::get('open-lpo', [ReportController::class, 'openLpo']);
-            Route::get('profit-loss', [ReportController::class, 'profitLoss']);
-            Route::get('eod-cashier', [ReportController::class, 'eodCashier']);
-            Route::get('eod-report', [ReportController::class, 'eodReport']);
-            Route::get('ar-aging', [ReportController::class, 'arAging']);
-            Route::get('top-debtors', [ReportController::class, 'topDebtors']);
-            Route::get('invoice-payments', [ReportController::class, 'invoicePayments']);
-            Route::get('purchases-by-supplier', [ReportController::class, 'purchasesBySupplier']);
-            Route::get('expenses', [ReportController::class, 'expenses']);
-            Route::get('supplier-returns', [ReportController::class, 'supplierReturns']);
             Route::get('kra-receipts', [ReportController::class, 'kraReceipts']);
-            Route::get('till-sessions', [ReportController::class, 'tillSessions']);
             Route::get('audit-trail', [ReportController::class, 'auditTrail']);
-            Route::get('returns', [ReportController::class, 'returns']);
 
             Route::prefix('legacy-archive')->group(function () {
                 Route::get('status', [LegacyArchiveController::class, 'status']);
@@ -414,10 +424,16 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('trial-balance', [AccountingReportController::class, 'trialBalance']);
             Route::get('balance-sheet', [AccountingReportController::class, 'balanceSheet']);
             Route::get('profit-loss-gl', [AccountingReportController::class, 'profitLossGl']);
+            Route::get('profit-loss', [ReportController::class, 'profitLoss']);
             Route::get('cash-flow', [AccountingReportController::class, 'cashFlow']);
             Route::get('accounts-receivable', [AccountingReportController::class, 'accountsReceivable']);
             Route::get('accounts-payable', [AccountingReportController::class, 'accountsPayable']);
             Route::get('subledger-reconciliation', [AccountingReportController::class, 'subledgerReconciliation']);
+            Route::get('ar-aging', [ReportController::class, 'arAging']);
+            Route::get('top-debtors', [ReportController::class, 'topDebtors']);
+            Route::get('invoice-payments', [ReportController::class, 'invoicePayments']);
+            Route::get('credit-outstanding', [ReportController::class, 'creditOutstanding']);
+            Route::get('expenses', [ReportController::class, 'expenses']);
         });
 
         Route::get('customers/{customerNum}/statement', [ReportController::class, 'customerStatement'])
