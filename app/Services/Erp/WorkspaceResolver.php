@@ -17,7 +17,7 @@ class WorkspaceResolver
         }
 
         $permissionMap = $user
-            ? app(UserPermissionService::class)->directPermissionMapForUser($user)
+            ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
             : [];
 
         $definitions = config('erp_workspaces', []);

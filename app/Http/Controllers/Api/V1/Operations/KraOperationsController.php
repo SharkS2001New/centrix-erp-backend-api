@@ -20,7 +20,7 @@ class KraOperationsController extends Controller
     public function deviceStatus(Request $request)
     {
         $user = $request->user();
-        $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
         $configured = KraFiscalPolicy::isDeviceConfigured($finance);
 
         $status = [
@@ -67,7 +67,7 @@ class KraOperationsController extends Controller
     public function deviceHealth(Request $request)
     {
         $user = $request->user();
-        $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
 
         $draft = $request->validate([
             'kra_device_ip' => 'sometimes|nullable|string|max:250',
@@ -108,7 +108,7 @@ class KraOperationsController extends Controller
     public function deviceInit(Request $request)
     {
         $user = $request->user();
-        $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
 
         $draft = $this->validateKraDeviceDraft($request);
 
@@ -152,7 +152,7 @@ class KraOperationsController extends Controller
     public function deviceRestart(Request $request)
     {
         $user = $request->user();
-        $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
 
         $draft = $this->validateKraDeviceDraft($request);
         $testFinance = array_merge($finance, $draft, ['enable_kra_device' => true]);
@@ -199,7 +199,7 @@ class KraOperationsController extends Controller
     public function retry(Request $request, int $kraResponse)
     {
         $user = $request->user();
-        $orgId = (int) $this->erp->gateForUser($user)->organization()?->id;
+        $orgId = (int) $this->erp->gateForRequest($request)->organization()?->id;
 
         $row = KraResponse::query()
             ->whereHas('sale', fn ($saleQuery) => $saleQuery->where('organization_id', $orgId))
@@ -213,7 +213,7 @@ class KraOperationsController extends Controller
             return response()->json(['message' => 'Linked sale not found.'], 422);
         }
 
-        $finance = $this->erp->gateForUser($user)->moduleSettings('finance');
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
         if (empty($finance['enable_kra_device'])) {
             return response()->json(['message' => 'Enable KRA device in Finance settings first.'], 422);
         }

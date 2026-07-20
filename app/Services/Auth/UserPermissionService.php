@@ -346,6 +346,7 @@ class UserPermissionService
     public function permissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
         $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
+        $map = $this->expandGrantedCapabilityAliases($map);
         $map = $this->expandLegacySalesOrderQueueView($map);
         // Mirror hasPermission('sales.create'|'driver.mobile') for mobile app UI codes.
         $map = $this->expandMobileBundlePermissions($map);
@@ -357,6 +358,30 @@ class UserPermissionService
 
         if ($gate !== null) {
             $map = $this->grantManagerAppBundlePermissions($map, $gate);
+        }
+
+        return $map;
+    }
+
+    /**
+     * When a capability alias group is granted, expose every member code in the map
+     * (e.g. inventory.view → dashboard.inventory.view for stock clerks).
+     *
+     * @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function expandGrantedCapabilityAliases(array $map): array
+    {
+        foreach (config('permission_aliases', []) as $capability => $aliases) {
+            if (! ($map[$capability] ?? false)) {
+                continue;
+            }
+
+            foreach ($aliases as $alias) {
+                if (is_string($alias) && $alias !== '') {
+                    $map[$alias] = true;
+                }
+            }
         }
 
         return $map;

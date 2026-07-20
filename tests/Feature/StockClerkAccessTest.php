@@ -38,6 +38,7 @@ class StockClerkAccessTest extends TestCase
                 'inventory' => true,
                 'inventory.dashboard' => true,
                 'inventory.reports' => true,
+                'customers_suppliers' => true,
                 'sales' => true,
                 'sales.backend' => true,
             ],
@@ -100,5 +101,74 @@ class StockClerkAccessTest extends TestCase
 
         $this->getJson('/api/v1/reports/stock-on-hand?branch_id='.$admin->branch_id.'&per_page=20')
             ->assertOk();
+    }
+
+    public function test_stock_clerk_capabilities_include_inventory_permissions_and_workspace_home(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        Organization::query()->whereKey($admin->organization_id)->update([
+            'enabled_modules' => [
+                'inventory' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
+                'sales' => true,
+                'sales.backend' => true,
+            ],
+        ]);
+
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'Stock Clerk Capabilities '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $permissionIds = Permission::query()
+            ->whereIn('permission_code', ['inventory.stock.view', 'inventory.receipts.view'])
+            ->pluck('id');
+        $this->assertNotEmpty($permissionIds);
+
+        foreach ($permissionIds as $permissionId) {
+            DB::table('role_permissions')->updateOrInsert(
+                ['role_id' => $role->id, 'permission_id' => $permissionId],
+                [],
+            );
+        }
+
+        $clerk = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'stock_clerk_caps_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Stock Clerk Caps',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($clerk);
+
+        $capabilities = $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->json();
+
+        $this->assertTrue($capabilities['permissions']['inventory.stock.view'] ?? false);
+        $this->assertTrue($capabilities['permissions']['dashboard.inventory.view'] ?? false);
+
+        $backoffice = collect($capabilities['workspaces'] ?? [])->firstWhere('id', 'backoffice');
+        $this->assertNotNull($backoffice);
+        $this->assertSame('/inventory/stock', $backoffice['home_path']);
     }
 }

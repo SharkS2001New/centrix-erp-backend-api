@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Models\Organization;
 use App\Models\Permission;
 use App\Models\Role;
+use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ModuleRegistry;
 use Illuminate\Support\Facades\DB;
@@ -209,6 +210,8 @@ class RoleTemplateService
                 'permission_id' => $permissionId,
             ]);
         }
+
+        CapabilitiesCacheInvalidator::forRole($legacy->fresh());
     }
 
     /**

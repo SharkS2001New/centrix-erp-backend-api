@@ -45,6 +45,7 @@ use App\Http\Controllers\Api\V1\InventoryTransactionController;
 use App\Http\Controllers\Api\V1\JournalEntryController;
 use App\Http\Controllers\Api\V1\JournalEntryLineController;
 use App\Http\Controllers\Api\V1\KraResponseController;
+use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
 use App\Http\Controllers\Api\V1\LoyaltyCardController;
 use App\Http\Controllers\Api\V1\LpoAttachmentController;
 use App\Http\Controllers\Api\V1\LpoMstController;
@@ -595,6 +596,12 @@ Route::prefix('v1')->group(function () {
                     Route::get('company-premises', [CompanyPremisesController::class, 'show']);
                     Route::post('company-premises', [CompanyPremisesController::class, 'update']);
                 });
+                Route::apiResource('kra-responses', KraResponseController::class)->only(['index', 'show']);
+                Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);
+                Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
+                Route::post('kra/device-init', [KraOperationsController::class, 'deviceInit']);
+                Route::post('kra/device-restart', [KraOperationsController::class, 'deviceRestart']);
+                Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
             });
 
         Route::middleware(['erp.module:admin'])->group(function () {
