@@ -271,6 +271,9 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($service->isPrintInvoiceStatus('paid'));
         $this->assertTrue($service->isCollectPaymentStatus('unpaid'));
         $this->assertFalse($service->isCollectPaymentStatus('paid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('pending', 'backend', 'partial'));
+        $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'paid'));
         $this->assertTrue($service->isCancellableStatus('booked'));
         $this->assertFalse($service->isCancellableStatus('paid'));
         $this->assertTrue($service->isCustomerReturnStatus('paid'));

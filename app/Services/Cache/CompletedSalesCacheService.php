@@ -364,7 +364,11 @@ class CompletedSalesCacheService
             'can_edit' => $editService->canRestoreSaleToCart($sale, $user, $gate),
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $user, $gate),
             'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel),
-            'can_collect_payment' => $workflow->isCollectPaymentStatus($status, $channel),
+            'can_collect_payment' => $workflow->canCollectPaymentForOrder(
+                $status,
+                $channel,
+                (string) ($sale->payment_status ?? ''),
+            ),
         ]);
     }
 

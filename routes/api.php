@@ -741,11 +741,11 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
             Route::apiResource('stock-take-sessions', StockTakeSessionController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:inventory.stock_take.view|inventory.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.stock_take.create|inventory.manage']);
             Route::apiResource('stock-take-lines', StockTakeLineController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:inventory.stock_take.view|inventory.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.stock_take.create|inventory.manage']);
             Route::get('lpo-mst/dashboard', [LpoMstController::class, 'dashboard'])
                 ->middleware('erp.permission:purchasing.view');
             Route::post('lpo-mst/full', [LpoMstController::class, 'storeFull'])

@@ -292,9 +292,7 @@ class ErpSettingsController extends Controller
 
         $nextSales = \App\Services\Sales\DiscountApprovalService::normalizeDiscountApprovalSettings($nextSales);
 
-        $moduleSettings = $org->module_settings ?? [];
-        $moduleSettings['sales'] = $nextSales;
-        $org->update(['module_settings' => $moduleSettings]);
+        $org->putModuleSettingsSection('sales', $nextSales);
 
         if (array_key_exists('allow_negative_stock', $data)) {
             $system = SystemSetting::query()->firstOrCreate(
@@ -388,9 +386,7 @@ class ErpSettingsController extends Controller
             ARRAY_FILTER_USE_KEY
         ));
 
-        $moduleSettings = $org->module_settings ?? [];
-        $moduleSettings['distribution'] = $next;
-        $org->update(['module_settings' => $moduleSettings]);
+        $org->putModuleSettingsSection('distribution', $next);
 
         $refreshedGate = $this->erp->gateForOrganization($org->fresh());
 
@@ -473,10 +469,10 @@ class ErpSettingsController extends Controller
             ARRAY_FILTER_USE_KEY
         ));
 
-        $moduleSettings = $org->module_settings ?? [];
-        $moduleSettings['sales'] = $nextSales;
-        $moduleSettings['inventory'] = $nextInventory;
-        $org->update(['module_settings' => $moduleSettings]);
+        $org->putModuleSettingsSections([
+            'sales' => $nextSales,
+            'inventory' => $nextInventory,
+        ]);
 
         $systemPayload = array_filter(
             $data,
@@ -777,9 +773,7 @@ class ErpSettingsController extends Controller
             $gate->moduleSettings('general'),
             $data,
         ));
-        $moduleSettings = $org->module_settings ?? [];
-        $moduleSettings['general'] = $next;
-        $org->update(['module_settings' => $moduleSettings]);
+        $org->putModuleSettingsSection('general', $next);
 
         return response()->json([
             'general' => GeneralSettingsResolver::forGate(
@@ -932,9 +926,7 @@ class ErpSettingsController extends Controller
             ),
         ));
 
-        $moduleSettings = $org->module_settings ?? [];
-        $moduleSettings['procurement'] = $next;
-        $org->update(['module_settings' => $moduleSettings]);
+        $org->putModuleSettingsSection('procurement', $next);
 
         return response()->json([
             'procurement' => ProcurementSettingsResolver::forGate(

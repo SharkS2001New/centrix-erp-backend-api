@@ -177,7 +177,11 @@ class MobileSalesService
                         'can_direct_cancel' => false,
                         'can_request_cancellation' => false,
                         'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel),
-                        'can_collect_payment' => $workflow->isCollectPaymentStatus($status, $channel),
+                        'can_collect_payment' => $workflow->canCollectPaymentForOrder(
+                            $status,
+                            $channel,
+                            (string) ($row['payment_status'] ?? ''),
+                        ),
                         'can_return' => $workflow->isCustomerReturnStatus($status, $channel),
                     ]);
                 })
@@ -417,7 +421,11 @@ class MobileSalesService
                     ? false
                     : $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
                 'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel),
-                'can_collect_payment' => $workflow->isCollectPaymentStatus($status, $channel),
+                'can_collect_payment' => $workflow->canCollectPaymentForOrder(
+                    $status,
+                    $channel,
+                    (string) ($sale->payment_status ?? ''),
+                ),
                 'can_return' => $workflow->isCustomerReturnStatus($status, $channel),
             ],
             $this->cancellationCapabilitiesForSale(

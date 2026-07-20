@@ -88,6 +88,9 @@ class ErpCapabilitiesController extends Controller
             'permissions' => $user
                 ? app(UserPermissionService::class)->permissionMapForUser($user, $gate)
                 : [],
+            'assigned_permissions' => $user
+                ? app(UserPermissionService::class)->navigationPermissionMapForUser($user, $gate)
+                : [],
             'approval_permissions' => $user
                 ? app(UserPermissionService::class)->approvalCapabilitiesForUser($user)
                 : [],

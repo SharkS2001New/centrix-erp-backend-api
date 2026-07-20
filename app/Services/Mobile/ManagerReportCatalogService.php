@@ -48,6 +48,9 @@ class ManagerReportCatalogService
     /** @var list<string> */
     private const MOBILE_EXCLUDED_REPORT_KEYS = [
         'stock-reservations',
+        // Compliance suite stays on web ERP (KRA receipts + audit trail).
+        'kra-receipts',
+        'audit-trail',
     ];
 
     /** @var list<string> */
@@ -179,12 +182,6 @@ class ManagerReportCatalogService
                 'cash-flow', 'general-ledger', 'accounts-payable', 'expenses',
                 'journal-register', 'subledger-reconciliation',
             ],
-        ],
-        [
-            'id' => 'compliance',
-            'title' => 'Compliance Reports',
-            'description' => 'Tax receipts and audit trail',
-            'keys' => ['kra-receipts', 'audit-trail'],
         ],
         [
             'id' => 'hr',

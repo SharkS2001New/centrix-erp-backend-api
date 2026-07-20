@@ -371,6 +371,44 @@ class BackofficeOrderLineEditTest extends TestCase
         );
     }
 
+    public function test_editable_order_books_on_save_when_advised_discount_already_applied(): void
+    {
+        $this->enableDiscountApprovalForOrg();
+
+        $sale = $this->createBackofficeSale(2, 100.0, 'editable');
+        $item = $sale->items->first();
+        $item->update(['discount_given' => 10, 'amount' => 90]);
+
+        $sale->update([
+            'order_total' => 90,
+            'fulfillment_meta' => [
+                'discount_approval' => [
+                    'rejected_at' => now()->toIso8601String(),
+                    'rejected_by' => $this->user->id,
+                    'rejection_reason' => 'Too high',
+                    'rejection_guidance_type' => 'advised_amount',
+                    'advised_discount_amount' => 10,
+                ],
+            ],
+        ]);
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($this->user);
+        $updated = app(\App\Services\Sales\BackofficeOrderLineEditService::class)->updateLineQuantities(
+            $sale->fresh('items'),
+            $this->user,
+            [
+                [
+                    'id' => $item->id,
+                    'quantity' => (float) $item->quantity,
+                    'discount_given' => 10,
+                ],
+            ],
+            $gate,
+        );
+
+        $this->assertSame('booked', $updated->status);
+    }
+
     public function test_backoffice_order_customer_can_be_reassigned(): void
     {
         $sale = $this->createBackofficeSale(2, 100.0, 'booked');
@@ -392,6 +430,19 @@ class BackofficeOrderLineEditTest extends TestCase
         $this->assertSame($to->customer_num, (int) $updated->customer_num);
         $this->assertSame('Correct Customer', (string) $updated->customer?->customer_name);
         $this->assertSame($to->customer_num, (int) $sale->fresh()->customer_num);
+    }
+
+    protected function enableDiscountApprovalForOrg(): void
+    {
+        $org = \App\Models\Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'discount_approval_enabled' => true,
+            'discount_approval_enabled_backoffice' => true,
+            'enable_order_discount' => false,
+            'allow_edit_line_discount' => true,
+        ]);
+        $org->update(['module_settings' => $settings]);
     }
 
     protected function createCustomer(string $name): \App\Models\Customer

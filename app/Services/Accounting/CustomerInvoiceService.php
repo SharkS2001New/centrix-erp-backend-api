@@ -8,8 +8,12 @@ use App\Models\CustomerInvoice;
 use App\Models\CustomerInvoicePayment;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Accounting\CustomerPaymentJournalService;
+use App\Services\Erp\ErpContext;
+use App\Services\Fulfillment\TripAutoCloseService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class CustomerInvoiceService
 {
@@ -107,6 +111,63 @@ class CustomerInvoiceService
         }
 
         return 0;
+    }
+
+    public function syncPaidTotalsFromPayments(CustomerInvoice $invoice): CustomerInvoice
+    {
+        $paid = round((float) CustomerInvoicePayment::query()
+            ->where('customer_invoice_id', $invoice->id)
+            ->sum('amount_paid'), 2);
+        $invoiceTotal = round((float) $invoice->invoice_total, 2);
+
+        $invoice->update([
+            'amount_paid' => $paid,
+            'payment_status' => $this->paymentStatus($invoiceTotal, $paid),
+        ]);
+
+        return $invoice->fresh();
+    }
+
+    public function voidInvoicePayment(CustomerInvoicePayment $payment, User $user): void
+    {
+        DB::transaction(function () use ($payment, $user) {
+            $payment->loadMissing('customerInvoice.sale');
+            $invoice = $payment->customerInvoice;
+            if (! $invoice) {
+                throw ValidationException::withMessages([
+                    'payment' => ['Invoice for this payment was not found.'],
+                ]);
+            }
+
+            $amount = round((float) $payment->amount_paid, 2);
+            $paymentMethodId = (int) $payment->payment_method_id;
+            $organizationId = (int) $payment->organization_id;
+            $customerNum = (int) $payment->customer_num;
+            $sale = $invoice->sale;
+
+            $payment->delete();
+
+            $invoice = $this->syncPaidTotalsFromPayments($invoice);
+
+            if ($sale) {
+                $gate = app(ErpContext::class)->gateForUser($user);
+                app(TripAutoCloseService::class)->syncSaleFromInvoicePaidTotal(
+                    $sale,
+                    $user,
+                    (float) $invoice->amount_paid,
+                    $paymentMethodId,
+                );
+                app(CustomerPaymentJournalService::class)->reverseIfEnabled(
+                    $sale,
+                    $user,
+                    $gate,
+                    $amount,
+                    $paymentMethodId,
+                );
+            }
+
+            $this->refreshCustomerBalance($organizationId, $customerNum);
+        });
     }
 
     public function voidForCancelledSale(Sale $sale, User $user): void

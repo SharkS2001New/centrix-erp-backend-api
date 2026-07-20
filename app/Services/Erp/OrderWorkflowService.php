@@ -486,6 +486,31 @@ class OrderWorkflowService
     }
 
     /**
+     * Whether Collect payment is allowed for this order stage config.
+     * Maps payment_status (unpaid / partial) to workflow stages (unpaid / pending_payment)
+     * so Booked + Unpaid orders match the "Unpaid" collect-payment setting.
+     */
+    public function canCollectPaymentForOrder(
+        string $status,
+        ?string $channel = null,
+        ?string $paymentStatus = null,
+    ): bool {
+        if ($this->isCollectPaymentStatus($status, $channel)) {
+            return true;
+        }
+
+        $payment = strtolower(trim((string) ($paymentStatus ?? '')));
+        if ($payment === 'unpaid' && $this->isCollectPaymentStatus('unpaid', $channel)) {
+            return true;
+        }
+        if ($payment === 'partial' && $this->isCollectPaymentStatus('pending_payment', $channel)) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * @param  list<string>  $allowed
      */
     protected function actionStagesAllowMobileChannel(array $allowed, ?string $channel): bool

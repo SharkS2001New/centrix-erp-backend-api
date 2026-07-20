@@ -66,6 +66,52 @@ class TenantOrganizationSettingsTest extends TestCase
             ->assertJsonPath('general.print_font_invoice_scale', 'compact');
     }
 
+    public function test_org_admin_can_save_a4_invoice_print_footer(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $footer = json_encode([
+            ['text' => 'You were served by: {username}', 'align' => 'left', 'bold' => false, 'italic' => false, 'size' => 'md'],
+            ['text' => 'Please Confirm Your Goods', 'align' => 'center', 'bold' => true, 'italic' => false, 'size' => 'md'],
+        ], JSON_THROW_ON_ERROR);
+
+        $this->patchJson('/api/v1/erp/settings/general', [
+            'print_footer_a4_invoice' => $footer,
+        ])
+            ->assertOk()
+            ->assertJsonPath('general.print_footer_a4_invoice', $footer);
+
+        $this->getJson('/api/v1/erp/settings/general')
+            ->assertOk()
+            ->assertJsonPath('general.print_footer_a4_invoice', $footer);
+    }
+
+    public function test_parallel_printout_settings_updates_do_not_clobber_general_footer(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $footer = json_encode([
+            ['text' => 'You were served by: {username}', 'align' => 'left', 'bold' => false, 'italic' => false, 'size' => 'md'],
+        ], JSON_THROW_ON_ERROR);
+
+        $this->patchJson('/api/v1/erp/settings/general', [
+            'print_footer_a4_invoice' => $footer,
+        ])->assertOk();
+
+        $beforeSales = $this->getJson('/api/v1/erp/settings/sales')->assertOk()->json('sales');
+
+        $this->patchJson('/api/v1/erp/settings/sales', [
+            'show_branch_on_receipt' => ! ($beforeSales['show_branch_on_receipt'] ?? true),
+            'invoice_valid_days' => 14,
+        ])->assertOk();
+
+        $this->getJson('/api/v1/erp/settings/general')
+            ->assertOk()
+            ->assertJsonPath('general.print_footer_a4_invoice', $footer);
+    }
+
     public function test_org_admin_can_access_module_settings_routes(): void
     {
         $orgAdmin = User::where('username', 'admin')->firstOrFail();

@@ -327,7 +327,10 @@ class SaleController extends BaseResourceController
                 $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
             );
             $sale->setAttribute('can_print_invoice', $workflow->isPrintInvoiceStatus($status, $channel));
-            $sale->setAttribute('can_collect_payment', $workflow->isCollectPaymentStatus($status, $channel));
+            $sale->setAttribute(
+                'can_collect_payment',
+                $workflow->canCollectPaymentForOrder($status, $channel, (string) ($sale->payment_status ?? '')),
+            );
             $sale->setAttribute('order_connectivity', $sale->mobileOrderConnectivity());
             $sale->setAttribute('is_offline_order', $sale->isOfflineMobileOrder());
 
@@ -371,7 +374,11 @@ class SaleController extends BaseResourceController
             'can_edit' => $editService->canRestoreSaleToCart($sale, $request->user(), $gate),
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
             'can_print_invoice' => $workflowService->isPrintInvoiceStatus($status, $channel),
-            'can_collect_payment' => $workflowService->isCollectPaymentStatus($status, $channel),
+            'can_collect_payment' => $workflowService->canCollectPaymentForOrder(
+                $status,
+                $channel,
+                (string) ($sale->payment_status ?? ''),
+            ),
             'order_connectivity' => $sale->mobileOrderConnectivity(),
             'is_offline_order' => $sale->isOfflineMobileOrder(),
         ]);

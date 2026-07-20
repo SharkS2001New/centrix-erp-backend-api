@@ -82,6 +82,34 @@ class MobileManagerAdminController extends Controller
         return app(RoleController::class)->syncPermissions($request, $role);
     }
 
+    public function userPermissions(Request $request, string $user)
+    {
+        $this->assertManagerAccess($request);
+
+        return app(UserController::class)->permissions($user);
+    }
+
+    public function syncUserPermissions(Request $request, string $user)
+    {
+        $this->assertManagerAccess($request);
+
+        return app(UserController::class)->syncPermissions($request, $user);
+    }
+
+    public function storeRole(Request $request)
+    {
+        $this->assertManagerAccess($request);
+
+        return app(RoleController::class)->store($request);
+    }
+
+    public function destroyRole(Request $request, string $role)
+    {
+        $this->assertManagerAccess($request);
+
+        return app(RoleController::class)->destroy($request, $role);
+    }
+
     public function branches(Request $request)
     {
         $this->assertManagerAccess($request);

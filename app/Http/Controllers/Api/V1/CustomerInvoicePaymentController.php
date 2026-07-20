@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\CustomerInvoice;
 use App\Models\CustomerInvoicePayment;
 use App\Models\Organization;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\CustomerPaymentJournalService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Erp\ErpContext;
@@ -113,5 +114,30 @@ class CustomerInvoicePaymentController extends BaseResourceController
         }
 
         return response()->json($payment, 201);
+    }
+
+    public function destroy(Request $request, string $id)
+    {
+        $user = $request->user();
+        if (! $user) {
+            abort(401);
+        }
+
+        $payment = $this->findScopedModel($request, $id);
+
+        if ($this->auditable()) {
+            $this->auditLogger()->logModel(
+                $user,
+                'delete',
+                $payment,
+                $payment->getAttributes(),
+                null,
+                $request,
+            );
+        }
+
+        app(CustomerInvoiceService::class)->voidInvoicePayment($payment, $user);
+
+        return response()->json(null, 204);
     }
 }

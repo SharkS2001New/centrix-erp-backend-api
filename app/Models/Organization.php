@@ -4,6 +4,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Facades\DB;
 
 class Organization extends Model
 {
@@ -119,7 +120,33 @@ class Organization extends Model
         return \App\Support\OrganizationPublicStorage::isOrgScopedPath($logo);
     }
 
-    /** @return array<string, mixed> */
+    /**
+     * Merge one module_settings section without clobbering concurrent updates to other sections.
+     *
+     * @param  array<string, mixed>  $values
+     */
+    public function putModuleSettingsSection(string $section, array $values): self
+    {
+        return $this->putModuleSettingsSections([$section => $values]);
+    }
+
+    /**
+     * @param  array<string, array<string, mixed>>  $sections
+     */
+    public function putModuleSettingsSections(array $sections): self
+    {
+        DB::transaction(function () use ($sections) {
+            $organization = static::query()->whereKey($this->getKey())->lockForUpdate()->firstOrFail();
+            $moduleSettings = is_array($organization->module_settings) ? $organization->module_settings : [];
+            foreach ($sections as $section => $values) {
+                $moduleSettings[$section] = $values;
+            }
+            $organization->update(['module_settings' => $moduleSettings]);
+        });
+
+        return $this->refresh();
+    }
+
     public function toProfileArray(): array
     {
         $data = $this->only([

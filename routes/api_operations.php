@@ -64,9 +64,17 @@ Route::middleware('auth:sanctum')->group(function () {
                 ->middleware('erp.permission:mobile_manager.users.edit');
             Route::delete('users/{user}', [MobileManagerAdminController::class, 'destroyUser'])
                 ->middleware('erp.permission:mobile_manager.users.delete');
+            Route::get('users/{user}/permissions', [MobileManagerAdminController::class, 'userPermissions'])
+                ->middleware('erp.permission:mobile_manager.users.view');
+            Route::put('users/{user}/permissions', [MobileManagerAdminController::class, 'syncUserPermissions'])
+                ->middleware('erp.permission:mobile_manager.users.edit');
 
             Route::get('roles', [MobileManagerAdminController::class, 'indexRoles'])
                 ->middleware('erp.permission:mobile_manager.roles.view');
+            Route::post('roles', [MobileManagerAdminController::class, 'storeRole'])
+                ->middleware('erp.permission:mobile_manager.roles.edit');
+            Route::delete('roles/{role}', [MobileManagerAdminController::class, 'destroyRole'])
+                ->middleware('erp.permission:mobile_manager.roles.edit');
             Route::get('roles/permission-matrix', [MobileManagerAdminController::class, 'permissionMatrix'])
                 ->middleware('erp.permission:mobile_manager.roles.view');
             Route::get('roles/{role}/permissions', [MobileManagerAdminController::class, 'rolePermissions'])
@@ -201,10 +209,15 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('branch-transfer', [BranchStockTransferController::class, 'store']);
         Route::post('receive', [LpoReceiveController::class, 'store']);
         Route::post('returns', [ReturnOperationsController::class, 'store']);
-        Route::post('stock-take/{sessionId}/initialize', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'initialize']);
-        Route::post('stock-take/{sessionId}/save-counts', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'saveCounts']);
-        Route::post('stock-take/{sessionId}/complete', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'complete']);
     });
+
+    Route::middleware(['erp.module:inventory', 'erp.permission:inventory.stock_take.create|inventory.manage'])
+        ->prefix('inventory')
+        ->group(function () {
+            Route::post('stock-take/{sessionId}/initialize', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'initialize']);
+            Route::post('stock-take/{sessionId}/save-counts', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'saveCounts']);
+            Route::post('stock-take/{sessionId}/complete', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'complete']);
+        });
 
     // ---- Accounting ----
     Route::middleware(['erp.module:accounting', 'erp.permission:accounting.view'])->prefix('accounting')->group(function () {

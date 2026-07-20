@@ -74,6 +74,58 @@ class TripAutoCloseService
         return $sale;
     }
 
+    public function syncSaleFromInvoicePaidTotal(
+        Sale $sale,
+        User $user,
+        float $invoicePaidTotal,
+        ?int $paymentMethodId = null,
+    ): Sale {
+        $sale->refresh();
+
+        $orderTotal = round((float) $sale->order_total, 2);
+        $paidTotal = $orderTotal > 0 ? min($orderTotal, round($invoicePaidTotal, 2)) : 0.0;
+
+        $gate = $this->erp->gateForUser($user);
+        $workflow = OrderWorkflowService::forGate($gate);
+        $channel = $workflow->normalizeSalesChannel((string) ($sale->channel ?: 'backend'));
+        $method = $paymentMethodId ? PaymentMethod::query()->find($paymentMethodId) : null;
+        $paymentMethodCode = $method?->method_code ?? 'CASH';
+        $fullyPaid = $orderTotal <= 0 || $paidTotal + 0.01 >= $orderTotal;
+
+        $updates = [
+            'amount_paid' => $paidTotal,
+            'payment_status' => $this->paymentStatusForAmounts($orderTotal, $paidTotal),
+        ];
+
+        if (! in_array((string) $sale->status, ['cancelled', 'held'], true)) {
+            $orderStatus = $workflow->resolveStatusAfterPayment(
+                $channel,
+                (string) $sale->status,
+                $paidTotal,
+                $orderTotal,
+                (bool) $sale->is_credit_sale,
+                $paymentMethodCode,
+                ! empty($gate->moduleSettings('sales')['allow_credit_pay_now']),
+            );
+
+            if ($fullyPaid && in_array((string) $sale->status, ['delivered', 'completed'], true)) {
+                $orderStatus = $workflow->pickEnabledStatus('completed', $workflow->forChannel($channel));
+            }
+
+            $updates['status'] = $orderStatus;
+            if ($orderStatus === 'completed' || $workflow->isTerminalStatus($orderStatus, $channel)) {
+                $updates['completed_at'] = $sale->completed_at ?? now();
+            }
+        }
+
+        $sale->update($updates);
+
+        $sale = $sale->fresh();
+        $this->tryAutoCloseTripsForSale($sale, $user);
+
+        return $sale;
+    }
+
     public function tryAutoCloseTripsForSale(Sale $sale, User $user): void
     {
         $trips = $sale->dispatchTrips()

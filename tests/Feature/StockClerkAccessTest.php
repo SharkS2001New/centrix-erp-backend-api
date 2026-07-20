@@ -239,9 +239,86 @@ class StockClerkAccessTest extends TestCase
 
         $this->assertTrue($capabilities['permissions']['inventory.stock.view'] ?? false);
         $this->assertTrue($capabilities['permissions']['dashboard.inventory.view'] ?? false);
+        $this->assertFalse($capabilities['permissions']['inventory.receipts.view'] ?? false);
+        $this->assertFalse($capabilities['assigned_permissions']['inventory.receipts.view'] ?? false);
 
         $backoffice = collect($capabilities['workspaces'] ?? [])->firstWhere('id', 'backoffice');
         $this->assertNotNull($backoffice);
         $this->assertSame('/inventory/stock', $backoffice['home_path']);
+    }
+
+    public function test_stock_clerk_can_list_and_create_stock_take_sessions(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        Organization::query()->whereKey($admin->organization_id)->update([
+            'enabled_modules' => [
+                'inventory' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
+            ],
+        ]);
+
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'Stock Clerk Stock Take '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $permissionIds = Permission::query()
+            ->whereIn('permission_code', [
+                'inventory.stock_take.view',
+                'inventory.stock_take.create',
+            ])
+            ->pluck('id');
+        $this->assertCount(2, $permissionIds);
+
+        foreach ($permissionIds as $permissionId) {
+            DB::table('role_permissions')->updateOrInsert(
+                ['role_id' => $role->id, 'permission_id' => $permissionId],
+                [],
+            );
+        }
+
+        $clerk = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'stock_clerk_take_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Stock Clerk Stock Take',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($clerk);
+
+        $this->getJson('/api/v1/stock-take-sessions?per_page=20')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
+
+        $created = $this->postJson('/api/v1/stock-take-sessions', [
+            'session_code' => 'ST-TEST-'.uniqid(),
+            'stock_location' => 'shop',
+            'branch_id' => $admin->branch_id,
+        ])
+            ->assertCreated()
+            ->json();
+
+        $this->postJson("/api/v1/inventory/stock-take/{$created['id']}/initialize", [
+            'branch_id' => $admin->branch_id,
+        ])->assertOk();
     }
 }

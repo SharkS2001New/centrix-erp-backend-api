@@ -342,11 +342,19 @@ class UserPermissionService
         return $map;
     }
 
+    /** @return array<string, bool> Role-assigned feature codes for accurate sidebar / nav visibility. */
+    public function navigationPermissionMapForUser(User $user, ?CapabilityGate $gate = null): array
+    {
+        $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
+
+        return $this->expandNavigationDashboardPermissions($map);
+    }
+
     /** @return array<string, bool> */
     public function permissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
         $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
-        $map = $this->expandGrantedCapabilityAliases($map);
+        $map = $this->expandNavigationDashboardPermissions($map);
         $map = $this->expandLegacySalesOrderQueueView($map);
         // Mirror hasPermission('sales.create'|'driver.mobile') for mobile app UI codes.
         $map = $this->expandMobileBundlePermissions($map);
@@ -364,13 +372,13 @@ class UserPermissionService
     }
 
     /**
-     * When a capability alias group is granted, expose every member code in the map
-     * (e.g. inventory.view → dashboard.inventory.view for stock clerks).
+     * Expose dashboard / home nav codes when a parent capability is granted.
+     * Does not grant sibling feature permissions — sidebar stays aligned with the role.
      *
      * @param  array<string, bool>  $map
      * @return array<string, bool>
      */
-    protected function expandGrantedCapabilityAliases(array $map): array
+    protected function expandNavigationDashboardPermissions(array $map): array
     {
         foreach (config('permission_aliases', []) as $capability => $aliases) {
             if (! ($map[$capability] ?? false)) {
@@ -378,7 +386,16 @@ class UserPermissionService
             }
 
             foreach ($aliases as $alias) {
-                if (is_string($alias) && $alias !== '') {
+                if (! is_string($alias) || $alias === '') {
+                    continue;
+                }
+                if (
+                    str_starts_with($alias, 'dashboard.')
+                    || str_starts_with($alias, 'accounting.dashboard.')
+                    || str_starts_with($alias, 'mobile_sales.dashboard.')
+                    || str_starts_with($alias, 'mobile_manager.dashboard.')
+                    || str_starts_with($alias, 'fulfillment.overview.')
+                ) {
                     $map[$alias] = true;
                 }
             }

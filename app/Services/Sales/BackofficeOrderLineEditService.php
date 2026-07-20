@@ -314,7 +314,9 @@ class BackofficeOrderLineEditService
                 'payment_status' => $this->derivePaymentStatus($orderTotal, $amountPaid),
             ];
 
-            if ($wasEditable && $lineChanged) {
+            // Editable orders are resubmitted on save even when line values are unchanged
+            // (e.g. advised discounts were already applied before the user clicks Save & book).
+            if ($wasEditable) {
                 $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
                 $approval = is_array($meta['discount_approval'] ?? null) ? $meta['discount_approval'] : [];
                 $advisedApplied = $this->discounts->saleMatchesApproverGuidance($sale->fresh(['items']));
