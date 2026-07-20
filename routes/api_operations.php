@@ -316,6 +316,24 @@ Route::middleware('auth:sanctum')->group(function () {
 
     // ---- Reports ----
     Route::middleware(['erp.report_module'])->prefix('reports')->group(function () {
+        // Operational inventory screens (sidebar uses inventory.*) call these report endpoints.
+        Route::middleware('erp.permission:reports.view|inventory.view')->group(function () {
+            Route::get('stock-on-hand', [ReportController::class, 'stockOnHand']);
+            Route::get('items-currently-in-stock', [ReportController::class, 'stockOnHand']);
+            Route::get('low-stock', [ReportController::class, 'lowStock']);
+            Route::get('stock-movement', [ReportController::class, 'stockMovement']);
+            Route::get('stock-chain', [ReportController::class, 'stockChain']);
+            Route::get('stock-valuation', [ReportController::class, 'stockValuation']);
+            Route::get('inventory-valuation-summary', [ReportController::class, 'inventoryValuationSummary']);
+            Route::get('stock-reservations', [ReportController::class, 'stockReservations']);
+            Route::get('stock-receipts', [ReportController::class, 'stockReceipts']);
+            Route::get('stock-transfers', [ReportController::class, 'stockTransfers']);
+            Route::get('branch-stock-transfers', [ReportController::class, 'branchStockTransfers']);
+            Route::get('damages', [ReportController::class, 'damages']);
+            Route::get('price-list', [ReportController::class, 'priceList']);
+            Route::get('product-price-sheet', [ReportController::class, 'productPriceSheet']);
+        });
+
         Route::middleware('erp.permission:reports.view')->group(function () {
             Route::get('/', [ReportController::class, 'catalog']);
             Route::get('dashboard', [ReportController::class, 'dashboard']);
@@ -350,17 +368,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('discount-summary', [ReportController::class, 'discountSummary']);
             Route::get('payment-collection', [ReportController::class, 'paymentCollection']);
             Route::get('credit-outstanding', [ReportController::class, 'creditOutstanding']);
-            Route::get('stock-on-hand', [ReportController::class, 'stockOnHand']);
-            Route::get('items-currently-in-stock', [ReportController::class, 'stockOnHand']);
-            Route::get('low-stock', [ReportController::class, 'lowStock']);
-            Route::get('stock-movement', [ReportController::class, 'stockMovement']);
-            Route::get('stock-chain', [ReportController::class, 'stockChain']);
-            Route::get('stock-valuation', [ReportController::class, 'stockValuation']);
-            Route::get('inventory-valuation-summary', [ReportController::class, 'inventoryValuationSummary']);
-            Route::get('stock-reservations', [ReportController::class, 'stockReservations']);
-            Route::get('stock-receipts', [ReportController::class, 'stockReceipts']);
-            Route::get('stock-transfers', [ReportController::class, 'stockTransfers']);
-            Route::get('branch-stock-transfers', [ReportController::class, 'branchStockTransfers']);
             Route::get('open-lpo', [ReportController::class, 'openLpo']);
             Route::get('profit-loss', [ReportController::class, 'profitLoss']);
             Route::get('eod-cashier', [ReportController::class, 'eodCashier']);
@@ -370,13 +377,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('invoice-payments', [ReportController::class, 'invoicePayments']);
             Route::get('purchases-by-supplier', [ReportController::class, 'purchasesBySupplier']);
             Route::get('expenses', [ReportController::class, 'expenses']);
-            Route::get('damages', [ReportController::class, 'damages']);
             Route::get('supplier-returns', [ReportController::class, 'supplierReturns']);
             Route::get('kra-receipts', [ReportController::class, 'kraReceipts']);
             Route::get('till-sessions', [ReportController::class, 'tillSessions']);
             Route::get('audit-trail', [ReportController::class, 'auditTrail']);
-            Route::get('price-list', [ReportController::class, 'priceList']);
-            Route::get('product-price-sheet', [ReportController::class, 'productPriceSheet']);
             Route::get('returns', [ReportController::class, 'returns']);
 
             Route::prefix('legacy-archive')->group(function () {

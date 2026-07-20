@@ -101,6 +101,79 @@ class StockClerkAccessTest extends TestCase
 
         $this->getJson('/api/v1/reports/stock-on-hand?branch_id='.$admin->branch_id.'&per_page=20')
             ->assertOk();
+
+        $this->getJson('/api/v1/reports/stock-movement?branch_id='.$admin->branch_id.'&per_page=20')
+            ->assertOk();
+
+        $this->getJson('/api/v1/reports/stock-transfers?branch_id='.$admin->branch_id.'&per_page=20')
+            ->assertOk();
+    }
+
+    public function test_stock_clerk_can_load_inventory_report_endpoints_with_inventory_permissions_only(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        Organization::query()->whereKey($admin->organization_id)->update([
+            'enabled_modules' => [
+                'inventory' => true,
+                'inventory.reports' => true,
+                'sales' => true,
+                'sales.backend' => true,
+            ],
+        ]);
+
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'Stock Clerk Reports '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $permissionIds = Permission::query()
+            ->whereIn('permission_code', [
+                'inventory.stock.view',
+                'inventory.movements.view',
+                'inventory.transfers.view',
+            ])
+            ->pluck('id');
+        $this->assertCount(3, $permissionIds);
+
+        foreach ($permissionIds as $permissionId) {
+            DB::table('role_permissions')->updateOrInsert(
+                ['role_id' => $role->id, 'permission_id' => $permissionId],
+                [],
+            );
+        }
+
+        $clerk = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'stock_clerk_reports_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Stock Clerk Reports',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_active' => true,
+        ]);
+
+        Sanctum::actingAs($clerk);
+
+        $branchQuery = 'branch_id='.$admin->branch_id.'&per_page=20';
+
+        $this->getJson('/api/v1/reports/stock-on-hand?'.$branchQuery)->assertOk();
+        $this->getJson('/api/v1/reports/stock-movement?'.$branchQuery)->assertOk();
+        $this->getJson('/api/v1/reports/stock-transfers?'.$branchQuery)->assertOk();
     }
 
     public function test_stock_clerk_capabilities_include_inventory_permissions_and_workspace_home(): void
