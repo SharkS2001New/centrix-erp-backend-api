@@ -271,14 +271,34 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($service->isPrintInvoiceStatus('paid'));
         $this->assertTrue($service->isCollectPaymentStatus('unpaid'));
         $this->assertFalse($service->isCollectPaymentStatus('paid'));
-        $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
         $this->assertTrue($service->canCollectPaymentForOrder('unpaid', 'backend', 'unpaid'));
         $this->assertTrue($service->canCollectPaymentForOrder('pending_payment', 'backend', 'partial'));
+        $this->assertTrue($service->canCollectPaymentForOrder('processed', 'backend', 'unpaid'));
         $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'paid'));
         $this->assertTrue($service->isCancellableStatus('booked'));
         $this->assertFalse($service->isCancellableStatus('paid'));
         $this->assertTrue($service->isCustomerReturnStatus('paid'));
         $this->assertFalse($service->isCustomerReturnStatus('unpaid'));
+    }
+
+    public function test_metric_sale_statuses_exclude_cancelled_expired_and_held(): void
+    {
+        $service = OrderWorkflowService::forGate(
+            new \App\Services\Erp\CapabilityGate(new \App\Models\Organization([
+                'module_settings' => ['sales' => []],
+            ]))
+        );
+
+        $statuses = $service->metricSaleStatuses();
+
+        $this->assertContains('draft', $statuses);
+        $this->assertContains('pending_approval', $statuses);
+        $this->assertContains('editable', $statuses);
+        $this->assertContains('completed', $statuses);
+        $this->assertNotContains('cancelled', $statuses);
+        $this->assertNotContains('expired', $statuses);
+        $this->assertNotContains('held', $statuses);
     }
 
     public function test_order_action_status_helpers_respect_configured_lists(): void
@@ -309,6 +329,8 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertFalse($service->isCollectPaymentStatus('unpaid'));
         $this->assertFalse($service->isPrintInvoiceStatus('cancelled'));
         $this->assertFalse($service->isCollectPaymentStatus('cancelled'));
+        $this->assertFalse($service->canCollectPaymentForOrder('processed', 'backend', 'unpaid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('delivered', 'backend', 'unpaid'));
 
         $this->assertSame(['unpaid', 'booked'], $service->cancelOrderStatuses());
         $this->assertTrue($service->isCancellableStatus('unpaid'));
@@ -374,9 +396,10 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertFalse($service->isPrintInvoiceStatus('booked'));
         $this->assertTrue($service->isPrintInvoiceStatus('paid'));
 
-        $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
         $this->assertTrue($service->canCollectPaymentForOrder('unpaid', 'backend', 'unpaid'));
         $this->assertTrue($service->canCollectPaymentForOrder('pending_payment', 'backend', 'partial'));
+        $this->assertTrue($service->canCollectPaymentForOrder('processed', 'backend', 'partial'));
 
         $this->assertTrue($service->isCancellableStatus('booked'));
         $this->assertFalse($service->isCancellableStatus('unpaid'));

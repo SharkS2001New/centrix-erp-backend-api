@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Organization;
+use App\Models\Sale;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ModuleRegistry;
@@ -44,6 +45,48 @@ class BackofficeFinanceReportsTest extends TestCase
 
         $this->getJson('/api/v1/reports/profit-loss?from_date=2026-01-01&to_date=2026-06-30')
             ->assertOk();
+    }
+
+    public function test_profit_loss_includes_non_completed_orders_except_cancelled_and_expired(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $baseline = $this->getJson('/api/v1/reports/profit-loss?from_date=2026-06-01&to_date=2026-06-30')
+            ->assertOk()
+            ->json('data.0');
+
+        Sale::create([
+            'order_num' => 99110,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => null,
+            'status' => 'pending_approval',
+            'total_vat' => 200,
+            'order_total' => 1200,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'archived' => 0,
+            'completed_at' => null,
+            'created_at' => '2026-06-15 10:00:00',
+        ]);
+
+        $current = $this->getJson('/api/v1/reports/profit-loss?from_date=2026-06-01&to_date=2026-06-30')
+            ->assertOk()
+            ->json('data.0');
+
+        $this->assertEqualsWithDelta(
+            (float) ($baseline['gross_revenue'] ?? 0) + 1200.0,
+            (float) ($current['gross_revenue'] ?? 0),
+            0.01,
+        );
+        $this->assertEqualsWithDelta(
+            (float) ($baseline['net_revenue'] ?? 0) + 1000.0,
+            (float) ($current['net_revenue'] ?? 0),
+            0.01,
+        );
     }
 
     public function test_profit_loss_forbidden_without_sales_or_accounting_reports(): void

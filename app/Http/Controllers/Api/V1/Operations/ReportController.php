@@ -243,10 +243,16 @@ class ReportController extends Controller
         $creditOutstanding = (float) DB::table('sales as s')
             ->where('s.is_credit_sale', 1)
             ->whereIn('s.payment_status', ['unpaid', 'partial'])
-            ->where('s.status', 'completed')
+            ->whereIn('s.status', $metricStatuses)
             ->whereNotNull('s.customer_num')
             ->when($orgId, fn ($q) => $q->where('s.organization_id', $orgId))
             ->when($branchId, fn ($q) => $q->where('s.branch_id', $branchId))
+            ->when($from->toDateString() ?? null, function ($q) use ($from) {
+                $q->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$from->toDateString()]);
+            })
+            ->when($to->toDateString() ?? null, function ($q) use ($to) {
+                $q->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$to->toDateString()]);
+            })
             ->whereNotExists(function ($sub) {
                 $sub->select(DB::raw(1))
                     ->from('customer_invoices as ci')
@@ -258,16 +264,16 @@ class ReportController extends Controller
 
         $receivables = round($receivables + $creditOutstanding, 2);
 
-        $creditIssued = (float) CentrixSalesScope::excludeLegacyMaterialized(
+        $creditIssuedQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales')
-                ->where('status', 'completed')
+                ->whereIn('status', $metricStatuses)
                 ->where('archived', 0)
                 ->where('is_credit_sale', 1)
                 ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
-                ->whereDate('completed_at', '>=', $from->toDateString())
-                ->whereDate('completed_at', '<=', $to->toDateString())
                 ->when($branchId, fn ($q) => $q->where('branch_id', $branchId)),
-        )->sum('order_total');
+        );
+        EffectiveSaleDate::applyFromToDateFilter($creditIssuedQuery, $from->toDateString(), $to->toDateString());
+        $creditIssued = (float) $creditIssuedQuery->sum('order_total');
 
         $paymentsCollected = (float) DB::table('customer_invoice_payments as p')
             ->when($orgId, fn ($q) => $q->where('p.organization_id', $orgId))
@@ -813,21 +819,17 @@ class ReportController extends Controller
             ? (int) $filters['branch_id']
             : null;
         $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
 
         // Date-bounded aggregates — avoid v_profit_loss_summary, which materializes
         // all-time sales/receipts/expenses before the period filter can apply.
         $salesQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales')
-                ->where('status', 'completed')
+                ->whereIn('status', $metricStatuses)
                 ->where('archived', 0),
         );
         $this->applySalesTenantScope($salesQuery, $orgId, $branchId);
-        if ($from) {
-            $salesQuery->whereDate('completed_at', '>=', $from);
-        }
-        if ($to) {
-            $salesQuery->whereDate('completed_at', '<=', $to);
-        }
+        EffectiveSaleDate::applyFromToDateFilter($salesQuery, $from, $to);
 
         $sales = $salesQuery
             ->selectRaw('COALESCE(SUM(order_total), 0) as gross_revenue, COALESCE(SUM(total_vat), 0) as vat_collected')
@@ -937,17 +939,14 @@ class ReportController extends Controller
         $periodStartDate = $periodStart->toDateString();
         $periodEndDate = $periodEnd->toDateString();
 
+        $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
         $salesBase = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales')
-                ->where('status', 'completed')
+                ->whereIn('status', $metricStatuses)
                 ->where('archived', 0),
         );
         $this->applySalesTenantScope($salesBase, $orgId, $branchId);
-        if ($isMonthly) {
-            $salesBase->whereBetween('completed_at', [$periodStart, $periodEnd]);
-        } else {
-            $salesBase->whereDate('completed_at', $date);
-        }
+        EffectiveSaleDate::applyFromToDateFilter($salesBase, $periodStartDate, $periodEndDate);
         if ($cashierId) {
             $salesBase->where('cashier_id', $cashierId);
         }
@@ -963,40 +962,36 @@ class ReportController extends Controller
             COALESCE(SUM(equity_amount), 0) as equity_collected,
             COALESCE(SUM(kcb_amount), 0) as kcb_collected,
             COALESCE(SUM(CASE WHEN is_credit_sale = 1 THEN order_total ELSE 0 END), 0) as credit_sales,
-            MIN(completed_at) as first_sale_at,
-            MAX(completed_at) as last_sale_at
+            MIN(COALESCE(completed_at, created_at)) as first_sale_at,
+            MAX(COALESCE(completed_at, created_at)) as last_sale_at
         ')->first();
 
         $lineDiscountQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sale_items as si')
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
-                ->where('s.status', 'completed')
+                ->whereIn('s.status', $metricStatuses)
                 ->where('s.archived', 0)
                 ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
             's',
         );
         $this->applySalesTenantScope($lineDiscountQuery, $orgId, $branchId, 's');
-        if ($isMonthly) {
-            $lineDiscountQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
-        } else {
-            $lineDiscountQuery->whereDate('s.completed_at', $date);
-        }
+        $lineDiscountQuery
+            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$periodStartDate])
+            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$periodEndDate]);
         $lineDiscounts = (float) $lineDiscountQuery->sum('si.discount_given');
 
         $itemsSoldQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sale_items as si')
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
-                ->where('s.status', 'completed')
+                ->whereIn('s.status', $metricStatuses)
                 ->where('s.archived', 0)
                 ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
             's',
         );
         $this->applySalesTenantScope($itemsSoldQuery, $orgId, $branchId, 's');
-        if ($isMonthly) {
-            $itemsSoldQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
-        } else {
-            $itemsSoldQuery->whereDate('s.completed_at', $date);
-        }
+        $itemsSoldQuery
+            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$periodStartDate])
+            ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$periodEndDate]);
         $itemsSold = (float) $itemsSoldQuery->sum('si.quantity');
 
         $saleIds = (clone $salesBase)->pluck('id');
@@ -1181,21 +1176,21 @@ class ReportController extends Controller
         if ($isMonthly) {
             $dailyBreakdown = CentrixSalesScope::excludeLegacyMaterialized(
                 DB::table('sales')
-                    ->where('status', 'completed')
+                    ->whereIn('status', $metricStatuses)
                     ->where('archived', 0)
-                    ->whereBetween('completed_at', [$periodStart, $periodEnd])
                     ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId)),
             );
             $this->applySalesTenantScope($dailyBreakdown, $orgId, $branchId);
+            EffectiveSaleDate::applyFromToDateFilter($dailyBreakdown, $periodStartDate, $periodEndDate);
             $dailyBreakdown = $dailyBreakdown
                 ->selectRaw('
-                    DATE(completed_at) as sale_date,
+                    DATE(COALESCE(completed_at, created_at)) as sale_date,
                     COUNT(*) as transactions,
                     COALESCE(SUM(order_total), 0) as gross_sales,
                     COALESCE(SUM(total_vat), 0) as total_vat,
                     COALESCE(SUM(cash), 0) as cash_collected
                 ')
-                ->groupBy(DB::raw('DATE(completed_at)'))
+                ->groupBy(DB::raw('DATE(COALESCE(completed_at, created_at))'))
                 ->orderBy('sale_date')
                 ->get()
                 ->map(fn ($row) => [

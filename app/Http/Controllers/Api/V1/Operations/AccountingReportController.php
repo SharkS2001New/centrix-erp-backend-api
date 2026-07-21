@@ -6,6 +6,8 @@ use App\Http\Controllers\Controller;
 use App\Services\Accounting\AccountingReportService;
 use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\SubledgerReconciliationService;
+use App\Services\Erp\OrderWorkflowService;
+use App\Support\EffectiveSaleDate;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -128,12 +130,10 @@ class AccountingReportController extends Controller
 
         $creditSub = DB::table('sales as s')
             ->where('s.organization_id', $orgId)
-            ->where('s.status', 'completed')
+            ->whereIn('s.status', app(OrderWorkflowService::class)->metricSaleStatuses())
             ->where('s.is_credit_sale', 1)
             ->whereIn('s.payment_status', ['unpaid', 'partial'])
             ->whereNotNull('s.customer_num')
-            ->when($fromDate, fn ($query) => $query->whereDate('s.completed_at', '>=', $fromDate))
-            ->when($toDate, fn ($query) => $query->whereDate('s.completed_at', '<=', $toDate))
             ->whereNotExists(function ($sub) {
                 $sub->select(DB::raw(1))
                     ->from('customer_invoices as ci')
@@ -146,6 +146,9 @@ class AccountingReportController extends Controller
                 's.customer_num',
                 DB::raw('SUM(s.order_total - s.amount_paid) AS credit_sales_outstanding'),
             ]);
+        if ($fromDate || $toDate) {
+            EffectiveSaleDate::applyFromToDateFilter($creditSub, $fromDate, $toDate, 's');
+        }
 
         $q = DB::table('customers as c')
             ->leftJoin('routes as r', 'c.route_id', '=', 'r.id')

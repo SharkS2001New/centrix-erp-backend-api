@@ -486,16 +486,45 @@ class OrderWorkflowService
     }
 
     /**
-     * Whether Collect payment is allowed for this order's workflow stage.
-     * Uses sales.collect_payment_statuses only — not payment_status on earlier stages
-     * (e.g. Booked + Unpaid must not match the Unpaid stage setting).
+     * Whether Collect payment is allowed for this order's current stage or
+     * outstanding payment state.
      */
     public function canCollectPaymentForOrder(
         string $status,
         ?string $channel = null,
         ?string $paymentStatus = null,
     ): bool {
-        return $this->isCollectPaymentStatus($status, $channel);
+        if ($this->isCollectPaymentStatus($status, $channel)) {
+            return true;
+        }
+
+        if (in_array($status, ['cancelled', 'expired', 'completed', 'held', 'draft'], true)) {
+            return false;
+        }
+
+        $paymentStage = $this->collectPaymentStageForPaymentStatus($paymentStatus, $channel);
+        if ($paymentStage === null) {
+            return false;
+        }
+
+        return $this->isCollectPaymentStatus($paymentStage, $channel);
+    }
+
+    protected function collectPaymentStageForPaymentStatus(?string $paymentStatus, ?string $channel = null): ?string
+    {
+        $normalized = strtolower(trim((string) $paymentStatus));
+        if ($normalized === '' || $normalized === 'paid') {
+            return null;
+        }
+
+        $workflow = $channel ? $this->forChannel($channel) : $this->config();
+        $checkout = is_array($workflow['checkout'] ?? null) ? $workflow['checkout'] : [];
+
+        return match ($normalized) {
+            'unpaid' => (string) ($checkout['unpaid'] ?? 'unpaid'),
+            'partial' => (string) ($checkout['partial'] ?? 'pending_payment'),
+            default => null,
+        };
     }
 
     /**
@@ -630,7 +659,8 @@ class OrderWorkflowService
     }
 
     /**
-     * Sale statuses included in revenue KPIs and dashboard charts across all channels.
+     * Sale statuses included in financial / reporting math across all channels.
+     * Keep every in-system order except cancelled, expired, and held.
      *
      * @return list<string>
      */
@@ -640,13 +670,15 @@ class OrderWorkflowService
 
         foreach (['pos', 'mobile', 'backend'] as $channel) {
             $statuses = array_merge($statuses, $this->checkoutCompleteStatuses($channel));
+            $workflow = $this->forChannel($channel);
+            $statuses = array_merge($statuses, $workflow['statuses'] ?? []);
             $terminal = $this->lastPipelineStatus($channel);
             if ($terminal !== null && $terminal !== '') {
                 $statuses = array_merge($statuses, $this->statusesForQueueFilter($terminal, $channel));
             }
         }
 
-        $exclude = ['cancelled', 'expired', 'held', 'draft', 'pending_approval', 'editable'];
+        $exclude = ['cancelled', 'expired', 'held'];
 
         return array_values(array_unique(array_filter(
             $statuses,

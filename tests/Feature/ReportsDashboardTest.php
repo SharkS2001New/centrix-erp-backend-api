@@ -98,4 +98,35 @@ class ReportsDashboardTest extends TestCase
         $this->assertSame('Mobile', $mobile['channel_label']);
         $this->assertEqualsWithDelta(500.0, (float) $mobile['revenue'], 0.01);
     }
+
+    public function test_reports_dashboard_counts_pending_approval_orders_in_financial_kpis(): void
+    {
+        $template = Sale::query()->firstOrFail();
+        $baseline = $this->getJson('/api/v1/reports/dashboard?from_date=2026-06-01&to_date=2026-06-30')
+            ->assertOk()
+            ->json('kpis.total_sales.value');
+
+        Sale::create([
+            'order_num' => 99003,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $template->cashier_id,
+            'customer_num' => $template->customer_num,
+            'status' => 'pending_approval',
+            'total_vat' => 80,
+            'order_total' => 800,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'archived' => 0,
+            'completed_at' => null,
+            'created_at' => '2026-06-16 10:00:00',
+        ]);
+
+        $after = $this->getJson('/api/v1/reports/dashboard?from_date=2026-06-01&to_date=2026-06-30')
+            ->assertOk()
+            ->json('kpis.total_sales.value');
+
+        $this->assertEqualsWithDelta((float) $baseline + 800.0, (float) $after, 0.01);
+    }
 }
