@@ -204,6 +204,8 @@ return [
         'sales-by-channel' => 'sales.reports',
         'mobile-route-sales' => 'distribution.reports',
         'dispatch-trips' => 'distribution.reports',
+        'vehicle-trip-loads' => 'distribution.reports',
+        'driver-trip-loads' => 'distribution.reports',
         'trip-cash-settlement' => 'distribution.reports',
         'pod-compliance' => 'distribution.reports',
         'driver-deliveries' => 'distribution.reports',

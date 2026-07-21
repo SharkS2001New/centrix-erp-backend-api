@@ -26,6 +26,8 @@ class ManagerReportCatalogService
     private const DISTRIBUTION_REPORT_KEYS = [
         'mobile-route-sales',
         'dispatch-trips',
+        'vehicle-trip-loads',
+        'driver-trip-loads',
         'trip-cash-settlement',
         'pod-compliance',
         'driver-deliveries',
@@ -112,6 +114,8 @@ class ManagerReportCatalogService
         'journal-register' => 'reports.journal_register.view',
         'ar-aging' => 'reports.ar_aging.view',
         'dispatch-trips' => 'reports.dispatch_trips.view',
+        'vehicle-trip-loads' => 'reports.dispatch_trips.view',
+        'driver-trip-loads' => 'reports.dispatch_trips.view',
         'driver-deliveries' => 'reports.driver_deliveries.view',
         'payroll-summary' => 'reports.payroll_summary.view',
         'legacy-archive' => 'reports.legacy_archive.view',
@@ -133,8 +137,8 @@ class ManagerReportCatalogService
             'title' => 'Distribution Reports',
             'description' => 'Route sales, trips, and delivery performance',
             'keys' => [
-                'mobile-route-sales', 'dispatch-trips', 'trip-cash-settlement',
-                'pod-compliance', 'driver-deliveries',
+                'mobile-route-sales', 'dispatch-trips', 'vehicle-trip-loads', 'driver-trip-loads',
+                'trip-cash-settlement', 'pod-compliance', 'driver-deliveries',
             ],
         ],
         [

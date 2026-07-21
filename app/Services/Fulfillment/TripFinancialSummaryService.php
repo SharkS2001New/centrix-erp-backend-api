@@ -31,6 +31,7 @@ class TripFinancialSummaryService
             'failed_order_count' => 0,
             'unresolved_order_count' => 0,
             'net_revenue' => 0.0,
+            'total_cogs' => 0.0,
             'total_profit' => 0.0,
             'profit_margin_percent' => null,
             'expenses' => [],
@@ -71,6 +72,7 @@ class TripFinancialSummaryService
             $empty = $this->emptySummary();
             if (! $includeCogs) {
                 $empty['cogs_included'] = false;
+                $empty['total_cogs'] = null;
                 $empty['total_profit'] = null;
                 $empty['net_profit'] = null;
                 $empty['profit_margin_percent'] = null;
@@ -135,6 +137,7 @@ class TripFinancialSummaryService
             $empty = $this->emptySummary();
             if (! $includeCogs) {
                 $empty['cogs_included'] = false;
+                $empty['total_cogs'] = null;
                 $empty['total_profit'] = null;
                 $empty['net_profit'] = null;
                 $empty['profit_margin_percent'] = null;
@@ -198,6 +201,7 @@ class TripFinancialSummaryService
         $failedAmount = round($failedAmount, 2);
         $actualAmount = round($actualAmount, 2);
         $netRevenue = round($netRevenue, 2);
+        $roundedCogs = $includeCogs ? round($totalCost, 2) : null;
         $totalProfit = $includeCogs ? round($netRevenue - $totalCost, 2) : null;
         $profitMarginPercent = ($includeCogs && $netRevenue > 0 && $totalProfit !== null)
             ? round(($totalProfit / $netRevenue) * 100, 1)
@@ -216,6 +220,7 @@ class TripFinancialSummaryService
             'failed_order_count' => $failedOrderCount,
             'unresolved_order_count' => $unresolvedOrderCount,
             'net_revenue' => $netRevenue,
+            'total_cogs' => $roundedCogs,
             'total_profit' => $totalProfit,
             'profit_margin_percent' => $profitMarginPercent,
             'expenses' => [],

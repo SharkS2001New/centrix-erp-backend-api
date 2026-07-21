@@ -377,6 +377,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('trip-cash-settlement', [ReportController::class, 'tripCashSettlement']);
             Route::get('pod-compliance', [ReportController::class, 'podCompliance']);
             Route::get('driver-deliveries', [ReportController::class, 'driverDeliveries']);
+            Route::get('vehicle-trip-loads', [ReportController::class, 'vehicleTripLoads']);
+            Route::get('driver-trip-loads', [ReportController::class, 'driverTripLoads']);
         });
 
         // Purchasing operational reports (e.g. open LPO from accounts payable).

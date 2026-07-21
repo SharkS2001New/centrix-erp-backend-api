@@ -246,6 +246,61 @@ class LoadingListBuilder
         return $this->computeItemsWeightKg($items, $organizationId);
     }
 
+    /**
+     * Batch trip load weights (kg) for report rows.
+     *
+     * @param  list<int>  $tripIds
+     * @return array<int, float>
+     */
+    public function computeTripWeightsKgByTripIds(array $tripIds): array
+    {
+        $tripIds = array_values(array_unique(array_map('intval', $tripIds)));
+        if ($tripIds === []) {
+            return [];
+        }
+
+        $weights = array_fill_keys($tripIds, 0.0);
+        $trips = DispatchTrip::query()
+            ->with(['sales.customer', 'branch'])
+            ->whereIn('id', $tripIds)
+            ->get()
+            ->keyBy('id');
+
+        $saleIdsByTrip = [];
+        $allSaleIds = [];
+        foreach ($tripIds as $tripId) {
+            $trip = $trips->get($tripId);
+            if (! $trip) {
+                continue;
+            }
+            $saleIds = $this->eligibleSaleIdsForTrip($trip);
+            $saleIdsByTrip[$tripId] = $saleIds;
+            foreach ($saleIds as $saleId) {
+                $allSaleIds[] = $saleId;
+            }
+        }
+
+        $allSaleIds = array_values(array_unique($allSaleIds));
+        if ($allSaleIds === []) {
+            return $weights;
+        }
+
+        $items = SaleItem::query()->whereIn('sale_id', $allSaleIds)->get();
+        $itemsBySale = $items->groupBy(fn (SaleItem $item) => (int) $item->sale_id);
+        $organizationId = $trips->first()?->branch?->organization_id
+            ?? $trips->first()?->sales->first()?->organization_id;
+
+        foreach ($saleIdsByTrip as $tripId => $saleIds) {
+            $tripItems = collect();
+            foreach ($saleIds as $saleId) {
+                $tripItems = $tripItems->concat($itemsBySale->get($saleId, collect()));
+            }
+            $weights[$tripId] = $this->computeItemsWeightKg($tripItems, $organizationId);
+        }
+
+        return $weights;
+    }
+
     public function computeSaleWeightKg(Sale $sale): float
     {
         $items = $sale->relationLoaded('items')

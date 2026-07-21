@@ -160,6 +160,8 @@ class ReportController extends Controller
             'distribution' => [
                 ['key' => 'mobile-route-sales', 'path' => '/reports/mobile-route-sales', 'label' => 'Route order sales'],
                 ['key' => 'dispatch-trips', 'path' => '/reports/dispatch-trips', 'label' => 'Dispatch trips'],
+                ['key' => 'vehicle-trip-loads', 'path' => '/reports/vehicle-trip-loads', 'label' => 'Vehicle trip loads'],
+                ['key' => 'driver-trip-loads', 'path' => '/reports/driver-trip-loads', 'label' => 'Driver trip loads'],
                 ['key' => 'trip-cash-settlement', 'path' => '/reports/trip-cash-settlement', 'label' => 'Trip cash settlement'],
                 ['key' => 'pod-compliance', 'path' => '/reports/pod-compliance', 'label' => 'Proof of delivery'],
                 ['key' => 'driver-deliveries', 'path' => '/reports/driver-deliveries', 'label' => 'Driver deliveries'],
@@ -615,6 +617,16 @@ class ReportController extends Controller
         return response()->json($this->reportFromView('v_driver_deliveries', $this->filters($request), [
             'delivery_date', 'branch_id', 'driver_name', 'route_name',
         ]));
+    }
+
+    public function vehicleTripLoads(Request $request)
+    {
+        return response()->json(app(\App\Services\Fulfillment\TripLoadReportService::class)->paginate($request, 'vehicle'));
+    }
+
+    public function driverTripLoads(Request $request)
+    {
+        return response()->json(app(\App\Services\Fulfillment\TripLoadReportService::class)->paginate($request, 'driver'));
     }
 
     public function salesPipeline(Request $request)
