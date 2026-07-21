@@ -48,4 +48,17 @@ class AppTimezoneTest extends TestCase
 
         Carbon::setTestNow();
     }
+
+    #[Test]
+    public function report_period_can_default_to_today_only(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-06-20 15:45:00', 'Africa/Nairobi'));
+
+        $period = AppTimezone::reportPeriod(null, null, 1);
+
+        $this->assertSame('2026-06-20', $period['from']->toDateString());
+        $this->assertSame('2026-06-20', $period['to']->toDateString());
+
+        Carbon::setTestNow();
+    }
 }

@@ -21,6 +21,23 @@ class ReportsDashboardTest extends TestCase
         Sanctum::actingAs($this->user);
     }
 
+    public function test_reports_dashboard_defaults_to_today_when_dates_omitted(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        \Carbon\Carbon::setTestNow(\Carbon\Carbon::parse('2026-06-20 12:00:00', 'Africa/Nairobi'));
+
+        $response = $this->getJson('/api/v1/reports/dashboard')
+            ->assertOk()
+            ->json();
+
+        $this->assertSame('2026-06-20', $response['period']['from_date'] ?? null);
+        $this->assertSame('2026-06-20', $response['period']['to_date'] ?? null);
+
+        \Carbon\Carbon::setTestNow();
+    }
+
     public function test_reports_dashboard_returns_kpis_and_charts(): void
     {
         $response = $this->getJson('/api/v1/reports/dashboard?from_date=2026-06-01&to_date=2026-06-30')

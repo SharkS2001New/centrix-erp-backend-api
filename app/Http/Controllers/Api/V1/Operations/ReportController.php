@@ -12,7 +12,9 @@ use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Catalog\ProductPriceSheetService;
 use App\Services\Inventory\StockCostCalculation;
+use App\Services\Inventory\StockUomDisplayService;
 use App\Services\Inventory\StockValuationService;
+use App\Models\Uom;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\LpoModuleService;
@@ -195,9 +197,11 @@ class ReportController extends Controller
             'branch_id' => 'nullable|integer',
         ]);
 
+        // Business summary / manager dashboard default to today only (same as sales analytics).
         $period = AppTimezone::reportPeriod(
             $data['from_date'] ?? null,
             $data['to_date'] ?? null,
+            1,
         );
         $from = $period['from'];
         $to = $period['to'];
@@ -979,6 +983,7 @@ class ReportController extends Controller
                 MAX(uom.middle_packaging_label) AS middle_packaging_label,
                 MAX(uom.middle_factor) AS middle_factor,
                 MAX(uom.uom_type) AS uom_type,
+                MAX(uom.uses_small_packaging) AS uses_small_packaging,
                 SUM(si.amount) AS gross_revenue,
                 SUM(si.product_vat) AS total_vat,
                 SUM({$cogsExpr}) AS cogs
@@ -987,14 +992,30 @@ class ReportController extends Controller
 
         $paginator = $query->paginate(min((int) ($filters['per_page'] ?? 20), 200));
 
-        $paginator->getCollection()->transform(function ($row) {
+        $qtyDisplay = app(StockUomDisplayService::class);
+        $paginator->getCollection()->transform(function ($row) use ($qtyDisplay) {
             $grossRevenue = (float) ($row->gross_revenue ?? 0);
             $totalVat = (float) ($row->total_vat ?? 0);
             $netRevenue = $grossRevenue - $totalVat;
             $cogs = (float) ($row->cogs ?? 0);
             $grossProfit = $netRevenue - $cogs;
 
-            $row->qty_sold = (float) ($row->qty_sold ?? 0);
+            $baseQty = (float) ($row->qty_sold ?? 0);
+            $factor = StockCostCalculation::normalizedConversionFactor($row->conversion_factor ?? 1);
+            $uom = new Uom([
+                'full_name' => $row->uom_name,
+                'conversion_factor' => $factor,
+                'small_packaging_label' => $row->small_packaging_label,
+                'middle_packaging_label' => $row->middle_packaging_label,
+                'middle_factor' => $row->middle_factor,
+                'uom_type' => $row->uom_type,
+                'uses_small_packaging' => (bool) ($row->uses_small_packaging ?? true),
+            ]);
+
+            // Keep qty_sold in base units for shared inventory formatters; expose pack label too.
+            $row->qty_sold = round($baseQty, 4);
+            $row->qty_sold_packages = round(StockCostCalculation::convertedQuantity($baseQty, $factor), 4);
+            $row->qty_sold_label = $qtyDisplay->formatMixedStockDisplay($baseQty, $uom)['text'];
             $row->gross_revenue = round($grossRevenue, 2);
             $row->total_vat = round($totalVat, 2);
             $row->net_revenue = round($netRevenue, 2);

@@ -486,19 +486,30 @@ class OrderWorkflowService
     }
 
     /**
-     * Whether Collect payment is allowed for this order's current stage or
-     * outstanding payment state.
+     * Whether Collect payment is allowed for this order.
+     *
+     * Matches configured collect stages (e.g. unpaid / pending_payment) by workflow
+     * status. Fulfillment stages (processed / delivered) may also collect when
+     * payment_status is still unpaid/partial and that payment stage is configured.
+     * Early stages (booked / pending) never qualify via payment_status alone.
      */
     public function canCollectPaymentForOrder(
         string $status,
         ?string $channel = null,
         ?string $paymentStatus = null,
     ): bool {
-        if ($this->isCollectPaymentStatus($status, $channel)) {
+        $normalized = strtolower(trim($status));
+
+        if (in_array($normalized, ['cancelled', 'expired', 'completed', 'held', 'draft'], true)) {
+            return false;
+        }
+
+        if ($this->isCollectPaymentStatus($normalized, $channel)) {
             return true;
         }
 
-        if (in_array($status, ['cancelled', 'expired', 'completed', 'held', 'draft'], true)) {
+        // Booked / Pending / approval queues are not payment-collection stages.
+        if (in_array($normalized, ['booked', 'pending', 'pending_approval', 'editable'], true)) {
             return false;
         }
 

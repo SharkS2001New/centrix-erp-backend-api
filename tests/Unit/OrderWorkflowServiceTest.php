@@ -271,7 +271,8 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($service->isPrintInvoiceStatus('paid'));
         $this->assertTrue($service->isCollectPaymentStatus('unpaid'));
         $this->assertFalse($service->isCollectPaymentStatus('paid'));
-        $this->assertTrue($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
+        $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
+        $this->assertFalse($service->canCollectPaymentForOrder('pending', 'backend', 'unpaid'));
         $this->assertTrue($service->canCollectPaymentForOrder('unpaid', 'backend', 'unpaid'));
         $this->assertTrue($service->canCollectPaymentForOrder('pending_payment', 'backend', 'partial'));
         $this->assertTrue($service->canCollectPaymentForOrder('processed', 'backend', 'unpaid'));
@@ -396,10 +397,11 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertFalse($service->isPrintInvoiceStatus('booked'));
         $this->assertTrue($service->isPrintInvoiceStatus('paid'));
 
-        $this->assertTrue($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
+        $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
         $this->assertTrue($service->canCollectPaymentForOrder('unpaid', 'backend', 'unpaid'));
         $this->assertTrue($service->canCollectPaymentForOrder('pending_payment', 'backend', 'partial'));
         $this->assertTrue($service->canCollectPaymentForOrder('processed', 'backend', 'partial'));
+        $this->assertTrue($service->canCollectPaymentForOrder('processed', 'backend', 'unpaid'));
 
         $this->assertTrue($service->isCancellableStatus('booked'));
         $this->assertFalse($service->isCancellableStatus('unpaid'));

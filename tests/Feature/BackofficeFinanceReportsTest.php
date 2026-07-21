@@ -148,6 +148,8 @@ class BackofficeFinanceReportsTest extends TestCase
         $this->assertNotNull($row);
         $this->assertEqualsWithDelta(884.0, (float) ($row['cogs'] ?? 0), 0.01);
         $this->assertEqualsWithDelta(36.0, (float) ($row['gross_profit'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(2.0, (float) ($row['qty_sold_packages'] ?? 0), 0.01);
+        $this->assertNotEmpty($row['qty_sold_label'] ?? null);
     }
 
     public function test_profit_loss_by_product_accessible_with_sales_reports_only(): void

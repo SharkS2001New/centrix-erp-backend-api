@@ -44,19 +44,21 @@ class MobileManagerService
             $this->permissions->hasPermission($user, 'reports.hub.view', $gate)
             || $this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate)
         )) {
+            $today = \App\Support\AppTimezone::todayDateString();
             $reportsRequest = Request::create('/api/v1/reports/dashboard', 'GET', array_filter([
-                'from_date' => $filters['from_date'] ?? null,
-                'to_date' => $filters['to_date'] ?? null,
+                'from_date' => $filters['from_date'] ?? $today,
+                'to_date' => $filters['to_date'] ?? $today,
                 'branch_id' => $filters['branch_id'] ?? null,
-            ]));
+            ], fn ($value) => $value !== null && $value !== ''));
             $reportsRequest->setUserResolver(fn () => $user);
             $reportsPayload = app(ReportController::class)->dashboard($reportsRequest)->getData(true);
             $payload['reports_dashboard'] = $reportsPayload;
+            $kpis = is_array($reportsPayload['kpis'] ?? null) ? $reportsPayload['kpis'] : [];
             $payload['summary'] = [
-                'total_sales' => $reportsPayload['total_sales'] ?? null,
-                'gross_profit' => $reportsPayload['gross_profit'] ?? null,
-                'receivables' => $reportsPayload['receivables'] ?? null,
-                'inventory_value' => $reportsPayload['inventory_value'] ?? null,
+                'total_sales' => $kpis['total_sales']['value'] ?? null,
+                'gross_profit' => $kpis['gross_profit']['value'] ?? null,
+                'receivables' => $kpis['receivables']['value'] ?? null,
+                'inventory_value' => $kpis['inventory_value']['value'] ?? null,
             ];
         }
 
