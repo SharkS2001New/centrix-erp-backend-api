@@ -89,6 +89,67 @@ class BackofficeFinanceReportsTest extends TestCase
         );
     }
 
+    public function test_profit_loss_by_product_uses_package_cost_per_sold_quantity(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $product = \App\Models\Product::query()
+            ->with('unit')
+            ->where('organization_id', $admin->organization_id)
+            ->firstOrFail();
+
+        $uom = $product->unit ?? \App\Models\Uom::query()->findOrFail($product->unit_id);
+        $originalFactor = (float) $uom->conversion_factor;
+        $uom->forceFill(['conversion_factor' => 18])->save();
+        $product->forceFill(['last_cost_price' => 442, 'unit_price' => 460])->save();
+
+        $factor = 18.0;
+        $cartonsSold = 2;
+        $baseQty = $cartonsSold * $factor;
+
+        $sale = Sale::create([
+            'order_num' => 99221,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'processed',
+            'total_vat' => 0,
+            'order_total' => 920,
+            'payment_status' => 'paid',
+            'amount_paid' => 920,
+            'archived' => 0,
+            'completed_at' => '2026-06-20 12:00:00',
+            'created_at' => '2026-06-20 12:00:00',
+        ]);
+
+        \App\Models\SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => $baseQty,
+            'uom' => $product->uom ?? $uom->measure_name,
+            'selling_price' => 460,
+            'discount_given' => 0,
+            'product_vat' => 0,
+            'amount' => 920,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $row = collect($this->getJson('/api/v1/reports/profit-loss-by-product?from_date=2026-06-20&to_date=2026-06-20')
+            ->assertOk()
+            ->json('data'))
+            ->firstWhere('product_code', $product->product_code);
+
+        $uom->forceFill(['conversion_factor' => $originalFactor])->save();
+
+        $this->assertNotNull($row);
+        $this->assertEqualsWithDelta(884.0, (float) ($row['cogs'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(36.0, (float) ($row['gross_profit'] ?? 0), 0.01);
+    }
+
     public function test_profit_loss_by_product_accessible_with_sales_reports_only(): void
     {
         $org = Organization::where('company_code', 'DEMO')->firstOrFail();

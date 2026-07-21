@@ -11,6 +11,7 @@ use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Auth\UserAccessService;
 use App\Services\Catalog\ProductCatalogFilterService;
 use App\Services\Catalog\ProductPriceSheetService;
+use App\Services\Inventory\StockCostCalculation;
 use App\Services\Inventory\StockValuationService;
 use App\Services\Legacy\LegacyArchiveReader;
 use App\Services\Legacy\OrganizationLegacyArchiveService;
@@ -244,13 +245,14 @@ class ReportController extends Controller
                     $join->on('p.product_code', '=', 'si.product_code')
                         ->on('p.organization_id', '=', 'cs.organization_id');
                 })
+                ->leftJoin('uoms as uom', 'uom.id', '=', 'p.unit_id')
                 ->whereIn('cs.status', $metricStatuses)
                 ->where('cs.archived', 0)
                 ->when($orgId, fn ($q2) => $q2->where('cs.organization_id', $orgId))
                 ->when($branchId, fn ($q2) => $q2->where('cs.branch_id', $branchId))
                 ->tap(fn ($q2) => EffectiveSaleDate::applyFromToDateFilter($q2, $start->toDateString(), $end->toDateString(), 'cs'))
                 ->tap(fn ($q2) => CentrixSalesScope::excludeLegacyMaterialized($q2, 'cs'))
-                ->selectRaw('COALESCE(SUM(si.quantity * COALESCE(p.last_cost_price, 0)), 0) as total_cost')
+                ->selectRaw('COALESCE(SUM('.$this->soldLineCogsSumSql().'), 0) as total_cost')
                 ->value('total_cost');
 
             return $revenue - $cogs;
@@ -873,13 +875,14 @@ class ReportController extends Controller
                 $join->on('p.product_code', '=', 'si.product_code')
                     ->on('p.organization_id', '=', 'cs.organization_id');
             })
+            ->leftJoin('uoms as uom', 'uom.id', '=', 'p.unit_id')
             ->whereIn('cs.status', $metricStatuses)
             ->where('cs.archived', 0);
         CentrixSalesScope::excludeLegacyMaterialized($cogsQuery, 'cs');
         $this->applySalesTenantScope($cogsQuery, $orgId, $branchId, 'cs');
         EffectiveSaleDate::applyFromToDateFilter($cogsQuery, $from, $to, 'cs');
         $cogs = (float) $cogsQuery
-            ->selectRaw('COALESCE(SUM(si.quantity * COALESCE(p.last_cost_price, 0)), 0) as total_cost')
+            ->selectRaw('COALESCE(SUM('.$this->soldLineCogsSumSql().'), 0) as total_cost')
             ->value('total_cost');
 
         $expenseQuery = DB::table('expenses')->whereNull('deleted_at');
@@ -963,9 +966,10 @@ class ReportController extends Controller
             });
         }
 
+        $cogsExpr = $this->soldLineCogsSumSql();
         $query
             ->groupBy('si.product_code', 'p.product_name')
-            ->selectRaw('
+            ->selectRaw("
                 si.product_code,
                 p.product_name,
                 SUM(si.quantity) AS qty_sold,
@@ -977,8 +981,8 @@ class ReportController extends Controller
                 MAX(uom.uom_type) AS uom_type,
                 SUM(si.amount) AS gross_revenue,
                 SUM(si.product_vat) AS total_vat,
-                SUM(si.quantity * COALESCE(p.last_cost_price, 0)) AS cogs
-            ')
+                SUM({$cogsExpr}) AS cogs
+            ")
             ->orderByDesc(DB::raw('SUM(si.amount) - SUM(si.product_vat)'));
 
         $paginator = $query->paginate(min((int) ($filters['per_page'] ?? 20), 200));
@@ -2452,5 +2456,14 @@ class ReportController extends Controller
         }
 
         return ['in' => $in, 'out' => $out];
+    }
+
+    protected function soldLineCogsSumSql(): string
+    {
+        return StockCostCalculation::costValueSqlExpression(
+            'si.quantity',
+            'COALESCE(p.last_cost_price, 0)',
+            'uom',
+        );
     }
 }
