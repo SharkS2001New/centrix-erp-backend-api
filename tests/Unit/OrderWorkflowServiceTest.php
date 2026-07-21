@@ -271,8 +271,9 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($service->isPrintInvoiceStatus('paid'));
         $this->assertTrue($service->isCollectPaymentStatus('unpaid'));
         $this->assertFalse($service->isCollectPaymentStatus('paid'));
-        $this->assertTrue($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
-        $this->assertTrue($service->canCollectPaymentForOrder('pending', 'backend', 'partial'));
+        $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('unpaid', 'backend', 'unpaid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('pending_payment', 'backend', 'partial'));
         $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'paid'));
         $this->assertTrue($service->isCancellableStatus('booked'));
         $this->assertFalse($service->isCancellableStatus('paid'));
@@ -349,6 +350,39 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertFalse($service->isCancellableStatus('booked', 'backend'));
         $this->assertTrue($service->isCustomerReturnStatus('processed', 'mobile'));
         $this->assertFalse($service->isCustomerReturnStatus('processed', 'backend'));
+    }
+
+    public function test_order_action_flags_respect_platform_stage_config(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'edit_order_statuses' => ['booked', 'pending'],
+                    'print_invoice_statuses' => ['paid', 'processed', 'delivered', 'completed'],
+                    'collect_payment_statuses' => ['unpaid', 'pending_payment'],
+                    'cancel_order_statuses' => ['booked', 'pending'],
+                    'customer_return_statuses' => ['processed', 'delivered', 'completed'],
+                ],
+            ],
+        ]);
+
+        $service = OrderWorkflowService::forGate(new \App\Services\Erp\CapabilityGate($org));
+
+        $this->assertTrue($service->isEditableLineStatus('booked'));
+        $this->assertFalse($service->isEditableLineStatus('unpaid'));
+
+        $this->assertFalse($service->isPrintInvoiceStatus('booked'));
+        $this->assertTrue($service->isPrintInvoiceStatus('paid'));
+
+        $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'unpaid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('unpaid', 'backend', 'unpaid'));
+        $this->assertTrue($service->canCollectPaymentForOrder('pending_payment', 'backend', 'partial'));
+
+        $this->assertTrue($service->isCancellableStatus('booked'));
+        $this->assertFalse($service->isCancellableStatus('unpaid'));
+
+        $this->assertFalse($service->isCustomerReturnStatus('paid'));
+        $this->assertTrue($service->isCustomerReturnStatus('processed'));
     }
 
     public function test_mobile_order_capability_flags_include_print_and_collect(): void

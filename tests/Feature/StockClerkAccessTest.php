@@ -244,7 +244,7 @@ class StockClerkAccessTest extends TestCase
 
         $backoffice = collect($capabilities['workspaces'] ?? [])->firstWhere('id', 'backoffice');
         $this->assertNotNull($backoffice);
-        $this->assertSame('/inventory/stock', $backoffice['home_path']);
+        $this->assertSame('/dashboard', $backoffice['home_path']);
     }
 
     public function test_stock_clerk_can_list_and_create_stock_take_sessions(): void

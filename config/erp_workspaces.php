@@ -32,13 +32,7 @@ return [
             'inventory.',
             'purchasing.',
             'reports.',
-        ],
-        'home_path_by_permissions' => [
-            ['prefixes' => ['inventory.'], 'path' => '/inventory/stock'],
-            ['prefixes' => ['purchasing.'], 'path' => '/purchasing/lpo'],
-            ['prefixes' => ['sales.'], 'path' => '/sales/orders'],
-            ['prefixes' => ['catalogue.'], 'path' => '/products'],
-            ['prefixes' => ['customers.'], 'path' => '/customers'],
+            'dashboard.',
         ],
     ],
     'hotel_bar_pos' => [
