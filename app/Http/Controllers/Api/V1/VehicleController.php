@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Sale;
 use App\Models\Vehicle;
+use App\Support\OrganizationIdResolver;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -22,6 +23,9 @@ class VehicleController extends BaseResourceController
     public function store(Request $request)
     {
         $data = $this->validatedVehicle($request);
+        if ($request->user()) {
+            $this->applyBranchScopeToWriteData($request->user(), $data, $request);
+        }
         $vehicle = Vehicle::create($data);
 
         return response()->json($vehicle->load('branch'), 201);
@@ -65,9 +69,10 @@ class VehicleController extends BaseResourceController
 
     protected function validatedVehicle(Request $request, ?Vehicle $existing = null): array
     {
+        $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $branchId = (int) ($request->input('branch_id') ?? $existing?->branch_id ?? 0);
 
-        return $request->validate([
+        $data = $request->validate([
             'branch_id' => $existing ? 'sometimes|integer|exists:branches,id' : 'required|integer|exists:branches,id',
             'vehicle_code' => [
                 ($existing ? 'sometimes|' : '').'required',
@@ -83,5 +88,17 @@ class VehicleController extends BaseResourceController
             'max_volume_m3' => 'nullable|numeric|min:0',
             'is_active' => 'nullable|boolean',
         ]);
+
+        if (! empty($data['branch_id'])) {
+            $this->access()->assertBranchInOrganization($request->user(), (int) $data['branch_id'], $request);
+        }
+
+        if ($orgId > 0) {
+            $data['organization_id'] = $orgId;
+        } elseif (! empty($data['branch_id'])) {
+            $data['organization_id'] = OrganizationIdResolver::requireForBranch((int) $data['branch_id']);
+        }
+
+        return $data;
     }
 }

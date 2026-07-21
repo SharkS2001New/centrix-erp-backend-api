@@ -71,6 +71,24 @@ class TenantIsolationTest extends TestCase
         $this->assertFalse($codes->contains('V-ISO'));
     }
 
+    public function test_vehicle_create_sets_organization_id_from_authenticated_user(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $response = $this->postJson('/api/v1/vehicles', [
+            'branch_id' => $admin->branch_id,
+            'vehicle_code' => 'V-NEW',
+            'vehicle_name' => 'New Van',
+            'plate_number' => 'KCL 001',
+            'max_weight_kg' => 6000,
+            'is_active' => true,
+        ])->assertCreated();
+
+        $vehicle = Vehicle::query()->whereKey($response->json('id'))->firstOrFail();
+        $this->assertSame((int) $admin->organization_id, (int) $vehicle->organization_id);
+    }
+
     public function test_payment_methods_are_scoped_per_organization(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
