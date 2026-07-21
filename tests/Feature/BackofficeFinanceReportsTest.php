@@ -89,6 +89,26 @@ class BackofficeFinanceReportsTest extends TestCase
         );
     }
 
+    public function test_profit_loss_by_product_accessible_with_sales_reports_only(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $org->enabled_modules = ModuleRegistry::cascade([
+            'sales' => true,
+            'sales.backend' => true,
+            'sales.reports' => true,
+            'accounting' => false,
+            'accounting.reports' => false,
+        ]);
+        $org->save();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/reports/profit-loss-by-product?from_date=2026-01-01&to_date=2026-06-30')
+            ->assertOk()
+            ->assertJsonStructure(['data', 'current_page', 'total']);
+    }
+
     public function test_profit_loss_forbidden_without_sales_or_accounting_reports(): void
     {
         $org = Organization::where('company_code', 'DEMO')->firstOrFail();

@@ -233,6 +233,7 @@ return [
         'price-list' => 'inventory.reports',
 
         'profit-loss' => 'accounting.reports',
+        'profit-loss-by-product' => 'accounting.reports',
         'top-debtors' => 'accounting.reports',
         'expenses' => 'accounting.reports',
         'ar-aging' => 'accounting.reports',
@@ -270,6 +271,7 @@ return [
     */
     'backoffice_finance_reports' => [
         'profit-loss',
+        'profit-loss-by-product',
         'top-debtors',
         'ar-aging',
         'expenses',

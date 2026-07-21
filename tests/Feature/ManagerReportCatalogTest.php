@@ -11,6 +11,18 @@ class ManagerReportCatalogTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    public function test_mobile_catalog_includes_profit_loss_by_product(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/manager/reports/catalog');
+        $response->assertOk();
+
+        $keys = $this->collectCatalogReportKeys($response->json());
+        $this->assertContains('profit-loss-by-product', $keys);
+    }
+
     public function test_mobile_catalog_excludes_active_cart_reservations(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

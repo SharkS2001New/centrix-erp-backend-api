@@ -33,7 +33,7 @@ class ManagerReportCatalogService
 
     /** @var list<string> */
     private const FINANCE_REPORT_KEYS = [
-        'profit-loss', 'profit-loss-gl', 'trial-balance', 'balance-sheet',
+        'profit-loss', 'profit-loss-by-product', 'profit-loss-gl', 'trial-balance', 'balance-sheet',
         'cash-flow', 'general-ledger', 'accounts-payable', 'expenses',
         'journal-register', 'subledger-reconciliation', 'accounts-receivable',
         'invoice-payments', 'credit-outstanding',
@@ -102,6 +102,7 @@ class ManagerReportCatalogService
         'stock-on-hand' => 'reports.stock_on_hand.view',
         'stock-movement' => 'reports.stock_movement.view',
         'profit-loss' => 'reports.profit_loss.view',
+        'profit-loss-by-product' => 'reports.profit_loss.view',
         'profit-loss-gl' => 'accounting.profit_loss.view',
         'top-debtors' => 'reports.top_debtors.view',
         'vat-collected' => 'reports.vat_collected.view',
@@ -178,7 +179,7 @@ class ManagerReportCatalogService
             'title' => 'Finance & Accounting',
             'description' => 'P&L, balance sheet, ledger, and expenses',
             'keys' => [
-                'profit-loss', 'profit-loss-gl', 'trial-balance', 'balance-sheet',
+                'profit-loss', 'profit-loss-by-product', 'profit-loss-gl', 'trial-balance', 'balance-sheet',
                 'cash-flow', 'general-ledger', 'accounts-payable', 'expenses',
                 'journal-register', 'subledger-reconciliation',
             ],
