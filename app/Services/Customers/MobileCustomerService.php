@@ -119,7 +119,7 @@ class MobileCustomerService
             return Customer::create($payload);
         });
 
-        return $this->show($user, (int) $customer->customer_num);
+        return $this->presentCustomerModel($customer, $user);
     }
 
     public function update(User $user, int $customerNum, array $data): array
@@ -264,6 +264,34 @@ class MobileCustomerService
         }
 
         return $payload;
+    }
+
+    /** @return array<string, mixed> */
+    protected function presentCustomerModel(Customer $customer, ?User $creator = null): array
+    {
+        $customer->loadMissing('route:id,route_name');
+
+        return [
+            'customer_num' => (int) $customer->customer_num,
+            'branch_id' => $customer->branch_id !== null ? (int) $customer->branch_id : null,
+            'customer_name' => (string) $customer->customer_name,
+            'customer_type' => (string) ($customer->customer_type ?? 'debtor'),
+            'phone_number' => $customer->phone_number,
+            'additional_phone' => $customer->additional_phone,
+            'email' => $customer->email,
+            'town' => $customer->town,
+            'latitude' => $customer->latitude !== null ? (float) $customer->latitude : null,
+            'longitude' => $customer->longitude !== null ? (float) $customer->longitude : null,
+            'has_location' => $customer->latitude !== null && $customer->longitude !== null,
+            'route_id' => $customer->route_id !== null ? (int) $customer->route_id : null,
+            'route_name' => $customer->route?->route_name,
+            'kra_pin' => $customer->kra_pin,
+            'terms_of_payment' => $customer->terms_of_payment,
+            'credit_limit' => round((float) ($customer->credit_limit ?? 0), 2),
+            'current_balance' => round((float) ($customer->current_balance ?? 0), 2),
+            'customer_status' => $customer->customer_status,
+            'createdBy' => $creator?->username ?? '',
+        ];
     }
 
     /** @return array<string, mixed> */
