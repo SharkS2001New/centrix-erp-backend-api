@@ -983,6 +983,28 @@ class ReportController extends Controller
         }
 
         $cogsExpr = $this->soldLineCogsSumSql();
+        $summaryRaw = (clone $query)->selectRaw("
+                COUNT(DISTINCT si.product_code) as product_count,
+                SUM(si.amount) AS gross_revenue,
+                SUM(si.product_vat) AS total_vat,
+                SUM({$cogsExpr}) AS cogs
+            ")
+            ->first();
+        $summaryGrossRevenue = (float) ($summaryRaw->gross_revenue ?? 0);
+        $summaryTotalVat = (float) ($summaryRaw->total_vat ?? 0);
+        $summaryNetRevenue = $summaryGrossRevenue - $summaryTotalVat;
+        $summaryCogs = (float) ($summaryRaw->cogs ?? 0);
+        $summaryGrossProfit = $summaryNetRevenue - $summaryCogs;
+        $summary = [
+            'product_count' => (int) ($summaryRaw->product_count ?? 0),
+            'net_revenue' => round($summaryNetRevenue, 2),
+            'cogs' => round($summaryCogs, 2),
+            'gross_profit' => round($summaryGrossProfit, 2),
+            'gross_margin_percent' => $summaryNetRevenue > 0
+                ? round(($summaryGrossProfit / $summaryNetRevenue) * 100, 1)
+                : null,
+        ];
+
         $query
             ->groupBy('si.product_code', 'p.product_name')
             ->selectRaw("
@@ -1040,7 +1062,9 @@ class ReportController extends Controller
             return $row;
         });
 
-        return response()->json($paginator);
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => $summary,
+        ]));
     }
 
     public function eodCashier(Request $request)

@@ -150,6 +150,12 @@ class BackofficeFinanceReportsTest extends TestCase
         $this->assertEqualsWithDelta(36.0, (float) ($row['gross_profit'] ?? 0), 0.01);
         $this->assertEqualsWithDelta(2.0, (float) ($row['qty_sold_packages'] ?? 0), 0.01);
         $this->assertNotEmpty($row['qty_sold_label'] ?? null);
+
+        $response = $this->getJson('/api/v1/reports/profit-loss-by-product?from_date=2026-06-20&to_date=2026-06-20')
+            ->assertOk()
+            ->json();
+        $this->assertEqualsWithDelta(36.0, (float) ($response['summary']['gross_profit'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(884.0, (float) ($response['summary']['cogs'] ?? 0), 0.01);
     }
 
     public function test_profit_loss_by_product_accessible_with_sales_reports_only(): void
