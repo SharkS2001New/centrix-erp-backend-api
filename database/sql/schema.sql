@@ -2025,11 +2025,16 @@ FROM (
 ) sales_agg
 LEFT JOIN (
     SELECT
-        DATE(sr.created_at) AS cost_date,
-        sr.branch_id,
-        SUM(sr.units_received * COALESCE(sr.cost_price, 0)) AS total_cost
-    FROM stock_receipts sr
-    GROUP BY DATE(sr.created_at), sr.branch_id
+        DATE(s.completed_at) AS cost_date,
+        s.branch_id,
+        SUM(si.quantity * COALESCE(p.last_cost_price, 0)) AS total_cost
+    FROM sale_items si
+    JOIN sales s ON s.id = si.sale_id
+    LEFT JOIN products p
+        ON p.product_code = si.product_code
+       AND p.organization_id = s.organization_id
+    WHERE s.status = 'completed' AND s.archived = 0
+    GROUP BY DATE(s.completed_at), s.branch_id
 ) cogs ON sales_agg.period = cogs.cost_date AND sales_agg.branch_id = cogs.branch_id
 LEFT JOIN (
     SELECT

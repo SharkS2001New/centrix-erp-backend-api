@@ -289,6 +289,9 @@ class UserLoginChannelService
             'vats',
             'retail-package-settings',
             'payments/',
+            'notifications',
+            'action-requests/',
+            'system-issue-reports',
         ];
 
         return $this->pathMatchesAny($path, $prefixes);

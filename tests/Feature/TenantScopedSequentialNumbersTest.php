@@ -75,6 +75,27 @@ class TenantScopedSequentialNumbersTest extends TestCase
         $this->assertSame(1, $allocator->nextForOrganization((int) $orgB->id));
     }
 
+    public function test_customer_allocator_skips_soft_deleted_customer_numbers(): void
+    {
+        $org = Organization::where('company_code', 'DEMO')->firstOrFail();
+        $adminId = User::where('username', 'admin')->value('id');
+        $branchId = Branch::query()->where('organization_id', $org->id)->value('id');
+        $allocator = app(CustomerNumberAllocator::class);
+
+        $deleted = Customer::create([
+            'organization_id' => $org->id,
+            'branch_id' => $branchId,
+            'customer_num' => 990001,
+            'customer_name' => 'Deleted Allocator Customer',
+            'customer_type' => 'debtor',
+            'phone_number' => '0700990001',
+            'created_by' => $adminId,
+        ]);
+        $deleted->delete();
+
+        $this->assertSame(990002, $allocator->nextForOrganization((int) $org->id));
+    }
+
     public function test_two_organizations_can_share_ar_invoice_number(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

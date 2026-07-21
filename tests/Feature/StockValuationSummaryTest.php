@@ -34,6 +34,37 @@ class StockValuationSummaryTest extends TestCase
         $total = (float) $response->json('value');
 
         $this->assertSame(round($shop + $store, 2), $total);
+        $this->assertArrayHasKey('cost_value', $response->json());
+    }
+
+    public function test_inventory_valuation_summary_uses_selling_price_for_stock_value(): void
+    {
+        $product = Product::query()->with('unit')->firstOrFail();
+        $branchId = (int) $this->user->branch_id;
+
+        $product->unit?->update(['conversion_factor' => 1]);
+        $product->update(['last_cost_price' => 80, 'unit_price' => 120]);
+
+        CurrentStock::query()->updateOrCreate(
+            [
+                'product_code' => $product->product_code,
+                'branch_id' => $branchId,
+            ],
+            [
+                'shop_quantity' => 10,
+                'store_quantity' => 5,
+            ],
+        );
+
+        $response = $this->getJson('/api/v1/reports/inventory-valuation-summary?branch_id='.$branchId)
+            ->assertOk();
+
+        $this->assertSame(1200.0, (float) $response->json('shop_value'));
+        $this->assertSame(600.0, (float) $response->json('store_value'));
+        $this->assertSame(1800.0, (float) $response->json('value'));
+        $this->assertSame(800.0, (float) $response->json('shop_cost_value'));
+        $this->assertSame(400.0, (float) $response->json('store_cost_value'));
+        $this->assertSame(1200.0, (float) $response->json('cost_value'));
     }
 
     public function test_stock_on_hand_includes_available_after_reservations(): void
@@ -119,7 +150,7 @@ class StockValuationSummaryTest extends TestCase
         $branchId = (int) $this->user->branch_id;
 
         $product->unit?->update(['conversion_factor' => 24]);
-        $product->update(['last_cost_price' => 1200]);
+        $product->update(['last_cost_price' => 1200, 'unit_price' => 1500]);
 
         CurrentStock::query()->updateOrCreate(
             [
@@ -142,7 +173,8 @@ class StockValuationSummaryTest extends TestCase
         $this->assertNotNull($row);
         $this->assertSame(2400.0, (float) $row['shop_cost_value']);
         $this->assertSame(2400.0, (float) $row['total_cost_value']);
-        $this->assertGreaterThanOrEqual(2400.0, (float) $response->json('shop_value'));
+        $this->assertSame(3000.0, (float) $response->json('shop_value'));
+        $this->assertSame(2400.0, (float) $response->json('shop_cost_value'));
     }
 
     public function test_stock_valuation_report_shows_available_qty_and_on_hand_value(): void

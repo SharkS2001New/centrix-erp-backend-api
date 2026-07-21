@@ -116,6 +116,46 @@ class UserLoginChannelTest extends TestCase
             ->assertJsonPath('code', 'login_channel_forbidden');
     }
 
+    public function test_mobile_session_can_access_notifications_and_issue_reports(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $routeId = (int) (\App\Models\RouteModel::query()->value('id') ?? 1);
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'mobile_notify_'.uniqid(),
+            'email' => null,
+            'password' => Hash::make('password'),
+            'full_name' => 'Mobile Notify User',
+            'is_admin' => false,
+            'access_scope' => 'branch',
+            'login_channels' => ['mobile'],
+            'mobile_order_scope' => 'route_only',
+            'assigned_route_id' => $routeId,
+            'is_active' => true,
+        ]);
+
+        $issued = $user->createToken('MOBILE_NOTIFY_TEST', ['*']);
+        $issued->accessToken->forceFill([
+            'organization_id' => $user->organization_id,
+            'login_channel' => 'mobile',
+        ])->save();
+        $token = $issued->plainTextToken;
+
+        $this->withToken($token)
+            ->getJson('/api/v1/notifications/unread-count')
+            ->assertOk();
+
+        $this->withToken($token)
+            ->postJson('/api/v1/system-issue-reports', [
+                'kind' => 'user_report',
+                'message' => 'Mobile app test issue',
+                'reported_by_user' => true,
+            ])
+            ->assertCreated();
+    }
+
     public function test_pos_session_can_access_pos_sales_and_branches_but_not_admin_users(): void
     {
         $user = $this->makeUser(['login_channels' => ['pos']]);

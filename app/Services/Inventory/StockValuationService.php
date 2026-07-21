@@ -46,6 +46,16 @@ SQL;
         return StockCostCalculation::costValueSqlExpression($quantityExpression, $unitCost, $uomAlias);
     }
 
+    public function stockRetailValueSql(
+        string $quantityExpression,
+        string $productAlias = 'p',
+        string $uomAlias = 'u',
+    ): string {
+        $converted = StockCostCalculation::convertedQuantitySqlExpression($quantityExpression, $uomAlias);
+
+        return "({$converted} * COALESCE({$productAlias}.unit_price, 0))";
+    }
+
     public function effectiveUnitCostForProduct(int $organizationId, string $productCode): float
     {
         $unitCost = $this->effectiveUnitCostExpression('p', '');
@@ -63,6 +73,9 @@ SQL;
      *   shop_value: float,
      *   store_value: float,
      *   value: float,
+     *   shop_cost_value: float,
+     *   store_cost_value: float,
+     *   cost_value: float,
      *   branch_id: int|null,
      *   skus_in_stock: int,
      *   skus_low: int,
@@ -76,6 +89,9 @@ SQL;
             'shop_value' => 0.0,
             'store_value' => 0.0,
             'value' => 0.0,
+            'shop_cost_value' => 0.0,
+            'store_cost_value' => 0.0,
+            'cost_value' => 0.0,
             'branch_id' => $branchId,
             'skus_in_stock' => 0,
             'skus_low' => 0,
@@ -87,8 +103,10 @@ SQL;
             return $empty;
         }
 
-        $shopValueSql = $this->stockCostValueSql('cs.shop_quantity');
-        $storeValueSql = $this->stockCostValueSql('cs.store_quantity');
+        $shopRetailValueSql = $this->stockRetailValueSql('cs.shop_quantity');
+        $storeRetailValueSql = $this->stockRetailValueSql('cs.store_quantity');
+        $shopCostValueSql = $this->stockCostValueSql('cs.shop_quantity');
+        $storeCostValueSql = $this->stockCostValueSql('cs.store_quantity');
 
         $query = DB::table('current_stock as cs')
             ->join('branches as b', 'b.id', '=', 'cs.branch_id')
@@ -105,12 +123,16 @@ SQL;
         }
 
         $totals = $query
-            ->selectRaw("COALESCE(SUM({$shopValueSql}), 0) as shop_value")
-            ->selectRaw("COALESCE(SUM({$storeValueSql}), 0) as store_value")
+            ->selectRaw("COALESCE(SUM({$shopRetailValueSql}), 0) as shop_value")
+            ->selectRaw("COALESCE(SUM({$storeRetailValueSql}), 0) as store_value")
+            ->selectRaw("COALESCE(SUM({$shopCostValueSql}), 0) as shop_cost_value")
+            ->selectRaw("COALESCE(SUM({$storeCostValueSql}), 0) as store_cost_value")
             ->first();
 
         $shopValue = round((float) ($totals->shop_value ?? 0), 2);
         $storeValue = round((float) ($totals->store_value ?? 0), 2);
+        $shopCostValue = round((float) ($totals->shop_cost_value ?? 0), 2);
+        $storeCostValue = round((float) ($totals->store_cost_value ?? 0), 2);
 
         // Catalog-wide health (includes zero-stock products missing from current_stock).
         $branchIds = $branchId !== null
@@ -155,6 +177,9 @@ SQL;
             'shop_value' => $shopValue,
             'store_value' => $storeValue,
             'value' => round($shopValue + $storeValue, 2),
+            'shop_cost_value' => $shopCostValue,
+            'store_cost_value' => $storeCostValue,
+            'cost_value' => round($shopCostValue + $storeCostValue, 2),
             'branch_id' => $branchId,
             ...$health,
         ];

@@ -9,7 +9,8 @@ class CustomerNumberAllocator
 {
     public function nextForOrganization(int $organizationId): int
     {
-        $max = Customer::query()
+        // Include soft-deleted rows: uq_org_customer_num still reserves the number.
+        $max = Customer::withTrashed()
             ->where('organization_id', $organizationId)
             ->lockForUpdate()
             ->max('customer_num');

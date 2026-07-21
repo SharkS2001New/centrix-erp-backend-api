@@ -135,6 +135,7 @@ class ReportController extends Controller
             'inventory' => $inventory,
             'finance' => [
                 ['key' => 'profit-loss', 'path' => '/reports/profit-loss', 'label' => 'Profit & loss (operational)'],
+                ['key' => 'profit-loss-by-product', 'path' => '/reports/profit-loss-by-product', 'label' => 'Profit & loss by product'],
                 ['key' => 'profit-loss-gl', 'path' => '/reports/profit-loss-gl', 'label' => 'Profit & loss (GL)'],
                 ['key' => 'trial-balance', 'path' => '/reports/trial-balance', 'label' => 'Trial balance'],
                 ['key' => 'balance-sheet', 'path' => '/reports/balance-sheet', 'label' => 'Balance sheet'],
@@ -225,14 +226,38 @@ class ReportController extends Controller
         $totalSales = (float) $salesBase($from, $to)->sum('order_total');
         $prevTotalSales = (float) $salesBase($prevFrom, $prevTo)->sum('order_total');
 
-        $plBase = fn (\Carbon\Carbon $start, \Carbon\Carbon $end) => DB::table('v_profit_loss_summary')
-            ->where('period', '>=', $start->toDateString())
-            ->where('period', '<=', $end->toDateString())
-            ->when($orgId, fn ($q) => $this->scopeOrganizationBranches($q, $orgId))
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId));
+        $grossProfitForPeriod = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($orgId, $branchId, $metricStatuses) {
+            $revenue = (float) CentrixSalesScope::excludeLegacyMaterialized(
+                DB::table('sales')
+                    ->whereIn('status', $metricStatuses)
+                    ->where('archived', 0),
+            )
+                ->when($orgId, fn ($q2) => $q2->where('organization_id', $orgId))
+                ->when($branchId, fn ($q2) => $q2->where('branch_id', $branchId))
+                ->tap(fn ($q2) => EffectiveSaleDate::applyFromToDateFilter($q2, $start->toDateString(), $end->toDateString()))
+                ->selectRaw('COALESCE(SUM(order_total - total_vat), 0) as net')
+                ->value('net');
 
-        $grossProfit = (float) $plBase($from, $to)->sum('gross_profit');
-        $prevGrossProfit = (float) $plBase($prevFrom, $prevTo)->sum('gross_profit');
+            $cogs = (float) DB::table('sale_items as si')
+                ->join('sales as cs', 'cs.id', '=', 'si.sale_id')
+                ->join('products as p', function ($join) {
+                    $join->on('p.product_code', '=', 'si.product_code')
+                        ->on('p.organization_id', '=', 'cs.organization_id');
+                })
+                ->whereIn('cs.status', $metricStatuses)
+                ->where('cs.archived', 0)
+                ->when($orgId, fn ($q2) => $q2->where('cs.organization_id', $orgId))
+                ->when($branchId, fn ($q2) => $q2->where('cs.branch_id', $branchId))
+                ->tap(fn ($q2) => EffectiveSaleDate::applyFromToDateFilter($q2, $start->toDateString(), $end->toDateString(), 'cs'))
+                ->tap(fn ($q2) => CentrixSalesScope::excludeLegacyMaterialized($q2, 'cs'))
+                ->selectRaw('COALESCE(SUM(si.quantity * COALESCE(p.last_cost_price, 0)), 0) as total_cost')
+                ->value('total_cost');
+
+            return $revenue - $cogs;
+        };
+
+        $grossProfit = $grossProfitForPeriod($from, $to);
+        $prevGrossProfit = $grossProfitForPeriod($prevFrom, $prevTo);
 
         $receivables = (float) DB::table('customers')
             ->whereNull('deleted_at')
@@ -296,7 +321,7 @@ class ReportController extends Controller
 
         $prevReceivables = max(0, $receivables - $creditIssued + $paymentsCollected);
 
-        // Inventory value = on-hand qty × effective unit cost (not retail price).
+        // Stock value = on-hand qty × selling price (expected revenue from remaining stock).
         $inventorySummary = app(StockValuationService::class)->summarize($orgId, $branchId);
         $shopInventoryValue = $inventorySummary['shop_value'];
         $storeInventoryValue = $inventorySummary['store_value'];
@@ -740,6 +765,9 @@ class ReportController extends Controller
                 'shop_value' => 0,
                 'store_value' => 0,
                 'value' => 0,
+                'shop_cost_value' => 0,
+                'store_cost_value' => 0,
+                'cost_value' => 0,
                 'branch_id' => null,
                 'skus_in_stock' => 0,
                 'skus_low' => 0,
@@ -839,19 +867,19 @@ class ReportController extends Controller
         $vatCollected = (float) ($sales->vat_collected ?? 0);
         $netRevenue = $grossRevenue - $vatCollected;
 
-        $cogsQuery = DB::table('stock_receipts');
-        $this->applyBranchTenantScope($cogsQuery, $orgId, $branchId);
-        if ($orgId && Schema::hasColumn('stock_receipts', 'organization_id')) {
-            $cogsQuery->where('organization_id', $orgId);
-        }
-        if ($from) {
-            $cogsQuery->whereDate('created_at', '>=', $from);
-        }
-        if ($to) {
-            $cogsQuery->whereDate('created_at', '<=', $to);
-        }
+        $cogsQuery = DB::table('sale_items as si')
+            ->join('sales as cs', 'cs.id', '=', 'si.sale_id')
+            ->join('products as p', function ($join) {
+                $join->on('p.product_code', '=', 'si.product_code')
+                    ->on('p.organization_id', '=', 'cs.organization_id');
+            })
+            ->whereIn('cs.status', $metricStatuses)
+            ->where('cs.archived', 0);
+        CentrixSalesScope::excludeLegacyMaterialized($cogsQuery, 'cs');
+        $this->applySalesTenantScope($cogsQuery, $orgId, $branchId, 'cs');
+        EffectiveSaleDate::applyFromToDateFilter($cogsQuery, $from, $to, 'cs');
         $cogs = (float) $cogsQuery
-            ->selectRaw('COALESCE(SUM(units_received * COALESCE(cost_price, 0)), 0) as total_cost')
+            ->selectRaw('COALESCE(SUM(si.quantity * COALESCE(p.last_cost_price, 0)), 0) as total_cost')
             ->value('total_cost');
 
         $expenseQuery = DB::table('expenses')->whereNull('deleted_at');
@@ -893,6 +921,89 @@ class ReportController extends Controller
             'from' => 1,
             'to' => 1,
         ]);
+    }
+
+    public function profitLossByProduct(Request $request)
+    {
+        $filters = $this->filters($request);
+        $from = ! empty($filters['from_date']) ? (string) $filters['from_date'] : null;
+        $to = ! empty($filters['to_date']) ? (string) $filters['to_date'] : null;
+        $branchId = isset($filters['branch_id']) && $filters['branch_id'] !== ''
+            ? (int) $filters['branch_id']
+            : null;
+        $orgId = app(UserAccessService::class)->organizationId($request->user(), $request);
+        $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
+
+        $query = DB::table('sale_items as si')
+            ->join('sales as cs', 'cs.id', '=', 'si.sale_id')
+            ->join('products as p', function ($join) {
+                $join->on('p.product_code', '=', 'si.product_code')
+                    ->on('p.organization_id', '=', 'cs.organization_id');
+            })
+            ->leftJoin('uoms as uom', 'uom.id', '=', 'p.unit_id')
+            ->whereIn('cs.status', $metricStatuses)
+            ->where('cs.archived', 0);
+
+        CentrixSalesScope::excludeLegacyMaterialized($query, 'cs');
+        $this->applySalesTenantScope($query, $orgId, $branchId, 'cs');
+        EffectiveSaleDate::applyFromToDateFilter($query, $from, $to, 'cs');
+
+        if (! empty($filters['product_code'])) {
+            $query->where('si.product_code', $filters['product_code']);
+        }
+
+        if (! empty($filters['channel'])) {
+            $query->where('cs.channel', $filters['channel']);
+        }
+
+        if ($search = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($search) {
+                $inner->where('p.product_name', 'like', "%{$search}%")
+                    ->orWhere('si.product_code', 'like', "%{$search}%");
+            });
+        }
+
+        $query
+            ->groupBy('si.product_code', 'p.product_name')
+            ->selectRaw('
+                si.product_code,
+                p.product_name,
+                SUM(si.quantity) AS qty_sold,
+                MAX(uom.full_name) AS uom_name,
+                MAX(uom.conversion_factor) AS conversion_factor,
+                MAX(uom.small_packaging_label) AS small_packaging_label,
+                MAX(uom.middle_packaging_label) AS middle_packaging_label,
+                MAX(uom.middle_factor) AS middle_factor,
+                MAX(uom.uom_type) AS uom_type,
+                SUM(si.amount) AS gross_revenue,
+                SUM(si.product_vat) AS total_vat,
+                SUM(si.quantity * COALESCE(p.last_cost_price, 0)) AS cogs
+            ')
+            ->orderByDesc(DB::raw('SUM(si.amount) - SUM(si.product_vat)'));
+
+        $paginator = $query->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+
+        $paginator->getCollection()->transform(function ($row) {
+            $grossRevenue = (float) ($row->gross_revenue ?? 0);
+            $totalVat = (float) ($row->total_vat ?? 0);
+            $netRevenue = $grossRevenue - $totalVat;
+            $cogs = (float) ($row->cogs ?? 0);
+            $grossProfit = $netRevenue - $cogs;
+
+            $row->qty_sold = (float) ($row->qty_sold ?? 0);
+            $row->gross_revenue = round($grossRevenue, 2);
+            $row->total_vat = round($totalVat, 2);
+            $row->net_revenue = round($netRevenue, 2);
+            $row->cogs = round($cogs, 2);
+            $row->gross_profit = round($grossProfit, 2);
+            $row->gross_margin_percent = $netRevenue > 0
+                ? round(($grossProfit / $netRevenue) * 100, 1)
+                : null;
+
+            return $row;
+        });
+
+        return response()->json($paginator);
     }
 
     public function eodCashier(Request $request)
