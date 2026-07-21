@@ -559,6 +559,7 @@ Route::prefix('v1')->group(function () {
             ->group(function () {
                 Route::get('accounting/settings', [\App\Http\Controllers\Api\V1\Operations\AccountingSettingsController::class, 'show']);
                 Route::patch('accounting/settings', [\App\Http\Controllers\Api\V1\Operations\AccountingSettingsController::class, 'update']);
+                Route::post('accounting/seed-chart-of-accounts', [\App\Http\Controllers\Api\V1\Operations\AccountingSettingsController::class, 'seedChart']);
                 Route::post('logo', function (Request $request, $organization) {
                     return app(OrganizationController::class)->uploadLogo($request, (string) $organization);
                 });

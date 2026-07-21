@@ -27,22 +27,33 @@ class AccountingSettingsController extends Controller
     {
         $org = $this->erp->resolveOrganization($request);
         $gate = $this->erp->gateForOrganization($org);
+        $isPlatformRoute = $request->route('organization') !== null;
 
-        $data = $request->validate([
-            'auto_post_sales' => 'sometimes|boolean',
-            'auto_post_expenses' => 'sometimes|boolean',
-            'auto_post_purchases' => 'sometimes|boolean',
-            'auto_post_payments' => 'sometimes|boolean',
-            'auto_post_payroll' => 'sometimes|boolean',
-            'auto_post_returns' => 'sometimes|boolean',
-            'auto_post_stock_adjustments' => 'sometimes|boolean',
-            'post_till_variance' => 'sometimes|boolean',
-            'journal_entry_approval_enabled' => 'sometimes|boolean',
-            'account_codes' => 'sometimes|array',
-            'account_codes.*' => 'nullable|string|max:20',
-            'payment_method_accounts' => 'sometimes|array',
-            'payment_method_accounts.*' => 'nullable|string|max:20',
-        ]);
+        if ($isPlatformRoute) {
+            $data = $request->validate([
+                'auto_post_sales' => 'sometimes|boolean',
+                'auto_post_expenses' => 'sometimes|boolean',
+                'auto_post_purchases' => 'sometimes|boolean',
+                'auto_post_payments' => 'sometimes|boolean',
+                'auto_post_payroll' => 'sometimes|boolean',
+                'auto_post_returns' => 'sometimes|boolean',
+                'auto_post_stock_adjustments' => 'sometimes|boolean',
+                'post_till_variance' => 'sometimes|boolean',
+                'journal_entry_approval_enabled' => 'sometimes|boolean',
+                'account_codes' => 'sometimes|array',
+                'account_codes.*' => 'nullable|string|max:20',
+                'payment_method_accounts' => 'sometimes|array',
+                'payment_method_accounts.*' => 'nullable|string|max:20',
+            ]);
+        } else {
+            $data = $request->validate([
+                'journal_entry_approval_enabled' => 'sometimes|boolean',
+            ]);
+
+            if ($data === []) {
+                abort(403, 'Accounting settings are managed by the platform administrator.');
+            }
+        }
 
         $current = $gate->moduleSettings('accounting');
         $moduleSettings = $org->module_settings ?? [];
@@ -62,9 +73,12 @@ class AccountingSettingsController extends Controller
         $moduleSettings['accounting'] = $merged;
         $org->update(['module_settings' => $moduleSettings]);
 
-        $refreshed = $this->erp->gateForUser($user->fresh())->moduleSettings('accounting');
+        $refreshed = $this->erp->gateForOrganization($org->fresh())->moduleSettings('accounting');
 
-        return response()->json(['accounting' => $refreshed]);
+        return response()->json([
+            'accounting' => $refreshed,
+            'chart_seeded' => app(StandardChartOfAccounts::class)->isSeeded((int) $org->id),
+        ]);
     }
 
     public function seedChart(Request $request)
@@ -73,7 +87,7 @@ class AccountingSettingsController extends Controller
             abort(403, 'Chart seeding is not available in production.');
         }
 
-        $org = Organization::findOrFail($request->user()->organization_id);
+        $org = $this->erp->resolveOrganization($request);
         $accounts = app(StandardChartOfAccounts::class)->seedForOrganization($org);
 
         return response()->json([
