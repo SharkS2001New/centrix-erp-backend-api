@@ -405,4 +405,80 @@ class SalesReportsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('id', $this->admin->id);
     }
+
+    public function test_daily_sales_and_sales_by_product_tally_with_order_discount(): void
+    {
+        $day = now()->toDateString();
+        $product = \App\Models\Product::query()
+            ->where('organization_id', $this->admin->organization_id)
+            ->firstOrFail();
+
+        // Two lines totaling 1000 gross / ~137.93 VAT; order discount 100 → header 900.
+        $lineGross = 1000.0;
+        $lineVat = 137.93;
+        $orderDiscount = 100.0;
+        $scaled = \App\Services\Sales\CentrixSalesScope::scaleVatForOrderDiscount($lineGross, $lineVat, $orderDiscount);
+
+        $sale = Sale::query()->create([
+            'order_num' => 995100,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $this->admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => $scaled['order_total'],
+            'total_vat' => $scaled['total_vat'],
+            'order_discount' => $scaled['order_discount'],
+            'amount_paid' => $scaled['order_total'],
+            'archived' => 0,
+            'completed_at' => now(),
+            'created_at' => now(),
+        ]);
+
+        \App\Models\SaleItem::query()->create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'quantity' => 1,
+            'uom' => 'PCS',
+            'selling_price' => 600,
+            'amount' => 600,
+            'product_vat' => 82.76,
+            'discount_given' => 0,
+        ]);
+        \App\Models\SaleItem::query()->create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 2,
+            'quantity' => 1,
+            'uom' => 'PCS',
+            'selling_price' => 400,
+            'amount' => 400,
+            'product_vat' => 55.17,
+            'discount_given' => 0,
+        ]);
+
+        $daily = $this->getJson(
+            "/api/v1/reports/daily-sales?from_date={$day}&to_date={$day}&date_column=sale_day&per_page=100"
+        )->assertOk();
+        $productReport = $this->getJson(
+            "/api/v1/reports/sales-by-product?from_date={$day}&to_date={$day}&date_column=sale_date&per_page=100"
+        )->assertOk();
+
+        $dailyGross = (float) ($daily->json('summary.gross') ?? collect($daily->json('data'))->sum(fn ($r) => (float) ($r['gross'] ?? 0)));
+        $dailyVat = (float) ($daily->json('summary.vat') ?? collect($daily->json('data'))->sum(fn ($r) => (float) ($r['vat'] ?? 0)));
+        $productGross = (float) ($productReport->json('summary.total_revenue')
+            ?? collect($productReport->json('data'))->sum(fn ($r) => (float) ($r['total_revenue'] ?? 0)));
+        $productVat = (float) ($productReport->json('summary.total_vat')
+            ?? collect($productReport->json('data'))->sum(fn ($r) => (float) ($r['total_vat'] ?? 0)));
+
+        // Org may have other seed sales for the day — assert our discounted sale
+        // is reflected equally in both reports by comparing deltas is hard.
+        // Instead assert product summary gross equals daily summary gross for the day.
+        $this->assertEqualsWithDelta($dailyGross, $productGross, 0.05);
+        $this->assertEqualsWithDelta($dailyVat, $productVat, 0.05);
+        $this->assertEqualsWithDelta(900.0, $scaled['order_total'], 0.01);
+        $this->assertLessThan($lineVat, $scaled['total_vat']);
+    }
 }

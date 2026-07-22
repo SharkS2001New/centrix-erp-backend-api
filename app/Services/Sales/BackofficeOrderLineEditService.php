@@ -303,13 +303,18 @@ class BackofficeOrderLineEditService
                 throw new InvalidArgumentException('An order must keep at least one line item.');
             }
 
-            $orderTotal = round((float) $sale->items->sum('amount'), 2);
-            $totalVat = round((float) $sale->items->sum('product_vat'), 2);
+            $lineGross = round((float) $sale->items->sum('amount'), 2);
+            $lineVat = round((float) $sale->items->sum('product_vat'), 2);
+            $orderDiscount = min(max(0, (float) ($sale->order_discount ?? 0)), $lineGross);
+            $scaled = CentrixSalesScope::scaleVatForOrderDiscount($lineGross, $lineVat, $orderDiscount);
+            $orderTotal = $scaled['order_total'];
+            $totalVat = $scaled['total_vat'];
             $amountPaid = min((float) ($sale->amount_paid ?? 0), $orderTotal);
 
             $updates = [
                 'order_total' => $orderTotal,
                 'total_vat' => $totalVat,
+                'order_discount' => $scaled['order_discount'],
                 'amount_paid' => $amountPaid,
                 'payment_status' => $this->derivePaymentStatus($orderTotal, $amountPaid),
             ];

@@ -213,6 +213,11 @@ class SalesCartCheckoutStockTest extends TestCase
 
         $this->assertEquals(50.0, (float) ($sale['order_discount'] ?? 0));
         $this->assertEquals($lineTotal - 50, (float) ($sale['order_total'] ?? 0));
+        $lineVat = (float) (($lineCart['lines'][0]['product_vat'] ?? 0));
+        if ($lineTotal > 0 && $lineVat > 0) {
+            $expectedVat = round($lineVat * (($lineTotal - 50) / $lineTotal), 2);
+            $this->assertEqualsWithDelta($expectedVat, (float) ($sale['total_vat'] ?? 0), 0.01);
+        }
     }
 
     public function test_hold_order_restore_binds_reservations_to_cart_lines(): void

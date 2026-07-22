@@ -969,7 +969,8 @@ class ReportController extends Controller
 
         $query = DB::table('sale_items as si')
             ->join('sales as cs', 'cs.id', '=', 'si.sale_id')
-            ->join('products as p', function ($join) {
+            ->join(DB::raw(CentrixSalesScope::saleLineTotalsSubquerySql().' as ls'), 'ls.sale_id', '=', 'si.sale_id')
+            ->leftJoin('products as p', function ($join) {
                 $join->on('p.product_code', '=', 'si.product_code')
                     ->on('p.organization_id', '=', 'cs.organization_id');
             })
@@ -996,11 +997,13 @@ class ReportController extends Controller
             });
         }
 
+        $allocGross = CentrixSalesScope::allocatedLineGrossSql('si', 'cs', 'ls');
+        $allocVat = CentrixSalesScope::allocatedLineVatSql('si', 'cs', 'ls');
         $cogsExpr = $this->soldLineCogsSumSql();
         $summaryRaw = (clone $query)->selectRaw("
                 COUNT(DISTINCT si.product_code) as product_count,
-                SUM(si.amount) AS gross_revenue,
-                SUM(si.product_vat) AS total_vat,
+                SUM({$allocGross}) AS gross_revenue,
+                SUM({$allocVat}) AS total_vat,
                 SUM({$cogsExpr}) AS cogs
             ")
             ->first();
@@ -1022,10 +1025,10 @@ class ReportController extends Controller
         ];
 
         $query
-            ->groupBy('si.product_code', 'p.product_name')
+            ->groupBy('si.product_code', DB::raw('COALESCE(p.product_name, si.product_code)'))
             ->selectRaw("
                 si.product_code,
-                p.product_name,
+                COALESCE(p.product_name, si.product_code) AS product_name,
                 SUM(si.quantity) AS qty_sold,
                 MAX(uom.full_name) AS uom_name,
                 MAX(uom.conversion_factor) AS conversion_factor,
@@ -1034,11 +1037,11 @@ class ReportController extends Controller
                 MAX(uom.middle_factor) AS middle_factor,
                 MAX(uom.uom_type) AS uom_type,
                 MAX(uom.uses_small_packaging) AS uses_small_packaging,
-                SUM(si.amount) AS gross_revenue,
-                SUM(si.product_vat) AS total_vat,
+                SUM({$allocGross}) AS gross_revenue,
+                SUM({$allocVat}) AS total_vat,
                 SUM({$cogsExpr}) AS cogs
             ")
-            ->orderByDesc(DB::raw('SUM(si.amount) - SUM(si.product_vat)'));
+            ->orderByDesc(DB::raw("SUM({$allocGross}) - SUM({$allocVat})"));
 
         $paginator = $query->paginate(min((int) ($filters['per_page'] ?? 20), 200));
 

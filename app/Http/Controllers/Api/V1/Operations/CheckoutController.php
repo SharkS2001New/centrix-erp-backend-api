@@ -36,6 +36,7 @@ use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
 use App\Services\Notifications\CustomerNotificationService;
 use App\Services\Sales\DiscountApprovalService;
+use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\MobileCheckoutLocationService;
 use App\Services\Sales\MobileCheckoutSettings;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
@@ -221,7 +222,10 @@ class CheckoutController extends Controller
                 // keep the amount already stored on the cart for pending-approval sales.
                 $orderDiscount = min(max(0, (float) ($cart->order_discount ?? 0)), $lineNet);
             }
-            $total = max(0, $lineNet - $orderDiscount);
+            $scaled = CentrixSalesScope::scaleVatForOrderDiscount($lineNet, $vat, $orderDiscount);
+            $orderDiscount = $scaled['order_discount'];
+            $total = $scaled['order_total'];
+            $vat = $scaled['total_vat'];
 
             $voucherPayment = 0.0;
             if (! empty($salesSettings['enable_vouchers']) && $cart->payment_voucher_id) {

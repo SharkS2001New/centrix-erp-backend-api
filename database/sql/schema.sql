@@ -1865,20 +1865,37 @@ CREATE VIEW v_sales_by_product AS
 SELECT
     s.organization_id,
     si.product_code,
-    p.product_name,
+    COALESCE(p.product_name, si.product_code) AS product_name,
     DATE(s.created_at) AS sale_date,
     s.branch_id,
     s.channel,
     SUM(si.quantity) AS qty_sold,
     si.uom AS sell_uom,
-    SUM(si.amount) AS total_revenue,
-    SUM(si.product_vat) AS total_vat,
-    SUM(si.discount_given) AS total_discount
+    SUM(
+        CASE WHEN ls.line_gross > 0 THEN (si.amount * (s.order_total / ls.line_gross)) ELSE 0 END
+    ) AS total_revenue,
+    SUM(
+        CASE
+            WHEN ls.line_vat > 0 THEN (si.product_vat * (s.total_vat / ls.line_vat))
+            WHEN ls.line_gross > 0 THEN (s.total_vat * (si.amount / ls.line_gross))
+            ELSE 0
+        END
+    ) AS total_vat,
+    SUM(
+        COALESCE(si.discount_given, 0)
+        + CASE WHEN ls.line_gross > 0 THEN (si.amount * (COALESCE(s.order_discount, 0) / ls.line_gross)) ELSE 0 END
+    ) AS total_discount
 FROM sale_items si
 JOIN sales s ON si.sale_id = s.id
-JOIN products p ON si.product_code = p.product_code AND p.organization_id = s.organization_id
-WHERE s.status = 'completed'
-GROUP BY s.organization_id, si.product_code, p.product_name, DATE(s.created_at), s.branch_id, s.channel, si.uom;
+JOIN (
+    SELECT sale_id, SUM(amount) AS line_gross, SUM(product_vat) AS line_vat
+    FROM sale_items
+    GROUP BY sale_id
+) ls ON ls.sale_id = si.sale_id
+LEFT JOIN products p ON si.product_code = p.product_code AND p.organization_id = s.organization_id
+WHERE s.status IN ('booked','pending','unpaid','pending_payment','paid','processed','delivered','completed')
+  AND s.archived = 0
+GROUP BY s.organization_id, si.product_code, COALESCE(p.product_name, si.product_code), DATE(s.created_at), s.branch_id, s.channel, si.uom;
 
 DROP VIEW IF EXISTS v_sales_by_supplier;
 CREATE VIEW v_sales_by_supplier AS
