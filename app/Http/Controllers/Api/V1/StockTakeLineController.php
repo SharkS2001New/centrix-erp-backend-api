@@ -29,7 +29,19 @@ class StockTakeLineController extends BaseResourceController
                     ->on('p.organization_id', '=', 'b.organization_id')
                     ->whereNull('p.deleted_at');
             })
-            ->select('stock_take_lines.*', 'p.product_name');
+            ->leftJoin('uoms as u', 'u.id', '=', 'p.unit_id')
+            ->select([
+                'stock_take_lines.*',
+                'p.product_name',
+                'p.unit_id',
+                'p.subcategory_id',
+                'u.full_name as uom_name',
+                'u.conversion_factor',
+                'u.small_packaging_label',
+                'u.middle_packaging_label',
+                'u.middle_factor',
+                'u.uom_type',
+            ]);
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if (in_array($col, $this->filterableColumns(), true)) {

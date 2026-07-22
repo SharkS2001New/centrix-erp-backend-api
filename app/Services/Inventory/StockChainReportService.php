@@ -178,11 +178,26 @@ class StockChainReportService
             $query->where('p.subcategory_id', $subcategoryId);
         }
 
+        $summaryRaw = DB::query()
+            ->fromSub((clone $query)->reorder(), 'stock_chain_filtered')
+            ->selectRaw('COUNT(*) as row_count')
+            ->selectRaw('COALESCE(SUM(total_received), 0) as total_received')
+            ->selectRaw('COALESCE(SUM(total_sold), 0) as total_sold')
+            ->selectRaw('COALESCE(SUM(total_cost_value), 0) as total_cost_value')
+            ->first();
+
         $paginator = $query
             ->orderBy('p.product_name')
             ->paginate($perPage, ['*'], 'page', $page);
 
-        return $paginator->toArray();
+        return array_merge($paginator->toArray(), [
+            'summary' => [
+                'row_count' => (int) ($summaryRaw->row_count ?? 0),
+                'total_received' => round((float) ($summaryRaw->total_received ?? 0), 2),
+                'total_sold' => round((float) ($summaryRaw->total_sold ?? 0), 2),
+                'total_cost_value' => round((float) ($summaryRaw->total_cost_value ?? 0), 2),
+            ],
+        ]);
     }
 
     /** @return array<string, mixed> */

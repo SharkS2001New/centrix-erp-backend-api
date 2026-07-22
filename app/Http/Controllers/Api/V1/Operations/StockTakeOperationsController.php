@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
+use App\Jobs\CompleteStockTakeSessionJob;
 use App\Jobs\InitializeStockTakeSessionJob;
 use App\Jobs\SaveStockTakeCountsJob;
 use App\Models\CurrentStock;
@@ -28,6 +29,9 @@ class StockTakeOperationsController extends Controller
     use HandlesInventory;
 
     private const SYNC_SAVE_LINE_LIMIT = 25;
+
+    /** Complete sync when line count is at or below this; larger sessions use the queue. */
+    private const SYNC_COMPLETE_LINE_LIMIT = 50;
 
     public function __construct(
         protected ErpContext $erp,
@@ -208,9 +212,25 @@ class StockTakeOperationsController extends Controller
             ], 202);
         }
 
-        return response()->json(
-            $this->completeStockTakeSession($session, $request->user())
-        );
+        $lineCount = StockTakeLine::query()->where('session_id', $session->id)->count();
+        if ($lineCount <= self::SYNC_COMPLETE_LINE_LIMIT) {
+            return response()->json(
+                $this->completeStockTakeSession($session, $request->user())
+            );
+        }
+
+        $task = $this->tasks->create('stock_take_complete', $request->user(), [
+            'session_id' => $session->id,
+            'user_id' => $request->user()->id,
+            'line_count' => $lineCount,
+        ]);
+
+        CompleteStockTakeSessionJob::dispatch($task->id);
+
+        return response()->json([
+            'message' => 'Stock take completion queued.',
+            'task_id' => $task->id,
+        ], 202);
     }
 
     public function completeStockTakeSession(StockTakeSession $session, User $user): StockTakeSession

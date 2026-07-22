@@ -87,6 +87,14 @@ class LowStockReportService
             });
         });
 
+        $summaryRaw = (clone $query)
+            ->reorder()
+            ->select([
+                DB::raw('COUNT(*) as row_count'),
+                DB::raw("SUM(CASE WHEN {$totalSql} <= 0 THEN 1 ELSE 0 END) as out_of_stock_count"),
+            ])
+            ->first();
+
         $paginator = $query->orderBy('p.product_name')->paginate($perPage);
 
         $paginator->getCollection()->transform(function ($row) use ($mode, $globalThreshold) {
@@ -144,6 +152,11 @@ class LowStockReportService
             $row['total_base_units'] = $available;
         }
         unset($row);
+
+        $payload['summary'] = [
+            'row_count' => (int) ($summaryRaw->row_count ?? $payload['total'] ?? 0),
+            'out_of_stock_count' => (int) ($summaryRaw->out_of_stock_count ?? 0),
+        ];
 
         return $payload;
     }

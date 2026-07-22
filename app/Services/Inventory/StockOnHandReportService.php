@@ -122,9 +122,48 @@ class StockOnHandReportService
             $query->orderBy('p.product_name');
         }
 
+        $includeSummary = $request->boolean('include_summary', true);
+        $summaryOnly = $request->boolean('summary_only', false);
+
+        if ($summaryOnly || $includeSummary) {
+            $summaryRaw = (clone $query)
+                ->reorder()
+                ->select([
+                    DB::raw('COUNT(*) as row_count'),
+                    DB::raw("COALESCE(SUM({$shopCostValueSql}), 0) as shop_cost_value"),
+                    DB::raw("COALESCE(SUM({$storeCostValueSql}), 0) as store_cost_value"),
+                    DB::raw("COALESCE(SUM({$totalCostValueSql}), 0) as total_cost_value"),
+                ])
+                ->first();
+
+            $summary = [
+                'row_count' => (int) ($summaryRaw->row_count ?? 0),
+                'shop_cost_value' => round((float) ($summaryRaw->shop_cost_value ?? 0), 2),
+                'store_cost_value' => round((float) ($summaryRaw->store_cost_value ?? 0), 2),
+                'total_cost_value' => round((float) ($summaryRaw->total_cost_value ?? 0), 2),
+                'cost_value' => round((float) ($summaryRaw->total_cost_value ?? 0), 2),
+            ];
+
+            if ($summaryOnly) {
+                return [
+                    'data' => [],
+                    'total' => $summary['row_count'],
+                    'per_page' => $perPage,
+                    'current_page' => 1,
+                    'last_page' => 1,
+                    'summary' => $summary,
+                ];
+            }
+        } else {
+            $summary = null;
+        }
+
         $paginator = $query->paginate($perPage);
         $payload = $paginator->toArray();
         $payload['data'] = $this->branchStock->attachAvailabilityToRows($payload['data'] ?? []);
+        if ($summary !== null) {
+            $payload['summary'] = $summary;
+        }
 
         return $payload;
     }

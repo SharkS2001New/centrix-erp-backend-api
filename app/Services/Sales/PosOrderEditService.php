@@ -98,31 +98,18 @@ class PosOrderEditService
             return;
         }
 
-        $allowed = $this->editableStatusesForChannel($channel, $gate);
+        // Sales & Orders “Edit Order” follows Platform → Edit order stages (defaults: booked, pending).
+        if (! $workflowService->isEditableLineStatus($status, $channel)) {
+            if ($isPosSale) {
+                throw new InvalidArgumentException(
+                    'Editing completed POS orders is disabled. Enable “Allow editing completed POS orders” under Platform → Sales behaviour.',
+                );
+            }
 
-        if (in_array($status, $allowed, true)) {
-            return;
-        }
-
-        $aligned = $workflowService->alignStatusToPipeline($status, $channel);
-        if (in_array($aligned, $allowed, true)) {
-            return;
-        }
-
-        if ($this->allowsCheckoutReEdit($channel, $gate)
-            && $workflowService->isRestorableToCartStatus($status, $channel, true)) {
-            return;
-        }
-
-        if ($isPosSale && ! $this->posOrderEditEnabled($gate)) {
             throw new InvalidArgumentException(
-                'Editing completed POS orders is disabled. Enable “Allow editing completed POS orders” under Platform → Sales behaviour.',
+                "This order cannot be edited in its current status ({$status}).",
             );
         }
-
-        throw new InvalidArgumentException(
-            "This order cannot be edited in its current status ({$status}).",
-        );
     }
 
     public function canRestoreSaleToCart(Sale $sale, User $user, CapabilityGate $gate): bool

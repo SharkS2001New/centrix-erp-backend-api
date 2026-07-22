@@ -204,6 +204,36 @@ class PosOrderEditServiceTest extends TestCase
         $this->assertTrue($service->canRestoreSaleToCart($sale, $manager, $gate));
     }
 
+    public function test_completed_backend_orders_are_not_editable_outside_platform_edit_stages(): void
+    {
+        $permissions = $this->createMock(\App\Services\Auth\UserPermissionService::class);
+        $permissions->method('canEditOthersSalesOrders')->willReturn(true);
+        $service = new PosOrderEditService(
+            app(\App\Services\Sales\CustomerReturnService::class),
+            $permissions,
+        );
+        $gate = $this->gateWithPosOrderEdit(false);
+
+        $manager = new \App\Models\User(['is_admin' => true]);
+        $manager->id = 30;
+
+        $sale = new \App\Models\Sale([
+            'status' => 'completed',
+            'archived' => 0,
+            'channel' => 'backend',
+            'cashier_id' => $manager->id,
+        ]);
+
+        try {
+            $service->assertSaleEditable($sale, $manager, $gate);
+            $this->fail('Expected InvalidArgumentException was not thrown.');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('current status (completed)', $e->getMessage());
+        }
+
+        $this->assertFalse($service->canRestoreSaleToCart($sale, $manager, $gate));
+    }
+
     public function test_booked_or_pending_mobile_orders_allow_previous_day_mutation(): void
     {
         $service = new PosOrderEditService(

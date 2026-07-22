@@ -723,26 +723,37 @@ class ReportController extends Controller
             });
         }
 
-        return response()->json(
-            $q->with(['product:product_code,product_name,unit_id', 'product.unit'])
-                ->orderByDesc('id')
-                ->paginate(min((int) $request->input('per_page', 50), 200))
-                ->through(function ($transaction) {
-                    $payload = $transaction->toArray();
-                    $payload['product_name'] = $transaction->product?->product_name;
-                    $unit = $transaction->product?->unit;
-                    if ($unit) {
-                        $payload['uom_name'] = $unit->full_name;
-                        $payload['conversion_factor'] = $unit->conversion_factor;
-                        $payload['small_packaging_label'] = $unit->small_packaging_label;
-                        $payload['middle_packaging_label'] = $unit->middle_packaging_label;
-                        $payload['middle_factor'] = $unit->middle_factor;
-                        $payload['uom_type'] = $unit->uom_type;
-                    }
+        $summaryRaw = (clone $q)
+            ->reorder()
+            ->selectRaw('COUNT(*) as row_count')
+            ->selectRaw('COUNT(DISTINCT product_code) as product_count')
+            ->first();
 
-                    return $payload;
-                }),
-        );
+        $paginator = $q->with(['product:product_code,product_name,unit_id', 'product.unit'])
+            ->orderByDesc('id')
+            ->paginate(min((int) $request->input('per_page', 50), 200))
+            ->through(function ($transaction) {
+                $payload = $transaction->toArray();
+                $payload['product_name'] = $transaction->product?->product_name;
+                $unit = $transaction->product?->unit;
+                if ($unit) {
+                    $payload['uom_name'] = $unit->full_name;
+                    $payload['conversion_factor'] = $unit->conversion_factor;
+                    $payload['small_packaging_label'] = $unit->small_packaging_label;
+                    $payload['middle_packaging_label'] = $unit->middle_packaging_label;
+                    $payload['middle_factor'] = $unit->middle_factor;
+                    $payload['uom_type'] = $unit->uom_type;
+                }
+
+                return $payload;
+            });
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => [
+                'row_count' => (int) ($summaryRaw->row_count ?? 0),
+                'product_count' => (int) ($summaryRaw->product_count ?? 0),
+            ],
+        ]));
     }
 
     public function stockChain(Request $request)
@@ -1000,7 +1011,9 @@ class ReportController extends Controller
         $summaryGrossProfit = $summaryGrossRevenue - $summaryCogs;
         $summary = [
             'product_count' => (int) ($summaryRaw->product_count ?? 0),
+            'gross_revenue' => round($summaryGrossRevenue, 2),
             'net_revenue' => round($summaryNetRevenue, 2),
+            'total_vat' => round($summaryTotalVat, 2),
             'cogs' => round($summaryCogs, 2),
             'gross_profit' => round($summaryGrossProfit, 2),
             'gross_margin_percent' => $summaryGrossRevenue > 0
@@ -1529,11 +1542,27 @@ class ReportController extends Controller
 
         $perPage = min((int) ($filters['per_page'] ?? 20), 200);
 
-        return response()->json(
-            $q->orderByRaw('outstanding_balance DESC')
-                ->orderBy('c.customer_name')
-                ->paginate($perPage),
-        );
+        $summaryQuery = clone $q;
+        $summaryRaw = DB::query()
+            ->fromSub($summaryQuery, 'debtors_filtered')
+            ->selectRaw('COUNT(*) as row_count')
+            ->selectRaw('COALESCE(SUM(outstanding_balance), 0) as outstanding_balance')
+            ->selectRaw('COALESCE(SUM(invoice_balance), 0) as invoice_balance')
+            ->selectRaw('COALESCE(SUM(open_invoices), 0) as open_invoices')
+            ->first();
+
+        $paginator = $q->orderByRaw('outstanding_balance DESC')
+            ->orderBy('c.customer_name')
+            ->paginate($perPage);
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => [
+                'row_count' => (int) ($summaryRaw->row_count ?? 0),
+                'outstanding_balance' => round((float) ($summaryRaw->outstanding_balance ?? 0), 2),
+                'invoice_balance' => round((float) ($summaryRaw->invoice_balance ?? 0), 2),
+                'open_invoices' => (int) ($summaryRaw->open_invoices ?? 0),
+            ],
+        ]));
     }
 
     public function invoicePayments(Request $request)
@@ -1610,11 +1639,24 @@ class ReportController extends Controller
             });
         }
 
-        return response()->json(
-            $q->orderByDesc('cip.date_paid')
-                ->orderByDesc('cip.id')
-                ->paginate(min((int) ($filters['per_page'] ?? 20), 200)),
-        );
+        $summaryRaw = (clone $q)
+            ->reorder()
+            ->select([
+                DB::raw('COUNT(*) as row_count'),
+                DB::raw('COALESCE(SUM(cip.amount_paid), 0) as amount_paid'),
+            ])
+            ->first();
+
+        $paginator = $q->orderByDesc('cip.date_paid')
+            ->orderByDesc('cip.id')
+            ->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => [
+                'row_count' => (int) ($summaryRaw->row_count ?? 0),
+                'amount_paid' => round((float) ($summaryRaw->amount_paid ?? 0), 2),
+            ],
+        ]));
     }
 
     public function purchasesBySupplier(Request $request)
@@ -1637,9 +1679,44 @@ class ReportController extends Controller
 
     public function expenses(Request $request)
     {
-        return response()->json($this->reportFromView('v_expenses_summary', $this->filters($request), [
-            'expense_date', 'branch_id', 'expense_group_id',
-        ]));
+        $filters = $this->filters($request);
+        $allowedCols = ['expense_date', 'branch_id', 'expense_group_id'];
+        $payload = $this->reportFromView('v_expenses_summary', $filters, $allowedCols);
+
+        $q = DB::table('v_expenses_summary');
+        $this->scopeReportQueryToOrganization($q, $request, 'v_expenses_summary', $allowedCols);
+        foreach ($allowedCols as $col) {
+            if (isset($filters[$col]) && $filters[$col] !== '') {
+                $q->where($col, $filters[$col]);
+            }
+        }
+        if (! empty($filters['from_date']) && ! empty($filters['date_column'])
+            && $this->viewColumnExists('v_expenses_summary', $filters['date_column'])) {
+            $q->where($filters['date_column'], '>=', $filters['from_date']);
+        }
+        if (! empty($filters['to_date']) && ! empty($filters['date_column'])
+            && $this->viewColumnExists('v_expenses_summary', $filters['date_column'])) {
+            $q->where($filters['date_column'], '<=', $filters['to_date']);
+        }
+
+        $byGroup = $q
+            ->selectRaw("COALESCE(NULLIF(TRIM(group_name), ''), 'Other') as group_name")
+            ->selectRaw('COALESCE(SUM(total_amount), 0) as total_amount')
+            ->groupByRaw("COALESCE(NULLIF(TRIM(group_name), ''), 'Other')")
+            ->orderByDesc('total_amount')
+            ->get()
+            ->map(fn ($row) => [
+                'group_name' => (string) ($row->group_name ?? 'Other'),
+                'total_amount' => round((float) ($row->total_amount ?? 0), 2),
+            ])
+            ->values()
+            ->all();
+
+        $payload['summary'] = array_merge($payload['summary'] ?? [], [
+            'by_group' => $byGroup,
+        ]);
+
+        return response()->json($payload);
     }
 
     public function damages(Request $request)
@@ -1875,7 +1952,7 @@ class ReportController extends Controller
         return $filters;
     }
 
-    protected function reportFromView(string $view, array $filters, array $allowedCols, ?callable $orderBy = null)
+    protected function reportFromView(string $view, array $filters, array $allowedCols, ?callable $orderBy = null): array
     {
         $request = request();
         $q = DB::table($view);
@@ -1924,18 +2001,111 @@ class ReportController extends Controller
 
         $this->applyProductSubcategoryFilter($q, $request, $view);
 
+        // Full-filter aggregates for KPI / footer cards (not just the current page).
+        $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
+
         if ($orderBy) {
             $orderBy($q);
         }
 
-        return $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+        $paginator = $q->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+
+        return array_merge($paginator->toArray(), [
+            'summary' => $summary,
+        ]);
+    }
+
+    /**
+     * Sum numeric/money/qty columns across the full filtered report (before pagination).
+     *
+     * @param  \Illuminate\Database\Query\Builder  $query
+     * @return array<string, float|int>
+     */
+    protected function aggregateFilteredReportSummary($query, string $view): array
+    {
+        try {
+            $query->reorder();
+        } catch (\Throwable) {
+            // Some builders may not support reorder; continue.
+        }
+
+        $sample = (clone $query)->limit(1)->first();
+        if (! $sample) {
+            return ['row_count' => 0];
+        }
+
+        $sumCols = [];
+        foreach (array_keys((array) $sample) as $col) {
+            $col = (string) $col;
+            if ($this->isSummableReportColumn($col) && $this->viewColumnExists($view, $col)) {
+                $sumCols[] = $col;
+            }
+        }
+
+        $selects = ['COUNT(*) as row_count'];
+        foreach ($sumCols as $col) {
+            $escaped = str_replace('`', '``', $col);
+            $selects[] = "COALESCE(SUM(`{$escaped}`), 0) as `{$escaped}`";
+        }
+
+        $agg = (clone $query)->selectRaw(implode(', ', $selects))->first();
+        $summary = [
+            'row_count' => (int) ($agg->row_count ?? 0),
+        ];
+
+        foreach ($sumCols as $col) {
+            $summary[$col] = round((float) ($agg->{$col} ?? 0), 4);
+        }
+
+        // Derived VAT-friendly nets used by report KPI cards.
+        if (isset($summary['total_revenue'], $summary['total_vat'])) {
+            $summary['net_ex_vat'] = round((float) $summary['total_revenue'] - (float) $summary['total_vat'], 2);
+        }
+        if (isset($summary['gross_sales'], $summary['total_vat'])) {
+            $summary['net_ex_vat'] = round((float) $summary['gross_sales'] - (float) $summary['total_vat'], 2);
+            if (! isset($summary['net_sales'])) {
+                $summary['net_sales'] = $summary['net_ex_vat'];
+            }
+        }
+        if (isset($summary['revenue'], $summary['vat'])) {
+            $summary['net_ex_vat'] = round((float) $summary['revenue'] - (float) $summary['vat'], 2);
+        }
+        if (isset($summary['gross'], $summary['vat'])) {
+            $summary['net'] = round((float) $summary['gross'] - (float) $summary['vat'], 2);
+        }
+
+        return $summary;
+    }
+
+    protected function isSummableReportColumn(string $column): bool
+    {
+        $col = strtolower($column);
+        if ($col === '' || $col === 'id') {
+            return false;
+        }
+        // Header-level / snapshot / rate fields — summing these across rows is usually wrong.
+        if (preg_match('/(^|_)(id|code|uuid|date|day|period|name|status|channel|uom|label|type|alert|bucket|username|email|phone|route|branch|cashier|salesperson|supplier|customer|product|category|subcategory|method|group|location|purpose|notes|comments|reference|unit|price|rate|factor|after|before|opening|closing|expected|available|reorder)(_|$)/', $col)) {
+            return false;
+        }
+
+        return (bool) preg_match(
+            '/amount|total|vat|gross|net|qty|quantity|count|orders|revenue|collected|discount|credit|debit|sales|profit|expense|due|outstanding|variance|float|value|paid|balance|cost|cogs|received|sold|units|items|transactions|line_items|pending|working/',
+            $col,
+        );
     }
 
     /** Add ERP-style PO numbers to LPO report rows (open LPO, purchases by supplier). */
-    protected function attachLpoDisplayFields($paginator): array
+    protected function attachLpoDisplayFields($paginatorOrPayload): array
     {
+        if ($paginatorOrPayload instanceof \Illuminate\Contracts\Pagination\LengthAwarePaginator) {
+            $payload = $paginatorOrPayload->toArray();
+            $rows = collect($paginatorOrPayload->items());
+        } else {
+            $payload = is_array($paginatorOrPayload) ? $paginatorOrPayload : [];
+            $rows = collect($payload['data'] ?? []);
+        }
+
         $lpoModule = app(LpoModuleService::class);
-        $rows = collect($paginator->items());
         $lpoNos = $rows->pluck('lpo_no')->filter()->map(fn ($v) => (int) $v)->unique()->values()->all();
 
         $lpos = $lpoNos === []
@@ -1945,7 +2115,6 @@ class ReportController extends Controller
                 ->get(['lpo_no', 'lpo_seq', 'reference_number', 'created_at', 'sent_at'])
                 ->keyBy('lpo_no');
 
-        $payload = $paginator->toArray();
         $payload['data'] = $rows->map(function ($row) use ($lpos, $lpoModule) {
             $row = (array) $row;
             $lpoNo = (int) ($row['lpo_no'] ?? 0);
@@ -2116,7 +2285,12 @@ class ReportController extends Controller
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
-        return $q->orderBy('product_name')->paginate($perPage);
+        $summary = $this->aggregateFilteredReportSummary(clone $q, $view);
+        $paginator = $q->orderBy('product_name')->paginate($perPage);
+
+        return array_merge($paginator->toArray(), [
+            'summary' => $summary,
+        ]);
     }
 
     protected function buildCustomerStatement(Request $request, int $customerNum): array

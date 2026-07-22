@@ -560,7 +560,8 @@ CREATE TABLE stock_receipts (
     FOREIGN KEY (branch_id)       REFERENCES branches(id),
     FOREIGN KEY (organization_id) REFERENCES organizations(id),
     FOREIGN KEY (received_by)     REFERENCES users(id),
-    INDEX idx_product_code (product_code)
+    INDEX idx_product_code (product_code),
+    INDEX stock_receipts_org_product_id_idx (organization_id, product_code, id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 DROP TABLE IF EXISTS supplier_return_document_lines;
