@@ -183,8 +183,10 @@ class AccountingReportController extends Controller
         $paginator = $q->orderByDesc('total_outstanding')->paginate(
             min((int) $request->input('per_page', 50), 200),
         );
-        $totalOutstanding = (float) collect((clone $q)->get())
-            ->sum(fn ($row) => (float) ($row->total_outstanding ?? 0));
+        $totalOutstanding = (float) (DB::query()
+            ->fromSub((clone $q)->reorder(), 'ar_filtered')
+            ->selectRaw('COALESCE(SUM(total_outstanding), 0) as total_outstanding')
+            ->value('total_outstanding') ?? 0);
 
         return response()->json(array_merge($paginator->toArray(), [
             'summary' => ['total_outstanding' => round($totalOutstanding, 2)],

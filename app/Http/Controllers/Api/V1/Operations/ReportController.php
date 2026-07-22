@@ -2387,15 +2387,26 @@ class ReportController extends Controller
         }
         $customer = $customerQuery->firstOrFail();
 
+        $fromDate = $request->filled('from_date')
+            ? (string) $request->input('from_date')
+            : now()->subDays(365)->toDateString();
+        $toDate = $request->filled('to_date')
+            ? (string) $request->input('to_date')
+            : now()->toDateString();
+
+        // Sync paid totals only for invoices in the statement window that already have payments.
         CustomerInvoice::query()
             ->where('customer_num', $customerNum)
             ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereNull('deleted_at')
+            ->whereDate('invoice_date', '>=', $fromDate)
+            ->whereDate('invoice_date', '<=', $toDate)
             ->whereExists(function ($query) {
                 $query->select(DB::raw(1))
                     ->from('customer_invoice_payments as cip')
                     ->whereColumn('cip.customer_invoice_id', 'customer_invoices.id');
             })
+            ->limit(200)
             ->get()
             ->each(fn (CustomerInvoice $invoice) => $invoiceService->syncPaidTotalsFromPayments($invoice));
 
@@ -2413,12 +2424,16 @@ class ReportController extends Controller
             ->where('customer_num', $customerNum)
             ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
             ->whereNull('deleted_at')
+            ->whereDate('invoice_date', '>=', $fromDate)
+            ->whereDate('invoice_date', '<=', $toDate)
             ->orderBy('invoice_date')
             ->get();
 
         $payments = DB::table('customer_invoice_payments')
             ->where('customer_num', $customerNum)
             ->when($orgId && Schema::hasColumn('customer_invoice_payments', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->whereDate('date_paid', '>=', $fromDate)
+            ->whereDate('date_paid', '<=', $toDate)
             ->orderBy('date_paid')
             ->get();
 
@@ -2427,6 +2442,8 @@ class ReportController extends Controller
             $creditQuery = DB::table('credit_notes as cn')
                 ->where('cn.customer_num', $customerNum)
                 ->when($orgId, fn ($q) => $q->where('cn.organization_id', $orgId))
+                ->whereDate('cn.credit_date', '>=', $fromDate)
+                ->whereDate('cn.credit_date', '<=', $toDate)
                 ->orderBy('cn.credit_date')
                 ->orderBy('cn.id');
 
@@ -2493,6 +2510,8 @@ class ReportController extends Controller
             ->where('customer_num', $customerNum)
             ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
             ->where('status', 'completed')
+            ->whereDate('completed_at', '>=', $fromDate)
+            ->whereDate('completed_at', '<=', $toDate)
             ->orderByDesc('completed_at')
             ->limit(100)
             ->get();
@@ -2528,6 +2547,8 @@ class ReportController extends Controller
                 'total_paid' => round($totalPaid, 2),
                 'outstanding_balance' => (float) $customer->current_balance,
                 'credit_limit' => (float) $customer->credit_limit,
+                'from_date' => $fromDate,
+                'to_date' => $toDate,
             ],
         ];
     }

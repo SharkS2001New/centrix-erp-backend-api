@@ -75,11 +75,45 @@ class SupplierModuleService
 
     public function summary(Supplier $supplier): array
     {
+        // Lean batch path — avoid N× LpoModuleService::summary (full lines/products per LPO).
         $lpos = LpoMst::query()
             ->where('supplier_id', $supplier->id)
             ->whereNull('deleted_at')
             ->orderByDesc('lpo_no')
+            ->limit(150)
             ->get();
+
+        $lpoNos = $lpos->pluck('lpo_no')->map(fn ($n) => (int) $n)->filter()->unique()->values()->all();
+
+        $statusNames = $lpoNos === []
+            ? collect()
+            : DB::table('lpo_statuses')->pluck('status_name', 'status_code');
+
+        $receivedByLpo = $lpoNos === []
+            ? collect()
+            : DB::table('lpo_txn')
+                ->whereIn('lpo_no', $lpoNos)
+                ->groupBy('lpo_no')
+                ->selectRaw('lpo_no, COALESCE(SUM(GREATEST(COALESCE(received_qty, 0), 0) * COALESCE(cost_price, 0)), 0) as received_payable')
+                ->pluck('received_payable', 'lpo_no');
+
+        $paidByLpo = $lpoNos === []
+            ? []
+            : DB::table('supplier_payments')
+                ->whereIn('lpo_no', $lpoNos)
+                ->groupBy('lpo_no')
+                ->selectRaw('lpo_no, COALESCE(SUM(amount_paid), 0) AS total')
+                ->pluck('total', 'lpo_no')
+                ->map(fn ($total) => (float) $total)
+                ->all();
+
+        $invoicesByLpo = $lpoNos === []
+            ? collect()
+            : DB::table('lpo_supplier_invoices')
+                ->whereIn('lpo_no', $lpoNos)
+                ->orderByDesc('id')
+                ->get()
+                ->groupBy('lpo_no');
 
         $purchases = [];
         $documents = [];
@@ -91,21 +125,56 @@ class SupplierModuleService
         $leadTimes = [];
 
         foreach ($lpos as $lpo) {
-            $lpoSummary = $this->lpoModule->summary((int) $lpo->lpo_no);
-            $purchase = $this->mapPurchaseRow($lpoSummary);
+            $lpoNo = (int) $lpo->lpo_no;
+            $statusCode = (int) ($lpo->lpo_status_code ?? 0);
+            $statusName = trim((string) ($statusNames[$statusCode] ?? ''));
+            if ($statusName === '') {
+                $statusName = LpoModuleService::statusLabel($statusCode);
+            }
+            if ((int) ($lpo->cleared_flag ?? 0) === 1 && $statusCode >= LpoModuleService::STATUS_FULLY_RECEIVED) {
+                $statusName = LpoModuleService::statusLabel(LpoModuleService::STATUS_CLEARED);
+            }
+
+            $receivedPayable = (float) ($receivedByLpo[$lpoNo] ?? 0);
+            $amountPaid = (float) ($paidByLpo[$lpoNo] ?? 0);
+            $netAmount = (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0);
+            $balanceDue = max(0, $receivedPayable - $amountPaid);
+            $paymentStatus = $balanceDue <= 0.009
+                ? ($receivedPayable > 0 || $amountPaid > 0 ? 'paid' : 'unpaid')
+                : ($amountPaid > 0 ? 'partial' : 'unpaid');
+
+            $seq = (int) ($lpo->lpo_seq ?? $lpoNo);
+            $orderDate = $lpo->created_at ?? $lpo->sent_at;
+            $purchase = [
+                'lpo_no' => $lpoNo,
+                'lpo_seq' => $seq,
+                'po_number' => $this->lpoModule->formatPoNumber($seq, $orderDate),
+                'status_name' => $statusName,
+                'supplier_invoice_no' => $lpo->supplier_invoice_no,
+                'reference_number' => $lpo->reference_number,
+                'order_date' => $orderDate,
+                'net_amount' => $netAmount,
+                'total_amount' => (float) ($lpo->total_amount ?? 0),
+                'amount_paid' => round($amountPaid, 2),
+                'balance_due' => round($balanceDue, 2),
+                'payment_status' => $paymentStatus,
+                'received_payable_total' => round($receivedPayable, 2),
+                'items_fully_received' => $receivedPayable > 0,
+                'can_pay' => $receivedPayable > 0,
+            ];
             $purchases[] = $purchase;
 
-            $totalPurchases += (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0);
-            $totalPaid += (float) ($purchase['amount_paid'] ?? 0);
+            $totalPurchases += $netAmount;
+            $totalPaid += $amountPaid;
 
-            if (! in_array($purchase['payment_status'] ?? '', ['paid'], true)
-                && (float) ($purchase['balance_due'] ?? 0) > 0) {
+            if ($paymentStatus !== 'paid' && $balanceDue > 0) {
                 $openLpoCount++;
             }
 
-            $invoiceCount += count($lpoSummary['supplier_invoices'] ?? []);
+            $lpoInvoices = $invoicesByLpo->get($lpoNo, collect());
+            $invoiceCount += $lpoInvoices->count();
 
-            if ((float) ($purchase['received_payable_total'] ?? 0) > 0) {
+            if ($receivedPayable > 0) {
                 $receivedAt = $this->asCarbon($lpo->cleared_at ?? $lpo->sent_at ?? $lpo->created_at);
                 if ($receivedAt && (! $lastDelivery || $receivedAt->gt($lastDelivery))) {
                     $lastDelivery = $receivedAt;
@@ -116,26 +185,26 @@ class SupplierModuleService
                 }
             }
 
-            foreach ($lpoSummary['supplier_invoices'] as $inv) {
+            foreach ($lpoInvoices as $inv) {
                 $documents[] = [
-                    'id' => 'inv-' . $inv['id'],
-                    'lpo_no' => (int) $lpo->lpo_no,
+                    'id' => 'inv-' . $inv->id,
+                    'lpo_no' => $lpoNo,
                     'lpo_seq' => $purchase['lpo_seq'] ?? null,
                     'po_number' => $purchase['po_number'] ?? null,
                     'reference_number' => $purchase['reference_number'] ?? null,
                     'order_date' => $purchase['order_date'],
-                    'file_name' => $inv['supplier_invoice_number'] ?? $inv['number'] ?? 'Supplier invoice',
+                    'file_name' => $inv->supplier_invoice_number ?? $inv->file_name ?? 'Supplier invoice',
                     'status_name' => $purchase['status_name'],
-                    'supplier_invoice_no' => $inv['supplier_invoice_number'] ?? $inv['number'],
+                    'supplier_invoice_no' => $inv->supplier_invoice_number ?? null,
                     'total_amount' => (float) ($purchase['net_amount'] ?? $purchase['total_amount'] ?? 0),
                     'balance_due' => (float) ($purchase['balance_due'] ?? 0),
                 ];
             }
         }
 
-        $attachments = LpoAttachment::query()
-            ->whereIn('lpo_no', $lpos->pluck('lpo_no'))
-            ->get();
+        $attachments = $lpoNos === []
+            ? collect()
+            : LpoAttachment::query()->whereIn('lpo_no', $lpoNos)->get();
 
         $purchaseByLpo = collect($purchases)->keyBy('lpo_no');
         foreach ($attachments as $attachment) {
@@ -161,6 +230,17 @@ class SupplierModuleService
         $supplierPayload = $supplier->toArray();
         $supplierPayload['current_balance'] = $currentBalance;
 
+        $payments = SupplierPayment::query()
+            ->with(['paymentMethod', 'paidByUser'])
+            ->where('supplier_id', $supplier->id)
+            ->orderByDesc('date_paid')
+            ->orderByDesc('id')
+            ->limit(150)
+            ->get()
+            ->map(fn (SupplierPayment $payment) => $this->mapPaymentRow($payment))
+            ->values()
+            ->all();
+
         return [
             'supplier' => $supplierPayload,
             'stats' => [
@@ -174,7 +254,7 @@ class SupplierModuleService
                     : null,
             ],
             'purchases' => $purchases,
-            'payments' => $this->paymentsForSupplier($supplier->id),
+            'payments' => $payments,
             'documents' => $documents,
         ];
     }

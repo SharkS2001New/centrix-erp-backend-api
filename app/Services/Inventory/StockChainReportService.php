@@ -36,12 +36,16 @@ class StockChainReportService
             return $this->emptyPage($perPage, $page);
         }
 
-        $fromDate = $request->filled('from_date') ? (string) $request->input('from_date') : null;
-        $toDate = $request->filled('to_date') ? (string) $request->input('to_date') : null;
-        $hasPeriod = $fromDate !== null || $toDate !== null;
+        $fromDate = $request->filled('from_date')
+            ? (string) $request->input('from_date')
+            : now()->subDays(90)->toDateString();
+        $toDate = $request->filled('to_date')
+            ? (string) $request->input('to_date')
+            : now()->toDateString();
 
         $saleTypeList = implode(', ', array_map(fn ($t) => "'{$t}'", self::SALE_TYPES));
 
+        // Lifecycle is period-scoped (default 90d) so we do not scan all-time history.
         $lifecycleSub = DB::table('inventory_transactions as it')
             ->join('products as p', function ($join) use ($organizationId) {
                 $join->on('p.product_code', '=', 'it.product_code')
@@ -49,6 +53,8 @@ class StockChainReportService
                     ->whereNull('p.deleted_at');
             })
             ->whereIn('it.branch_id', $branchIds)
+            ->whereDate('it.created_at', '>=', $fromDate)
+            ->whereDate('it.created_at', '<=', $toDate)
             ->groupBy('it.branch_id', 'it.product_code')
             ->select([
                 'it.branch_id',
@@ -76,8 +82,8 @@ class StockChainReportService
                     ->where('it.reference_type', '=', 'sale');
             })
             ->whereIn('it.branch_id', $branchIds)
-            ->when($fromDate, fn ($q) => $q->whereDate('it.created_at', '>=', $fromDate))
-            ->when($toDate, fn ($q) => $q->whereDate('it.created_at', '<=', $toDate))
+            ->whereDate('it.created_at', '>=', $fromDate)
+            ->whereDate('it.created_at', '<=', $toDate)
             ->groupBy('it.branch_id', 'it.product_code')
             ->select([
                 'it.branch_id',
@@ -104,14 +110,8 @@ class StockChainReportService
                     ->whereNull('p.deleted_at');
             })
             ->whereIn('it.branch_id', $branchIds)
-            ->when($hasPeriod, function ($q) use ($fromDate, $toDate) {
-                if ($fromDate) {
-                    $q->whereDate('it.created_at', '>=', $fromDate);
-                }
-                if ($toDate) {
-                    $q->whereDate('it.created_at', '<=', $toDate);
-                }
-            })
+            ->whereDate('it.created_at', '>=', $fromDate)
+            ->whereDate('it.created_at', '<=', $toDate)
             ->select('it.branch_id', 'it.product_code')
             ->distinct();
 
