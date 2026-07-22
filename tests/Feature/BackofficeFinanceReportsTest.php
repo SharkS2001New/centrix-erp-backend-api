@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Models\Organization;
+use App\Models\PlatformSubscription;
 use App\Models\Sale;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
@@ -14,6 +15,34 @@ use Tests\TestCase;
 class BackofficeFinanceReportsTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $admin = User::where('username', 'admin')->first();
+        if ($admin) {
+            $this->ensureActiveSubscription($admin);
+        }
+    }
+
+    protected function ensureActiveSubscription(User $user): void
+    {
+        if (! $user->organization_id) {
+            return;
+        }
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $user->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+    }
 
     public function test_backoffice_finance_slugs_allow_sales_or_accounting_reports(): void
     {
@@ -151,11 +180,100 @@ class BackofficeFinanceReportsTest extends TestCase
         $this->assertEqualsWithDelta(2.0, (float) ($row['qty_sold_packages'] ?? 0), 0.01);
         $this->assertNotEmpty($row['qty_sold_label'] ?? null);
 
-        $response = $this->getJson('/api/v1/reports/profit-loss-by-product?from_date=2026-06-20&to_date=2026-06-20')
+        // Summary is org-wide for the day (may include other seed sales) — only
+        // assert the product-level formula: gross − COGS.
+        $this->assertEqualsWithDelta(
+            (float) ($row['gross_revenue'] ?? 0) - (float) ($row['cogs'] ?? 0),
+            (float) ($row['gross_profit'] ?? 0),
+            0.01,
+        );
+    }
+
+    public function test_profit_loss_by_product_uses_gross_selling_amount_not_net_ex_vat(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $product = \App\Models\Product::query()
+            ->with('unit')
+            ->where('organization_id', $admin->organization_id)
+            ->firstOrFail();
+
+        $uom = $product->unit ?? \App\Models\Uom::query()->findOrFail($product->unit_id);
+        $originalFactor = (float) $uom->conversion_factor;
+        $originalCost = (float) $product->last_cost_price;
+        $originalPrice = (float) $product->unit_price;
+        $uom->forceFill(['conversion_factor' => 1])->save();
+        $product->forceFill(['last_cost_price' => 4790, 'unit_price' => 4860])->save();
+
+        // Isolated day so seed sales cannot mix into this product row.
+        $day = '2025-03-15';
+        $qty = 80;
+        $gross = 390400.0;
+        $vat = 53848.28;
+
+        $sale = Sale::create([
+            'order_num' => 99222,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'processed',
+            'total_vat' => $vat,
+            'order_total' => $gross,
+            'payment_status' => 'paid',
+            'amount_paid' => $gross,
+            'archived' => 0,
+            'completed_at' => $day.' 12:00:00',
+        ]);
+        $sale->forceFill(['created_at' => $day.' 12:00:00'])->save();
+
+        \App\Models\SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => $qty,
+            'uom' => $product->uom ?? $uom->measure_name,
+            'selling_price' => 4860,
+            'discount_given' => 0,
+            'product_vat' => $vat,
+            'amount' => $gross,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $row = collect($this->getJson("/api/v1/reports/profit-loss-by-product?from_date={$day}&to_date={$day}")
             ->assertOk()
-            ->json();
-        $this->assertEqualsWithDelta(36.0, (float) ($response['summary']['gross_profit'] ?? 0), 0.01);
-        $this->assertEqualsWithDelta(884.0, (float) ($response['summary']['cogs'] ?? 0), 0.01);
+            ->json('data'))
+            ->firstWhere('product_code', $product->product_code);
+
+        $uom->forceFill(['conversion_factor' => $originalFactor])->save();
+        $product->forceFill(['last_cost_price' => $originalCost, 'unit_price' => $originalPrice])->save();
+
+        $this->assertNotNull($row);
+        $grossRevenue = (float) ($row['gross_revenue'] ?? 0);
+        $netRevenue = (float) ($row['net_revenue'] ?? 0);
+        $cogs = (float) ($row['cogs'] ?? 0);
+        $grossProfit = (float) ($row['gross_profit'] ?? 0);
+
+        $this->assertEqualsWithDelta(383200.0, $cogs, 0.01);
+        $this->assertEqualsWithDelta(7200.0, $grossProfit, 0.01);
+        $this->assertEqualsWithDelta($grossRevenue - $cogs, $grossProfit, 0.01);
+        $this->assertNotEqualsWithDelta(
+            $netRevenue - $cogs,
+            $grossProfit,
+            1.0,
+            'Gross profit must not use net-ex-VAT minus COGS when VAT is present.',
+        );
+
+        $pl = $this->getJson("/api/v1/reports/profit-loss?from_date={$day}&to_date={$day}")
+            ->assertOk()
+            ->json('data.0');
+        $this->assertEqualsWithDelta(
+            (float) ($pl['gross_revenue'] ?? 0) - (float) ($pl['cogs'] ?? 0),
+            (float) ($pl['gross_profit'] ?? 0),
+            0.01,
+        );
     }
 
     public function test_profit_loss_by_product_accessible_with_sales_reports_only(): void

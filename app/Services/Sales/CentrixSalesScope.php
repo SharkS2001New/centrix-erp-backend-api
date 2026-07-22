@@ -43,10 +43,14 @@ class CentrixSalesScope
         return "{$column} IN ({$list})";
     }
 
-    /** Report date bucket: completed when set, else created/booked date. */
+    /**
+     * Report date bucket: order placed / booked date.
+     * Use created_at (not completed_at) so pipeline orders stay on the day the
+     * salesperson placed them — matching the sales list "Placed date" filter.
+     */
     public static function reportSaleDateSql(string $alias = 's'): string
     {
-        return "DATE(COALESCE({$alias}.completed_at, {$alias}.created_at))";
+        return "DATE({$alias}.created_at)";
     }
 
     /**

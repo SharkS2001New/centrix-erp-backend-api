@@ -234,6 +234,8 @@ class ReportController extends Controller
         $prevTotalSales = (float) $salesBase($prevFrom, $prevTo)->sum('order_total');
 
         $grossProfitForPeriod = function (\Carbon\Carbon $start, \Carbon\Carbon $end) use ($orgId, $branchId, $metricStatuses) {
+            // Gross profit = (qty × unit/selling price) − (qty × cost) = gross sales − COGS.
+            // Do not subtract VAT from revenue here: unit_price and cost_price are on the same basis.
             $revenue = (float) CentrixSalesScope::excludeLegacyMaterialized(
                 DB::table('sales')
                     ->whereIn('status', $metricStatuses)
@@ -242,8 +244,8 @@ class ReportController extends Controller
                 ->when($orgId, fn ($q2) => $q2->where('organization_id', $orgId))
                 ->when($branchId, fn ($q2) => $q2->where('branch_id', $branchId))
                 ->tap(fn ($q2) => EffectiveSaleDate::applyFromToDateFilter($q2, $start->toDateString(), $end->toDateString()))
-                ->selectRaw('COALESCE(SUM(order_total - total_vat), 0) as net')
-                ->value('net');
+                ->selectRaw('COALESCE(SUM(order_total), 0) as gross')
+                ->value('gross');
 
             $cogs = (float) DB::table('sale_items as si')
                 ->join('sales as cs', 'cs.id', '=', 'si.sale_id')
@@ -914,7 +916,8 @@ class ReportController extends Controller
         }
         $totalExpenses = (float) $expenseQuery->sum('expense_amount');
 
-        $grossProfit = $netRevenue - $cogs;
+        // (qty × unit_price) − (qty × cost_price) ≈ gross sales − COGS (same price basis).
+        $grossProfit = $grossRevenue - $cogs;
         $netProfit = $grossProfit - $totalExpenses;
 
         $row = [
@@ -994,14 +997,14 @@ class ReportController extends Controller
         $summaryTotalVat = (float) ($summaryRaw->total_vat ?? 0);
         $summaryNetRevenue = $summaryGrossRevenue - $summaryTotalVat;
         $summaryCogs = (float) ($summaryRaw->cogs ?? 0);
-        $summaryGrossProfit = $summaryNetRevenue - $summaryCogs;
+        $summaryGrossProfit = $summaryGrossRevenue - $summaryCogs;
         $summary = [
             'product_count' => (int) ($summaryRaw->product_count ?? 0),
             'net_revenue' => round($summaryNetRevenue, 2),
             'cogs' => round($summaryCogs, 2),
             'gross_profit' => round($summaryGrossProfit, 2),
-            'gross_margin_percent' => $summaryNetRevenue > 0
-                ? round(($summaryGrossProfit / $summaryNetRevenue) * 100, 1)
+            'gross_margin_percent' => $summaryGrossRevenue > 0
+                ? round(($summaryGrossProfit / $summaryGrossRevenue) * 100, 1)
                 : null,
         ];
 
@@ -1032,7 +1035,8 @@ class ReportController extends Controller
             $totalVat = (float) ($row->total_vat ?? 0);
             $netRevenue = $grossRevenue - $totalVat;
             $cogs = (float) ($row->cogs ?? 0);
-            $grossProfit = $netRevenue - $cogs;
+            // (qty × unit_price) − (qty × cost_price) using line amount (selling) vs COGS.
+            $grossProfit = $grossRevenue - $cogs;
 
             $baseQty = (float) ($row->qty_sold ?? 0);
             $factor = StockCostCalculation::normalizedConversionFactor($row->conversion_factor ?? 1);
@@ -1055,8 +1059,8 @@ class ReportController extends Controller
             $row->net_revenue = round($netRevenue, 2);
             $row->cogs = round($cogs, 2);
             $row->gross_profit = round($grossProfit, 2);
-            $row->gross_margin_percent = $netRevenue > 0
-                ? round(($grossProfit / $netRevenue) * 100, 1)
+            $row->gross_margin_percent = $grossRevenue > 0
+                ? round(($grossProfit / $grossRevenue) * 100, 1)
                 : null;
 
             return $row;

@@ -13,7 +13,9 @@ class EffectiveSaleDate
 
     public static function resolve(?Carbon $completedAt, ?Carbon $createdAt = null): string
     {
-        $timestamp = $completedAt ?? $createdAt ?? now();
+        // Prefer placed/created date so reports match the sales list "Placed date"
+        // and do not shift orders onto a later completion day.
+        $timestamp = $createdAt ?? $completedAt ?? now();
 
         return $timestamp->toDateString();
     }

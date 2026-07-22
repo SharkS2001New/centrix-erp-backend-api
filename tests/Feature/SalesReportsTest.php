@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Models\Customer;
 use App\Models\CustomerInvoice;
 use App\Models\CustomerInvoicePayment;
+use App\Models\PlatformSubscription;
 use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\User;
@@ -22,7 +23,27 @@ class SalesReportsTest extends TestCase
     {
         parent::setUp();
         $this->admin = User::where('username', 'admin')->firstOrFail();
+        $this->ensureActiveSubscription($this->admin);
         Sanctum::actingAs($this->admin);
+    }
+
+    protected function ensureActiveSubscription(User $user): void
+    {
+        if (! $user->organization_id) {
+            return;
+        }
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $user->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
     }
 
     public function test_daily_sales_report_returns_pipeline_sales_for_org(): void
@@ -131,6 +152,55 @@ class SalesReportsTest extends TestCase
 
         $orderCount = (int) $rows->sum(fn ($row) => (int) ($row['order_count'] ?? 0));
         $this->assertGreaterThanOrEqual(2, $orderCount);
+    }
+
+    public function test_sales_by_user_buckets_by_placed_date_not_completed_at(): void
+    {
+        $placedDay = now()->subDay()->toDateString();
+        $completedDay = now()->toDateString();
+        $uniqueGross = 488772.50;
+
+        $beforeCompleted = (float) collect($this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$completedDay}&to_date={$completedDay}&date_column=sale_date&cashier_id={$this->admin->id}&per_page=50"
+        )->assertOk()->json('data'))->sum(fn ($row) => (float) ($row['gross_sales'] ?? 0));
+
+        $sale = Sale::query()->create([
+            'order_num' => 995014,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $this->admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => $uniqueGross,
+            'total_vat' => 67416.88,
+            'amount_paid' => $uniqueGross,
+            'archived' => 0,
+            'completed_at' => $completedDay.' 18:00:00',
+        ]);
+        // created_at is not fillable — force the placed day after insert.
+        $sale->forceFill(['created_at' => $placedDay.' 10:00:00'])->save();
+
+        $onPlaced = (float) collect($this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$placedDay}&to_date={$placedDay}&date_column=sale_date&cashier_id={$this->admin->id}&per_page=50"
+        )->assertOk()->json('data'))->sum(fn ($row) => (float) ($row['gross_sales'] ?? 0));
+
+        $this->assertGreaterThanOrEqual(
+            $uniqueGross,
+            $onPlaced,
+            'Sales by user should attribute the order to the placed/created date.',
+        );
+
+        $afterCompleted = (float) collect($this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$completedDay}&to_date={$completedDay}&date_column=sale_date&cashier_id={$this->admin->id}&per_page=50"
+        )->assertOk()->json('data'))->sum(fn ($row) => (float) ($row['gross_sales'] ?? 0));
+
+        $this->assertEqualsWithDelta(
+            $beforeCompleted,
+            $afterCompleted,
+            0.01,
+            'Completing an order on a later day must not move it onto that day in sales-by-user.',
+        );
     }
 
     public function test_dispatch_orders_match_orders_without_required_date_using_created_at(): void

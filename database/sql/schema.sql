@@ -2007,12 +2007,12 @@ SELECT
     sales_agg.vat_collected,
     sales_agg.net_revenue,
     COALESCE(cogs.total_cost, 0) AS cogs,
-    sales_agg.net_revenue - COALESCE(cogs.total_cost, 0) AS gross_profit,
+    sales_agg.gross_revenue - COALESCE(cogs.total_cost, 0) AS gross_profit,
     COALESCE(exp.total_expenses, 0) AS total_expenses,
-    sales_agg.net_revenue - COALESCE(cogs.total_cost, 0) - COALESCE(exp.total_expenses, 0) AS net_profit
+    sales_agg.gross_revenue - COALESCE(cogs.total_cost, 0) - COALESCE(exp.total_expenses, 0) AS net_profit
 FROM (
     SELECT
-        DATE(s.completed_at) AS period,
+        DATE(s.created_at) AS period,
         s.branch_id,
         b.branch_name,
         SUM(s.order_total) AS gross_revenue,
@@ -2021,11 +2021,11 @@ FROM (
     FROM sales s
     JOIN branches b ON s.branch_id = b.id
     WHERE s.status = 'completed' AND s.archived = 0
-    GROUP BY DATE(s.completed_at), s.branch_id, b.branch_name
+    GROUP BY DATE(s.created_at), s.branch_id, b.branch_name
 ) sales_agg
 LEFT JOIN (
     SELECT
-        DATE(s.completed_at) AS cost_date,
+        DATE(s.created_at) AS cost_date,
         s.branch_id,
         SUM(((si.quantity) / GREATEST(COALESCE(u.conversion_factor, 1), 1)) * (COALESCE(p.last_cost_price, 0))) AS total_cost
     FROM sale_items si
@@ -2035,7 +2035,7 @@ LEFT JOIN (
        AND p.organization_id = s.organization_id
     LEFT JOIN uoms u ON u.id = p.unit_id
     WHERE s.status = 'completed' AND s.archived = 0
-    GROUP BY DATE(s.completed_at), s.branch_id
+    GROUP BY DATE(s.created_at), s.branch_id
 ) cogs ON sales_agg.period = cogs.cost_date AND sales_agg.branch_id = cogs.branch_id
 LEFT JOIN (
     SELECT
@@ -2116,7 +2116,7 @@ DROP VIEW IF EXISTS v_sales_by_user;
 CREATE VIEW v_sales_by_user AS
 SELECT
     s.organization_id,
-    DATE(COALESCE(s.completed_at, s.created_at)) AS sale_date,
+    DATE(s.created_at) AS sale_date,
     s.branch_id,
     s.cashier_id,
     u.full_name AS salesperson,
@@ -2142,7 +2142,7 @@ WHERE s.status IN (
   AND s.cashier_id IS NOT NULL
 GROUP BY
     s.organization_id,
-    DATE(COALESCE(s.completed_at, s.created_at)),
+    DATE(s.created_at),
     s.branch_id,
     s.cashier_id,
     u.full_name,
