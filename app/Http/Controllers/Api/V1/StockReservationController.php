@@ -65,6 +65,10 @@ class StockReservationController extends BaseResourceController
             });
         }
 
+        if ($request->boolean('active') || $request->boolean('only_active')) {
+            $query->whereNull('released_at');
+        }
+
         $this->applyCreatedAtDateRange($query, $request);
         $perPage = min((int) $request->input('per_page', 25), 200);
         $this->applyListOrdering(

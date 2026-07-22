@@ -20,6 +20,12 @@ class VehicleController extends BaseResourceController
         return parent::baseQuery($request)->with('branch');
     }
 
+    /** @return list<string> */
+    protected function searchColumns(): array
+    {
+        return ['vehicle_name', 'plate_number', 'vehicle_code'];
+    }
+
     public function store(Request $request)
     {
         $data = $this->validatedVehicle($request);

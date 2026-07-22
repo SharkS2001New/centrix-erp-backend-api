@@ -18,8 +18,9 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Notifications\ActionRequestService;
 use App\Services\Erp\ErpContext;
 use App\Services\Returns\ReturnProofService;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
+use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\UploadedFile;
-use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -34,7 +35,7 @@ class SupplierReturnDocumentService
     ) {}
 
     /** @param  array<string, mixed>  $filters */
-    public function listForUser(User $user, array $filters = []): Collection
+    public function listForUser(User $user, array $filters = []): LengthAwarePaginator
     {
         $query = SupplierReturnDocument::query()
             ->with(['lines', 'supplier', 'returnedByUser'])
@@ -64,11 +65,26 @@ class SupplierReturnDocumentService
             $query->whereDate('created_at', '<=', $filters['date_to']);
         }
 
-        return $query
-            ->orderByDesc('id')
-            ->limit(min((int) ($filters['per_page'] ?? 200), 200))
-            ->get()
-            ->map(fn (SupplierReturnDocument $doc) => $this->formatDocument($doc, $user));
+        if ($q = trim((string) ($filters['q'] ?? ''))) {
+            $query->where(function (Builder $inner) use ($q) {
+                // document_no is the org-scoped return number (e.g. SR-0001).
+                $inner->where('document_no', 'like', "%{$q}%")
+                    ->orWhereHas(
+                        'supplier',
+                        fn ($supplier) => $supplier->where('supplier_name', 'like', "%{$q}%"),
+                    );
+            });
+        }
+
+        $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 100);
+        $paginator = $query->orderByDesc('id')->paginate($perPage);
+        $paginator->setCollection(
+            $paginator->getCollection()->map(
+                fn (SupplierReturnDocument $doc) => $this->formatDocument($doc, $user),
+            ),
+        );
+
+        return $paginator;
     }
 
     public function findForUser(User $user, int $id): SupplierReturnDocument

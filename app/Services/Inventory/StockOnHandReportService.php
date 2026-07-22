@@ -46,10 +46,10 @@ class StockOnHandReportService
         }
 
         $totalSql = '(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0))';
-        $unitCostSql = $this->valuation->effectiveUnitCostExpression('p', 'br');
-        $shopCostValueSql = $this->valuation->stockCostValueSql('COALESCE(cs.shop_quantity, 0)', 'p', 'br');
-        $storeCostValueSql = $this->valuation->stockCostValueSql('COALESCE(cs.store_quantity, 0)', 'p', 'br');
-        $totalCostValueSql = $this->valuation->stockCostValueSql($totalSql, 'p', 'br');
+        $unitCostSql = $this->valuation->effectiveUnitCostExpression('p', 'br', 'lrc');
+        $shopCostValueSql = $this->valuation->stockCostValueSql('COALESCE(cs.shop_quantity, 0)', 'p', 'br', 'u', 'lrc');
+        $storeCostValueSql = $this->valuation->stockCostValueSql('COALESCE(cs.store_quantity, 0)', 'p', 'br', 'u', 'lrc');
+        $totalCostValueSql = $this->valuation->stockCostValueSql($totalSql, 'p', 'br', 'u', 'lrc');
 
         $query = DB::table('products as p')
             ->join('uoms as u', 'u.id', '=', 'p.unit_id')
@@ -63,7 +63,11 @@ class StockOnHandReportService
             })
             ->leftJoin('retail_package_settings as rps', 'rps.product_code', '=', 'p.product_code')
             ->where('p.organization_id', $organizationId)
-            ->whereNull('p.deleted_at')
+            ->whereNull('p.deleted_at');
+
+        $this->valuation->joinLatestReceiptCosts($query, 'p', 'br', 'lrc');
+
+        $query
             ->when($request->filled('product_code'), fn ($q) => $q->where('p.product_code', $request->input('product_code')))
             ->select([
                 'br.id as branch_id',

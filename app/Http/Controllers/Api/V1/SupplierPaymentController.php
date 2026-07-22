@@ -15,8 +15,9 @@ class SupplierPaymentController extends Controller
     public function index(Request $request)
     {
         $organizationId = (int) $request->user()->organization_id;
-        $data = $this->supplierModule->listPayments($request, $organizationId);
 
-        return response()->json(['data' => $data]);
+        return response()->json(
+            $this->supplierModule->listPayments($request, $organizationId),
+        );
     }
 }

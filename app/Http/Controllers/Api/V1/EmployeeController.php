@@ -132,11 +132,22 @@ class EmployeeController extends BaseResourceController
                 ])
                 ->all();
 
+            // Matches FE isPayrollEligible / payroll auto-process rules.
+            $payrollEligible = (clone $query)
+                ->where(function ($inner) {
+                    $inner->where('is_active', '!=', false)->orWhereNull('is_active');
+                })
+                ->where('employment_status', 'active')
+                ->where('base_salary', '>', 0)
+                ->whereNotNull('shift_id')
+                ->count();
+
             return [
                 'total' => (int) ($row->total ?? 0),
                 'active' => (int) ($row->active ?? 0),
                 'departments' => $departmentQuery->count(),
                 'payroll_cost' => (float) ($row->payroll_cost ?? 0),
+                'payroll_eligible' => (int) $payrollEligible,
                 'by_department_id' => $byDepartment,
             ];
         };

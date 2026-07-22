@@ -340,6 +340,8 @@ class CartOperationsController extends Controller
                 'superseded_by_edit' => true,
                 'superseded_at' => now()->toIso8601String(),
                 'original_order_num' => $heldOrderNum,
+                'original_status' => (string) $sale->status,
+                'original_stock_balanced' => (bool) $sale->stock_balanced,
             ]);
 
             $sale->update([
@@ -1023,6 +1025,8 @@ class CartOperationsController extends Controller
     protected function clearCart(TemporaryCart $cart, ?User $user = null): void
     {
         $user ??= request()->user();
+        $supersededSaleId = (int) ($cart->superseded_sale_id ?? 0);
+
         if ($user) {
             app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForCart(
                 $cart,
@@ -1041,6 +1045,116 @@ class CartOperationsController extends Controller
         ]);
         $this->clearCartPaymentOptions($cart);
         $cart->increment('update_no');
+
+        // Abandoning an in-progress POS edit must restore the receipt so ← can open it again.
+        if ($supersededSaleId > 0 && $user) {
+            $this->reinstateSupersededSale($supersededSaleId, $user);
+        }
+    }
+
+    /**
+     * Undo restoreHeldOrder tombstone when the edit cart is cleared without checkout.
+     */
+    protected function reinstateSupersededSale(int $saleId, User $user): void
+    {
+        $sale = Sale::query()->with('items')->find($saleId);
+        if (! $sale) {
+            return;
+        }
+
+        $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $originalOrderNum = (int) ($meta['original_order_num'] ?? 0);
+        if ($originalOrderNum <= 0 || $originalOrderNum >= 9_000_000) {
+            return;
+        }
+
+        // Only reinstate sales we cancelled for edit.
+        if (($sale->status !== 'cancelled' && (int) ($sale->archived ?? 0) !== 1)
+            || empty($meta['superseded_by_edit'])) {
+            return;
+        }
+
+        $originalStatus = (string) ($meta['original_status'] ?? 'completed');
+        if ($originalStatus === '' || $originalStatus === 'cancelled') {
+            $originalStatus = 'completed';
+        }
+        $shouldBalanceStock = (bool) ($meta['original_stock_balanced'] ?? true);
+
+        unset(
+            $meta['superseded_by_edit'],
+            $meta['superseded_at'],
+            $meta['original_order_num'],
+            $meta['original_status'],
+            $meta['original_stock_balanced'],
+        );
+
+        $sale->update([
+            'order_num' => $originalOrderNum,
+            'status' => $originalStatus,
+            'cancelled_at' => null,
+            'cancelled_by' => null,
+            'archived' => 0,
+            'fulfillment_meta' => $meta === [] ? null : $meta,
+        ]);
+
+        $sale = $sale->fresh(['items']);
+        if ($shouldBalanceStock && $sale && ! $sale->stock_balanced) {
+            $this->deductSaleStockAfterReinstate($sale, $user);
+        }
+
+        if ($sale) {
+            $gate = $this->erp->gateForUser($user);
+            app(\App\Services\Accounting\SaleJournalService::class)->postIfEnabled($sale, $user, $gate);
+        }
+    }
+
+    protected function deductSaleStockAfterReinstate(Sale $sale, User $user): void
+    {
+        if ($sale->stock_balanced) {
+            return;
+        }
+
+        $gate = $this->erp->gateForUser($user);
+        $inventorySettings = $gate->moduleSettings('inventory');
+        $salesSettings = $gate->moduleSettings('sales');
+        $txnType = $this->saleTransactionType((string) ($sale->channel ?: 'pos'));
+        $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+
+        foreach ($sale->items ?? [] as $item) {
+            $product = $this->orgProduct((int) $user->organization_id, (string) $item->product_code);
+            $location = $product
+                ? $this->resolveSaleLineStockLocation(
+                    (string) $sale->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    $product,
+                    (bool) $item->on_wholesale_retail,
+                )
+                : $this->saleLineStockLocation(
+                    (string) $sale->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    (bool) $item->on_wholesale_retail,
+                );
+
+            $unitCost = max(0, (float) ($product?->last_cost_price ?? 0));
+
+            $this->postStockLedger([
+                'branch_id' => $sale->branch_id,
+                'product_code' => $item->product_code,
+                'stock_location' => $location,
+                'transaction_type' => $txnType,
+                'reference_type' => 'sale',
+                'reference_id' => $sale->id,
+                'quantity_change' => -abs((float) $item->quantity),
+                'unit_cost' => $unitCost > 0 ? $unitCost : null,
+                'notes' => 'Sale reinstated after abandoned POS edit',
+                'created_by' => $user->id,
+            ], $allowBelowStock);
+        }
+
+        $sale->update(['stock_balanced' => 1]);
+        $this->releaseSaleReservations((int) $sale->id);
     }
 
     protected function findCartLineByRef(TemporaryCart $cart, string $lineRef): CartLine

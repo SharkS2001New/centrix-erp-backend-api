@@ -6,10 +6,13 @@ use App\Services\Accounting\ExpenseApprovalService;
 use App\Services\Accounting\ExpenseJournalService;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\ErpContext;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 
 class ExpenseController extends BaseResourceController
 {
+    public const DEFAULT_RANGE_DAYS = 30;
+
     public function __construct(protected ErpContext $erp) {}
 
     protected function modelClass(): string
@@ -48,14 +51,24 @@ class ExpenseController extends BaseResourceController
             }
         }
 
-        if ($request->filled('from_date')) {
-            $query->whereDate('expense_date', '>=', $request->input('from_date'));
-        }
-        if ($request->filled('to_date')) {
-            $query->whereDate('expense_date', '<=', $request->input('to_date'));
+        $q = trim((string) $request->input('q', ''));
+        $hasFrom = $request->filled('from_date');
+        $hasTo = $request->filled('to_date');
+        if (! $hasFrom && ! $hasTo && $q === '') {
+            $to = now()->toDateString();
+            $from = Carbon::parse($to)->subDays(self::DEFAULT_RANGE_DAYS - 1)->toDateString();
+            $query->whereDate('expense_date', '>=', $from)
+                ->whereDate('expense_date', '<=', $to);
+        } else {
+            if ($hasFrom) {
+                $query->whereDate('expense_date', '>=', $request->input('from_date'));
+            }
+            if ($hasTo) {
+                $query->whereDate('expense_date', '<=', $request->input('to_date'));
+            }
         }
 
-        if ($q = trim((string) $request->input('q', ''))) {
+        if ($q !== '') {
             $query->where(function ($inner) use ($q) {
                 $inner->where('description', 'like', "%{$q}%")
                     ->orWhere('invoice_no', 'like', "%{$q}%");

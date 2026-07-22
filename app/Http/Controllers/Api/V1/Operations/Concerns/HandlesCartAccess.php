@@ -44,8 +44,9 @@ trait HandlesCartAccess
         $cart->loadMissing('lines');
         $payload = array_merge($cart->toArray(), $extra);
 
-        if ($user && $includeNextOrderNum && $user->organization_id) {
-            // Peek only — never lock org/sales for cart present (allocation happens at checkout).
+        if ($user && $user->organization_id) {
+            // Always peek — POS UI needs a stable “New Order - S00xx” label after line adds.
+            // Peek only (no lock); real allocation still happens at checkout.
             $payload['next_order_num'] = app(OrderNumberAllocator::class)
                 ->peekNextForOrganization((int) $user->organization_id);
         }

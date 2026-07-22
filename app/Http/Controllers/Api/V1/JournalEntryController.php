@@ -5,11 +5,14 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\ActionRequest;
 use App\Models\JournalEntry;
 use App\Services\Notifications\ActionRequestService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class JournalEntryController extends BaseResourceController
 {
+    public const DEFAULT_RANGE_DAYS = 30;
+
     protected function modelClass(): string
     {
         return JournalEntry::class;
@@ -31,11 +34,28 @@ class JournalEntryController extends BaseResourceController
             }
         }
 
-        if ($q = trim((string) $request->input('q', ''))) {
+        $q = trim((string) $request->input('q', ''));
+        if ($q !== '') {
             $query->where(function ($inner) use ($q) {
                 $inner->where('entry_number', 'like', "%{$q}%")
                     ->orWhere('description', 'like', "%{$q}%");
             });
+        }
+
+        $hasFrom = $request->filled('from_date');
+        $hasTo = $request->filled('to_date');
+        if (! $hasFrom && ! $hasTo && $q === '') {
+            $to = now()->toDateString();
+            $from = Carbon::parse($to)->subDays(self::DEFAULT_RANGE_DAYS - 1)->toDateString();
+            $query->whereDate('entry_date', '>=', $from)
+                ->whereDate('entry_date', '<=', $to);
+        } else {
+            if ($hasFrom) {
+                $query->whereDate('entry_date', '>=', $request->input('from_date'));
+            }
+            if ($hasTo) {
+                $query->whereDate('entry_date', '<=', $request->input('to_date'));
+            }
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);

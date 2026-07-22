@@ -44,9 +44,26 @@ class StockTakeLineController extends BaseResourceController
             ]);
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
+            if ($col === 'subcategory_id' || $col === 'category_id') {
+                continue;
+            }
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where('stock_take_lines.'.$col, $val);
             }
+        }
+
+        $subcategoryId = (int) ($request->input('filter.subcategory_id') ?: $request->input('subcategory_id') ?: 0);
+        if ($subcategoryId > 0) {
+            $query->where('p.subcategory_id', $subcategoryId);
+        }
+
+        $categoryId = (int) ($request->input('filter.category_id') ?: $request->input('category_id') ?: 0);
+        if ($categoryId > 0) {
+            $query->whereIn('p.subcategory_id', function ($sub) use ($categoryId) {
+                $sub->select('id')
+                    ->from('sub_categories')
+                    ->where('category_id', $categoryId);
+            });
         }
 
         if ($q = $request->input('q')) {
@@ -57,7 +74,8 @@ class StockTakeLineController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
-        $this->applyListOrdering($request, $query, 'stock_take_lines.id', 'desc');
+        $this->applyListOrdering($request, $query, 'p.product_name', 'asc');
+        $query->orderBy('stock_take_lines.stock_location');
 
         return response()->json($query->paginate($perPage));
     }

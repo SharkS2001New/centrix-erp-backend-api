@@ -87,11 +87,22 @@ class LowStockReportService
             });
         });
 
+        $belowReorderCase = match (true) {
+            $mode === 'global' && $globalThreshold !== null => "CASE WHEN {$totalSql} > 0 AND {$totalSql} <= ".(float) $globalThreshold.' THEN 1 ELSE 0 END',
+            $mode === 'global' => '0',
+            $mode === 'both' && $globalThreshold !== null => "CASE WHEN {$totalSql} > 0 AND ("
+                .' (p.reorder_point > 0 AND '.$totalSql.' <= p.reorder_point)'
+                .' OR ('.$totalSql.' <= '.(float) $globalThreshold.')'
+                .') THEN 1 ELSE 0 END',
+            default => "CASE WHEN {$totalSql} > 0 AND p.reorder_point > 0 AND {$totalSql} <= p.reorder_point THEN 1 ELSE 0 END",
+        };
+
         $summaryRaw = (clone $query)
             ->reorder()
             ->select([
                 DB::raw('COUNT(*) as row_count'),
                 DB::raw("SUM(CASE WHEN {$totalSql} <= 0 THEN 1 ELSE 0 END) as out_of_stock_count"),
+                DB::raw("SUM({$belowReorderCase}) as below_reorder_count"),
             ])
             ->first();
 
@@ -156,6 +167,7 @@ class LowStockReportService
         $payload['summary'] = [
             'row_count' => (int) ($summaryRaw->row_count ?? $payload['total'] ?? 0),
             'out_of_stock_count' => (int) ($summaryRaw->out_of_stock_count ?? 0),
+            'below_reorder_count' => (int) ($summaryRaw->below_reorder_count ?? 0),
         ];
 
         return $payload;

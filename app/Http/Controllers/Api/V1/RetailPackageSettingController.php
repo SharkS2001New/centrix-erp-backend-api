@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Concerns\ScopesViaParentOrganization;
 use App\Models\RetailPackageSetting;
+use App\Models\SubCategory;
 use Illuminate\Http\Request;
 
 class RetailPackageSettingController extends BaseResourceController
@@ -55,7 +56,36 @@ class RetailPackageSettingController extends BaseResourceController
             });
         }
 
-        // Align with catalogue refs (categories / UOMs): allow larger list pages for cache warmers.
+        $productCodes = $request->input('product_codes');
+        if (is_string($productCodes) && trim($productCodes) !== '') {
+            $codes = array_values(array_filter(array_map('trim', explode(',', $productCodes))));
+            if ($codes !== []) {
+                $query->whereIn('product_code', array_slice($codes, 0, 200));
+            }
+        } elseif (is_array($productCodes) && $productCodes !== []) {
+            $codes = array_values(array_filter(array_map('strval', $productCodes)));
+            if ($codes !== []) {
+                $query->whereIn('product_code', array_slice($codes, 0, 200));
+            }
+        }
+
+        $subcategoryId = (int) $request->input('subcategory_id', 0);
+        $categoryId = (int) $request->input('category_id', 0);
+        if ($subcategoryId > 0) {
+            $query->whereHas('product', fn ($product) => $product->where('subcategory_id', $subcategoryId));
+        } elseif ($categoryId > 0) {
+            // Parent category (unlike product list, which treats category_id as subcategory).
+            $subIds = SubCategory::query()
+                ->where('category_id', $categoryId)
+                ->pluck('id')
+                ->all();
+            if ($subIds === []) {
+                $query->whereRaw('0 = 1');
+            } else {
+                $query->whereHas('product', fn ($product) => $product->whereIn('subcategory_id', $subIds));
+            }
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 500);
         $this->applyListOrdering($request, $query, 'id', 'desc');
 

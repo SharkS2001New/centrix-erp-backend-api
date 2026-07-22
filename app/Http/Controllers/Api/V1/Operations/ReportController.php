@@ -566,10 +566,28 @@ class ReportController extends Controller
             });
         }
 
-        return response()->json(
-            $q->orderByDesc('total_purchased')
-                ->paginate(min((int) ($filters['per_page'] ?? 20), 200)),
-        );
+        $perPage = min((int) ($filters['per_page'] ?? 20), 200);
+        $summaryRaw = DB::query()
+            ->fromSub(clone $q, 'sales_by_customer_filtered')
+            ->selectRaw('COUNT(*) as customer_count')
+            ->selectRaw('COALESCE(SUM(total_orders), 0) as total_orders')
+            ->selectRaw('COALESCE(SUM(total_purchased), 0) as total_purchased')
+            ->selectRaw('COALESCE(SUM(total_outstanding), 0) as total_outstanding')
+            ->selectRaw('COALESCE(SUM(ar_balance), 0) as ar_balance')
+            ->first();
+
+        $paginator = $q->orderByDesc('total_purchased')->paginate($perPage);
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => [
+                'customer_count' => (int) ($summaryRaw->customer_count ?? 0),
+                'row_count' => (int) ($summaryRaw->customer_count ?? 0),
+                'total_orders' => (int) ($summaryRaw->total_orders ?? 0),
+                'total_purchased' => round((float) ($summaryRaw->total_purchased ?? 0), 2),
+                'total_outstanding' => round((float) ($summaryRaw->total_outstanding ?? 0), 2),
+                'ar_balance' => round((float) ($summaryRaw->ar_balance ?? 0), 2),
+            ],
+        ]));
     }
 
     public function salesByChannel(Request $request)
@@ -1717,6 +1735,7 @@ class ReportController extends Controller
 
         $payload['summary'] = array_merge($payload['summary'] ?? [], [
             'by_group' => $byGroup,
+            'group_count' => count($byGroup),
         ]);
 
         return response()->json($payload);
@@ -1867,6 +1886,25 @@ class ReportController extends Controller
                 $inner->where('p.product_name', 'like', "%{$q}%")
                     ->orWhere('p.product_code', 'like', "%{$q}%");
             });
+        }
+
+        $stockStatus = strtolower(trim((string) $request->input('stock_status', '')));
+        if (in_array($stockStatus, ['in_stock', 'low_stock', 'out_of_stock'], true)) {
+            $qtyExpr = '(COALESCE(p.stock_in_shop, 0) + COALESCE(p.stock_in_store, 0))';
+            $reorderExpr = 'COALESCE(p.reorder_point, 0)';
+            if ($stockStatus === 'out_of_stock') {
+                $query->whereRaw("{$qtyExpr} <= 0");
+            } elseif ($stockStatus === 'low_stock') {
+                $query->whereRaw("{$qtyExpr} > 0")
+                    ->whereRaw("{$reorderExpr} > 0")
+                    ->whereRaw("{$qtyExpr} <= {$reorderExpr}");
+            } else {
+                $query->whereRaw("{$qtyExpr} > 0")
+                    ->where(function ($inner) use ($qtyExpr, $reorderExpr) {
+                        $inner->whereRaw("{$reorderExpr} <= 0")
+                            ->orWhereRaw("{$qtyExpr} > {$reorderExpr}");
+                    });
+            }
         }
 
         $sheet = app(ProductPriceSheetService::class);
@@ -2075,6 +2113,46 @@ class ReportController extends Controller
         }
         if (isset($summary['gross'], $summary['vat'])) {
             $summary['net'] = round((float) $summary['gross'] - (float) $summary['vat'], 2);
+        }
+
+        // Distinct / header-level KPIs (sums alone are wrong for line-level views).
+        if ($view === 'v_open_lpo_lines' && $this->viewColumnExists($view, 'lpo_no')) {
+            $summary['lpo_count'] = (int) ((clone $query)
+                ->selectRaw('COUNT(DISTINCT `lpo_no`) as `c`')
+                ->value('c') ?? 0);
+        }
+
+        if ($view === 'v_purchases_by_supplier') {
+            if ($this->viewColumnExists($view, 'supplier_id')) {
+                $summary['supplier_count'] = (int) ((clone $query)
+                    ->selectRaw('COUNT(DISTINCT `supplier_id`) as `c`')
+                    ->value('c') ?? 0);
+            }
+            if ($this->viewColumnExists($view, 'lpo_no') && $this->viewColumnExists($view, 'total_amount')) {
+                // total_amount repeats on every line — sum once per LPO header.
+                $summary['lpo_total'] = round((float) (DB::query()
+                    ->fromSub(
+                        (clone $query)
+                            ->select('lpo_no', DB::raw('MAX(total_amount) as total_amount'))
+                            ->groupBy('lpo_no'),
+                        'lpo_headers',
+                    )
+                    ->selectRaw('COALESCE(SUM(total_amount), 0) as lpo_total')
+                    ->value('lpo_total') ?? 0), 2);
+                unset($summary['total_amount']);
+            }
+        }
+
+        if ($view === 'v_expenses_summary') {
+            if ($this->viewColumnExists($view, 'expense_group_id')) {
+                $summary['group_count'] = (int) ((clone $query)
+                    ->selectRaw('COUNT(DISTINCT `expense_group_id`) as `c`')
+                    ->value('c') ?? 0);
+            } elseif ($this->viewColumnExists($view, 'group_name')) {
+                $summary['group_count'] = (int) ((clone $query)
+                    ->selectRaw('COUNT(DISTINCT `group_name`) as `c`')
+                    ->value('c') ?? 0);
+            }
         }
 
         return $summary;

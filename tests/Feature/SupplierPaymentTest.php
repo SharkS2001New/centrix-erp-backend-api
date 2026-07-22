@@ -139,6 +139,7 @@ class SupplierPaymentTest extends TestCase
 
         $this->getJson('/api/v1/supplier-payments?supplier_id='.$supplier->id)
             ->assertOk()
+            ->assertJsonPath('current_page', 1)
             ->assertJsonFragment(['supplier_id' => $supplier->id, 'amount_paid' => 200]);
     }
 }

@@ -38,6 +38,16 @@ class PodRecordController extends BaseResourceController
             $query->whereDate('captured_at', '<=', $to);
         }
 
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('recipient_name', 'like', "%{$q}%")
+                    ->orWhereHas('sale', fn ($sale) => $sale->where('order_num', 'like', "%{$q}%"));
+                if (ctype_digit($q)) {
+                    $inner->orWhere('sale_id', (int) $q);
+                }
+            });
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         return response()->json($query->orderByDesc('captured_at')->paginate($perPage));

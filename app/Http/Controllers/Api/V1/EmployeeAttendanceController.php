@@ -44,7 +44,10 @@ class EmployeeAttendanceController extends HrOrgResourceController
 
     public function index(Request $request)
     {
-        $query = EmployeeAttendance::query()->with(['employee', 'branch']);
+        $query = EmployeeAttendance::query()->with([
+            'employee:id,organization_id,full_name,first_name,last_name,employee_code,department_id,branch_id',
+            'branch:id,organization_id,branch_name',
+        ]);
 
         if ($orgId = $request->user()?->organization_id) {
             $query->where('organization_id', $orgId);
@@ -62,6 +65,27 @@ class EmployeeAttendanceController extends HrOrgResourceController
             if (in_array($col, $this->filterableColumns(), true)) {
                 $query->where($col, $val);
             }
+        }
+
+        if ($request->filled('from_date')) {
+            $query->whereDate('attendance_date', '>=', $request->input('from_date'));
+        }
+        if ($request->filled('to_date')) {
+            $query->whereDate('attendance_date', '<=', $request->input('to_date'));
+        }
+
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('status', 'like', "%{$q}%")
+                    ->orWhere('notes', 'like', "%{$q}%")
+                    ->orWhere('source', 'like', "%{$q}%")
+                    ->orWhereHas('employee', function ($emp) use ($q) {
+                        $emp->where('full_name', 'like', "%{$q}%")
+                            ->orWhere('first_name', 'like', "%{$q}%")
+                            ->orWhere('last_name', 'like', "%{$q}%")
+                            ->orWhere('employee_code', 'like', "%{$q}%");
+                    });
+            });
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);

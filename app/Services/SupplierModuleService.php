@@ -8,6 +8,7 @@ use App\Models\Supplier;
 use App\Models\SupplierPayment;
 use App\Services\Auth\UserAccessService;
 use Carbon\Carbon;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
@@ -191,7 +192,7 @@ class SupplierModuleService
             ->all();
     }
 
-    public function listPayments(Request $request, int $organizationId): array
+    public function listPayments(Request $request, int $organizationId): LengthAwarePaginator
     {
         $query = SupplierPayment::query()
             ->with(['supplier', 'paymentMethod', 'paidByUser'])
@@ -214,10 +215,26 @@ class SupplierModuleService
             $query->whereDate('date_paid', '<=', $to);
         }
 
-        $perPage = min((int) $request->input('per_page', 25), 200);
-        $rows = $query->limit($perPage)->get();
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('reference_number', 'like', "%{$q}%")
+                    ->orWhere('cheque_number', 'like', "%{$q}%")
+                    ->orWhereHas(
+                        'supplier',
+                        fn ($supplier) => $supplier->where('supplier_name', 'like', "%{$q}%"),
+                    );
+            });
+        }
 
-        return $rows->map(fn (SupplierPayment $payment) => $this->mapPaymentRow($payment))->values()->all();
+        $perPage = min(max((int) $request->input('per_page', 25), 1), 100);
+        $paginator = $query->paginate($perPage);
+        $paginator->setCollection(
+            $paginator->getCollection()->map(
+                fn (SupplierPayment $payment) => $this->mapPaymentRow($payment),
+            ),
+        );
+
+        return $paginator;
     }
 
     public function recordPayment(Request $request, Supplier $supplier): SupplierPayment

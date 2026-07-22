@@ -193,16 +193,50 @@ class AccountingReportController extends Controller
 
     public function accountsPayable(Request $request)
     {
-        $q = DB::table('v_supplier_payables');
+        $orgId = (int) $request->user()->organization_id;
+        $q = DB::table('v_supplier_payables as sp')
+            ->whereIn('sp.supplier_id', function ($sub) use ($orgId) {
+                $sub->select('id')
+                    ->from('suppliers')
+                    ->where('organization_id', $orgId)
+                    ->whereNull('deleted_at');
+            });
+
         foreach (['supplier_id'] as $col) {
             if ($request->filled($col)) {
-                $q->where($col, $request->input($col));
+                $q->where("sp.{$col}", $request->input($col));
             }
         }
 
-        return response()->json($q->orderByDesc('balance_due')->paginate(
-            min((int) $request->input('per_page', 50), 200),
-        ));
+        if ($search = trim((string) $request->input('q', ''))) {
+            $q->where(function ($inner) use ($search) {
+                $inner->where('sp.supplier_name', 'like', "%{$search}%")
+                    ->orWhere('sp.supplier_code', 'like', "%{$search}%");
+            });
+        }
+
+        $perPage = min((int) $request->input('per_page', 50), 200);
+        $summaryRaw = DB::query()
+            ->fromSub(clone $q, 'payables_filtered')
+            ->selectRaw('COUNT(*) as supplier_count')
+            ->selectRaw('COALESCE(SUM(balance_due), 0) as balance_due')
+            ->selectRaw('COALESCE(SUM(received_value), 0) as received_value')
+            ->selectRaw('COALESCE(SUM(return_value), 0) as return_value')
+            ->selectRaw('COALESCE(SUM(open_lpo_count), 0) as open_lpo_count')
+            ->first();
+
+        $paginator = $q->orderByDesc('sp.balance_due')->paginate($perPage);
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => [
+                'supplier_count' => (int) ($summaryRaw->supplier_count ?? 0),
+                'row_count' => (int) ($summaryRaw->supplier_count ?? 0),
+                'balance_due' => round((float) ($summaryRaw->balance_due ?? 0), 2),
+                'received_value' => round((float) ($summaryRaw->received_value ?? 0), 2),
+                'return_value' => round((float) ($summaryRaw->return_value ?? 0), 2),
+                'open_lpo_count' => (int) ($summaryRaw->open_lpo_count ?? 0),
+            ],
+        ]));
     }
 
     public function subledgerReconciliation(Request $request)

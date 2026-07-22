@@ -27,6 +27,18 @@ class RouteScheduleController extends BaseResourceController
             }
         }
 
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->whereHas('route', fn ($r) => $r->where('route_name', 'like', "%{$q}%"))
+                    ->orWhereHas('defaultDriver', fn ($d) => $d->where('full_name', 'like', "%{$q}%"))
+                    ->orWhereHas('defaultVehicle', function ($v) use ($q) {
+                        $v->where('plate_number', 'like', "%{$q}%")
+                            ->orWhere('vehicle_name', 'like', "%{$q}%")
+                            ->orWhere('vehicle_code', 'like', "%{$q}%");
+                    });
+            });
+        }
+
         $perPage = min((int) $request->input('per_page', 100), 200);
 
         return response()->json($query->orderBy('route_id')->orderBy('day_of_week')->paginate($perPage));

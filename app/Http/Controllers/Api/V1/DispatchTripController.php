@@ -47,6 +47,24 @@ class DispatchTripController extends BaseResourceController
             $query->whereDate('scheduled_date', '<=', $to);
         }
 
+        if ($request->boolean('has_orders')) {
+            $query->has('sales');
+        }
+
+        if ($q = trim((string) $request->input('q', ''))) {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('trip_code', 'like', "%{$q}%")
+                    ->orWhereHas('route', fn ($r) => $r->where('route_name', 'like', "%{$q}%"))
+                    ->orWhereHas('routes', fn ($r) => $r->where('route_name', 'like', "%{$q}%"))
+                    ->orWhereHas('driver', fn ($d) => $d->where('full_name', 'like', "%{$q}%"))
+                    ->orWhereHas('vehicle', function ($v) use ($q) {
+                        $v->where('plate_number', 'like', "%{$q}%")
+                            ->orWhere('vehicle_name', 'like', "%{$q}%")
+                            ->orWhere('vehicle_code', 'like', "%{$q}%");
+                    });
+            });
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         $paginator = $query->orderByDesc('scheduled_date')->orderByDesc('id')->paginate($perPage);

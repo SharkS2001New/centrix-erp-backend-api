@@ -2,20 +2,87 @@
 
 namespace App\Services\Inventory;
 
+use Illuminate\Database\Query\Builder;
 use Illuminate\Support\Facades\DB;
 
 class StockValuationService
 {
     /**
+     * Derived table: latest positive receipt cost per org + product (one scan, joinable).
+     */
+    public function latestReceiptCostSubquery(): Builder
+    {
+        return DB::table('stock_receipts as sr')
+            ->joinSub(
+                DB::table('stock_receipts')
+                    ->whereNotNull('cost_price')
+                    ->where('cost_price', '>', 0)
+                    ->groupBy('organization_id', 'product_code')
+                    ->select([
+                        'organization_id',
+                        'product_code',
+                        DB::raw('MAX(id) as max_id'),
+                    ]),
+                'latest_sr',
+                function ($join) {
+                    $join->on('latest_sr.max_id', '=', 'sr.id');
+                },
+            )
+            ->select([
+                'sr.organization_id',
+                'sr.product_code',
+                'sr.cost_price',
+            ]);
+    }
+
+    /**
+     * Left-join latest receipt costs onto a stock/product query.
+     *
+     * @param  Builder  $query
+     */
+    public function joinLatestReceiptCosts(
+        Builder $query,
+        string $productAlias = 'p',
+        string $organizationAlias = 'b',
+        string $receiptAlias = 'lrc',
+    ): Builder {
+        return $query->leftJoinSub(
+            $this->latestReceiptCostSubquery(),
+            $receiptAlias,
+            function ($join) use ($productAlias, $organizationAlias, $receiptAlias) {
+                $join->on("{$receiptAlias}.product_code", '=', "{$productAlias}.product_code")
+                    ->on("{$receiptAlias}.organization_id", '=', "{$organizationAlias}.organization_id");
+            },
+        );
+    }
+
+    /**
      * Effective unit cost: product last cost, else latest purchase receipt, else zero.
      * Cost is per purchase/package unit (not per base unit).
+     *
+     * Prefer {@see joinLatestReceiptCosts()} + $receiptAlias so reports avoid per-row
+     * correlated subqueries. When $receiptAlias is null, falls back to a correlated lookup
+     * (single-product helpers).
      */
-    public function effectiveUnitCostExpression(string $productAlias = 'p', string $branchAlias = 'b'): string
-    {
+    public function effectiveUnitCostExpression(
+        string $productAlias = 'p',
+        string $branchAlias = 'b',
+        ?string $receiptAlias = null,
+    ): string {
         $productCode = "{$productAlias}.product_code";
         $organizationId = $branchAlias !== ''
             ? "{$branchAlias}.organization_id"
             : "{$productAlias}.organization_id";
+
+        if ($receiptAlias !== null && $receiptAlias !== '') {
+            return <<<SQL
+COALESCE(
+    NULLIF({$productAlias}.last_cost_price, 0),
+    {$receiptAlias}.cost_price,
+    0
+)
+SQL;
+        }
 
         return <<<SQL
 COALESCE(
@@ -40,25 +107,17 @@ SQL;
         string $productAlias = 'p',
         string $branchAlias = 'b',
         string $uomAlias = 'u',
+        ?string $receiptAlias = null,
     ): string {
-        $unitCost = $this->effectiveUnitCostExpression($productAlias, $branchAlias);
+        $unitCost = $this->effectiveUnitCostExpression($productAlias, $branchAlias, $receiptAlias);
 
         return StockCostCalculation::costValueSqlExpression($quantityExpression, $unitCost, $uomAlias);
     }
 
-    public function stockRetailValueSql(
-        string $quantityExpression,
-        string $productAlias = 'p',
-        string $uomAlias = 'u',
-    ): string {
-        $converted = StockCostCalculation::convertedQuantitySqlExpression($quantityExpression, $uomAlias);
-
-        return "({$converted} * COALESCE({$productAlias}.unit_price, 0))";
-    }
-
     public function effectiveUnitCostForProduct(int $organizationId, string $productCode): float
     {
-        $unitCost = $this->effectiveUnitCostExpression('p', '');
+        // Single-row helper: correlated subquery is fine.
+        $unitCost = $this->effectiveUnitCostExpression('p', '', null);
 
         return (float) (DB::table('products as p')
             ->where('p.organization_id', $organizationId)
@@ -105,8 +164,8 @@ SQL;
 
         $shopRetailValueSql = $this->stockRetailValueSql('cs.shop_quantity');
         $storeRetailValueSql = $this->stockRetailValueSql('cs.store_quantity');
-        $shopCostValueSql = $this->stockCostValueSql('cs.shop_quantity');
-        $storeCostValueSql = $this->stockCostValueSql('cs.store_quantity');
+        $shopCostValueSql = $this->stockCostValueSql('cs.shop_quantity', 'p', 'b', 'u', 'lrc');
+        $storeCostValueSql = $this->stockCostValueSql('cs.store_quantity', 'p', 'b', 'u', 'lrc');
 
         $query = DB::table('current_stock as cs')
             ->join('branches as b', 'b.id', '=', 'cs.branch_id')
@@ -117,6 +176,8 @@ SQL;
             ->join('uoms as u', 'u.id', '=', 'p.unit_id')
             ->where('b.organization_id', $organizationId)
             ->whereNull('p.deleted_at');
+
+        $this->joinLatestReceiptCosts($query, 'p', 'b', 'lrc');
 
         if ($branchId !== null) {
             $query->where('cs.branch_id', $branchId);
@@ -183,5 +244,15 @@ SQL;
             'branch_id' => $branchId,
             ...$health,
         ];
+    }
+
+    public function stockRetailValueSql(
+        string $quantityExpression,
+        string $productAlias = 'p',
+        string $uomAlias = 'u',
+    ): string {
+        $converted = StockCostCalculation::convertedQuantitySqlExpression($quantityExpression, $uomAlias);
+
+        return "({$converted} * COALESCE({$productAlias}.unit_price, 0))";
     }
 }

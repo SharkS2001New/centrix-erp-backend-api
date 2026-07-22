@@ -51,6 +51,7 @@ class SupplierReturnDocumentTest extends TestCase
 
         $this->getJson('/api/v1/supplier-return-documents?supplier_id='.$supplier->id)
             ->assertOk()
+            ->assertJsonPath('current_page', 1)
             ->assertJsonFragment(['status' => 'pending_approval']);
     }
 
