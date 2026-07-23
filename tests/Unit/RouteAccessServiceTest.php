@@ -47,6 +47,27 @@ class RouteAccessServiceTest extends TestCase
         ));
     }
 
+    public function test_branch_limited_user_can_access_org_shared_route(): void
+    {
+        $cashier = User::where('username', 'cashier')->firstOrFail();
+        $this->assertSame('branch', $cashier->access_scope);
+
+        $shared = RouteModel::create([
+            'organization_id' => $cashier->organization_id,
+            'branch_id' => null,
+            'route_name' => 'Shared Route '.uniqid(),
+            'route_markup_price' => 0,
+            'direction' => 'north',
+            'is_active' => true,
+        ]);
+
+        $service = app(RouteAccessService::class);
+        $found = $service->findForUser($cashier, (int) $shared->id);
+
+        $this->assertNotNull($found);
+        $this->assertSame((int) $shared->id, (int) $found->id);
+    }
+
     public function test_assert_accessible_rejects_foreign_organization_route(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

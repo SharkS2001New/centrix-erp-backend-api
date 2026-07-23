@@ -22,7 +22,8 @@ class RouteAccessService
     public function scopeForUser(Builder $query, User $user, ?Request $request = null): Builder
     {
         $this->scopeOrganization($query, $user, $request);
-        $this->access->scopeBranchIfLimited($query, $user, 'branch_id');
+        // Org-wide routes (branch_id NULL) stay visible to branch-limited users.
+        $this->access->scopeBranchIfLimitedOrShared($query, $user, 'branch_id');
 
         return $query;
     }

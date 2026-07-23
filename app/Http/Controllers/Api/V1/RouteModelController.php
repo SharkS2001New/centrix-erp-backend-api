@@ -70,7 +70,20 @@ class RouteModelController extends BaseResourceController
 
     protected function scopesByBranch(): bool
     {
-        return true;
+        // Applied in baseQuery via scopeBranchIfLimitedOrShared so NULL branch_id
+        // (org-shared routes) remain visible to branch-limited users.
+        return false;
+    }
+
+    protected function baseQuery(Request $request)
+    {
+        $query = parent::baseQuery($request);
+        $user = $request->user();
+        if ($user && Schema::hasColumn('routes', 'branch_id')) {
+            $this->access()->scopeBranchIfLimitedOrShared($query, $user);
+        }
+
+        return $query;
     }
 
     protected function routesScopedByOrganization(): bool

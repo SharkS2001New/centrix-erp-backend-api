@@ -133,6 +133,24 @@ class UserAccessService
     }
 
     /**
+     * Branch-limited users see their branch rows plus org-shared rows (NULL branch_id).
+     * Used for master data like routes that customers across branches can reference.
+     *
+     * @param  Builder<\Illuminate\Database\Eloquent\Model>  $query
+     */
+    public function scopeBranchIfLimitedOrShared(Builder $query, User $user, string $column = 'branch_id'): Builder
+    {
+        $branchId = $this->branchId($user);
+        if ($branchId !== null) {
+            $query->where(function (Builder $scoped) use ($column, $branchId) {
+                $scoped->where($column, $branchId)->orWhereNull($column);
+            });
+        }
+
+        return $query;
+    }
+
+    /**
      * Branch-limited users: forced to their branch.
      * Org-wide users: optional filter via filter[branch_id] or branch_id (must belong to org).
      *
