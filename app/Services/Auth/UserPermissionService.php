@@ -118,21 +118,21 @@ class UserPermissionService
         }
 
         if ($this->hasDirectPermission($user, $permissionCode)) {
-            return true;
+            return $this->permissionAllowedByGate($permissionCode, $gate);
         }
 
         if (
             preg_match('/^sales\.order_queue_.+\.view$/', $permissionCode) === 1
             && $this->hasDirectPermission($user, 'sales.orders.view')
         ) {
-            return true;
+            return $this->permissionAllowedByGate('sales.orders.view', $gate);
         }
 
         $aliases = config('permission_aliases', []);
 
         foreach ($aliases[$permissionCode] ?? [] as $aliasCode) {
             if ($this->hasDirectPermission($user, $aliasCode)) {
-                return true;
+                return $this->permissionAllowedByGate($aliasCode, $gate);
             }
         }
 
@@ -141,6 +141,27 @@ class UserPermissionService
         }
 
         return false;
+    }
+
+    /**
+     * Role/direct grants still require the permission's ERP module to be org-enabled
+     * when a capability gate is supplied (matches admin filtering + API middleware).
+     */
+    protected function permissionAllowedByGate(string $permissionCode, ?CapabilityGate $gate): bool
+    {
+        if ($gate === null) {
+            return true;
+        }
+
+        $permission = Permission::query()
+            ->where('permission_code', $permissionCode)
+            ->first();
+
+        if (! $permission) {
+            return true;
+        }
+
+        return PermissionMatrixService::isRegistryModuleEnabled((string) $permission->module, $gate);
     }
 
   /** Whether the user holds a feature permission on their role/overrides (no capability aliases). */
