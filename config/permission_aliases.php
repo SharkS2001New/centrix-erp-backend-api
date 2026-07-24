@@ -330,6 +330,7 @@ return [
         'hr.cash_advances.edit',
         'hr.cash_advances.approve',
         'hr.attendance.create',
+        'hr.attendance.waive.approve',
         'hr.leave.create',
         'hr.leave.edit',
         'hr.leave.approve',

@@ -80,8 +80,8 @@ use App\Http\Controllers\Api\V1\LegacyImportConverterController;
 use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
+use App\Http\Controllers\Api\V1\PlatformKenyaPayrollSettingsController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueAlertSettingsController;
-use App\Http\Controllers\Api\V1\PlatformPayrollScheduleSettingsController;
 use App\Http\Controllers\Api\V1\SystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformInvoiceController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
@@ -473,9 +473,9 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::put('admin/system-issue-alert-settings', [PlatformSystemIssueAlertSettingsController::class, 'update'])
             ->middleware(['erp.super_admin']);
-        Route::get('admin/payroll-schedule-settings', [PlatformPayrollScheduleSettingsController::class, 'show'])
+        Route::get('admin/kenya-payroll-settings', [PlatformKenyaPayrollSettingsController::class, 'show'])
             ->middleware(['erp.super_admin']);
-        Route::put('admin/payroll-schedule-settings', [PlatformPayrollScheduleSettingsController::class, 'update'])
+        Route::put('admin/kenya-payroll-settings', [PlatformKenyaPayrollSettingsController::class, 'update'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/system-issue-reports', [PlatformSystemIssueReportController::class, 'index'])
             ->middleware(['erp.super_admin']);
@@ -1063,12 +1063,18 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.view');
             Route::post('employee-attendance/bulk', [EmployeeAttendanceController::class, 'bulkStore'])
                 ->middleware('erp.permission:hr.manage');
+            Route::post('employee-attendance/mark-absents', [EmployeeAttendanceController::class, 'markAbsents'])
+                ->middleware('erp.permission:hr.manage');
             Route::post('employee-attendance/bulk-delete', [EmployeeAttendanceController::class, 'bulkDestroy'])
                 ->middleware('erp.permission:hr.manage');
             Route::post('employee-attendance/bulk-waive-lateness', [EmployeeAttendanceController::class, 'bulkWaiveLateness'])
                 ->middleware('erp.permission:hr.manage');
             Route::post('employee-attendance/{id}/waive-lateness', [EmployeeAttendanceController::class, 'waiveLateness'])
                 ->middleware('erp.permission:hr.manage');
+            Route::post('lateness-waiver-requests/{id}/approve', [EmployeeAttendanceController::class, 'approveWaiverRequest'])
+                ->middleware('erp.permission:hr.attendance.view|hr.attendance.waive.approve|hr.manage');
+            Route::post('lateness-waiver-requests/{id}/reject', [EmployeeAttendanceController::class, 'rejectWaiverRequest'])
+                ->middleware('erp.permission:hr.attendance.view|hr.attendance.waive.approve|hr.manage');
             Route::apiResource('payroll-deduction-types', PayrollDeductionTypeController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);

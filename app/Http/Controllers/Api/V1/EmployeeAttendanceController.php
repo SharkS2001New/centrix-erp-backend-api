@@ -4,8 +4,12 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Employee;
 use App\Models\EmployeeAttendance;
+use App\Models\LatenessWaiverRequest;
+use App\Services\Attendance\AttendanceAbsentMaterializer;
 use App\Services\Attendance\AttendanceDayPolicy;
 use App\Services\Attendance\AttendanceDayReconciler;
+use App\Services\Hr\LatenessWaiverApprovalService;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Support\AttendanceTime;
 use Illuminate\Http\Request;
@@ -115,8 +119,39 @@ class EmployeeAttendanceController extends HrOrgResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
+        $page = $query->orderByDesc('attendance_date')->paginate($perPage);
+        $this->attachPendingWaivers($page->getCollection());
 
-        return response()->json($query->orderByDesc('attendance_date')->paginate($perPage));
+        return response()->json($page);
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, EmployeeAttendance>  $rows
+     */
+    protected function attachPendingWaivers($rows): void
+    {
+        if ($rows->isEmpty()) {
+            return;
+        }
+
+        $ids = $rows->pluck('id')->all();
+        $pending = LatenessWaiverRequest::query()
+            ->whereIn('employee_attendance_id', $ids)
+            ->where('status', 'pending')
+            ->get()
+            ->keyBy('employee_attendance_id');
+
+        foreach ($rows as $row) {
+            $req = $pending->get($row->id);
+            $row->setAttribute('pending_waiver', $req ? [
+                'id' => $req->id,
+                'waive' => (bool) $req->waive,
+                'reason' => $req->reason,
+                'late_minutes' => (int) $req->late_minutes,
+                'requested_at' => $req->requested_at,
+                'assigned_manager_user_id' => $req->assigned_manager_user_id,
+            ] : null);
+        }
     }
 
     public function store(Request $request)
@@ -308,6 +343,34 @@ class EmployeeAttendanceController extends HrOrgResourceController
         ], count($created) > 0 ? 201 : 422);
     }
 
+    /**
+     * POST /employee-attendance/mark-absents — create absent rows for scheduled days with no attendance.
+     * Never marks today or future dates.
+     */
+    public function markAbsents(Request $request)
+    {
+        $data = $request->validate([
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date|after_or_equal:from_date',
+            'attendance_date' => 'nullable|date',
+        ]);
+
+        $orgId = $request->user()?->organization_id
+            ? (int) $request->user()->organization_id
+            : null;
+
+        $materializer = app(AttendanceAbsentMaterializer::class);
+        if (! empty($data['attendance_date'])) {
+            $result = $materializer->markDate($orgId, $data['attendance_date']);
+        } else {
+            $from = $data['from_date'] ?? now()->subDay()->toDateString();
+            $to = $data['to_date'] ?? $from;
+            $result = $materializer->markRange($orgId, $from, $to);
+        }
+
+        return response()->json($result);
+    }
+
     public function update(Request $request, string $id)
     {
         $row = $this->findScoped($id);
@@ -356,51 +419,58 @@ class EmployeeAttendanceController extends HrOrgResourceController
         }
 
         if (array_key_exists('lateness_waived', $data)) {
-            try {
-                $attendance = app(AttendanceDayReconciler::class)->setLatenessWaiver(
+            $desired = (bool) $data['lateness_waived'];
+            $current = (bool) $attendance->fresh()->lateness_waived;
+            if ($desired !== $current) {
+                if (! $request->user()) {
+                    throw ValidationException::withMessages([
+                        'lateness_waived' => ['Authentication required to request a lateness waiver.'],
+                    ]);
+                }
+                $waiver = app(LatenessWaiverApprovalService::class)->submit(
+                    $request->user(),
                     $attendance->fresh(),
-                    (bool) $data['lateness_waived'],
+                    $desired,
                     $data['lateness_waiver_reason'] ?? null,
-                    $request->user()?->id,
                 );
-            } catch (\InvalidArgumentException $e) {
-                throw ValidationException::withMessages([
-                    'lateness_waived' => [$e->getMessage()],
-                ]);
+
+                return response()->json($attendance->fresh(['employee', 'branch'])->setAttribute('pending_waiver', [
+                    'id' => $waiver->id,
+                    'waive' => (bool) $waiver->waive,
+                    'reason' => $waiver->reason,
+                    'status' => $waiver->status,
+                ]));
             }
         }
 
         return response()->json($attendance->fresh(['employee', 'branch']));
     }
 
-    /** POST /employee-attendance/{id}/waive-lateness */
+    /** POST /employee-attendance/{id}/waive-lateness — submit for manager approval (does not apply yet). */
     public function waiveLateness(Request $request, string $id)
     {
         $row = $this->findScoped($id);
-        PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'attendance record');
         $data = $request->validate([
             'lateness_waived' => 'required|boolean',
             'lateness_waiver_reason' => 'nullable|string|max:500',
         ]);
 
-        try {
-            $attendance = app(AttendanceDayReconciler::class)->setLatenessWaiver(
-                $row,
-                (bool) $data['lateness_waived'],
-                $data['lateness_waiver_reason'] ?? null,
-                $request->user()?->id,
-            );
-        } catch (\InvalidArgumentException $e) {
-            throw ValidationException::withMessages([
-                'lateness_waived' => [$e->getMessage()],
-            ]);
-        }
+        $waiver = app(LatenessWaiverApprovalService::class)->submit(
+            $request->user(),
+            $row,
+            (bool) $data['lateness_waived'],
+            $data['lateness_waiver_reason'] ?? null,
+        );
 
-        return response()->json($attendance);
+        return response()->json([
+            'message' => 'Lateness waiver submitted for manager approval.',
+            'waiver_request' => $waiver,
+            'attendance' => $row->fresh(['employee', 'branch']),
+        ], 202);
     }
 
     /**
-     * POST /employee-attendance/bulk-waive-lateness — one reason applied to many late rows.
+     * POST /employee-attendance/bulk-waive-lateness — submit waiver requests (one shared reason).
      */
     public function bulkWaiveLateness(Request $request)
     {
@@ -413,8 +483,8 @@ class EmployeeAttendanceController extends HrOrgResourceController
 
         $ids = array_map('intval', $data['ids']);
         $rows = $this->scopedAttendanceByIds($ids, $request);
-        $reconciler = app(AttendanceDayReconciler::class);
-        $updated = [];
+        $service = app(LatenessWaiverApprovalService::class);
+        $submitted = [];
         $skipped = [];
 
         foreach ($rows as $row) {
@@ -422,36 +492,23 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 ? ($row->employee->full_name ?: trim($row->employee->first_name.' '.$row->employee->last_name))
                 : ('#'.$row->id);
 
-            if ((int) ($row->late_minutes ?? 0) <= 0) {
-                $skipped[] = [
-                    'id' => $row->id,
-                    'employee_name' => $label,
-                    'reason' => 'No late minutes on this record',
-                ];
-                continue;
-            }
-
             try {
-                PayrollCycleSettlementService::assertNotPayrollLocked(
-                    $row->payroll_run_id ? (int) $row->payroll_run_id : null,
-                    'attendance record',
-                );
-                $attendance = $reconciler->setLatenessWaiver(
+                $waiver = $service->submit(
+                    $request->user(),
                     $row,
                     (bool) $data['lateness_waived'],
                     $data['lateness_waiver_reason'] ?? null,
-                    $request->user()?->id,
                 );
-                $updated[] = [
-                    'id' => $attendance->id,
+                $submitted[] = [
+                    'id' => $row->id,
                     'employee_name' => $label,
-                    'lateness_waived' => (bool) $attendance->lateness_waived,
+                    'waiver_request_id' => $waiver->id,
                 ];
             } catch (\Throwable $e) {
                 $skipped[] = [
                     'id' => $row->id,
                     'employee_name' => $label,
-                    'reason' => $e->getMessage() ?: 'Could not update waiver',
+                    'reason' => $e->getMessage() ?: 'Could not submit waiver request',
                 ];
             }
         }
@@ -468,11 +525,67 @@ class EmployeeAttendanceController extends HrOrgResourceController
         }
 
         return response()->json([
-            'updated_count' => count($updated),
+            'submitted_count' => count($submitted),
             'skipped_count' => count($skipped),
-            'updated' => $updated,
+            'updated_count' => count($submitted), // FE compat
+            'submitted' => $submitted,
+            'updated' => $submitted,
             'skipped' => $skipped,
-        ], count($updated) > 0 ? 200 : 422);
+        ], count($submitted) > 0 ? 202 : 422);
+    }
+
+    /** POST /lateness-waiver-requests/{id}/approve */
+    public function approveWaiverRequest(Request $request, string $id)
+    {
+        $waiver = $this->findScopedWaiverRequest($id, $request);
+        $approved = app(LatenessWaiverApprovalService::class)->approve($waiver, $request->user());
+
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'lateness_waiver',
+            'lateness_waiver_request',
+            (int) $approved->id,
+            'approved',
+            $request->user(),
+        );
+
+        return response()->json($approved->load(['attendance.employee', 'employee']));
+    }
+
+    /** POST /lateness-waiver-requests/{id}/reject */
+    public function rejectWaiverRequest(Request $request, string $id)
+    {
+        $data = $request->validate([
+            'reason' => 'nullable|string|max:500',
+        ]);
+        $waiver = $this->findScopedWaiverRequest($id, $request);
+        $rejected = app(LatenessWaiverApprovalService::class)->reject(
+            $waiver,
+            $request->user(),
+            $data['reason'] ?? null,
+        );
+
+        app(ActionRequestService::class)->markResolvedFromDomain(
+            'lateness_waiver',
+            'lateness_waiver_request',
+            (int) $rejected->id,
+            'rejected',
+            $request->user(),
+            $data['reason'] ?? null,
+        );
+
+        return response()->json($rejected->load(['attendance.employee', 'employee']));
+    }
+
+    protected function findScopedWaiverRequest(string $id, Request $request): LatenessWaiverRequest
+    {
+        $query = LatenessWaiverRequest::query()->where('id', $id);
+        if ($orgId = $request->user()?->organization_id) {
+            $query->where('organization_id', $orgId);
+        }
+
+        $waiver = $query->firstOrFail();
+
+        return $waiver;
     }
 
     /**
@@ -650,7 +763,9 @@ class EmployeeAttendanceController extends HrOrgResourceController
 
         $employee->loadMissing('shift');
         if (! $employee->shift) {
-            return array_key_exists('lunch_taken', $data) ? (bool) $data['lunch_taken'] : true;
+            return array_key_exists('lunch_taken', $data)
+                ? filter_var($data['lunch_taken'], FILTER_VALIDATE_BOOLEAN)
+                : true;
         }
 
         $isHoliday = \App\Models\OrganizationHoliday::query()
@@ -663,6 +778,8 @@ class EmployeeAttendanceController extends HrOrgResourceController
             return null;
         }
 
-        return array_key_exists('lunch_taken', $data) ? (bool) $data['lunch_taken'] : true;
+        return array_key_exists('lunch_taken', $data)
+            ? filter_var($data['lunch_taken'], FILTER_VALIDATE_BOOLEAN)
+            : true;
     }
 }

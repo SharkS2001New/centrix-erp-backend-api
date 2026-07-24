@@ -226,6 +226,12 @@ class UserPermissionService
             || $this->hasAssignedCapability($user, 'hr.manage');
     }
 
+    public function canApproveLatenessWaivers(User $user): bool
+    {
+        return $this->hasRoleAssignedPermission($user, 'hr.attendance.waive.approve')
+            || $this->hasAssignedCapability($user, 'hr.manage');
+    }
+
     public function canApproveOrderCancellations(User $user): bool
     {
         return $this->canApproveSalesOrders($user)
@@ -306,6 +312,7 @@ class UserPermissionService
             'sales_orders' => $this->canApproveSalesOrders($user),
             'order_cancellations' => $this->canApproveOrderCancellations($user),
             'leave_requests' => $this->canApproveLeaveRequests($user),
+            'lateness_waivers' => $this->canApproveLatenessWaivers($user),
             'payroll_runs' => $this->canApprovePayrollRuns($user),
             'cash_advances' => $this->canApproveCashAdvances($user),
             'supplier_returns' => $this->canApproveSupplierReturns($user),

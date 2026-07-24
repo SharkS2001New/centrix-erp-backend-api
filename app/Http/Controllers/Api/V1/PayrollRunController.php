@@ -107,6 +107,7 @@ class PayrollRunController extends BaseResourceController
 
     /**
      * Admin only — delete run and lines; restore closed attendance, overtime, advances, etc.
+     * Paid runs are locked so disbursed payroll cannot be removed by mistake.
      */
     public function destroy(Request $request, string $id)
     {
@@ -115,21 +116,10 @@ class PayrollRunController extends BaseResourceController
         }
 
         $run = $this->findScopedRun($request, $id)->load('payPeriod');
-        $orgId = (int) ($run->organization_id ?: $run->payPeriod?->organization_id ?? 0);
-        $schedule = app(PayrollRunScheduleService::class);
 
-        if (! $schedule->canDeletePayrollRun($run->created_at, $run->run_date, $orgId ?: null)) {
-            $expires = $schedule->deleteLockExpiresAt($run->created_at, $run->run_date, $orgId ?: null);
-            $lockMinutes = $orgId
-                ? (int) \App\Services\Hr\HrPayrollSettingsResolver::forOrganizationId($orgId)['payroll_run_delete_lock_minutes']
-                : PayrollRunScheduleService::DELETE_LOCK_MINUTES;
-
+        if ($run->status === 'paid') {
             return response()->json([
-                'message' => 'Payroll run can only be deleted within '
-                    . $lockMinutes
-                    . ' minutes of creation (locked after '
-                    . $expires->timezone(config('app.timezone'))->format('M j, Y g:i A')
-                    . ').',
+                'message' => 'Paid payroll runs cannot be deleted. Marking as paid locks the run.',
             ], 422);
         }
 
@@ -151,6 +141,7 @@ class PayrollRunController extends BaseResourceController
         $run->setAttribute('can_delete', $meta['can_delete']);
         $run->setAttribute('delete_locked_after', $meta['delete_locked_after']);
         $run->setAttribute('delete_lock_minutes', $meta['delete_lock_minutes']);
+        $run->setAttribute('delete_blocked_reason', $meta['delete_blocked_reason']);
 
         if ($viewer && $run->status === 'pending_approval') {
             $run->setAttribute(

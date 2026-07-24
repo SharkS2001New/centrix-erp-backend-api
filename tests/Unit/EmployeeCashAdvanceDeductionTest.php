@@ -32,6 +32,18 @@ class EmployeeCashAdvanceDeductionTest extends TestCase
         $this->assertSame(2500.0, $advance->payrollDeductionAmount());
     }
 
+    public function test_full_next_cycle_deducts_remaining_balance_only(): void
+    {
+        $advance = new EmployeeCashAdvance([
+            'status' => 'open',
+            'amount' => 3000,
+            'balance' => 1000,
+            'repayment_mode' => 'full_next_cycle',
+        ]);
+
+        $this->assertSame(1000.0, $advance->payrollDeductionAmount());
+    }
+
     public function test_fixed_per_cycle_with_tiny_instalment(): void
     {
         $advance = new EmployeeCashAdvance([

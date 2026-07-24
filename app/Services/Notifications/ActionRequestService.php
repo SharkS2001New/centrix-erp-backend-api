@@ -20,6 +20,7 @@ use App\Services\Notifications\Handlers\DiscountApprovalActionRequestHandler;
 use App\Services\Notifications\Handlers\ExpenseActionRequestHandler;
 use App\Services\Notifications\Handlers\JournalEntryActionRequestHandler;
 use App\Services\Notifications\Handlers\LeaveActionRequestHandler;
+use App\Services\Notifications\Handlers\LatenessWaiverActionRequestHandler;
 use App\Services\Notifications\Handlers\LpoApprovalActionRequestHandler;
 use App\Services\Notifications\Handlers\OrderCancellationActionRequestHandler;
 use App\Services\Notifications\Handlers\PayrollRunActionRequestHandler;
@@ -44,6 +45,7 @@ class ActionRequestService
         DiscountApprovalActionRequestHandler $discountHandler,
         OrderCancellationActionRequestHandler $orderCancelHandler,
         LeaveActionRequestHandler $leaveHandler,
+        LatenessWaiverActionRequestHandler $latenessWaiverHandler,
         JournalEntryActionRequestHandler $journalHandler,
         StockAdjustmentActionRequestHandler $stockAdjustmentHandler,
         StockTransferActionRequestHandler $stockTransferHandler,
@@ -60,6 +62,7 @@ class ActionRequestService
             $discountHandler,
             $orderCancelHandler,
             $leaveHandler,
+            $latenessWaiverHandler,
             $journalHandler,
             $stockAdjustmentHandler,
             $stockTransferHandler,

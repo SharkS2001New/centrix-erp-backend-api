@@ -106,6 +106,8 @@ class PayrollOperationsController extends Controller
             'include_deductions' => 'nullable|boolean',
             'lines' => 'required|array',
             'lines.*.employee_id' => 'required|integer',
+            'lines.*.basic_salary' => 'nullable|numeric|min:0',
+            'lines.*.allowances' => 'nullable|numeric|min:0',
             'lines.*.gross_pay' => 'nullable|numeric|min:0',
             'lines.*.other_deductions' => 'nullable|numeric|min:0',
             'lines.*.payroll_meta' => 'nullable|array',
@@ -139,21 +141,35 @@ class PayrollOperationsController extends Controller
                 $employee = $this->findOrgEmployee($lineInput['employee_id'], $request);
                 $basic = (float) ($lineInput['basic_salary'] ?? $employee->base_salary ?? 0);
                 $allowances = (float) ($lineInput['allowances'] ?? 0);
-                $meta = $lineInput['payroll_meta'] ?? [];
+                $meta = is_array($lineInput['payroll_meta'] ?? null) ? $lineInput['payroll_meta'] : [];
                 $overtime = (float) ($meta['overtime'] ?? 0);
-                $gross = (float) ($lineInput['gross_pay'] ?? ($basic + $allowances + $overtime));
+                $periodGross = (float) ($lineInput['gross_pay'] ?? ($basic + $allowances + $overtime));
                 $other = (float) ($lineInput['other_deductions'] ?? 0);
 
+                // PAYE / NSSF / SHIF / AHL use the employee's set (contract) monthly gross,
+                // not attendance-prorated period pay. Overtime earned in the period is still taxable.
+                $contractBasic = (float) ($meta['contract_monthly_salary'] ?? $employee->base_salary ?? $basic);
+                $monthlyAllowance = (float) ($meta['monthly_allowance'] ?? 0);
+                $statutoryGross = round($contractBasic + $monthlyAllowance + $overtime, 2);
+                if ($statutoryGross <= 0) {
+                    $statutoryGross = $periodGross;
+                }
+
                 if ($autoCalculate || ! isset($lineInput['paye'])) {
-                    $calc = $this->calculator->calculateMonthly($gross, $other);
+                    $calc = $this->calculator->calculateMonthly($statutoryGross, $other);
+                    $calc = $this->applyStatutoryToPeriodGross($calc, $periodGross, $other);
                 } else {
-                    $calc = $this->manualLine($lineInput, $gross, $other);
+                    $calc = $this->manualLine($lineInput, $periodGross, $other);
                 }
 
                 $calc['basic_salary'] = $basic;
                 $calc['allowances'] = $allowances;
-                if (! empty($lineInput['payroll_meta'])) {
-                    $calc['payroll'] = $lineInput['payroll_meta'];
+                $calc['statutory_gross'] = $statutoryGross;
+                $calc['period_gross'] = round($periodGross, 2);
+                $calc['statutory_based_on_contract_gross'] = true;
+                if ($meta !== []) {
+                    $meta['contract_gross_for_statutory'] = $statutoryGross;
+                    $calc['payroll'] = $meta;
                 }
 
                 PayrollLine::create([
@@ -242,14 +258,8 @@ class PayrollOperationsController extends Controller
 
         $departmentId = $options['department_id'] ?? null;
 
-        $employeeQuery = Employee::query()
-            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
-            ->when($departmentId, fn ($q) => $q->where('department_id', $departmentId))
-            ->where('employment_status', 'active')
-            ->where('is_active', true)
-            ->where('base_salary', '>', 0);
-
-        if (! $request->boolean('sync') && (clone $employeeQuery)->count() > 15) {
+        // Always queue (unless sync=true) so the UI can show chunk progress and avoid an empty run page.
+        if (! $request->boolean('sync')) {
             $task = $this->tasks->create('payroll_process_auto', $request->user(), [
                 'run_id' => (int) $runId,
                 'options' => $options,
@@ -380,15 +390,17 @@ class PayrollOperationsController extends Controller
         }
 
         $hr = HrPayrollSettingsResolver::forOrganizationId($orgId ?: $runOrg);
+        // Allow re-process of unpaid "processed" runs so statutory (e.g. PAYE) can be recalculated
+        // after rate/formula fixes without deleting the run.
         if (! ($hr['require_payroll_approval'] ?? false)) {
-            if (! in_array($run->status, ['draft', 'approved'], true)) {
+            if (! in_array($run->status, ['draft', 'approved', 'processed'], true)) {
                 abort(422, 'Payroll run cannot be processed in its current status.');
             }
 
             return;
         }
 
-        if ($run->status !== 'approved') {
+        if (! in_array($run->status, ['approved', 'processed'], true)) {
             abort(422, 'Payroll run must be approved before processing.');
         }
     }
@@ -398,6 +410,33 @@ class PayrollOperationsController extends Controller
         if (! app(UserPermissionService::class)->canApprovePayrollRuns($user)) {
             abort(403, 'You do not have permission to approve payroll runs.');
         }
+    }
+
+    /**
+     * Keep period earnings on the line, but statutory amounts computed on contract gross.
+     *
+     * @param  array<string, mixed>  $calc
+     * @return array<string, mixed>
+     */
+    protected function applyStatutoryToPeriodGross(array $calc, float $periodGross, float $other): array
+    {
+        $periodGross = round(max(0, $periodGross), 2);
+        $other = round(max(0, $other), 2);
+        $statutory = round(
+            (float) $calc['nssf']
+            + (float) $calc['shif']
+            + (float) $calc['housing_levy']
+            + (float) $calc['paye'],
+            2,
+        );
+        $deductions = round($statutory + $other, 2);
+
+        $calc['gross_pay'] = $periodGross;
+        $calc['other_deductions'] = $other;
+        $calc['deductions'] = $deductions;
+        $calc['net_pay'] = round(max(0, $periodGross - $deductions), 2);
+
+        return $calc;
     }
 
     /** @param array<string, mixed> $lineInput */

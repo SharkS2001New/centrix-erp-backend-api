@@ -46,7 +46,7 @@ class EmployeeCashAdvance extends Model
             : 'full_next_cycle';
     }
 
-    /** Amount to deduct on the next payroll run (full balance unless fixed instalment is set). */
+    /** Amount to deduct on the next payroll run (full remaining balance unless fixed instalment is set). */
     public function payrollDeductionAmount(): float
     {
         if ($this->status !== 'open') {
@@ -54,23 +54,13 @@ class EmployeeCashAdvance extends Model
         }
 
         $balance = round((float) $this->balance, 2);
-        $advanced = round((float) $this->amount, 2);
-
         if ($balance <= 0) {
-            if ($advanced > 0) {
-                return $advanced;
-            }
-
             return 0.0;
         }
 
         $mode = $this->normalizedRepaymentMode();
 
         if ($mode === 'full_next_cycle') {
-            if ($advanced > 0 && $balance < $advanced) {
-                return $advanced;
-            }
-
             return $balance;
         }
 

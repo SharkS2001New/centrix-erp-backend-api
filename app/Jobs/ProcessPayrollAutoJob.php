@@ -49,10 +49,27 @@ class ProcessPayrollAutoJob implements ShouldQueue
                 app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($run->payPeriod);
             }
 
-            $built = $autoProcess->buildLines($run, (int) $task->organization_id, $payload['options'] ?? []);
+            $tasks->updateProgress($task, 3, 'Preparing employee payroll…');
+
+            $built = $autoProcess->buildLines(
+                $run,
+                (int) $task->organization_id,
+                $payload['options'] ?? [],
+                function (int $done, int $total, string $employeeName) use ($tasks, $task) {
+                    $pct = 5 + (int) floor(($done / max(1, $total)) * 70);
+                    $tasks->updateProgress(
+                        $task,
+                        min(75, $pct),
+                        "Calculating {$employeeName} ({$done}/{$total})…",
+                    );
+                },
+            );
+
             if ($built['lines'] === []) {
                 throw new \RuntimeException('No eligible employees to process.');
             }
+
+            $tasks->updateProgress($task, 82, 'Writing payroll lines…');
 
             $request = Request::create("/payroll/runs/{$runId}/process-auto", 'POST', [
                 'auto_calculate' => true,
@@ -74,6 +91,7 @@ class ProcessPayrollAutoJob implements ShouldQueue
                 $data['processed_count'] = count($built['lines']);
             }
 
+            $tasks->updateProgress($task, 98, 'Finalizing payroll run…');
             $tasks->markCompleted($task, is_array($data) ? $data : ['status' => 'completed']);
         } catch (\Throwable $e) {
             Log::warning('ProcessPayrollAutoJob failed', [

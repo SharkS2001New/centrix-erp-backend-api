@@ -8,6 +8,7 @@ class NotificationActionUrlBuilder
     {
         return match ($type) {
             'leave_request' => '/hr/leave?leave_day_id='.$referenceId,
+            'lateness_waiver' => '/hr/attendance?tab=records&waiver_id='.$referenceId,
             'customer_return' => '/sales/returns?return_id='.$referenceId,
             'supplier_return' => '/suppliers/returns?return_id='.$referenceId,
             'journal_entry' => '/accounting/journal-entries/'.$referenceId,

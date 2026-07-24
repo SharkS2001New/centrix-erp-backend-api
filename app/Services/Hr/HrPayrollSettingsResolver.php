@@ -66,6 +66,7 @@ class HrPayrollSettingsResolver
             'deduct_cash_advances_on_payroll',
             'default_lunch_required',
             'lunch_break_is_paid',
+            'enforce_month_end_run_schedule',
         ] as $flag) {
             $out[$flag] = (bool) ($out[$flag] ?? ($defaults[$flag] ?? false));
         }

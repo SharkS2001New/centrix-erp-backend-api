@@ -3,11 +3,8 @@
 namespace App\Services\Payroll;
 
 use App\Models\Employee;
-use App\Models\PayPeriod;
 use App\Models\PayrollRun;
-use App\Models\User;
 use App\Services\Attendance\AttendanceDayPolicy;
-use Illuminate\Support\Collection;
 
 class PayrollAutoProcessService
 {
@@ -25,9 +22,10 @@ class PayrollAutoProcessService
      *   include_overtime?: bool,
      *   use_attendance_proration?: bool
      * }  $options
+     * @param  (callable(int $done, int $total, string $employeeName): void)|null  $onProgress
      * @return array{lines: list<array<string, mixed>>, skipped: list<array<string, mixed>>}
      */
-    public function buildLines(PayrollRun $run, ?int $orgId, array $options = []): array
+    public function buildLines(PayrollRun $run, ?int $orgId, array $options = [], ?callable $onProgress = null): array
     {
         $period = $run->payPeriod;
         if (! $period) {
@@ -64,8 +62,16 @@ class PayrollAutoProcessService
 
         $lines = [];
         $skipped = [];
+        $total = $employees->count();
+        $done = 0;
 
         foreach ($employees as $employee) {
+            $done++;
+            $name = (string) ($employee->full_name ?: trim($employee->first_name.' '.$employee->last_name) ?: ('#'.$employee->id));
+            if ($onProgress) {
+                $onProgress($done, max(1, $total), $name);
+            }
+
             if (! $employee->shift_id) {
                 $skipped[] = [
                     'employee_id' => $employee->id,

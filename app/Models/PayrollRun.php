@@ -41,19 +41,15 @@ class PayrollRun extends Model
     /** @return array<string, mixed> */
     public function deleteMeta(): array
     {
-        $this->loadMissing('payPeriod');
-        $schedule = app(\App\Services\Payroll\PayrollRunScheduleService::class);
-        $created = $this->created_at;
-        $orgId = (int) ($this->payPeriod?->organization_id ?? 0);
-        $expires = $schedule->deleteLockExpiresAt($created, $this->run_date, $orgId ?: null);
-        $lockMinutes = $orgId
-            ? (int) \App\Services\Hr\HrPayrollSettingsResolver::forOrganizationId($orgId)['payroll_run_delete_lock_minutes']
-            : \App\Services\Payroll\PayrollRunScheduleService::DELETE_LOCK_MINUTES;
+        $canDelete = $this->status !== 'paid';
 
         return [
-            'can_delete' => $schedule->canDeletePayrollRun($created, $this->run_date, $orgId ?: null),
-            'delete_locked_after' => $expires->toIso8601String(),
-            'delete_lock_minutes' => $lockMinutes,
+            'can_delete' => $canDelete,
+            'delete_locked_after' => null,
+            'delete_lock_minutes' => null,
+            'delete_blocked_reason' => $canDelete
+                ? null
+                : 'Paid payroll runs cannot be deleted.',
         ];
     }
 

@@ -35,7 +35,7 @@ class KenyaStatutoryCalculator
     ): array {
         $gross = round(max(0, $grossPay), 2);
         $other = round(max(0, $otherDeductions), 2);
-        $cfg = config('kenya_payroll');
+        $cfg = KenyaPayrollSettingsResolver::resolve();
 
         $nssfParts = $this->nssf($gross, $cfg['nssf']);
         $nssf = $nssfParts['total'];

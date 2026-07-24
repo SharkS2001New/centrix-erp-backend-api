@@ -127,6 +127,7 @@ class PayrollEarningsService
             'payroll_meta' => [
                 'contract_monthly_salary' => $contractBasic,
                 'monthly_allowance' => $allowanceBreakdown['monthly'],
+                'contract_gross_for_statutory' => $contractGrossForOther,
                 'allowance_source' => $allowanceBreakdown['source'],
                 'allowance_lines' => $allowanceBreakdown['lines'],
                 'allowances_period' => $allowances,

@@ -751,6 +751,7 @@ return [
         'hr_payroll' => [
             'pay_frequency' => 'monthly',
             'grace_days_after_month_end' => 7,
+            'enforce_month_end_run_schedule' => true,
             'payroll_run_delete_lock_minutes' => 20,
             'auto_calculate_statutory' => true,
             'close_cycle_on_process' => true,

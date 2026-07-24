@@ -11,7 +11,7 @@ class KenyaStatutoryReference
      */
     public static function describe(): array
     {
-        $cfg = config('kenya_payroll');
+        $cfg = KenyaPayrollSettingsResolver::resolve();
         $nssf = $cfg['nssf'];
         $shif = $cfg['shif'];
         $hl = $cfg['housing_levy'];
@@ -72,7 +72,7 @@ class KenyaStatutoryReference
                     'id' => 'paye',
                     'label' => 'PAYE',
                     'formula' => sprintf(
-                        'Taxable income = gross − NSSF − SHIF − housing levy (employee). Apply KRA monthly bands, then subtract personal relief (KES %s). Insurance relief is %s%% of private premiums only (cap KES %s/month) — SHIF does not qualify.',
+                        'Taxable income = contract monthly gross (employee set salary + monthly allowances + overtime) − NSSF − SHIF − housing levy (employee). Attendance proration does not reduce the PAYE base. Apply KRA monthly bands, then subtract personal relief (KES %s). Insurance relief is %s%% of private premiums only (cap KES %s/month) — SHIF does not qualify.',
                         number_format($paye['personal_relief_monthly']),
                         round(($paye['insurance_relief_rate'] ?? 0.15) * 100, 0),
                         number_format($paye['insurance_relief_cap_monthly']),
@@ -85,7 +85,7 @@ class KenyaStatutoryReference
                     ],
                 ],
             ],
-            'net_pay_formula' => 'Net pay = gross − (NSSF + SHIF + housing levy + PAYE + other deductions)',
+            'net_pay_formula' => 'Net pay = payable amount (period earnings for days worked) − (NSSF + SHIF + housing levy + PAYE + other deductions). Statutory and percentage deductions use contract monthly gross, not payable days.',
             'other_deductions' => [
                 'label' => 'Other deductions (loans, advances, custom)',
                 'formula' => 'Fixed amounts and cash-advance repayments are deducted in full for the pay run (not reduced when basic pay is prorated for attendance). Percentage deductions use contract monthly gross (basic salary + monthly allowances), not prorated period gross.',

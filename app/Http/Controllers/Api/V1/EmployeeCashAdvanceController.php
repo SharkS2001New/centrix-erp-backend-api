@@ -67,7 +67,8 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
         }
         $data['organization_id'] = $data['organization_id'] ?? $employee->organization_id;
         $data['branch_id'] = $data['branch_id'] ?? $employee->branch_id;
-        $data['balance'] = $data['balance'] ?? $data['amount'];
+        // Always start with the full advanced amount outstanding (ignore stale client balance).
+        $data['balance'] = $data['amount'];
         $data['repayment_mode'] = $data['repayment_mode'] ?? 'full_next_cycle';
         if (! isset($data['status'])) {
             $data['status'] = 'pending';
@@ -84,6 +85,8 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
 
     protected function advanceWithMeta(EmployeeCashAdvance $advance, ?User $viewer): EmployeeCashAdvance
     {
+        $advance->setAttribute('next_deduction_amount', $advance->payrollDeductionAmount());
+
         if ($viewer && $advance->status === 'pending') {
             $advance->setAttribute(
                 'action_request',

@@ -77,6 +77,87 @@ class PayrollRunWorkflowTest extends TestCase
             ->assertJsonPath('message', 'Only processed payroll runs can be marked as paid.');
     }
 
+    public function test_process_run_auto_calculates_non_zero_paye(): void
+    {
+        $run = $this->createRun('draft');
+        $employee = Employee::query()
+            ->where('organization_id', $this->admin->organization_id)
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        $this->postJson("/api/v1/payroll/runs/{$run->id}/process", [
+            'auto_calculate' => true,
+            'close_cycle' => false,
+            'lines' => [
+                [
+                    'employee_id' => $employee->id,
+                    'basic_salary' => 50000,
+                    'allowances' => 0,
+                    'gross_pay' => 50000,
+                    'other_deductions' => 0,
+                ],
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 'processed');
+
+        $line = PayrollLine::query()
+            ->where('payroll_run_id', $run->id)
+            ->where('employee_id', $employee->id)
+            ->firstOrFail();
+
+        $this->assertEquals(50000.0, (float) $line->gross_pay);
+        $this->assertGreaterThan(0, (float) $line->paye);
+        $this->assertEqualsWithDelta(5845.85, (float) $line->paye, 0.02);
+        $this->assertEquals(0.0, (float) data_get($line->statutory_meta, 'insurance_relief', -1));
+    }
+
+    public function test_processed_run_can_be_reprocessed_to_refresh_paye(): void
+    {
+        $run = $this->createRun('processed');
+        $employee = Employee::query()
+            ->where('organization_id', $this->admin->organization_id)
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        PayrollLine::create([
+            'payroll_run_id' => $run->id,
+            'employee_id' => $employee->id,
+            'gross_pay' => 50000,
+            'nssf' => 3000,
+            'shif' => 1375,
+            'housing_levy' => 750,
+            'paye' => 0,
+            'other_deductions' => 0,
+            'deductions' => 5125,
+            'net_pay' => 44875,
+            'taxable_income' => 44875,
+            'employer_nssf' => 3000,
+            'employer_housing' => 750,
+        ]);
+
+        $this->postJson("/api/v1/payroll/runs/{$run->id}/process", [
+            'auto_calculate' => true,
+            'close_cycle' => false,
+            'lines' => [
+                [
+                    'employee_id' => $employee->id,
+                    'gross_pay' => 50000,
+                    'other_deductions' => 0,
+                ],
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('status', 'processed');
+
+        $line = PayrollLine::query()
+            ->where('payroll_run_id', $run->id)
+            ->where('employee_id', $employee->id)
+            ->firstOrFail();
+
+        $this->assertGreaterThan(0, (float) $line->paye);
+    }
+
     protected function createRun(string $status): PayrollRun
     {
         $orgId = (int) $this->admin->organization_id;

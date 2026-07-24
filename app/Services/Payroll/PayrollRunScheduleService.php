@@ -3,7 +3,6 @@
 namespace App\Services\Payroll;
 
 use App\Services\Hr\HrPayrollSettingsResolver;
-use App\Services\Platform\PlatformPayrollScheduleSettingsResolver;
 use App\Models\PayPeriod;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -33,10 +32,14 @@ class PayrollRunScheduleService
         return (int) HrPayrollSettingsResolver::forOrganizationId($organizationId)['payroll_run_delete_lock_minutes'];
     }
 
-    public function enforceMonthEndSchedule(): bool
+    public function enforceMonthEndSchedule(?int $organizationId = null): bool
     {
         try {
-            return PlatformPayrollScheduleSettingsResolver::enforceMonthEndSchedule();
+            $settings = $organizationId
+                ? HrPayrollSettingsResolver::forOrganizationId($organizationId)
+                : HrPayrollSettingsResolver::normalize(HrPayrollSettingsResolver::defaults());
+
+            return (bool) ($settings['enforce_month_end_run_schedule'] ?? true);
         } catch (\Throwable) {
             return true;
         }
@@ -50,7 +53,7 @@ class PayrollRunScheduleService
         $today = ($today ?? now())->copy()->startOfDay();
         $specs = [];
 
-        if (! $this->enforceMonthEndSchedule()) {
+        if (! $this->enforceMonthEndSchedule($organizationId)) {
             // Any time: ensure the current calendar month exists for generate/select.
             $specs[] = $this->monthPeriodSpec($today);
 
@@ -104,7 +107,7 @@ class PayrollRunScheduleService
             return false;
         }
 
-        if (! $this->enforceMonthEndSchedule()) {
+        if (! $this->enforceMonthEndSchedule($organizationId)) {
             return true;
         }
 
@@ -142,7 +145,7 @@ class PayrollRunScheduleService
             return "Payroll for {$label} cannot run before that month ends. Upcoming months are not allowed.";
         }
 
-        if (! $this->enforceMonthEndSchedule()) {
+        if (! $this->enforceMonthEndSchedule((int) $period->organization_id)) {
             return "Payroll for {$label} cannot be run.";
         }
 
@@ -196,8 +199,7 @@ class PayrollRunScheduleService
     {
         $today = ($today ?? now())->copy()->startOfDay();
         $graceDays = $this->graceDays($organizationId);
-        $deleteLock = $this->deleteLockMinutes($organizationId);
-        $enforce = $this->enforceMonthEndSchedule();
+        $enforce = $this->enforceMonthEndSchedule($organizationId);
         $runnable = $this->runnablePeriodSpecs($today, $organizationId);
 
         $rules = $enforce
@@ -207,16 +209,17 @@ class PayrollRunScheduleService
                     . $graceDays
                     . ' days of the following month.',
                 'Upcoming (future) months cannot be processed.',
+                'Payroll runs can be deleted until they are marked as paid.',
             ]
             : [
-                'Month-end schedule enforcement is off (platform setting).',
+                'Month-end schedule enforcement is off for this organization.',
                 'Payroll may run for the current or any past month at any time.',
                 'Upcoming (future) months cannot be processed.',
+                'Payroll runs can be deleted until they are marked as paid.',
             ];
 
         return [
             'today' => $today->toDateString(),
-            'delete_lock_minutes' => $deleteLock,
             'grace_days_after_month_end' => $graceDays,
             'enforce_month_end_run_schedule' => $enforce,
             'rules' => $rules,
@@ -257,11 +260,13 @@ class PayrollRunScheduleService
 
     public function canDeletePayrollRun(?Carbon $createdAt, ?Carbon $runDate = null, ?int $organizationId = null): bool
     {
-        if (! $createdAt) {
-            return false;
-        }
+        // Kept for callers that still pass timestamps; deletion is status-based on the run.
+        return true;
+    }
 
-        return now()->lt($createdAt->copy()->addMinutes($this->deleteLockMinutes($organizationId)));
+    public function canDeletePayrollRunByStatus(?string $status): bool
+    {
+        return $status !== 'paid';
     }
 
     public function deleteLockExpiresAt(?Carbon $createdAt, ?Carbon $runDate = null, ?int $organizationId = null): Carbon

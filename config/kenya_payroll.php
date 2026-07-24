@@ -1,9 +1,10 @@
 <?php
 
 /**
- * Kenya statutory payroll rates (2026).
+ * Kenya statutory payroll rates (2026) — file defaults.
  * Sources: KRA PAYE bands, NSSF Act 2013 Year 4 (Feb 2026), SHIF 2.75%, Affordable Housing Levy 1.5%.
- * Update here when legislation changes — calculator reads this file only.
+ * Runtime rates come from KenyaPayrollSettingsResolver (platform admin can override via
+ * GET/PUT /admin/kenya-payroll-settings). This file is the default when no override is saved.
  */
 return [
     'effective_label' => '2026-02',
