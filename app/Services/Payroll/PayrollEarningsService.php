@@ -246,13 +246,10 @@ class PayrollEarningsService
             $source = 'employee_field';
             if ($monthly > 0) {
                 $lines = [['id' => null, 'name' => 'Monthly allowance', 'amount' => $monthly]];
+            } else {
+                $source = 'none';
+                $lines = [];
             }
-        }
-
-        if ($monthly <= 0) {
-            $monthly = round($contractBasic * 0.1, 2);
-            $source = 'default_percent';
-            $lines = [['id' => null, 'name' => 'Default (10% of basic)', 'amount' => $monthly]];
         }
 
         if ($useProration && $expectedDays > 0) {
