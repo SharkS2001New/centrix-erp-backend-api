@@ -5,8 +5,8 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Employee;
 use App\Models\EmployeeAttendance;
 use App\Services\Attendance\AttendanceDayPolicy;
+use App\Services\Attendance\AttendanceDayReconciler;
 use App\Services\Payroll\PayrollCycleSettlementService;
-use App\Support\AttendanceHours;
 use App\Support\AttendanceTime;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -33,18 +33,16 @@ class EmployeeAttendanceController extends HrOrgResourceController
 
         $shiftHours = null;
         $shiftTimes = null;
+        $lunchMinutes = null;
         if ($employee->shift) {
             $hours = $employee->shift->hoursForDate(
                 $data['attendance_date'],
                 (bool) ($eval['is_holiday'] ?? false),
             );
             $shiftTimes = $hours;
-            $shiftHours = app(\App\Services\Attendance\LeaveRequestCalculator::class)
-                ->hoursBetweenTimes(
-                    $hours['start_time'],
-                    $hours['end_time'],
-                    (bool) $hours['crosses_midnight'],
-                );
+            $lunchMinutes = (int) ($hours['lunch_minutes'] ?? 0);
+            $shiftHours = app(AttendanceDayReconciler::class)
+                ->expectedPaidHours($employee, $data['attendance_date']);
         }
 
         return response()->json(array_merge($eval, [
@@ -54,16 +52,23 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 'status' => $existing->status,
                 'source' => $existing->source,
                 'hours_worked' => $existing->hours_worked,
+                'expected_hours' => $existing->expected_hours,
+                'late_minutes' => $existing->late_minutes,
+                'lunch_status' => $existing->lunch_status,
+                'lunch_minutes' => $existing->lunch_minutes,
+                'overtime_minutes' => $existing->overtime_minutes,
             ] : null,
             'expected_hours' => $shiftHours,
             'shift_times' => $shiftTimes,
+            'lunch_minutes' => $lunchMinutes,
+            'bank_lunch_as_work' => (bool) ($employee->bank_lunch_as_work ?? false),
         ]));
     }
 
     public function index(Request $request)
     {
         $query = EmployeeAttendance::query()->with([
-            'employee:id,organization_id,full_name,first_name,last_name,employee_code,department_id,branch_id',
+            'employee:id,organization_id,full_name,first_name,last_name,employee_code,department_id,branch_id,bank_lunch_as_work',
             'branch:id,organization_id,branch_name',
         ]);
 
@@ -114,10 +119,9 @@ class EmployeeAttendanceController extends HrOrgResourceController
     public function store(Request $request)
     {
         $request->merge(AttendanceTime::normalizePayload($request->all()));
-        $data = $this->applyHours($this->validated($request));
+        $data = $this->validated($request);
         $employee = $this->findOrgEmployee($data['employee_id'], $request)->load('shift');
         app(AttendanceDayPolicy::class)->assertCanCreateAttendance($employee, $data['attendance_date']);
-        $data = $this->applyDayPolicy($employee, $data);
         $data['organization_id'] = $data['organization_id'] ?? $employee->organization_id;
         if (empty($data['branch_id'])) {
             $data['branch_id'] = $employee->branch_id;
@@ -132,10 +136,19 @@ class EmployeeAttendanceController extends HrOrgResourceController
             $data['attendance_date'],
         );
 
-        return response()->json(
-            EmployeeAttendance::create($data)->load(['employee', 'branch']),
-            201,
+        $attendance = app(AttendanceDayReconciler::class)->reconcileManualSpan(
+            $employee,
+            $data['attendance_date'],
+            $data['check_in'] ?? null,
+            $data['check_out'] ?? null,
+            $data['source'],
+            $data['device_identifier'] ?? null,
+            isset($data['branch_id']) ? (int) $data['branch_id'] : null,
+            $data['notes'] ?? null,
+            $data['status'] ?? null,
         );
+
+        return response()->json($attendance->load(['employee', 'branch']), 201);
     }
 
     public function update(Request $request, string $id)
@@ -143,22 +156,36 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'attendance record');
         $request->merge(AttendanceTime::normalizePayload($request->all()));
-        $data = $this->applyHours($this->validated($request, updating: true));
+        $data = $this->validated($request, updating: true);
         $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id, $request)->load('shift');
-        $data['attendance_date'] = $data['attendance_date'] ?? $row->attendance_date->format('Y-m-d');
-        app(AttendanceDayPolicy::class)->assertCanCreateAttendance($employee, $data['attendance_date']);
+        $date = $data['attendance_date'] ?? $row->attendance_date->format('Y-m-d');
+        app(AttendanceDayPolicy::class)->assertCanCreateAttendance($employee, $date);
         $this->assertUniqueAttendanceDate(
             (int) ($data['employee_id'] ?? $row->employee_id),
-            $data['attendance_date'],
+            $date,
             (int) $row->id,
         );
-        $data = $this->applyDayPolicy($employee, $data);
         if ($request->user()) {
             $this->applyBranchScopeToWriteData($request->user(), $data, $request);
         }
-        $row->update($data);
 
-        return response()->json($row->fresh(['employee', 'branch']));
+        $attendance = app(AttendanceDayReconciler::class)->reconcileManualSpan(
+            $employee,
+            $date,
+            array_key_exists('check_in', $data) ? ($data['check_in'] ?? null) : $row->check_in,
+            array_key_exists('check_out', $data) ? ($data['check_out'] ?? null) : $row->check_out,
+            $data['source'] ?? $row->source ?? 'manual',
+            $data['device_identifier'] ?? $row->device_identifier,
+            isset($data['branch_id']) ? (int) $data['branch_id'] : ($row->branch_id ? (int) $row->branch_id : null),
+            array_key_exists('notes', $data) ? ($data['notes'] ?? null) : $row->notes,
+            $data['status'] ?? $row->status,
+        );
+
+        if ((int) $attendance->id !== (int) $row->id) {
+            $row->delete();
+        }
+
+        return response()->json($attendance->fresh(['employee', 'branch']));
     }
 
     public function destroy(string $id)
@@ -168,49 +195,6 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $row->delete();
 
         return response()->json(null, 204);
-    }
-
-    /** @param array<string, mixed> $data */
-    protected function applyHours(array $data): array
-    {
-        $computed = AttendanceHours::fromTimeStrings(
-            $data['check_in'] ?? null,
-            $data['check_out'] ?? null,
-        );
-        if ($computed !== null) {
-            $data['hours_worked'] = $computed;
-        }
-
-        return $data;
-    }
-
-    /** @param array<string, mixed> $data */
-    protected function applyDayPolicy(Employee $employee, array $data): array
-    {
-        $date = $data['attendance_date'] ?? now()->toDateString();
-        $policy = app(AttendanceDayPolicy::class);
-        $eval = $policy->evaluate($employee, $date);
-
-        $status = $data['status'] ?? $eval['suggested_status'];
-        if (in_array($status, ['leave', 'holiday', 'absent'], true)) {
-            $data['status'] = $status;
-            $data['check_in'] = null;
-            $data['check_out'] = null;
-            $data['hours_worked'] = 0;
-
-            return $data;
-        }
-
-        if (! $eval['should_work'] && ($data['status'] ?? 'present') === 'present') {
-            $data['status'] = $eval['suggested_status'];
-            $data['hours_worked'] = 0;
-            $data['check_in'] = null;
-            $data['check_out'] = null;
-
-            return $data;
-        }
-
-        return $data;
     }
 
     protected function assertUniqueAttendanceDate(
@@ -249,7 +233,6 @@ class EmployeeAttendanceController extends HrOrgResourceController
             'status' => 'nullable|in:present,absent,late,half_day,leave,holiday',
             'source' => 'nullable|in:manual,clock_device,company_mobile,field_rep',
             'device_identifier' => 'nullable|string|max:100',
-            'hours_worked' => 'nullable|numeric|min:0|max:24',
             'notes' => 'nullable|string|max:500',
         ]);
     }

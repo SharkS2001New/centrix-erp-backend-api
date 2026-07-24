@@ -4,11 +4,9 @@ namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
-use App\Models\EmployeeAttendance;
 use App\Models\EmployeeClockSession;
 use App\Services\Attendance\AttendanceDayPolicy;
-use App\Support\AttendanceHours;
-use Carbon\Carbon;
+use App\Services\Attendance\AttendanceDayReconciler;
 use Illuminate\Http\Request;
 
 class AttendanceClockController extends Controller
@@ -48,6 +46,7 @@ class AttendanceClockController extends Controller
             'employee_id' => $employee->id,
             'organization_id' => $employee->organization_id,
             'branch_id' => $data['branch_id'] ?? $employee->branch_id,
+            'source' => 'clock_device',
             'clock_in_at' => $now,
             'device_identifier' => $data['device_identifier'] ?? null,
         ]);
@@ -84,32 +83,15 @@ class AttendanceClockController extends Controller
         if (! empty($data['device_identifier'])) {
             $session->device_identifier = $data['device_identifier'];
         }
+        $session->save();
 
-        $in = Carbon::parse($session->clock_in_at);
-        $attendanceDate = $in->toDateString();
-        $checkIn = $in->format('H:i:s');
-        $checkOut = $out->format('H:i:s');
-        $hours = AttendanceHours::fromTimeStrings($checkIn, $checkOut);
-        $policy = app(AttendanceDayPolicy::class);
-        $eval = $policy->evaluate($employee, $attendanceDate);
-        $status = $eval['should_work'] ? 'present' : $eval['suggested_status'];
-
-        $attendance = EmployeeAttendance::query()->updateOrCreate(
-            [
-                'employee_id' => $employee->id,
-                'attendance_date' => $attendanceDate,
-            ],
-            [
-                'organization_id' => $employee->organization_id,
-                'branch_id' => $session->branch_id ?? $employee->branch_id,
-                'check_in' => $status === 'present' ? $checkIn : null,
-                'check_out' => $status === 'present' ? $checkOut : null,
-                'status' => $status,
-                'source' => 'clock_device',
-                'device_identifier' => $session->device_identifier,
-                'hours_worked' => $status === 'present' ? $hours : 0,
-                'notes' => $eval['reason'],
-            ],
+        $attendanceDate = \Carbon\Carbon::parse($session->clock_in_at)->toDateString();
+        $attendance = app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $employee,
+            $attendanceDate,
+            'clock_device',
+            $session->device_identifier,
+            $session->branch_id ? (int) $session->branch_id : null,
         );
 
         $session->attendance_id = $attendance->id;

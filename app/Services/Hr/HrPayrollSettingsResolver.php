@@ -53,6 +53,7 @@ class HrPayrollSettingsResolver
         $out['standard_work_hours_per_day'] = max(1, min(24, (float) ($out['standard_work_hours_per_day'] ?? 8)));
         $out['overtime_rate_multiplier'] = max(1, min(5, (float) ($out['overtime_rate_multiplier'] ?? 1.5)));
         $out['default_probation_months'] = max(0, min(24, (int) ($out['default_probation_months'] ?? 3)));
+        $out['default_lunch_minutes'] = max(0, min(240, (int) ($out['default_lunch_minutes'] ?? 60)));
 
         foreach ([
             'auto_calculate_statutory',
@@ -63,8 +64,10 @@ class HrPayrollSettingsResolver
             'require_attendance_for_payroll',
             'enable_cash_advance_deductions',
             'deduct_cash_advances_on_payroll',
+            'default_lunch_required',
+            'lunch_break_is_paid',
         ] as $flag) {
-            $out[$flag] = (bool) ($out[$flag] ?? false);
+            $out[$flag] = (bool) ($out[$flag] ?? ($defaults[$flag] ?? false));
         }
 
         $out['pay_frequency'] = in_array($out['pay_frequency'] ?? '', ['monthly'], true)

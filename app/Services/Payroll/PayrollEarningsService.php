@@ -9,6 +9,7 @@ use App\Models\EmployeeLeaveDay;
 use App\Models\EmployeeOvertime;
 use App\Models\PayPeriod;
 use App\Services\Attendance\AttendanceDayPolicy;
+use App\Services\Attendance\AttendanceDayReconciler;
 use App\Services\Attendance\LeaveRequestCalculator;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use Carbon\Carbon;
@@ -19,6 +20,7 @@ class PayrollEarningsService
         protected AttendanceDayPolicy $dayPolicy,
         protected LeaveRequestCalculator $leaveCalculator,
         protected OvertimeRateCalculator $overtimeRates,
+        protected AttendanceDayReconciler $attendanceReconciler,
     ) {}
 
     /**
@@ -58,26 +60,38 @@ class PayrollEarningsService
             : null;
 
         if ($hr['require_attendance_for_payroll'] && $attendanceSummary) {
-            $attended = (float) ($attendanceSummary['attended_days'] ?? 0);
-            $paidLeave = (float) ($attendanceSummary['paid_leave_days'] ?? 0);
-            if ($attended <= 0 && $paidLeave <= 0) {
-                return null;
+            $paidHours = (float) ($attendanceSummary['paid_hours'] ?? 0);
+            $paidLeaveHours = (float) ($attendanceSummary['paid_leave_hours'] ?? 0);
+            if ($paidHours <= 0 && $paidLeaveHours <= 0) {
+                $attended = (float) ($attendanceSummary['attended_days'] ?? 0);
+                $paidLeave = (float) ($attendanceSummary['paid_leave_days'] ?? 0);
+                if ($attended <= 0 && $paidLeave <= 0) {
+                    return null;
+                }
             }
         }
 
+        $expectedHours = (float) ($attendanceSummary['expected_hours'] ?? 0);
         $expectedDays = $attendanceSummary['expected_days'] ?? $this->expectedWorkDays($employee, $start, $end);
-        if ($expectedDays <= 0) {
+        if ($expectedDays <= 0 && $expectedHours <= 0) {
             return null;
         }
 
-        $dailyRate = round($contractBasic / $expectedDays, 2);
-        $paidDays = $useProration
-            ? ($attendanceSummary['paid_days'] ?? $expectedDays)
-            : $expectedDays;
+        $paidHours = $useProration
+            ? (float) ($attendanceSummary['paid_hours'] ?? $expectedHours)
+            : $expectedHours;
 
-        $payrollBasic = $useProration
-            ? round($dailyRate * $paidDays, 2)
-            : $contractBasic;
+        if ($useProration && $expectedHours > 0) {
+            $ratio = $paidHours / $expectedHours;
+            $payrollBasic = round($contractBasic * $ratio, 2);
+            $paidDays = round(($attendanceSummary['paid_days'] ?? 0), 2);
+            $dailyRate = $expectedDays > 0 ? round($contractBasic / $expectedDays, 2) : 0.0;
+        } else {
+            $payrollBasic = $contractBasic;
+            $paidDays = $expectedDays;
+            $dailyRate = $expectedDays > 0 ? round($contractBasic / $expectedDays, 2) : 0.0;
+            $ratio = 1.0;
+        }
 
         $allowanceBreakdown = $this->resolveAllowances(
             $employee,
@@ -86,6 +100,7 @@ class PayrollEarningsService
             $expectedDays,
             $includeAllowances,
             $useProration,
+            $ratio,
         );
         $allowances = $allowanceBreakdown['period'];
         $overtimeTotal = $includeOvertime
@@ -117,6 +132,9 @@ class PayrollEarningsService
                 'allowances_period' => $allowances,
                 'expected_work_days' => $expectedDays,
                 'paid_work_days' => $paidDays,
+                'expected_hours' => round($expectedHours, 2),
+                'paid_hours' => round($paidHours, 2),
+                'hour_ratio' => round($ratio, 4),
                 'daily_rate' => $dailyRate,
                 'overtime' => $overtimeTotal,
                 'attendance' => $attendanceSummary,
@@ -135,17 +153,22 @@ class PayrollEarningsService
      *   attended_days: float,
      *   paid_leave_days: float,
      *   unpaid_leave_days: float,
-     *   absent_days: float
+     *   absent_days: float,
+     *   expected_hours: float,
+     *   paid_hours: float,
+     *   paid_leave_hours: float,
+     *   late_minutes_total: int
      * }
      */
     public function summarizeAttendance(Employee $employee, string $start, string $end): array
     {
+        $employee->loadMissing('shift');
+
         $leaves = EmployeeLeaveDay::query()
             ->where('employee_id', $employee->id)
             ->whereDate('end_date', '>=', $start)
             ->whereDate('start_date', '<=', $end)
             ->whereNull('payroll_run_id')
-            // Only approved assignments affect pay (legacy null = already in force).
             ->where(function ($q) {
                 $q->where('approval_status', 'approved')
                     ->orWhereNull('approval_status');
@@ -166,6 +189,10 @@ class PayrollEarningsService
         $unpaidLeave = 0.0;
         $deductibleOffDays = 0.0;
         $nonDeductibleOffDays = 0.0;
+        $expectedHours = 0.0;
+        $paidHours = 0.0;
+        $paidLeaveHours = 0.0;
+        $lateMinutesTotal = 0;
 
         $cursor = Carbon::parse($start)->startOfDay();
         $endDay = Carbon::parse($end)->startOfDay();
@@ -178,20 +205,26 @@ class PayrollEarningsService
                 continue;
             }
 
+            $dayExpectedHours = $this->attendanceReconciler->expectedPaidHours($employee, $date);
             $expected += 1.0;
+            $expectedHours += $dayExpectedHours;
             $dayFraction = 1.0;
 
             $leave = $leaves->first(fn (EmployeeLeaveDay $l) => $l->coversDate($date));
             if ($leave) {
                 $dayFraction = $leave->duration_type === 'half_day' ? 0.5 : 1.0;
+                $leaveHours = round($dayExpectedHours * $dayFraction, 2);
                 $isOff = ($leave->assignment_kind ?? 'leave') === 'off_day';
                 if ($this->leaveIsUnpaid($leave)) {
                     $unpaidLeave += $dayFraction;
                     if ($isOff) {
                         $deductibleOffDays += $dayFraction;
                     }
+                    // Unpaid leave: expected hours remain; paid hours stay 0 for this day.
                 } else {
                     $paidLeave += $dayFraction;
+                    $paidHours += $leaveHours;
+                    $paidLeaveHours += $leaveHours;
                     if ($isOff) {
                         $nonDeductibleOffDays += $dayFraction;
                     }
@@ -204,6 +237,14 @@ class PayrollEarningsService
             $att = $attendanceByDate->get($date);
             if ($att && $this->attendanceCountsAsPaid($att->status)) {
                 $attended += $att->status === 'half_day' ? 0.5 : 1.0;
+                $dayPaid = (float) ($att->hours_worked ?? 0);
+                if ($att->expected_hours !== null && (float) $att->expected_hours > 0) {
+                    $dayPaid = min($dayPaid, (float) $att->expected_hours);
+                } else {
+                    $dayPaid = min($dayPaid, $dayExpectedHours);
+                }
+                $paidHours += $dayPaid;
+                $lateMinutesTotal += (int) ($att->late_minutes ?? 0);
             }
 
             $cursor->addDay();
@@ -221,6 +262,10 @@ class PayrollEarningsService
             'deductible_off_days' => round($deductibleOffDays, 2),
             'non_deductible_off_days' => round($nonDeductibleOffDays, 2),
             'absent_days' => $absent,
+            'expected_hours' => round($expectedHours, 2),
+            'paid_hours' => round($paidHours, 2),
+            'paid_leave_hours' => round($paidLeaveHours, 2),
+            'late_minutes_total' => $lateMinutesTotal,
         ];
     }
 
@@ -243,6 +288,7 @@ class PayrollEarningsService
         float $expectedDays,
         bool $includeAllowances,
         bool $useProration,
+        float $hourRatio = 1.0,
     ): array {
         if (! $includeAllowances) {
             return [
@@ -268,8 +314,8 @@ class PayrollEarningsService
             }
         }
 
-        if ($useProration && $expectedDays > 0) {
-            $ratio = $paidDays / $expectedDays;
+        if ($useProration) {
+            $ratio = $hourRatio > 0 ? $hourRatio : (($expectedDays > 0) ? ($paidDays / $expectedDays) : 0);
             $periodLines = array_map(fn (array $line) => [
                 'id' => $line['id'],
                 'name' => $line['name'],

@@ -10,7 +10,6 @@ use App\Models\EmployeeClockSession;
 use App\Models\EmployeeFaceProfile;
 use App\Models\Organization;
 use App\Support\UploadedImageProcessor;
-use App\Support\AttendanceHours;
 use App\Support\AttendanceSchema;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -431,31 +430,13 @@ class CompanyMobileAttendanceService
             ]);
             $session->save();
 
-            $in = Carbon::parse($session->clock_in_at);
-            $attendanceDate = $in->toDateString();
-            $checkIn = $in->format('H:i:s');
-            $checkOut = $out->format('H:i:s');
-            $hours = AttendanceHours::fromTimeStrings($checkIn, $checkOut);
-            $policy = app(AttendanceDayPolicy::class);
-            $eval = $policy->evaluate($employee->loadMissing('shift'), $attendanceDate);
-            $status = $eval['should_work'] ? 'present' : $eval['suggested_status'];
-
-            $attendance = EmployeeAttendance::query()->updateOrCreate(
-                [
-                    'employee_id' => $employee->id,
-                    'attendance_date' => $attendanceDate,
-                ],
-                [
-                    'organization_id' => $employee->organization_id,
-                    'branch_id' => $session->branch_id ?? $employee->branch_id,
-                    'check_in' => $status === 'present' ? $checkIn : null,
-                    'check_out' => $status === 'present' ? $checkOut : null,
-                    'status' => $status,
-                    'source' => 'company_mobile',
-                    'device_identifier' => $session->device_identifier,
-                    'hours_worked' => $status === 'present' ? $hours : 0,
-                    'notes' => $eval['reason'],
-                ],
+            $attendanceDate = Carbon::parse($session->clock_in_at)->toDateString();
+            $attendance = app(AttendanceDayReconciler::class)->reconcileFromSessions(
+                $employee->loadMissing('shift'),
+                $attendanceDate,
+                'company_mobile',
+                $session->device_identifier,
+                $session->branch_id ? (int) $session->branch_id : null,
             );
 
             $session->attendance_id = $attendance->id;

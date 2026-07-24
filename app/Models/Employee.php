@@ -61,12 +61,14 @@ class Employee extends Model
         'housing_levy_number',
         'is_active',
         'work_weekdays',
+        'bank_lunch_as_work',
     ];
 
     protected $appends = ['photo_url'];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'bank_lunch_as_work' => 'boolean',
         'base_salary' => 'decimal:2',
         'monthly_allowance' => 'decimal:2',
         'hire_date' => 'date',

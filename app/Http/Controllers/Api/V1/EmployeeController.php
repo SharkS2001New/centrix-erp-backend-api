@@ -345,6 +345,7 @@ class EmployeeController extends BaseResourceController
             'shift_id' => 'nullable|integer|exists:work_shifts,id',
             'work_weekdays' => 'nullable|array',
             'work_weekdays.*' => 'integer|min:0|max:6',
+            'bank_lunch_as_work' => 'nullable|boolean',
             'user_id' => 'nullable|integer|exists:users,id',
             'reports_to_employee_id' => 'nullable|integer|exists:employees,id',
             'employee_code' => 'nullable|string|max:45',

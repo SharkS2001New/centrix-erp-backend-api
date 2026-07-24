@@ -18,6 +18,8 @@ class WorkShift extends Model
         'shift_name',
         'start_time',
         'end_time',
+        'lunch_minutes',
+        'lunch_required',
         'crosses_midnight',
         'works_saturday',
         'works_sunday',
@@ -25,6 +27,7 @@ class WorkShift extends Model
         'use_alternate_hours',
         'alternate_start_time',
         'alternate_end_time',
+        'alternate_lunch_minutes',
         'alternate_crosses_midnight',
         'is_active',
     ];
@@ -36,14 +39,21 @@ class WorkShift extends Model
         'works_public_holidays' => 'boolean',
         'use_alternate_hours' => 'boolean',
         'alternate_crosses_midnight' => 'boolean',
+        'lunch_required' => 'boolean',
         'is_active' => 'boolean',
     ];
 
     /**
-     * Resolve start/end for a calendar day.
+     * Resolve start/end/lunch for a calendar day.
      * Alternate hours apply on Saturday and public holidays when enabled.
      *
-     * @return array{start_time: ?string, end_time: ?string, crosses_midnight: bool}
+     * @return array{
+     *   start_time: ?string,
+     *   end_time: ?string,
+     *   crosses_midnight: bool,
+     *   lunch_minutes: int,
+     *   lunch_required: bool
+     * }
      */
     public function hoursForDate(string $date, bool $isPublicHoliday = false): array
     {
@@ -57,10 +67,17 @@ class WorkShift extends Model
             );
 
         if ($useAlternate) {
+            $lunch = $this->alternate_lunch_minutes;
+            if ($lunch === null) {
+                $lunch = $this->lunch_minutes;
+            }
+
             return [
                 'start_time' => (string) $this->alternate_start_time,
                 'end_time' => (string) $this->alternate_end_time,
                 'crosses_midnight' => (bool) $this->alternate_crosses_midnight,
+                'lunch_minutes' => max(0, (int) ($lunch ?? 0)),
+                'lunch_required' => (bool) $this->lunch_required,
             ];
         }
 
@@ -68,6 +85,8 @@ class WorkShift extends Model
             'start_time' => $this->start_time ? (string) $this->start_time : null,
             'end_time' => $this->end_time ? (string) $this->end_time : null,
             'crosses_midnight' => (bool) $this->crosses_midnight,
+            'lunch_minutes' => max(0, (int) ($this->lunch_minutes ?? 60)),
+            'lunch_required' => (bool) ($this->lunch_required ?? true),
         ];
     }
 }

@@ -84,6 +84,9 @@ class WorkShiftController extends HrOrgResourceController
             'alternate_start_time' => 'nullable|date_format:H:i,H:i:s',
             'alternate_end_time' => 'nullable|date_format:H:i,H:i:s',
             'alternate_crosses_midnight' => 'nullable|boolean',
+            'lunch_minutes' => 'nullable|integer|min:0|max:240',
+            'alternate_lunch_minutes' => 'nullable|integer|min:0|max:240',
+            'lunch_required' => 'nullable|boolean',
             'is_active' => 'nullable|boolean',
         ], [
             'shift_code.unique' => 'This shift code is already used in your organization.',

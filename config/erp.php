@@ -761,6 +761,11 @@ return [
             'standard_work_hours_per_day' => 8,
             'overtime_rate_multiplier' => 1.5,
             'default_probation_months' => 3,
+            /** Default lunch break for new shifts (minutes). Shifts can override. */
+            'default_lunch_minutes' => 60,
+            'default_lunch_required' => true,
+            /** When true, lunch break counts as paid time (expected hours = full shift span). */
+            'lunch_break_is_paid' => true,
             'enable_cash_advance_deductions' => true,
             'deduct_cash_advances_on_payroll' => true,
             'attendance_capture_mode' => 'clock_device',

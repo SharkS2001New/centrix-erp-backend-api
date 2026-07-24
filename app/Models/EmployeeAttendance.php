@@ -26,6 +26,12 @@ class EmployeeAttendance extends Model
         'source',
         'device_identifier',
         'hours_worked',
+        'expected_hours',
+        'late_minutes',
+        'lunch_status',
+        'lunch_minutes',
+        'early_leave_minutes',
+        'overtime_minutes',
         'notes',
         'payroll_run_id',
     ];
@@ -33,6 +39,7 @@ class EmployeeAttendance extends Model
     protected $casts = [
         'attendance_date' => 'date',
         'hours_worked' => 'decimal:2',
+        'expected_hours' => 'decimal:2',
     ];
 
     public function employee()

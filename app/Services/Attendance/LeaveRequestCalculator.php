@@ -109,6 +109,7 @@ class LeaveRequestCalculator
             return self::DEFAULT_SHIFT_HOURS;
         }
 
+        // Full shift span — lunch is paid by default (included in the day).
         return $this->hoursBetweenTimes($shift->start_time, $shift->end_time, (bool) $shift->crosses_midnight);
     }
 
