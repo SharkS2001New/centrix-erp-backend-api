@@ -149,6 +149,9 @@ class AttendanceDayReconciler
         $lunchMinutes = (bool) ($hours['lunch_required'] ?? true)
             ? (int) ($hours['lunch_minutes'] ?? 0)
             : 0;
+        if ($lunchMinutes <= 0) {
+            return round(max(0, $span), 2);
+        }
 
         return round(max(0, $span - ($lunchMinutes / 60)), 2);
     }
@@ -251,8 +254,11 @@ class AttendanceDayReconciler
             $shiftEnd->addDay();
         }
 
-        $lunchRequired = (bool) ($shiftHours['lunch_required'] ?? true);
-        $configuredLunch = max(0, (int) ($shiftHours['lunch_minutes'] ?? 0));
+        $lunchRequired = (bool) ($shiftHours['lunch_required'] ?? true)
+            && max(0, (int) ($shiftHours['lunch_minutes'] ?? 0)) > 0;
+        $configuredLunch = $lunchRequired
+            ? max(0, (int) ($shiftHours['lunch_minutes'] ?? 0))
+            : 0;
         $bankLunch = (bool) ($employee->bank_lunch_as_work ?? false);
 
         $expectedHours = $this->expectedPaidHours($employee, $date);

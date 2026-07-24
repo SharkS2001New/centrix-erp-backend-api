@@ -28,6 +28,7 @@ class WorkShift extends Model
         'alternate_start_time',
         'alternate_end_time',
         'alternate_lunch_minutes',
+        'alternate_lunch_required',
         'alternate_crosses_midnight',
         'is_active',
     ];
@@ -40,12 +41,13 @@ class WorkShift extends Model
         'use_alternate_hours' => 'boolean',
         'alternate_crosses_midnight' => 'boolean',
         'lunch_required' => 'boolean',
+        'alternate_lunch_required' => 'boolean',
         'is_active' => 'boolean',
     ];
 
     /**
      * Resolve start/end/lunch for a calendar day.
-     * Alternate hours apply on Saturday and public holidays when enabled.
+     * Alternate hours (and/or lunch) apply on Saturday, Sunday, and public holidays when configured.
      *
      * @return array{
      *   start_time: ?string,
@@ -58,35 +60,57 @@ class WorkShift extends Model
     public function hoursForDate(string $date, bool $isPublicHoliday = false): array
     {
         $dow = (int) \Carbon\Carbon::parse($date)->dayOfWeek;
-        $useAlternate = (bool) $this->use_alternate_hours
+        $isSaturday = $dow === \Carbon\Carbon::SATURDAY;
+        $isSunday = $dow === \Carbon\Carbon::SUNDAY;
+        $isAlternateDay = $isPublicHoliday || $isSaturday || $isSunday;
+
+        $useAlternateTimes = (bool) $this->use_alternate_hours
             && $this->alternate_start_time
             && $this->alternate_end_time
-            && (
-                $isPublicHoliday
-                || $dow === \Carbon\Carbon::SATURDAY
-            );
+            && $isAlternateDay;
 
-        if ($useAlternate) {
-            $lunch = $this->alternate_lunch_minutes;
-            if ($lunch === null) {
-                $lunch = $this->lunch_minutes;
-            }
-
-            return [
-                'start_time' => (string) $this->alternate_start_time,
-                'end_time' => (string) $this->alternate_end_time,
-                'crosses_midnight' => (bool) $this->alternate_crosses_midnight,
-                'lunch_minutes' => max(0, (int) ($lunch ?? 0)),
-                'lunch_required' => (bool) $this->lunch_required,
-            ];
+        if ($useAlternateTimes) {
+            $start = (string) $this->alternate_start_time;
+            $end = (string) $this->alternate_end_time;
+            $crosses = (bool) $this->alternate_crosses_midnight;
+        } else {
+            $start = $this->start_time ? (string) $this->start_time : null;
+            $end = $this->end_time ? (string) $this->end_time : null;
+            $crosses = (bool) $this->crosses_midnight;
         }
 
+        $weekdayLunchRequired = (bool) ($this->lunch_required ?? true);
+        $weekdayLunchMinutes = max(0, (int) ($this->lunch_minutes ?? ($weekdayLunchRequired ? 60 : 0)));
+
+        if ($isAlternateDay && $this->hasAlternateLunchOverride()) {
+            $lunchRequired = $this->alternate_lunch_required !== null
+                ? (bool) $this->alternate_lunch_required
+                : $weekdayLunchRequired;
+            $lunchMinutes = $this->alternate_lunch_minutes !== null
+                ? max(0, (int) $this->alternate_lunch_minutes)
+                : $weekdayLunchMinutes;
+        } else {
+            $lunchRequired = $weekdayLunchRequired;
+            $lunchMinutes = $weekdayLunchMinutes;
+        }
+
+        $lunchRequired = $lunchRequired && $lunchMinutes > 0;
+
         return [
-            'start_time' => $this->start_time ? (string) $this->start_time : null,
-            'end_time' => $this->end_time ? (string) $this->end_time : null,
-            'crosses_midnight' => (bool) $this->crosses_midnight,
-            'lunch_minutes' => max(0, (int) ($this->lunch_minutes ?? 60)),
-            'lunch_required' => (bool) ($this->lunch_required ?? true),
+            'start_time' => $start,
+            'end_time' => $end,
+            'crosses_midnight' => $crosses,
+            'lunch_minutes' => $lunchRequired ? $lunchMinutes : 0,
+            'lunch_required' => $lunchRequired,
         ];
+    }
+
+    /**
+     * Whether Sat/Sun/holiday lunch is explicitly configured (duration and/or required flag).
+     */
+    public function hasAlternateLunchOverride(): bool
+    {
+        return $this->alternate_lunch_minutes !== null
+            || $this->alternate_lunch_required !== null;
     }
 }

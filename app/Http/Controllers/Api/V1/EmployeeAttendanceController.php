@@ -34,13 +34,15 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $shiftHours = null;
         $shiftTimes = null;
         $lunchMinutes = null;
+        $lunchRequired = false;
         if ($employee->shift) {
             $hours = $employee->shift->hoursForDate(
                 $data['attendance_date'],
                 (bool) ($eval['is_holiday'] ?? false),
             );
             $shiftTimes = $hours;
-            $lunchMinutes = (int) ($hours['lunch_minutes'] ?? 0);
+            $lunchRequired = (bool) ($hours['lunch_required'] ?? false);
+            $lunchMinutes = $lunchRequired ? (int) ($hours['lunch_minutes'] ?? 0) : 0;
             $shiftHours = app(AttendanceDayReconciler::class)
                 ->expectedPaidHours($employee, $data['attendance_date']);
         }
@@ -61,6 +63,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
             'expected_hours' => $shiftHours,
             'shift_times' => $shiftTimes,
             'lunch_minutes' => $lunchMinutes,
+            'lunch_required' => $lunchRequired,
             'bank_lunch_as_work' => (bool) ($employee->bank_lunch_as_work ?? false),
         ]));
     }
@@ -146,7 +149,12 @@ class EmployeeAttendanceController extends HrOrgResourceController
             isset($data['branch_id']) ? (int) $data['branch_id'] : null,
             $data['notes'] ?? null,
             $data['status'] ?? null,
-            array_key_exists('lunch_taken', $data) ? (bool) $data['lunch_taken'] : true,
+            $this->manualLunchTakenForEmployee(
+                $employee,
+                $data['attendance_date'],
+                ! in_array($data['status'] ?? 'present', ['leave', 'holiday', 'absent'], true),
+                $data,
+            ),
         );
 
         return response()->json($attendance->load(['employee', 'branch']), 201);
@@ -273,9 +281,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
                     $write['branch_id'] ?? $branchId,
                     $data['notes'] ?? null,
                     $status,
-                    $needsTimes
-                        ? (array_key_exists('lunch_taken', $data) ? (bool) $data['lunch_taken'] : true)
-                        : null,
+                    $this->manualLunchTakenForEmployee($employee, $date, $needsTimes, $data),
                 );
                 $created[] = [
                     'id' => $row->id,
@@ -333,9 +339,15 @@ class EmployeeAttendanceController extends HrOrgResourceController
             isset($data['branch_id']) ? (int) $data['branch_id'] : ($row->branch_id ? (int) $row->branch_id : null),
             array_key_exists('notes', $data) ? ($data['notes'] ?? null) : $row->notes,
             $data['status'] ?? $row->status,
-            array_key_exists('lunch_taken', $data)
-                ? (bool) $data['lunch_taken']
-                : ($row->lunch_status === 'taken'),
+            $this->manualLunchTakenForEmployee(
+                $employee,
+                $date,
+                ! in_array($data['status'] ?? $row->status, ['leave', 'holiday', 'absent'], true),
+                array_merge(
+                    ['lunch_taken' => $row->lunch_status === 'taken'],
+                    $data,
+                ),
+            ),
         );
 
         // updateOrCreate should hit the same row; if a different row was written, remove the old one.
@@ -387,18 +399,179 @@ class EmployeeAttendanceController extends HrOrgResourceController
         return response()->json($attendance);
     }
 
+    /**
+     * POST /employee-attendance/bulk-waive-lateness — one reason applied to many late rows.
+     */
+    public function bulkWaiveLateness(Request $request)
+    {
+        $data = $request->validate([
+            'ids' => 'required|array|min:1|max:200',
+            'ids.*' => 'integer|distinct',
+            'lateness_waived' => 'required|boolean',
+            'lateness_waiver_reason' => 'nullable|string|max:500',
+        ]);
+
+        $ids = array_map('intval', $data['ids']);
+        $rows = $this->scopedAttendanceByIds($ids, $request);
+        $reconciler = app(AttendanceDayReconciler::class);
+        $updated = [];
+        $skipped = [];
+
+        foreach ($rows as $row) {
+            $label = $row->employee
+                ? ($row->employee->full_name ?: trim($row->employee->first_name.' '.$row->employee->last_name))
+                : ('#'.$row->id);
+
+            if ((int) ($row->late_minutes ?? 0) <= 0) {
+                $skipped[] = [
+                    'id' => $row->id,
+                    'employee_name' => $label,
+                    'reason' => 'No late minutes on this record',
+                ];
+                continue;
+            }
+
+            try {
+                PayrollCycleSettlementService::assertNotPayrollLocked(
+                    $row->payroll_run_id ? (int) $row->payroll_run_id : null,
+                    'attendance record',
+                );
+                $attendance = $reconciler->setLatenessWaiver(
+                    $row,
+                    (bool) $data['lateness_waived'],
+                    $data['lateness_waiver_reason'] ?? null,
+                    $request->user()?->id,
+                );
+                $updated[] = [
+                    'id' => $attendance->id,
+                    'employee_name' => $label,
+                    'lateness_waived' => (bool) $attendance->lateness_waived,
+                ];
+            } catch (\Throwable $e) {
+                $skipped[] = [
+                    'id' => $row->id,
+                    'employee_name' => $label,
+                    'reason' => $e->getMessage() ?: 'Could not update waiver',
+                ];
+            }
+        }
+
+        foreach ($ids as $id) {
+            if ($rows->firstWhere('id', $id)) {
+                continue;
+            }
+            $skipped[] = [
+                'id' => $id,
+                'employee_name' => '#'.$id,
+                'reason' => 'Attendance not found or outside your access',
+            ];
+        }
+
+        return response()->json([
+            'updated_count' => count($updated),
+            'skipped_count' => count($skipped),
+            'updated' => $updated,
+            'skipped' => $skipped,
+        ], count($updated) > 0 ? 200 : 422);
+    }
+
+    /**
+     * POST /employee-attendance/bulk-delete
+     */
+    public function bulkDestroy(Request $request)
+    {
+        $data = $request->validate([
+            'ids' => 'required|array|min:1|max:200',
+            'ids.*' => 'integer|distinct',
+        ]);
+
+        $ids = array_map('intval', $data['ids']);
+        $rows = $this->scopedAttendanceByIds($ids, $request);
+        $deleted = [];
+        $skipped = [];
+
+        foreach ($rows as $row) {
+            $label = $row->employee
+                ? ($row->employee->full_name ?: trim($row->employee->first_name.' '.$row->employee->last_name))
+                : ('#'.$row->id);
+
+            try {
+                PayrollCycleSettlementService::assertNotPayrollLocked(
+                    $row->payroll_run_id ? (int) $row->payroll_run_id : null,
+                    'attendance record',
+                );
+                $this->deleteAttendanceRow($row);
+                $deleted[] = [
+                    'id' => $row->id,
+                    'employee_name' => $label,
+                ];
+            } catch (\Throwable $e) {
+                $skipped[] = [
+                    'id' => $row->id,
+                    'employee_name' => $label,
+                    'reason' => $e->getMessage() ?: 'Could not delete',
+                ];
+            }
+        }
+
+        foreach ($ids as $id) {
+            if ($rows->firstWhere('id', $id)) {
+                continue;
+            }
+            $skipped[] = [
+                'id' => $id,
+                'employee_name' => '#'.$id,
+                'reason' => 'Attendance not found or outside your access',
+            ];
+        }
+
+        return response()->json([
+            'deleted_count' => count($deleted),
+            'skipped_count' => count($skipped),
+            'deleted' => $deleted,
+            'skipped' => $skipped,
+        ], count($deleted) > 0 ? 200 : 422);
+    }
+
     public function destroy(string $id)
     {
         $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'attendance record');
+        $this->deleteAttendanceRow($row);
 
+        return response()->json(null, 204);
+    }
+
+    /**
+     * @param  list<int>  $ids
+     * @return \Illuminate\Support\Collection<int, EmployeeAttendance>
+     */
+    protected function scopedAttendanceByIds(array $ids, Request $request)
+    {
+        $query = EmployeeAttendance::query()
+            ->with(['employee:id,organization_id,full_name,first_name,last_name,employee_code'])
+            ->whereIn('id', $ids);
+
+        if ($orgId = $request->user()?->organization_id) {
+            $query->where('organization_id', $orgId);
+        }
+
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($query, $request->user(), $request);
+        }
+
+        return $query->get();
+    }
+
+    protected function deleteAttendanceRow(EmployeeAttendance $row): void
+    {
         $employeeId = (int) $row->employee_id;
         $date = $row->attendance_date instanceof \Carbon\Carbon
             ? $row->attendance_date->toDateString()
             : (string) $row->attendance_date;
 
         \Illuminate\Support\Facades\DB::transaction(function () use ($row, $employeeId, $date) {
-            // Remove clock punches for the day so attendance can be recreated cleanly.
             \App\Models\EmployeeClockSession::query()
                 ->where('employee_id', $employeeId)
                 ->where(function ($q) use ($date) {
@@ -407,7 +580,6 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 })
                 ->delete();
 
-            // Drop pending auto-OT drafts tied to this day.
             \App\Models\EmployeeOvertime::query()
                 ->where('employee_id', $employeeId)
                 ->whereDate('work_date', $date)
@@ -418,8 +590,6 @@ class EmployeeAttendanceController extends HrOrgResourceController
 
             $row->delete();
         });
-
-        return response()->json(null, 204);
     }
 
     protected function assertUniqueAttendanceDate(
@@ -463,5 +633,36 @@ class EmployeeAttendanceController extends HrOrgResourceController
             'lateness_waiver_reason' => 'nullable|string|max:500',
             'lunch_taken' => 'nullable|boolean',
         ]);
+    }
+
+    /**
+     * Manual lunch flag only applies when the employee's shift requires lunch that day.
+     */
+    protected function manualLunchTakenForEmployee(
+        Employee $employee,
+        string $date,
+        bool $needsTimes,
+        array $data,
+    ): ?bool {
+        if (! $needsTimes) {
+            return null;
+        }
+
+        $employee->loadMissing('shift');
+        if (! $employee->shift) {
+            return array_key_exists('lunch_taken', $data) ? (bool) $data['lunch_taken'] : true;
+        }
+
+        $isHoliday = \App\Models\OrganizationHoliday::query()
+            ->where('organization_id', $employee->organization_id)
+            ->where('is_active', true)
+            ->whereDate('holiday_date', $date)
+            ->exists();
+        $hours = $employee->shift->hoursForDate($date, $isHoliday);
+        if (! ($hours['lunch_required'] ?? false) || (int) ($hours['lunch_minutes'] ?? 0) <= 0) {
+            return null;
+        }
+
+        return array_key_exists('lunch_taken', $data) ? (bool) $data['lunch_taken'] : true;
     }
 }

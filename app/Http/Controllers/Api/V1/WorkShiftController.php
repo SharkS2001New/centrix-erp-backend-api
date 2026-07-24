@@ -86,6 +86,7 @@ class WorkShiftController extends HrOrgResourceController
             'alternate_crosses_midnight' => 'nullable|boolean',
             'lunch_minutes' => 'nullable|integer|min:0|max:240',
             'alternate_lunch_minutes' => 'nullable|integer|min:0|max:240',
+            'alternate_lunch_required' => 'nullable|boolean',
             'lunch_required' => 'nullable|boolean',
             'is_active' => 'nullable|boolean',
         ], [

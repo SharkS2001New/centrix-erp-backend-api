@@ -244,6 +244,72 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertEquals(9.0, (float) $att->hours_worked);
     }
 
+    public function test_shift_without_lunch_ignores_manual_lunch_taken(): void
+    {
+        $this->shift->update([
+            'lunch_required' => false,
+            'lunch_minutes' => 0,
+        ]);
+
+        $att = app(AttendanceDayReconciler::class)->reconcileManualSpan(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+            '08:00:00',
+            '17:00:00',
+            'manual',
+            null,
+            null,
+            null,
+            'present',
+            true,
+        );
+
+        $this->assertSame('-', $att->lunch_status);
+        $this->assertNull($att->lunch_minutes);
+        $this->assertEquals(9.0, (float) $att->hours_worked);
+        $this->assertEquals(9.0, (float) $att->expected_hours);
+    }
+
+    public function test_saturday_uses_alternate_lunch_minutes(): void
+    {
+        $saturday = '2026-07-25'; // Saturday
+        $this->shift->update([
+            'works_saturday' => true,
+            'use_alternate_hours' => true,
+            'alternate_start_time' => '08:00:00',
+            'alternate_end_time' => '13:00:00',
+            'alternate_lunch_minutes' => 30,
+            'alternate_lunch_required' => true,
+        ]);
+
+        $hours = $this->shift->fresh()->hoursForDate($saturday, false);
+        $this->assertTrue($hours['lunch_required']);
+        $this->assertSame(30, $hours['lunch_minutes']);
+        $this->assertSame('08:00:00', $hours['start_time']);
+        $this->assertSame('13:00:00', $hours['end_time']);
+
+        $weekday = $this->shift->fresh()->hoursForDate($this->workDate, false);
+        $this->assertSame(60, $weekday['lunch_minutes']);
+    }
+
+    public function test_weekend_can_disable_lunch_while_weekday_keeps_it(): void
+    {
+        $saturday = '2026-07-25';
+        $this->shift->update([
+            'works_saturday' => true,
+            'alternate_lunch_required' => false,
+            'alternate_lunch_minutes' => 0,
+        ]);
+
+        $hours = $this->shift->fresh()->hoursForDate($saturday, false);
+        $this->assertFalse($hours['lunch_required']);
+        $this->assertSame(0, $hours['lunch_minutes']);
+
+        $weekday = $this->shift->fresh()->hoursForDate($this->workDate, false);
+        $this->assertTrue($weekday['lunch_required']);
+        $this->assertSame(60, $weekday['lunch_minutes']);
+    }
+
     public function test_lateness_waiver_restores_paid_hours(): void
     {
         $this->addSession('08:30:00', '13:00:00');
