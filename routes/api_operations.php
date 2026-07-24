@@ -425,6 +425,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {
             Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
             Route::get('leave-balance', [HrReportController::class, 'leaveBalance']);
+            Route::get('attendance-register', [HrReportController::class, 'attendanceRegister']);
+            Route::get('lateness-list', [HrReportController::class, 'latenessList']);
             Route::get('statutory-deductions', [HrReportController::class, 'statutoryDeductions']);
             Route::get('bank-transfer', [HrReportController::class, 'bankTransfer']);
             Route::get('staff-turnover', [HrReportController::class, 'staffTurnover']);

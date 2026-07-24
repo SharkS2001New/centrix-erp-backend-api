@@ -361,12 +361,33 @@ class AttendanceDayReconciler
 
         $overtimeMinutes = (int) floor($overtimeSeconds / 60);
         $status = $forcedStatus;
-        if ($status === null || $status === 'present') {
+        if ($status === null || $status === 'present' || $status === 'late') {
             if ($lateMinutes > 0) {
                 $status = 'late';
             } elseif ($expectedHours > 0 && $paidHours < ($expectedHours * 0.5)) {
                 $status = 'half_day';
             } else {
+                $status = 'present';
+            }
+        }
+
+        $existing = EmployeeAttendance::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('attendance_date', $date)
+            ->first();
+
+        $latenessWaived = (bool) ($existing?->lateness_waived);
+        $waiverReason = $existing?->lateness_waiver_reason;
+        $waivedBy = $existing?->lateness_waived_by;
+        $waivedAt = $existing?->lateness_waived_at;
+
+        // Waived lateness is restored into paid hours so payroll is not reduced.
+        if ($latenessWaived && $lateMinutes > 0) {
+            $paidHours = round(min(
+                $expectedHours > 0 ? $expectedHours : ($paidHours + ($lateMinutes / 60)),
+                $paidHours + ($lateMinutes / 60),
+            ), 2);
+            if ($status === 'late') {
                 $status = 'present';
             }
         }
@@ -387,6 +408,10 @@ class AttendanceDayReconciler
                 'hours_worked' => $paidHours,
                 'expected_hours' => $expectedHours,
                 'late_minutes' => $lateMinutes,
+                'lateness_waived' => $latenessWaived,
+                'lateness_waiver_reason' => $latenessWaived ? $waiverReason : null,
+                'lateness_waived_by' => $latenessWaived ? $waivedBy : null,
+                'lateness_waived_at' => $latenessWaived ? $waivedAt : null,
                 'lunch_status' => $lunchStatus,
                 'lunch_minutes' => $actualLunchMinutes,
                 'early_leave_minutes' => $earlyLeaveMinutes,
@@ -398,6 +423,51 @@ class AttendanceDayReconciler
         $this->syncAutoOvertime($employee, $date, $overtimeMinutes);
 
         return $attendance;
+    }
+
+    /**
+     * Toggle lateness waiver and adjust paid hours for payroll.
+     */
+    public function setLatenessWaiver(
+        EmployeeAttendance $attendance,
+        bool $waived,
+        ?string $reason = null,
+        ?int $userId = null,
+    ): EmployeeAttendance {
+        $late = (int) ($attendance->late_minutes ?? 0);
+        if ($waived && $late <= 0) {
+            throw new \InvalidArgumentException('No lateness to waive on this attendance record.');
+        }
+
+        $wasWaived = (bool) $attendance->lateness_waived;
+        $expected = (float) ($attendance->expected_hours ?? 0);
+        $hours = (float) ($attendance->hours_worked ?? 0);
+
+        if ($waived && ! $wasWaived) {
+            $hours = round(min(
+                $expected > 0 ? $expected : ($hours + ($late / 60)),
+                $hours + ($late / 60),
+            ), 2);
+            if ($attendance->status === 'late') {
+                $attendance->status = 'present';
+            }
+        } elseif (! $waived && $wasWaived) {
+            $hours = round(max(0, $hours - ($late / 60)), 2);
+            if ($late > 0 && in_array($attendance->status, ['present', 'late'], true)) {
+                $attendance->status = 'late';
+            }
+        }
+
+        $attendance->fill([
+            'hours_worked' => $hours,
+            'lateness_waived' => $waived,
+            'lateness_waiver_reason' => $waived ? ($reason ?: $attendance->lateness_waiver_reason) : null,
+            'lateness_waived_by' => $waived ? ($userId ?? $attendance->lateness_waived_by) : null,
+            'lateness_waived_at' => $waived ? ($attendance->lateness_waived_at ?? now()) : null,
+        ]);
+        $attendance->save();
+
+        return $attendance->fresh(['employee', 'branch']);
     }
 
     protected function syncAutoOvertime(Employee $employee, string $date, int $overtimeMinutes): void

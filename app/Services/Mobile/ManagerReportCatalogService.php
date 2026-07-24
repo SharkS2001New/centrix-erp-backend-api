@@ -43,7 +43,7 @@ class ManagerReportCatalogService
 
     /** @var list<string> */
     private const HR_REPORT_KEYS = [
-        'leave-balance', 'payroll-summary', 'statutory-deductions', 'bank-transfer',
+        'leave-balance', 'attendance-register', 'lateness-list', 'payroll-summary', 'statutory-deductions', 'bank-transfer',
         'staff-turnover', 'headcount', 'contract-expiry', 'hr-dashboard-kpi',
     ];
 

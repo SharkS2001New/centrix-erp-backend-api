@@ -202,6 +202,32 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertEquals(9.0, (float) $att->expected_hours);
     }
 
+    public function test_lateness_waiver_restores_paid_hours(): void
+    {
+        $this->addSession('08:30:00', '13:00:00');
+        $this->addSession('14:00:00', '17:00:00');
+
+        $att = app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+        );
+
+        $this->assertEquals(8.5, (float) $att->hours_worked);
+        $this->assertSame(30, (int) $att->late_minutes);
+
+        $waived = app(AttendanceDayReconciler::class)->setLatenessWaiver(
+            $att,
+            true,
+            'Doctor appointment',
+            null,
+        );
+
+        $this->assertTrue((bool) $waived->lateness_waived);
+        $this->assertEquals(9.0, (float) $waived->hours_worked);
+        $this->assertSame('present', $waived->status);
+        $this->assertSame('Doctor appointment', $waived->lateness_waiver_reason);
+    }
+
     public function test_payroll_prorates_basic_by_paid_over_expected_hours(): void
     {
         // One late day: 7.5 paid of 8 expected on a single-day period.

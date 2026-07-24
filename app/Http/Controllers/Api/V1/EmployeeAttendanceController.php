@@ -322,7 +322,48 @@ class EmployeeAttendanceController extends HrOrgResourceController
             $row->delete();
         }
 
+        if (array_key_exists('lateness_waived', $data)) {
+            try {
+                $attendance = app(AttendanceDayReconciler::class)->setLatenessWaiver(
+                    $attendance->fresh(),
+                    (bool) $data['lateness_waived'],
+                    $data['lateness_waiver_reason'] ?? null,
+                    $request->user()?->id,
+                );
+            } catch (\InvalidArgumentException $e) {
+                throw ValidationException::withMessages([
+                    'lateness_waived' => [$e->getMessage()],
+                ]);
+            }
+        }
+
         return response()->json($attendance->fresh(['employee', 'branch']));
+    }
+
+    /** POST /employee-attendance/{id}/waive-lateness */
+    public function waiveLateness(Request $request, string $id)
+    {
+        $row = $this->findScoped($id);
+        PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'attendance record');
+        $data = $request->validate([
+            'lateness_waived' => 'required|boolean',
+            'lateness_waiver_reason' => 'nullable|string|max:500',
+        ]);
+
+        try {
+            $attendance = app(AttendanceDayReconciler::class)->setLatenessWaiver(
+                $row,
+                (bool) $data['lateness_waived'],
+                $data['lateness_waiver_reason'] ?? null,
+                $request->user()?->id,
+            );
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages([
+                'lateness_waived' => [$e->getMessage()],
+            ]);
+        }
+
+        return response()->json($attendance);
     }
 
     public function destroy(string $id)
@@ -371,6 +412,8 @@ class EmployeeAttendanceController extends HrOrgResourceController
             'source' => 'nullable|in:manual,clock_device,company_mobile,field_rep',
             'device_identifier' => 'nullable|string|max:100',
             'notes' => 'nullable|string|max:500',
+            'lateness_waived' => 'nullable|boolean',
+            'lateness_waiver_reason' => 'nullable|string|max:500',
         ]);
     }
 }

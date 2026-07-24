@@ -28,6 +28,10 @@ class EmployeeAttendance extends Model
         'hours_worked',
         'expected_hours',
         'late_minutes',
+        'lateness_waived',
+        'lateness_waiver_reason',
+        'lateness_waived_by',
+        'lateness_waived_at',
         'lunch_status',
         'lunch_minutes',
         'early_leave_minutes',
@@ -40,6 +44,8 @@ class EmployeeAttendance extends Model
         'attendance_date' => 'date',
         'hours_worked' => 'decimal:2',
         'expected_hours' => 'decimal:2',
+        'lateness_waived' => 'boolean',
+        'lateness_waived_at' => 'datetime',
     ];
 
     public function employee()

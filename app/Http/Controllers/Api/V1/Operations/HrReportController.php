@@ -125,12 +125,99 @@ class HrReportController extends Controller
         );
     }
 
+    /** Daily attendance register (present / late / absent metrics). */
+    public function attendanceRegister(Request $request)
+    {
+        $filters = $this->filters($request);
+        $q = DB::table('employee_attendance as a')
+            ->join('employees as e', 'e.id', '=', 'a.employee_id')
+            ->leftJoin('departments as d', 'd.id', '=', 'e.department_id')
+            ->leftJoin('branches as b', 'b.id', '=', 'a.branch_id')
+            ->select([
+                'a.id',
+                'a.attendance_date',
+                'a.employee_id',
+                'e.employee_code',
+                'e.full_name',
+                'd.department_name',
+                'b.branch_name',
+                'a.check_in',
+                'a.check_out',
+                'a.status',
+                'a.hours_worked',
+                'a.expected_hours',
+                'a.late_minutes',
+                'a.lateness_waived',
+                'a.lateness_waiver_reason',
+                'a.lunch_status',
+                'a.lunch_minutes',
+                'a.early_leave_minutes',
+                'a.overtime_minutes',
+                'a.source',
+                'a.notes',
+            ])
+            ->when($filters['organization_id'] ?? null, fn ($q, $id) => $q->where('a.organization_id', $id))
+            ->when($filters['branch_id'] ?? null, fn ($q, $id) => $q->where('a.branch_id', $id))
+            ->when($filters['department_id'] ?? null, fn ($q, $id) => $q->where('e.department_id', $id))
+            ->when($filters['status'] ?? null, fn ($q, $status) => $q->where('a.status', $status))
+            ->when($filters['from_date'] ?? null, fn ($q, $d) => $q->whereDate('a.attendance_date', '>=', $d))
+            ->when($filters['to_date'] ?? null, fn ($q, $d) => $q->whereDate('a.attendance_date', '<=', $d))
+            ->orderByDesc('a.attendance_date')
+            ->orderBy('e.full_name');
+
+        return response()->json($q->paginate(min((int) ($filters['per_page'] ?? 50), 200)));
+    }
+
+    /** Lateness list — days with late_minutes > 0 (includes waived). */
+    public function latenessList(Request $request)
+    {
+        $filters = $this->filters($request);
+        $q = DB::table('employee_attendance as a')
+            ->join('employees as e', 'e.id', '=', 'a.employee_id')
+            ->leftJoin('departments as d', 'd.id', '=', 'e.department_id')
+            ->leftJoin('branches as b', 'b.id', '=', 'a.branch_id')
+            ->select([
+                'a.id',
+                'a.attendance_date',
+                'a.employee_id',
+                'e.employee_code',
+                'e.full_name',
+                'd.department_name',
+                'b.branch_name',
+                'a.check_in',
+                'a.check_out',
+                'a.status',
+                'a.late_minutes',
+                'a.lateness_waived',
+                'a.lateness_waiver_reason',
+                'a.lateness_waived_at',
+                'a.hours_worked',
+                'a.expected_hours',
+                'a.source',
+                'a.notes',
+            ])
+            ->where('a.late_minutes', '>', 0)
+            ->when($filters['organization_id'] ?? null, fn ($q, $id) => $q->where('a.organization_id', $id))
+            ->when($filters['branch_id'] ?? null, fn ($q, $id) => $q->where('a.branch_id', $id))
+            ->when($filters['department_id'] ?? null, fn ($q, $id) => $q->where('e.department_id', $id))
+            ->when($filters['from_date'] ?? null, fn ($q, $d) => $q->whereDate('a.attendance_date', '>=', $d))
+            ->when($filters['to_date'] ?? null, fn ($q, $d) => $q->whereDate('a.attendance_date', '<=', $d))
+            ->when(isset($filters['lateness_waived']) && $filters['lateness_waived'] !== '', function ($q) use ($filters) {
+                $q->where('a.lateness_waived', filter_var($filters['lateness_waived'], FILTER_VALIDATE_BOOLEAN));
+            })
+            ->orderByDesc('a.attendance_date')
+            ->orderByDesc('a.late_minutes')
+            ->orderBy('e.full_name');
+
+        return response()->json($q->paginate(min((int) ($filters['per_page'] ?? 50), 200)));
+    }
+
     protected function filters(Request $request): array
     {
         $filters = $request->only([
             'branch_id', 'department_id', 'employment_status', 'employment_type', 'is_active',
             'from_date', 'to_date', 'date_column', 'per_page', 'organization_id',
-            'payroll_run_id', 'period_code', 'status', 'days_until_expiry',
+            'payroll_run_id', 'period_code', 'status', 'days_until_expiry', 'lateness_waived',
         ]);
 
         $user = $request->user();

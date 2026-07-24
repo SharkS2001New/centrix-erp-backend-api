@@ -1063,6 +1063,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.view');
             Route::post('employee-attendance/bulk', [EmployeeAttendanceController::class, 'bulkStore'])
                 ->middleware('erp.permission:hr.manage');
+            Route::post('employee-attendance/{id}/waive-lateness', [EmployeeAttendanceController::class, 'waiveLateness'])
+                ->middleware('erp.permission:hr.manage');
             Route::apiResource('payroll-deduction-types', PayrollDeductionTypeController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);

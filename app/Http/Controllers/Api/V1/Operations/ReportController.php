@@ -168,6 +168,8 @@ class ReportController extends Controller
             ],
             'hr' => [
                 ['key' => 'leave-balance', 'path' => '/reports/leave-balance', 'label' => 'Leave balance'],
+                ['key' => 'attendance-register', 'path' => '/reports/attendance-register', 'label' => 'Attendance register'],
+                ['key' => 'lateness-list', 'path' => '/reports/lateness-list', 'label' => 'Lateness list'],
                 ['key' => 'payroll-summary', 'path' => '/reports/payroll-summary', 'label' => 'Payroll summary'],
                 ['key' => 'statutory-deductions', 'path' => '/reports/statutory-deductions', 'label' => 'Statutory deductions'],
                 ['key' => 'bank-transfer', 'path' => '/reports/bank-transfer', 'label' => 'Bank transfer'],
@@ -185,7 +187,7 @@ class ReportController extends Controller
                 'from_date', 'to_date', 'date_column', 'per_page', 'aging_bucket',
                 'status', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
                 'department_id', 'employment_status', 'employment_type', 'is_active',
-                'payroll_run_id', 'period_code', 'days_until_expiry',
+                'payroll_run_id', 'period_code', 'days_until_expiry', 'lateness_waived',
             ],
         ]);
     }

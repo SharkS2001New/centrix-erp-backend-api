@@ -244,7 +244,9 @@ class PayrollEarningsService
                     $dayPaid = min($dayPaid, $dayExpectedHours);
                 }
                 $paidHours += $dayPaid;
-                $lateMinutesTotal += (int) ($att->late_minutes ?? 0);
+                if (! (bool) ($att->lateness_waived ?? false)) {
+                    $lateMinutesTotal += (int) ($att->late_minutes ?? 0);
+                }
             }
 
             $cursor->addDay();
