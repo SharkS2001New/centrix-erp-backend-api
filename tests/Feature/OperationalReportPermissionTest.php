@@ -148,4 +148,24 @@ class OperationalReportPermissionTest extends TestCase
         $this->getJson('/api/v1/categories?per_page=50')
             ->assertOk();
     }
+
+    public function test_hr_leave_permission_can_load_leave_balance_and_catalog(): void
+    {
+        Organization::query()->where('company_code', 'DEMO')->update([
+            'enabled_modules' => [
+                'hr_payroll' => true,
+                'hr_payroll.reports' => true,
+            ],
+        ]);
+
+        $user = $this->createRoleUser(['hr.leave.view'], 'hrleave');
+        Sanctum::actingAs($user);
+
+        $this->getJson('/api/v1/reports/')
+            ->assertOk()
+            ->assertJsonPath('hr.0.key', 'leave-balance');
+
+        $this->getJson('/api/v1/reports/leave-balance?per_page=5')
+            ->assertOk();
+    }
 }

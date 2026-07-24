@@ -43,6 +43,7 @@ class EmployeeEmergencyContactController extends Controller
 
     public function update(Request $request, int $employee, int $contact)
     {
+        $this->findOrgEmployee($employee);
         $row = EmployeeEmergencyContact::where('employee_id', $employee)->findOrFail($contact);
         $data = $request->validate([
             'full_name' => 'sometimes|string|max:200',
@@ -64,6 +65,7 @@ class EmployeeEmergencyContactController extends Controller
 
     public function destroy(int $employee, int $contact)
     {
+        $this->findOrgEmployee($employee);
         EmployeeEmergencyContact::where('employee_id', $employee)->findOrFail($contact)->delete();
 
         return response()->json(null, 204);

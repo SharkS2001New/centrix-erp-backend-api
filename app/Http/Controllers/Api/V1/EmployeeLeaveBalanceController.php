@@ -21,9 +21,14 @@ class EmployeeLeaveBalanceController extends Controller
             return response()->json(['message' => 'Organization required.'], 403);
         }
         $service = app(LeaveBalanceService::class);
+        $access = app(\App\Services\Auth\UserAccessService::class);
+        $user = $request->user();
 
-        $employees = Employee::query()
-            ->where('organization_id', $orgId)
+        $employeesQuery = Employee::query()->where('organization_id', $orgId);
+        if ($user) {
+            $access->scopeBranchIfLimited($employeesQuery, $user);
+        }
+        $employees = $employeesQuery
             ->orderBy('first_name')
             ->orderBy('last_name')
             ->get();

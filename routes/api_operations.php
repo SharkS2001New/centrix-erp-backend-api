@@ -388,7 +388,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('supplier-returns', [ReportController::class, 'supplierReturns']);
         });
 
-        Route::middleware('erp.permission:reports.view')->group(function () {
+        Route::middleware('erp.permission:reports.view|hr.view|accounting.view|inventory.view|sales.view|purchasing.view|fulfillment.view|customers.view|pos.end_of_day.view|pos.terminal.view|admin.view')->group(function () {
             Route::get('/', [ReportController::class, 'catalog']);
             Route::get('dashboard', [ReportController::class, 'dashboard']);
             Route::get('filter-cashiers', [ReportController::class, 'filterCashiers']);

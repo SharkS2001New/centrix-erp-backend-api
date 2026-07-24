@@ -100,6 +100,8 @@ class EmployeeDocumentController extends Controller
 
     protected function findDoc(int $employeeId, int $documentId): EmployeeDocument
     {
+        $this->findOrgEmployee($employeeId);
+
         return EmployeeDocument::where('employee_id', $employeeId)->findOrFail($documentId);
     }
 }

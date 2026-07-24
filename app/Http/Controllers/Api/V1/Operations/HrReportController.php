@@ -117,6 +117,9 @@ class HrReportController extends Controller
             $q->where('organization_id', $filters['organization_id']);
         }
 
+        // v_hr_dashboard_kpi is org-level (no branch_id column). Branch isolation
+        // for transactional HR lists is enforced on employees / attendance / leave APIs.
+
         return response()->json(
             $q->paginate(min((int) ($filters['per_page'] ?? 50), 200))
         );

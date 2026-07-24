@@ -58,7 +58,7 @@ class EmployeeController extends BaseResourceController
         $user = $request->user();
         if ($user) {
             $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
-            $this->access()->scopeBranchIfLimited($query, $user);
+            $this->access()->applyBranchListFilter($query, $user, $request);
         }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {

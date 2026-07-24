@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Http\Controllers\Controller;
+use App\Services\Auth\UserAccessService;
 use Illuminate\Http\Request;
 
 abstract class HrOrgResourceController extends Controller
@@ -21,19 +22,27 @@ abstract class HrOrgResourceController extends Controller
         return $cols;
     }
 
+    protected function modelHasColumn(string $column): bool
+    {
+        return in_array($column, (new ($this->modelClass()))->getFillable(), true);
+    }
+
+    protected function access(): UserAccessService
+    {
+        return app(UserAccessService::class);
+    }
+
     public function index(Request $request)
     {
         $query = ($this->modelClass())::query();
+        $user = $request->user();
 
-        if ($orgId = $request->user()?->organization_id) {
-            if (in_array('organization_id', (new ($this->modelClass()))->getFillable(), true)) {
-                $query->where('organization_id', $orgId);
-            }
+        if ($user && $this->modelHasColumn('organization_id')) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
         }
 
-        if ($request->user() && in_array('branch_id', (new ($this->modelClass()))->getFillable(), true)) {
-            app(\App\Services\Auth\UserAccessService::class)
-                ->applyBranchListFilter($query, $request->user(), $request);
+        if ($user && $this->modelHasColumn('branch_id')) {
+            $this->access()->applyBranchListFilter($query, $user, $request);
         }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
@@ -57,9 +66,12 @@ abstract class HrOrgResourceController extends Controller
     public function store(Request $request)
     {
         $data = $this->validated($request);
-        if ($request->user()?->organization_id && empty($data['organization_id'])
-            && in_array('organization_id', (new ($this->modelClass()))->getFillable(), true)) {
-            $data['organization_id'] = $request->user()->organization_id;
+        $user = $request->user();
+        if ($user && $this->modelHasColumn('organization_id') && empty($data['organization_id'])) {
+            $data['organization_id'] = $user->organization_id;
+        }
+        if ($user && $this->modelHasColumn('branch_id')) {
+            $this->applyBranchScopeToWriteData($user, $data, $request);
         }
         $model = ($this->modelClass())::create($data);
 
@@ -74,7 +86,12 @@ abstract class HrOrgResourceController extends Controller
     public function update(Request $request, string $id)
     {
         $model = $this->findScoped($id);
-        $model->update($this->validated($request, updating: true));
+        $data = $this->validated($request, updating: true);
+        $user = $request->user();
+        if ($user && $this->modelHasColumn('branch_id')) {
+            $this->applyBranchScopeToWriteData($user, $data, $request);
+        }
+        $model->update($data);
 
         return response()->json($model->fresh());
     }
@@ -89,11 +106,35 @@ abstract class HrOrgResourceController extends Controller
     protected function findScoped(string $id)
     {
         $query = ($this->modelClass())::query()->where('id', (int) $id);
-        if ($orgId = request()->user()?->organization_id) {
-            $query->where('organization_id', $orgId);
+        $user = request()->user();
+        if ($user && $this->modelHasColumn('organization_id')) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', request());
+        }
+        if ($user && $this->modelHasColumn('branch_id')) {
+            $this->access()->scopeBranchIfLimited($query, $user);
         }
 
         return $query->firstOrFail();
+    }
+
+    /** @param  array<string, mixed>  $data */
+    protected function applyBranchScopeToWriteData($user, array &$data, ?Request $request = null): void
+    {
+        if (array_key_exists('branch_id', $data) && $data['branch_id'] !== null) {
+            $this->access()->assertBranchInOrganization($user, (int) $data['branch_id'], $request);
+        }
+
+        $limitedBranch = $this->access()->branchId($user);
+        if ($limitedBranch === null) {
+            return;
+        }
+
+        if (array_key_exists('branch_id', $data) && $data['branch_id'] !== null
+            && (int) $data['branch_id'] !== $limitedBranch) {
+            abort(403, 'You can only operate within your assigned branch.');
+        }
+
+        $data['branch_id'] = $limitedBranch;
     }
 
     /** @param  \Illuminate\Database\Eloquent\Builder  $query */

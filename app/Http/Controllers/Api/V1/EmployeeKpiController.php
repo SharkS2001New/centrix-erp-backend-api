@@ -38,6 +38,7 @@ class EmployeeKpiController extends Controller
 
     public function update(Request $request, int $employee, int $kpi)
     {
+        $this->findOrgEmployee($employee);
         $model = EmployeeKpi::where('employee_id', $employee)->findOrFail($kpi);
         $model->update($this->validated($request, updating: true));
 
@@ -46,6 +47,7 @@ class EmployeeKpiController extends Controller
 
     public function destroy(int $employee, int $kpi)
     {
+        $this->findOrgEmployee($employee);
         EmployeeKpi::where('employee_id', $employee)->findOrFail($kpi)->delete();
 
         return response()->json(null, 204);

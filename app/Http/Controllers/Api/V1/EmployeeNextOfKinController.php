@@ -42,6 +42,7 @@ class EmployeeNextOfKinController extends Controller
 
     public function destroy(int $employee)
     {
+        $this->findOrgEmployee($employee);
         EmployeeNextOfKin::where('employee_id', $employee)->delete();
 
         return response()->json(null, 204);

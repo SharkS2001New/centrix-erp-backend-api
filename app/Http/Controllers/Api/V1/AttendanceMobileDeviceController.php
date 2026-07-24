@@ -25,12 +25,19 @@ class AttendanceMobileDeviceController extends Controller
             return response()->json(new \Illuminate\Pagination\LengthAwarePaginator([], 0, $perPage));
         }
 
-        $devices = AttendanceMobileDevice::query()
+        $devicesQuery = AttendanceMobileDevice::query()
             ->with([
                 'registeredByUser:id,full_name,username',
                 'branch:id,branch_name,branch_code',
             ])
-            ->where('organization_id', $org->id)
+            ->where('organization_id', $org->id);
+
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->applyBranchListFilter($devicesQuery, $request->user(), $request);
+        }
+
+        $devices = $devicesQuery
             ->orderByDesc('created_at')
             ->paginate($perPage);
 
@@ -52,6 +59,9 @@ class AttendanceMobileDeviceController extends Controller
             'platform' => 'nullable|string|max:32',
         ]);
 
+        app(\App\Services\Auth\UserAccessService::class)
+            ->assertBranchAccess($user, (int) $data['branch_id']);
+
         $device = $this->devices->register(
             $org,
             $user,
@@ -71,9 +81,13 @@ class AttendanceMobileDeviceController extends Controller
     {
         $org = $this->erp->resolveOrganization($request);
 
-        $device = AttendanceMobileDevice::query()
-            ->where('organization_id', $org->id)
-            ->findOrFail((int) $id);
+        $deviceQuery = AttendanceMobileDevice::query()
+            ->where('organization_id', $org->id);
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->scopeBranchIfLimited($deviceQuery, $request->user());
+        }
+        $device = $deviceQuery->findOrFail((int) $id);
 
         $data = $request->validate([
             'device_label' => 'nullable|string|max:120',
@@ -83,6 +97,10 @@ class AttendanceMobileDeviceController extends Controller
 
         if (isset($data['branch_id'])) {
             $this->devices->validateBranch($org, (int) $data['branch_id']);
+            if ($request->user()) {
+                app(\App\Services\Auth\UserAccessService::class)
+                    ->assertBranchAccess($request->user(), (int) $data['branch_id']);
+            }
         }
 
         $device->fill($data);
@@ -98,9 +116,13 @@ class AttendanceMobileDeviceController extends Controller
     {
         $org = $this->erp->resolveOrganization($request);
 
-        $device = AttendanceMobileDevice::query()
-            ->where('organization_id', $org->id)
-            ->findOrFail((int) $id);
+        $deviceQuery = AttendanceMobileDevice::query()
+            ->where('organization_id', $org->id);
+        if ($request->user()) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->scopeBranchIfLimited($deviceQuery, $request->user());
+        }
+        $device = $deviceQuery->findOrFail((int) $id);
 
         $device->delete();
 

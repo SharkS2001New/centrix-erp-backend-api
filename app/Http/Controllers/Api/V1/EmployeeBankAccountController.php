@@ -39,6 +39,7 @@ class EmployeeBankAccountController extends Controller
 
     public function update(Request $request, int $employee, int $bankAccount)
     {
+        $this->findOrgEmployee($employee);
         $account = EmployeeBankAccount::where('employee_id', $employee)->findOrFail($bankAccount);
         $data = $this->validatedAccount($request, updating: true);
         $data = $this->normalizeAccount(array_merge($account->only([
@@ -102,6 +103,7 @@ class EmployeeBankAccountController extends Controller
 
     public function destroy(int $employee, int $bankAccount)
     {
+        $this->findOrgEmployee($employee);
         EmployeeBankAccount::where('employee_id', $employee)->findOrFail($bankAccount)->delete();
 
         return response()->json(null, 204);

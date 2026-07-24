@@ -70,6 +70,20 @@ class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
                         throw new \InvalidArgumentException('First name and last name are required.');
                     }
 
+                    $access = app(\App\Services\Auth\UserAccessService::class);
+                    $limitedBranch = $access->branchId($user);
+                    if ($limitedBranch !== null) {
+                        $requestedBranch = isset($body['branch_id']) ? (int) $body['branch_id'] : null;
+                        if ($requestedBranch !== null && $requestedBranch !== $limitedBranch) {
+                            throw new \InvalidArgumentException(
+                                'You can only import employees into your assigned branch.',
+                            );
+                        }
+                        $body['branch_id'] = $limitedBranch;
+                    } elseif (! empty($body['branch_id'])) {
+                        $access->assertBranchInOrganization($user, (int) $body['branch_id']);
+                    }
+
                     $providedCode = trim((string) ($row['employee_code'] ?? ''));
                     if ($providedCode !== '') {
                         $codeKey = strtolower($providedCode);

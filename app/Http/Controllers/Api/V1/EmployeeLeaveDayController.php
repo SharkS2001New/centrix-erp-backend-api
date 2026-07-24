@@ -211,7 +211,7 @@ class EmployeeLeaveDayController extends HrOrgResourceController
 
     public function update(Request $request, string $id)
     {
-        $row = EmployeeLeaveDay::findOrFail($id);
+        $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'leave assignment');
         $data = $this->validated($request, updating: true);
         $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id);

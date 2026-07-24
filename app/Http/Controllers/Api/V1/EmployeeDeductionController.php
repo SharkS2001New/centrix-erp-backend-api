@@ -71,8 +71,16 @@ class EmployeeDeductionController extends Controller
     protected function findScopedDeduction(Request $request, int $id): EmployeeDeduction
     {
         $query = EmployeeDeduction::query()->whereKey($id);
-        if ($orgId = $request->user()?->organization_id) {
-            $query->whereHas('employee', fn ($q) => $q->where('organization_id', $orgId));
+        $user = $request->user();
+        if ($user) {
+            $access = app(\App\Services\Auth\UserAccessService::class);
+            $query->whereHas('employee', function ($q) use ($access, $user, $request) {
+                $access->scopeOrganization($q, $user, 'organization_id', $request);
+                $access->scopeBranchIfLimited($q, $user);
+            });
+            if (in_array('branch_id', (new EmployeeDeduction)->getFillable(), true)) {
+                $access->scopeBranchIfLimited($query, $user);
+            }
         }
 
         return $query->firstOrFail();

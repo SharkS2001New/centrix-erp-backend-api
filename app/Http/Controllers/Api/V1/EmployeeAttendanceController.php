@@ -122,6 +122,9 @@ class EmployeeAttendanceController extends HrOrgResourceController
         if (empty($data['branch_id'])) {
             $data['branch_id'] = $employee->branch_id;
         }
+        if ($request->user()) {
+            $this->applyBranchScopeToWriteData($request->user(), $data, $request);
+        }
         $data['source'] = $data['source'] ?? 'manual';
 
         $this->assertUniqueAttendanceDate(
@@ -137,7 +140,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
 
     public function update(Request $request, string $id)
     {
-        $row = EmployeeAttendance::findOrFail($id);
+        $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'attendance record');
         $request->merge(AttendanceTime::normalizePayload($request->all()));
         $data = $this->applyHours($this->validated($request, updating: true));
@@ -150,6 +153,9 @@ class EmployeeAttendanceController extends HrOrgResourceController
             (int) $row->id,
         );
         $data = $this->applyDayPolicy($employee, $data);
+        if ($request->user()) {
+            $this->applyBranchScopeToWriteData($request->user(), $data, $request);
+        }
         $row->update($data);
 
         return response()->json($row->fresh(['employee', 'branch']));
@@ -157,12 +163,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
 
     public function destroy(string $id)
     {
-        $row = EmployeeAttendance::findOrFail($id);
-        if ($orgId = request()->user()?->organization_id) {
-            if ((int) $row->organization_id !== (int) $orgId) {
-                abort(404);
-            }
-        }
+        $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'attendance record');
         $row->delete();
 
