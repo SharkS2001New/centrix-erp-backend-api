@@ -44,6 +44,7 @@ class ManagerReportCatalogService
     /** @var list<string> */
     private const HR_REPORT_KEYS = [
         'leave-balance', 'attendance-register', 'lateness-list', 'payroll-summary', 'statutory-deductions', 'bank-transfer',
+        'nssf-remittance', 'other-deductions',
         'staff-turnover', 'headcount', 'contract-expiry', 'hr-dashboard-kpi',
     ];
 
@@ -194,6 +195,7 @@ class ManagerReportCatalogService
             'description' => 'Leave, payroll, headcount, and workforce analytics',
             'keys' => [
                 'leave-balance', 'payroll-summary', 'statutory-deductions', 'bank-transfer',
+                'nssf-remittance', 'other-deductions',
                 'staff-turnover', 'headcount', 'contract-expiry', 'hr-dashboard-kpi',
             ],
         ],

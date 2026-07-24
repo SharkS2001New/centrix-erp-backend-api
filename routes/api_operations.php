@@ -429,6 +429,8 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('lateness-list', [HrReportController::class, 'latenessList']);
             Route::get('statutory-deductions', [HrReportController::class, 'statutoryDeductions']);
             Route::get('bank-transfer', [HrReportController::class, 'bankTransfer']);
+            Route::get('nssf-remittance', [HrReportController::class, 'nssfRemittance']);
+            Route::get('other-deductions', [HrReportController::class, 'otherDeductionsByPeriod']);
             Route::get('staff-turnover', [HrReportController::class, 'staffTurnover']);
             Route::get('headcount', [HrReportController::class, 'headcount']);
             Route::get('contract-expiry', [HrReportController::class, 'contractExpiry']);

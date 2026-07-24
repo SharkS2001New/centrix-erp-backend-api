@@ -68,6 +68,20 @@ class HrReportController extends Controller
         ]));
     }
 
+    public function nssfRemittance(Request $request)
+    {
+        return response()->json($this->reportFromView('v_nssf_remittance_report', $this->filters($request), [
+            'organization_id', 'branch_id', 'payroll_run_id', 'period_code', 'payroll_status',
+        ]));
+    }
+
+    public function otherDeductionsByPeriod(Request $request)
+    {
+        return response()->json($this->reportFromView('v_other_deductions_by_period', $this->filters($request), [
+            'organization_id', 'branch_id', 'payroll_run_id', 'period_code', 'payroll_status',
+        ]));
+    }
+
     public function headcount(Request $request)
     {
         return response()->json($this->reportFromView('v_headcount_report', $this->filters($request), [

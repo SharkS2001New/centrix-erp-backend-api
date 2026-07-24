@@ -261,6 +261,8 @@ return [
         'lateness-list' => 'hr_payroll.reports',
         'statutory-deductions' => 'hr_payroll.reports',
         'bank-transfer' => 'hr_payroll.reports',
+        'nssf-remittance' => 'hr_payroll.reports',
+        'other-deductions' => 'hr_payroll.reports',
         'staff-turnover' => 'hr_payroll.reports',
         'headcount' => 'hr_payroll.reports',
         'contract-expiry' => 'hr_payroll.reports',

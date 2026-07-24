@@ -371,4 +371,45 @@ class AttendanceLunchReconcileTest extends TestCase
         // 44000 * (8.5/9) ≈ 41555.56
         $this->assertEquals(41555.56, (float) $line['basic_salary']);
     }
+
+    public function test_payroll_uses_calendar_days_through_today_not_future_absences(): void
+    {
+        // Mon–Fri worker, paid across calendar days (Sun counts in place).
+        // Mid-month run on 24 Jul for 1–31: show 24/31, not future days as absent.
+        $this->travelTo('2026-07-24 10:00:00');
+
+        $cursor = Carbon::parse('2026-07-01');
+        $today = Carbon::parse('2026-07-24');
+        while ($cursor->lte($today)) {
+            // Shift is Mon–Fri; create attendance only on scheduled days.
+            if ($cursor->isWeekday()) {
+                $date = $cursor->toDateString();
+                EmployeeClockSession::query()->create([
+                    'employee_id' => $this->employee->id,
+                    'organization_id' => $this->org->id,
+                    'branch_id' => $this->employee->branch_id,
+                    'source' => 'clock_device',
+                    'clock_in_at' => Carbon::parse($date.' 08:00:00'),
+                    'clock_out_at' => Carbon::parse($date.' 17:00:00'),
+                ]);
+                app(AttendanceDayReconciler::class)->reconcileFromSessions(
+                    $this->employee->fresh('shift'),
+                    $date,
+                );
+            }
+            $cursor->addDay();
+        }
+
+        $summary = app(PayrollEarningsService::class)->summarizeAttendance(
+            $this->employee->fresh('shift'),
+            '2026-07-01',
+            '2026-07-31',
+        );
+
+        $this->assertSame(31.0, $summary['expected_days']);
+        $this->assertSame(24.0, $summary['paid_days']);
+        $this->assertSame(7.0, $summary['remaining_days']);
+        $this->assertSame(0.0, $summary['absent_days']);
+        $this->assertGreaterThan(0.0, $summary['rest_days_paid']);
+    }
 }

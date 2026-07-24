@@ -4,9 +4,11 @@ namespace App\Services\Payroll;
 
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeCashAdvance;
+use App\Models\EmployeeDeduction;
 use App\Models\EmployeeLeaveDay;
 use App\Models\EmployeeOvertime;
 use App\Models\PayPeriod;
+use App\Models\PayrollDeductionType;
 use App\Models\PayrollRun;
 use App\Models\PayrollRunSettlement;
 use Illuminate\Support\Facades\DB;
@@ -130,12 +132,83 @@ class PayrollCycleSettlementService
                             $counts['cash_advance']++;
                         }
                         if (($item['type'] ?? '') === 'employee_deduction' && ! empty($item['id'])) {
-                            $this->recordSettlement($runId, $orgId, PayrollRunSettlement::TYPE_EMPLOYEE_DEDUCTION, (int) $item['id'], [
+                            $deduction = EmployeeDeduction::find($item['id']);
+                            $snapshot = [
                                 'name' => $item['name'] ?? null,
                                 'amount' => (float) ($item['amount'] ?? 0),
                                 'employee_id' => (int) ($line['employee_id'] ?? 0),
-                            ]);
+                                'frequency' => $item['frequency'] ?? null,
+                            ];
+                            if ($deduction && ($item['frequency'] ?? '') === EmployeeDeduction::FREQUENCY_ONE_TIME) {
+                                $snapshot['is_active'] = (bool) $deduction->is_active;
+                                $snapshot['payroll_run_id'] = $deduction->payroll_run_id;
+                                $deduction->update([
+                                    'is_active' => false,
+                                    'payroll_run_id' => $runId,
+                                ]);
+                            }
+                            $this->recordSettlement(
+                                $runId,
+                                $orgId,
+                                PayrollRunSettlement::TYPE_EMPLOYEE_DEDUCTION,
+                                (int) $item['id'],
+                                $snapshot,
+                            );
                             $counts['employee_deduction']++;
+                        }
+                        if (($item['type'] ?? '') === 'organization_deduction'
+                            && ! empty($item['id'])
+                            && ($item['frequency'] ?? '') === PayrollDeductionType::FREQUENCY_ONE_TIME) {
+                            $employeeId = (int) ($line['employee_id'] ?? 0);
+                            $typeId = (int) $item['id'];
+                            if ($employeeId > 0) {
+                                $type = PayrollDeductionType::find($typeId);
+                                $marker = EmployeeDeduction::query()
+                                    ->where('employee_id', $employeeId)
+                                    ->where('deduction_type_id', $typeId)
+                                    ->where('frequency', EmployeeDeduction::FREQUENCY_ONE_TIME)
+                                    ->first();
+                                if (! $marker) {
+                                    $marker = EmployeeDeduction::create([
+                                        'employee_id' => $employeeId,
+                                        'deduction_type_id' => $typeId,
+                                        'name' => $type?->name ?? ($item['name'] ?? 'Deduction'),
+                                        'calc_type' => $type?->calc_type ?? 'fixed',
+                                        'amount' => $type?->calc_type === 'percentage'
+                                            ? 0
+                                            : (float) ($type?->default_amount ?? $item['amount'] ?? 0),
+                                        'percentage' => $type?->calc_type === 'percentage'
+                                            ? (float) $type->default_percentage
+                                            : null,
+                                        'is_active' => false,
+                                        'frequency' => EmployeeDeduction::FREQUENCY_ONE_TIME,
+                                        'payroll_run_id' => $runId,
+                                    ]);
+                                } else {
+                                    $marker->update([
+                                        'is_active' => false,
+                                        'payroll_run_id' => $runId,
+                                    ]);
+                                }
+                                $this->recordSettlement(
+                                    $runId,
+                                    $orgId,
+                                    PayrollRunSettlement::TYPE_EMPLOYEE_DEDUCTION,
+                                    (int) $marker->id,
+                                    [
+                                        'name' => $item['name'] ?? null,
+                                        'amount' => (float) ($item['amount'] ?? 0),
+                                        'employee_id' => $employeeId,
+                                        'frequency' => EmployeeDeduction::FREQUENCY_ONE_TIME,
+                                        'from_organization_type' => true,
+                                        'deduction_type_id' => $typeId,
+                                        'created_marker' => true,
+                                        'is_active' => false,
+                                        'payroll_run_id' => null,
+                                    ],
+                                );
+                                $counts['employee_deduction']++;
+                            }
                         }
                     }
                 }
@@ -178,7 +251,7 @@ class PayrollCycleSettlementService
                     PayrollRunSettlement::TYPE_LEAVE_DAY => $this->restoreLeaveDay((int) $settlement->item_id, $snapshot, $counts),
                     PayrollRunSettlement::TYPE_OVERTIME => $this->restoreOvertime((int) $settlement->item_id, $snapshot, $counts),
                     PayrollRunSettlement::TYPE_CASH_ADVANCE => $this->restoreCashAdvance((int) $settlement->item_id, $snapshot, $counts),
-                    PayrollRunSettlement::TYPE_EMPLOYEE_DEDUCTION => $counts['employee_deduction']++,
+                    PayrollRunSettlement::TYPE_EMPLOYEE_DEDUCTION => $this->restoreEmployeeDeduction((int) $settlement->item_id, $snapshot, $counts),
                     default => null,
                 };
 
@@ -267,6 +340,32 @@ class PayrollCycleSettlementService
             'payroll_run_id' => $snapshot['payroll_run_id'] ?? null,
         ]);
         $counts['overtime']++;
+    }
+
+    /** @param  array<string, int>  $counts */
+    protected function restoreEmployeeDeduction(int $id, array $snapshot, array &$counts): void
+    {
+        $row = EmployeeDeduction::find($id);
+        if (! $row) {
+            return;
+        }
+
+        if (! empty($snapshot['created_marker']) && ! empty($snapshot['from_organization_type'])) {
+            $row->delete();
+            $counts['employee_deduction']++;
+
+            return;
+        }
+
+        if (($snapshot['frequency'] ?? '') === EmployeeDeduction::FREQUENCY_ONE_TIME
+            || $row->isOneTime()) {
+            $row->update([
+                'is_active' => array_key_exists('is_active', $snapshot) ? (bool) $snapshot['is_active'] : true,
+                'payroll_run_id' => $snapshot['payroll_run_id'] ?? null,
+            ]);
+        }
+
+        $counts['employee_deduction']++;
     }
 
     /** @param  array<string, int>  $counts */

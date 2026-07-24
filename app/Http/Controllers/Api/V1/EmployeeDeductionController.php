@@ -100,6 +100,7 @@ class EmployeeDeductionController extends Controller
             'start_date' => 'nullable|date',
             'end_date' => 'nullable|date|after_or_equal:start_date',
             'is_active' => 'nullable|boolean',
+            'frequency' => 'nullable|in:per_cycle,one_time',
             'notes' => 'nullable|string|max:500',
         ]);
     }

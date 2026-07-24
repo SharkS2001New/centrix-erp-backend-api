@@ -100,6 +100,8 @@ return [
                 ['label' => 'Leave balance', 'path' => '/reports/leave-balance', 'module' => 'hr_payroll.reports', 'permission' => 'hr.leave.view'],
                 ['label' => 'Statutory deductions', 'path' => '/reports/statutory-deductions', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
                 ['label' => 'Bank transfer', 'path' => '/reports/bank-transfer', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
+                ['label' => 'NSSF remittance', 'path' => '/reports/nssf-remittance', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
+                ['label' => 'Other deductions by period', 'path' => '/reports/other-deductions', 'module' => 'hr_payroll.reports', 'permission' => 'hr.payroll.view'],
                 ['label' => 'Headcount', 'path' => '/reports/headcount', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
                 ['label' => 'Contract expiry', 'path' => '/reports/contract-expiry', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],
                 ['label' => 'Staff turnover', 'path' => '/reports/staff-turnover', 'module' => 'hr_payroll.reports', 'permission' => 'hr.employees.view'],

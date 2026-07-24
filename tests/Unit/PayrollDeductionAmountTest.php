@@ -67,4 +67,17 @@ class PayrollDeductionAmountTest extends TestCase
 
         $this->assertSame(1500.0, $ded->payrollDeductionAmount(50_000.0));
     }
+
+    public function test_one_time_deduction_skips_after_payroll_run_linked(): void
+    {
+        $ded = new EmployeeDeduction([
+            'calc_type' => 'fixed',
+            'amount' => 2000,
+            'is_active' => true,
+            'frequency' => 'one_time',
+            'payroll_run_id' => 99,
+        ]);
+
+        $this->assertSame(0.0, $ded->payrollDeductionAmount(50_000.0));
+    }
 }

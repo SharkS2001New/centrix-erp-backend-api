@@ -21,6 +21,7 @@ class PayrollDeductionType extends Model
         'default_percentage',
         'is_active',
         'applies_to_all',
+        'frequency',
     ];
 
     protected $casts = [
@@ -29,6 +30,15 @@ class PayrollDeductionType extends Model
         'default_amount' => 'decimal:2',
         'default_percentage' => 'decimal:2',
     ];
+
+    public const FREQUENCY_PER_CYCLE = 'per_cycle';
+
+    public const FREQUENCY_ONE_TIME = 'one_time';
+
+    public function isOneTime(): bool
+    {
+        return ($this->frequency ?? self::FREQUENCY_PER_CYCLE) === self::FREQUENCY_ONE_TIME;
+    }
 
     /**
      * Org-wide other deduction for one payroll run (same rules as EmployeeDeduction).

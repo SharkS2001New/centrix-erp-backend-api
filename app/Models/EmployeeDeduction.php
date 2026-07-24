@@ -23,6 +23,8 @@ class EmployeeDeduction extends Model
         'start_date',
         'end_date',
         'is_active',
+        'frequency',
+        'payroll_run_id',
         'notes',
     ];
 
@@ -33,6 +35,28 @@ class EmployeeDeduction extends Model
         'start_date' => 'date',
         'end_date' => 'date',
     ];
+
+    public const FREQUENCY_PER_CYCLE = 'per_cycle';
+
+    public const FREQUENCY_ONE_TIME = 'one_time';
+
+    public function isOneTime(): bool
+    {
+        return ($this->frequency ?? self::FREQUENCY_PER_CYCLE) === self::FREQUENCY_ONE_TIME;
+    }
+
+    /** Still eligible to deduct on a payroll run. */
+    public function isPendingForPayroll(): bool
+    {
+        if (! $this->is_active) {
+            return false;
+        }
+        if ($this->isOneTime() && $this->payroll_run_id) {
+            return false;
+        }
+
+        return true;
+    }
 
     public function employee()
     {
@@ -51,7 +75,7 @@ class EmployeeDeduction extends Model
      */
     public function payrollDeductionAmount(float $contractGrossForPercent): float
     {
-        if (! $this->is_active) {
+        if (! $this->isPendingForPayroll()) {
             return 0.0;
         }
         $today = now()->toDateString();

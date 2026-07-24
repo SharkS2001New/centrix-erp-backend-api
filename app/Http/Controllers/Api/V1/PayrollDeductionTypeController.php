@@ -120,6 +120,9 @@ class PayrollDeductionTypeController extends HrOrgResourceController
                 'amount' => $type->calc_type === 'percentage' ? 0 : (float) $type->default_amount,
                 'percentage' => $type->calc_type === 'percentage' ? (float) $type->default_percentage : null,
                 'is_active' => (bool) $type->is_active,
+                'frequency' => $type->isOneTime()
+                    ? EmployeeDeduction::FREQUENCY_ONE_TIME
+                    : EmployeeDeduction::FREQUENCY_PER_CYCLE,
             ]);
             $created++;
         }
@@ -140,6 +143,7 @@ class PayrollDeductionTypeController extends HrOrgResourceController
             'default_percentage' => 'nullable|numeric|min:0|max:100',
             'is_active' => 'nullable|boolean',
             'applies_to_all' => 'nullable|boolean',
+            'frequency' => 'nullable|in:per_cycle,one_time',
             'employee_ids' => 'nullable|array',
             'employee_ids.*' => 'integer|exists:employees,id',
         ]);

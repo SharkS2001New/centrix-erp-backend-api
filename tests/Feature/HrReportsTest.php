@@ -32,6 +32,8 @@ class HrReportsTest extends TestCase
         $this->assertContains('payroll-summary', $keys);
         $this->assertContains('statutory-deductions', $keys);
         $this->assertContains('bank-transfer', $keys);
+        $this->assertContains('nssf-remittance', $keys);
+        $this->assertContains('other-deductions', $keys);
         $this->assertContains('staff-turnover', $keys);
         $this->assertContains('headcount', $keys);
         $this->assertContains('contract-expiry', $keys);
@@ -52,9 +54,16 @@ class HrReportsTest extends TestCase
             ->assertJsonStructure(['data', 'current_page']);
     }
 
-    public function test_hr_user_can_access_hr_dashboard_kpi_report(): void
+    public function test_hr_user_can_access_nssf_remittance_report(): void
     {
-        $this->getJson('/api/v1/reports/hr-dashboard-kpi')
+        $this->getJson('/api/v1/reports/nssf-remittance')
+            ->assertOk()
+            ->assertJsonStructure(['data', 'current_page']);
+    }
+
+    public function test_hr_user_can_access_other_deductions_report(): void
+    {
+        $this->getJson('/api/v1/reports/other-deductions')
             ->assertOk()
             ->assertJsonStructure(['data', 'current_page']);
     }

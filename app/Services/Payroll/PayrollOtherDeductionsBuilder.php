@@ -50,6 +50,7 @@ class PayrollOtherDeductionsBuilder
                     'balance_before' => (float) $advance->balance,
                     'amount' => round($advAmt, 2),
                     'prorated' => false,
+                    'frequency' => 'per_cycle',
                 ];
             }
         }
@@ -65,12 +66,22 @@ class PayrollOtherDeductionsBuilder
             ->with('deductionType')
             ->where('employee_id', $employee->id)
             ->where('is_active', true)
+            ->whereNull('payroll_run_id')
             ->orderBy('name')
             ->get();
 
         $overriddenTypeIds = $employeeDeductions
             ->pluck('deduction_type_id')
             ->filter()
+            ->unique()
+            ->values();
+
+        $appliedOneTimeTypeIds = EmployeeDeduction::query()
+            ->where('employee_id', $employee->id)
+            ->whereNotNull('deduction_type_id')
+            ->where('frequency', EmployeeDeduction::FREQUENCY_ONE_TIME)
+            ->whereNotNull('payroll_run_id')
+            ->pluck('deduction_type_id')
             ->unique()
             ->values();
 
@@ -83,6 +94,9 @@ class PayrollOtherDeductionsBuilder
 
         foreach ($orgTypes as $type) {
             if ($overriddenTypeIds->contains($type->id)) {
+                continue;
+            }
+            if ($type->isOneTime() && $appliedOneTimeTypeIds->contains($type->id)) {
                 continue;
             }
             $amt = $type->payrollDeductionAmount($contractGrossForPercent);
@@ -99,6 +113,9 @@ class PayrollOtherDeductionsBuilder
                 'percentage' => $type->calc_type === 'percentage' ? (float) $type->default_percentage : null,
                 'amount' => $amt,
                 'prorated' => false,
+                'frequency' => $type->isOneTime()
+                    ? PayrollDeductionType::FREQUENCY_ONE_TIME
+                    : PayrollDeductionType::FREQUENCY_PER_CYCLE,
             ];
         }
 
@@ -118,6 +135,9 @@ class PayrollOtherDeductionsBuilder
                 'percentage' => $ded->calc_type === 'percentage' ? (float) $ded->percentage : null,
                 'amount' => round($amt, 2),
                 'prorated' => false,
+                'frequency' => $ded->isOneTime()
+                    ? EmployeeDeduction::FREQUENCY_ONE_TIME
+                    : EmployeeDeduction::FREQUENCY_PER_CYCLE,
             ];
         }
 
