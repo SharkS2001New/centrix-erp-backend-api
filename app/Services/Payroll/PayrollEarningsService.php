@@ -145,6 +145,11 @@ class PayrollEarningsService
             ->whereDate('end_date', '>=', $start)
             ->whereDate('start_date', '<=', $end)
             ->whereNull('payroll_run_id')
+            // Only approved assignments affect pay (legacy null = already in force).
+            ->where(function ($q) {
+                $q->where('approval_status', 'approved')
+                    ->orWhereNull('approval_status');
+            })
             ->get();
 
         $attendanceByDate = EmployeeAttendance::query()
@@ -159,6 +164,8 @@ class PayrollEarningsService
         $attended = 0.0;
         $paidLeave = 0.0;
         $unpaidLeave = 0.0;
+        $deductibleOffDays = 0.0;
+        $nonDeductibleOffDays = 0.0;
 
         $cursor = Carbon::parse($start)->startOfDay();
         $endDay = Carbon::parse($end)->startOfDay();
@@ -177,10 +184,17 @@ class PayrollEarningsService
             $leave = $leaves->first(fn (EmployeeLeaveDay $l) => $l->coversDate($date));
             if ($leave) {
                 $dayFraction = $leave->duration_type === 'half_day' ? 0.5 : 1.0;
+                $isOff = ($leave->assignment_kind ?? 'leave') === 'off_day';
                 if ($this->leaveIsUnpaid($leave)) {
                     $unpaidLeave += $dayFraction;
+                    if ($isOff) {
+                        $deductibleOffDays += $dayFraction;
+                    }
                 } else {
                     $paidLeave += $dayFraction;
+                    if ($isOff) {
+                        $nonDeductibleOffDays += $dayFraction;
+                    }
                 }
                 $cursor->addDay();
 
@@ -204,6 +218,8 @@ class PayrollEarningsService
             'attended_days' => round($attended, 2),
             'paid_leave_days' => round($paidLeave, 2),
             'unpaid_leave_days' => round($unpaidLeave, 2),
+            'deductible_off_days' => round($deductibleOffDays, 2),
+            'non_deductible_off_days' => round($nonDeductibleOffDays, 2),
             'absent_days' => $absent,
         ];
     }
@@ -285,13 +301,13 @@ class PayrollEarningsService
             ->sum('amount'), 2);
     }
 
+    /**
+     * Deductible offs (and unpaid leave) reduce paid days under attendance proration.
+     * Non-deductible offs keep pay (counted as paid leave).
+     */
     protected function leaveIsUnpaid(EmployeeLeaveDay $leave): bool
     {
-        if ($leave->deduct_from === 'unpaid' || $leave->leave_type === 'unpaid') {
-            return true;
-        }
-
-        return false;
+        return $leave->deduct_from === 'unpaid' || $leave->leave_type === 'unpaid';
     }
 
     protected function attendanceCountsAsPaid(?string $status): bool
