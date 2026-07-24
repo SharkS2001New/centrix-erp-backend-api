@@ -60,6 +60,7 @@ class Employee extends Model
         'sha_number',
         'housing_levy_number',
         'is_active',
+        'work_weekdays',
     ];
 
     protected $appends = ['photo_url'];
@@ -74,6 +75,7 @@ class Employee extends Model
         'probation_end_date' => 'date',
         'contract_start_date' => 'date',
         'contract_end_date' => 'date',
+        'work_weekdays' => 'array',
     ];
 
     protected function photoUrl(): Attribute

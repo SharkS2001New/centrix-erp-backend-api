@@ -259,6 +259,15 @@ class EmployeeController extends BaseResourceController
     {
         $data = $this->validatedEmployee($request, $existing);
 
+        if (array_key_exists('work_weekdays', $data)) {
+            $days = $data['work_weekdays'];
+            if (! is_array($days) || $days === []) {
+                $data['work_weekdays'] = null;
+            } else {
+                $data['work_weekdays'] = array_values(array_unique(array_map('intval', $days)));
+            }
+        }
+
         $user = $request->user();
         if ($user) {
             $orgId = (int) ($this->access()->organizationId($user, $request) ?? 0);
@@ -332,6 +341,8 @@ class EmployeeController extends BaseResourceController
             'department_id' => 'nullable|integer|exists:departments,id',
             'position_id' => 'nullable|integer|exists:positions,id',
             'shift_id' => 'nullable|integer|exists:work_shifts,id',
+            'work_weekdays' => 'nullable|array',
+            'work_weekdays.*' => 'integer|min:0|max:6',
             'user_id' => 'nullable|integer|exists:users,id',
             'reports_to_employee_id' => 'nullable|integer|exists:employees,id',
             'employee_code' => 'nullable|string|max:45',

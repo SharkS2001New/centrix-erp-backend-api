@@ -616,8 +616,8 @@ Route::prefix('v1')->group(function () {
             Route::delete('organizations/{organization}/logo', [OrganizationController::class, 'deleteLogo'])
                 ->middleware(['erp.permission:admin.company.edit|admin.manage']);
             Route::apiResource('branches', BranchController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:admin.view|fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
+                ->only(['store', 'update', 'destroy'])
+                ->middleware(['erp.permission:admin.manage']);
             Route::get('roles/permissions/matrix', [RoleController::class, 'permissionMatrix'])
                 ->middleware('erp.permission:admin.view');
             Route::get('roles/{role}/permissions', [RoleController::class, 'permissions'])
@@ -648,10 +648,23 @@ Route::prefix('v1')->group(function () {
                 'erp.module:admin,sales,payments,purchasing,distribution',
                 'erp.permission:admin.view|admin.payment_methods.view|purchasing.view|payments.view|payments.manage|payments.sale_payments.view|payments.sale_payments.create|sales.orders.view|sales.orders.edit|pos.checkout.create|driver.mobile',
             ]);
+        // Branch pickers (HR employee form, sales, etc.) — not admin-module-only.
+        Route::apiResource('branches', BranchController::class)
+            ->only(['index', 'show'])
+            ->middleware([
+                'erp.module:admin,hr_payroll,sales,inventory,accounting,fulfillment,customers,reports',
+                'erp.permission:admin.view|hr.view|hr.manage|fulfillment.manage|fulfillment.view|customers.view|customers.manage|sales.view|inventory.view|accounting.view|reports.view',
+            ]);
+        // User pickers for HR employee linking — index/show also via hr_payroll.
         Route::apiResource('users', UserController::class)
-            ->middleware(['erp.module:admin'])
-            ->middlewareFor(['index', 'show'], ['erp.permission:admin.view'])
-            ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.manage']);
+            ->only(['index', 'show'])
+            ->middleware([
+                'erp.module:admin,hr_payroll',
+                'erp.permission:admin.view|hr.view|hr.manage',
+            ]);
+        Route::apiResource('users', UserController::class)
+            ->only(['store', 'update', 'destroy'])
+            ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::post('users/{user}/clear-password-lock', [UserController::class, 'clearPasswordLock'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
         Route::post('users/{user}/clear-two-factor', [UserController::class, 'clearTwoFactor'])

@@ -31,6 +31,22 @@ class EmployeeAttendanceController extends HrOrgResourceController
             ->whereDate('attendance_date', $data['attendance_date'])
             ->first();
 
+        $shiftHours = null;
+        $shiftTimes = null;
+        if ($employee->shift) {
+            $hours = $employee->shift->hoursForDate(
+                $data['attendance_date'],
+                (bool) ($eval['is_holiday'] ?? false),
+            );
+            $shiftTimes = $hours;
+            $shiftHours = app(\App\Services\Attendance\LeaveRequestCalculator::class)
+                ->hoursBetweenTimes(
+                    $hours['start_time'],
+                    $hours['end_time'],
+                    (bool) $hours['crosses_midnight'],
+                );
+        }
+
         return response()->json(array_merge($eval, [
             'has_existing_attendance' => (bool) $existing,
             'existing_attendance' => $existing ? [
@@ -39,6 +55,8 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 'source' => $existing->source,
                 'hours_worked' => $existing->hours_worked,
             ] : null,
+            'expected_hours' => $shiftHours,
+            'shift_times' => $shiftTimes,
         ]));
     }
 

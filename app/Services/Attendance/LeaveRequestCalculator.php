@@ -112,6 +112,29 @@ class LeaveRequestCalculator
         return $this->hoursBetweenTimes($shift->start_time, $shift->end_time, (bool) $shift->crosses_midnight);
     }
 
+    /**
+     * Expected hours for a specific calendar day (uses alternate Sat/holiday hours when configured).
+     */
+    public function shiftHoursForEmployeeOnDate(Employee $employee, string $date, bool $isPublicHoliday = false): float
+    {
+        if (! $employee->shift_id) {
+            return self::DEFAULT_SHIFT_HOURS;
+        }
+
+        $shift = WorkShift::find($employee->shift_id);
+        if (! $shift) {
+            return self::DEFAULT_SHIFT_HOURS;
+        }
+
+        $hours = $shift->hoursForDate($date, $isPublicHoliday);
+
+        return $this->hoursBetweenTimes(
+            $hours['start_time'],
+            $hours['end_time'],
+            (bool) $hours['crosses_midnight'],
+        );
+    }
+
     public function hoursBetweenTimes(?string $start, ?string $end, bool $crossesMidnight = false): float
     {
         if (! $start || ! $end) {

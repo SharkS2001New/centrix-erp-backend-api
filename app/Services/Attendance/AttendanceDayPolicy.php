@@ -77,23 +77,10 @@ class AttendanceDayPolicy
         $day = Carbon::parse($date);
         $dow = (int) $day->dayOfWeek;
 
-        $holiday = $this->holidayDatesByOrg[(int) $employee->organization_id][$date] ?? null;
-        if ($holiday === null) {
-            $holiday = OrganizationHoliday::query()
-                ->where('organization_id', $employee->organization_id)
-                ->where('is_active', true)
-                ->whereDate('holiday_date', $date)
-                ->first();
-        }
-
-        $shift = $employee->shift_id
-            ? ($this->shiftCache[(int) $employee->shift_id] ?? WorkShift::find($employee->shift_id))
-            : null;
+        $holiday = $this->resolveHoliday($employee, $date);
+        $shift = $this->resolveShift($employee);
 
         $isWeekend = $dow === Carbon::SATURDAY || $dow === Carbon::SUNDAY;
-        $worksWeekend = $shift
-            ? ($dow === Carbon::SATURDAY ? $shift->works_saturday : ($dow === Carbon::SUNDAY ? $shift->works_sunday : true))
-            : false;
 
         if ($holiday) {
             $worksHoliday = $shift?->works_public_holidays ?? false;
@@ -107,12 +94,12 @@ class AttendanceDayPolicy
             }
         }
 
-        if ($isWeekend && ! $worksWeekend) {
+        if (! $this->weekdayAllowed($employee, $dow, $shift)) {
             return [
                 'should_work' => false,
-                'is_weekend' => true,
-                'is_holiday' => false,
-                'reason' => 'Weekend — shift does not include this day',
+                'is_weekend' => $isWeekend,
+                'is_holiday' => (bool) $holiday,
+                'reason' => $this->weekdayOffReason($employee, $dow, $isWeekend),
             ];
         }
 
@@ -137,7 +124,7 @@ class AttendanceDayPolicy
     public function evaluate(Employee $employee, string $date): array
     {
         $day = Carbon::parse($date);
-        $dow = (int) $day->dayOfWeek; // 0=Sun, 6=Sat
+        $dow = (int) $day->dayOfWeek;
 
         $leave = EmployeeLeaveDay::query()
             ->where('employee_id', $employee->id)
@@ -162,23 +149,9 @@ class AttendanceDayPolicy
             ];
         }
 
-        $holiday = $this->holidayDatesByOrg[(int) $employee->organization_id][$date] ?? null;
-        if ($holiday === null) {
-            $holiday = OrganizationHoliday::query()
-                ->where('organization_id', $employee->organization_id)
-                ->where('is_active', true)
-                ->whereDate('holiday_date', $date)
-                ->first();
-        }
-
-        $shift = $employee->shift_id
-            ? ($this->shiftCache[(int) $employee->shift_id] ?? WorkShift::find($employee->shift_id))
-            : null;
-
+        $holiday = $this->resolveHoliday($employee, $date);
+        $shift = $this->resolveShift($employee);
         $isWeekend = $dow === Carbon::SATURDAY || $dow === Carbon::SUNDAY;
-        $worksWeekend = $shift
-            ? ($dow === Carbon::SATURDAY ? $shift->works_saturday : ($dow === Carbon::SUNDAY ? $shift->works_sunday : true))
-            : false;
 
         if ($holiday) {
             $worksHoliday = $shift?->works_public_holidays ?? false;
@@ -194,13 +167,13 @@ class AttendanceDayPolicy
             }
         }
 
-        if ($isWeekend && ! $worksWeekend) {
+        if (! $this->weekdayAllowed($employee, $dow, $shift)) {
             return [
                 'should_work' => false,
                 'suggested_status' => 'holiday',
-                'reason' => 'Weekend — shift does not include this day',
-                'is_weekend' => true,
-                'is_holiday' => false,
+                'reason' => $this->weekdayOffReason($employee, $dow, $isWeekend),
+                'is_weekend' => $isWeekend,
+                'is_holiday' => (bool) $holiday,
                 'is_leave' => false,
             ];
         }
@@ -223,5 +196,77 @@ class AttendanceDayPolicy
         if (! $eval['should_work']) {
             throw new \InvalidArgumentException($eval['reason'] ?? 'Not a working day for this employee.');
         }
+    }
+
+    protected function resolveHoliday(Employee $employee, string $date): ?OrganizationHoliday
+    {
+        $holiday = $this->holidayDatesByOrg[(int) $employee->organization_id][$date] ?? null;
+        if ($holiday !== null) {
+            return $holiday;
+        }
+
+        return OrganizationHoliday::query()
+            ->where('organization_id', $employee->organization_id)
+            ->where('is_active', true)
+            ->whereDate('holiday_date', $date)
+            ->first();
+    }
+
+    protected function resolveShift(Employee $employee): ?WorkShift
+    {
+        if (! $employee->shift_id) {
+            return null;
+        }
+
+        return $this->shiftCache[(int) $employee->shift_id] ?? WorkShift::find($employee->shift_id);
+    }
+
+    /**
+     * @param  list<int>|null  $workWeekdays  Carbon dayOfWeek (0=Sun … 6=Sat)
+     */
+    protected function normalizedWorkWeekdays(Employee $employee): ?array
+    {
+        $raw = $employee->work_weekdays;
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        if (! is_array($raw)) {
+            return null;
+        }
+        $days = array_values(array_unique(array_map('intval', $raw)));
+        $days = array_values(array_filter($days, fn ($d) => $d >= 0 && $d <= 6));
+
+        return $days === [] ? null : $days;
+    }
+
+    protected function weekdayAllowed(Employee $employee, int $dow, ?WorkShift $shift): bool
+    {
+        $custom = $this->normalizedWorkWeekdays($employee);
+        if ($custom !== null) {
+            return in_array($dow, $custom, true);
+        }
+
+        // Default: Mon–Fri always; Sat/Sun only when the shift includes them.
+        if ($dow === Carbon::SATURDAY) {
+            return (bool) ($shift?->works_saturday);
+        }
+        if ($dow === Carbon::SUNDAY) {
+            return (bool) ($shift?->works_sunday);
+        }
+
+        return true;
+    }
+
+    protected function weekdayOffReason(Employee $employee, int $dow, bool $isWeekend): string
+    {
+        if ($this->normalizedWorkWeekdays($employee) !== null) {
+            return 'Not a scheduled workday for this employee';
+        }
+
+        if ($isWeekend) {
+            return 'Weekend — shift does not include this day';
+        }
+
+        return 'Not a scheduled workday for this employee';
     }
 }
