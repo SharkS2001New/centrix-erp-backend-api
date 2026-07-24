@@ -116,6 +116,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $request->merge(AttendanceTime::normalizePayload($request->all()));
         $data = $this->applyHours($this->validated($request));
         $employee = $this->findOrgEmployee($data['employee_id'], $request)->load('shift');
+        app(AttendanceDayPolicy::class)->assertCanCreateAttendance($employee, $data['attendance_date']);
         $data = $this->applyDayPolicy($employee, $data);
         $data['organization_id'] = $data['organization_id'] ?? $employee->organization_id;
         if (empty($data['branch_id'])) {
@@ -142,6 +143,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $data = $this->applyHours($this->validated($request, updating: true));
         $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id, $request)->load('shift');
         $data['attendance_date'] = $data['attendance_date'] ?? $row->attendance_date->format('Y-m-d');
+        app(AttendanceDayPolicy::class)->assertCanCreateAttendance($employee, $data['attendance_date']);
         $this->assertUniqueAttendanceDate(
             (int) ($data['employee_id'] ?? $row->employee_id),
             $data['attendance_date'],

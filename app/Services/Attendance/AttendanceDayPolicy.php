@@ -8,6 +8,7 @@ use App\Models\OrganizationHoliday;
 use App\Models\WorkShift;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
+use Illuminate\Validation\ValidationException;
 
 class AttendanceDayPolicy
 {
@@ -118,7 +119,10 @@ class AttendanceDayPolicy
      *   reason: string|null,
      *   is_weekend: bool,
      *   is_holiday: bool,
-     *   is_leave: bool
+     *   is_leave: bool,
+     *   assignment_kind: string|null,
+     *   blocks_attendance: bool,
+     *   leave_id: int|null
      * }
      */
     public function evaluate(Employee $employee, string $date): array
@@ -137,15 +141,25 @@ class AttendanceDayPolicy
             $period = $leave->half_day_period
                 ? ' ('.$leave->half_day_period.')'
                 : '';
+            $isOff = ($leave->assignment_kind ?? 'leave') === 'off_day';
+            $kindLabel = $isOff ? 'off day' : 'leave';
+            $salaryNote = ($leave->deduct_from === 'unpaid' || $leave->leave_type === 'unpaid')
+                ? ' (deductible from salary)'
+                : '';
 
             return [
                 'should_work' => $isHalf,
                 'suggested_status' => $isHalf ? 'half_day' : 'leave',
-                'reason' => ($isHalf ? 'Half day leave' : 'Approved leave')
-                    .' — '.$leave->leave_type.$period,
+                'reason' => $isHalf
+                    ? 'Half-day '.$kindLabel.' assigned'.$period.$salaryNote
+                    : 'This employee has an '.$kindLabel.' assigned for this date'
+                        .$salaryNote.'. Attendance cannot be created.',
                 'is_weekend' => false,
                 'is_holiday' => false,
                 'is_leave' => true,
+                'assignment_kind' => $leave->assignment_kind ?? 'leave',
+                'blocks_attendance' => ! $isHalf,
+                'leave_id' => (int) $leave->id,
             ];
         }
 
@@ -163,6 +177,9 @@ class AttendanceDayPolicy
                     'is_weekend' => $isWeekend,
                     'is_holiday' => true,
                     'is_leave' => false,
+                    'assignment_kind' => null,
+                    'blocks_attendance' => false,
+                    'leave_id' => null,
                 ];
             }
         }
@@ -175,6 +192,9 @@ class AttendanceDayPolicy
                 'is_weekend' => $isWeekend,
                 'is_holiday' => (bool) $holiday,
                 'is_leave' => false,
+                'assignment_kind' => null,
+                'blocks_attendance' => false,
+                'leave_id' => null,
             ];
         }
 
@@ -185,6 +205,9 @@ class AttendanceDayPolicy
             'is_weekend' => $isWeekend,
             'is_holiday' => (bool) $holiday,
             'is_leave' => false,
+            'assignment_kind' => null,
+            'blocks_attendance' => false,
+            'leave_id' => null,
         ];
     }
 
@@ -196,6 +219,25 @@ class AttendanceDayPolicy
         if (! $eval['should_work']) {
             throw new \InvalidArgumentException($eval['reason'] ?? 'Not a working day for this employee.');
         }
+    }
+
+    /**
+     * Manual attendance cannot be created when a full-day leave/off covers the date.
+     */
+    public function assertCanCreateAttendance(Employee $employee, string $date): void
+    {
+        $eval = $this->evaluate($employee, $date);
+        if (! ($eval['blocks_attendance'] ?? false)) {
+            return;
+        }
+
+        $kind = ($eval['assignment_kind'] ?? 'leave') === 'off_day' ? 'off day' : 'leave';
+
+        throw ValidationException::withMessages([
+            'attendance_date' => [
+                "This employee has an {$kind} assigned for this date. Attendance cannot be created.",
+            ],
+        ]);
     }
 
     protected function resolveHoliday(Employee $employee, string $date): ?OrganizationHoliday
