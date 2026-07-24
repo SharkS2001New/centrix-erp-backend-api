@@ -202,6 +202,48 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertEquals(9.0, (float) $att->expected_hours);
     }
 
+    public function test_manual_span_lunch_taken_credits_configured_lunch(): void
+    {
+        $att = app(AttendanceDayReconciler::class)->reconcileManualSpan(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+            '08:00:00',
+            '17:00:00',
+            'manual',
+            null,
+            null,
+            null,
+            'present',
+            true,
+        );
+
+        $this->assertSame('taken', $att->lunch_status);
+        $this->assertSame(60, (int) $att->lunch_minutes);
+        $this->assertEquals(9.0, (float) $att->hours_worked);
+        $this->assertEquals(9.0, (float) $att->expected_hours);
+        $this->assertSame('present', $att->status);
+    }
+
+    public function test_manual_span_lunch_unchecked_marks_skipped(): void
+    {
+        $att = app(AttendanceDayReconciler::class)->reconcileManualSpan(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+            '08:00:00',
+            '17:00:00',
+            'manual',
+            null,
+            null,
+            null,
+            'present',
+            false,
+        );
+
+        $this->assertSame('skipped', $att->lunch_status);
+        $this->assertNull($att->lunch_minutes);
+        $this->assertEquals(9.0, (float) $att->hours_worked);
+    }
+
     public function test_lateness_waiver_restores_paid_hours(): void
     {
         $this->addSession('08:30:00', '13:00:00');

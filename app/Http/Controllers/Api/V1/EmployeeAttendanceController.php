@@ -146,6 +146,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
             isset($data['branch_id']) ? (int) $data['branch_id'] : null,
             $data['notes'] ?? null,
             $data['status'] ?? null,
+            array_key_exists('lunch_taken', $data) ? (bool) $data['lunch_taken'] : true,
         );
 
         return response()->json($attendance->load(['employee', 'branch']), 201);
@@ -166,6 +167,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
             'all_active' => 'sometimes|boolean',
             'employee_ids' => 'required_unless:all_active,true|array|min:1',
             'employee_ids.*' => 'integer|distinct|exists:employees,id',
+            'lunch_taken' => 'sometimes|boolean',
         ]);
 
         if (empty($data['all_active']) && empty($data['employee_ids'])) {
@@ -271,6 +273,9 @@ class EmployeeAttendanceController extends HrOrgResourceController
                     $write['branch_id'] ?? $branchId,
                     $data['notes'] ?? null,
                     $status,
+                    $needsTimes
+                        ? (array_key_exists('lunch_taken', $data) ? (bool) $data['lunch_taken'] : true)
+                        : null,
                 );
                 $created[] = [
                     'id' => $row->id,
@@ -328,6 +333,9 @@ class EmployeeAttendanceController extends HrOrgResourceController
             isset($data['branch_id']) ? (int) $data['branch_id'] : ($row->branch_id ? (int) $row->branch_id : null),
             array_key_exists('notes', $data) ? ($data['notes'] ?? null) : $row->notes,
             $data['status'] ?? $row->status,
+            array_key_exists('lunch_taken', $data)
+                ? (bool) $data['lunch_taken']
+                : ($row->lunch_status === 'taken'),
         );
 
         // updateOrCreate should hit the same row; if a different row was written, remove the old one.
@@ -453,6 +461,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
             'notes' => 'nullable|string|max:500',
             'lateness_waived' => 'nullable|boolean',
             'lateness_waiver_reason' => 'nullable|string|max:500',
+            'lunch_taken' => 'nullable|boolean',
         ]);
     }
 }

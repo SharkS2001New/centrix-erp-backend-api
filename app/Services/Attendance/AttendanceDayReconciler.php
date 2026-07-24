@@ -74,7 +74,11 @@ class AttendanceDayReconciler
     }
 
     /**
-     * Manual single check-in / check-out span (treated as one work segment; lunch skipped if required).
+     * Manual single check-in / check-out span.
+     *
+     * @param  bool|null  $lunchTaken  When true (typical manual entry), treat configured lunch as taken
+     *                                 even with one in/out pair. When false, lunch was skipped.
+     *                                 Null keeps auto-detect (2+ pairs = taken).
      */
     public function reconcileManualSpan(
         Employee $employee,
@@ -86,6 +90,7 @@ class AttendanceDayReconciler
         ?int $branchId = null,
         ?string $notes = null,
         ?string $forcedStatus = null,
+        ?bool $lunchTaken = null,
     ): EmployeeAttendance {
         $pairs = [];
         if ($checkIn && $checkOut) {
@@ -106,6 +111,7 @@ class AttendanceDayReconciler
             $branchId ?? $employee->branch_id,
             $notes,
             $forcedStatus,
+            $lunchTaken,
         );
     }
 
@@ -149,6 +155,7 @@ class AttendanceDayReconciler
 
     /**
      * @param  list<array{in: Carbon, out: Carbon}>  $pairs
+     * @param  bool|null  $lunchTakenOverride  Manual lunch flag; null = detect from punch pairs
      */
     protected function applyComputation(
         Employee $employee,
@@ -159,6 +166,7 @@ class AttendanceDayReconciler
         ?int $branchId,
         ?string $notes = null,
         ?string $forcedStatus = null,
+        ?bool $lunchTakenOverride = null,
     ): EmployeeAttendance {
         $employee->loadMissing('shift');
         $eval = $this->dayPolicy->evaluate($employee, $date);
@@ -295,10 +303,17 @@ class AttendanceDayReconciler
         $lunchStatus = '-';
         if (! $lunchRequired) {
             $lunchStatus = '-';
-        } elseif (count($pairs) >= 2) {
-            $gapStart = $pairs[0]['out'];
-            $gapEnd = $pairs[1]['in'];
-            $actualLunchMinutes = (int) max(0, (int) floor(($gapEnd->getTimestamp() - $gapStart->getTimestamp()) / 60));
+        } elseif ($lunchTakenOverride === false) {
+            $lunchStatus = 'skipped';
+        } elseif ($lunchTakenOverride === true || count($pairs) >= 2) {
+            if (count($pairs) >= 2) {
+                $gapStart = $pairs[0]['out'];
+                $gapEnd = $pairs[1]['in'];
+                $actualLunchMinutes = (int) max(0, (int) floor(($gapEnd->getTimestamp() - $gapStart->getTimestamp()) / 60));
+            } else {
+                // Manual single span with lunch marked taken: use configured lunch length.
+                $actualLunchMinutes = $configuredLunch > 0 ? $configuredLunch : null;
+            }
             $lunchStatus = 'taken';
         } else {
             $lunchStatus = 'skipped';
@@ -332,6 +347,17 @@ class AttendanceDayReconciler
                 $otStart = $segStart->greaterThan($shiftEnd) ? $segStart->copy() : $shiftEnd->copy();
                 $overtimeSeconds += max(0, $segEnd->getTimestamp() - $otStart->getTimestamp());
             }
+        }
+
+        // Single-span manual "lunch taken": remove configured lunch from continuous work so
+        // paid credit (below) matches multi-punch behaviour instead of double-counting.
+        if (
+            $lunchStatus === 'taken'
+            && count($pairs) === 1
+            && $configuredLunch > 0
+            && $lunchTakenOverride === true
+        ) {
+            $workSeconds = max(0, $workSeconds - ($configuredLunch * 60));
         }
 
         // Paid lunch: credit configured lunch when taken (or banked when skipped).
