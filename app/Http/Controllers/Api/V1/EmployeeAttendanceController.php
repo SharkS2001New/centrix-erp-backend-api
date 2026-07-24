@@ -151,6 +151,143 @@ class EmployeeAttendanceController extends HrOrgResourceController
         return response()->json($attendance->load(['employee', 'branch']), 201);
     }
 
+    /**
+     * POST /employee-attendance/bulk — create the same day/times for many employees.
+     */
+    public function bulkStore(Request $request)
+    {
+        $request->merge(AttendanceTime::normalizePayload($request->all()));
+        $data = $request->validate([
+            'attendance_date' => 'required|date',
+            'check_in' => ['nullable', 'regex:/^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/'],
+            'check_out' => ['nullable', 'regex:/^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/'],
+            'status' => 'nullable|in:present,absent,late,half_day,leave,holiday',
+            'notes' => 'nullable|string|max:500',
+            'all_active' => 'sometimes|boolean',
+            'employee_ids' => 'required_unless:all_active,true|array|min:1',
+            'employee_ids.*' => 'integer|distinct|exists:employees,id',
+        ]);
+
+        if (empty($data['all_active']) && empty($data['employee_ids'])) {
+            throw ValidationException::withMessages([
+                'employee_ids' => ['Select at least one employee, or choose all active employees.'],
+            ]);
+        }
+
+        $status = $data['status'] ?? 'present';
+        $needsTimes = ! in_array($status, ['leave', 'holiday', 'absent'], true);
+        if ($needsTimes && (empty($data['check_in']) || empty($data['check_out']))) {
+            throw ValidationException::withMessages([
+                'check_in' => ['Check-in and check-out are required for this status.'],
+            ]);
+        }
+
+        $user = $request->user();
+        $access = app(\App\Services\Auth\UserAccessService::class);
+        $employeesQuery = Employee::query()
+            ->with('shift')
+            ->where(function ($q) {
+                $q->where('is_active', '!=', false)->orWhereNull('is_active');
+            })
+            ->where('employment_status', 'active');
+
+        if ($user) {
+            $access->scopeOrganization($employeesQuery, $user, 'organization_id', $request);
+            $access->scopeBranchIfLimited($employeesQuery, $user);
+        }
+
+        if (! empty($data['all_active'])) {
+            $employees = $employeesQuery->orderBy('first_name')->orderBy('last_name')->get();
+        } else {
+            $ids = array_map('intval', $data['employee_ids'] ?? []);
+            $employees = $employeesQuery->whereIn('id', $ids)->get();
+            if ($employees->count() !== count(array_unique($ids))) {
+                throw ValidationException::withMessages([
+                    'employee_ids' => ['One or more employees are outside your organization or branch.'],
+                ]);
+            }
+        }
+
+        if ($employees->isEmpty()) {
+            throw ValidationException::withMessages([
+                'employee_ids' => ['No active employees selected.'],
+            ]);
+        }
+
+        $policy = app(AttendanceDayPolicy::class);
+        $reconciler = app(AttendanceDayReconciler::class);
+        $date = $data['attendance_date'];
+        $created = [];
+        $skipped = [];
+
+        foreach ($employees as $employee) {
+            $eval = $policy->evaluate($employee, $date);
+            if ($eval['blocks_attendance'] ?? false) {
+                $skipped[] = [
+                    'employee_id' => $employee->id,
+                    'employee_name' => $employee->full_name ?: trim($employee->first_name.' '.$employee->last_name),
+                    'reason' => $eval['reason'] ?? 'Leave or off day assigned',
+                ];
+                continue;
+            }
+
+            $exists = EmployeeAttendance::query()
+                ->where('employee_id', $employee->id)
+                ->whereDate('attendance_date', $date)
+                ->exists();
+            if ($exists) {
+                $skipped[] = [
+                    'employee_id' => $employee->id,
+                    'employee_name' => $employee->full_name ?: trim($employee->first_name.' '.$employee->last_name),
+                    'reason' => 'Attendance already exists for this date',
+                ];
+                continue;
+            }
+
+            try {
+                $branchId = $employee->branch_id ? (int) $employee->branch_id : null;
+                $write = [
+                    'branch_id' => $branchId,
+                ];
+                if ($user) {
+                    $this->applyBranchScopeToWriteData($user, $write, $request);
+                }
+
+                $row = $reconciler->reconcileManualSpan(
+                    $employee,
+                    $date,
+                    $needsTimes ? ($data['check_in'] ?? null) : null,
+                    $needsTimes ? ($data['check_out'] ?? null) : null,
+                    'manual',
+                    null,
+                    $write['branch_id'] ?? $branchId,
+                    $data['notes'] ?? null,
+                    $status,
+                );
+                $created[] = [
+                    'id' => $row->id,
+                    'employee_id' => $employee->id,
+                    'employee_name' => $employee->full_name ?: trim($employee->first_name.' '.$employee->last_name),
+                    'status' => $row->status,
+                    'hours_worked' => $row->hours_worked,
+                ];
+            } catch (\Throwable $e) {
+                $skipped[] = [
+                    'employee_id' => $employee->id,
+                    'employee_name' => $employee->full_name ?: trim($employee->first_name.' '.$employee->last_name),
+                    'reason' => $e->getMessage() ?: 'Could not create attendance',
+                ];
+            }
+        }
+
+        return response()->json([
+            'created_count' => count($created),
+            'skipped_count' => count($skipped),
+            'created' => $created,
+            'skipped' => $skipped,
+        ], count($created) > 0 ? 201 : 422);
+    }
+
     public function update(Request $request, string $id)
     {
         $row = $this->findScoped($id);

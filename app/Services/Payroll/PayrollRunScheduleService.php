@@ -3,6 +3,7 @@
 namespace App\Services\Payroll;
 
 use App\Services\Hr\HrPayrollSettingsResolver;
+use App\Services\Platform\PlatformPayrollScheduleSettingsResolver;
 use App\Models\PayPeriod;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -32,6 +33,15 @@ class PayrollRunScheduleService
         return (int) HrPayrollSettingsResolver::forOrganizationId($organizationId)['payroll_run_delete_lock_minutes'];
     }
 
+    public function enforceMonthEndSchedule(): bool
+    {
+        try {
+            return PlatformPayrollScheduleSettingsResolver::enforceMonthEndSchedule();
+        } catch (\Throwable) {
+            return true;
+        }
+    }
+
     /**
      * @return array<int, array{period_code: string, period_start: string, period_end: string}>
      */
@@ -39,6 +49,13 @@ class PayrollRunScheduleService
     {
         $today = ($today ?? now())->copy()->startOfDay();
         $specs = [];
+
+        if (! $this->enforceMonthEndSchedule()) {
+            // Any time: ensure the current calendar month exists for generate/select.
+            $specs[] = $this->monthPeriodSpec($today);
+
+            return $specs;
+        }
 
         if ($this->isInPreviousMonthGraceWindow($today, $organizationId)) {
             $specs[] = $this->monthPeriodSpec($today->copy()->subMonthNoOverflow());
@@ -79,7 +96,6 @@ class PayrollRunScheduleService
     ): bool {
         $today = ($today ?? now())->copy()->startOfDay();
         $periodEnd = $periodEnd->copy()->startOfDay();
-        $graceDays = $this->graceDays($organizationId);
 
         $periodYm = (int) $periodEnd->format('Ym');
         $todayYm = (int) $today->format('Ym');
@@ -87,6 +103,12 @@ class PayrollRunScheduleService
         if ($periodYm > $todayYm) {
             return false;
         }
+
+        if (! $this->enforceMonthEndSchedule()) {
+            return true;
+        }
+
+        $graceDays = $this->graceDays($organizationId);
 
         if ($periodYm === $todayYm) {
             return $this->isLastDayOfMonth($today);
@@ -118,6 +140,10 @@ class PayrollRunScheduleService
 
         if ((int) $periodEnd->format('Ym') > (int) $today->format('Ym')) {
             return "Payroll for {$label} cannot run before that month ends. Upcoming months are not allowed.";
+        }
+
+        if (! $this->enforceMonthEndSchedule()) {
+            return "Payroll for {$label} cannot be run.";
         }
 
         if ((int) $periodEnd->format('Ym') === (int) $today->format('Ym')) {
@@ -171,22 +197,32 @@ class PayrollRunScheduleService
         $today = ($today ?? now())->copy()->startOfDay();
         $graceDays = $this->graceDays($organizationId);
         $deleteLock = $this->deleteLockMinutes($organizationId);
+        $enforce = $this->enforceMonthEndSchedule();
         $runnable = $this->runnablePeriodSpecs($today, $organizationId);
 
-        return [
-            'today' => $today->toDateString(),
-            'delete_lock_minutes' => $deleteLock,
-            'grace_days_after_month_end' => $graceDays,
-            'rules' => [
+        $rules = $enforce
+            ? [
                 'Payroll may run for the current month only on that month\'s last calendar day.',
                 'Payroll for the previous month may run during the first '
                     . $graceDays
                     . ' days of the following month.',
                 'Upcoming (future) months cannot be processed.',
-            ],
+            ]
+            : [
+                'Month-end schedule enforcement is off (platform setting).',
+                'Payroll may run for the current or any past month at any time.',
+                'Upcoming (future) months cannot be processed.',
+            ];
+
+        return [
+            'today' => $today->toDateString(),
+            'delete_lock_minutes' => $deleteLock,
+            'grace_days_after_month_end' => $graceDays,
+            'enforce_month_end_run_schedule' => $enforce,
+            'rules' => $rules,
             'runnable_period_codes' => array_column($runnable, 'period_code'),
             'runnable_periods' => $runnable,
-            'can_run_any_period_today' => count($runnable) > 0,
+            'can_run_any_period_today' => $enforce ? count($runnable) > 0 : true,
         ];
     }
 
