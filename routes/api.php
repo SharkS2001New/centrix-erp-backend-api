@@ -81,6 +81,7 @@ use App\Http\Controllers\Api\V1\PlatformDatabaseBackupController;
 use App\Http\Controllers\Api\V1\RetailPackageImportController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformKenyaPayrollSettingsController;
+use App\Http\Controllers\Api\V1\PlatformPayrollScheduleSettingsController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueAlertSettingsController;
 use App\Http\Controllers\Api\V1\SystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformInvoiceController;
@@ -476,6 +477,10 @@ Route::prefix('v1')->group(function () {
         Route::get('admin/kenya-payroll-settings', [PlatformKenyaPayrollSettingsController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::put('admin/kenya-payroll-settings', [PlatformKenyaPayrollSettingsController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/payroll-schedule-settings', [PlatformPayrollScheduleSettingsController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/payroll-schedule-settings', [PlatformPayrollScheduleSettingsController::class, 'update'])
             ->middleware(['erp.super_admin']);
         Route::get('admin/system-issue-reports', [PlatformSystemIssueReportController::class, 'index'])
             ->middleware(['erp.super_admin']);

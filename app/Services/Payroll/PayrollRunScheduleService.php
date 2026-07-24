@@ -3,6 +3,7 @@
 namespace App\Services\Payroll;
 
 use App\Services\Hr\HrPayrollSettingsResolver;
+use App\Services\Platform\PlatformPayrollScheduleSettingsResolver;
 use App\Models\PayPeriod;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
@@ -35,6 +36,12 @@ class PayrollRunScheduleService
     public function enforceMonthEndSchedule(?int $organizationId = null): bool
     {
         try {
+            // Platform master switch: off → all tenants may run anytime.
+            if (! PlatformPayrollScheduleSettingsResolver::enforceMonthEndSchedule()) {
+                return false;
+            }
+
+            // Platform on → org HR setting can still disable for that tenant.
             $settings = $organizationId
                 ? HrPayrollSettingsResolver::forOrganizationId($organizationId)
                 : HrPayrollSettingsResolver::normalize(HrPayrollSettingsResolver::defaults());
@@ -212,7 +219,7 @@ class PayrollRunScheduleService
                 'Payroll runs can be deleted until they are marked as paid.',
             ]
             : [
-                'Month-end schedule enforcement is off for this organization.',
+                'Month-end schedule enforcement is off (platform and/or organization setting).',
                 'Payroll may run for the current or any past month at any time.',
                 'Upcoming (future) months cannot be processed.',
                 'Payroll runs can be deleted until they are marked as paid.',

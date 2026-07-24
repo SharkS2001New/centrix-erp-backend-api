@@ -134,6 +134,12 @@ class AttendanceDayPolicy
             ->where('employee_id', $employee->id)
             ->whereDate('start_date', '<=', $date)
             ->whereDate('end_date', '>=', $date)
+            ->where(function ($q) {
+                // Match payroll: only approved leave/off blocks attendance (pending does not).
+                $q->where('approval_status', 'approved')
+                    ->orWhereNull('approval_status');
+            })
+            ->orderByDesc('id')
             ->first();
 
         if ($leave) {

@@ -267,7 +267,14 @@ class EmployeeAttendanceController extends HrOrgResourceController
 
         foreach ($employees as $employee) {
             $eval = $policy->evaluate($employee, $date);
-            if ($eval['blocks_attendance'] ?? false) {
+
+            $existing = EmployeeAttendance::query()
+                ->where('employee_id', $employee->id)
+                ->whereDate('attendance_date', $date)
+                ->first();
+
+            // Leave/off blocks new attendance only — existing rows can still be updated.
+            if (($eval['blocks_attendance'] ?? false) && ! $existing) {
                 $skipped[] = [
                     'employee_id' => $employee->id,
                     'employee_name' => $employee->full_name ?: trim($employee->first_name.' '.$employee->last_name),
@@ -275,11 +282,6 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 ];
                 continue;
             }
-
-            $existing = EmployeeAttendance::query()
-                ->where('employee_id', $employee->id)
-                ->whereDate('attendance_date', $date)
-                ->first();
 
             if ($existing) {
                 try {
@@ -379,7 +381,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $data = $this->validated($request, updating: true);
         $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id, $request)->load('shift');
         $date = $data['attendance_date'] ?? $row->attendance_date->format('Y-m-d');
-        app(AttendanceDayPolicy::class)->assertCanCreateAttendance($employee, $date);
+        // Do not apply create-only leave/off blocking on update — editing an existing row must work.
 
         $nextEmployeeId = (int) ($data['employee_id'] ?? $row->employee_id);
         $sameEmployeeAndDate = $nextEmployeeId === (int) $row->employee_id

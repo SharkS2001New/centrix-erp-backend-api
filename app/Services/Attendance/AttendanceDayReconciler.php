@@ -395,8 +395,9 @@ class AttendanceDayReconciler
         }
 
         $overtimeMinutes = (int) floor($overtimeSeconds / 60);
-        $status = $forcedStatus;
-        if ($status === null || $status === 'present' || $status === 'late') {
+        // Manual create/update always passes an explicit status — honor it.
+        // Auto-derive present/late/half_day only when status is not provided (device/clock paths).
+        if ($forcedStatus === null) {
             if ($lateMinutes > 0) {
                 $status = 'late';
             } elseif ($expectedHours > 0 && $paidHours < ($expectedHours * 0.5)) {
@@ -404,6 +405,8 @@ class AttendanceDayReconciler
             } else {
                 $status = 'present';
             }
+        } else {
+            $status = $forcedStatus;
         }
 
         $existing = EmployeeAttendance::query()
