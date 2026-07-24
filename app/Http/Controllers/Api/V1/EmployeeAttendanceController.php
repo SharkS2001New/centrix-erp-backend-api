@@ -231,17 +231,25 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 continue;
             }
 
-            $exists = EmployeeAttendance::query()
+            $existing = EmployeeAttendance::query()
                 ->where('employee_id', $employee->id)
                 ->whereDate('attendance_date', $date)
-                ->exists();
-            if ($exists) {
-                $skipped[] = [
-                    'employee_id' => $employee->id,
-                    'employee_name' => $employee->full_name ?: trim($employee->first_name.' '.$employee->last_name),
-                    'reason' => 'Attendance already exists for this date',
-                ];
-                continue;
+                ->first();
+
+            if ($existing) {
+                try {
+                    PayrollCycleSettlementService::assertNotPayrollLocked(
+                        $existing->payroll_run_id ? (int) $existing->payroll_run_id : null,
+                        'attendance record',
+                    );
+                } catch (ValidationException $e) {
+                    $skipped[] = [
+                        'employee_id' => $employee->id,
+                        'employee_name' => $employee->full_name ?: trim($employee->first_name.' '.$employee->last_name),
+                        'reason' => 'Attendance for this date is locked on a payroll run',
+                    ];
+                    continue;
+                }
             }
 
             try {
@@ -270,6 +278,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
                     'employee_name' => $employee->full_name ?: trim($employee->first_name.' '.$employee->last_name),
                     'status' => $row->status,
                     'hours_worked' => $row->hours_worked,
+                    'updated' => (bool) $existing,
                 ];
             } catch (\Throwable $e) {
                 $skipped[] = [
@@ -297,11 +306,14 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $employee = $this->findOrgEmployee($data['employee_id'] ?? $row->employee_id, $request)->load('shift');
         $date = $data['attendance_date'] ?? $row->attendance_date->format('Y-m-d');
         app(AttendanceDayPolicy::class)->assertCanCreateAttendance($employee, $date);
-        $this->assertUniqueAttendanceDate(
-            (int) ($data['employee_id'] ?? $row->employee_id),
-            $date,
-            (int) $row->id,
-        );
+
+        $nextEmployeeId = (int) ($data['employee_id'] ?? $row->employee_id);
+        $sameEmployeeAndDate = $nextEmployeeId === (int) $row->employee_id
+            && $date === $row->attendance_date->format('Y-m-d');
+        if (! $sameEmployeeAndDate) {
+            $this->assertUniqueAttendanceDate($nextEmployeeId, $date, (int) $row->id);
+        }
+
         if ($request->user()) {
             $this->applyBranchScopeToWriteData($request->user(), $data, $request);
         }
@@ -318,6 +330,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
             $data['status'] ?? $row->status,
         );
 
+        // updateOrCreate should hit the same row; if a different row was written, remove the old one.
         if ((int) $attendance->id !== (int) $row->id) {
             $row->delete();
         }
@@ -370,7 +383,33 @@ class EmployeeAttendanceController extends HrOrgResourceController
     {
         $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'attendance record');
-        $row->delete();
+
+        $employeeId = (int) $row->employee_id;
+        $date = $row->attendance_date instanceof \Carbon\Carbon
+            ? $row->attendance_date->toDateString()
+            : (string) $row->attendance_date;
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($row, $employeeId, $date) {
+            // Remove clock punches for the day so attendance can be recreated cleanly.
+            \App\Models\EmployeeClockSession::query()
+                ->where('employee_id', $employeeId)
+                ->where(function ($q) use ($date) {
+                    $q->whereDate('clock_in_at', $date)
+                        ->orWhereDate('clock_out_at', $date);
+                })
+                ->delete();
+
+            // Drop pending auto-OT drafts tied to this day.
+            \App\Models\EmployeeOvertime::query()
+                ->where('employee_id', $employeeId)
+                ->whereDate('work_date', $date)
+                ->where('status', 'pending')
+                ->whereNull('payroll_run_id')
+                ->where('notes', 'like', AttendanceDayReconciler::AUTO_OT_NOTE_PREFIX.'%')
+                ->delete();
+
+            $row->delete();
+        });
 
         return response()->json(null, 204);
     }

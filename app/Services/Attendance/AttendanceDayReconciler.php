@@ -162,8 +162,11 @@ class AttendanceDayReconciler
     ): EmployeeAttendance {
         $employee->loadMissing('shift');
         $eval = $this->dayPolicy->evaluate($employee, $date);
+        $forcedWork = in_array($forcedStatus ?? '', ['present', 'late', 'half_day'], true);
+        $forcedOff = in_array($forcedStatus ?? '', ['leave', 'holiday', 'absent'], true);
 
-        if (! $eval['should_work'] && in_array($forcedStatus ?? '', ['leave', 'holiday', 'absent'], true) === false) {
+        // Admin can still record times for a non-scheduled day (present/late/half_day with punches).
+        if (! $eval['should_work'] && ! $forcedWork && ! $forcedOff) {
             $status = $forcedStatus ?? $eval['suggested_status'];
             $attendance = EmployeeAttendance::query()->updateOrCreate(
                 [
@@ -193,7 +196,7 @@ class AttendanceDayReconciler
             return $attendance;
         }
 
-        if (in_array($forcedStatus ?? '', ['leave', 'holiday', 'absent'], true)) {
+        if ($forcedOff) {
             $attendance = EmployeeAttendance::query()->updateOrCreate(
                 [
                     'employee_id' => $employee->id,
