@@ -46,10 +46,9 @@ class KenyaStatutoryReference
                     'id' => 'shif',
                     'label' => 'SHIF (NHIF successor)',
                     'formula' => sprintf(
-                        'max(KES %s, gross × %s%%). Deducted before PAYE; SHIF also caps insurance relief on PAYE at KES %s/month.',
+                        'max(KES %s, gross × %s%%). Allowable deduction from taxable income before PAYE (not insurance relief).',
                         number_format($shif['minimum_monthly']),
                         round($shif['rate'] * 100, 2),
-                        number_format($paye['insurance_relief_cap_monthly']),
                     ),
                     'rates' => [
                         'rate_percent' => round($shif['rate'] * 100, 2),
@@ -72,9 +71,15 @@ class KenyaStatutoryReference
                 [
                     'id' => 'paye',
                     'label' => 'PAYE',
-                    'formula' => 'Taxable income = gross − NSSF − SHIF − housing levy (employee). Apply KRA monthly bands, then subtract personal relief and insurance relief.',
+                    'formula' => sprintf(
+                        'Taxable income = gross − NSSF − SHIF − housing levy (employee). Apply KRA monthly bands, then subtract personal relief (KES %s). Insurance relief is %s%% of private premiums only (cap KES %s/month) — SHIF does not qualify.',
+                        number_format($paye['personal_relief_monthly']),
+                        round(($paye['insurance_relief_rate'] ?? 0.15) * 100, 0),
+                        number_format($paye['insurance_relief_cap_monthly']),
+                    ),
                     'rates' => [
                         'personal_relief_monthly' => $paye['personal_relief_monthly'],
+                        'insurance_relief_rate' => $paye['insurance_relief_rate'] ?? 0.15,
                         'insurance_relief_cap_monthly' => $paye['insurance_relief_cap_monthly'],
                         'bands' => $bands,
                     ],

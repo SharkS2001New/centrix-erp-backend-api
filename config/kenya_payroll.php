@@ -10,6 +10,8 @@ return [
 
     'paye' => [
         'personal_relief_monthly' => 2400,
+        // Private life/health/education premiums only (not SHIF — SHIF is already a taxable-income deduction).
+        'insurance_relief_rate' => 0.15,
         'insurance_relief_cap_monthly' => 5000,
         'bands' => [
             ['up_to' => 24000, 'rate' => 0.10],

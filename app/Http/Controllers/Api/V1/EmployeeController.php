@@ -43,12 +43,14 @@ class EmployeeController extends BaseResourceController
         $fields = strtolower(trim((string) $request->input('fields', '')));
         $lean = $fields === 'lean' || $request->boolean('lightweight');
 
-        // Pickers / list rows: skip bank, NOK, emergency, user, shift graph.
+        // Pickers / list rows: skip bank, NOK, emergency, user graph.
+        // Keep shift — HR employee list shows work shift / "Not assigned".
         $relations = $lean
             ? [
                 'department:id,organization_id,department_name',
                 'position:id,organization_id,position_title',
                 'branch:id,organization_id,branch_name',
+                'shift:id,organization_id,shift_name,shift_code,start_time,end_time',
             ]
             : $this->employeeRelations();
 

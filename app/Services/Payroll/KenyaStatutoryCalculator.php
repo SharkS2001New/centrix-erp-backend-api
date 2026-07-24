@@ -28,8 +28,11 @@ class KenyaStatutoryCalculator
      *   effective_label: string
      * }
      */
-    public function calculateMonthly(float $grossPay, float $otherDeductions = 0): array
-    {
+    public function calculateMonthly(
+        float $grossPay,
+        float $otherDeductions = 0,
+        float $privateInsurancePremiums = 0,
+    ): array {
         $gross = round(max(0, $grossPay), 2);
         $other = round(max(0, $otherDeductions), 2);
         $cfg = config('kenya_payroll');
@@ -39,10 +42,12 @@ class KenyaStatutoryCalculator
         $shif = $this->shif($gross, $cfg['shif']);
         $housing = round($gross * (float) $cfg['housing_levy']['employee_rate'], 2);
 
+        // SHIF is an allowable deduction from taxable income (Tax Laws Amendment Act 2024).
+        // It does NOT also qualify for insurance relief.
         $taxable = round(max(0, $gross - $nssf - $shif - $housing), 2);
         $payeBeforeRelief = $this->progressiveTax($taxable, $cfg['paye']['bands']);
         $personalRelief = (float) $cfg['paye']['personal_relief_monthly'];
-        $insuranceRelief = min($shif, (float) $cfg['paye']['insurance_relief_cap_monthly']);
+        $insuranceRelief = $this->insuranceRelief($privateInsurancePremiums, $cfg['paye']);
         $paye = round(max(0, $payeBeforeRelief - $personalRelief - $insuranceRelief), 2);
 
         $statutory = round($nssf + $shif + $housing + $paye, 2);
@@ -98,6 +103,24 @@ class KenyaStatutoryCalculator
         $amount = round($gross * (float) $shifCfg['rate'], 2);
 
         return max($amount, (float) $shifCfg['minimum_monthly']);
+    }
+
+    /**
+     * Private insurance premiums only (life/health/education). SHIF is excluded.
+     *
+     * @param  array<string, mixed>  $payeCfg
+     */
+    protected function insuranceRelief(float $privatePremiums, array $payeCfg): float
+    {
+        $premiums = max(0, $privatePremiums);
+        if ($premiums <= 0) {
+            return 0.0;
+        }
+
+        $rate = (float) ($payeCfg['insurance_relief_rate'] ?? 0.15);
+        $cap = (float) ($payeCfg['insurance_relief_cap_monthly'] ?? 5000);
+
+        return min(round($premiums * $rate, 2), $cap);
     }
 
     /** @param list<array{up_to: int|null, rate: float}> $bands */
