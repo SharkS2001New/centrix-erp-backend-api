@@ -69,7 +69,7 @@ class MobileSalesController extends Controller
             'to_date' => 'nullable|date',
             'status' => 'nullable|in:pending_approval,editable',
             'q' => 'nullable|string|max:200',
-            'per_page' => 'nullable|integer|min:1|max:200',
+            'per_page' => 'nullable|integer|min:1|max:50',
             'all_channels' => 'nullable|boolean',
         ]);
 

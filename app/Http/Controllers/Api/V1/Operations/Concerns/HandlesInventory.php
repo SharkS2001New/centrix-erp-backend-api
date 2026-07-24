@@ -91,7 +91,7 @@ trait HandlesInventory
             throw new InvalidArgumentException("Insufficient stock at {$location} for {$productCode}.");
         }
 
-        return DB::transaction(function () use ($data, $branchId, $productCode, $location, $change, $before, $after) {
+        $run = function () use ($data, $branchId, $productCode, $location, $change, $before, $after) {
             $organizationId = (int) ($data['organization_id']
                 ?? OrganizationIdResolver::requireForBranch($branchId));
 
@@ -114,7 +114,14 @@ trait HandlesInventory
             $this->syncProductStockTotals($productCode, $branchId);
 
             return $txn;
-        });
+        };
+
+        // Avoid savepoint overhead when already inside checkout/transfer transaction.
+        if (DB::transactionLevel() > 0) {
+            return $run();
+        }
+
+        return DB::transaction($run);
     }
 
     protected function syncProductStockTotals(string $productCode, int $branchId): void

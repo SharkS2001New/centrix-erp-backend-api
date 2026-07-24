@@ -280,18 +280,25 @@ class BranchStockService
             return;
         }
 
-        $sub = DB::table('stock_reservations')
-            ->whereNull('released_at')
-            ->where(function ($inner) {
-                $inner->whereNull('expires_at')
-                    ->orWhere('expires_at', '>', now());
+        // Only aggregate reservations for products that still have on-hand stock at this
+        // branch — avoids scanning the entire reservation table on large mobile catalogs.
+        $sub = DB::table('stock_reservations as sr')
+            ->join('current_stock as cs', function ($join) use ($branchId) {
+                $join->on('cs.product_code', '=', 'sr.product_code')
+                    ->where('cs.branch_id', '=', $branchId);
             })
-            ->where('branch_id', $branchId)
-            ->groupBy('product_code')
+            ->whereNull('sr.released_at')
+            ->where(function ($inner) {
+                $inner->whereNull('sr.expires_at')
+                    ->orWhere('sr.expires_at', '>', now());
+            })
+            ->where('sr.branch_id', $branchId)
+            ->whereRaw('(COALESCE(cs.shop_quantity, 0) + COALESCE(cs.store_quantity, 0)) > 0')
+            ->groupBy('sr.product_code')
             ->selectRaw("
-                product_code,
-                COALESCE(SUM(CASE WHEN stock_location = 'shop' THEN quantity ELSE 0 END), 0) AS reserved_shop,
-                COALESCE(SUM(CASE WHEN stock_location = 'store' THEN quantity ELSE 0 END), 0) AS reserved_store
+                sr.product_code,
+                COALESCE(SUM(CASE WHEN sr.stock_location = 'shop' THEN sr.quantity ELSE 0 END), 0) AS reserved_shop,
+                COALESCE(SUM(CASE WHEN sr.stock_location = 'store' THEN sr.quantity ELSE 0 END), 0) AS reserved_store
             ");
 
         $query->leftJoinSub($sub, $alias, function ($join) use ($alias) {

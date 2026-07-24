@@ -139,6 +139,10 @@ class MobileSalesService
         $this->access->scopeBranchIfLimited($customerCount, $user);
         $this->mobileScope->applyCustomerScope($customerCount, $user);
 
+        $trendFrom = $to->copy()->subDays(29);
+        $trendRows = $this->trendSalesRows($user, $trendFrom, $to, $allChannels);
+        $weekStart = $to->copy()->subDays(6)->toDateString();
+
         return [
             'mobile_context' => $this->mobileScope->mobileContext($user),
             'summary' => array_merge([
@@ -149,8 +153,10 @@ class MobileSalesService
                 'noofCustomers' => (int) $customerCount->count(),
             ], $this->workflowQueueCounts($user, $allChannels)),
             'recent_orders' => $this->recentOrders($user, $from, $to, $allChannels),
-            'weekly_sales' => $this->trendSales($user, $to->copy()->subDays(6), $to, $allChannels),
-            'monthly_sales' => $this->trendSales($user, $to->copy()->subDays(29), $to, $allChannels),
+            'weekly_sales' => $this->formatTrendSales(
+                $trendRows->filter(fn ($row) => (string) $row->sale_day >= $weekStart)->values(),
+            ),
+            'monthly_sales' => $this->formatTrendSales($trendRows),
         ];
     }
 
@@ -290,7 +296,7 @@ class MobileSalesService
             SqlLikeSearch::applySalesOrderSearch($query, $search, includeCustomerRelation: ! ctype_digit($search));
         }
 
-        $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
+        $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 50);
         $page = $query->paginate($perPage);
         $gate = $this->erp->gateForUser($user);
         $presentation = app(SaleOrderPresentationService::class);
@@ -511,6 +517,7 @@ class MobileSalesService
     {
         $gate = $this->erp->gateForUser($user);
         $presentation = app(SaleOrderPresentationService::class);
+        $cancelCaps = $this->cancellationCapabilitiesTemplate($user, $gate);
 
         return $this->mobileSalesQuery($user, $allChannels)
             ->select($this->orderListColumns())
@@ -524,7 +531,7 @@ class MobileSalesService
             ->get()
             ->map(fn (Sale $sale) => array_merge(
                 $this->presentOrderSummary($sale, $user, $presentation),
-                $this->orderCapabilityFlags($sale, $user, $gate),
+                $this->orderCapabilityFlags($sale, $user, $gate, $cancelCaps),
             ))
             ->values()
             ->all();
@@ -533,9 +540,18 @@ class MobileSalesService
     /** @return list<array<string, mixed>> */
     protected function trendSales(User $user, Carbon $from, Carbon $to, bool $allChannels = false): array
     {
+        return $this->formatTrendSales($this->trendSalesRows($user, $from, $to, $allChannels));
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, object{sale_day: string, total_amount: mixed, order_count: mixed}>
+     */
+    protected function trendSalesRows(User $user, Carbon $from, Carbon $to, bool $allChannels = false)
+    {
         $rows = $this->mobileSalesQuery($user, $allChannels);
         $this->applyCreatedAtDayRange($rows, $from, $to);
-        $rows = $rows
+
+        return $rows
             ->where('status', '!=', 'cancelled')
             ->selectRaw('DATE(created_at) as sale_day')
             ->selectRaw('COUNT(*) as order_count')
@@ -543,7 +559,14 @@ class MobileSalesService
             ->groupBy('sale_day')
             ->orderBy('sale_day')
             ->get();
+    }
 
+    /**
+     * @param  \Illuminate\Support\Collection<int, object{sale_day: mixed, total_amount: mixed, order_count: mixed}>  $rows
+     * @return list<array<string, mixed>>
+     */
+    protected function formatTrendSales($rows): array
+    {
         return $rows->map(function ($row) {
             $day = Carbon::parse($row->sale_day);
 
@@ -663,12 +686,15 @@ class MobileSalesService
     protected function workflowQueueCounts(User $user, bool $allChannels = false): array
     {
         // Cap queue scans — older workflow rows are not actionable for mobile ops.
-        $base = $this->mobileSalesQuery($user, $allChannels)
-            ->where('sales.created_at', '>=', now()->subDays(90)->startOfDay()->toDateTimeString());
+        $row = $this->mobileSalesQuery($user, $allChannels)
+            ->where('sales.created_at', '>=', now()->subDays(90)->startOfDay()->toDateTimeString())
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'pending_approval' THEN 1 ELSE 0 END), 0) as pending_approval_count")
+            ->selectRaw("COALESCE(SUM(CASE WHEN status = 'editable' THEN 1 ELSE 0 END), 0) as editable_count")
+            ->first();
 
         return [
-            'pending_approval_count' => (int) (clone $base)->where('status', 'pending_approval')->count(),
-            'editable_count' => (int) (clone $base)->where('status', 'editable')->count(),
+            'pending_approval_count' => (int) ($row->pending_approval_count ?? 0),
+            'editable_count' => (int) ($row->editable_count ?? 0),
         ];
     }
 

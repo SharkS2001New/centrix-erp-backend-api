@@ -10,6 +10,9 @@ use Illuminate\Support\Facades\DB;
  */
 class ProductStockDenormService
 {
+    /** @var array<int, int> */
+    protected static array $branchCountByOrg = [];
+
     public function syncFromCurrentStock(string $productCode, int $branchId): void
     {
         $row = DB::table('current_stock')
@@ -21,14 +24,17 @@ class ProductStockDenormService
             return;
         }
 
-        $orgId = DB::table('branches')->where('id', $branchId)->value('organization_id');
+        $orgId = (int) (DB::table('branches')->where('id', $branchId)->value('organization_id') ?? 0);
         if (! $orgId) {
             return;
         }
 
-        $branchCount = (int) DB::table('branches')
-            ->where('organization_id', $orgId)
-            ->count();
+        if (! array_key_exists($orgId, self::$branchCountByOrg)) {
+            self::$branchCountByOrg[$orgId] = (int) DB::table('branches')
+                ->where('organization_id', $orgId)
+                ->count();
+        }
+        $branchCount = self::$branchCountByOrg[$orgId];
 
         $query = Product::query()
             ->where('organization_id', $orgId)

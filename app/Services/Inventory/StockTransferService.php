@@ -5,6 +5,7 @@ namespace App\Services\Inventory;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\StockMovementHistory;
 use App\Models\User;
+use App\Support\OrganizationIdResolver;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -85,8 +86,8 @@ class StockTransferService
             ? "Transfer in from {$from}: {$noteText}"
             : "Transfer in from {$from}";
 
-        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $to, $user, $outNote, $inNote) {
-            $orgId = (int) $user->organization_id;
+        return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $to, $user, $outNote, $inNote, $noteText) {
+            $orgId = OrganizationIdResolver::requireForBranch($branchId);
             $out = $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $branchId,
                 'product_code' => $productCode,
@@ -111,11 +112,13 @@ class StockTransferService
             ], $orgId));
 
             StockMovementHistory::create([
+                'organization_id' => $orgId,
                 'product_code' => $productCode,
                 'branch_id' => $branchId,
                 'quantity_moved' => $quantity,
                 'from_location' => $from,
                 'to_location' => $to,
+                'notes' => $noteText !== '' ? $noteText : null,
                 'moved_by' => $user->id,
             ]);
 
@@ -153,7 +156,7 @@ class StockTransferService
             : "Transfer out for {$label}";
 
         return DB::transaction(function () use ($branchId, $productCode, $quantity, $from, $purpose, $user, $outNote, $label) {
-            $orgId = (int) $user->organization_id;
+            $orgId = OrganizationIdResolver::requireForBranch($branchId);
             $out = $this->postStockLedger($this->withProductUnitCost([
                 'branch_id' => $branchId,
                 'product_code' => $productCode,
