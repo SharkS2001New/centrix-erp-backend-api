@@ -72,14 +72,14 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart, $request->user(), 201, includeNextOrderNum: true);
     }
 
-    public function show(int $cartId)
+    public function show(int|string $cartId)
     {
         $user = request()->user();
 
         return $this->cartResponse($this->findOwnedCart($cartId, $user), $user, includeNextOrderNum: true);
     }
 
-    public function update(\Illuminate\Http\Request $request, int $cartId)
+    public function update(\Illuminate\Http\Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
@@ -123,7 +123,7 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart->fresh('lines'), $request->user(), includeNextOrderNum: false);
     }
 
-    public function requestDiscount(Request $request, int $cartId)
+    public function requestDiscount(Request $request, int|string $cartId)
     {
         $user = $request->user();
         $cart = $this->findOwnedCart($cartId, $user);
@@ -161,7 +161,7 @@ class CartOperationsController extends Controller
         return response()->json($payload, $result['applied'] ? 200 : 202);
     }
 
-    public function addLine(AddCartLineRequest $request, int $cartId)
+    public function addLine(AddCartLineRequest $request, int|string $cartId)
     {
         $user = $request->user();
         $cart = $this->findOwnedCart($cartId, $user, withLines: false);
@@ -171,7 +171,7 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart->fresh('lines'), $user, 201, includeNextOrderNum: false);
     }
 
-    public function updateLine(UpdateCartLineRequest $request, int $cartId, string $lineRef)
+    public function updateLine(UpdateCartLineRequest $request, int|string $cartId, string $lineRef)
     {
         $user = $request->user();
         $cart = $this->findOwnedCart($cartId, $user);
@@ -182,7 +182,7 @@ class CartOperationsController extends Controller
     }
 
     /** POST /sales/carts/{cartId}/apply-advised-discounts — apply manager-advised per-line discounts in one request. */
-    public function applyAdvisedDiscounts(Request $request, int $cartId)
+    public function applyAdvisedDiscounts(Request $request, int|string $cartId)
     {
         $user = $request->user();
         $cart = $this->findOwnedCart($cartId, $user);
@@ -251,7 +251,7 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
     }
 
-    public function deleteLine(int $cartId, string $lineRef)
+    public function deleteLine(int|string $cartId, string $lineRef)
     {
         $user = request()->user();
         $cart = $this->findOwnedCart($cartId, $user);
@@ -260,7 +260,7 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
     }
 
-    public function clear(int $cartId)
+    public function clear(int|string $cartId)
     {
         $user = request()->user();
         $cart = $this->findOwnedCart($cartId, $user);
@@ -444,7 +444,7 @@ class CartOperationsController extends Controller
         ]);
     }
 
-    public function attachLoyaltyCard(Request $request, int $cartId)
+    public function attachLoyaltyCard(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
@@ -472,7 +472,7 @@ class CartOperationsController extends Controller
         ]);
     }
 
-    public function applyVoucherPayment(Request $request, int $cartId)
+    public function applyVoucherPayment(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
@@ -563,7 +563,7 @@ class CartOperationsController extends Controller
         ]);
     }
 
-    public function applyPointsPayment(Request $request, int $cartId)
+    public function applyPointsPayment(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
@@ -609,7 +609,7 @@ class CartOperationsController extends Controller
         ]);
     }
 
-    public function updateCartPaymentExtras(Request $request, int $cartId)
+    public function updateCartPaymentExtras(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $data = $request->validate([
@@ -624,7 +624,7 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart->fresh('lines'), $request->user());
     }
 
-    public function clearCartPayments(int $cartId)
+    public function clearCartPayments(int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, request()->user());
         $this->clearCartPaymentOptions($cart);

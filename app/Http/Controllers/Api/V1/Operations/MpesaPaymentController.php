@@ -37,7 +37,7 @@ class MpesaPaymentController extends Controller
         return MpesaService::forOrganization($org, $branch);
     }
 
-    public function stkPush(Request $request, int $cartId)
+    public function stkPush(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $org = Organization::findOrFail($request->user()->organization_id);
@@ -127,7 +127,7 @@ class MpesaPaymentController extends Controller
         ]);
     }
 
-    public function paymentStatus(Request $request, int $cartId)
+    public function paymentStatus(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $phone = (string) ($request->query('phone') ?: $cart->mpesa_phone ?: '');
@@ -160,7 +160,7 @@ class MpesaPaymentController extends Controller
         ]);
     }
 
-    public function lookupIncomingPayments(Request $request, int $cartId)
+    public function lookupIncomingPayments(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $data = $request->validate([
@@ -178,7 +178,7 @@ class MpesaPaymentController extends Controller
         ]);
     }
 
-    public function applyIncomingPayment(Request $request, int $cartId)
+    public function applyIncomingPayment(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $orgId = (int) $request->user()->organization_id;
@@ -243,7 +243,7 @@ class MpesaPaymentController extends Controller
         ]);
     }
 
-    public function skipIncomingPayment(Request $request, int $cartId)
+    public function skipIncomingPayment(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $orgId = (int) $request->user()->organization_id;

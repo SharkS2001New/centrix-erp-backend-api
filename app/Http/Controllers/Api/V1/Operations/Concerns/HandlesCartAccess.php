@@ -12,8 +12,35 @@ trait HandlesCartAccess
 {
     use HandlesBranchScope;
 
-    protected function findOwnedCart(int $cartId, User $user, bool $withLines = true): TemporaryCart
+    /**
+     * Route params arrive as strings; reject non-numeric ids (e.g. offline "active") cleanly.
+     */
+    protected function resolveCartId(int|string $cartId): int
     {
+        if (is_int($cartId)) {
+            if ($cartId <= 0) {
+                abort(404, 'Cart not found.');
+            }
+
+            return $cartId;
+        }
+
+        $raw = trim((string) $cartId);
+        if ($raw === '' || ! ctype_digit($raw)) {
+            abort(404, 'Cart not found.');
+        }
+
+        $id = (int) $raw;
+        if ($id <= 0) {
+            abort(404, 'Cart not found.');
+        }
+
+        return $id;
+    }
+
+    protected function findOwnedCart(int|string $cartId, User $user, bool $withLines = true): TemporaryCart
+    {
+        $cartId = $this->resolveCartId($cartId);
         $query = TemporaryCart::query();
         if ($withLines) {
             $query->with('lines');

@@ -56,7 +56,7 @@ class CheckoutController extends Controller
 
     public function __construct(protected ErpContext $erp) {}
 
-    public function fromCart(CheckoutRequest $request, int $cartId)
+    public function fromCart(CheckoutRequest $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
@@ -92,14 +92,14 @@ class CheckoutController extends Controller
             ], 201);
         }
 
-        $sale = $sale->fresh(['items', 'payments.paymentMethod']);
+        $sale = $sale->fresh(['items.product.unit', 'payments.paymentMethod']);
 
         return response()->json(array_merge($sale->toArray(), [
             'status_name' => $statusName,
         ]), 201);
     }
 
-    public function quoteFromCart(\Illuminate\Http\Request $request, int $cartId)
+    public function quoteFromCart(\Illuminate\Http\Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
@@ -590,7 +590,7 @@ class CheckoutController extends Controller
             CartLine::where('cart_id', $cart->id)->delete();
             $cart->delete();
 
-            $sale = $sale->fresh(['items', 'payments.paymentMethod']);
+            $sale = $sale->fresh(['items.product.unit', 'payments.paymentMethod']);
 
             $finance = $gate->moduleSettings('finance');
             $explicitSubmit = array_key_exists('submit_kra', $input)
