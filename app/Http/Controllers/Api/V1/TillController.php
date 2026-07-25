@@ -4,8 +4,10 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Till;
 use App\Models\TillFloatSession;
+use App\Services\Pos\TillNumbering;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 
 class TillController extends BaseResourceController
 {
@@ -30,17 +32,14 @@ class TillController extends BaseResourceController
         if ($branchId !== null) {
             $query->where('branch_id', $branchId);
         }
-        $rows = $query->get();
-        $max = 0;
-        foreach ($rows as $row) {
-            foreach ([$row->till_name, $row->till_number] as $value) {
-                if (is_string($value) && preg_match('/^Till(\d+)$/i', trim($value), $m)) {
-                    $max = max($max, (int) $m[1]);
-                }
-            }
+        $label = TillNumbering::nextLabelOrNull($query->get());
+        if ($label === null) {
+            throw ValidationException::withMessages([
+                'till_number' => ['All tills Till01–Till10 are already in use at this branch.'],
+            ]);
         }
 
-        return 'Till'.str_pad((string) ($max + 1), 2, '0', STR_PAD_LEFT);
+        return $label;
     }
 
     protected function tillCodeExists(int $branchId, string $tillCode, ?int $exceptId = null): bool
@@ -106,8 +105,24 @@ class TillController extends BaseResourceController
             $this->assertUniqueTillCode($branchId, (string) $data['till_name']);
         }
 
-        // Float and cashier belong to POS sessions — not stored on the till record.
-        $data['cashier_id'] = null;
+        // Float belongs to POS sessions — not stored on the till record.
+        // Optional cashier_id ties a cashier to this till (user admin / POS create).
+        if (array_key_exists('cashier_id', $data)) {
+            $cashierId = $data['cashier_id'] !== null && $data['cashier_id'] !== ''
+                ? (int) $data['cashier_id']
+                : null;
+            if ($cashierId) {
+                $conflict = Till::query()
+                    ->where('cashier_id', $cashierId)
+                    ->exists();
+                if ($conflict) {
+                    throw new \InvalidArgumentException('That cashier is already assigned to another till.');
+                }
+            }
+            $data['cashier_id'] = $cashierId;
+        } else {
+            $data['cashier_id'] = null;
+        }
 
         $model = Till::create($data);
 

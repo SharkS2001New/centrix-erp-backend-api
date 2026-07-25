@@ -82,10 +82,9 @@ class PayrollReceiptMailService
     }
 
     /**
-     * @param  list<int>|null  $lineIds  When set, only these payroll line ids are emailed.
      * @return array{sent: int, skipped: int, failed: int, details: list<array{employee: string, to: ?string, status: string, reason: ?string}>}
      */
-    public function emailRun(PayrollRun $run, Organization $organization, ?array $lineIds = null): array
+    public function emailRun(PayrollRun $run, Organization $organization): array
     {
         $run->loadMissing(['payPeriod', 'lines.employee']);
         $sent = 0;
@@ -93,19 +92,7 @@ class PayrollReceiptMailService
         $failed = 0;
         $details = [];
 
-        $allowedIds = null;
-        if ($lineIds !== null) {
-            $allowedIds = array_fill_keys(
-                array_values(array_unique(array_map('intval', $lineIds))),
-                true,
-            );
-        }
-
         foreach ($run->lines as $line) {
-            if ($allowedIds !== null && ! isset($allowedIds[(int) $line->id])) {
-                continue;
-            }
-
             $employee = $line->employee;
             $name = $employee
                 ? trim((string) ($employee->full_name ?: $employee->employee_code ?: 'Employee'))

@@ -81,15 +81,11 @@ class PayrollEarningsService
             ? (float) ($attendanceSummary['paid_hours'] ?? $expectedHours)
             : $expectedHours;
 
-        if ($useProration && $expectedDays > 0) {
-            // Calendar-day proration: e.g. mid-month run on the 24th of a 31-day
-            // period pays 24/31. Rest days (Sun) count in place; future days stay
-            // unpaid until they arrive (and are not treated as absences).
-            $paidDaysRaw = (float) ($attendanceSummary['paid_days'] ?? 0);
-            $ratio = $paidDaysRaw / $expectedDays;
+        if ($useProration && $expectedHours > 0) {
+            $ratio = $paidHours / $expectedHours;
             $payrollBasic = round($contractBasic * $ratio, 2);
-            $paidDays = round($paidDaysRaw, 2);
-            $dailyRate = round($contractBasic / $expectedDays, 2);
+            $paidDays = round(($attendanceSummary['paid_days'] ?? 0), 2);
+            $dailyRate = $expectedDays > 0 ? round($contractBasic / $expectedDays, 2) : 0.0;
         } else {
             $payrollBasic = $contractBasic;
             $paidDays = $expectedDays;
@@ -152,19 +148,11 @@ class PayrollEarningsService
     }
 
     /**
-     * Calendar-day attendance summary for payroll.
-     *
-     * - expected_days = every calendar day in the pay period (e.g. 31)
-     * - paid_days = elapsed days through today that are payable, including rest
-     *   days such as Sunday counted “in place”
-     * - Future days in the period are remaining (not absent, not paid yet)
-     *
      * @return array{
      *   expected_days: float,
      *   paid_days: float,
      *   attended_days: float,
-     *   rest_days_paid: float,
-     *   remaining_days: float,
+     *   assumed_future_days: float,
      *   paid_leave_days: float,
      *   unpaid_leave_days: float,
      *   absent_days: float,
@@ -199,13 +187,11 @@ class PayrollEarningsService
 
         $expected = 0.0;
         $attended = 0.0;
-        $restPaid = 0.0;
-        $remaining = 0.0;
+        $assumedFuture = 0.0;
         $paidLeave = 0.0;
         $unpaidLeave = 0.0;
         $deductibleOffDays = 0.0;
         $nonDeductibleOffDays = 0.0;
-        $absent = 0.0;
         $expectedHours = 0.0;
         $paidHours = 0.0;
         $paidLeaveHours = 0.0;
@@ -217,21 +203,16 @@ class PayrollEarningsService
 
         while ($cursor->lte($endDay)) {
             $date = $cursor->toDateString();
-            $expected += 1.0;
-
-            $isScheduled = $this->dayPolicy->isScheduledWorkday($employee, $date);
-            $dayExpectedHours = $isScheduled
-                ? $this->attendanceReconciler->expectedPaidHours($employee, $date)
-                : 0.0;
-            $expectedHours += $dayExpectedHours;
-
-            // Not yet reached — stay in the period denominator only.
-            if ($cursor->gt($today)) {
-                $remaining += 1.0;
+            if (! $this->dayPolicy->isScheduledWorkday($employee, $date)) {
                 $cursor->addDay();
 
                 continue;
             }
+
+            $dayExpectedHours = $this->attendanceReconciler->expectedPaidHours($employee, $date);
+            $expected += 1.0;
+            $expectedHours += $dayExpectedHours;
+            $dayFraction = 1.0;
 
             $leave = $leaves->first(fn (EmployeeLeaveDay $l) => $l->coversDate($date));
             if ($leave) {
@@ -243,6 +224,7 @@ class PayrollEarningsService
                     if ($isOff) {
                         $deductibleOffDays += $dayFraction;
                     }
+                    // Unpaid leave: expected hours remain; paid hours stay 0 for this day.
                 } else {
                     $paidLeave += $dayFraction;
                     $paidHours += $leaveHours;
@@ -256,16 +238,9 @@ class PayrollEarningsService
                 continue;
             }
 
-            if (! $isScheduled) {
-                // Sunday / off / holiday: monthly pay covers the day “in place”.
-                $restPaid += 1.0;
-                $cursor->addDay();
-
-                continue;
-            }
-
             $att = $attendanceByDate->get($date);
             if ($att && $this->attendanceCountsAsPaid($att->status)) {
+                $attended += $att->status === 'half_day' ? 0.5 : 1.0;
                 $dayPaid = (float) ($att->hours_worked ?? 0);
                 if ($att->expected_hours !== null && (float) $att->expected_hours > 0) {
                     $dayPaid = min($dayPaid, (float) $att->expected_hours);
@@ -273,38 +248,32 @@ class PayrollEarningsService
                     $dayPaid = min($dayPaid, $dayExpectedHours);
                 }
                 $paidHours += $dayPaid;
-                if ($att->status === 'half_day') {
-                    $dayFraction = 0.5;
-                } elseif ($dayExpectedHours > 0) {
-                    $dayFraction = min(1.0, $dayPaid / $dayExpectedHours);
-                } else {
-                    $dayFraction = 1.0;
-                }
-                $attended += $dayFraction;
                 if (! (bool) ($att->lateness_waived ?? false)) {
                     $lateMinutesTotal += (int) ($att->late_minutes ?? 0);
                 }
-            } else {
-                $absent += 1.0;
+            } elseif ($cursor->gt($today)) {
+                // Remaining days still in the pay period: credit full day so mid-month
+                // runs do not treat future dates as unpaid absences on the payslip.
+                $assumedFuture += 1.0;
+                $paidHours += $dayExpectedHours;
             }
 
             $cursor->addDay();
         }
 
-        $paidDays = $attended + $paidLeave + $restPaid;
+        $paidDays = round($attended + $paidLeave + $assumedFuture, 2);
+        $absent = round(max(0, $expected - $paidDays - $unpaidLeave), 2);
 
         return [
             'expected_days' => round($expected, 2),
-            // Keep full precision for pay ratio (display layers round to 2).
             'paid_days' => $paidDays,
-            'attended_days' => $attended,
-            'rest_days_paid' => round($restPaid, 2),
-            'remaining_days' => round($remaining, 2),
+            'attended_days' => round($attended, 2),
+            'assumed_future_days' => round($assumedFuture, 2),
             'paid_leave_days' => round($paidLeave, 2),
             'unpaid_leave_days' => round($unpaidLeave, 2),
             'deductible_off_days' => round($deductibleOffDays, 2),
             'non_deductible_off_days' => round($nonDeductibleOffDays, 2),
-            'absent_days' => round($absent, 2),
+            'absent_days' => $absent,
             'expected_hours' => round($expectedHours, 2),
             'paid_hours' => round($paidHours, 2),
             'paid_leave_hours' => round($paidLeaveHours, 2),

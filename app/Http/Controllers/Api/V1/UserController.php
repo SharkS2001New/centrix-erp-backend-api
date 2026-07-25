@@ -21,6 +21,7 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Auth\UsernameValidator;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\PermissionMatrixService;
+use App\Services\Pos\UserTillAssignmentService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -98,7 +99,11 @@ class UserController extends BaseResourceController
             throw $e;
         }
 
-        return response()->json($model, 201);
+        if ($request->exists('till_id')) {
+            app(UserTillAssignmentService::class)->sync($model, $request->input('till_id'));
+        }
+
+        return response()->json($this->presentUser($model->fresh()), 201);
     }
 
     public function update(Request $request, string $id, ?string $nestedId = null)
@@ -198,9 +203,13 @@ class UserController extends BaseResourceController
             $model = app(UserLoginService::class)->disableLogin($model);
         }
 
+        if ($request->exists('till_id')) {
+            app(UserTillAssignmentService::class)->sync($model->fresh(), $request->input('till_id'));
+        }
+
         CapabilitiesCacheInvalidator::forUser($model->fresh());
 
-        return response()->json($model);
+        return response()->json($this->presentUser($model->fresh()));
     }
 
     public function destroy(Request $request, string $id, ?string $nestedId = null)
@@ -334,7 +343,16 @@ class UserController extends BaseResourceController
         $perPage = min((int) $request->input('per_page', 25), 200);
         $paginator = $query->orderBy('full_name')->paginate($perPage);
         $expiryService = app(PasswordExpiryService::class);
-        $paginator->through(fn (User $user) => $this->withPasswordLockFlag($user, $expiryService));
+        $tillByCashier = \App\Models\Till::query()
+            ->whereIn('cashier_id', $paginator->getCollection()->pluck('id')->filter()->all())
+            ->pluck('id', 'cashier_id');
+        $paginator->through(function (User $user) use ($expiryService, $tillByCashier) {
+            $user = $this->withPasswordLockFlag($user, $expiryService);
+            $tillId = $tillByCashier->get($user->id);
+            $user->setAttribute('till_id', $tillId ? (int) $tillId : null);
+
+            return $user;
+        });
 
         return response()->json($paginator);
     }
@@ -377,6 +395,20 @@ class UserController extends BaseResourceController
         $user->setAttribute(
             'two_factor_enabled',
             (bool) $user->two_factor_enabled && filled($user->two_factor_confirmed_at),
+        );
+
+        return $user;
+    }
+
+    protected function presentUser(User $user, ?PasswordExpiryService $expiryService = null): User
+    {
+        $user = $this->withPasswordLockFlag(
+            $user,
+            $expiryService ?? app(PasswordExpiryService::class),
+        );
+        $user->setAttribute(
+            'till_id',
+            app(UserTillAssignmentService::class)->assignedTillId((int) $user->id),
         );
 
         return $user;

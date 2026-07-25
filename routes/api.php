@@ -83,6 +83,7 @@ use App\Http\Controllers\Api\V1\PlatformSystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformKenyaPayrollSettingsController;
 use App\Http\Controllers\Api\V1\PlatformPayrollScheduleSettingsController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueAlertSettingsController;
+use App\Http\Controllers\Api\V1\PlatformPrintAgentMsiController;
 use App\Http\Controllers\Api\V1\SystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformInvoiceController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
@@ -476,6 +477,15 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::put('admin/system-issue-alert-settings', [PlatformSystemIssueAlertSettingsController::class, 'update'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/print-agent-msi', [PlatformPrintAgentMsiController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::put('admin/print-agent-msi', [PlatformPrintAgentMsiController::class, 'update'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/print-agent-msi/build', [PlatformPrintAgentMsiController::class, 'build'])
+            ->middleware(['erp.super_admin']);
+        Route::post('admin/print-agent-msi/upload', [PlatformPrintAgentMsiController::class, 'upload'])
+            ->middleware(['erp.super_admin']);
+        Route::get('print-agent-msi', [PlatformPrintAgentMsiController::class, 'downloadInfo']);
         Route::get('admin/kenya-payroll-settings', [PlatformKenyaPayrollSettingsController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::put('admin/kenya-payroll-settings', [PlatformKenyaPayrollSettingsController::class, 'update'])

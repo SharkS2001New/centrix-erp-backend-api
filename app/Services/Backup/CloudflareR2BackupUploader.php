@@ -157,6 +157,84 @@ class CloudflareR2BackupUploader
     }
 
     /**
+     * Upload a local file to an absolute object key (ignores backup prefix).
+     * Used for Print Agent MSI hosting in the same R2 bucket.
+     *
+     * @return array{file_id: string, name: string, web_view_link: string|null, bucket: string}
+     */
+    public function uploadToObjectKey(
+        string $absolutePath,
+        string $objectKey,
+        string $contentType = 'application/octet-stream',
+    ): array {
+        if (! is_file($absolutePath)) {
+            throw new DatabaseBackupException(
+                'Local file was not found for R2 upload.',
+                'r2_source_missing',
+            );
+        }
+
+        $cfg = BackupR2SettingsResolver::applyToRuntime();
+        if (! BackupR2SettingsResolver::isConfigured($cfg)) {
+            throw new DatabaseBackupException(
+                'Cloudflare R2 is not configured. Set credentials under Platform → Cloudflare R2.',
+                'r2_not_configured',
+            );
+        }
+
+        $disk = (string) config('backup.r2.disk', 'r2');
+        $key = ltrim(str_replace('\\', '/', trim($objectKey)), '/');
+        if ($key === '') {
+            throw new DatabaseBackupException('R2 object key is required.', 'r2_key_missing');
+        }
+
+        Storage::forgetDisk($disk);
+
+        try {
+            $stream = fopen($absolutePath, 'rb');
+            if ($stream === false) {
+                throw new \RuntimeException('Could not open file for upload.');
+            }
+
+            try {
+                $ok = Storage::disk($disk)->put($key, $stream, [
+                    'visibility' => 'private',
+                    'ContentType' => $contentType,
+                    'CacheControl' => 'public, max-age=300',
+                ]);
+            } finally {
+                if (is_resource($stream)) {
+                    fclose($stream);
+                }
+            }
+
+            if ($ok === false) {
+                throw new \RuntimeException('R2 put() returned false.');
+            }
+        } catch (DatabaseBackupException $e) {
+            throw $e;
+        } catch (\Throwable $e) {
+            Log::warning('Cloudflare R2 object upload failed', [
+                'object_key' => $key,
+                'error' => $e->getMessage(),
+            ]);
+
+            throw new DatabaseBackupException(
+                $this->humanizeErrorForUser($e->getMessage()),
+                'r2_upload_failed',
+                $e,
+            );
+        }
+
+        return [
+            'file_id' => $key,
+            'name' => basename($key),
+            'web_view_link' => $this->objectUrl($key, $cfg['public_url'] ?? ''),
+            'bucket' => (string) $cfg['bucket'],
+        ];
+    }
+
+    /**
      * Verify credentials can write/read/delete a tiny probe object (probe is removed).
      *
      * @param  array<string, mixed>  $overrides

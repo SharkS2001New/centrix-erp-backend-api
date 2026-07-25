@@ -85,7 +85,7 @@ class KenyaStatutoryReference
                     ],
                 ],
             ],
-            'net_pay_formula' => 'Net pay = payable amount (period earnings for days worked) − (NSSF + SHIF + housing levy + PAYE + other deductions). Statutory and percentage deductions use contract monthly gross, not payable days.',
+            'net_pay_formula' => 'Net pay = gross − (NSSF + SHIF + housing levy + PAYE + other deductions)',
             'other_deductions' => [
                 'label' => 'Other deductions (loans, advances, custom)',
                 'formula' => 'Fixed amounts and cash-advance repayments are deducted in full for the pay run (not reduced when basic pay is prorated for attendance). Percentage deductions use contract monthly gross (basic salary + monthly allowances), not prorated period gross.',
