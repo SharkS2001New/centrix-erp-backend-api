@@ -384,7 +384,7 @@ class PayrollOperationsController extends Controller
         return response()->json($run->fresh(['payPeriod', 'paidByUser', 'approvedByUser']));
     }
 
-    /** POST /payroll/runs/{runId}/email-receipts — email payslip PDF to each employee with an email */
+    /** POST /payroll/runs/{runId}/email-receipts — email payslip PDF to employees with email (skips the rest) */
     public function emailReceipts(Request $request, string $runId)
     {
         $run = $this->findScopedPayrollRun($request, $runId, ['payPeriod', 'lines.employee']);
@@ -395,6 +395,24 @@ class PayrollOperationsController extends Controller
             return response()->json(['message' => 'Payroll run has no lines to email.'], 422);
         }
 
+        $data = $request->validate([
+            'line_ids' => 'nullable|array',
+            'line_ids.*' => 'integer',
+        ]);
+        $lineIds = isset($data['line_ids'])
+            ? array_values(array_unique(array_map('intval', $data['line_ids'])))
+            : null;
+        if ($lineIds !== null) {
+            if ($lineIds === []) {
+                return response()->json(['message' => 'Select at least one employee to email.'], 422);
+            }
+            $validIds = $run->lines->pluck('id')->map(fn ($id) => (int) $id)->all();
+            $lineIds = array_values(array_intersect($lineIds, $validIds));
+            if ($lineIds === []) {
+                return response()->json(['message' => 'None of the selected lines belong to this payroll run.'], 422);
+            }
+        }
+
         $organization = $request->user()?->organization;
         if (! $organization) {
             $organization = Organization::query()->find($run->organization_id);
@@ -403,15 +421,17 @@ class PayrollOperationsController extends Controller
             return response()->json(['message' => 'Organization not found.'], 422);
         }
 
-        $result = app(PayrollReceiptMailService::class)->emailRun($run, $organization);
+        $result = app(PayrollReceiptMailService::class)->emailRun($run, $organization, $lineIds);
+
+        // Missing emails are a normal skip — not a hard failure.
         if ($result['sent'] === 0 && $result['failed'] === 0 && $result['skipped'] > 0) {
             return response()->json([
-                'message' => 'No receipts sent — employees are missing email addresses.',
+                'message' => "No receipts sent — {$result['skipped']} employee(s) have no email on file (skipped).",
                 'sent' => $result['sent'],
                 'skipped' => $result['skipped'],
                 'failed' => $result['failed'],
                 'details' => $result['details'],
-            ], 422);
+            ]);
         }
         if ($result['sent'] === 0 && $result['failed'] > 0) {
             return response()->json([
