@@ -7,23 +7,61 @@ namespace App\Services\Legacy;
  */
 class SqlDumpInsertParser
 {
+    /**
+     * Extract all VALUES blobs for a table (supports multiple INSERT blocks).
+     *
+     * Handles:
+     * - INSERT INTO `table` VALUES (...);
+     * - INSERT INTO `table` (col1, col2) VALUES (...);
+     * - Trailing mysqldump markers or a bare semicolon
+     */
     public function extractInsertValues(string $sql, string $table): ?string
     {
-        $pattern = '/INSERT\s+INTO\s+`'.preg_quote($table, '/').'`\s+VALUES\s*(.+?);\s*(?:\/\*|UNLOCK|\/\*!40000)/is';
-        if (! preg_match($pattern, $sql, $matches)) {
+        $quoted = preg_quote($table, '/');
+        $pattern = '/INSERT\s+INTO\s+`'.$quoted.'`\s*(?:\([^)]*\)\s*)?VALUES\s*(.+?);/is';
+        if (! preg_match_all($pattern, $sql, $matches) || $matches[1] === []) {
             return null;
         }
 
-        return trim($matches[1]);
+        $blobs = [];
+        foreach ($matches[1] as $blob) {
+            $trimmed = trim((string) $blob);
+            if ($trimmed !== '') {
+                $blobs[] = $trimmed;
+            }
+        }
+
+        return $blobs === [] ? null : implode(",\n", $blobs);
     }
 
     public function detectTableName(string $sql): ?string
     {
-        if (preg_match('/INSERT\s+INTO\s+`([^`]+)`/i', $sql, $matches)) {
-            return $matches[1];
+        $tables = $this->detectAllTableNames($sql);
+
+        return $tables[0] ?? null;
+    }
+
+    /**
+     * @return list<string> Distinct table names that have INSERT statements, in first-seen order.
+     */
+    public function detectAllTableNames(string $sql): array
+    {
+        if (! preg_match_all('/INSERT\s+INTO\s+`([^`]+)`/i', $sql, $matches)) {
+            return [];
         }
 
-        return null;
+        $seen = [];
+        $tables = [];
+        foreach ($matches[1] as $table) {
+            $name = (string) $table;
+            if ($name === '' || isset($seen[$name])) {
+                continue;
+            }
+            $seen[$name] = true;
+            $tables[] = $name;
+        }
+
+        return $tables;
     }
 
     /** @return list<string> */

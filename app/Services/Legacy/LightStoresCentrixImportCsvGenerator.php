@@ -36,15 +36,20 @@ class LightStoresCentrixImportCsvGenerator
         continue;
       }
       $sql = (string) file_get_contents($file->getRealPath());
-      $table = $parser->detectTableName($sql);
-      if ($table === null) {
+      $tables = $parser->detectAllTableNames($sql);
+      if ($tables === []) {
         $base = strtolower(pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
         $table = preg_replace('/^superdb_/', '', $base) ?: null;
+        if ($table === null) {
+          continue;
+        }
+        $tables = [$table];
       }
-      if ($table === null) {
-        continue;
+
+      // One dump file can contain many tables — index the SQL under every table found.
+      foreach ($tables as $table) {
+        $sqlByTable[$table] = ($sqlByTable[$table] ?? '')."\n".$sql;
       }
-      $sqlByTable[$table] = ($sqlByTable[$table] ?? '')."\n".$sql;
     }
 
     return new self($sqlByTable, $parser);
@@ -56,8 +61,8 @@ class LightStoresCentrixImportCsvGenerator
     $lookups = $this->loadLookupMaps();
     $routeNames = $lookups['routes'];
 
-    [$supplierHeaders, $supplierRows, $supplierRefHeaders, $supplierRefRows] = $this->buildSuppliers();
-    [$customerHeaders, $customerRows, $customerRefHeaders, $customerRefRows] = $this->buildCustomers($routeNames);
+    [$supplierHeaders, $supplierRows] = $this->buildSuppliers();
+    [$customerHeaders, $customerRows] = $this->buildCustomers($routeNames);
     [$productHeaders, $productRows] = $this->buildProducts($lookups);
     [$retailHeaders, $retailRows] = $this->buildRetailPackages();
 
@@ -67,11 +72,17 @@ class LightStoresCentrixImportCsvGenerator
     [$uomH, $uom] = $this->buildUomsImport();
     [$vatH, $vat] = $this->buildVatsImport();
 
-    [$refRoutesH, $refRoutes] = $this->buildReferenceRoutes();
-    [$refCatH, $refCat] = $this->buildReferenceCategories();
-    [$refSubH, $refSub] = $this->buildReferenceSubcategories();
-    [$refUomH, $refUom] = $this->buildReferenceUoms();
-    [$refVatH, $refVat] = $this->buildReferenceVats();
+    $counts = [
+      'vats' => count($vat),
+      'categories' => count($cat),
+      'subcategories' => count($sub),
+      'uoms' => count($uom),
+      'routes' => count($routes),
+      'suppliers' => count($supplierRows),
+      'customers' => count($customerRows),
+      'products' => count($productRows),
+      'retail_packages' => count($retailRows),
+    ];
 
     return [
       'vats-import.csv' => $this->csvContent($vatH, $vat),
@@ -80,27 +91,10 @@ class LightStoresCentrixImportCsvGenerator
       'uoms-import.csv' => $this->csvContent($uomH, $uom),
       'routes-import.csv' => $this->csvContent($routesH, $routes),
       'suppliers-import.csv' => $this->csvContent($supplierHeaders, $supplierRows),
-      'reference-suppliers.csv' => $this->csvContent($supplierRefHeaders, $supplierRefRows),
       'customers-import.csv' => $this->csvContent($customerHeaders, $customerRows),
-      'reference-customers.csv' => $this->csvContent($customerRefHeaders, $customerRefRows),
       'products-import.csv' => $this->csvContent($productHeaders, $productRows),
       'retail-packages-import.csv' => $this->csvContent($retailHeaders, $retailRows),
-      'reference-routes.csv' => $this->csvContent($refRoutesH, $refRoutes),
-      'reference-categories.csv' => $this->csvContent($refCatH, $refCat),
-      'reference-subcategories.csv' => $this->csvContent($refSubH, $refSub),
-      'reference-uoms.csv' => $this->csvContent($refUomH, $refUom),
-      'reference-vats.csv' => $this->csvContent($refVatH, $refVat),
-      'README.md' => $this->buildReadme([
-        'vats' => count($vat),
-        'categories' => count($cat),
-        'subcategories' => count($sub),
-        'uoms' => count($uom),
-        'routes' => count($routes),
-        'suppliers' => count($supplierRows),
-        'customers' => count($customerRows),
-        'products' => count($productRows),
-        'retail_packages' => count($retailRows),
-      ]),
+      'README.md' => $this->buildReadme($counts),
     ];
   }
 
@@ -209,7 +203,8 @@ class LightStoresCentrixImportCsvGenerator
 
     $suppliers = [];
     foreach ($this->loadRows('suppliers') as $r) {
-      if (count($r) < 12 || $r[0] === null || $r[11] !== null) {
+      // SPLR_ID=0, SPLR_NAME=1, … DLT_ON=9
+      if (count($r) < 8 || $r[0] === null || ($r[9] ?? null) !== null) {
         continue;
       }
       $name = $this->cleanText($r[1]);
@@ -282,7 +277,15 @@ class LightStoresCentrixImportCsvGenerator
     $suppliers = $lookups['suppliers'];
 
     foreach ($this->loadRows('product') as $r) {
-      if (count($r) < 29 || $r[26] !== null) {
+      // LightStores `product` (25 cols, 0-based):
+      // 4 product_code, 5 product_name, 7 subcateg_id, 8 unit_id,
+      // 9 unit_in_stock, 10 stock_in_store, 11 unit_price, 12 supplier_id,
+      // 13 last_cost_price, 15 discount_percentage, 16 product_weight,
+      // 18 vat_statusid, 20 dlt_on, 22 sell_on_retail
+      if (count($r) < 23) {
+        continue;
+      }
+      if (($r[20] ?? null) !== null) {
         continue;
       }
       $productCode = $this->cleanText($r[4]);
@@ -314,14 +317,11 @@ class LightStoresCentrixImportCsvGenerator
       }
 
       $vatCode = '';
-      if (! in_array($r[24] ?? null, [null, 0, '0'], true)) {
-        $vatCode = $vats[(int) $r[24]] ?? '';
+      if (! in_array($r[18] ?? null, [null, 0, '0'], true)) {
+        $vatCode = $vats[(int) $r[18]] ?? '';
       }
 
-      $discountType = $this->cleanText($r[16]) ?: 'percentage';
-      $discountAmount = (float) ($r[17] ?? 0);
-      $discountPercentage = $discountType === 'percentage' ? $discountAmount : '';
-      $discountValue = $discountType === 'fixed' ? $discountAmount : '';
+      $discountPercentage = (float) ($r[15] ?? 0);
 
       $rows[] = $this->csvEscapeRow([
         $productCode,
@@ -331,24 +331,24 @@ class LightStoresCentrixImportCsvGenerator
         $measureName,
         (float) ($r[11] ?? 0),
         (float) ($r[13] ?? 0),
-        $discountType,
+        'percentage',
         $discountPercentage,
-        $discountValue,
-        $r[15] !== null ? (float) $r[15] : '',
+        '',
+        $r[16] !== null ? (float) $r[16] : '',
         '', // shelf_location — not present in LightStores dumps
         (float) ($r[9] ?? 0),
         (float) ($r[10] ?? 0),
         0,
         $supplierName,
         $vatCode,
-        in_array($r[28] ?? null, [1, '1', true], true) ? 'true' : 'false',
+        in_array($r[22] ?? null, [1, '1', true], true) ? 'true' : 'false',
       ]);
     }
 
     return [$headers, $rows];
   }
 
-  /** @return array{0: list<string>, 1: list<list<string>>, 2: list<string>, 3: list<list<string>>} */
+  /** @return array{0: list<string>, 1: list<list<string>>} */
   private function buildSuppliers(): array
   {
     // Matches Centrix supplier advanced-import sample headers exactly.
@@ -356,9 +356,7 @@ class LightStoresCentrixImportCsvGenerator
       'supplier_name', 'supplier_code', 'contact_person', 'phone', 'alternate_phone',
       'email', 'town', 'tax_pin', 'terms_of_payment', 'address', 'is_active',
     ];
-    $referenceHeaders = array_merge(['legacy_supplier_id'], $headers);
     $rows = [];
-    $referenceRows = [];
     $seenNames = [];
 
     foreach ($this->loadRows('suppliers') as $r) {
@@ -385,7 +383,7 @@ class LightStoresCentrixImportCsvGenerator
       $seenNames[$key] = true;
 
       $legacyId = (int) ($r[0] ?? 0);
-      $row = $this->csvEscapeRow([
+      $rows[] = $this->csvEscapeRow([
         $name,
         $legacyId > 0 ? 'LS-'.$legacyId : '',
         $this->cleanText($r[4]),
@@ -398,15 +396,13 @@ class LightStoresCentrixImportCsvGenerator
         $this->cleanText($r[5]), // SPLR_ADDRS
         'true',
       ]);
-      $rows[] = $row;
-      $referenceRows[] = $this->csvEscapeRow(array_merge([(string) $r[0]], $row));
     }
 
-    return [$headers, $rows, $referenceHeaders, $referenceRows];
+    return [$headers, $rows];
   }
 
   /** @param  array<int, string>  $routeNames
-   * @return array{0: list<string>, 1: list<list<string>>, 2: list<string>, 3: list<list<string>>}
+   * @return array{0: list<string>, 1: list<list<string>>}
    */
   private function buildCustomers(array $routeNames): array
   {
@@ -416,13 +412,7 @@ class LightStoresCentrixImportCsvGenerator
       'route_name', 'branch_id', 'kra_pin', 'terms_of_payment', 'credit_limit',
       'latitude', 'longitude',
     ];
-    $referenceHeaders = [
-      'legacy_customer_num', 'customer_name', 'customer_type', 'legacy_phone_raw',
-      'import_phone', 'legacy_additional_phone_raw', 'import_additional_phone',
-      'legacy_route_id', 'route_name', 'import_notes',
-    ];
     $rows = [];
-    $referenceRows = [];
     $seenNums = [];
     $seenPhones = [];
 
@@ -463,14 +453,9 @@ class LightStoresCentrixImportCsvGenerator
       $rawAdditional = $this->cleanText($mapped['additional']);
       $phone = $this->normalizePhone($rawPhone);
       $additionalPhone = $this->normalizePhone($rawAdditional);
-      $notes = [];
 
-      if ($rawPhone !== '' && $phone === '') {
-        $notes[] = 'invalid primary phone cleared';
-      }
       if ($phone !== '') {
         if (isset($seenPhones[$phone])) {
-          $notes[] = "duplicate primary phone cleared ({$phone})";
           $phone = '';
         } else {
           $seenPhones[$phone] = true;
@@ -478,7 +463,6 @@ class LightStoresCentrixImportCsvGenerator
       }
       if ($additionalPhone !== '') {
         if (isset($seenPhones[$additionalPhone])) {
-          $notes[] = "duplicate additional phone cleared ({$additionalPhone})";
           $additionalPhone = '';
         } else {
           $seenPhones[$additionalPhone] = true;
@@ -492,17 +476,9 @@ class LightStoresCentrixImportCsvGenerator
         $routeName, '', $kraPin, $this->cleanText($mapped['terms']), $this->formatCreditLimit($mapped['credit_limit']),
         $this->formatCoordinate($mapped['lat']), $this->formatCoordinate($mapped['lng']),
       ]);
-
-      if ($notes !== [] || $num > 0) {
-        $referenceRows[] = $this->csvEscapeRow([
-          (string) $num, $name, $customerType, $rawPhone, $phone, $rawAdditional,
-          $additionalPhone, $routeId !== null ? (string) $routeId : '', $routeName,
-          implode('; ', $notes),
-        ]);
-      }
     }
 
-    return [$headers, $rows, $referenceHeaders, $referenceRows];
+    return [$headers, $rows];
   }
 
   /**
@@ -796,7 +772,7 @@ class LightStoresCentrixImportCsvGenerator
   {
     $ids = [];
     foreach ($this->loadRows('product') as $r) {
-      if (count($r) < 29 || $r[26] !== null) {
+      if (count($r) < 23 || ($r[20] ?? null) !== null) {
         continue;
       }
       $unitId = $r[8];
@@ -838,7 +814,7 @@ class LightStoresCentrixImportCsvGenerator
 8. `products-import.csv`
 9. `retail-packages-import.csv`
 
-Reference `reference-*.csv` files are for audit only — do not import them directly.
+Each file is ready for Centrix advanced data import on the matching catalog page (one entity at a time).
 MD;
   }
 
