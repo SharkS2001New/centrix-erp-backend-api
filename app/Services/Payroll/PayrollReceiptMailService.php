@@ -6,6 +6,7 @@ use App\Models\Employee;
 use App\Models\Organization;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
+use App\Services\Erp\GeneralSettingsResolver;
 use App\Services\Notifications\OrganizationMailSender;
 use Dompdf\Dompdf;
 use Dompdf\Options;
@@ -156,6 +157,17 @@ class PayrollReceiptMailService
         $employee = $line->employee;
         $period = $run->payPeriod;
         $orgName = e((string) ($organization->org_name ?? 'Organization'));
+        $general = GeneralSettingsResolver::forOrganization($organization);
+        $footer = trim((string) ($general['print_footer_payroll_receipt'] ?? $general['document_footer_text'] ?? ''));
+        $footerHtml = '';
+        if ($footer !== '') {
+            $footerLines = array_values(array_filter(array_map('trim', preg_split('/\r\n|\r|\n/', $footer) ?: [])));
+            if ($footerLines !== []) {
+                $footerHtml = '<div style="margin-top:14px;padding-top:10px;border-top:1px solid #cbd5e1;font-size:10px;color:#64748b;text-align:center;">'
+                    .implode('<br>', array_map(static fn ($line) => e($line), $footerLines))
+                    .'</div>';
+            }
+        }
         $periodLabel = e((string) (
             $period?->period_code
             ?: trim(($period?->period_start?->format('d M Y') ?? '').' – '.($period?->period_end?->format('d M Y') ?? ''))
@@ -241,6 +253,7 @@ class PayrollReceiptMailService
                 '.($code !== '' ? '<p class="muted" style="margin:2px 0 12px;">#'.$code.'</p>' : '<div style="height:12px;"></div>').'
                 <table>'.$rowHtml.'</table>
                 '.$paidNote.'
+                '.$footerHtml.'
             </div>
         </body></html>';
     }

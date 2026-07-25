@@ -28,14 +28,15 @@ class PrintAgentMsiService
         $ref = trim((string) $settings['github_ref']) ?: 'main';
         $workflow = trim((string) $settings['workflow_file']) ?: 'build-print-agent-msi.yml';
 
-        if ($token === '' || $repo === '') {
+        if ($token === '' || $repo === '' || ! PrintAgentMsiSettingsResolver::isValidGithubRepo($repo)) {
+            $described = PrintAgentMsiSettingsResolver::describe();
+            $missing = $described['effective']['missing'] ?? [];
+            $detail = $missing !== []
+                ? ' Missing: '.implode('; ', $missing).'.'
+                : '';
             throw new \RuntimeException(
-                'GitHub build is not configured. Set PRINT_AGENT_MSI_GITHUB_TOKEN on the API and the github repo (owner/name) in Print Agent MSI settings.',
+                'GitHub build is not configured.'.$detail.' Set the GitHub token and repo (owner/name) under Platform → Print Agent MSI.',
             );
-        }
-
-        if (! preg_match('#^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$#', $repo)) {
-            throw new \RuntimeException('GitHub repo must look like owner/repository.');
         }
 
         $r2 = BackupR2SettingsResolver::resolve();

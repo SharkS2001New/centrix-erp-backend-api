@@ -49,6 +49,11 @@ class GeneralSettingsResolver
             'header_scale' => 'large', 'header_weight' => 'semibold',
             'footer_scale' => 'standard', 'footer_weight' => 'semibold',
         ],
+        'payroll_receipt' => [
+            'family' => 'times', 'scale' => 'standard', 'size_px' => 12, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
         'report' => [
             'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
             'header_scale' => 'large', 'header_weight' => 'semibold',

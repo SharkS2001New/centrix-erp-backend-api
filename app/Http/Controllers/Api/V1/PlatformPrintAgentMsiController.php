@@ -43,6 +43,7 @@ class PlatformPrintAgentMsiController extends Controller
             'github_repo' => ['nullable', 'string', 'max:120'],
             'github_ref' => ['nullable', 'string', 'max:80'],
             'workflow_file' => ['nullable', 'string', 'max:120'],
+            'github_token' => ['nullable', 'string', 'max:255'],
         ]);
 
         return response()->json(PrintAgentMsiSettingsResolver::save($data));
