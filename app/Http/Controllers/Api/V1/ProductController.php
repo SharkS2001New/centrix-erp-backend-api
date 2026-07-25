@@ -13,10 +13,13 @@ use App\Services\Inventory\OpeningStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileProductListSettings;
+use App\Support\ReferentialIntegrityMessage;
 use App\Support\SqlLikeSearch;
+use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 class ProductController extends BaseResourceController
@@ -607,26 +610,76 @@ class ProductController extends BaseResourceController
 
     public function destroy(Request $request, string $id)
     {
-        $model = $this->findScopedProduct($request, $id);
+        // Include inactive (soft-deleted) rows — catalogue "Delete" on inactive
+        // previously 404'd because findScopedProduct excluded deleted_at.
+        $model = $this->findScopedProduct($request, $id, withTrashed: true);
 
-        if ($request->user()) {
-            $model->forceFill(['deleted_by' => $request->user()->id])->save();
+        try {
+            if ($model->trashed()) {
+                // Already inactive: permanently remove (matches "cannot be undone").
+                $this->purgeProductDependents($model);
+                $this->forceDeleteProductRow($model);
+            } else {
+                if ($request->user()) {
+                    $model->forceFill(['deleted_by' => $request->user()->id])->save();
+                }
+                $model->delete();
+            }
+        } catch (QueryException $e) {
+            $message = ReferentialIntegrityMessage::forDelete($e);
+            if ($message !== null) {
+                throw ValidationException::withMessages([
+                    'record' => [$message],
+                ]);
+            }
+
+            throw $e;
         }
-
-        $model->delete();
 
         return response()->json(null, 204);
     }
 
-    protected function findScopedProduct(Request $request, string $id): Product
+    protected function findScopedProduct(Request $request, string $id, bool $withTrashed = false): Product
     {
-        $query = Product::query()->where($this->routeKeyColumn(), $id)->whereNull('deleted_at');
+        $query = ($withTrashed ? Product::withTrashed() : Product::query())
+            ->where($this->routeKeyColumn(), $id);
+
+        if (! $withTrashed) {
+            $query->whereNull('deleted_at');
+        }
+
         $user = $request->user();
         if ($user) {
             $this->catalogScope->scopeForUser($query, $user, $request);
         }
 
         return $query->firstOrFail();
+    }
+
+    /**
+     * SoftDeletes uses product_code as the Eloquent key, but the DB primary key is id.
+     * Delete by id so we never touch another org's row that shares the same code.
+     */
+    protected function forceDeleteProductRow(Product $model): void
+    {
+        $rowId = $model->getAttribute('id');
+        if ($rowId) {
+            Product::withTrashed()->where('id', $rowId)->forceDelete();
+
+            return;
+        }
+
+        Product::withTrashed()
+            ->where('organization_id', $model->organization_id)
+            ->where($this->routeKeyColumn(), $model->product_code)
+            ->forceDelete();
+    }
+
+    protected function purgeProductDependents(Product $model): void
+    {
+        RetailPackageSetting::query()
+            ->where('product_code', $model->product_code)
+            ->delete();
     }
 
     protected function resolveProductForRequest(Request $request, string $id): Product

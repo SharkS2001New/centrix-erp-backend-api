@@ -9,6 +9,7 @@ use App\Models\Organization;
 use App\Models\PayPeriod;
 use App\Models\PayrollRun;
 use App\Models\Permission;
+use App\Models\PlatformSubscription;
 use App\Models\Role;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
@@ -19,6 +20,34 @@ use Tests\TestCase;
 class HrApprovalWorkflowTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $admin = User::where('username', 'admin')->first();
+        if ($admin) {
+            $this->ensureActiveSubscription($admin);
+        }
+    }
+
+    protected function ensureActiveSubscription(User $user): void
+    {
+        if (! $user->organization_id) {
+            return;
+        }
+
+        PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $user->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+    }
 
     protected function userWithPermissions(array $codes): User
     {
@@ -122,6 +151,8 @@ class HrApprovalWorkflowTest extends TestCase
             'advance_date' => now()->toDateString(),
             'amount' => 1500,
             'notes' => 'Field float',
+            // Client cannot skip approval by sending open.
+            'status' => 'open',
         ])->assertCreated()
             ->assertJsonPath('status', 'pending')
             ->json();
@@ -148,6 +179,43 @@ class HrApprovalWorkflowTest extends TestCase
             'open',
             EmployeeCashAdvance::query()->findOrFail($advance['id'])->status,
         );
+    }
+
+    public function test_cash_advance_assigns_line_manager_when_manager_has_approve_right(): void
+    {
+        $hrClerk = $this->userWithPermissions(['hr.manage']);
+        $managerUser = $this->userWithPermissions(['hr.cash_advances.approve']);
+        $employee = Employee::query()->firstOrFail();
+
+        $managerEmployee = $employee->replicate();
+        $managerEmployee->employee_code = 'MGR-CA-'.uniqid();
+        $managerEmployee->payroll_number = 'MGR-CA-'.uniqid();
+        $managerEmployee->first_name = 'Approve';
+        $managerEmployee->last_name = 'Manager';
+        $managerEmployee->full_name = 'Approve Manager';
+        $managerEmployee->user_id = $managerUser->id;
+        $managerEmployee->reports_to_employee_id = null;
+        $managerEmployee->save();
+
+        $employee->forceFill(['reports_to_employee_id' => $managerEmployee->id])->save();
+
+        Sanctum::actingAs($hrClerk);
+
+        $advance = $this->postJson('/api/v1/employee-cash-advances', [
+            'employee_id' => $employee->id,
+            'advance_date' => now()->toDateString(),
+            'amount' => 900,
+            'notes' => 'Assigned manager path',
+        ])->assertCreated()
+            ->assertJsonPath('status', 'pending')
+            ->json();
+
+        $this->assertDatabaseHas('action_requests', [
+            'type' => 'cash_advance',
+            'reference_id' => $advance['id'],
+            'assigned_to' => $managerUser->id,
+            'status' => 'pending',
+        ]);
     }
 
     public function test_payroll_run_with_approval_required_creates_action_request(): void

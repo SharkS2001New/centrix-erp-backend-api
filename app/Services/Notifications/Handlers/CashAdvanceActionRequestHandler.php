@@ -18,7 +18,7 @@ class CashAdvanceActionRequestHandler implements ActionRequestHandler
 
     public function canApprove(User $user, ActionRequest $request): bool
     {
-        return $this->advances->canApprove($user);
+        return $this->advances->canApprove($user, $request);
     }
 
     public function approve(ActionRequest $request, User $user): void

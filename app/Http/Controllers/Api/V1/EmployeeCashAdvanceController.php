@@ -70,17 +70,16 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
         // Always start with the full advanced amount outstanding (ignore stale client balance).
         $data['balance'] = $data['amount'];
         $data['repayment_mode'] = $data['repayment_mode'] ?? 'full_next_cycle';
-        if (! isset($data['status'])) {
-            $data['status'] = 'pending';
-        }
+        // New advances always require manager / approver sign-off before payroll.
+        $data['status'] = 'pending';
         $data = $this->normalizeRepayment($data);
 
         $advance = EmployeeCashAdvance::create($data)->load('employee');
-        if ($advance->status === 'pending' && $request->user()) {
+        if ($request->user()) {
             app(CashAdvanceApprovalService::class)->requestApproval($request->user(), $advance);
         }
 
-        return response()->json($this->advanceWithMeta($advance, $request->user()), 201);
+        return response()->json($this->advanceWithMeta($advance->fresh('employee'), $request->user()), 201);
     }
 
     protected function advanceWithMeta(EmployeeCashAdvance $advance, ?User $viewer): EmployeeCashAdvance
@@ -147,9 +146,20 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
     {
         $row = $this->findScoped($id);
         $data = $this->normalizeRepayment($this->validated($request, updating: true));
+
+        if (
+            array_key_exists('status', $data)
+            && $row->status === 'pending'
+            && ($data['status'] ?? null) === 'open'
+        ) {
+            throw ValidationException::withMessages([
+                'status' => ['Use Approve to open a pending cash advance — it cannot be set to open directly.'],
+            ]);
+        }
+
         $row->update($data);
 
-        return response()->json($row->fresh('employee'));
+        return response()->json($this->advanceWithMeta($row->fresh('employee'), $request->user()));
     }
 
     /** @param array<string, mixed> $data */

@@ -62,6 +62,7 @@ class OrganizationMailSender
         string $subject,
         string $body,
         bool $requireNotificationsEnabled = false,
+        array $attachments = [],
     ): bool {
         if (! filter_var($to, FILTER_VALIDATE_EMAIL)) {
             return false;
@@ -75,12 +76,21 @@ class OrganizationMailSender
         $mailer = $this->configureMailer($organization);
 
         try {
-            Mail::mailer($mailer)->raw($body, function ($message) use ($to, $subject, $from) {
+            Mail::mailer($mailer)->raw($body, function ($message) use ($to, $subject, $from, $attachments) {
                 $message->to($to)->subject($subject);
                 $message->from(
                     $from['address'],
                     $from['name'] !== '' ? $from['name'] : null,
                 );
+                foreach ($attachments as $attachment) {
+                    $data = $attachment['data'] ?? null;
+                    $name = (string) ($attachment['name'] ?? 'attachment');
+                    $mime = (string) ($attachment['mime'] ?? 'application/octet-stream');
+                    if (! is_string($data) || $data === '') {
+                        continue;
+                    }
+                    $message->attachData($data, $name, ['mime' => $mime]);
+                }
             });
 
             return true;

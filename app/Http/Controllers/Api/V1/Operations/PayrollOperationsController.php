@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Concerns\FindsOrganizationEmployee;
 use App\Http\Controllers\Controller;
 use App\Models\Employee;
+use App\Models\Organization;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
 use App\Services\Accounting\PayrollJournalService;
@@ -19,6 +20,7 @@ use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Services\Payroll\PayrollEarningsService;
 use App\Services\Payroll\PayrollAutoProcessService;
 use App\Services\Payroll\PayrollRunScheduleService;
+use App\Services\Payroll\PayrollReceiptMailService;
 use App\Services\Background\BackgroundTaskService;
 use App\Jobs\ProcessPayrollAutoJob;
 use App\Services\Notifications\ActionRequestService;
@@ -380,6 +382,110 @@ class PayrollOperationsController extends Controller
         ]);
 
         return response()->json($run->fresh(['payPeriod', 'paidByUser', 'approvedByUser']));
+    }
+
+    /** POST /payroll/runs/{runId}/email-receipts — email payslip PDF to each employee with an email */
+    public function emailReceipts(Request $request, string $runId)
+    {
+        $run = $this->findScopedPayrollRun($request, $runId, ['payPeriod', 'lines.employee']);
+        if (! in_array($run->status, ['processed', 'paid'], true)) {
+            return response()->json(['message' => 'Only processed or paid payroll runs can email receipts.'], 422);
+        }
+        if ($run->lines->isEmpty()) {
+            return response()->json(['message' => 'Payroll run has no lines to email.'], 422);
+        }
+
+        $organization = $request->user()?->organization;
+        if (! $organization) {
+            $organization = Organization::query()->find($run->organization_id);
+        }
+        if (! $organization) {
+            return response()->json(['message' => 'Organization not found.'], 422);
+        }
+
+        $result = app(PayrollReceiptMailService::class)->emailRun($run, $organization);
+        if ($result['sent'] === 0 && $result['failed'] === 0 && $result['skipped'] > 0) {
+            return response()->json([
+                'message' => 'No receipts sent — employees are missing email addresses.',
+                'sent' => $result['sent'],
+                'skipped' => $result['skipped'],
+                'failed' => $result['failed'],
+                'details' => $result['details'],
+            ], 422);
+        }
+        if ($result['sent'] === 0 && $result['failed'] > 0) {
+            return response()->json([
+                'message' => 'Could not send payroll receipts. Check Organization → Notifications → Email setup.',
+                'sent' => $result['sent'],
+                'skipped' => $result['skipped'],
+                'failed' => $result['failed'],
+                'details' => $result['details'],
+            ], 422);
+        }
+
+        $parts = ["Sent {$result['sent']}"];
+        if ($result['skipped'] > 0) {
+            $parts[] = "{$result['skipped']} skipped (no email)";
+        }
+        if ($result['failed'] > 0) {
+            $parts[] = "{$result['failed']} failed";
+        }
+
+        return response()->json([
+            'message' => implode(', ', $parts).'.',
+            'sent' => $result['sent'],
+            'skipped' => $result['skipped'],
+            'failed' => $result['failed'],
+            'details' => $result['details'],
+        ]);
+    }
+
+    /** POST /payroll/runs/{runId}/lines/{lineId}/email-receipt */
+    public function emailLineReceipt(Request $request, string $runId, string $lineId)
+    {
+        $run = $this->findScopedPayrollRun($request, $runId, ['payPeriod']);
+        if (! in_array($run->status, ['processed', 'paid'], true)) {
+            return response()->json(['message' => 'Only processed or paid payroll runs can email receipts.'], 422);
+        }
+
+        $line = PayrollLine::query()
+            ->where('payroll_run_id', $run->id)
+            ->whereKey((int) $lineId)
+            ->with('employee')
+            ->firstOrFail();
+
+        $data = $request->validate([
+            'to' => 'nullable|email',
+        ]);
+
+        $organization = $request->user()?->organization
+            ?? Organization::query()->find($run->organization_id);
+        if (! $organization) {
+            return response()->json(['message' => 'Organization not found.'], 422);
+        }
+
+        $result = app(PayrollReceiptMailService::class)->emailLine(
+            $run,
+            $line,
+            $organization,
+            $data['to'] ?? null,
+        );
+
+        if (! $result['sent']) {
+            return response()->json([
+                'message' => $result['skipped_reason'] ?? 'Could not send payroll receipt.',
+                'sent' => $result['sent'],
+                'to' => $result['to'],
+                'skipped_reason' => $result['skipped_reason'],
+            ], 422);
+        }
+
+        return response()->json([
+            'message' => 'Payroll receipt emailed to '.$result['to'].'.',
+            'sent' => $result['sent'],
+            'to' => $result['to'],
+            'skipped_reason' => $result['skipped_reason'],
+        ]);
     }
 
     protected function assertPayrollRunProcessable(PayrollRun $run, int $orgId): void

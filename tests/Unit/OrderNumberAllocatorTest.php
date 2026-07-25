@@ -56,6 +56,30 @@ class OrderNumberAllocatorTest extends TestCase
         );
     }
 
+    public function test_reserve_block_advances_watermark_ahead_of_sales(): void
+    {
+        $this->insertSaleRow([
+            'order_num' => 10,
+            'organization_id' => 99,
+        ]);
+
+        DB::table('sales_order_num_watermarks')->insert([
+            'organization_id' => 99,
+            'watermark' => 0,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        $allocator = app(OrderNumberAllocator::class);
+        $block = $allocator->reserveBlockForOrganization(99, 5);
+
+        $this->assertSame(11, $block['start']);
+        $this->assertSame(15, $block['end']);
+        $this->assertSame([11, 12, 13, 14, 15], $block['numbers']);
+        $this->assertSame(16, $allocator->peekNextForOrganization(99));
+        $this->assertSame(16, $allocator->nextForOrganization(99));
+    }
+
     /** @param  array<string, mixed>  $overrides */
     protected function insertSaleRow(array $overrides): void
     {

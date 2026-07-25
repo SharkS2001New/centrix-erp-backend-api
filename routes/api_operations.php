@@ -151,6 +151,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('carts/{cartId}/payment', [CartOperationsController::class, 'clearCartPayments']);
         Route::post('carts/{cartId}/checkout', [CheckoutController::class, 'fromCart']);
         Route::post('carts/{cartId}/checkout-quote', [CheckoutController::class, 'quoteFromCart']);
+        Route::post('order-numbers/reserve', [\App\Http\Controllers\Api\V1\Operations\OrderNumberReserveController::class, 'reserve']);
         Route::post('orders/{saleId}/restore-to-cart', [CartOperationsController::class, 'restoreHeldOrder']);
         Route::post('orders/{saleId}/cancel-held', [CartOperationsController::class, 'cancelHeldOrder']);
         Route::post('orders/{saleId}/cancel', [CartOperationsController::class, 'cancelOrder']);
@@ -311,6 +312,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('runs/{runId}/approve', [PayrollOperationsController::class, 'approveRun']);
             Route::post('runs/{runId}/reject', [PayrollOperationsController::class, 'rejectRun']);
             Route::post('runs/{runId}/mark-paid', [PayrollOperationsController::class, 'markPaidRun']);
+        });
+        Route::middleware('erp.permission:hr.manage|hr.payroll.create|hr.payroll.view')->group(function () {
+            Route::post('runs/{runId}/email-receipts', [PayrollOperationsController::class, 'emailReceipts']);
+            Route::post('runs/{runId}/lines/{lineId}/email-receipt', [PayrollOperationsController::class, 'emailLineReceipt']);
         });
     });
 
