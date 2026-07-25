@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\ActionRequest;
 use App\Models\Employee;
 use App\Models\EmployeeCashAdvance;
 use App\Models\User;
@@ -85,6 +86,7 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
     protected function advanceWithMeta(EmployeeCashAdvance $advance, ?User $viewer): EmployeeCashAdvance
     {
         $advance->setAttribute('next_deduction_amount', $advance->payrollDeductionAmount());
+        $this->attachVoucherPartyNames($advance, $viewer);
 
         if ($viewer && $advance->status === 'pending') {
             $advance->setAttribute(
@@ -99,6 +101,46 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
         }
 
         return $advance;
+    }
+
+    /** Prefill print voucher: HR requester + manager approver from the action request. */
+    protected function attachVoucherPartyNames(EmployeeCashAdvance $advance, ?User $viewer): void
+    {
+        $query = ActionRequest::query()
+            ->where('type', 'cash_advance')
+            ->where('reference_type', 'employee_cash_advance')
+            ->where('reference_id', (int) $advance->id)
+            ->orderByDesc('id');
+
+        if ($viewer?->organization_id) {
+            $query->where('organization_id', (int) $viewer->organization_id);
+        } elseif ($advance->organization_id) {
+            $query->where('organization_id', (int) $advance->organization_id);
+        }
+
+        $action = $query->first();
+        if (! $action) {
+            return;
+        }
+
+        $requester = User::query()->find($action->requested_by);
+        if ($requester) {
+            $advance->setAttribute(
+                'prepared_by_name',
+                trim((string) ($requester->full_name ?: $requester->username)) ?: null,
+            );
+        }
+
+        $approverId = $action->resolved_by ?: $action->assigned_to;
+        if ($approverId) {
+            $approver = User::query()->find($approverId);
+            if ($approver) {
+                $advance->setAttribute(
+                    'approved_by_name',
+                    trim((string) ($approver->full_name ?: $approver->username)) ?: null,
+                );
+            }
+        }
     }
 
     /** POST /employee-cash-advances/{id}/approve */
@@ -120,7 +162,7 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             request()->user(),
         );
 
-        return response()->json($row->fresh('employee'));
+        return response()->json($this->advanceWithMeta($row->fresh('employee'), request()->user()));
     }
 
     /** POST /employee-cash-advances/{id}/reject */
@@ -139,7 +181,7 @@ class EmployeeCashAdvanceController extends HrOrgResourceController
             request()->user(),
         );
 
-        return response()->json($row->fresh('employee'));
+        return response()->json($this->advanceWithMeta($row->fresh('employee'), request()->user()));
     }
 
     public function update(Request $request, string $id)

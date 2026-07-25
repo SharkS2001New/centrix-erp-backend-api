@@ -6,15 +6,17 @@ use App\Jobs\Concerns\ProcessesImportRowOutcomes;
 use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
+use App\Models\Branch;
 use App\Models\Product;
-use App\Services\Inventory\OpeningStockService;
 use App\Models\SubCategory;
 use App\Models\Supplier;
 use App\Models\Uom;
 use App\Models\User;
 use App\Models\Vat;
-use Illuminate\Support\Facades\DB;
+use App\Services\Auth\UserAccessService;
 use App\Services\Background\BackgroundTaskService;
+use App\Services\Catalog\ProductCatalogScopeService;
+use App\Services\Inventory\OpeningStockService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
@@ -32,8 +34,11 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
         public string $taskId,
     ) {}
 
-    public function handle(BackgroundTaskService $tasks): void
-    {
+    public function handle(
+        BackgroundTaskService $tasks,
+        ProductCatalogScopeService $catalogScope,
+        UserAccessService $access,
+    ): void {
         $task = BackgroundTask::query()->find($this->taskId);
         if ($this->shouldSkipBackgroundTask($task)) {
             return;
@@ -58,6 +63,7 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
             $failures = [];
             $total = count($rows);
             $seenCodes = [];
+            $seenNames = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -76,27 +82,41 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
                         );
                     }
 
-                    if (empty($body['product_code'])) {
-                        $body['product_code'] = Product::generateNextProductCode($organizationId);
+                    $body = $this->applyCatalogScope($body, $row, $user, $organizationId, $catalogScope, $access);
+                    $catalogBranchId = isset($body['branch_id']) ? (int) $body['branch_id'] : null;
+                    if ($catalogBranchId !== null && $catalogBranchId <= 0) {
+                        $catalogBranchId = null;
+                        $body['branch_id'] = null;
                     }
 
-                    $codeKey = strtolower(trim((string) $body['product_code']));
-                    if ($codeKey !== '') {
-                        if (isset($seenCodes[$codeKey])) {
-                            $skipped++;
+                    $codeKey = strtolower(trim((string) ($body['product_code'] ?? '')));
+                    $nameKey = strtolower(trim((string) $body['product_name']));
+                    $nameScopeKey = $nameKey.'|'.($catalogBranchId ?? 'org');
 
-                            continue;
-                        }
+                    if ($codeKey !== '' && isset($seenCodes[$codeKey])) {
+                        $skipped++;
 
-                        if (Product::query()
-                            ->where('organization_id', $organizationId)
-                            ->whereRaw('LOWER(TRIM(product_code)) = ?', [$codeKey])
-                            ->exists()) {
+                        continue;
+                    }
+                    if (isset($seenNames[$nameScopeKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if ($this->productAlreadyExists($organizationId, $codeKey, $nameKey, $catalogBranchId)) {
+                        if ($codeKey !== '') {
                             $seenCodes[$codeKey] = true;
-                            $skipped++;
-
-                            continue;
                         }
+                        $seenNames[$nameScopeKey] = true;
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if ($codeKey === '') {
+                        $body['product_code'] = Product::generateNextProductCode($organizationId);
+                        $codeKey = strtolower(trim((string) $body['product_code']));
                     }
 
                     $body['organization_id'] = $organizationId;
@@ -105,7 +125,7 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
                     unset($body['stock_in_shop'], $body['stock_in_store']);
                     $openingShop = (float) ($row['stock_in_shop'] ?? 0);
                     $openingStore = (float) ($row['stock_in_store'] ?? 0);
-                    $openingBranchId = $this->resolveOpeningBranchId($row, $user, $organizationId);
+                    $openingBranchId = $this->resolveOpeningBranchId($row, $user, $organizationId, $access, $catalogBranchId);
 
                     $product = Product::create($body);
                     if ($openingBranchId > 0 && ($openingShop > 0 || $openingStore > 0)) {
@@ -118,6 +138,7 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
                     if ($codeKey !== '') {
                         $seenCodes[$codeKey] = true;
                     }
+                    $seenNames[$nameScopeKey] = true;
                     $created++;
                 } catch (\Throwable $e) {
                     if ($this->shouldSkipDuplicateImport($e)) {
@@ -140,6 +161,78 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
         } catch (\Throwable $e) {
             $this->failImportTask($tasks, $task, $e, 'ImportProductsJob');
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    protected function applyCatalogScope(
+        array $body,
+        array $row,
+        User $user,
+        int $organizationId,
+        ProductCatalogScopeService $catalogScope,
+        UserAccessService $access,
+    ): array {
+        $catalogScopeValue = strtolower(trim((string) ($row['catalog_scope'] ?? '')));
+        $rowBranchId = (int) ($row['branch_id'] ?? 0);
+        $limitedBranch = $access->branchId($user);
+
+        if ($limitedBranch !== null) {
+            $catalogScopeValue = 'branch';
+            $rowBranchId = $limitedBranch;
+        } elseif ($rowBranchId > 0 && $catalogScopeValue === '') {
+            $catalogScopeValue = 'branch';
+        } elseif ($catalogScopeValue === '') {
+            $catalogScopeValue = 'organization';
+        }
+
+        $scoped = $catalogScope->normalizeWriteData($user, [
+            'organization_id' => $organizationId,
+            'catalog_scope' => $catalogScopeValue,
+            'branch_id' => $rowBranchId > 0 ? $rowBranchId : null,
+        ]);
+
+        $body['branch_id'] = $scoped['branch_id'] ?? null;
+
+        return $body;
+    }
+
+    protected function productAlreadyExists(
+        int $organizationId,
+        string $codeKey,
+        string $nameKey,
+        ?int $catalogBranchId,
+    ): bool {
+        if ($codeKey !== '') {
+            $byCode = Product::query()
+                ->where('organization_id', $organizationId)
+                ->whereRaw('LOWER(TRIM(product_code)) = ?', [$codeKey])
+                ->exists();
+            if ($byCode) {
+                return true;
+            }
+        }
+
+        if ($nameKey === '') {
+            return false;
+        }
+
+        $byName = Product::query()
+            ->where('organization_id', $organizationId)
+            ->whereRaw('LOWER(TRIM(product_name)) = ?', [$nameKey]);
+
+        if ($catalogBranchId !== null) {
+            // Branch catalog: skip if org-wide or same-branch product already uses this name.
+            $byName->where(function ($query) use ($catalogBranchId) {
+                $query->whereNull('branch_id')
+                    ->orWhere('branch_id', $catalogBranchId);
+            });
+        }
+
+        return $byName->exists();
     }
 
     /** @param array<string, mixed> $row
@@ -183,21 +276,54 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
     }
 
     /** @param  array<string, mixed>  $row */
-    protected function resolveOpeningBranchId(array $row, User $user, int $organizationId): int
-    {
-        $fromRow = (int) ($row['branch_id'] ?? 0);
+    protected function resolveOpeningBranchId(
+        array $row,
+        User $user,
+        int $organizationId,
+        UserAccessService $access,
+        ?int $catalogBranchId,
+    ): int {
+        $limitedBranch = $access->branchId($user);
+        if ($limitedBranch !== null) {
+            return $limitedBranch;
+        }
+
+        $fromRow = (int) ($row['opening_branch_id'] ?? $row['branch_id'] ?? 0);
         if ($fromRow > 0) {
+            $this->assertBranchInOrganization($organizationId, $fromRow);
+
             return $fromRow;
         }
 
-        if ($user->branch_id) {
-            return (int) $user->branch_id;
+        if ($catalogBranchId !== null && $catalogBranchId > 0) {
+            return $catalogBranchId;
         }
 
-        return (int) (DB::table('branches')
+        if ($user->branch_id) {
+            $branchId = (int) $user->branch_id;
+            $this->assertBranchInOrganization($organizationId, $branchId);
+
+            return $branchId;
+        }
+
+        return (int) (Branch::query()
             ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->orderByRaw("CASE WHEN branch_code = 'HQ' THEN 0 ELSE 1 END")
             ->orderBy('id')
             ->value('id') ?? 0);
+    }
+
+    protected function assertBranchInOrganization(int $organizationId, int $branchId): void
+    {
+        $exists = Branch::query()
+            ->where('organization_id', $organizationId)
+            ->where('id', $branchId)
+            ->exists();
+
+        if (! $exists) {
+            throw new \InvalidArgumentException('branch_id does not belong to this organization.');
+        }
     }
 
     /** @param  array<string, mixed>  $body
@@ -252,6 +378,17 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
                 if ($vat !== null) {
                     $body['vat_id'] = (int) $vat->id;
                 }
+            }
+        }
+
+        if (empty($body['vat_id'])) {
+            $defaultVatId = Vat::query()
+                ->where('organization_id', $organizationId)
+                ->where('is_active', true)
+                ->orderBy('id')
+                ->value('id');
+            if ($defaultVatId) {
+                $body['vat_id'] = (int) $defaultVatId;
             }
         }
 

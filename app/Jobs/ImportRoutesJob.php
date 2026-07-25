@@ -46,7 +46,7 @@ class ImportRoutesJob implements ShouldBeUnique, ShouldQueue
             if ($organizationId <= 0) {
                 throw new \RuntimeException('Route import requires an organization context.');
             }
-            $branchId = $this->headOfficeBranchId($organizationId) ?? (int) $user->branch_id;
+            $defaultBranchId = $this->resolveRouteBranchId($user, $organizationId);
 
             $rows = $this->importRowsFromTask($task);
             if ($rows === []) {
@@ -74,7 +74,14 @@ class ImportRoutesJob implements ShouldBeUnique, ShouldQueue
                         throw new \InvalidArgumentException('route_name is required.');
                     }
 
-                    $nameKey = strtolower($routeName);
+                    $branchId = (int) ($row['branch_id'] ?? 0);
+                    if ($branchId > 0) {
+                        $this->assertBranchInOrganization($organizationId, $branchId);
+                    } else {
+                        $branchId = $defaultBranchId;
+                    }
+
+                    $nameKey = strtolower($routeName).'|'.$branchId;
                     if (isset($seenNames[$nameKey])) {
                         $skipped++;
 
@@ -83,7 +90,26 @@ class ImportRoutesJob implements ShouldBeUnique, ShouldQueue
 
                     if (RouteModel::query()
                         ->where('organization_id', $organizationId)
-                        ->whereRaw('LOWER(TRIM(route_name)) = ?', [$nameKey])
+                        ->where(function ($query) use ($branchId) {
+                            if ($branchId > 0) {
+                                $query->where('branch_id', $branchId);
+                            } else {
+                                $query->whereNull('branch_id');
+                            }
+                        })
+                        ->whereRaw('LOWER(TRIM(route_name)) = ?', [strtolower($routeName)])
+                        ->exists()) {
+                        $seenNames[$nameKey] = true;
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    // Org-wide unique on route_name still applies in DB for some tenants —
+                    // also skip if same name already exists anywhere in the org.
+                    if (RouteModel::query()
+                        ->where('organization_id', $organizationId)
+                        ->whereRaw('LOWER(TRIM(route_name)) = ?', [strtolower($routeName)])
                         ->exists()) {
                         $seenNames[$nameKey] = true;
                         $skipped++;
@@ -135,6 +161,33 @@ class ImportRoutesJob implements ShouldBeUnique, ShouldQueue
         $normalized = strtolower(trim((string) $value));
 
         return in_array($normalized, ['1', 'true', 'yes', 'y'], true);
+    }
+
+    protected function resolveRouteBranchId(User $user, int $organizationId): int
+    {
+        if (! empty($user->branch_id)) {
+            $branchId = (int) $user->branch_id;
+            if ($this->branchBelongsToOrganization($organizationId, $branchId)) {
+                return $branchId;
+            }
+        }
+
+        return $this->headOfficeBranchId($organizationId) ?? 0;
+    }
+
+    protected function assertBranchInOrganization(int $organizationId, int $branchId): void
+    {
+        if (! $this->branchBelongsToOrganization($organizationId, $branchId)) {
+            throw new \InvalidArgumentException('branch_id does not belong to this organization.');
+        }
+    }
+
+    protected function branchBelongsToOrganization(int $organizationId, int $branchId): bool
+    {
+        return Branch::query()
+            ->where('organization_id', $organizationId)
+            ->where('id', $branchId)
+            ->exists();
     }
 
     protected function headOfficeBranchId(int $organizationId): ?int

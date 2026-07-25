@@ -338,16 +338,20 @@ class PlatformMailboxService
             $criteria = $this->imapSearchCriteria($account);
             // Prefer stable UIDs (SE_UID). Sequence numbers drift as messages are deleted.
             $emails = @imap_search($inbox, $criteria, SE_UID) ?: [];
+            $this->clearImapErrors();
             // Fallback if Gmail category search is unsupported on this server build.
             if ($emails === [] && str_starts_with($criteria, 'X-GM-RAW')) {
                 $emails = @imap_search($inbox, 'ALL', SE_UID) ?: [];
+                $this->clearImapErrors();
             }
             // Legacy servers that ignore SE_UID still return sequence numbers — flag as such.
             $usingUids = $emails !== [];
             if ($emails === []) {
                 $emails = @imap_search($inbox, $criteria) ?: [];
+                $this->clearImapErrors();
                 if ($emails === [] && str_starts_with($criteria, 'X-GM-RAW')) {
                     $emails = @imap_search($inbox, 'ALL') ?: [];
+                    $this->clearImapErrors();
                 }
                 $usingUids = false;
             }
@@ -417,7 +421,8 @@ class PlatformMailboxService
                 $imported++;
             }
         } finally {
-            imap_close($inbox);
+            $this->clearImapErrors();
+            @imap_close($inbox);
         }
 
         return [
@@ -492,28 +497,28 @@ class PlatformMailboxService
             $preferUid = ($meta['imap_uid_mode'] ?? '') === 'uid';
             $seq = null;
             $useUid = false;
-            $messageId = trim((string) ($message->message_id ?? ''));
 
-            if ($messageId !== '' && ! str_ends_with($messageId, '@local')) {
-                $needle = trim($messageId, " \t<>");
-                $found = @imap_search($inbox, 'HEADER Message-ID "'.$needle.'"')
-                    ?: @imap_search($inbox, 'HEADER Message-ID "<'.$needle.'>"')
-                    ?: [];
-                if ($found) {
-                    $seq = (int) $found[0];
-                    $useUid = false;
-                }
-            }
-
-            if ($seq === null && trim((string) ($message->imap_uid ?? '')) !== '') {
+            // Prefer stored UID/sequence — HEADER Message-ID search is unsupported on some
+            // IMAP servers and can leave a deferred ErrorException on request shutdown.
+            if (trim((string) ($message->imap_uid ?? '')) !== '') {
                 $candidate = (int) $message->imap_uid;
                 foreach ($preferUid ? [true, false] : [false, true] as $tryUid) {
                     $probe = @imap_fetchstructure($inbox, $candidate, $tryUid ? FT_UID : 0);
+                    $this->clearImapErrors();
                     if ($probe) {
                         $seq = $candidate;
                         $useUid = $tryUid;
                         break;
                     }
+                }
+            }
+
+            $messageId = trim((string) ($message->message_id ?? ''));
+            if ($seq === null && $messageId !== '' && ! str_ends_with($messageId, '@local')) {
+                $found = $this->imapSearchByMessageId($inbox, $messageId);
+                if ($found !== []) {
+                    $seq = (int) $found[0];
+                    $useUid = false;
                 }
             }
 
@@ -526,6 +531,7 @@ class PlatformMailboxService
             }
 
             $structure = @imap_fetchstructure($inbox, $seq, $useUid ? FT_UID : 0);
+            $this->clearImapErrors();
             $body = $this->getBody($inbox, $seq, $structure, $useUid);
 
             return [
@@ -536,7 +542,8 @@ class PlatformMailboxService
                     : 'IMAP message found but body parts were empty.',
             ];
         } finally {
-            imap_close($inbox);
+            $this->clearImapErrors();
+            @imap_close($inbox);
         }
     }
 
@@ -640,33 +647,35 @@ class PlatformMailboxService
 
         try {
             $deleted = false;
+            $meta = is_array($message->meta) ? $message->meta : [];
+            $preferUid = ($meta['imap_uid_mode'] ?? '') === 'uid';
+
+            // Prefer stored UID/sequence first — HEADER search is not supported on every IMAP host.
+            if ($imapUid !== '') {
+                foreach ($preferUid ? [true, false] : [false, true] as $tryUid) {
+                    if (@imap_delete($inbox, $imapUid, $tryUid ? FT_UID : 0)) {
+                        $this->clearImapErrors();
+                        $deleted = true;
+                        break;
+                    }
+                    $this->clearImapErrors();
+                }
+            }
+
             $messageId = trim((string) ($message->message_id ?? ''));
-            // Prefer Message-ID lookup — stored imap_uid values are sequence numbers and can drift.
-            if ($messageId !== '' && ! str_ends_with($messageId, '@local')) {
-                $needle = trim($messageId, " \t<>");
-                $found = @imap_search($inbox, 'HEADER Message-ID "'.$needle.'"')
-                    ?: @imap_search($inbox, 'HEADER Message-ID "<'.$needle.'>"')
-                    ?: [];
+            if (! $deleted && $messageId !== '' && ! str_ends_with($messageId, '@local')) {
+                $found = $this->imapSearchByMessageId($inbox, $messageId);
                 foreach ($found as $seq) {
                     if (@imap_delete($inbox, (string) $seq)) {
                         $deleted = true;
                     }
                 }
-            }
-
-            if (! $deleted && $imapUid !== '') {
-                $meta = is_array($message->meta) ? $message->meta : [];
-                $preferUid = ($meta['imap_uid_mode'] ?? '') === 'uid';
-                foreach ($preferUid ? [true, false] : [false, true] as $tryUid) {
-                    if (@imap_delete($inbox, $imapUid, $tryUid ? FT_UID : 0)) {
-                        $deleted = true;
-                        break;
-                    }
-                }
+                $this->clearImapErrors();
             }
 
             if ($deleted) {
                 @imap_expunge($inbox);
+                $this->clearImapErrors();
             }
 
             return [
@@ -677,8 +686,83 @@ class PlatformMailboxService
                     : ('Local delete succeeded; remote delete failed: '.(imap_last_error() ?: 'unknown error')),
             ];
         } finally {
-            imap_close($inbox);
+            $this->clearImapErrors();
+            @imap_close($inbox);
         }
+    }
+
+    /** Drain PHP IMAP error/alert queues so failed searches cannot 500 on request shutdown. */
+    protected function clearImapErrors(): void
+    {
+        if (! function_exists('imap_errors')) {
+            return;
+        }
+        @imap_errors();
+        @imap_alerts();
+    }
+
+    /**
+     * Locate a message by Message-ID when the IMAP server supports HEADER search.
+     * Always clears IMAP errors — some hosts reject HEADER and queue a deferred warning.
+     *
+     * @return list<int|string>
+     */
+    protected function imapSearchByMessageId($inbox, string $messageId): array
+    {
+        $needle = trim($messageId, " \t<>");
+        if ($needle === '' || ! $inbox) {
+            return [];
+        }
+
+        $this->clearImapErrors();
+
+        $criteriaList = [
+            'HEADER Message-ID "'.$needle.'"',
+            'HEADER Message-ID "<'.$needle.'>"',
+            'HEADER Message-ID '.$needle,
+            'HEADER Message-ID <'.$needle.'>',
+        ];
+
+        foreach ($criteriaList as $criteria) {
+            $found = @imap_search($inbox, $criteria);
+            $errors = function_exists('imap_errors') ? (@imap_errors() ?: []) : [];
+            @imap_alerts();
+
+            if ($this->imapErrorsIndicateUnsupportedHeaderSearch($errors)) {
+                // Do not retry other HEADER variants on this connection.
+                $this->clearImapErrors();
+
+                return [];
+            }
+
+            if (is_array($found) && $found !== []) {
+                $this->clearImapErrors();
+
+                return array_values($found);
+            }
+        }
+
+        $this->clearImapErrors();
+
+        return [];
+    }
+
+    /**
+     * @param  list<string>|array<int, string>  $errors
+     */
+    protected function imapErrorsIndicateUnsupportedHeaderSearch(array $errors): bool
+    {
+        foreach ($errors as $err) {
+            $text = (string) $err;
+            if (stripos($text, 'Unknown search criterion: HEADER') !== false) {
+                return true;
+            }
+            if (stripos($text, 'Unknown search criterion') !== false && stripos($text, 'HEADER') !== false) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /**

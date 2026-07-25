@@ -52,6 +52,7 @@ class ImportSuppliersJob implements ShouldBeUnique, ShouldQueue
             $failures = [];
             $total = count($rows);
             $seenCodes = [];
+            $seenNames = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -64,23 +65,31 @@ class ImportSuppliersJob implements ShouldBeUnique, ShouldQueue
 
                 try {
                     $providedCode = trim((string) ($row['supplier_code'] ?? ''));
-                    if ($providedCode !== '') {
-                        $codeKey = strtolower($providedCode);
-                        if (isset($seenCodes[$codeKey])) {
-                            $skipped++;
+                    $providedName = trim((string) ($row['supplier_name'] ?? ''));
+                    $codeKey = $providedCode !== '' ? strtolower($providedCode) : '';
+                    $nameKey = $providedName !== '' ? strtolower($providedName) : '';
 
-                            continue;
-                        }
+                    if ($codeKey !== '' && isset($seenCodes[$codeKey])) {
+                        $skipped++;
 
-                        if (Supplier::query()
-                            ->where('organization_id', $organizationId)
-                            ->whereRaw('LOWER(TRIM(supplier_code)) = ?', [$codeKey])
-                            ->exists()) {
+                        continue;
+                    }
+                    if ($nameKey !== '' && isset($seenNames[$nameKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if ($this->supplierAlreadyExists($organizationId, $codeKey, $nameKey)) {
+                        if ($codeKey !== '') {
                             $seenCodes[$codeKey] = true;
-                            $skipped++;
-
-                            continue;
                         }
+                        if ($nameKey !== '') {
+                            $seenNames[$nameKey] = true;
+                        }
+                        $skipped++;
+
+                        continue;
                     }
 
                     $body = $this->normalizeRow($row, $organizationId);
@@ -92,9 +101,10 @@ class ImportSuppliersJob implements ShouldBeUnique, ShouldQueue
                     $body['created_by'] = (int) $user->id;
 
                     Supplier::create($body);
-                    if ($providedCode !== '') {
-                        $seenCodes[strtolower($providedCode)] = true;
+                    if ($codeKey !== '') {
+                        $seenCodes[$codeKey] = true;
                     }
+                    $seenNames[strtolower($body['supplier_name'])] = true;
                     $created++;
                 } catch (\Throwable $e) {
                     if ($this->shouldSkipDuplicateImport($e)) {
@@ -117,6 +127,28 @@ class ImportSuppliersJob implements ShouldBeUnique, ShouldQueue
         } catch (\Throwable $e) {
             $this->failImportTask($tasks, $task, $e, 'ImportSuppliersJob');
         }
+    }
+
+    protected function supplierAlreadyExists(int $organizationId, string $codeKey, string $nameKey): bool
+    {
+        if ($codeKey !== '') {
+            $byCode = Supplier::query()
+                ->where('organization_id', $organizationId)
+                ->whereRaw('LOWER(TRIM(supplier_code)) = ?', [$codeKey])
+                ->exists();
+            if ($byCode) {
+                return true;
+            }
+        }
+
+        if ($nameKey === '') {
+            return false;
+        }
+
+        return Supplier::query()
+            ->where('organization_id', $organizationId)
+            ->whereRaw('LOWER(TRIM(supplier_name)) = ?', [$nameKey])
+            ->exists();
     }
 
     /** @return array<string, mixed> */

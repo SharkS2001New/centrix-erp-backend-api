@@ -49,11 +49,14 @@ class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
             }
 
             $organizationId = $this->importOrganizationId($task, $user);
+            $defaultBranchId = $this->resolveDefaultBranchId($user, $organizationId);
             $created = 0;
             $skipped = 0;
             $failures = [];
             $total = count($rows);
             $seenCodes = [];
+            $seenNationalIds = [];
+            $seenNames = [];
 
             foreach ($rows as $index => $row) {
                 if (($index + 1) % 5 === 0) {
@@ -82,26 +85,53 @@ class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
                         $body['branch_id'] = $limitedBranch;
                     } elseif (! empty($body['branch_id'])) {
                         $access->assertBranchInOrganization($user, (int) $body['branch_id']);
+                    } elseif ($defaultBranchId > 0) {
+                        $body['branch_id'] = $defaultBranchId;
                     }
 
-                    $providedCode = trim((string) ($row['employee_code'] ?? ''));
-                    if ($providedCode !== '') {
-                        $codeKey = strtolower($providedCode);
-                        if (isset($seenCodes[$codeKey])) {
-                            $skipped++;
+                    if (empty($body['branch_id'])) {
+                        throw new \InvalidArgumentException('Employee import requires a branch in this organization.');
+                    }
 
-                            continue;
-                        }
+                    $branchId = (int) $body['branch_id'];
+                    $providedCode = trim((string) ($row['employee_code'] ?? $body['employee_code'] ?? ''));
+                    $nationalId = trim((string) ($body['national_id'] ?? ''));
+                    $fullName = strtolower(trim(Employee::composeFullName(
+                        $body['first_name'],
+                        $body['middle_name'] ?? null,
+                        $body['last_name'],
+                    )));
+                    $codeKey = $providedCode !== '' ? strtolower($providedCode) : '';
+                    $nationalKey = $nationalId !== '' ? strtolower($nationalId) : '';
+                    $nameKey = $fullName.'|'.$branchId;
 
-                        if (Employee::query()
-                            ->where('organization_id', $organizationId)
-                            ->whereRaw('LOWER(TRIM(employee_code)) = ?', [$codeKey])
-                            ->exists()) {
+                    if ($codeKey !== '' && isset($seenCodes[$codeKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+                    if ($nationalKey !== '' && isset($seenNationalIds[$nationalKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+                    if (isset($seenNames[$nameKey])) {
+                        $skipped++;
+
+                        continue;
+                    }
+
+                    if ($this->employeeAlreadyExists($organizationId, $branchId, $codeKey, $nationalKey, $fullName)) {
+                        if ($codeKey !== '') {
                             $seenCodes[$codeKey] = true;
-                            $skipped++;
-
-                            continue;
                         }
+                        if ($nationalKey !== '') {
+                            $seenNationalIds[$nationalKey] = true;
+                        }
+                        $seenNames[$nameKey] = true;
+                        $skipped++;
+
+                        continue;
                     }
 
                     $body['organization_id'] = $organizationId;
@@ -122,9 +152,13 @@ class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
                         Employee::create($body);
                     });
 
-                    if ($providedCode !== '') {
-                        $seenCodes[strtolower($providedCode)] = true;
+                    if ($codeKey !== '') {
+                        $seenCodes[$codeKey] = true;
                     }
+                    if ($nationalKey !== '') {
+                        $seenNationalIds[$nationalKey] = true;
+                    }
+                    $seenNames[$nameKey] = true;
                     $created++;
                 } catch (\Throwable $e) {
                     if ($this->shouldSkipDuplicateImport($e)) {
@@ -149,6 +183,63 @@ class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
         }
     }
 
+    protected function resolveDefaultBranchId(User $user, int $organizationId): int
+    {
+        $access = app(\App\Services\Auth\UserAccessService::class);
+        $limitedBranch = $access->branchId($user);
+        if ($limitedBranch !== null) {
+            return $limitedBranch;
+        }
+
+        if (! empty($user->branch_id)) {
+            return (int) $user->branch_id;
+        }
+
+        return (int) (DB::table('branches')
+            ->where('organization_id', $organizationId)
+            ->orderByRaw("CASE WHEN branch_code = 'HQ' THEN 0 ELSE 1 END")
+            ->orderBy('id')
+            ->value('id') ?? 0);
+    }
+
+    protected function employeeAlreadyExists(
+        int $organizationId,
+        int $branchId,
+        string $codeKey,
+        string $nationalKey,
+        string $fullName,
+    ): bool {
+        if ($codeKey !== '') {
+            $byCode = Employee::query()
+                ->where('organization_id', $organizationId)
+                ->whereRaw('LOWER(TRIM(employee_code)) = ?', [$codeKey])
+                ->exists();
+            if ($byCode) {
+                return true;
+            }
+        }
+
+        if ($nationalKey !== '') {
+            $byNationalId = Employee::query()
+                ->where('organization_id', $organizationId)
+                ->whereRaw('LOWER(TRIM(national_id)) = ?', [$nationalKey])
+                ->exists();
+            if ($byNationalId) {
+                return true;
+            }
+        }
+
+        if ($fullName === '') {
+            return false;
+        }
+
+        return Employee::query()
+            ->where('organization_id', $organizationId)
+            ->where('branch_id', $branchId)
+            ->whereRaw('LOWER(TRIM(full_name)) = ?', [$fullName])
+            ->exists();
+    }
+
     /** @return array<string, mixed> */
     protected function normalizeRow(array $row, int $organizationId): array
     {
@@ -168,6 +259,7 @@ class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
             'phone',
             'alt_phone',
             'job_title',
+            'national_id',
             'kra_pin',
             'nssf_number',
             'sha_number',

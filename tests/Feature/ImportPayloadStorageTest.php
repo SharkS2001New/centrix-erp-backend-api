@@ -5,7 +5,6 @@ namespace Tests\Feature;
 use App\Jobs\ImportCustomersJob;
 use App\Models\BackgroundTask;
 use App\Models\User;
-use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\ImportPayloadStorage;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -31,12 +30,16 @@ class ImportPayloadStorageTest extends TestCase
     public function test_large_import_rows_are_stored_on_disk_and_loaded_by_job(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
+        $route = \App\Models\RouteModel::query()
+            ->where('organization_id', (int) $admin->organization_id)
+            ->firstOrFail();
         $rows = [];
         for ($i = 1; $i <= 250; $i++) {
             $rows[] = [
                 'customer_name' => "Bulk Customer {$i}",
-                'customer_type' => 'debtor',
+                'customer_type' => 'route',
                 'phone_number' => '0712'.str_pad((string) $i, 6, '0', STR_PAD_LEFT),
+                'route_id' => $route->id,
             ];
         }
 
@@ -52,11 +55,7 @@ class ImportPayloadStorageTest extends TestCase
         );
 
         $job = new ImportCustomersJob($task->id);
-        $job->handle(
-            app(BackgroundTaskService::class),
-            app(\App\Services\Customers\CustomerUniquenessValidator::class),
-            app(\App\Services\Auth\UserAccessService::class),
-        );
+        $this->app->call([$job, 'handle']);
 
         $task->refresh();
         $this->assertSame('completed', $task->status);

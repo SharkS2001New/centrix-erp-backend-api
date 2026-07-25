@@ -364,6 +364,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/legacy-import-converter/convert', [LegacyImportConverterController::class, 'convert'])
             ->middleware(['erp.super_admin']);
+        Route::get('admin/legacy-import-converter/tasks/{taskId}/download', [LegacyImportConverterController::class, 'download'])
+            ->middleware(['erp.super_admin']);
 
         Route::get('admin/platform-invoices/billing-context', [PlatformInvoiceController::class, 'billingContext'])
             ->middleware(['erp.super_admin']);

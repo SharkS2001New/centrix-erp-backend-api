@@ -113,6 +113,29 @@ class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
                         throw new \InvalidArgumentException('Missing customer name.');
                     }
 
+                    $branchId = (int) ($body['branch_id'] ?? 0);
+                    if ($branchId <= 0) {
+                        throw new \InvalidArgumentException('Customer import requires a branch in this organization.');
+                    }
+
+                    if (! empty($body['customer_num'])) {
+                        $existingByNum = Customer::query()
+                            ->where('organization_id', $organizationId)
+                            ->where('customer_num', (int) $body['customer_num'])
+                            ->exists();
+                        if ($existingByNum) {
+                            $skipped++;
+
+                            continue;
+                        }
+                    }
+
+                    if ($this->customerAlreadyExists($organizationId, $branchId, $body)) {
+                        $skipped++;
+
+                        continue;
+                    }
+
                     $customerUniqueness->assertUnique(
                         $organizationId,
                         $body['phone_number'] ?? null,
@@ -291,6 +314,30 @@ class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
         }
 
         return $body;
+    }
+
+    /**
+     * Re-import safety: same org + branch customer already present by name and/or contact keys.
+     *
+     * @param  array<string, mixed>  $body
+     */
+    protected function customerAlreadyExists(int $organizationId, int $branchId, array $body): bool
+    {
+        $name = strtolower(trim((string) ($body['customer_name'] ?? '')));
+        if ($name === '') {
+            return false;
+        }
+
+        $byName = Customer::query()
+            ->where('organization_id', $organizationId)
+            ->where('branch_id', $branchId)
+            ->whereRaw('LOWER(TRIM(customer_name)) = ?', [$name])
+            ->exists();
+        if ($byName) {
+            return true;
+        }
+
+        return false;
     }
 
     protected function formatImportFailureMessage(\Throwable $e): string

@@ -28,4 +28,24 @@ class PlatformMailboxBodyHelpersTest extends TestCase
             $service->snippetBody("Line one\n\n  Line two  "),
         );
     }
+
+    public function test_detects_unsupported_header_search_errors(): void
+    {
+        $service = app(PlatformMailboxService::class);
+        $method = new \ReflectionMethod(PlatformMailboxService::class, 'imapErrorsIndicateUnsupportedHeaderSearch');
+        $method->setAccessible(true);
+
+        $this->assertTrue($method->invoke(
+            $service,
+            ['PHP Request Shutdown: Unknown search criterion: HEADER (errflg=2)'],
+        ));
+        $this->assertTrue($method->invoke(
+            $service,
+            ['Unknown search criterion: HEADER'],
+        ));
+        $this->assertFalse($method->invoke(
+            $service,
+            ['Can not authenticate to IMAP server'],
+        ));
+    }
 }

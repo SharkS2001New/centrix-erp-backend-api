@@ -95,6 +95,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
             if ($e instanceof AuthenticationException
                 || $e instanceof \Illuminate\Validation\ValidationException
+                || $e instanceof \Illuminate\Http\Exceptions\HttpResponseException
                 || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
                 return null;
             }

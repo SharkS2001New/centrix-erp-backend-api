@@ -10,10 +10,6 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\RouteModel;
 use App\Models\User;
-use App\Services\Auth\UserAccessService;
-use App\Services\Background\BackgroundTaskService;
-use App\Services\Customers\CustomerNumberAllocator;
-use App\Services\Customers\CustomerUniquenessValidator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
@@ -36,14 +32,11 @@ class ImportCustomersTest extends TestCase
 
     public function test_customer_import_assigns_branch_and_creates_rows(): void
     {
-        $this->enableAdvancedDataImportForDemoOrg();
-
         $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $organizationId = (int) $admin->organization_id;
+        $route = RouteModel::query()->where('organization_id', $organizationId)->firstOrFail();
 
-        $route = RouteModel::query()->firstOrFail();
-
-        $response = $this->postJson('/api/v1/customers/import-batch', [
+        $task = BackgroundTask::createPending('customer_import', $organizationId, (int) $admin->id, [
             'rows' => [
                 [
                     'customer_name' => 'Imported Route Customer',
@@ -57,21 +50,14 @@ class ImportCustomersTest extends TestCase
                     'customer_type' => 'debtor',
                     'phone_number' => '0711000002',
                     'town' => 'Nairobi',
+                    'route_id' => $route->id,
                 ],
             ],
-        ])->assertAccepted();
+        ]);
 
-        $taskId = (string) $response->json('task_id');
-        $this->assertNotSame('', $taskId);
+        $this->app->call([new ImportCustomersJob($task->id), 'handle']);
 
-        (new ImportCustomersJob($taskId))->handle(
-            app(BackgroundTaskService::class),
-            app(CustomerUniquenessValidator::class),
-            app(UserAccessService::class),
-            app(CustomerNumberAllocator::class),
-        );
-
-        $task = BackgroundTask::query()->findOrFail($taskId);
+        $task->refresh();
         $this->assertSame('completed', $task->status);
         $this->assertSame(2, $task->result['created'] ?? null);
 
@@ -85,7 +71,8 @@ class ImportCustomersTest extends TestCase
         $this->assertNotNull($routeCustomer->branch_id);
         $this->assertSame((int) $route->id, (int) $routeCustomer->route_id);
         $this->assertNotNull($debtorCustomer->branch_id);
-        $this->assertNull($debtorCustomer->route_id);
+        // Distribution orgs coerce imports to route customers.
+        $this->assertSame((int) $route->id, (int) $debtorCustomer->route_id);
     }
 
     public function test_customer_import_rejected_when_import_page_disabled(): void
@@ -123,13 +110,7 @@ class ImportCustomersTest extends TestCase
             ],
         ]);
 
-        $job = new ImportCustomersJob($task->id);
-        $job->handle(
-            app(BackgroundTaskService::class),
-            app(CustomerUniquenessValidator::class),
-            app(UserAccessService::class),
-            app(CustomerNumberAllocator::class),
-        );
+        $this->app->call([new ImportCustomersJob($task->id), 'handle']);
 
         $task->refresh();
         $this->assertSame('completed', $task->status);
@@ -138,10 +119,56 @@ class ImportCustomersTest extends TestCase
         $this->assertStringContainsString('Route ID 999999 does not exist', $task->result['failures'][0]['message'] ?? '');
     }
 
+    public function test_customer_reimport_skips_existing_name_in_same_org_branch(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $organizationId = (int) $admin->organization_id;
+        $route = RouteModel::query()->where('organization_id', $organizationId)->firstOrFail();
+
+        $first = BackgroundTask::createPending('customer_import', $organizationId, (int) $admin->id, [
+            'rows' => [
+                [
+                    'customer_name' => 'Repeat Import Customer',
+                    'customer_type' => 'route',
+                    'phone_number' => '0711888001',
+                    'route_id' => $route->id,
+                ],
+            ],
+        ]);
+        $this->app->call([new ImportCustomersJob($first->id), 'handle']);
+        $first->refresh();
+        $this->assertSame(1, $first->result['created'] ?? null);
+
+        $second = BackgroundTask::createPending('customer_import', $organizationId, (int) $admin->id, [
+            'rows' => [
+                [
+                    'customer_name' => 'Repeat Import Customer',
+                    'customer_type' => 'route',
+                    'phone_number' => '0711888002',
+                    'route_id' => $route->id,
+                ],
+            ],
+        ]);
+        $this->app->call([new ImportCustomersJob($second->id), 'handle']);
+        $second->refresh();
+
+        $this->assertSame('completed', $second->status);
+        $this->assertSame(0, $second->result['created'] ?? null);
+        $this->assertSame(1, $second->result['skipped'] ?? null);
+        $this->assertSame(
+            1,
+            Customer::query()
+                ->where('organization_id', $organizationId)
+                ->where('customer_name', 'Repeat Import Customer')
+                ->count(),
+        );
+    }
+
     public function test_customer_import_allocates_sequential_numbers_in_bulk(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         $organizationId = (int) $admin->organization_id;
+        $route = RouteModel::query()->where('organization_id', $organizationId)->firstOrFail();
         $existingMax = (int) (Customer::query()
             ->where('organization_id', $organizationId)
             ->max('customer_num') ?? 0);
@@ -150,8 +177,9 @@ class ImportCustomersTest extends TestCase
         for ($i = 1; $i <= 5; $i++) {
             $rows[] = [
                 'customer_name' => "Bulk Import Customer {$i}",
-                'customer_type' => 'debtor',
+                'customer_type' => 'route',
                 'phone_number' => '0799'.str_pad((string) $i, 6, '0', STR_PAD_LEFT),
+                'route_id' => $route->id,
             ];
         }
 
@@ -159,12 +187,7 @@ class ImportCustomersTest extends TestCase
             'rows' => $rows,
         ]);
 
-        (new ImportCustomersJob($task->id))->handle(
-            app(BackgroundTaskService::class),
-            app(CustomerUniquenessValidator::class),
-            app(UserAccessService::class),
-            app(CustomerNumberAllocator::class),
-        );
+        $this->app->call([new ImportCustomersJob($task->id), 'handle']);
 
         $task->refresh();
         $this->assertSame('completed', $task->status);
@@ -219,9 +242,10 @@ class ImportCustomersTest extends TestCase
             'rows' => [
                 [
                     'customer_name' => 'Permissioned Import Customer',
-                    'customer_type' => 'debtor',
+                    'customer_type' => 'route',
                     'phone_number' => '0711000099',
                     'town' => 'Nairobi',
+                    'route_id' => RouteModel::query()->firstOrFail()->id,
                 ],
             ],
         ])->assertAccepted();

@@ -61,8 +61,10 @@ class ConvertLegacyImportJob implements ShouldQueue
             }
 
             $tasks->markCompleted($task, [
+                'disk_path' => $target,
                 'download_path' => $target,
                 'filename' => 'centrix-import-csv.zip',
+                'mime_type' => 'application/zip',
             ]);
         } catch (\Throwable $e) {
             Log::warning('ConvertLegacyImportJob failed', [

@@ -35,7 +35,10 @@ class LegacyImportConverterController extends Controller
         }
 
         $totalBytes = array_sum(array_map(fn ($file) => (int) $file->getSize(), $files));
-        $queue = ! $request->boolean('sync') || $totalBytes > 2_000_000 || count($files) > 2;
+        // Default sync for typical dump sets. Queue only very large uploads (or sync=0).
+        $queue = ! $request->boolean('sync', true)
+            || $totalBytes > 8_000_000
+            || count($files) > 12;
 
         if ($queue) {
             $storedPaths = [];
@@ -80,15 +83,17 @@ class LegacyImportConverterController extends Controller
     {
         $task = BackgroundTask::query()->findOrFail($taskId);
         abort_unless($task->user_id === $request->user()?->id, 403);
+        abort_unless($task->status === 'completed', 422, 'Conversion is not ready yet.');
 
-        $path = $task->result['download_path'] ?? null;
+        $result = is_array($task->result) ? $task->result : [];
+        $path = $result['disk_path'] ?? $result['download_path'] ?? null;
         if (! is_string($path) || ! Storage::disk('local')->exists($path)) {
             return response(['message' => 'Converted file is not available.'], 404);
         }
 
         return response()->download(
             Storage::disk('local')->path($path),
-            $task->result['filename'] ?? 'centrix-import-csv.zip',
+            $result['filename'] ?? 'centrix-import-csv.zip',
             ['Content-Type' => 'application/zip'],
         );
     }
