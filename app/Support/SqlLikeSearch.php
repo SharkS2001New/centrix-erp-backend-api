@@ -23,31 +23,36 @@ class SqlLikeSearch
 
     /**
      * @param  EloquentBuilder<mixed>|QueryBuilder  $query
+     * @return 'exact_code'|'code_like'|'name'|null  Match mode (for relevance ordering).
      */
     public static function applyProductSearch(
         EloquentBuilder|QueryBuilder $query,
         string $term,
         string $codeColumn = 'products.product_code',
         string $nameColumn = 'products.product_name',
-    ): void {
+    ): ?string {
         $term = trim($term);
         if ($term === '') {
-            return;
+            return null;
         }
 
         $escaped = self::escape($term);
         $prefix = $escaped.'%';
         $contains = '%'.$escaped.'%';
 
-        // Code-like terms: prefer exact/prefix on product_code (index-friendly), then name contains.
+        // Code-like terms: prefer exact/prefix on product_code (index-friendly).
         $looksLikeCode = (bool) preg_match('/^[A-Za-z0-9][A-Za-z0-9\\-_\\/.]*$/', $term)
             && strlen($term) <= 64;
+        // Pure numeric barcodes: skip expensive name %term% scans.
+        $strongBarcode = $looksLikeCode && (bool) preg_match('/^\d{6,}$/', $term);
 
-        $query->where(function ($inner) use ($term, $prefix, $contains, $codeColumn, $nameColumn, $looksLikeCode) {
+        $query->where(function ($inner) use ($term, $prefix, $contains, $codeColumn, $nameColumn, $looksLikeCode, $strongBarcode) {
             if ($looksLikeCode) {
                 $inner->where($codeColumn, '=', $term)
-                    ->orWhere($codeColumn, 'like', $prefix)
-                    ->orWhere($nameColumn, 'like', $contains);
+                    ->orWhere($codeColumn, 'like', $prefix);
+                if (! $strongBarcode) {
+                    $inner->orWhere($nameColumn, 'like', $contains);
+                }
 
                 return;
             }
@@ -55,6 +60,33 @@ class SqlLikeSearch
             $inner->where($nameColumn, 'like', $contains)
                 ->orWhere($codeColumn, 'like', $contains);
         });
+
+        return $looksLikeCode ? 'code_like' : 'name';
+    }
+
+    /**
+     * When an exact product_code hit exists in the already-scoped query, restrict to that code only.
+     *
+     * @param  EloquentBuilder<mixed>  $query
+     */
+    public static function restrictToExactProductCodeIfPresent(
+        EloquentBuilder $query,
+        string $term,
+        string $codeColumn = 'products.product_code',
+    ): bool {
+        $term = trim($term);
+        if ($term === '') {
+            return false;
+        }
+
+        $exists = (clone $query)->where($codeColumn, $term)->limit(1)->exists();
+        if (! $exists) {
+            return false;
+        }
+
+        $query->where($codeColumn, $term);
+
+        return true;
     }
 
     /**

@@ -234,8 +234,23 @@ class ProductController extends BaseResourceController
             );
         }
 
-        if ($q = trim((string) $request->input('q', ''))) {
-            SqlLikeSearch::applyProductSearch($query, $q, 'products.product_code', 'products.product_name');
+        $searchTerm = trim((string) $request->input('q', ''));
+        $exactCodeMatch = false;
+        if ($searchTerm !== '') {
+            // Barcode / exact SKU: indexed equality only — skip broad LIKE scans.
+            $exactCodeMatch = SqlLikeSearch::restrictToExactProductCodeIfPresent(
+                $query,
+                $searchTerm,
+                'products.product_code',
+            );
+            if (! $exactCodeMatch) {
+                SqlLikeSearch::applyProductSearch(
+                    $query,
+                    $searchTerm,
+                    'products.product_code',
+                    'products.product_name',
+                );
+            }
         }
 
         $productCodesRaw = trim((string) $request->input('product_codes', ''));
@@ -251,7 +266,25 @@ class ProductController extends BaseResourceController
         }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
-        $this->applyListOrdering($request, $query, 'product_name', 'asc');
+        $hasExplicitSort = trim((string) $request->input('sort', '')) !== '';
+        if ($searchTerm !== '' && ! $hasExplicitSort) {
+            if ($exactCodeMatch) {
+                $query->orderBy('products.product_code');
+            } else {
+                $escaped = SqlLikeSearch::escape($searchTerm);
+                $query->orderByRaw(
+                    'CASE
+                        WHEN products.product_code = ? THEN 0
+                        WHEN products.product_code LIKE ? THEN 1
+                        WHEN products.product_name LIKE ? THEN 2
+                        ELSE 3
+                    END',
+                    [$searchTerm, $escaped.'%', $escaped.'%'],
+                )->orderBy('products.product_name');
+            }
+        } else {
+            $this->applyListOrdering($request, $query, 'product_name', 'asc');
+        }
 
         $leanSalesList = in_array($this->salesLoginChannel($request), ['mobile', 'pos'], true);
         $fields = strtolower(trim((string) $request->input('fields', '')));

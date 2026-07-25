@@ -27,6 +27,21 @@ class SqlLikeSearchTest extends TestCase
         $this->assertSame(3, count($bindings));
     }
 
+    public function test_apply_product_search_numeric_barcode_skips_name_contains(): void
+    {
+        $query = DB::table('products');
+        SqlLikeSearch::applyProductSearch($query, '6001234567890');
+
+        $bindings = $query->getBindings();
+
+        $this->assertContains('6001234567890', $bindings);
+        $this->assertContains('6001234567890%', $bindings);
+        $this->assertFalse(
+            collect($bindings)->contains(fn ($b) => is_string($b) && str_starts_with($b, '%')),
+        );
+        $this->assertSame(2, count($bindings));
+    }
+
     public function test_apply_product_search_name_phrase_uses_contains_on_name_and_code(): void
     {
         $query = DB::table('products');
