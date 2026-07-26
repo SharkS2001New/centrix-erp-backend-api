@@ -55,8 +55,8 @@ class LocalPrintingSettingsResolver
 
         $out['printer_name'] = trim((string) ($out['printer_name'] ?? ''));
         $out['copies'] = max(1, min(10, (int) ($out['copies'] ?? 1)));
-        $out['fallback_to_browser'] = filter_var($out['fallback_to_browser'] ?? true, FILTER_VALIDATE_BOOLEAN);
-        $out['require_qz'] = filter_var($out['require_qz'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        $out['fallback_to_browser'] = true;
+        $out['require_qz'] = false;
         $out['use_signing'] = filter_var($out['use_signing'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
         return $out;
