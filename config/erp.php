@@ -584,6 +584,15 @@ return [
             'enable_advanced_data_import' => false,
             'advanced_data_import_pages' => [],
         ],
+        /** Admin → Local printing — org-wide browser vs QZ Tray defaults. */
+        'local_printing' => [
+            'provider' => 'browser',
+            'printer_name' => '',
+            'copies' => 1,
+            'fallback_to_browser' => true,
+            'require_qz' => false,
+            'use_signing' => false,
+        ],
         'general' => [
             'enable_tab_workspace' => true,
             'currency' => 'KES',

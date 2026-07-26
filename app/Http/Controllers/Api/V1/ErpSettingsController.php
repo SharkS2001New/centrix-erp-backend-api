@@ -16,6 +16,7 @@ use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\Notifications\NotificationSettingsResolver;
 use App\Services\OrganizationPlatformConfigService;
+use App\Services\Print\LocalPrintingSettingsResolver;
 use App\Services\Purchasing\ProcurementSettingsResolver;
 use App\Services\Sales\ReceiptPaymentDetailsResolver;
 use Illuminate\Http\Request;
@@ -1127,5 +1128,40 @@ class ErpSettingsController extends Controller
         }
 
         return $finance;
+    }
+
+    public function localPrinting(Request $request)
+    {
+        $gate = $this->erp->gateForRequest($request);
+
+        return response()->json([
+            'local_printing' => LocalPrintingSettingsResolver::forGate($gate),
+        ]);
+    }
+
+    public function updateLocalPrinting(Request $request)
+    {
+        $org = $this->erp->resolveOrganization($request);
+        $gate = $this->erp->gateForRequest($request);
+
+        $data = $request->validate([
+            'provider' => ['sometimes', Rule::in(['browser', 'qz', 'qz-tray', 'qz_tray'])],
+            'printer_name' => 'sometimes|nullable|string|max:200',
+            'copies' => 'sometimes|integer|min:1|max:10',
+            'fallback_to_browser' => 'sometimes|boolean',
+            'require_qz' => 'sometimes|boolean',
+            'use_signing' => 'sometimes|boolean',
+        ]);
+
+        $next = LocalPrintingSettingsResolver::normalize(array_merge(
+            LocalPrintingSettingsResolver::forGate($gate),
+            $data,
+        ));
+
+        $org->putModuleSettingsSection('local_printing', $next);
+
+        return response()->json([
+            'local_printing' => LocalPrintingSettingsResolver::forOrganization($org->fresh()),
+        ]);
     }
 }

@@ -301,6 +301,10 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/security', [ErpSettingsController::class, 'updateSecurity'])
             ->middleware(['erp.permission:admin.manage']);
+        Route::get('erp/settings/local-printing', [ErpSettingsController::class, 'localPrinting'])
+            ->middleware(['erp.permission:admin.till_printing.view|admin.manage']);
+        Route::patch('erp/settings/local-printing', [ErpSettingsController::class, 'updateLocalPrinting'])
+            ->middleware(['erp.permission:admin.till_printing.edit|admin.manage']);
         Route::get('erp/settings/hr', [ErpSettingsController::class, 'hr'])
             ->middleware(['erp.module:hr_payroll', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/hr', [ErpSettingsController::class, 'updateHr'])
@@ -576,6 +580,8 @@ Route::prefix('v1')->group(function () {
                 Route::patch('procurement', [ErpSettingsController::class, 'updateProcurement']);
                 Route::get('security', [ErpSettingsController::class, 'security']);
                 Route::patch('security', [ErpSettingsController::class, 'updateSecurity']);
+                Route::get('local-printing', [ErpSettingsController::class, 'localPrinting']);
+                Route::patch('local-printing', [ErpSettingsController::class, 'updateLocalPrinting']);
                 Route::get('legacy-archive', [ErpSettingsController::class, 'legacyArchive']);
                 Route::patch('legacy-archive', [ErpSettingsController::class, 'updateLegacyArchive']);
                 Route::get('hr', [ErpSettingsController::class, 'hr']);

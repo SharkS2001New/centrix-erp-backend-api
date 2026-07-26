@@ -600,6 +600,7 @@ class CapabilityGate
             $moduleSettings['sales'] = $sales;
 
             $moduleSettings['general'] = GeneralSettingsResolver::forGate($this);
+            $moduleSettings['local_printing'] = \App\Services\Print\LocalPrintingSettingsResolver::forGate($this);
 
             $finance = is_array($moduleSettings['finance'] ?? null) ? $moduleSettings['finance'] : [];
             if (isset($finance['mpesa']) && is_array($finance['mpesa'])) {
