@@ -50,4 +50,23 @@ class LocalPrintingSettingsTest extends TestCase
             ->assertJsonPath('local_printing.provider', 'qz')
             ->assertJsonPath('local_printing.printer_name', 'EPSON TM-T20II');
     }
+
+    public function test_can_update_local_printing_to_print_agent(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->patchJson('/api/v1/erp/settings/local-printing', [
+            'provider' => 'print-agent',
+            'printer_name' => 'Star TSP143',
+            'fallback_to_browser' => true,
+        ])
+            ->assertOk()
+            ->assertJsonPath('local_printing.provider', 'agent')
+            ->assertJsonPath('local_printing.printer_name', 'Star TSP143');
+
+        $this->getJson('/api/v1/erp/settings/local-printing')
+            ->assertOk()
+            ->assertJsonPath('local_printing.provider', 'agent');
+    }
 }

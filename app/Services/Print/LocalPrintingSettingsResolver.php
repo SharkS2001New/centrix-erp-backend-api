@@ -49,9 +49,13 @@ class LocalPrintingSettingsResolver
         $out = array_merge($defaults, $settings);
 
         $provider = strtolower(trim((string) ($out['provider'] ?? 'browser')));
-        $out['provider'] = $provider === 'qz' || $provider === 'qz-tray' || $provider === 'qz_tray'
-            ? 'qz'
-            : 'browser';
+        if ($provider === 'qz' || $provider === 'qz-tray' || $provider === 'qz_tray') {
+            $out['provider'] = 'qz';
+        } elseif ($provider === 'agent' || $provider === 'print-agent' || $provider === 'print_agent') {
+            $out['provider'] = 'agent';
+        } else {
+            $out['provider'] = 'browser';
+        }
 
         $out['printer_name'] = trim((string) ($out['printer_name'] ?? ''));
         $out['copies'] = max(1, min(10, (int) ($out['copies'] ?? 1)));

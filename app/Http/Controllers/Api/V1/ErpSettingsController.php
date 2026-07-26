@@ -1145,7 +1145,7 @@ class ErpSettingsController extends Controller
         $gate = $this->erp->gateForRequest($request);
 
         $data = $request->validate([
-            'provider' => ['sometimes', Rule::in(['browser', 'qz', 'qz-tray', 'qz_tray'])],
+            'provider' => ['sometimes', Rule::in(['browser', 'qz', 'qz-tray', 'qz_tray', 'agent', 'print-agent', 'print_agent'])],
             'printer_name' => 'sometimes|nullable|string|max:200',
             'copies' => 'sometimes|integer|min:1|max:10',
             'fallback_to_browser' => 'sometimes|boolean',
