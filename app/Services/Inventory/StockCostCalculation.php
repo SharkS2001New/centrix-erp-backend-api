@@ -72,6 +72,12 @@ class StockCostCalculation
     {
         $converted = self::convertedQuantitySqlExpression($quantityExpression, $uomAlias);
 
-        return "({$converted} * ({$unitCostExpression}))";
+        // Ignore absurd costs / qty so SUM() cannot explode into scientific-notation KPIs.
+        return "(CASE
+            WHEN ({$unitCostExpression}) <= 0 THEN 0
+            WHEN ({$unitCostExpression}) > 100000000 THEN 0
+            WHEN ABS({$quantityExpression}) > 100000000000 THEN 0
+            ELSE ({$converted} * ({$unitCostExpression}))
+        END)";
     }
 }

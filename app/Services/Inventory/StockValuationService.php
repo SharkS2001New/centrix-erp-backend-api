@@ -253,6 +253,12 @@ SQL;
     ): string {
         $converted = StockCostCalculation::convertedQuantitySqlExpression($quantityExpression, $uomAlias);
 
-        return "({$converted} * COALESCE({$productAlias}.unit_price, 0))";
+        // Ignore absurd unit prices (corrupt imports) so dashboard KPIs stay finite.
+        return "(CASE
+            WHEN COALESCE({$productAlias}.unit_price, 0) <= 0 THEN 0
+            WHEN COALESCE({$productAlias}.unit_price, 0) > 100000000 THEN 0
+            WHEN ABS({$quantityExpression}) > 100000000000 THEN 0
+            ELSE ({$converted} * COALESCE({$productAlias}.unit_price, 0))
+        END)";
     }
 }

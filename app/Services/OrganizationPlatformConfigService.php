@@ -110,6 +110,10 @@ class OrganizationPlatformConfigService
             $nextSales['enable_pos_order_edit'] = (bool) $salesPlatform['enable_pos_order_edit'];
         }
 
+        if (array_key_exists('enable_pos_cash_rounding', $salesPlatform)) {
+            $nextSales['enable_pos_cash_rounding'] = (bool) $salesPlatform['enable_pos_cash_rounding'];
+        }
+
         if (array_key_exists('external_pos_layout', $salesPlatform)) {
             $layout = strtolower(trim((string) $salesPlatform['external_pos_layout']));
             $nextSales['external_pos_layout'] = in_array($layout, ['modern', 'classic'], true)
@@ -269,6 +273,7 @@ class OrganizationPlatformConfigService
                 'backend' => 'order_completed',
             ],
             'require_pos_till_float' => false,
+            'enable_pos_cash_rounding' => false,
             'external_pos_layout' => 'modern',
             'order_workflow' => config('erp.default_order_workflow', []),
             'enable_pos_order_edit' => false,
@@ -324,6 +329,7 @@ class OrganizationPlatformConfigService
                 (bool) ($org->enabled_modules['sales.pos'] ?? false),
             ),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
+            'enable_pos_cash_rounding' => (bool) ($sales['enable_pos_cash_rounding'] ?? false),
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)
                 ? (string) $sales['external_pos_layout']
                 : 'modern',

@@ -84,6 +84,7 @@ use App\Http\Controllers\Api\V1\PlatformKenyaPayrollSettingsController;
 use App\Http\Controllers\Api\V1\PlatformPayrollScheduleSettingsController;
 use App\Http\Controllers\Api\V1\PlatformSystemIssueAlertSettingsController;
 use App\Http\Controllers\Api\V1\PlatformPrintAgentMsiController;
+use App\Http\Controllers\Api\V1\QzTrayController;
 use App\Http\Controllers\Api\V1\SystemIssueReportController;
 use App\Http\Controllers\Api\V1\PlatformInvoiceController;
 use App\Http\Controllers\Api\V1\PlatformOrganizationCacheController;
@@ -486,6 +487,11 @@ Route::prefix('v1')->group(function () {
         Route::post('admin/print-agent-msi/upload', [PlatformPrintAgentMsiController::class, 'upload'])
             ->middleware(['erp.super_admin']);
         Route::get('print-agent-msi', [PlatformPrintAgentMsiController::class, 'downloadInfo']);
+
+        // QZ Tray production signing (optional — unsigned works for development with trust prompts)
+        Route::get('qz/certificate', [QzTrayController::class, 'certificate']);
+        Route::post('qz/sign', [QzTrayController::class, 'sign']);
+
         Route::get('admin/kenya-payroll-settings', [PlatformKenyaPayrollSettingsController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::put('admin/kenya-payroll-settings', [PlatformKenyaPayrollSettingsController::class, 'update'])
