@@ -250,6 +250,26 @@ class PosLinePricingService
         return 1.0;
     }
 
+    protected function retailMarkupChunkSize(
+        array $tier,
+        float $conversion,
+        float $middleFactor,
+    ): float {
+        $level = (string) ($tier['measure_level'] ?? 'small');
+        $mode = $this->normalizeTierPriceMode($tier);
+
+        if ($mode === 'retail' && $level === 'small') {
+            return 1.0;
+        }
+
+        // Pack products: one markup per half pack (25kg of a 50kg bag).
+        if ($conversion >= 2) {
+            return $conversion / 2;
+        }
+
+        return max(1.0, $this->smallUnitsPerLevel($conversion, $middleFactor, $level));
+    }
+
     /**
      * @param  array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}  $tier
      */
@@ -263,18 +283,9 @@ class PosLinePricingService
             return 0.0;
         }
 
-        $level = (string) ($tier['measure_level'] ?? 'small');
-        $unitSize = $this->smallUnitsPerLevel($conversion, $middleFactor, $level);
+        $chunk = $this->retailMarkupChunkSize($tier, $conversion, $middleFactor);
 
-        if ($this->normalizeTierPriceMode($tier) === 'wholesale' && $level === 'full' && $conversion > 1) {
-            $unitSize = max(1.0, $middleFactor);
-        }
-
-        if ($unitSize <= 0) {
-            $unitSize = 1.0;
-        }
-
-        return $qty / $unitSize;
+        return $qty / max(1.0, $chunk);
     }
 
     /** @param  array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}  $tier */
@@ -290,25 +301,13 @@ class PosLinePricingService
         $stableBase = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion) * $qty;
         $mode = $this->normalizeTierPriceMode($tier);
 
-        if ($mode === 'wholesale') {
-            $apps = $scaleMarkup
-                ? $this->retailMarkupApplications($qty, $tier, $conversion, $middleFactor)
-                : 1.0;
-
-            return round($stableBase + ($markup * $apps), 2);
+        if ($mode === 'wholesale' && ! $scaleMarkup) {
+            return round($stableBase + $markup, 2);
         }
 
-        $wholesaleBase = $this->wholesalePriceAtMeasureLevel(
-            $baseUnitPrice,
-            $conversion,
-            $middleFactor,
-            $tier['measure_level'],
-        );
-        $smallPerLevel = $this->smallUnitsPerLevel($conversion, $middleFactor, $tier['measure_level']);
-        $priceAtLevel = $wholesaleBase + $markup;
-        $perSmall = $priceAtLevel / max(1.0, $smallPerLevel);
+        $apps = $this->retailMarkupApplications($qty, $tier, $conversion, $middleFactor);
 
-        return round($perSmall * $qty, 2);
+        return round($stableBase + ($markup * $apps), 2);
     }
 
     /** @param  list<array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}>  $tiers */
