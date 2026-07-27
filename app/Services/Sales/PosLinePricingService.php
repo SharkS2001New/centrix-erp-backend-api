@@ -29,16 +29,24 @@ class PosLinePricingService
         $rps = RetailPackageSetting::where('product_code', $product->product_code)->first();
         $baseUnitPrice = (float) $product->unit_price;
         $conversion = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+        $middleFactor = $this->resolvedMiddleFactor($product->unit?->middle_factor, $conversion);
         $tiers = $this->tiersForRetailPackage($rps);
         $packQty = $conversion > 1 ? $baseQty / $conversion : $baseQty;
 
         if ($isRetailLine && $rps && $tiers !== []) {
-            $lineAmount = $this->linePrice($baseUnitPrice, $tiers, $baseQty, true, $conversion);
+            $lineAmount = $this->linePrice($baseUnitPrice, $tiers, $baseQty, true, $conversion, $middleFactor);
         } elseif ($tiers !== []) {
             $wholesaleTiers = $this->tiersWithPriceMode($tiers, 'wholesale');
             $tier = $this->tierForQuantity($wholesaleTiers, $baseQty);
             if ($tier) {
-                $lineAmount = $this->linePriceForTier($baseUnitPrice, $tier, $baseQty, $conversion);
+                $lineAmount = $this->linePriceForTier(
+                    $baseUnitPrice,
+                    $tier,
+                    $baseQty,
+                    $conversion,
+                    $middleFactor,
+                    scaleMarkup: false,
+                );
             } else {
                 $wholesaleMarkup = (float) ($rps->wholesale_markup_price ?? 0);
                 $lineAmount = round($packQty * $baseUnitPrice + $wholesaleMarkup, 2);
@@ -165,7 +173,7 @@ class PosLinePricingService
     }
 
     /** @param  list<array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}>  $tiers */
-    protected function tierForQuantity(array $tiers, float $quantity): ?array
+    protected function tierForQuantity(array $tiers, float $quantity, bool $extendPastMax = false): ?array
     {
         foreach ($tiers as $tier) {
             if ($quantity + 0.0001 < $tier['min_qty']) {
@@ -178,7 +186,32 @@ class PosLinePricingService
             return $tier;
         }
 
+        if (! $extendPastMax || $tiers === []) {
+            return null;
+        }
+
+        $sorted = $tiers;
+        usort($sorted, fn ($a, $b) => $a['min_qty'] <=> $b['min_qty']);
+        for ($i = count($sorted) - 1; $i >= 0; $i--) {
+            if ($quantity + 0.0001 >= $sorted[$i]['min_qty']) {
+                return $sorted[$i];
+            }
+        }
+
         return null;
+    }
+
+    protected function resolvedMiddleFactor(mixed $middleFactor, float $conversion): float
+    {
+        $mid = (float) ($middleFactor ?? 0);
+        if ($mid > 1) {
+            return $mid;
+        }
+        if ($conversion >= 2) {
+            return $conversion / 2;
+        }
+
+        return 1.0;
     }
 
     protected function wholesalePricePerSmallUnit(float $baseUnitPrice, float $conversion): float
@@ -186,47 +219,92 @@ class PosLinePricingService
         return $conversion <= 1 ? $baseUnitPrice : $baseUnitPrice / $conversion;
     }
 
-    protected function wholesalePriceAtMeasureLevel(float $baseUnitPrice, float $conversion, string $level): float
-    {
+    protected function wholesalePriceAtMeasureLevel(
+        float $baseUnitPrice,
+        float $conversion,
+        float $middleFactor,
+        string $level,
+    ): float {
         if ($conversion <= 1) {
             return $baseUnitPrice;
         }
         if ($level === 'full') {
             return $baseUnitPrice;
         }
+        if ($level === 'middle') {
+            return ($baseUnitPrice / $conversion) * $middleFactor;
+        }
 
         return $baseUnitPrice / $conversion;
     }
 
-    protected function smallUnitsPerLevel(float $conversion, string $level): float
+    protected function smallUnitsPerLevel(float $conversion, float $middleFactor, string $level): float
     {
         if ($level === 'full' && $conversion > 1) {
             return $conversion;
+        }
+        if ($level === 'middle') {
+            return max(1.0, $middleFactor);
         }
 
         return 1.0;
     }
 
-    /** @param  array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}  $tier */
-    protected function tierPriceAtMeasureLevel(float $baseUnitPrice, array $tier, float $conversion): float
-    {
-        return $this->wholesalePriceAtMeasureLevel($baseUnitPrice, $conversion, $tier['measure_level']);
+    /**
+     * @param  array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}  $tier
+     */
+    protected function retailMarkupApplications(
+        float $qty,
+        array $tier,
+        float $conversion,
+        float $middleFactor,
+    ): float {
+        if ($qty <= 0) {
+            return 0.0;
+        }
+
+        $level = (string) ($tier['measure_level'] ?? 'small');
+        $unitSize = $this->smallUnitsPerLevel($conversion, $middleFactor, $level);
+
+        if ($this->normalizeTierPriceMode($tier) === 'wholesale' && $level === 'full' && $conversion > 1) {
+            $unitSize = max(1.0, $middleFactor);
+        }
+
+        if ($unitSize <= 0) {
+            $unitSize = 1.0;
+        }
+
+        return $qty / $unitSize;
     }
 
     /** @param  array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}  $tier */
-    protected function linePriceForTier(float $baseUnitPrice, array $tier, float $qty, float $conversion): float
-    {
-        $wholesaleBase = $this->wholesalePriceAtMeasureLevel($baseUnitPrice, $conversion, $tier['measure_level']);
+    protected function linePriceForTier(
+        float $baseUnitPrice,
+        array $tier,
+        float $qty,
+        float $conversion,
+        float $middleFactor,
+        bool $scaleMarkup = false,
+    ): float {
         $markup = (float) $tier['markup_price'];
-        $smallPerLevel = $this->smallUnitsPerLevel($conversion, $tier['measure_level']);
+        $stableBase = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion) * $qty;
+        $mode = $this->normalizeTierPriceMode($tier);
 
-        if ($this->normalizeTierPriceMode($tier) === 'wholesale') {
-            $measureUnits = $smallPerLevel > 0 ? $qty / $smallPerLevel : $qty;
-            $baseTotal = $wholesaleBase * $measureUnits;
+        if ($mode === 'wholesale') {
+            $apps = $scaleMarkup
+                ? $this->retailMarkupApplications($qty, $tier, $conversion, $middleFactor)
+                : 1.0;
 
-            return round($baseTotal + $markup, 2);
+            return round($stableBase + ($markup * $apps), 2);
         }
 
+        $wholesaleBase = $this->wholesalePriceAtMeasureLevel(
+            $baseUnitPrice,
+            $conversion,
+            $middleFactor,
+            $tier['measure_level'],
+        );
+        $smallPerLevel = $this->smallUnitsPerLevel($conversion, $middleFactor, $tier['measure_level']);
         $priceAtLevel = $wholesaleBase + $markup;
         $perSmall = $priceAtLevel / max(1.0, $smallPerLevel);
 
@@ -240,6 +318,7 @@ class PosLinePricingService
         float $qty,
         bool $isRetail,
         float $conversion,
+        float $middleFactor,
     ): float {
         if ($tiers === []) {
             $perSmall = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion);
@@ -248,14 +327,21 @@ class PosLinePricingService
         }
 
         $applicableTiers = $isRetail ? $tiers : $this->tiersWithPriceMode($tiers, 'wholesale');
-        $tier = $this->tierForQuantity($applicableTiers, $qty);
+        $tier = $this->tierForQuantity($applicableTiers, $qty, $isRetail);
         if (! $tier) {
             $perSmall = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion);
 
             return round($perSmall * $qty, 2);
         }
 
-        return $this->linePriceForTier($baseUnitPrice, $tier, $qty, $conversion);
+        return $this->linePriceForTier(
+            $baseUnitPrice,
+            $tier,
+            $qty,
+            $conversion,
+            $middleFactor,
+            scaleMarkup: $isRetail,
+        );
     }
 
     protected function applyRouteMarkup(

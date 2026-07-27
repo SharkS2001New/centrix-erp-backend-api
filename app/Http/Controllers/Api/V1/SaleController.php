@@ -126,10 +126,8 @@ class SaleController extends BaseResourceController
             $query->where('sales.archived', 0);
             $query->whereNotIn('sales.status', ['cancelled', 'expired', 'draft', 'held']);
 
-            $permissions = app(UserPermissionService::class);
-            if (! $permissions->canEditOthersSalesOrders($request->user(), $gate)) {
-                $query->where('sales.cashier_id', $request->user()->id);
-            }
+            // Previous-order browse is always this cashier's sales (not org-wide).
+            $query->where('sales.cashier_id', $request->user()->id);
         }
         $statusFilter = data_get($request->input('filter', []), 'status');
         if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {
