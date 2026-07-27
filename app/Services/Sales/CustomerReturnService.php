@@ -653,6 +653,7 @@ class CustomerReturnService
 
             $saleItem = $this->findSaleItemForReturnLine($sale, $line);
             if (! $saleItem) {
+                $totalCredit += $creditAmount;
                 continue;
             }
 
@@ -757,6 +758,7 @@ class CustomerReturnService
 
             $saleItem = $this->findSaleItemForReturnLine($sale, $line);
             if (! $saleItem) {
+                $totalCredit += $creditAmount;
                 continue;
             }
 
@@ -1154,16 +1156,31 @@ class CustomerReturnService
                 }
 
                 $saleItem = $this->findSaleItemForNormalizedLine($sale, $line);
-                if (! $saleItem) {
+                if ($saleItem) {
+                    $maxCredit = $this->maxCreditAmountForSaleItem($saleItem, $saleId, $excludeReturnId);
+                    if ($amount > $maxCredit + 0.02) {
+                        throw ValidationException::withMessages([
+                            'lines' => "Credit amount for {$line['product_code']} exceeds the remaining line total ({$maxCredit}).",
+                        ]);
+                    }
+
+                    continue;
+                }
+
+                $productCode = trim((string) ($line['product_code'] ?? ''));
+                if ($productCode === '') {
                     throw ValidationException::withMessages([
-                        'lines' => "Product {$line['product_code']} was not found on this order.",
+                        'lines' => 'Each credit line needs a product code.',
                     ]);
                 }
 
-                $maxCredit = $this->maxCreditAmountForSaleItem($saleItem, $saleId, $excludeReturnId);
-                if ($amount > $maxCredit + 0.02) {
+                $exists = Product::query()
+                    ->where('organization_id', $sale->organization_id)
+                    ->where('product_code', $productCode)
+                    ->exists();
+                if (! $exists) {
                     throw ValidationException::withMessages([
-                        'lines' => "Credit amount for {$line['product_code']} exceeds the remaining line total ({$maxCredit}).",
+                        'lines' => "Product {$productCode} was not found in the catalogue.",
                     ]);
                 }
             }
@@ -1241,30 +1258,57 @@ class CustomerReturnService
                 }
 
                 $saleItem = $sale ? $this->findSaleItemForNormalizedLine($sale, $line) : null;
-                if (! $saleItem) {
+                if ($saleItem) {
+                    $maxCredit = $this->maxCreditAmountForSaleItem($saleItem, (int) $saleId, $excludeReturnId);
+                    if ($amount > $maxCredit + 0.02) {
+                        throw ValidationException::withMessages([
+                            'lines' => "Credit amount for {$line['product_code']} exceeds the remaining line total ({$maxCredit}).",
+                        ]);
+                    }
+
+                    $qtySold = (float) ($saleItem->quantity ?? 0);
+                    $normalized[] = [
+                        'sale_item_id' => $saleItem->id,
+                        'product_code' => (string) $saleItem->product_code,
+                        'product_name' => $line['product_name'] ?? $saleItem->product?->product_name ?? $saleItem->product_code,
+                        'uom' => $saleItem->uom ?? $line['uom'] ?? null,
+                        'quantity_sold' => $qtySold,
+                        'return_qty' => 0,
+                        'unit_price' => $qtySold > 0 ? round($amount / $qtySold, 2) : round($amount, 2),
+                        'amount' => $amount,
+                        'line_no' => $line['line_no'] ?? $saleItem->line_no,
+                    ];
+
+                    continue;
+                }
+
+                $productCode = trim((string) ($line['product_code'] ?? ''));
+                if ($productCode === '') {
                     throw ValidationException::withMessages([
-                        'lines' => "Product {$line['product_code']} was not found on this order.",
+                        'lines' => 'Each credit line needs a product code or a matching sale line.',
                     ]);
                 }
 
-                $maxCredit = $this->maxCreditAmountForSaleItem($saleItem, (int) $saleId, $excludeReturnId);
-                if ($amount > $maxCredit + 0.02) {
+                $product = Product::query()
+                    ->where('organization_id', $sale?->organization_id)
+                    ->where('product_code', $productCode)
+                    ->first();
+                if (! $product) {
                     throw ValidationException::withMessages([
-                        'lines' => "Credit amount for {$line['product_code']} exceeds the remaining line total ({$maxCredit}).",
+                        'lines' => "Product {$productCode} was not found in the catalogue.",
                     ]);
                 }
 
-                $qtySold = (float) ($saleItem->quantity ?? 0);
                 $normalized[] = [
-                    'sale_item_id' => $saleItem->id,
-                    'product_code' => (string) $saleItem->product_code,
-                    'product_name' => $line['product_name'] ?? $saleItem->product?->product_name ?? $saleItem->product_code,
-                    'uom' => $saleItem->uom ?? $line['uom'] ?? null,
-                    'quantity_sold' => $qtySold,
+                    'sale_item_id' => null,
+                    'product_code' => $productCode,
+                    'product_name' => $line['product_name'] ?? $product->product_name ?? $productCode,
+                    'uom' => $line['uom'] ?? $product->uom ?? null,
+                    'quantity_sold' => 0,
                     'return_qty' => 0,
-                    'unit_price' => $qtySold > 0 ? round($amount / $qtySold, 2) : round($amount, 2),
+                    'unit_price' => round($amount, 2),
                     'amount' => $amount,
-                    'line_no' => $line['line_no'] ?? $saleItem->line_no,
+                    'line_no' => $line['line_no'] ?? null,
                 ];
 
                 continue;

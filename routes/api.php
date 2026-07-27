@@ -118,6 +118,7 @@ use App\Http\Controllers\Api\V1\SubCategoryController;
 use App\Http\Controllers\Api\V1\SupplierController;
 use App\Http\Controllers\Api\V1\SupplierPaymentController;
 use App\Http\Controllers\Api\V1\SupplierReturnController;
+use App\Http\Controllers\Api\V1\SupplierCreditNoteController;
 use App\Http\Controllers\Api\V1\SupplierReturnDocumentController;
 use App\Http\Controllers\Api\V1\SystemSettingController;
 use App\Http\Controllers\Api\V1\TemporaryCartController;
@@ -786,6 +787,14 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:purchasing.manage');
             Route::get('supplier-return-documents/{id}/proof/file', [SupplierReturnDocumentController::class, 'proofFile'])
                 ->middleware('erp.permission:purchasing.view|purchasing.manage');
+            Route::post('supplier-credit-notes/{id}/approve', [SupplierCreditNoteController::class, 'approve'])
+                ->middleware('erp.permission:purchasing.manage');
+            Route::post('supplier-credit-notes/{id}/reject', [SupplierCreditNoteController::class, 'reject'])
+                ->middleware('erp.permission:purchasing.manage');
+            Route::apiResource('supplier-credit-notes', SupplierCreditNoteController::class)
+                ->only(['index', 'show', 'store', 'destroy'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:purchasing.supplier_returns.view|purchasing.view'])
+                ->middlewareFor(['store', 'destroy'], ['erp.permission:purchasing.manage|purchasing.supplier_returns.create']);
             Route::apiResource('stock-reservations', StockReservationController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:inventory.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:inventory.manage']);
