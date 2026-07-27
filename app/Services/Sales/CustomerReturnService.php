@@ -126,6 +126,48 @@ class CustomerReturnService
     }
 
     /** @param  array<string, mixed>  $data */
+    public function createCreditNote(User $user, array $data): CustomerReturn
+    {
+        return DB::transaction(function () use ($user, $data) {
+            $saleId = (int) $data['sale_id'];
+            $this->assertSaleEligibleForCustomerReturn($saleId, $user);
+            $lines = $this->normalizeLines($data['lines'] ?? [], $saleId, null, 'credit_note');
+            $total = round(array_sum(array_column($lines, 'amount')), 2);
+            $sale = Sale::query()->find($saleId);
+
+            $document = $this->allocateReturnDocument((int) $user->organization_id);
+
+            $return = CustomerReturn::create([
+                ...$document,
+                'organization_id' => $user->organization_id,
+                'branch_id' => (int) ($data['branch_id'] ?? $user->branch_id ?? $sale?->branch_id),
+                'sale_id' => $saleId,
+                'customer_num' => $data['customer_num'] ?? $sale?->customer_num,
+                'return_date' => $data['return_date'] ?? now()->toDateString(),
+                'refund_method' => $data['refund_method'] ?? 'CASH',
+                'reason' => $data['reason'],
+                'notes' => $data['notes'] ?? null,
+                'status' => 'pending',
+                'total_amount' => $total,
+                'stock_location' => null,
+                'return_kind' => 'credit_note',
+                'returned_by' => $user->id,
+            ]);
+
+            $this->syncLines($return, $lines);
+
+            if (! empty($data['auto_approve'])) {
+                return $this->approve($return->fresh(['lines']), $user);
+            }
+
+            $return = $return->fresh(['lines', 'sale', 'customer', 'returnedByUser']);
+            app(CustomerReturnApprovalService::class)->notifyOnCreate($user, $return);
+
+            return $return;
+        });
+    }
+
+    /** @param  array<string, mixed>  $data */
     public function update(CustomerReturn $return, array $data, ?UploadedFile $proof = null): CustomerReturn
     {
         if ($return->status !== 'pending') {
@@ -184,6 +226,8 @@ class CustomerReturnService
         return DB::transaction(function () use ($return, $user) {
             $return->load(['lines', 'sale.items']);
 
+            $isCreditNote = $this->isCreditNoteReturn($return);
+
             if ($return->sale_id) {
                 $this->validateLinesAgainstSale(
                     (int) $return->sale_id,
@@ -192,15 +236,18 @@ class CustomerReturnService
                         'product_code' => $line->product_code,
                         'quantity_sold' => $line->quantity_sold,
                         'return_qty' => $line->return_qty,
+                        'amount' => $line->amount,
                     ])->all(),
                     $return->id,
+                    $isCreditNote ? 'credit_note' : null,
                 );
             }
 
-            foreach ($return->lines as $line) {
-                if ((float) $line->return_qty <= 0) {
-                    continue;
-                }
+            if (! $isCreditNote) {
+                foreach ($return->lines as $line) {
+                    if ((float) $line->return_qty <= 0) {
+                        continue;
+                    }
 
                 $unitCost = $this->resolveReturnUnitCost(
                     $return->sale_id ? (int) $return->sale_id : null,
@@ -233,14 +280,19 @@ class CustomerReturnService
                     'returned_by' => $user->id,
                 ]);
 
-                $line->update(['legacy_return_id' => $legacy->id]);
+                    $line->update(['legacy_return_id' => $legacy->id]);
+                }
             }
 
             if ($return->sale_id) {
-                $this->applyReturnToSale($return->fresh(['lines']));
-                $sale = Sale::query()->find($return->sale_id);
-                if ($sale) {
-                    app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
+                if ($isCreditNote) {
+                    $this->applyCreditNoteToSale($return->fresh(['lines']));
+                } else {
+                    $this->applyReturnToSale($return->fresh(['lines']));
+                    $sale = Sale::query()->find($return->sale_id);
+                    if ($sale) {
+                        app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
+                    }
                 }
             }
 
@@ -363,10 +415,16 @@ class CustomerReturnService
         if ($return->status === 'approved') {
             return DB::transaction(function () use ($return, $user, $reason) {
                 if ($return->sale_id) {
-                    $this->reverseReturnFromSale($return);
+                    if ($this->isCreditNoteReturn($return)) {
+                        $this->reverseCreditNoteFromSale($return);
+                    } else {
+                        $this->reverseReturnFromSale($return);
+                    }
                 }
-                $this->reverseApprovedStock($return, $user);
-                $this->deleteLegacySyncRows($return);
+                if (! $this->isCreditNoteReturn($return)) {
+                    $this->reverseApprovedStock($return, $user);
+                    $this->deleteLegacySyncRows($return);
+                }
                 CreditNote::query()->where('customer_return_id', $return->id)->delete();
 
                 $return->update([
@@ -397,10 +455,16 @@ class CustomerReturnService
         if ($return->status === 'approved') {
             DB::transaction(function () use ($return, $user) {
                 if ($return->sale_id) {
-                    $this->reverseReturnFromSale($return);
+                    if ($this->isCreditNoteReturn($return)) {
+                        $this->reverseCreditNoteFromSale($return);
+                    } else {
+                        $this->reverseReturnFromSale($return);
+                    }
                 }
-                $this->reverseApprovedStock($return, $user);
-                $this->deleteLegacySyncRows($return);
+                if (! $this->isCreditNoteReturn($return)) {
+                    $this->reverseApprovedStock($return, $user);
+                    $this->deleteLegacySyncRows($return);
+                }
                 CreditNote::query()->where('customer_return_id', $return->id)->delete();
                 $this->proofService->deleteExisting($return);
                 $return->lines()->delete();
@@ -569,6 +633,57 @@ class CustomerReturnService
         $this->syncSalePaymentAfterReturn($sale->fresh(), $totalReturnAmount);
     }
 
+    protected function applyCreditNoteToSale(CustomerReturn $return): void
+    {
+        $return->loadMissing(['lines']);
+        $sale = Sale::with('items')->find($return->sale_id);
+        if (! $sale) {
+            return;
+        }
+
+        $totalCredit = 0.0;
+        $totalVatReduction = 0.0;
+        $totalDiscountReduction = 0.0;
+
+        foreach ($return->lines as $line) {
+            $creditAmount = (float) $line->amount;
+            if ($creditAmount <= 0) {
+                continue;
+            }
+
+            $saleItem = $this->findSaleItemForReturnLine($sale, $line);
+            if (! $saleItem) {
+                continue;
+            }
+
+            $currentAmount = round((float) ($saleItem->amount ?? 0), 2);
+            $vatReduction = $currentAmount > 0
+                ? $this->proportionalShare((float) ($saleItem->product_vat ?? 0), $creditAmount, $currentAmount)
+                : 0.0;
+            $discountReduction = $currentAmount > 0
+                ? $this->proportionalShare((float) ($saleItem->discount_given ?? 0), $creditAmount, $currentAmount)
+                : 0.0;
+
+            $saleItem->update([
+                'amount' => max(0, round($currentAmount - $creditAmount, 2)),
+                'product_vat' => max(0, round((float) ($saleItem->product_vat ?? 0) - $vatReduction, 2)),
+                'discount_given' => max(0, round((float) ($saleItem->discount_given ?? 0) - $discountReduction, 2)),
+            ]);
+
+            $totalCredit += $creditAmount;
+            $totalVatReduction += $vatReduction;
+            $totalDiscountReduction += $discountReduction;
+        }
+
+        $sale->update([
+            'order_total' => max(0, round((float) $sale->order_total - $totalCredit, 2)),
+            'total_vat' => max(0, round((float) ($sale->total_vat ?? 0) - $totalVatReduction, 2)),
+            'order_discount' => max(0, round((float) ($sale->order_discount ?? 0) - $totalDiscountReduction, 2)),
+        ]);
+
+        $this->syncSalePaymentAfterReturn($sale->fresh(), $totalCredit);
+    }
+
     protected function reverseReturnFromSale(CustomerReturn $return): void
     {
         $return->loadMissing(['lines']);
@@ -620,6 +735,57 @@ class CustomerReturnService
         ]);
 
         $this->syncSalePaymentAfterReturnReversal($sale->fresh(), $totalReturnAmount);
+    }
+
+    protected function reverseCreditNoteFromSale(CustomerReturn $return): void
+    {
+        $return->loadMissing(['lines']);
+        $sale = Sale::with('items')->find($return->sale_id);
+        if (! $sale) {
+            return;
+        }
+
+        $totalCredit = 0.0;
+        $totalVatReduction = 0.0;
+        $totalDiscountReduction = 0.0;
+
+        foreach ($return->lines as $line) {
+            $creditAmount = (float) $line->amount;
+            if ($creditAmount <= 0) {
+                continue;
+            }
+
+            $saleItem = $this->findSaleItemForReturnLine($sale, $line);
+            if (! $saleItem) {
+                continue;
+            }
+
+            $currentAmount = (float) $saleItem->amount;
+            $vatAdd = $currentAmount > 0
+                ? $this->proportionalShare((float) ($saleItem->product_vat ?? 0), $creditAmount, $currentAmount)
+                : 0.0;
+            $discountAdd = $currentAmount > 0
+                ? $this->proportionalShare((float) ($saleItem->discount_given ?? 0), $creditAmount, $currentAmount)
+                : 0.0;
+
+            $saleItem->update([
+                'amount' => round($currentAmount + $creditAmount, 2),
+                'product_vat' => round((float) ($saleItem->product_vat ?? 0) + $vatAdd, 2),
+                'discount_given' => round((float) ($saleItem->discount_given ?? 0) + $discountAdd, 2),
+            ]);
+
+            $totalCredit += $creditAmount;
+            $totalVatReduction += $vatAdd;
+            $totalDiscountReduction += $discountAdd;
+        }
+
+        $sale->update([
+            'order_total' => round((float) $sale->order_total + $totalCredit, 2),
+            'total_vat' => round((float) ($sale->total_vat ?? 0) + $totalVatReduction, 2),
+            'order_discount' => round((float) ($sale->order_discount ?? 0) + $totalDiscountReduction, 2),
+        ]);
+
+        $this->syncSalePaymentAfterReturnReversal($sale->fresh(), $totalCredit);
     }
 
     protected function findSaleItemForReturnLine(Sale $sale, CustomerReturnLine $line): ?SaleItem
@@ -978,6 +1144,32 @@ class CustomerReturnService
     ): void {
         $sale = Sale::with('items')->findOrFail($saleId);
         $legacy = $mode === 'legacy';
+        $creditNote = $mode === 'credit_note';
+
+        if ($creditNote) {
+            foreach ($lines as $line) {
+                $amount = round((float) ($line['amount'] ?? 0), 2);
+                if ($amount <= 0) {
+                    continue;
+                }
+
+                $saleItem = $this->findSaleItemForNormalizedLine($sale, $line);
+                if (! $saleItem) {
+                    throw ValidationException::withMessages([
+                        'lines' => "Product {$line['product_code']} was not found on this order.",
+                    ]);
+                }
+
+                $maxCredit = $this->maxCreditAmountForSaleItem($saleItem, $saleId, $excludeReturnId);
+                if ($amount > $maxCredit + 0.02) {
+                    throw ValidationException::withMessages([
+                        'lines' => "Credit amount for {$line['product_code']} exceeds the remaining line total ({$maxCredit}).",
+                    ]);
+                }
+            }
+
+            return;
+        }
 
         foreach ($lines as $line) {
             $returnQty = (float) ($line['return_qty'] ?? 0);
@@ -1037,10 +1229,47 @@ class CustomerReturnService
         ?string $mode = null,
     ): array {
         $legacy = $mode === 'legacy';
+        $creditNote = $mode === 'credit_note';
         $sale = $saleId ? Sale::with('items.product')->find($saleId) : null;
         $normalized = [];
 
         foreach ($lines as $line) {
+            if ($creditNote) {
+                $amount = round((float) ($line['amount'] ?? 0), 2);
+                if ($amount <= 0) {
+                    continue;
+                }
+
+                $saleItem = $sale ? $this->findSaleItemForNormalizedLine($sale, $line) : null;
+                if (! $saleItem) {
+                    throw ValidationException::withMessages([
+                        'lines' => "Product {$line['product_code']} was not found on this order.",
+                    ]);
+                }
+
+                $maxCredit = $this->maxCreditAmountForSaleItem($saleItem, (int) $saleId, $excludeReturnId);
+                if ($amount > $maxCredit + 0.02) {
+                    throw ValidationException::withMessages([
+                        'lines' => "Credit amount for {$line['product_code']} exceeds the remaining line total ({$maxCredit}).",
+                    ]);
+                }
+
+                $qtySold = (float) ($saleItem->quantity ?? 0);
+                $normalized[] = [
+                    'sale_item_id' => $saleItem->id,
+                    'product_code' => (string) $saleItem->product_code,
+                    'product_name' => $line['product_name'] ?? $saleItem->product?->product_name ?? $saleItem->product_code,
+                    'uom' => $saleItem->uom ?? $line['uom'] ?? null,
+                    'quantity_sold' => $qtySold,
+                    'return_qty' => 0,
+                    'unit_price' => $qtySold > 0 ? round($amount / $qtySold, 2) : round($amount, 2),
+                    'amount' => $amount,
+                    'line_no' => $line['line_no'] ?? $saleItem->line_no,
+                ];
+
+                continue;
+            }
+
             $returnQty = (float) ($line['return_qty'] ?? 0);
             if ($returnQty <= 0) {
                 continue;
@@ -1159,7 +1388,9 @@ class CustomerReturnService
 
         if ($normalized === []) {
             throw ValidationException::withMessages([
-                'lines' => 'Add at least one product with a return quantity.',
+                'lines' => $creditNote
+                    ? 'Add at least one product with a credit amount.'
+                    : 'Add at least one product with a return quantity.',
             ]);
         }
 
@@ -1234,5 +1465,65 @@ class CustomerReturnService
                 'sale_id' => 'Customer returns are not allowed for orders in this stage.',
             ]);
         }
+    }
+
+    protected function isCreditNoteReturn(CustomerReturn $return): bool
+    {
+        return $return->return_kind === 'credit_note';
+    }
+
+    protected function maxCreditAmountForSaleItem(
+        SaleItem $saleItem,
+        int $saleId,
+        ?int $excludeReturnId = null,
+    ): float {
+        $lineAmount = round((float) ($saleItem->amount ?? 0), 2);
+        $credited = $this->creditedAmountForLine(
+            $this->approvedCreditAmounts($saleId, $excludeReturnId),
+            (int) $saleItem->id,
+            (string) $saleItem->product_code,
+        );
+
+        return max(0, round($lineAmount - $credited, 2));
+    }
+
+    /**
+     * @return array{by_sale_item: array<int, float>, by_product: array<string, float>}
+     */
+    protected function approvedCreditAmounts(int $saleId, ?int $excludeReturnId = null): array
+    {
+        $query = CustomerReturnLine::query()
+            ->select(['customer_return_lines.sale_item_id', 'customer_return_lines.product_code', 'customer_return_lines.amount'])
+            ->join('customer_returns', 'customer_returns.id', '=', 'customer_return_lines.customer_return_id')
+            ->where('customer_returns.sale_id', $saleId)
+            ->where('customer_returns.status', 'approved')
+            ->where('customer_returns.return_kind', 'credit_note');
+
+        if ($excludeReturnId) {
+            $query->where('customer_returns.id', '!=', $excludeReturnId);
+        }
+
+        $bySaleItem = [];
+        $byProduct = [];
+
+        foreach ($query->get() as $line) {
+            $amount = (float) $line->amount;
+            if ($line->sale_item_id) {
+                $bySaleItem[(int) $line->sale_item_id] = ($bySaleItem[(int) $line->sale_item_id] ?? 0) + $amount;
+            }
+            $code = (string) $line->product_code;
+            $byProduct[$code] = ($byProduct[$code] ?? 0) + $amount;
+        }
+
+        return ['by_sale_item' => $bySaleItem, 'by_product' => $byProduct];
+    }
+
+    protected function creditedAmountForLine(array $credited, ?int $saleItemId, string $productCode): float
+    {
+        if ($saleItemId && isset($credited['by_sale_item'][$saleItemId])) {
+            return (float) $credited['by_sale_item'][$saleItemId];
+        }
+
+        return (float) ($credited['by_product'][$productCode] ?? 0);
     }
 }

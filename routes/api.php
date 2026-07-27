@@ -16,6 +16,7 @@ use App\Http\Controllers\Api\V1\CurrentStockController;
 use App\Http\Controllers\Api\V1\CustomerController;
 use App\Http\Controllers\Api\V1\CustomerInvoiceController;
 use App\Http\Controllers\Api\V1\CustomerInvoicePaymentController;
+use App\Http\Controllers\Api\V1\CreditNoteController;
 use App\Http\Controllers\Api\V1\CustomerReturnController;
 use App\Http\Controllers\Api\V1\LegacyOrdersController;
 use App\Http\Controllers\Api\V1\LegacyReturnsController;
@@ -928,6 +929,14 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['store'], ['erp.permission:sales.manage']);
             Route::get('sales/{saleId}/return-lines', [CustomerReturnController::class, 'saleLines'])
                 ->middleware('erp.permission:sales.view');
+            Route::post('credit-notes/{id}/approve', [CreditNoteController::class, 'approve'])
+                ->middleware('erp.permission:sales.manage');
+            Route::post('credit-notes/{id}/reject', [CreditNoteController::class, 'reject'])
+                ->middleware('erp.permission:sales.manage');
+            Route::apiResource('credit-notes', CreditNoteController::class)
+                ->only(['index', 'show', 'store', 'destroy'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
+                ->middlewareFor(['store', 'destroy'], ['erp.permission:sales.manage']);
             Route::post('customer-returns/{id}/approve', [CustomerReturnController::class, 'approve'])
                 ->middleware('erp.permission:sales.manage');
             Route::post('customer-returns/{id}/reject', [CustomerReturnController::class, 'reject'])
