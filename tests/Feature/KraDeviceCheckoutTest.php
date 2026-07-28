@@ -75,6 +75,10 @@ class KraDeviceCheckoutTest extends TestCase
             'status' => 'success',
         ]);
 
+        $this->assertArrayHasKey('kra_response', $sale);
+        $this->assertSame('https://example.test/qr', $sale['kra_response']['signature_link'] ?? null);
+        $this->assertSame('CU-12345', $sale['kra_response']['invoice_number'] ?? null);
+
         Http::assertSent(fn ($request) => str_contains($request->url(), '/api/complete-workflow'));
     }
 

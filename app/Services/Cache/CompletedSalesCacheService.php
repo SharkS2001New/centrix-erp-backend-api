@@ -360,6 +360,12 @@ class CompletedSalesCacheService
         $status = (string) $sale->status;
         $channel = $sale->channel ?: 'backend';
 
+        // Reattach kra_response for thermal receipt QR when older cache entries omit it.
+        $sale->loadMissing('kraResponse');
+        if ($sale->kraResponse && empty($cached['kra_response'])) {
+            $cached['kra_response'] = $sale->kraResponse->toArray();
+        }
+
         return array_merge($cached, [
             'can_edit' => $editService->canRestoreSaleToCart($sale, $user, $gate),
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $user, $gate),

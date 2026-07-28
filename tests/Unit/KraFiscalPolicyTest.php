@@ -33,4 +33,16 @@ class KraFiscalPolicyTest extends TestCase
         $this->assertFalse(KraFiscalPolicy::shouldFiscalizeSale($finance, 50000));
         $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 49999.99));
     }
+
+    public function test_client_opt_out_ignored_when_use_kra_is_enabled(): void
+    {
+        $finance = [
+            'enable_kra_device' => true,
+            'default_submit_kra' => true,
+        ];
+
+        $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, false));
+        $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, null));
+        $this->assertTrue(KraFiscalPolicy::shouldFiscalizeSale($finance, 1000, true));
+    }
 }

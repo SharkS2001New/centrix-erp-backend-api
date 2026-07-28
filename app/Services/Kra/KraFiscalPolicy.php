@@ -49,15 +49,14 @@ class KraFiscalPolicy
 
     /**
      * @param  array<string, mixed>  $finance
-     * @param  bool|null  $explicitSubmit  Client request; false always skips. true still respects org policy.
+     * @param  bool|null  $explicitSubmit  Kept for API compatibility. Org "Use KRA device for
+     *                                     sales" wins — External POS cannot opt out via a stale
+     *                                     submit_kra=false. true still cannot force submit when
+     *                                     org fiscalization is off.
      */
     public static function shouldFiscalizeSale(array $finance, float $orderTotal, ?bool $explicitSubmit = null): bool
     {
         if (! self::isDeviceConfigured($finance)) {
-            return false;
-        }
-
-        if ($explicitSubmit === false) {
             return false;
         }
 

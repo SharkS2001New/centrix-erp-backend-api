@@ -4,6 +4,7 @@ namespace App\Models;
 use App\Models\Concerns\BelongsToOrganizationCustomer;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Database\Eloquent\Relations\HasOne;
 
 class Sale extends Model
 {
@@ -21,6 +22,11 @@ class Sale extends Model
     public function payments()
     {
         return $this->hasMany(SalePayment::class, 'sale_id');
+    }
+
+    public function kraResponse(): HasOne
+    {
+        return $this->hasOne(KraResponse::class, 'sale_id');
     }
 
     public function cashier()

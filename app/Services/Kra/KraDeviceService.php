@@ -738,8 +738,17 @@ class KraDeviceService
             'scu_id' => $responseData['scu_id'] ?? null,
             'cu_inv_no' => $responseData['cu-inv-no'] ?? null,
             'internal_data' => $responseData['internal-data'] ?? null,
-            'receipt_signature' => $responseData['Receipt Signature'] ?? null,
-            'signature_link' => $responseData['signature_link'] ?? null,
+            'receipt_signature' => $responseData['Receipt Signature']
+                ?? $responseData['receipt_signature']
+                ?? $responseData['signature']
+                ?? null,
+            'signature_link' => $responseData['signature_link']
+                ?? $responseData['Signature Link']
+                ?? $responseData['signatureLink']
+                ?? $responseData['qr_link']
+                ?? $responseData['qr_url']
+                ?? $responseData['verification_url']
+                ?? null,
             'version' => $responseData['version'] ?? null,
         ];
     }
