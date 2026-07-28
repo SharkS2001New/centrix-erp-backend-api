@@ -81,7 +81,15 @@ class PosLinePricingService
         $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
         $entryQty = $factor > 1 && ! $isRetailLine ? $baseQty / $factor : $baseQty;
 
-        if ($trustClientUnitPrice && $clientUnitPricePerBase !== null && $clientUnitPricePerBase > 0) {
+        // Retail lines always price from retail_package_settings (aggregate wholesale
+        // + tier markup). Never trust client unit×qty — that folds markup into the
+        // unit or drops the package add-on (e.g. 125×25=3125 instead of 3125+30).
+        if (
+            ! $isRetailLine
+            && $trustClientUnitPrice
+            && $clientUnitPricePerBase !== null
+            && $clientUnitPricePerBase > 0
+        ) {
             $amount = round($clientUnitPricePerBase * $baseQty, 2);
             $unitPrice = $entryQty > 0 ? round($amount / $entryQty, 4) : $clientUnitPricePerBase;
 
@@ -301,6 +309,7 @@ class PosLinePricingService
         $stableBase = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion) * $qty;
         $mode = $this->normalizeTierPriceMode($tier);
 
+        // Aggregate wholesale for qty, then add package markup (never fold markup into unit).
         if ($mode === 'wholesale' && ! $scaleMarkup) {
             return round($stableBase + $markup, 2);
         }
