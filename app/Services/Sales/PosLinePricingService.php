@@ -30,7 +30,7 @@ class PosLinePricingService
         $baseUnitPrice = (float) $product->unit_price;
         $conversion = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
         $middleFactor = $this->resolvedMiddleFactor($product->unit?->middle_factor, $conversion);
-        $tiers = $this->tiersForRetailPackage($rps);
+        $tiers = $this->tiersForRetailPackage($rps, $conversion);
         $packQty = $conversion > 1 ? $baseQty / $conversion : $baseQty;
 
         if ($isRetailLine && $rps && $tiers !== []) {
@@ -104,7 +104,7 @@ class PosLinePricingService
     }
 
     /** @return list<array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}> */
-    protected function tiersForRetailPackage(?RetailPackageSetting $rps): array
+    protected function tiersForRetailPackage(?RetailPackageSetting $rps, float $conversion = 1.0): array
     {
         if (! $rps) {
             return [];
@@ -135,13 +135,14 @@ class PosLinePricingService
             return $tiers;
         }
 
+        $isPack = $conversion > 1.0;
         $tiers = [];
         if ((float) ($rps->max_qty_measure ?? 0) > 0) {
             $tiers[] = [
                 'min_qty' => 1.0,
                 'max_qty' => (float) $rps->max_qty_measure,
-                'measure_level' => 'small',
-                'price_mode' => 'retail',
+                'measure_level' => $isPack ? 'full' : 'small',
+                'price_mode' => $isPack ? 'wholesale' : 'retail',
                 'markup_price' => (float) ($rps->markup_price ?? 0),
             ];
         }
@@ -149,7 +150,7 @@ class PosLinePricingService
             $tiers[] = [
                 'min_qty' => (float) ($rps->max_qty_measure ?? 0) + 0.001,
                 'max_qty' => (float) $rps->wholesale_qty_measure,
-                'measure_level' => 'middle',
+                'measure_level' => $isPack ? 'middle' : 'small',
                 'price_mode' => 'wholesale',
                 'markup_price' => (float) ($rps->wholesale_markup_price ?? 0),
             ];
@@ -263,19 +264,23 @@ class PosLinePricingService
         float $conversion,
         float $middleFactor,
     ): float {
-        $level = (string) ($tier['measure_level'] ?? 'small');
-        $mode = $this->normalizeTierPriceMode($tier);
+        unset($middleFactor);
+        $maxQty = array_key_exists('max_qty', $tier) && $tier['max_qty'] !== null
+            ? (float) $tier['max_qty']
+            : null;
+        $halfPack = $conversion >= 2 ? $conversion / 2 : 1.0;
 
-        if ($mode === 'retail' && $level === 'small') {
+        // Small retail band on pack products (e.g. 1–12 kg): markup per kg.
+        if ($conversion >= 2 && $maxQty !== null && $maxQty <= $halfPack) {
             return 1.0;
         }
 
-        // Pack products: one markup per half pack (25kg of a 50kg bag).
+        // Larger retail band on pack products: markup per half-bag chunk.
         if ($conversion >= 2) {
-            return $conversion / 2;
+            return $halfPack;
         }
 
-        return max(1.0, $this->smallUnitsPerLevel($conversion, $middleFactor, $level));
+        return 1.0;
     }
 
     /**
@@ -292,8 +297,11 @@ class PosLinePricingService
         }
 
         $chunk = $this->retailMarkupChunkSize($tier, $conversion, $middleFactor);
+        if ($chunk <= 1.0) {
+            return $qty;
+        }
 
-        return $qty / max(1.0, $chunk);
+        return (float) ceil($qty / $chunk - 1e-9);
     }
 
     /** @param  array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}  $tier */

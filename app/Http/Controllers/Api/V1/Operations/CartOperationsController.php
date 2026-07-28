@@ -883,6 +883,9 @@ class CartOperationsController extends Controller
             'product_code' => $product->product_code,
             'product_name' => $product->product_name,
             'unit_price' => $unitPrice,
+            'display_unit_price' => array_key_exists('display_unit_price', $line) && $line['display_unit_price'] !== null
+                ? round((float) $line['display_unit_price'], 4)
+                : null,
             'quantity' => $qty,
             'uom' => $line['uom'] ?? $product->unit?->uom_type,
             'product_vat' => $productVat,
@@ -1001,6 +1004,9 @@ class CartOperationsController extends Controller
 
         $row->update([
             'unit_price' => $unitPrice,
+            'display_unit_price' => array_key_exists('display_unit_price', $input) && $input['display_unit_price'] !== null
+                ? round((float) $input['display_unit_price'], 4)
+                : $row->display_unit_price,
             'quantity' => $qty,
             'uom' => $input['uom'] ?? $row->uom ?? $product->unit?->uom_type,
             'product_vat' => $productVat,
