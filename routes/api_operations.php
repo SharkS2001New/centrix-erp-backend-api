@@ -134,6 +134,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('carts/{cartId}', [CartOperationsController::class, 'update']);
         Route::post('carts/{cartId}/discount-requests', [CartOperationsController::class, 'requestDiscount']);
         Route::post('carts/{cartId}/lines', [CartOperationsController::class, 'addLine']);
+        Route::put('carts/{cartId}/lines', [CartOperationsController::class, 'replaceLines']);
         Route::patch('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'updateLine']);
         Route::delete('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'deleteLine']);
         Route::delete('carts/{cartId}/lines', [CartOperationsController::class, 'clear']);

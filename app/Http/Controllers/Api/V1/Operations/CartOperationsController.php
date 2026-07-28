@@ -260,6 +260,64 @@ class CartOperationsController extends Controller
         return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
     }
 
+    /**
+     * PUT /sales/carts/{cartId}/lines — replace all cart lines in one request.
+     * Used by previous-order edit flush so F10 does not N× POST each line.
+     * Preserves held_order_num / superseded_sale_id (unlike DELETE /lines clear).
+     */
+    public function replaceLines(Request $request, int|string $cartId)
+    {
+        $user = $request->user();
+        $cart = $this->findOwnedCart($cartId, $user);
+        $gate = $this->erp->gateForUser($user);
+
+        $data = $request->validate([
+            'lines' => 'required|array|min:1',
+            'lines.*.product_code' => 'required|string|max:64',
+            'lines.*.quantity' => 'required|numeric|gt:0',
+            'lines.*.unit_price' => 'nullable|numeric|min:0',
+            'lines.*.display_unit_price' => 'nullable|numeric|min:0',
+            'lines.*.uom' => 'nullable|string|max:64',
+            'lines.*.product_vat' => 'nullable|numeric|min:0',
+            'lines.*.discount_given' => 'nullable|numeric|min:0',
+            'lines.*.on_wholesale_retail' => 'nullable|boolean',
+            'lines.*.amount' => 'nullable|numeric|min:0',
+            'order_discount' => 'nullable|numeric|min:0',
+            'update_no' => 'nullable|integer|min:0',
+        ]);
+
+        if (
+            array_key_exists('update_no', $data)
+            && (int) $data['update_no'] !== (int) $cart->update_no
+        ) {
+            throw new InvalidArgumentException('Cart was updated elsewhere. Refresh and try again.');
+        }
+
+        $heldOrderNum = $cart->held_order_num;
+        $supersededSaleId = $cart->superseded_sale_id;
+
+        $cart = DB::transaction(function () use ($cart, $data, $user, $gate, $heldOrderNum, $supersededSaleId) {
+            $this->releaseCartReservations((int) $cart->id);
+            CartLine::where('cart_id', $cart->id)->delete();
+
+            $updates = [];
+            if (array_key_exists('order_discount', $data)) {
+                $updates['order_discount'] = max(0, (float) $data['order_discount']);
+            }
+            // Keep previous-order edit markers intact.
+            $updates['held_order_num'] = $heldOrderNum;
+            $updates['superseded_sale_id'] = $supersededSaleId;
+            $cart->update($updates);
+            $cart->refresh();
+
+            $this->addDraftLinesToCart($cart, $data['lines'], $user, $gate);
+
+            return $cart->fresh('lines');
+        });
+
+        return $this->cartResponse($cart, $user, includeNextOrderNum: false);
+    }
+
     public function clear(int|string $cartId)
     {
         $user = request()->user();
@@ -965,6 +1023,189 @@ class CartOperationsController extends Controller
                 'display_unit_price' => $item->display_unit_price ?? null,
                 'quantity' => $qty,
                 'uom' => $item->uom ?? $product->unit?->uom_type,
+                'product_vat' => $productVat,
+                'amount' => $amount,
+                'discount_given' => $discountGiven,
+                'on_wholesale_retail' => $onWholesaleRetailFlag ? 1 : 0,
+                'line_no' => $lineNo,
+                'update_code' => $updateCode,
+            ];
+
+            if ($reserveOnCart) {
+                $location = $this->resolveSaleLineStockLocation(
+                    $cart->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    $product,
+                    $onWholesaleRetailFlag,
+                );
+                $reserveJobs[] = [
+                    'product_code' => $product->product_code,
+                    'quantity' => $qty,
+                    'location' => $location,
+                    'update_code' => $updateCode,
+                ];
+            }
+        }
+
+        if ($rows !== []) {
+            CartLine::insert($rows);
+            $cart->increment('update_no');
+        }
+
+        if ($reserveJobs === []) {
+            return;
+        }
+
+        $createdLines = CartLine::query()
+            ->where('cart_id', $cart->id)
+            ->whereIn('update_code', array_column($reserveJobs, 'update_code'))
+            ->get()
+            ->keyBy('update_code');
+
+        foreach ($reserveJobs as $job) {
+            $line = $createdLines->get($job['update_code']);
+            if (! $line) {
+                continue;
+            }
+            $this->reserveStock(
+                (int) $cart->branch_id,
+                $job['product_code'],
+                $job['quantity'],
+                $job['location'],
+                $user->id,
+                $cart->id,
+                $allowBelowStock,
+                $line->id,
+                $expiresAt,
+            );
+        }
+    }
+
+    /**
+     * Bulk-insert draft POS lines (previous-order edit flush) without N× addCartLine.
+     *
+     * @param  list<array<string, mixed>>  $lines
+     */
+    protected function addDraftLinesToCart(
+        TemporaryCart $cart,
+        array $lines,
+        User $user,
+        CapabilityGate $gate,
+        bool $skipStockReserve = false,
+    ): void {
+        if ($lines === []) {
+            return;
+        }
+
+        $request = request();
+        $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? 0);
+        $codes = collect($lines)
+            ->pluck('product_code')
+            ->filter()
+            ->map(fn ($c) => trim((string) $c))
+            ->unique()
+            ->values()
+            ->all();
+        if ($codes === []) {
+            return;
+        }
+
+        $products = Product::query()
+            ->with(['unit', 'vat'])
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at')
+            ->where(function ($query) use ($codes) {
+                foreach (array_values($codes) as $index => $code) {
+                    if ($index === 0) {
+                        $query->whereRaw('LOWER(product_code) = ?', [strtolower($code)]);
+                    } else {
+                        $query->orWhereRaw('LOWER(product_code) = ?', [strtolower($code)]);
+                    }
+                }
+            })
+            ->get()
+            ->keyBy(fn (Product $product) => strtolower((string) $product->product_code));
+
+        $inventorySettings = $gate->moduleSettings('inventory');
+        $salesSettings = $gate->moduleSettings('sales');
+        $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+        $reserveOnCart = ($inventorySettings['reserve_stock_on_cart'] ?? true) && ! $skipStockReserve;
+        $expiresAt = $reserveOnCart ? $this->reservationExpiresAtForUser($user, $inventorySettings) : null;
+        $discountService = app(\App\Services\Sales\DiscountApprovalService::class);
+        $allowsManualDiscount = $discountService->allowsManualLineDiscount($salesSettings, $cart->order_source);
+        $isOrderEdit = $discountService->cartIsOrderEditSession($cart);
+
+        $lineNo = (int) CartLine::where('cart_id', $cart->id)->max('line_no');
+        $rows = [];
+        $reserveJobs = [];
+
+        foreach ($lines as $line) {
+            $code = strtolower(trim((string) ($line['product_code'] ?? '')));
+            $product = $products->get($code);
+            if (! $product) {
+                throw new InvalidArgumentException("Product {$line['product_code']} is not available for this cart.");
+            }
+
+            $qty = (float) ($line['quantity'] ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+
+            $onWholesaleRetailFlag = (bool) ($line['on_wholesale_retail'] ?? 0);
+            $isRetail = $this->isRetailLine($product, $onWholesaleRetailFlag);
+            $discountGiven = $this->resolveLineDiscountGiven(
+                $salesSettings,
+                (float) ($line['discount_given'] ?? 0),
+            );
+            if (! $allowsManualDiscount) {
+                $discountGiven = 0;
+            } elseif (! $isOrderEdit) {
+                $discountService->assertDirectManualDiscountAllowed(
+                    $user,
+                    $salesSettings,
+                    $discountGiven,
+                    'discount_given',
+                    $cart,
+                );
+            }
+
+            [$unitPrice, $amount] = app(PosLinePricingService::class)->resolveLineAmounts(
+                $product,
+                $qty,
+                $isRetail,
+                $discountGiven,
+                app(MobileRouteMarkupCheckoutService::class)->routeIdForCartPricing($cart, $salesSettings),
+                array_key_exists('unit_price', $line) && $line['unit_price'] !== null
+                    ? (float) $line['unit_price']
+                    : null,
+                SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
+            );
+
+            if (array_key_exists('amount', $line) && $line['amount'] !== null) {
+                $amount = max(0, (float) $line['amount']);
+            }
+
+            $grossForVat = max(0, $amount);
+            $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
+                ? max(0, (float) $line['product_vat'])
+                : SalesVatCalculator::vatFromInclusiveGross(
+                    $grossForVat,
+                    SalesVatCalculator::vatRateFromProduct($product),
+                );
+
+            $lineNo++;
+            $updateCode = 'CLU-'.Str::upper(Str::random(12));
+            $rows[] = [
+                'cart_id' => $cart->id,
+                'product_code' => $product->product_code,
+                'product_name' => $product->product_name,
+                'unit_price' => $unitPrice,
+                'display_unit_price' => array_key_exists('display_unit_price', $line) && $line['display_unit_price'] !== null
+                    ? round((float) $line['display_unit_price'], 4)
+                    : null,
+                'quantity' => $qty,
+                'uom' => $line['uom'] ?? $product->unit?->uom_type,
                 'product_vat' => $productVat,
                 'amount' => $amount,
                 'discount_given' => $discountGiven,
