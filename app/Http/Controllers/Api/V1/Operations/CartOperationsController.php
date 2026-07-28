@@ -294,6 +294,14 @@ class CartOperationsController extends Controller
             );
         }
 
+        // Parked held/draft sales are unfinished — restore as a normal new cart, not a
+        // previous-order edit (no held_order_num / superseded_sale_id).
+        if (in_array((string) $sale->status, ['held', 'draft'], true)) {
+            $cart = $this->restoreParkedSaleToNewCart($cart, $sale, $user, $gate);
+
+            return $this->cartResponse($cart, $user, includeNextOrderNum: true);
+        }
+
         $cart = DB::transaction(function () use ($cart, $sale, $user, $gate) {
             if ($cart->lines()->exists()) {
                 $this->clearCart($cart, $user);
@@ -319,17 +327,13 @@ class CartOperationsController extends Controller
             ]);
             $cart->refresh();
 
-            foreach ($sale->items as $item) {
-                $this->addCartLine($cart, [
-                    'product_code' => $item->product_code,
-                    'quantity' => $item->quantity,
-                    'unit_price' => $item->selling_price,
-                    'uom' => $item->uom,
-                    'product_vat' => $item->product_vat,
-                    'discount_given' => $item->discount_given,
-                    'on_wholesale_retail' => $item->on_wholesale_retail,
-                ], $user, $gate, allowRestoredOrderDiscounts: true, skipStockReserve: $hadReservations);
-            }
+            $this->addRestoredSaleItemsToCart(
+                $cart,
+                $sale,
+                $user,
+                $gate,
+                skipStockReserve: $hadReservations,
+            );
 
             if ($hadReservations) {
                 $this->transferSaleReservationsToCart((int) $sale->id, (int) $cart->id);
@@ -367,6 +371,79 @@ class CartOperationsController extends Controller
         });
 
         return $this->cartResponse($cart, $user);
+    }
+
+    /**
+     * Resume a parked (held/draft) sale as a normal POS cart so Complete books a new sale.
+     * Does not enter previous-order edit mode (held_order_num / superseded_sale_id).
+     */
+    protected function restoreParkedSaleToNewCart(
+        TemporaryCart $cart,
+        Sale $sale,
+        User $user,
+        CapabilityGate $gate,
+    ): TemporaryCart {
+        return DB::transaction(function () use ($cart, $sale, $user, $gate) {
+            if ($cart->lines()->exists()) {
+                $this->clearCart($cart, $user);
+            }
+
+            $hadReservations = ! $sale->stock_balanced
+                && $this->saleHasActiveReservations((int) $sale->id);
+
+            // Held sales are never fiscalized / stock-balanced; keep or move reservations only.
+            if ($sale->stock_balanced) {
+                $this->reverseSaleStockDeductions($sale, $user);
+            } elseif (! $hadReservations) {
+                $this->releaseSaleReservations((int) $sale->id);
+            }
+
+            $cart->update([
+                'route_id' => $sale->route_id,
+                'order_discount' => (float) ($sale->order_discount ?? 0),
+                'held_order_num' => null,
+                'superseded_sale_id' => null,
+            ]);
+            $cart->refresh();
+
+            $this->addRestoredSaleItemsToCart(
+                $cart,
+                $sale,
+                $user,
+                $gate,
+                skipStockReserve: $hadReservations,
+            );
+
+            if ($hadReservations) {
+                $this->transferSaleReservationsToCart((int) $sale->id, (int) $cart->id);
+                $this->bindCartReservationsToLines($cart->fresh('lines'), $user, $gate);
+            }
+
+            $meta = array_merge($sale->fulfillment_meta ?? [], [
+                'restored_held_to_cart' => true,
+                'restored_held_at' => now()->toIso8601String(),
+                'restored_from_order_num' => (int) $sale->order_num,
+            ]);
+
+            $sale->update([
+                'status' => 'cancelled',
+                'cancelled_at' => now(),
+                'cancelled_by' => $user->id,
+                'stock_balanced' => 0,
+                'fulfillment_meta' => $meta,
+            ]);
+
+            $this->reverseSaleJournalIfPosted($sale, $user);
+            app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
+
+            app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForSale(
+                $sale->fresh(),
+                $user,
+                'Held order restored to cart.',
+            );
+
+            return $cart->fresh('lines');
+        });
     }
 
     /** GET /sales/customers/lookup — search registered customers for POS credit checkout */
@@ -816,6 +893,135 @@ class CartOperationsController extends Controller
         }
 
         return $cart;
+    }
+
+    /**
+     * Fast path for restore-to-cart: reuse sale line totals, bulk-insert cart lines,
+     * and avoid N product/pricing round-trips that made held restores feel stuck.
+     */
+    protected function addRestoredSaleItemsToCart(
+        TemporaryCart $cart,
+        Sale $sale,
+        User $user,
+        CapabilityGate $gate,
+        bool $skipStockReserve = false,
+    ): void {
+        $items = $sale->items;
+        if ($items === null || $items->isEmpty()) {
+            return;
+        }
+
+        $request = request();
+        $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? 0);
+        $branchId = (int) ($cart->branch_id ?? $user->branch_id ?? 0);
+        $codes = $items->pluck('product_code')->filter()->map(fn ($c) => trim((string) $c))->unique()->values()->all();
+        $products = Product::query()
+            ->with('unit')
+            ->where('organization_id', $orgId)
+            ->whereNull('deleted_at')
+            ->where(function ($query) use ($codes) {
+                foreach (array_values($codes) as $index => $code) {
+                    if ($index === 0) {
+                        $query->whereRaw('LOWER(product_code) = ?', [strtolower($code)]);
+                    } else {
+                        $query->orWhereRaw('LOWER(product_code) = ?', [strtolower($code)]);
+                    }
+                }
+            })
+            ->get()
+            ->keyBy(fn (Product $product) => strtolower((string) $product->product_code));
+
+        $inventorySettings = $gate->moduleSettings('inventory');
+        $salesSettings = $gate->moduleSettings('sales');
+        $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
+        $reserveOnCart = ($inventorySettings['reserve_stock_on_cart'] ?? true) && ! $skipStockReserve;
+        $expiresAt = $reserveOnCart ? $this->reservationExpiresAtForUser($user, $inventorySettings) : null;
+
+        $lineNo = (int) CartLine::where('cart_id', $cart->id)->max('line_no');
+        $rows = [];
+        $reserveJobs = [];
+
+        foreach ($items as $item) {
+            $code = strtolower(trim((string) $item->product_code));
+            $product = $products->get($code);
+            if (! $product) {
+                throw new InvalidArgumentException("Product {$item->product_code} is not available for this cart.");
+            }
+
+            $lineNo++;
+            $qty = (float) $item->quantity;
+            $onWholesaleRetailFlag = (bool) ($item->on_wholesale_retail ?? 0);
+            $unitPrice = (float) ($item->selling_price ?? 0);
+            $amount = (float) ($item->amount ?? ($unitPrice * $qty));
+            $productVat = (float) ($item->product_vat ?? 0);
+            $discountGiven = (float) ($item->discount_given ?? 0);
+            $updateCode = 'CLU-'.Str::upper(Str::random(12));
+
+            $rows[] = [
+                'cart_id' => $cart->id,
+                'product_code' => $product->product_code,
+                'product_name' => $product->product_name,
+                'unit_price' => $unitPrice,
+                'display_unit_price' => $item->display_unit_price ?? null,
+                'quantity' => $qty,
+                'uom' => $item->uom ?? $product->unit?->uom_type,
+                'product_vat' => $productVat,
+                'amount' => $amount,
+                'discount_given' => $discountGiven,
+                'on_wholesale_retail' => $onWholesaleRetailFlag ? 1 : 0,
+                'line_no' => $lineNo,
+                'update_code' => $updateCode,
+            ];
+
+            if ($reserveOnCart) {
+                $location = $this->resolveSaleLineStockLocation(
+                    $cart->channel,
+                    $inventorySettings,
+                    $salesSettings,
+                    $product,
+                    $onWholesaleRetailFlag,
+                );
+                $reserveJobs[] = [
+                    'product_code' => $product->product_code,
+                    'quantity' => $qty,
+                    'location' => $location,
+                    'update_code' => $updateCode,
+                ];
+            }
+        }
+
+        if ($rows !== []) {
+            CartLine::insert($rows);
+            $cart->increment('update_no');
+        }
+
+        if ($reserveJobs === []) {
+            return;
+        }
+
+        $createdLines = CartLine::query()
+            ->where('cart_id', $cart->id)
+            ->whereIn('update_code', array_column($reserveJobs, 'update_code'))
+            ->get()
+            ->keyBy('update_code');
+
+        foreach ($reserveJobs as $job) {
+            $line = $createdLines->get($job['update_code']);
+            if (! $line) {
+                continue;
+            }
+            $this->reserveStock(
+                (int) $cart->branch_id,
+                $job['product_code'],
+                $job['quantity'],
+                $job['location'],
+                $user->id,
+                $cart->id,
+                $allowBelowStock,
+                $line->id,
+                $expiresAt,
+            );
+        }
     }
 
     protected function addCartLine(
