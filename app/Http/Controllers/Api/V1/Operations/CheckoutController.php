@@ -542,34 +542,48 @@ class CheckoutController extends Controller
             }
 
             if ($payNow > 0) {
-                $method = PaymentMethod::query()
-                    ->where('organization_id', $sale->organization_id)
-                    ->where('method_code', $sale->payment_method_code)
-                    ->first();
-                if (! $method) {
-                    $aliases = match (strtoupper((string) $sale->payment_method_code)) {
-                        'EQUITY', 'KCB', 'OTHER' => ['BANK', 'BANK_TRANSFER'],
-                        'M-PESA', 'M_PESA' => ['MPESA'],
-                        default => [],
-                    };
-                    if ($aliases !== []) {
-                        $method = PaymentMethod::query()
-                            ->where('organization_id', $sale->organization_id)
-                            ->whereIn('method_code', $aliases)
-                            ->first();
+                $splits = $this->normalizeCheckoutPaymentSplits($input['payment_splits'] ?? null);
+                if ($splits !== []) {
+                    $splitTotal = round(array_sum(array_column($splits, 'amount')), 2);
+                    if (abs($splitTotal - $payNow) > 0.02) {
+                        throw new InvalidArgumentException('Payment splits must add up to the amount paid now.');
                     }
+                    foreach ($splits as $split) {
+                        $methodCode = (string) $split['method_code'];
+                        $method = $this->resolveCheckoutPaymentMethod(
+                            (int) $sale->organization_id,
+                            $methodCode,
+                        );
+                        if (! $method) {
+                            throw new InvalidArgumentException("Payment method {$methodCode} is not configured.");
+                        }
+                        SalePayment::create([
+                            'sale_id' => $sale->id,
+                            'float_session_id' => $floatSessionId,
+                            'payment_method_id' => $method->id,
+                            'amount' => $split['amount'],
+                            'reference_number' => $split['reference_number'] ?? null,
+                            'paid_at' => $input['payment_date'] ?? now(),
+                        ]);
+                        SalePaymentColumnMapper::applyToSale($sale->fresh(), $methodCode, (float) $split['amount']);
+                    }
+                } else {
+                    $method = $this->resolveCheckoutPaymentMethod(
+                        (int) $sale->organization_id,
+                        (string) $sale->payment_method_code,
+                    );
+                    if ($method) {
+                        SalePayment::create([
+                            'sale_id' => $sale->id,
+                            'float_session_id' => $floatSessionId,
+                            'payment_method_id' => $method->id,
+                            'amount' => $payNow,
+                            'reference_number' => $input['payment_reference'] ?? null,
+                            'paid_at' => $input['payment_date'] ?? now(),
+                        ]);
+                    }
+                    SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
                 }
-                if ($method) {
-                    SalePayment::create([
-                        'sale_id' => $sale->id,
-                        'float_session_id' => $floatSessionId,
-                        'payment_method_id' => $method->id,
-                        'amount' => $payNow,
-                        'reference_number' => $input['payment_reference'] ?? null,
-                        'paid_at' => $input['payment_date'] ?? now(),
-                    ]);
-                }
-                SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
             }
 
             if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel)) {
@@ -753,5 +767,58 @@ class CheckoutController extends Controller
             (string) $cart->channel,
             $cart->route_id ? (int) $cart->route_id : null,
         );
+    }
+
+    /** @return list<array{method_code: string, amount: float, reference_number: ?string}> */
+    protected function normalizeCheckoutPaymentSplits(mixed $splits): array
+    {
+        if (! is_array($splits)) {
+            return [];
+        }
+
+        $normalized = [];
+        foreach ($splits as $split) {
+            if (! is_array($split)) {
+                continue;
+            }
+            $amount = round((float) ($split['amount'] ?? 0), 2);
+            $methodCode = strtoupper(trim((string) ($split['method_code'] ?? '')));
+            if ($methodCode === '' || $amount <= 0) {
+                continue;
+            }
+            $reference = trim((string) ($split['reference_number'] ?? ''));
+            $normalized[] = [
+                'method_code' => $methodCode,
+                'amount' => $amount,
+                'reference_number' => $reference !== '' ? $reference : null,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    protected function resolveCheckoutPaymentMethod(int $organizationId, string $methodCode): ?PaymentMethod
+    {
+        $method = PaymentMethod::query()
+            ->where('organization_id', $organizationId)
+            ->where('method_code', $methodCode)
+            ->first();
+        if ($method) {
+            return $method;
+        }
+
+        $aliases = match (strtoupper($methodCode)) {
+            'EQUITY', 'KCB', 'OTHER' => ['BANK', 'BANK_TRANSFER'],
+            'M-PESA', 'M_PESA' => ['MPESA'],
+            default => [],
+        };
+        if ($aliases === []) {
+            return null;
+        }
+
+        return PaymentMethod::query()
+            ->where('organization_id', $organizationId)
+            ->whereIn('method_code', $aliases)
+            ->first();
     }
 }

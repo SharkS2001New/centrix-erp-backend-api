@@ -598,7 +598,7 @@ class TillOperationsController extends Controller
                 'total_vat' => $totalVat,
                 'order_discounts' => $discounts,
                 'refunds' => $refunds,
-                'cash' => $cash,
+                'cash' => (float) ($salesAgg->cash ?? 0),
                 'debtor_collections' => $debtorCollections,
                 'mpesa' => $mpesa,
                 'bank' => $bank,
@@ -660,9 +660,6 @@ class TillOperationsController extends Controller
     /** @return list<array{method_code: string, method_name: string, total: float}> */
     protected function buildPaymentSummary(int $floatSessionId): array
     {
-        $byMethod = [];
-
-        // Primary source: sales payment columns (matches end-of-day and legacy split tenders).
         $columnAgg = DB::table('sales as s')
             ->where('s.float_session_id', $floatSessionId)
             ->where('s.status', 'completed')
@@ -685,18 +682,8 @@ class TillOperationsController extends Controller
             'POINTS' => (float) ($columnAgg->points ?? 0),
         ];
 
-        foreach ($columnMap as $code => $total) {
-            if ($total <= 0) {
-                continue;
-            }
-            $byMethod[$code] = [
-                'method_code' => $code,
-                'method_name' => $this->paymentMethodLabel($code, $code),
-                'total' => $total,
-            ];
-        }
+        $byMethod = [];
 
-        // sale_payments fill methods with no column totals (card, voucher-only, etc.).
         $paymentRows = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
@@ -710,9 +697,6 @@ class TillOperationsController extends Controller
             $code = $this->normalizePaymentMethodCode((string) ($row->method_code ?? ''));
             $total = (float) ($row->total ?? 0);
             if ($code === '' || $total <= 0) {
-                continue;
-            }
-            if (($columnMap[$code] ?? 0) > 0) {
                 continue;
             }
             $name = trim((string) ($row->method_name ?? ''));
@@ -729,6 +713,33 @@ class TillOperationsController extends Controller
             }
         }
 
+        $columnMethods = array_filter($columnMap, fn (float $total) => $total > 0);
+        $paymentTotal = array_sum(array_map(fn (array $entry) => (float) ($entry['total'] ?? 0), $byMethod));
+        $columnTotal = array_sum($columnMethods);
+
+        // Legacy checkout stored one sale_payment row but split tenders on the sale columns.
+        if (count($byMethod) === 1 && count($columnMethods) > 1 && $columnTotal > 0
+            && abs($paymentTotal - $columnTotal) < 0.02) {
+            $byMethod = [];
+            foreach ($columnMethods as $code => $total) {
+                $byMethod[$code] = [
+                    'method_code' => $code,
+                    'method_name' => $this->paymentMethodLabel($code, $code),
+                    'total' => $total,
+                ];
+            }
+        } else {
+            foreach ($columnMethods as $code => $total) {
+                if (($byMethod[$code]['total'] ?? 0) <= 0) {
+                    $byMethod[$code] = [
+                        'method_code' => $code,
+                        'method_name' => $this->paymentMethodLabel($code, $code),
+                        'total' => $total,
+                    ];
+                }
+            }
+        }
+
         $result = array_values($byMethod);
         usort($result, fn (array $a, array $b) => ($b['total'] <=> $a['total']));
 
@@ -736,7 +747,7 @@ class TillOperationsController extends Controller
             fn (array $entry) => [
                 'method_code' => $entry['method_code'],
                 'method_name' => $entry['method_name'],
-                'total' => round((float) $entry['total'], 2),
+                'total' => round((float) ($entry['total'] ?? 0), 2),
             ],
             array_filter($result, fn (array $entry) => (float) ($entry['total'] ?? 0) > 0),
         );

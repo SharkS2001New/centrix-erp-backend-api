@@ -294,6 +294,68 @@ class TillSessionFlowTest extends TestCase
         $this->assertEqualsWithDelta(300, (float) ($payments['EQUITY']['total'] ?? 0), 0.01);
     }
 
+    public function test_x_report_payment_summary_groups_sale_payments_by_method(): void
+    {
+        $session = $this->openFreshSession(5000);
+        $cashMethod = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+        $mpesaMethod = PaymentMethod::where('method_code', 'MPESA')->firstOrFail();
+        $equityMethod = PaymentMethod::where('method_code', 'EQUITY')->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 990002,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'pos',
+            'till_id' => $this->till->id,
+            'float_session_id' => $session->id,
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'order_total' => 1000,
+            'total_vat' => 0,
+            'amount_paid' => 1000,
+            'payment_status' => 'paid',
+            'completed_at' => now(),
+        ]);
+
+        foreach ([
+            [$cashMethod->id, 400],
+            [$mpesaMethod->id, 300],
+            [$equityMethod->id, 300],
+        ] as [$methodId, $amount]) {
+            SalePayment::create([
+                'sale_id' => $sale->id,
+                'float_session_id' => $session->id,
+                'payment_method_id' => $methodId,
+                'amount' => $amount,
+            ]);
+        }
+
+        $payments = collect(
+            $this->getJson("/api/v1/pos/sessions/{$session->id}/x-report")
+                ->assertOk()
+                ->json('report.payments') ?? [],
+        )->keyBy('method_code');
+
+        $this->assertEqualsWithDelta(400, (float) ($payments['CASH']['total'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(300, (float) ($payments['MPESA']['total'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(300, (float) ($payments['EQUITY']['total'] ?? 0), 0.01);
+
+        $this->postJson("/api/v1/pos/sessions/{$session->id}/close", [
+            'closing_amount' => 5000,
+        ])->assertOk();
+
+        $zPayments = collect(
+            $this->getJson("/api/v1/pos/sessions/{$session->id}/z-report")
+                ->assertOk()
+                ->assertJsonPath('type', 'Z')
+                ->json('report.payments') ?? [],
+        )->keyBy('method_code');
+
+        $this->assertEqualsWithDelta(400, (float) ($zPayments['CASH']['total'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(300, (float) ($zPayments['MPESA']['total'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(300, (float) ($zPayments['EQUITY']['total'] ?? 0), 0.01);
+    }
+
     public function test_till_float_session_crud_store_is_blocked(): void
     {
         $this->postJson('/api/v1/till-float-sessions', [
