@@ -569,7 +569,7 @@ class TillOperationsController extends Controller
                 : ($session->float_breakdown ?? []),
         );
 
-        $payments = $this->buildPaymentSummary($floatSessionId, $cash, $mpesa, $bank);
+        $payments = $this->buildPaymentSummary($floatSessionId, $cash, $mpesa, $equity, $kcb);
 
         return [
             'session' => $session,
@@ -642,7 +642,7 @@ class TillOperationsController extends Controller
     }
 
     /** @return list<array{method_code: string, method_name: string, total: float}> */
-    protected function buildPaymentSummary(int $floatSessionId, float $cash, float $mpesa, float $bank): array
+    protected function buildPaymentSummary(int $floatSessionId, float $cash, float $mpesa, float $equity, float $kcb): array
     {
         $rows = DB::table('sale_payments as sp')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
@@ -654,26 +654,42 @@ class TillOperationsController extends Controller
             ->orderByDesc('total')
             ->get();
 
-        if ($rows->isNotEmpty()) {
-            return $rows->map(fn ($row) => [
-                'method_code' => (string) $row->method_code,
-                'method_name' => (string) $row->method_name,
-                'total' => (float) $row->total,
-            ])->all();
+        // Start from authoritative sale column totals so X/Z always reflects Cash, M-Pesa, Equity, KCB
+        // even when payment-method setup is partial and sale_payments only has a subset.
+        $byMethod = [
+            'CASH' => ['method_code' => 'CASH', 'method_name' => 'Cash', 'total' => $cash],
+            'MPESA' => ['method_code' => 'MPESA', 'method_name' => 'M-Pesa', 'total' => $mpesa],
+            'EQUITY' => ['method_code' => 'EQUITY', 'method_name' => 'Equity', 'total' => $equity],
+            'KCB' => ['method_code' => 'KCB', 'method_name' => 'KCB', 'total' => $kcb],
+        ];
+
+        foreach ($rows as $row) {
+            $code = strtoupper(trim((string) ($row->method_code ?? '')));
+            $total = (float) ($row->total ?? 0);
+            $name = (string) ($row->method_name ?? $code);
+            if ($code === '') {
+                continue;
+            }
+            if ($code === 'M-PESA' || $code === 'M_PESA' || $code === 'AIRTEL') {
+                $code = 'MPESA';
+            } elseif ($code === 'BANK' || $code === 'BANK_TRANSFER') {
+                // Keep explicit BANK rows separately if they exist.
+                $code = 'BANK';
+            }
+
+            if (array_key_exists($code, $byMethod)) {
+                // Prefer payment-method labels when present, but keep sale-column totals to avoid undercount.
+                $byMethod[$code]['method_name'] = $name !== '' ? $name : $byMethod[$code]['method_name'];
+            } else {
+                $byMethod[$code] = [
+                    'method_code' => $code,
+                    'method_name' => $name !== '' ? $name : $code,
+                    'total' => $total,
+                ];
+            }
         }
 
-        $fallback = [];
-        if ($cash > 0) {
-            $fallback[] = ['method_code' => 'CASH', 'method_name' => 'Cash', 'total' => $cash];
-        }
-        if ($mpesa > 0) {
-            $fallback[] = ['method_code' => 'MPESA', 'method_name' => 'M-Pesa', 'total' => $mpesa];
-        }
-        if ($bank > 0) {
-            $fallback[] = ['method_code' => 'BANK', 'method_name' => 'Bank', 'total' => $bank];
-        }
-
-        return $fallback;
+        return array_values(array_filter($byMethod, fn ($entry) => (float) ($entry['total'] ?? 0) > 0));
     }
 
     /** @param  mixed  $movements */
