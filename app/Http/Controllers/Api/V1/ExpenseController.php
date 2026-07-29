@@ -33,7 +33,9 @@ class ExpenseController extends BaseResourceController
 
     public function index(Request $request)
     {
-        $query = $this->baseQuery($request);
+        $query = $this->baseQuery($request)->with([
+            'expenseGroup:id,group_name,organization_id',
+        ]);
 
         $status = (string) $request->input('status', 'active');
         if ($status === 'deleted') {

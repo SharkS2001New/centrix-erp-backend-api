@@ -273,7 +273,7 @@ class TillOperationsController extends Controller
         $data = $request->validate([
             'expense_group_id' => 'required|integer',
             'expense_amount' => 'required|numeric|min:0.01',
-            'description' => 'nullable|string|max:200',
+            'description' => 'required|string|min:1|max:200',
             'payment_method_id' => 'required|integer',
         ]);
 

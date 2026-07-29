@@ -1346,17 +1346,41 @@ class ReportController extends Controller
                 return $row;
             });
 
-        $expenseRowsQuery = DB::table('v_expenses_summary');
-        $this->applyBranchTenantScope($expenseRowsQuery, $orgId, $branchId);
-        if ($isMonthly) {
-            $expenseRowsQuery->whereBetween('expense_date', [$periodStartDate, $periodEndDate]);
-        } else {
-            $expenseRowsQuery->where('expense_date', $date);
+        $expenseLineQuery = DB::table('expenses as e')
+            ->leftJoin('expense_groups as eg', 'eg.id', '=', 'e.expense_group_id')
+            ->whereNull('e.deleted_at');
+        if ($orgId && Schema::hasColumn('expenses', 'organization_id')) {
+            $expenseLineQuery->where('e.organization_id', $orgId);
         }
-        $expenseRows = $expenseRowsQuery
-            ->select('group_name', DB::raw('SUM(total_amount) as amount'))
-            ->groupBy('group_name')
-            ->get();
+        $this->applyBranchTenantScope($expenseLineQuery, $orgId, $branchId, 'e.branch_id');
+        if ($isMonthly) {
+            $expenseLineQuery->whereBetween('e.expense_date', [$periodStartDate, $periodEndDate]);
+        } else {
+            $expenseLineQuery->whereDate('e.expense_date', $date);
+        }
+        $expenseRows = $expenseLineQuery
+            ->select([
+                'e.id',
+                'e.description',
+                'eg.group_name',
+                'e.expense_amount',
+            ])
+            ->orderBy('e.id')
+            ->get()
+            ->map(function ($row) {
+                $description = trim((string) ($row->description ?? ''));
+                $groupName = trim((string) ($row->group_name ?? ''));
+
+                return (object) [
+                    'id' => (int) $row->id,
+                    'description' => $description !== '' ? $description : null,
+                    'group_name' => $description !== ''
+                        ? $description
+                        : ($groupName !== '' ? $groupName : 'Expense'),
+                    'amount' => round((float) $row->expense_amount, 2),
+                ];
+            })
+            ->values();
 
         $totalExpenses = $expenseRows->sum(fn ($r) => (float) $r->amount);
 
