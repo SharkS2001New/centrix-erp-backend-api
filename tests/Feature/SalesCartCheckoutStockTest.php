@@ -494,4 +494,35 @@ class SalesCartCheckoutStockTest extends TestCase
 
         return $onHand - $reserved;
     }
+
+    public function test_cart_line_patch_can_swap_product_code(): void
+    {
+        $replacement = Product::query()
+            ->where('product_code', '!=', $this->productCode)
+            ->value('product_code');
+        $this->assertNotEmpty($replacement);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $added = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated()->json();
+
+        $lineRef = $added['lines'][0]['update_code'] ?? $added['lines'][0]['id'];
+        $this->assertNotEmpty($lineRef);
+
+        $updated = $this->patchJson("/api/v1/sales/carts/{$cartId}/lines/{$lineRef}", [
+            'product_code' => $replacement,
+            'quantity' => 3,
+            'update_no' => $added['update_no'] ?? 0,
+        ])->assertOk()->json();
+
+        $line = collect($updated['lines'] ?? [])->first();
+        $this->assertSame($replacement, $line['product_code'] ?? null);
+        $this->assertEquals(3, (float) ($line['quantity'] ?? 0));
+    }
 }

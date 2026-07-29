@@ -14,9 +14,11 @@ class UpdateCartLineRequest extends FormRequest
     public function rules(): array
     {
         return [
+            'product_code' => 'sometimes|string|max:45',
             'quantity' => 'sometimes|numeric|min:0.001',
             'unit_price' => 'sometimes|numeric|min:0',
             'display_unit_price' => 'sometimes|nullable|numeric|min:0',
+            'amount' => 'sometimes|nullable|numeric|min:0',
             'uom' => 'sometimes|nullable|string|max:45',
             'on_wholesale_retail' => 'sometimes|boolean',
             'product_vat' => 'sometimes|nullable|numeric|min:0',

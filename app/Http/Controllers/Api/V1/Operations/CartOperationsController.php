@@ -1386,7 +1386,10 @@ class CartOperationsController extends Controller
         }
 
         $row = $this->findCartLineByRef($cart, $lineRef);
-        $product = $this->findProductForCart($cart, (string) $row->product_code, $user);
+        $productCode = array_key_exists('product_code', $input) && $input['product_code'] !== null
+            ? (string) $input['product_code']
+            : (string) $row->product_code;
+        $product = $this->findProductForCart($cart, $productCode, $user);
 
         $qty = array_key_exists('quantity', $input) ? (float) $input['quantity'] : (float) $row->quantity;
         $onWholesaleRetailFlag = array_key_exists('on_wholesale_retail', $input)
@@ -1460,6 +1463,8 @@ class CartOperationsController extends Controller
             );
 
         $row->update([
+            'product_code' => $product->product_code,
+            'product_name' => $product->product_name,
             'unit_price' => $unitPrice,
             'display_unit_price' => array_key_exists('display_unit_price', $input) && $input['display_unit_price'] !== null
                 ? round((float) $input['display_unit_price'], 4)
