@@ -278,7 +278,7 @@ class WhatsAppBotHandler
         $this->logMessage($config, $conversation, 'in', $normalizedPhone, $text, $providerMessageId);
         $sent = $this->whatsapp->sendText($config, PhoneNumber::toE164($fromPhone) ?? $fromPhone, $reply);
         if ($sent) {
-            $this->logMessage($config, $conversation, 'out', null, $reply, null);
+        $this->logMessage($config, $conversation, 'out', null, $reply, null);
         } else {
             $this->logMessage(
                 $config,
@@ -531,9 +531,9 @@ class WhatsAppBotHandler
         string $input,
     ): string {
         if (in_array(strtoupper(trim($input)), ['CANCEL', '0'], true)) {
-            $conversation->payload = array_merge($conversation->payload ?? [], [
-                'pending_product_code' => null,
-                'pending_product_name' => null,
+        $conversation->payload = array_merge($conversation->payload ?? [], [
+            'pending_product_code' => null,
+            'pending_product_name' => null,
                 'pending_uom' => null,
                 'pending_on_wholesale_retail' => null,
                 'pending_preset_qty' => null,
@@ -797,15 +797,15 @@ class WhatsAppBotHandler
 
         $message = $messageOverride ?: ($e->getMessage() !== '' ? $e->getMessage() : class_basename($e));
 
-                $this->orders->logOrderFailure(
-                    $config->organizationId,
+            $this->orders->logOrderFailure(
+                $config->organizationId,
             $conversation->id ? (int) $conversation->id : null,
             (string) $conversation->phone,
             $message,
-                    $this->cartLines($conversation),
+                $this->cartLines($conversation),
             $e,
             $this->simulatorSession,
-                );
+            );
     }
 
     protected function handleTrack(
@@ -1872,7 +1872,7 @@ class WhatsAppBotHandler
         if ($isRetail) {
             $baseQty = $displayQty;
         } else {
-            $baseQty = $usesSmall && $factor > 1 ? $displayQty * $factor : $displayQty;
+        $baseQty = $usesSmall && $factor > 1 ? $displayQty * $factor : $displayQty;
         }
 
         $product = Product::query()
@@ -1977,7 +1977,7 @@ class WhatsAppBotHandler
         if ($isRetail) {
             $baseQty = $displayQty;
         } else {
-            $baseQty = $usesSmall && $factor > 1 ? $displayQty * $factor : $displayQty;
+        $baseQty = $usesSmall && $factor > 1 ? $displayQty * $factor : $displayQty;
         }
 
         $display = $product

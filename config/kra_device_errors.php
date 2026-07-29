@@ -49,6 +49,10 @@ return [
         '903' => 'The KRA device could not be initialized. Check hardware IP, serial number, and that the device is online.',
         '96' => 'Could not reach the KRA device. Check that it is powered on and on the same network.',
         '90' => 'The KRA device has no internet connection. Connect the device to the internet and try again.',
+        // Comstore / middleware: device aborted or lost communication mid-request
+        '519' => 'The KRA fiscal device is not communicating with the system. Check that Comstore is running, the device is powered on and connected, then try again.',
+        '518' => 'The KRA fiscal device timed out. Check the device connection and try again.',
+        '520' => 'The KRA fiscal device closed the connection. Check that the device is online and try again.',
 
         // PIN / buyer (legacy codes)
         '880' => 'The customer KRA PIN is invalid. Correct the buyer PIN and retry.',
@@ -85,7 +89,9 @@ return [
         '/Device not initialized/i' => 'The fiscal device is not initialized. Use Initialize device in Finance settings or configure it in Comstore desktop.',
         '/deviceConnection.*Disconnected/i' => 'Comstore API is reachable but the fiscal hardware is disconnected. Check power and network to the Smart VSCU device.',
         '/Could not reach KRA device/i' => 'Could not reach the KRA device. Check that it is powered on, on the network, and the URL in settings is correct.',
-        '/cURL error|Connection refused|timed out/i' => 'Could not connect to the KRA device. Check network connectivity and the device URL in Finance settings.',
+        '/cURL error|Connection refused|timed out|Connection timed out|Failed to connect/i' => 'Could not connect to the KRA device. Check network connectivity and the device URL in Finance settings.',
+        '/519\s*error\s*code|error\s*code\s*[,:]?\s*519/i' => 'The KRA fiscal device is not communicating with the system. Check that Comstore is running, the device is powered on and connected, then try again.',
+        '/aborted without a reason|signal is aborted|operation was aborted/i' => 'The KRA fiscal device stopped responding. Check that the device is powered on, connected to the network, and Comstore is running, then try again.',
     ],
 
     'fallback' => 'KRA device rejected the request. Check the device connection and product registration, then try again.',

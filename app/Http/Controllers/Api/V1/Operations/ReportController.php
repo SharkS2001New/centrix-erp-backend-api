@@ -752,11 +752,11 @@ class ReportController extends Controller
             ->first();
 
         $paginator = $q->with(['product:product_code,product_name,unit_id', 'product.unit'])
-            ->orderByDesc('id')
-            ->paginate(min((int) $request->input('per_page', 50), 200))
-            ->through(function ($transaction) {
-                $payload = $transaction->toArray();
-                $payload['product_name'] = $transaction->product?->product_name;
+                ->orderByDesc('id')
+                ->paginate(min((int) $request->input('per_page', 50), 200))
+                ->through(function ($transaction) {
+                    $payload = $transaction->toArray();
+                    $payload['product_name'] = $transaction->product?->product_name;
                 $unit = $transaction->product?->unit;
                 if ($unit) {
                     $payload['uom_name'] = $unit->full_name;
@@ -767,7 +767,7 @@ class ReportController extends Controller
                     $payload['uom_type'] = $unit->uom_type;
                 }
 
-                return $payload;
+                    return $payload;
             });
 
         return response()->json(array_merge($paginator->toArray(), [
@@ -1673,7 +1673,7 @@ class ReportController extends Controller
             ->first();
 
         $paginator = $q->orderByDesc('cip.date_paid')
-            ->orderByDesc('cip.id')
+                ->orderByDesc('cip.id')
             ->paginate(min((int) ($filters['per_page'] ?? 20), 200));
 
         return response()->json(array_merge($paginator->toArray(), [

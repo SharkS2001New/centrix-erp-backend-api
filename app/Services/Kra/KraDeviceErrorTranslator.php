@@ -94,6 +94,15 @@ final class KraDeviceErrorTranslator
             return $matches[1];
         }
 
+        // Comstore middleware style: "519 error code, aborted without a reason"
+        if (preg_match('/\b(\d{3})\s+error\s*code\b/i', $text, $matches) === 1) {
+            return $matches[1];
+        }
+
+        if (preg_match('/\berror\s*code\s*[,:]?\s*(\d{3})\b/i', $text, $matches) === 1) {
+            return $matches[1];
+        }
+
         if (preg_match('/\bE(\d{3})\b/i', $text, $matches) === 1) {
             return $matches[1];
         }
@@ -109,7 +118,7 @@ final class KraDeviceErrorTranslator
     {
         $fallback = (string) config('kra_device_errors.fallback', 'KRA device rejected the request.');
 
-        if ($technical === '' || self::looksLikeRawHttpNoise($technical)) {
+        if ($technical === '' || self::looksLikeRawHttpNoise($technical) || self::looksLikeCrypticDeviceNoise($technical)) {
             return $fallback;
         }
 
@@ -125,5 +134,14 @@ final class KraDeviceErrorTranslator
         return str_contains($text, 'HTTP request returned status code')
             || str_contains($text, 'cURL error')
             || (str_starts_with($text, '{') && str_contains($text, '"ModelState"'));
+    }
+
+    /** Raw middleware strings that should never be shown to cashiers as-is. */
+    protected static function looksLikeCrypticDeviceNoise(string $text): bool
+    {
+        return (bool) preg_match(
+            '/\berror\s*code\b|aborted without a reason|signal is aborted|operation was aborted/i',
+            $text,
+        );
     }
 }

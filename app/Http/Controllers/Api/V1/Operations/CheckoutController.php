@@ -582,15 +582,15 @@ class CheckoutController extends Controller
                 );
             }
 
-            if ($orderStatus !== 'pending_approval') {
-                app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
-            } else {
+            if ($orderStatus === 'pending_approval') {
                 $discountApproval->attachCheckoutToSale(
                     $sale,
                     $cart,
                     $user,
                     isset($input['discount_approval_reason']) ? (string) $input['discount_approval_reason'] : null,
                 );
+            } elseif (! in_array($orderStatus, ['held', 'draft'], true)) {
+                app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
             }
 
             $this->releaseCartReservations($cart->id);
@@ -599,16 +599,21 @@ class CheckoutController extends Controller
 
             $sale = $sale->fresh(['items.product.unit', 'payments.paymentMethod']);
 
+            // Held/draft parks are unfinished — do not fiscalize, invoice, journal, or notify.
+            $isParkedOrder = in_array($orderStatus, ['held', 'draft'], true);
+
             $finance = $gate->moduleSettings('finance');
             $explicitSubmit = array_key_exists('submit_kra', $input)
                 ? (bool) $input['submit_kra']
                 : null;
 
-            $submitKra = $orderStatus !== 'pending_approval' && KraFiscalPolicy::shouldFiscalizeSale(
-                $finance,
-                (float) $sale->order_total,
-                $explicitSubmit,
-            );
+            $submitKra = ! $isParkedOrder
+                && $orderStatus !== 'pending_approval'
+                && KraFiscalPolicy::shouldFiscalizeSale(
+                    $finance,
+                    (float) $sale->order_total,
+                    $explicitSubmit,
+                );
 
             $kraResponse = $this->submitKraForSale(
                 $sale,
@@ -621,7 +626,7 @@ class CheckoutController extends Controller
                 $sale->setRelation('kraResponse', $kraResponse);
             }
 
-            if ($orderStatus !== 'pending_approval') {
+            if (! $isParkedOrder && $orderStatus !== 'pending_approval') {
                 app(SaleJournalService::class)->postIfEnabled($sale, $user, $gate);
 
                 $organization = Organization::find($user->organization_id);

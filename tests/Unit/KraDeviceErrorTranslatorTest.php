@@ -56,4 +56,24 @@ class KraDeviceErrorTranslatorTest extends TestCase
         $this->assertSame('353', $result['code']);
         $this->assertStringContainsString('already', strtolower($result['message']));
     }
+
+    public function test_translates_519_communication_failure(): void
+    {
+        $raw = '519 error code, aborted without a reason';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertSame('519', $result['code']);
+        $this->assertStringContainsString('not communicating', strtolower($result['message']));
+        $this->assertStringNotContainsString('519 error code', $result['message']);
+    }
+
+    public function test_translates_aborted_without_reason_pattern(): void
+    {
+        $raw = 'signal is aborted without a reason';
+
+        $result = KraDeviceErrorTranslator::translate($raw);
+
+        $this->assertStringContainsString('stopped responding', strtolower($result['message']));
+    }
 }

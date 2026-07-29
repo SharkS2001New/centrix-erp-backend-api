@@ -214,4 +214,49 @@ class KraDeviceCheckoutTest extends TestCase
         $this->assertSame($beforeKra, \App\Models\KraResponse::query()->count());
         $this->assertDatabaseHas('temporary_carts', ['id' => $cartId]);
     }
+
+    public function test_held_checkout_does_not_submit_to_kra_device(): void
+    {
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => true,
+                'message' => 'OK',
+                'invoice_number' => 'CU-HOLD',
+                'Receipt Signature' => 'SIG-HOLD',
+                'signature_link' => 'https://example.test/qr-hold',
+                'serial_number' => 'DEJA02220240050',
+                'timestamp' => '2026-06-11T12:00:00',
+            ], 200),
+        ]);
+
+        $product = Product::with('vat')->first();
+        $this->assertNotNull($product);
+        if (! $product->vat_id) {
+            $vat = Vat::first();
+            $product->update(['vat_id' => $vat->id]);
+        }
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertSuccessful()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertSuccessful();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'held',
+            'save_only' => true,
+            'pay_now' => 0,
+            'customer_name_override' => 'Walk-in',
+        ])->assertCreated()->json();
+
+        $this->assertSame('held', $sale['status']);
+        $this->assertDatabaseMissing('kra_responses', [
+            'sale_id' => $sale['id'],
+        ]);
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '192.168.1.50'));
+    }
 }
