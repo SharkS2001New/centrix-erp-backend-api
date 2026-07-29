@@ -646,6 +646,41 @@ class TillOperationsController extends Controller
     {
         $byMethod = [];
 
+        // Primary source: sales payment columns (matches end-of-day and legacy split tenders).
+        $columnAgg = DB::table('sales as s')
+            ->where('s.float_session_id', $floatSessionId)
+            ->where('s.status', 'completed')
+            ->selectRaw('
+                COALESCE(SUM(s.cash), 0) as cash,
+                COALESCE(SUM(s.mpesa_amount), 0) as mpesa,
+                COALESCE(SUM(s.equity_amount), 0) as equity,
+                COALESCE(SUM(s.kcb_amount), 0) as kcb,
+                COALESCE(SUM(s.voucher_payment_amount), 0) as voucher,
+                COALESCE(SUM(s.points_payment_amount), 0) as points
+            ')
+            ->first();
+
+        $columnMap = [
+            'CASH' => (float) ($columnAgg->cash ?? 0),
+            'MPESA' => (float) ($columnAgg->mpesa ?? 0),
+            'EQUITY' => (float) ($columnAgg->equity ?? 0),
+            'KCB' => (float) ($columnAgg->kcb ?? 0),
+            'VOUCHER' => (float) ($columnAgg->voucher ?? 0),
+            'POINTS' => (float) ($columnAgg->points ?? 0),
+        ];
+
+        foreach ($columnMap as $code => $total) {
+            if ($total <= 0) {
+                continue;
+            }
+            $byMethod[$code] = [
+                'method_code' => $code,
+                'method_name' => $this->paymentMethodLabel($code, $code),
+                'total' => $total,
+            ];
+        }
+
+        // sale_payments fill methods with no column totals (card, voucher-only, etc.).
         $paymentRows = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
@@ -661,6 +696,9 @@ class TillOperationsController extends Controller
             if ($code === '' || $total <= 0) {
                 continue;
             }
+            if (($columnMap[$code] ?? 0) > 0) {
+                continue;
+            }
             $name = trim((string) ($row->method_name ?? ''));
             if (! isset($byMethod[$code])) {
                 $byMethod[$code] = [
@@ -673,49 +711,6 @@ class TillOperationsController extends Controller
             if ($name !== '') {
                 $byMethod[$code]['method_name'] = $this->paymentMethodLabel($code, $name);
             }
-        }
-
-        // Legacy sales without sale_payments rows (imported / older checkout path).
-        $legacy = DB::table('sales as s')
-            ->where('s.float_session_id', $floatSessionId)
-            ->where('s.status', 'completed')
-            ->whereNotExists(function ($query) {
-                $query->select(DB::raw(1))
-                    ->from('sale_payments as sp')
-                    ->whereColumn('sp.sale_id', 's.id')
-                    ->whereNotNull('sp.float_session_id');
-            })
-            ->selectRaw('
-                COALESCE(SUM(s.cash), 0) as cash,
-                COALESCE(SUM(s.mpesa_amount), 0) as mpesa,
-                COALESCE(SUM(s.equity_amount), 0) as equity,
-                COALESCE(SUM(s.kcb_amount), 0) as kcb,
-                COALESCE(SUM(s.voucher_payment_amount), 0) as voucher,
-                COALESCE(SUM(s.points_payment_amount), 0) as points
-            ')
-            ->first();
-
-        $legacyMap = [
-            'CASH' => (float) ($legacy->cash ?? 0),
-            'MPESA' => (float) ($legacy->mpesa ?? 0),
-            'EQUITY' => (float) ($legacy->equity ?? 0),
-            'KCB' => (float) ($legacy->kcb ?? 0),
-            'VOUCHER' => (float) ($legacy->voucher ?? 0),
-            'POINTS' => (float) ($legacy->points ?? 0),
-        ];
-
-        foreach ($legacyMap as $code => $total) {
-            if ($total <= 0) {
-                continue;
-            }
-            if (! isset($byMethod[$code])) {
-                $byMethod[$code] = [
-                    'method_code' => $code,
-                    'method_name' => $this->paymentMethodLabel($code, $code),
-                    'total' => 0.0,
-                ];
-            }
-            $byMethod[$code]['total'] += $total;
         }
 
         $result = array_values($byMethod);

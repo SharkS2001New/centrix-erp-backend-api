@@ -54,6 +54,25 @@ class CentrixSalesScope
     }
 
     /**
+     * Distinct customers served — registered accounts, named walk-ins, and one count
+     * per anonymous walk-in transaction (POS orders without customer_num).
+     */
+    public static function metricCustomerCountSql(string $alias = 's'): string
+    {
+        $customerNum = "{$alias}.customer_num";
+        $nameOverride = "{$alias}.customer_name_override";
+        $saleId = "{$alias}.id";
+
+        return "COUNT(DISTINCT CASE
+            WHEN {$customerNum} IS NOT NULL THEN CONCAT('reg:', {$customerNum})
+            WHEN NULLIF(TRIM({$nameOverride}), '') IS NOT NULL
+                AND LOWER(TRIM({$nameOverride})) NOT IN ('walk-in', 'walk in', 'walkin')
+                THEN CONCAT('walk:', LOWER(TRIM({$nameOverride})))
+            ELSE CONCAT('sale:', {$saleId})
+        END)";
+    }
+
+    /**
      * @param  EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder  $query
      * @return EloquentBuilder<\Illuminate\Database\Eloquent\Model>|QueryBuilder
      */

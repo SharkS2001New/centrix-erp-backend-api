@@ -1167,7 +1167,7 @@ class ReportController extends Controller
 
         $agg = (clone $salesBase)->selectRaw('
             COUNT(*) as transactions,
-            COUNT(DISTINCT customer_num) as customers,
+            '.CentrixSalesScope::metricCustomerCountSql('sales').' as customers,
             COALESCE(SUM(order_total), 0) as gross_sales,
             COALESCE(SUM(total_vat), 0) as total_vat,
             COALESCE(SUM(order_discount), 0) as order_discounts,
@@ -1250,22 +1250,41 @@ class ReportController extends Controller
             $sessionQ->where('tfs.cashier_id', $cashierId);
         }
         $openingFloat = (float) (clone $sessionQ)->sum('working_amount');
-        $cashMovementTotals = $this->sumSessionCashMovements(
-            (clone $sessionQ)->select('tfs.cash_movements')->get()->all(),
-        );
+        $sessionRows = (clone $sessionQ)->select('tfs.cash_movements', 'tfs.float_breakdown')->get()->all();
+        $cashMovementTotals = $this->sumSessionCashMovements($sessionRows);
         $cashMovementsIn = $cashMovementTotals['in'];
         $cashMovementsOut = $cashMovementTotals['out'];
+        $floatBreakdownRows = $this->sumSessionFloatBreakdown($sessionRows);
+        $floatBreakdownTotal = array_sum(array_map(
+            fn (array $row) => (float) ($row['amount'] ?? 0),
+            $floatBreakdownRows,
+        ));
+        if ($floatBreakdownRows === [] && $openingFloat > 0) {
+            $floatBreakdownRows = [
+                ['payment_type' => 'CASH', 'amount' => round($openingFloat, 2)],
+            ];
+            $floatBreakdownTotal = $openingFloat;
+        }
+
+        $salesBySessionSub = CentrixSalesScope::excludeLegacyMaterialized(
+            DB::table('sales')
+                ->whereIn('status', $metricStatuses)
+                ->where('archived', 0)
+                ->whereNotNull('float_session_id')
+                ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId)),
+        );
+        $this->applySalesTenantScope($salesBySessionSub, $orgId, $branchId);
+        EffectiveSaleDate::applyFromToDateFilter($salesBySessionSub, $periodStartDate, $periodEndDate);
+        $salesBySessionSub = $salesBySessionSub
+            ->select('float_session_id')
+            ->selectRaw('COUNT(*) as txn_count')
+            ->selectRaw('COALESCE(SUM(order_total), 0) as gross')
+            ->groupBy('float_session_id');
 
         $tillRowsQuery = DB::table('till_float_sessions as tfs')
             ->join('tills as t', 'tfs.till_id', '=', 't.id')
             ->join('users as u', 'tfs.cashier_id', '=', 'u.id')
-            ->leftJoin(DB::raw('(
-                SELECT float_session_id, COUNT(*) AS txn_count, SUM(order_total) AS gross
-                FROM sales
-                WHERE status = \'completed\'
-                  AND '.CentrixSalesScope::legacyExcludeSql('sales').'
-                GROUP BY float_session_id
-            ) s'), 's.float_session_id', '=', 'tfs.id')
+            ->leftJoinSub($salesBySessionSub, 's', 's.float_session_id', '=', 'tfs.id')
             ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
         $this->applyBranchTenantScope($tillRowsQuery, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
@@ -1292,16 +1311,13 @@ class ReportController extends Controller
         $cashierRowsQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales as s')
                 ->join('users as u', 's.cashier_id', '=', 'u.id')
-                ->where('s.status', 'completed')
-                ->where('s.archived', 0),
+                ->whereIn('s.status', $metricStatuses)
+                ->where('s.archived', 0)
+                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
             's',
         );
         $this->applySalesTenantScope($cashierRowsQuery, $orgId, $branchId, 's');
-        if ($isMonthly) {
-            $cashierRowsQuery->whereBetween('s.completed_at', [$periodStart, $periodEnd]);
-        } else {
-            $cashierRowsQuery->whereDate('s.completed_at', $date);
-        }
+        EffectiveSaleDate::applyFromToDateFilter($cashierRowsQuery, $periodStartDate, $periodEndDate, 's');
         $cashierRows = $cashierRowsQuery
             ->groupBy('s.cashier_id', 'u.username', 'u.full_name')
             ->orderBy('cashier')
@@ -1473,6 +1489,8 @@ class ReportController extends Controller
             ],
             'tills' => $tillRows,
             'cashiers' => $cashierRows,
+            'float_breakdown' => $floatBreakdownRows,
+            'float_breakdown_total' => round($floatBreakdownTotal, 2),
             'expenses' => $expenseRows,
             'total_expenses' => $totalExpenses,
             'session_expenses' => $sessionExpenses,
@@ -2797,6 +2815,75 @@ class ReportController extends Controller
         }
 
         return ['in' => $in, 'out' => $out];
+    }
+
+    /**
+     * @param  array<int, object|array>  $sessions
+     * @return list<array{payment_type: string, amount: float}>
+     */
+    protected function sumSessionFloatBreakdown(array $sessions): array
+    {
+        $totals = [];
+
+        foreach ($sessions as $session) {
+            $raw = is_array($session)
+                ? ($session['float_breakdown'] ?? null)
+                : ($session->float_breakdown ?? null);
+            $decoded = is_string($raw) ? json_decode($raw, true) : $raw;
+
+            foreach ($this->normalizeFloatBreakdownEntries(is_array($decoded) ? $decoded : []) as $entry) {
+                $type = $entry['payment_type'];
+                $totals[$type] = ($totals[$type] ?? 0) + (float) $entry['new_float'];
+            }
+        }
+
+        $rows = [];
+        foreach ($totals as $type => $amount) {
+            if ($amount <= 0) {
+                continue;
+            }
+            $rows[] = [
+                'payment_type' => $type,
+                'amount' => round($amount, 2),
+            ];
+        }
+
+        usort($rows, fn (array $a, array $b) => strcmp($a['payment_type'], $b['payment_type']));
+
+        return $rows;
+    }
+
+    /** @param  mixed  $breakdown */
+    protected function normalizeFloatBreakdownEntries($breakdown): array
+    {
+        if (! is_array($breakdown) || $breakdown === []) {
+            return [];
+        }
+
+        if (array_is_list($breakdown)) {
+            return array_values(array_filter(array_map(function ($entry) {
+                if (! is_array($entry)) {
+                    return null;
+                }
+
+                return [
+                    'new_float' => (float) ($entry['new_float'] ?? 0),
+                    'payment_type' => strtoupper((string) ($entry['payment_type'] ?? 'CASH')),
+                ];
+            }, $breakdown)));
+        }
+
+        $entries = [];
+        foreach ($breakdown as $type => $amount) {
+            if (is_numeric($amount)) {
+                $entries[] = [
+                    'new_float' => (float) $amount,
+                    'payment_type' => strtoupper((string) $type),
+                ];
+            }
+        }
+
+        return $entries;
     }
 
     protected function soldLineCogsSumSql(): string

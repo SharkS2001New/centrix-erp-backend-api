@@ -585,7 +585,14 @@ class CapabilityGate
             $this->organization?->module_settings ?? [],
         );
         if ($this->organization) {
+            $customSales = is_array($this->organization->module_settings['sales'] ?? null)
+                ? $this->organization->module_settings['sales']
+                : [];
             $sales = $this->moduleSettings('sales');
+            $sales['enable_pos_cash_rounding'] = \App\Services\Sales\PosCashRoundingSettings::enabled(
+                $sales,
+                $customSales,
+            );
             $sales['order_workflow'] = OrderWorkflowService::forGate($this)->config();
             $discounts = app(\App\Services\Sales\DiscountApprovalService::class);
             $sales['effective_allow_edit_line_discount'] = $discounts->allowsManualLineDiscount($sales);

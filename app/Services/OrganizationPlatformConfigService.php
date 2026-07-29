@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Services\Erp\AdvancedDataImportPageRegistry;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Sales\PosCashRoundingSettings;
 use Illuminate\Validation\ValidationException;
 
 class OrganizationPlatformConfigService
@@ -304,6 +305,9 @@ class OrganizationPlatformConfigService
     {
         $gate = app(CapabilityGate::class)->forOrganization($org);
         $sales = $gate->moduleSettings('sales');
+        $customSales = is_array($org->module_settings['sales'] ?? null)
+            ? $org->module_settings['sales']
+            : [];
         $distribution = $gate->distributionSettings();
         $inventory = $gate->moduleSettings('inventory');
         $finance = $gate->moduleSettings('finance');
@@ -334,7 +338,7 @@ class OrganizationPlatformConfigService
                 (bool) ($org->enabled_modules['sales.pos'] ?? false),
             ),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
-            'enable_pos_cash_rounding' => (bool) ($sales['enable_pos_cash_rounding'] ?? false),
+            'enable_pos_cash_rounding' => PosCashRoundingSettings::enabled($sales, $customSales),
             'receipt_show_all_payment_methods' => (bool) ($sales['receipt_show_all_payment_methods'] ?? true),
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)
                 ? (string) $sales['external_pos_layout']

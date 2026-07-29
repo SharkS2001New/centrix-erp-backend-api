@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SalePayment;
 use App\Models\Till;
 use App\Models\TillFloatSession;
 use App\Models\User;
@@ -248,6 +249,48 @@ class TillSessionFlowTest extends TestCase
             (float) ($xReport['till']['gross_total'] ?? 0),
             1.0,
         );
+    }
+
+    public function test_x_report_payment_summary_uses_sales_column_splits(): void
+    {
+        $session = $this->openFreshSession(5000);
+        $cashMethod = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 990001,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'pos',
+            'till_id' => $this->till->id,
+            'float_session_id' => $session->id,
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'order_total' => 1000,
+            'total_vat' => 0,
+            'amount_paid' => 1000,
+            'payment_status' => 'paid',
+            'cash' => 400,
+            'mpesa_amount' => 300,
+            'equity_amount' => 300,
+            'completed_at' => now(),
+        ]);
+
+        SalePayment::create([
+            'sale_id' => $sale->id,
+            'float_session_id' => $session->id,
+            'payment_method_id' => $cashMethod->id,
+            'amount' => 1000,
+        ]);
+
+        $payments = collect(
+            $this->getJson("/api/v1/pos/sessions/{$session->id}/x-report")
+                ->assertOk()
+                ->json('report.payments') ?? [],
+        )->keyBy('method_code');
+
+        $this->assertEqualsWithDelta(400, (float) ($payments['CASH']['total'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(300, (float) ($payments['MPESA']['total'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(300, (float) ($payments['EQUITY']['total'] ?? 0), 0.01);
     }
 
     public function test_till_float_session_crud_store_is_blocked(): void

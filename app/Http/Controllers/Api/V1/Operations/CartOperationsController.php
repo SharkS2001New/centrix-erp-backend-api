@@ -1190,9 +1190,7 @@ class CartOperationsController extends Controller
                 SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
             );
 
-            if (array_key_exists('amount', $line) && $line['amount'] !== null) {
-                $amount = max(0, (float) $line['amount']);
-            }
+            $amount = $this->resolveClientCartLineAmount($line, $amount);
 
             $grossForVat = max(0, $amount);
             $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
@@ -1313,6 +1311,8 @@ class CartOperationsController extends Controller
             SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
 
+        $amount = $this->resolveClientCartLineAmount($line, $amount);
+
         $product->loadMissing('vat');
         $grossForVat = max(0, $amount);
         $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
@@ -1422,6 +1422,8 @@ class CartOperationsController extends Controller
             array_key_exists('unit_price', $input) ? (float) $input['unit_price'] : (float) $row->unit_price,
             SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
+
+        $amount = $this->resolveClientCartLineAmount($input, $amount);
 
         $settings = $gate->moduleSettings('inventory');
         $location = $this->resolveSaleLineStockLocation(
@@ -1642,6 +1644,15 @@ class CartOperationsController extends Controller
         } while (CartLine::where('update_code', $code)->exists());
 
         return $code;
+    }
+
+    protected function resolveClientCartLineAmount(array $line, float $computedAmount): float
+    {
+        if (array_key_exists('amount', $line) && $line['amount'] !== null) {
+            return max(0, (float) $line['amount']);
+        }
+
+        return $computedAmount;
     }
 
     protected function resolveLineDiscountGiven(array $salesSettings, float $amount): float
