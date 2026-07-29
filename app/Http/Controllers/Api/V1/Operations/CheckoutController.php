@@ -94,7 +94,12 @@ class CheckoutController extends Controller
 
         // Preserve fiscal payload for immediate POS/thermal print — cashiers often lack
         // admin.kra_responses.view, so print must not rely on a separate lookup.
-        $sale = $sale->fresh(['items.product.unit', 'payments.paymentMethod', 'kraResponse']);
+        $sale = $sale->fresh([
+            'items.product.unit',
+            'payments.paymentMethod',
+            'kraResponse',
+            'cashier:id,username,full_name',
+        ]);
 
         return response()->json(array_merge($sale->toArray(), [
             'status_name' => $statusName,

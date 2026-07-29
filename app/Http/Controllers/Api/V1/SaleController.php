@@ -342,7 +342,12 @@ class SaleController extends BaseResourceController
 
     public function show(Request $request, string $id)
     {
-        $sale = $this->baseQuery($request)->with(['items.product.unit', 'customer:customer_num,customer_name,organization_id', 'kraResponse'])->findOrFail($id);
+        $sale = $this->baseQuery($request)->with([
+            'items.product.unit',
+            'customer:customer_num,customer_name,organization_id',
+            'kraResponse',
+            'cashier:id,username,full_name',
+        ])->findOrFail($id);
         $gate = $this->erp->gateForUser($request->user());
         $permissions = app(UserPermissionService::class);
         if (! SalesOrderQueuePermissions::userCanViewSale($request->user(), $sale, $gate, $permissions)) {
