@@ -11,6 +11,7 @@ use App\Models\Till;
 use App\Models\TillFloatSession;
 use App\Models\User;
 use Laravel\Sanctum\Sanctum;
+use Illuminate\Support\Facades\DB;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
 
@@ -302,5 +303,30 @@ class TillSessionFlowTest extends TestCase
             'session_date' => now()->toDateString(),
             'working_amount' => 1000,
         ])->assertStatus(422);
+    }
+
+    public function test_pos_expense_groups_are_scoped_to_user_organization(): void
+    {
+        $orgId = (int) $this->user->organization_id;
+        $otherOrgId = (int) Organization::query()->where('id', '!=', $orgId)->value('id');
+        $this->assertGreaterThan(0, $otherOrgId);
+
+        DB::table('expense_groups')->insert([
+            ['group_name' => 'Other Org Fuel', 'organization_id' => $otherOrgId],
+            ['group_name' => 'Other Org Rent', 'organization_id' => $otherOrgId],
+        ]);
+
+        $expectedNames = DB::table('expense_groups')
+            ->where('organization_id', $orgId)
+            ->orderBy('group_name')
+            ->pluck('group_name')
+            ->all();
+
+        $response = $this->getJson('/api/v1/pos/expense-groups')->assertOk()->json('data');
+        $names = array_column($response, 'group_name');
+
+        $this->assertSame($expectedNames, $names);
+        $this->assertNotContains('Other Org Fuel', $names);
+        $this->assertNotContains('Other Org Rent', $names);
     }
 }

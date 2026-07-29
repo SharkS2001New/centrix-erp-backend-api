@@ -254,8 +254,14 @@ class TillOperationsController extends Controller
 
     public function expenseGroups(Request $request)
     {
+        $orgId = (int) ($request->user()->organization_id ?? 0);
+        if ($orgId <= 0) {
+            return response()->json(['data' => []]);
+        }
+
         $rows = DB::table('expense_groups')
             ->select('id', 'group_name')
+            ->where('organization_id', $orgId)
             ->orderBy('group_name')
             ->get();
 
@@ -277,11 +283,21 @@ class TillOperationsController extends Controller
             throw new InvalidArgumentException('Cannot record expenses on a closed session.');
         }
 
+        $organizationId = (int) (
+            $request->user()->organization_id
+            ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $session->branch_id)
+        );
+
+        $expenseGroupExists = DB::table('expense_groups')
+            ->where('id', $data['expense_group_id'])
+            ->where('organization_id', $organizationId)
+            ->exists();
+        if (! $expenseGroupExists) {
+            throw new InvalidArgumentException('Expense category not found for this organization.');
+        }
+
         $expense = Expense::create([
-            'organization_id' => (int) (
-                $request->user()->organization_id
-                ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $session->branch_id)
-            ),
+            'organization_id' => $organizationId,
             'branch_id' => $session->branch_id,
             'expense_group_id' => $data['expense_group_id'],
             'float_session_id' => $session->id,
