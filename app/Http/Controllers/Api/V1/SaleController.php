@@ -137,6 +137,11 @@ class SaleController extends BaseResourceController
             }
         }
 
+        // POS held orders are private to the cashier who parked them.
+        if (strtolower((string) $statusFilter) === 'held' && $request->user()) {
+            $query->where('sales.cashier_id', $request->user()->id);
+        }
+
         if ($request->input('order_source') === 'backoffice') {
             $query->where(function ($sub) {
                 $sub->whereIn('sales.order_source', ['backoffice', 'backend'])

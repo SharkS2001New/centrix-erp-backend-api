@@ -183,6 +183,45 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
     }
 
+    public function test_held_orders_list_is_scoped_to_current_cashier(): void
+    {
+        $admin = $this->user;
+        $otherCashier = User::where('username', 'cashier')->firstOrFail();
+
+        $template = Sale::query()->where('organization_id', $admin->organization_id)->firstOrFail();
+        $heldSale = Sale::create([
+            'order_num' => 92001,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'cashier_id' => $admin->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'held',
+            'total_vat' => 0,
+            'order_total' => 1000,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        Sanctum::actingAs($otherCashier);
+
+        $this->getJson('/api/v1/sales?per_page=50&filter[status]=held')
+            ->assertOk()
+            ->assertJsonCount(0, 'data');
+
+        $this->postJson("/api/v1/sales/orders/{$heldSale->id}/cancel-held")
+            ->assertStatus(422)
+            ->assertJsonFragment(['message' => 'You can only cancel your own held orders.']);
+
+        Sanctum::actingAs($admin);
+
+        $this->getJson('/api/v1/sales?per_page=50&filter[status]=held')
+            ->assertOk()
+            ->assertJsonPath('data.0.id', $heldSale->id);
+    }
+
     public function test_cart_order_discount_reduces_checkout_total(): void
     {
         $org = \App\Models\Organization::findOrFail($this->user->organization_id);

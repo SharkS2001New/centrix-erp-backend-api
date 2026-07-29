@@ -58,4 +58,23 @@ class OrganizationSecuritySettingsTest extends TestCase
             ->assertStatus(422)
             ->assertJsonValidationErrors(['screen_lock_minutes']);
     }
+
+    public function test_capabilities_expose_screen_lock_minutes_from_org_security_settings(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $org = Organization::findOrFail($admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['security'] = array_merge($settings['security'] ?? [], [
+            'screen_lock_minutes' => 45,
+            'session_idle_minutes' => 120,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $this->getJson('/api/v1/erp/capabilities')
+            ->assertOk()
+            ->assertJsonPath('screen_lock_minutes', 45)
+            ->assertJsonPath('session_idle_minutes', 120);
+    }
 }

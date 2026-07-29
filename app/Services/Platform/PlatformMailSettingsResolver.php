@@ -523,8 +523,8 @@ class PlatformMailSettingsResolver
             }
             if (! empty($data['smtp_password'])) {
                 $account['smtp_password'] = $data['smtp_password'];
-            }
-            if (! empty($data['imap_password'])) {
+        }
+        if (! empty($data['imap_password'])) {
                 $account['imap_password'] = $data['imap_password'];
             }
             if (! empty($data['prefill_imap_from_smtp'])) {

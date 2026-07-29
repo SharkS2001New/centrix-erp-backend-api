@@ -942,8 +942,8 @@ class PlatformMailboxService
             $decoded = base64_decode($body, true);
             $body = $decoded !== false ? $decoded : $body;
         } elseif ($encoding === 4) {
-            $body = quoted_printable_decode($body);
-        }
+                    $body = quoted_printable_decode($body);
+                }
 
         return $this->decodePartCharset($body, $part);
     }

@@ -777,6 +777,14 @@ class CartOperationsController extends Controller
             throw new InvalidArgumentException('Only held orders can be deleted.');
         }
 
+        if ((int) $sale->cashier_id !== (int) $user->id
+            && ! app(\App\Services\Auth\UserPermissionService::class)->canEditOthersSalesOrders(
+                $user,
+                $this->erp->gateForUser($user),
+            )) {
+            throw new InvalidArgumentException('You can only cancel your own held orders.');
+        }
+
         DB::transaction(function () use ($sale, $user) {
             $this->restoreCancelledSaleStock($sale, $user);
 
