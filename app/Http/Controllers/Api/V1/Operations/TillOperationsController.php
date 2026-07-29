@@ -569,7 +569,7 @@ class TillOperationsController extends Controller
                 : ($session->float_breakdown ?? []),
         );
 
-        $payments = $this->buildPaymentSummary($floatSessionId, $cash, $mpesa, $equity, $kcb);
+        $payments = $this->buildPaymentSummary($floatSessionId);
 
         return [
             'session' => $session,
@@ -642,54 +642,129 @@ class TillOperationsController extends Controller
     }
 
     /** @return list<array{method_code: string, method_name: string, total: float}> */
-    protected function buildPaymentSummary(int $floatSessionId, float $cash, float $mpesa, float $equity, float $kcb): array
+    protected function buildPaymentSummary(int $floatSessionId): array
     {
-        $rows = DB::table('sale_payments as sp')
-            ->join('sales as s', 's.id', '=', 'sp.sale_id')
+        $byMethod = [];
+
+        $paymentRows = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
-            ->where('s.float_session_id', $floatSessionId)
+            ->join('sales as s', 's.id', '=', 'sp.sale_id')
+            ->where('sp.float_session_id', $floatSessionId)
             ->where('s.status', 'completed')
             ->selectRaw('pm.method_code, pm.method_name, COALESCE(SUM(sp.amount), 0) as total')
             ->groupBy('pm.method_code', 'pm.method_name')
-            ->orderByDesc('total')
             ->get();
 
-        // Start from authoritative sale column totals so X/Z always reflects Cash, M-Pesa, Equity, KCB
-        // even when payment-method setup is partial and sale_payments only has a subset.
-        $byMethod = [
-            'CASH' => ['method_code' => 'CASH', 'method_name' => 'Cash', 'total' => $cash],
-            'MPESA' => ['method_code' => 'MPESA', 'method_name' => 'M-Pesa', 'total' => $mpesa],
-            'EQUITY' => ['method_code' => 'EQUITY', 'method_name' => 'Equity', 'total' => $equity],
-            'KCB' => ['method_code' => 'KCB', 'method_name' => 'KCB', 'total' => $kcb],
-        ];
-
-        foreach ($rows as $row) {
-            $code = strtoupper(trim((string) ($row->method_code ?? '')));
+        foreach ($paymentRows as $row) {
+            $code = $this->normalizePaymentMethodCode((string) ($row->method_code ?? ''));
             $total = (float) ($row->total ?? 0);
-            $name = (string) ($row->method_name ?? $code);
-            if ($code === '') {
+            if ($code === '' || $total <= 0) {
                 continue;
             }
-            if ($code === 'M-PESA' || $code === 'M_PESA' || $code === 'AIRTEL') {
-                $code = 'MPESA';
-            } elseif ($code === 'BANK' || $code === 'BANK_TRANSFER') {
-                // Keep explicit BANK rows separately if they exist.
-                $code = 'BANK';
-            }
-
-            if (array_key_exists($code, $byMethod)) {
-                // Prefer payment-method labels when present, but keep sale-column totals to avoid undercount.
-                $byMethod[$code]['method_name'] = $name !== '' ? $name : $byMethod[$code]['method_name'];
-            } else {
+            $name = trim((string) ($row->method_name ?? ''));
+            if (! isset($byMethod[$code])) {
                 $byMethod[$code] = [
                     'method_code' => $code,
-                    'method_name' => $name !== '' ? $name : $code,
-                    'total' => $total,
+                    'method_name' => $this->paymentMethodLabel($code, $name),
+                    'total' => 0.0,
                 ];
+            }
+            $byMethod[$code]['total'] += $total;
+            if ($name !== '') {
+                $byMethod[$code]['method_name'] = $this->paymentMethodLabel($code, $name);
             }
         }
 
-        return array_values(array_filter($byMethod, fn ($entry) => (float) ($entry['total'] ?? 0) > 0));
+        // Legacy sales without sale_payments rows (imported / older checkout path).
+        $legacy = DB::table('sales as s')
+            ->where('s.float_session_id', $floatSessionId)
+            ->where('s.status', 'completed')
+            ->whereNotExists(function ($query) {
+                $query->select(DB::raw(1))
+                    ->from('sale_payments as sp')
+                    ->whereColumn('sp.sale_id', 's.id')
+                    ->whereNotNull('sp.float_session_id');
+            })
+            ->selectRaw('
+                COALESCE(SUM(s.cash), 0) as cash,
+                COALESCE(SUM(s.mpesa_amount), 0) as mpesa,
+                COALESCE(SUM(s.equity_amount), 0) as equity,
+                COALESCE(SUM(s.kcb_amount), 0) as kcb,
+                COALESCE(SUM(s.voucher_payment_amount), 0) as voucher,
+                COALESCE(SUM(s.points_payment_amount), 0) as points
+            ')
+            ->first();
+
+        $legacyMap = [
+            'CASH' => (float) ($legacy->cash ?? 0),
+            'MPESA' => (float) ($legacy->mpesa ?? 0),
+            'EQUITY' => (float) ($legacy->equity ?? 0),
+            'KCB' => (float) ($legacy->kcb ?? 0),
+            'VOUCHER' => (float) ($legacy->voucher ?? 0),
+            'POINTS' => (float) ($legacy->points ?? 0),
+        ];
+
+        foreach ($legacyMap as $code => $total) {
+            if ($total <= 0) {
+                continue;
+            }
+            if (! isset($byMethod[$code])) {
+                $byMethod[$code] = [
+                    'method_code' => $code,
+                    'method_name' => $this->paymentMethodLabel($code, $code),
+                    'total' => 0.0,
+                ];
+            }
+            $byMethod[$code]['total'] += $total;
+        }
+
+        $result = array_values($byMethod);
+        usort($result, fn (array $a, array $b) => ($b['total'] <=> $a['total']));
+
+        return array_map(
+            fn (array $entry) => [
+                'method_code' => $entry['method_code'],
+                'method_name' => $entry['method_name'],
+                'total' => round((float) $entry['total'], 2),
+            ],
+            array_filter($result, fn (array $entry) => (float) ($entry['total'] ?? 0) > 0),
+        );
+    }
+
+    protected function normalizePaymentMethodCode(string $methodCode): string
+    {
+        $code = strtoupper(trim($methodCode));
+        if ($code === '') {
+            return '';
+        }
+        if (in_array($code, ['M-PESA', 'M_PESA', 'AIRTEL'], true)) {
+            return 'MPESA';
+        }
+        if (in_array($code, ['BANK', 'BANK_TRANSFER'], true)) {
+            return 'BANK';
+        }
+
+        return $code;
+    }
+
+    protected function paymentMethodLabel(string $normalizedCode, string $preferredName = ''): string
+    {
+        if ($preferredName !== '') {
+            return $preferredName;
+        }
+
+        return match ($normalizedCode) {
+            'CASH' => 'Cash',
+            'MPESA' => 'M-Pesa',
+            'EQUITY' => 'Equity',
+            'KCB' => 'KCB',
+            'BANK' => 'Bank',
+            'VOUCHER' => 'Voucher',
+            'POINTS' => 'Points',
+            'CHEQUE' => 'Cheque',
+            'CREDIT' => 'Credit',
+            default => $normalizedCode,
+        };
     }
 
     /** @param  mixed  $movements */
