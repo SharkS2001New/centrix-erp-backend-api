@@ -123,6 +123,65 @@ class CustomerReturnTest extends TestCase
         $this->assertSame(300.0, (float) $sale->amount_paid);
     }
 
+    public function test_approve_customer_return_restocks_even_when_shop_stock_is_negative(): void
+    {
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->where('status', 'completed')->first();
+        if (! $sale) {
+            $sale = Sale::query()->firstOrFail();
+            $sale->update(['status' => 'completed']);
+        }
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 5,
+                'selling_price' => 100,
+                'amount' => 500,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+        $sale->update(['order_total' => 500, 'amount_paid' => 500, 'payment_status' => 'paid']);
+
+        \Illuminate\Support\Facades\DB::table('current_stock')->updateOrInsert(
+            ['product_code' => $product->product_code, 'branch_id' => $this->user->branch_id],
+            ['shop_quantity' => -10, 'store_quantity' => 0],
+        );
+
+        $created = $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale->id,
+            'return_date' => '2026-06-12',
+            'refund_method' => 'CASH',
+            'reason' => 'Customer changed mind',
+            'lines' => [
+                [
+                    'product_code' => $product->product_code,
+                    'product_name' => $product->product_name,
+                    'quantity_sold' => 5,
+                    'return_qty' => 2,
+                    'unit_price' => 100,
+                    'amount' => 200,
+                ],
+            ],
+        ])->assertCreated();
+
+        $returnId = $created->json('id');
+
+        $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
+            ->assertOk()
+            ->assertJsonPath('status', 'approved');
+
+        $this->assertDatabaseHas('inventory_transactions', [
+            'product_code' => $product->product_code,
+            'transaction_type' => 'RETURN',
+            'reference_type' => 'customer_return',
+            'reference_id' => $returnId,
+            'quantity_change' => 2,
+        ]);
+    }
+
     public function test_cannot_return_more_than_remaining_quantity(): void
     {
         $product = Product::firstOrFail();

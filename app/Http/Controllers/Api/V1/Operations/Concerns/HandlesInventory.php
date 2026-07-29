@@ -87,7 +87,9 @@ trait HandlesInventory
         $before = $this->stockOnHand($productCode, $branchId, $location);
         $after = $before + $change;
 
-        if (! $allowBelowStock && $after < -0.0001) {
+        // Only block stock-out deductions. Restocks / returns (positive changes) must always
+        // be allowed — even when on-hand is already negative from prior below-stock sales.
+        if (! $allowBelowStock && $change < 0 && $after < -0.0001) {
             throw new InvalidArgumentException("Insufficient stock at {$location} for {$productCode}.");
         }
 
