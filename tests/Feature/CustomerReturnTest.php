@@ -123,6 +123,58 @@ class CustomerReturnTest extends TestCase
         $this->assertSame(300.0, (float) $sale->amount_paid);
     }
 
+    public function test_full_return_cancels_the_related_sale(): void
+    {
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->where('status', 'completed')->first();
+        if (! $sale) {
+            $sale = Sale::query()->firstOrFail();
+            $sale->update(['status' => 'completed']);
+        }
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 5,
+                'selling_price' => 100,
+                'amount' => 500,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+        SaleItem::query()
+            ->where('sale_id', $sale->id)
+            ->where('product_code', '!=', $product->product_code)
+            ->delete();
+        $sale->update(['order_total' => 500, 'amount_paid' => 500, 'payment_status' => 'paid']);
+
+        $created = $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale->id,
+            'return_date' => '2026-06-13',
+            'refund_method' => 'CASH',
+            'reason' => 'Full order return',
+            'lines' => [
+                [
+                    'product_code' => $product->product_code,
+                    'product_name' => $product->product_name,
+                    'quantity_sold' => 5,
+                    'return_qty' => 5,
+                    'unit_price' => 100,
+                    'amount' => 500,
+                ],
+            ],
+        ])->assertCreated();
+
+        $this->postJson("/api/v1/customer-returns/{$created->json('id')}/approve")
+            ->assertOk()
+            ->assertJsonPath('status', 'approved');
+
+        $sale->refresh();
+        $this->assertSame(0.0, (float) $sale->order_total);
+        $this->assertSame('cancelled', (string) $sale->status);
+    }
+
     public function test_approve_customer_return_restocks_even_when_shop_stock_is_negative(): void
     {
         $product = Product::firstOrFail();

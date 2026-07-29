@@ -289,10 +289,10 @@ class CustomerReturnService
                     $this->applyCreditNoteToSale($return->fresh(['lines']));
                 } else {
                     $this->applyReturnToSale($return->fresh(['lines']));
-                    $sale = Sale::query()->find($return->sale_id);
-                    if ($sale) {
-                        app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
-                    }
+                }
+                $sale = Sale::query()->find($return->sale_id);
+                if ($sale) {
+                    app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
                 }
             }
 
@@ -420,6 +420,10 @@ class CustomerReturnService
                     } else {
                         $this->reverseReturnFromSale($return);
                     }
+                    $sale = Sale::query()->find($return->sale_id);
+                    if ($sale) {
+                        app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
+                    }
                 }
                 if (! $this->isCreditNoteReturn($return)) {
                     $this->reverseApprovedStock($return, $user);
@@ -459,6 +463,10 @@ class CustomerReturnService
                         $this->reverseCreditNoteFromSale($return);
                     } else {
                         $this->reverseReturnFromSale($return);
+                    }
+                    $sale = Sale::query()->find($return->sale_id);
+                    if ($sale) {
+                        app(TripAutoCloseService::class)->markReturnedSaleCompleteIfBalanced($sale, $user);
                     }
                 }
                 if (! $this->isCreditNoteReturn($return)) {

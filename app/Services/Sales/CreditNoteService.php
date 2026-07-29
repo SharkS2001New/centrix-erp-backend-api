@@ -81,6 +81,18 @@ class CreditNoteService
             return $creditNote;
         }
 
+        // Device configured org-wide does not mean this sale was fiscalized (bypass,
+        // fiscalization off, pre-KRA sale, failed/skipped submit). Only credit notes
+        // for fiscalized originals should hit the device — otherwise keep skipped.
+        $relevantInvoice = $this->resolveRelevantInvoiceNumber($return);
+        if ($relevantInvoice === '') {
+            if ($return->return_kind === 'legacy') {
+                KraDeviceFailure::abort('Original sale has no KRA invoice number to credit.');
+            }
+
+            return $creditNote;
+        }
+
         $creditNote = $this->submitToKra($creditNote, $return, $financeSettings);
 
         if ($creditNote->kra_status === 'failed') {
@@ -101,7 +113,7 @@ class CreditNoteService
                 ]);
             }
 
-            return $creditNote->fresh();
+            return $creditNote->fresh() ?? $creditNote;
         }
 
         try {
@@ -234,17 +246,33 @@ class CreditNoteService
             return '';
         }
 
-        $originalKra = KraResponse::query()
+        // Prefer the original sale fiscalization — never a later credit-note row on the
+        // same sale_id (orderByDesc used to pick those and break subsequent returns).
+        $candidates = KraResponse::query()
             ->where('sale_id', $return->sale_id)
             ->where('status', 'success')
-            ->orderByDesc('id')
-            ->first();
+            ->orderBy('id')
+            ->get();
 
-        if (! $originalKra) {
-            return '';
+        foreach ($candidates as $kra) {
+            if ($this->kraResponseIsCreditNoteDocument($kra)) {
+                continue;
+            }
+
+            $invoice = $this->relevantInvoiceNumberFromKraResponse($kra);
+            if ($invoice !== '') {
+                return $invoice;
+            }
         }
 
-        return $this->relevantInvoiceNumberFromKraResponse($originalKra);
+        return '';
+    }
+
+    protected function kraResponseIsCreditNoteDocument(KraResponse $kra): bool
+    {
+        $docType = strtolower(trim((string) (($kra->response_payload ?? [])['document_type'] ?? '')));
+
+        return $docType === 'credit_note';
     }
 
     protected function relevantInvoiceNumberFromKraResponse(KraResponse $kra): string

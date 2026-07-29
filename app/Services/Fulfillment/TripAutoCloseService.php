@@ -150,6 +150,11 @@ class TripAutoCloseService
         }
     }
 
+    /**
+     * After a customer return adjusts the sale total: cancel the order when fully
+     * returned (order total ~ 0). If an approved return is undone and the total
+     * comes back, restore a completed status so the order is active again.
+     */
     public function markReturnedSaleCompleteIfBalanced(Sale $sale, User $user): Sale
     {
         $sale->refresh();
@@ -162,7 +167,11 @@ class TripAutoCloseService
             'payment_status' => $paymentStatus,
         ];
 
-        if ($orderTotal <= 0.01 && ! in_array((string) $sale->status, ['cancelled', 'held'], true)) {
+        $status = (string) $sale->status;
+        if ($orderTotal <= 0.01 && ! in_array($status, ['cancelled', 'held'], true)) {
+            $updates['status'] = 'cancelled';
+        } elseif ($orderTotal > 0.01 && $status === 'cancelled') {
+            // Undoing a full return restored the sale total — revive the order.
             $updates['status'] = 'completed';
             $updates['completed_at'] = $sale->completed_at ?? now();
         }
@@ -195,7 +204,9 @@ class TripAutoCloseService
         }
 
         foreach ($sales as $sale) {
-            if ((string) $sale->status !== 'completed') {
+            $status = (string) $sale->status;
+            // Fully returned sales are cancelled; treat them as settled for trip close.
+            if (! in_array($status, ['completed', 'cancelled'], true)) {
                 return false;
             }
         }

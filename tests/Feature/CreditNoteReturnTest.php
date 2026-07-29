@@ -76,6 +76,80 @@ class CreditNoteReturnTest extends TestCase
         ]);
     }
 
+    public function test_approve_return_skips_kra_when_sale_was_not_fiscalized_but_device_enabled(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'kra_device_ip' => 'http://192.168.1.50:8010',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+            'default_submit_kra' => true,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => false,
+                'message' => 'Device should not be called for non-fiscalized sales',
+            ], 200),
+        ]);
+
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed', 'order_total' => 200, 'amount_paid' => 200, 'payment_status' => 'paid']);
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 2,
+                'selling_price' => 100,
+                'amount' => 200,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+
+        $this->assertDatabaseMissing('kra_responses', [
+            'sale_id' => $sale->id,
+            'status' => 'success',
+        ]);
+
+        $created = $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale->id,
+            'reason' => 'Damaged Product',
+            'refund_method' => 'CASH',
+            'lines' => [
+                [
+                    'product_code' => $product->product_code,
+                    'quantity_sold' => 2,
+                    'return_qty' => 1,
+                    'unit_price' => 100,
+                    'amount' => 100,
+                ],
+            ],
+        ])->assertCreated();
+
+        $returnId = $created->json('id');
+
+        $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
+            ->assertOk()
+            ->assertJsonPath('credit_note.kra_status', 'skipped');
+
+        $this->assertDatabaseHas('customer_returns', [
+            'id' => $returnId,
+            'status' => 'approved',
+        ]);
+        $this->assertDatabaseHas('credit_notes', [
+            'customer_return_id' => $returnId,
+            'kra_status' => 'skipped',
+        ]);
+
+        Http::assertNothingSent();
+    }
+
     public function test_credit_note_numbers_restart_per_organization(): void
     {
         $service = app(\App\Services\Sales\CreditNoteService::class);

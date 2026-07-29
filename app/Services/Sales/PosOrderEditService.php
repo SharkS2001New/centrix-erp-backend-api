@@ -153,6 +153,11 @@ class PosOrderEditService
         return KraResponse::query()
             ->where('sale_id', $sale->id)
             ->where('status', 'success')
-            ->exists();
+            ->get()
+            ->contains(function (KraResponse $kra): bool {
+                $docType = strtolower(trim((string) (($kra->response_payload ?? [])['document_type'] ?? '')));
+
+                return $docType !== 'credit_note';
+            });
     }
 }
