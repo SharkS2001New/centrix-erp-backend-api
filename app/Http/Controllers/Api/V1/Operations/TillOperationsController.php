@@ -11,6 +11,7 @@ use App\Services\Accounting\ExpenseJournalService;
 use App\Services\Audit\OperationalAuditService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
+use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\TillSessionAuthorization;
 use App\Services\Erp\TillVarianceJournal;
 use App\Models\User;
@@ -529,9 +530,11 @@ class TillOperationsController extends Controller
             return null;
         }
 
+        $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
+
         $salesAgg = DB::table('sales')
             ->where('float_session_id', $floatSessionId)
-            ->where('status', 'completed')
+            ->whereIn('status', $metricStatuses)
             ->selectRaw('
                 COUNT(*) as transactions,
                 COALESCE(SUM(order_total), 0) as gross,
@@ -546,7 +549,7 @@ class TillOperationsController extends Controller
 
         $saleIds = DB::table('sales')
             ->where('float_session_id', $floatSessionId)
-            ->where('status', 'completed')
+            ->whereIn('status', $metricStatuses)
             ->pluck('id');
 
         $refunds = $saleIds->isEmpty()
@@ -555,7 +558,7 @@ class TillOperationsController extends Controller
 
         $gross = (float) ($salesAgg->gross ?? 0);
         $discounts = (float) ($salesAgg->discounts ?? 0);
-        $cashBreakdown = $this->sessionCashCollected($floatSessionId);
+        $cashBreakdown = $this->sessionCashCollected($floatSessionId, $metricStatuses);
         $cash = (float) ($cashBreakdown['cash'] ?? 0);
         $debtorCollections = (float) ($cashBreakdown['debtor_collections'] ?? 0);
         $mpesa = (float) ($salesAgg->mpesa ?? 0);
@@ -565,8 +568,6 @@ class TillOperationsController extends Controller
         $netSales = max(0, $gross - $refunds);
         $totalVat = round((float) ($salesAgg->total_vat ?? 0), 2);
         $openingFloat = (float) ($session->working_amount ?? 0);
-        $netSalesMinusFloat = max(0, round($netSales - $openingFloat, 2));
-        $grossTillTotal = $openingFloat + $cash;
         $cashMovements = $this->normalizeCashMovements(
             is_string($session->cash_movements ?? null)
                 ? json_decode($session->cash_movements, true)
@@ -577,6 +578,10 @@ class TillOperationsController extends Controller
             ->where('float_session_id', $floatSessionId)
             ->whereNull('deleted_at')
             ->sum('expense_amount');
+        $netSalesMinusExpenses = max(0, round($gross - $sessionExpenses, 2));
+        $netSalesMinusVat = max(0, round($netSalesMinusExpenses - $totalVat, 2));
+        $netSalesMinusFloat = max(0, round($netSalesMinusExpenses - $openingFloat, 2));
+        $grossTillTotal = $openingFloat + $cash;
         $expectedCash = $openingFloat + $cash - $movementAdjust['out'] + $movementAdjust['in'] - $sessionExpenses;
 
         $floatEntries = $this->normalizeFloatEntries(
@@ -585,15 +590,18 @@ class TillOperationsController extends Controller
                 : ($session->float_breakdown ?? []),
         );
 
-        $payments = $this->buildPaymentSummary($floatSessionId);
+        $payments = $this->buildPaymentSummary($floatSessionId, $metricStatuses);
 
         return [
             'session' => $session,
             'float_entries' => $floatEntries,
             'sales' => [
                 'transactions' => (int) ($salesAgg->transactions ?? 0),
+                'gross_sales' => round($gross, 2),
                 'net_sales' => $netSales,
                 'net' => $netSales,
+                'net_sales_minus_expenses' => $netSalesMinusExpenses,
+                'net_sales_minus_vat' => $netSalesMinusVat,
                 'net_sales_minus_float' => $netSalesMinusFloat,
                 'total_vat' => $totalVat,
                 'order_discounts' => $discounts,
@@ -619,7 +627,7 @@ class TillOperationsController extends Controller
     }
 
     /** @return array{cash: float, debtor_collections: float} */
-    protected function sessionCashCollected(int $floatSessionId): array
+    protected function sessionCashCollected(int $floatSessionId, array $metricStatuses): array
     {
         $fromPayments = (float) DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
@@ -629,7 +637,7 @@ class TillOperationsController extends Controller
 
         $legacyCash = (float) DB::table('sales as s')
             ->where('s.float_session_id', $floatSessionId)
-            ->where('s.status', 'completed')
+            ->whereIn('s.status', $metricStatuses)
             ->whereNotExists(function ($query) {
                 $query->select(DB::raw(1))
                     ->from('sale_payments as sp')
@@ -642,9 +650,7 @@ class TillOperationsController extends Controller
 
         $debtorCollections = (float) DB::table('sale_payments as sp')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
-            ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->where('sp.float_session_id', $floatSessionId)
-            ->where('pm.method_code', 'CASH')
             ->where(function ($query) use ($floatSessionId) {
                 $query->whereNull('s.float_session_id')
                     ->orWhere('s.float_session_id', '!=', $floatSessionId);
@@ -658,11 +664,11 @@ class TillOperationsController extends Controller
     }
 
     /** @return list<array{method_code: string, method_name: string, total: float}> */
-    protected function buildPaymentSummary(int $floatSessionId): array
+    protected function buildPaymentSummary(int $floatSessionId, array $metricStatuses): array
     {
         $columnAgg = DB::table('sales as s')
             ->where('s.float_session_id', $floatSessionId)
-            ->where('s.status', 'completed')
+            ->whereIn('s.status', $metricStatuses)
             ->selectRaw('
                 COALESCE(SUM(s.cash), 0) as cash,
                 COALESCE(SUM(s.mpesa_amount), 0) as mpesa,
@@ -688,7 +694,7 @@ class TillOperationsController extends Controller
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
             ->where('sp.float_session_id', $floatSessionId)
-            ->where('s.status', 'completed')
+            ->whereIn('s.status', $metricStatuses)
             ->selectRaw('pm.method_code, pm.method_name, COALESCE(SUM(sp.amount), 0) as total')
             ->groupBy('pm.method_code', 'pm.method_name')
             ->get();
