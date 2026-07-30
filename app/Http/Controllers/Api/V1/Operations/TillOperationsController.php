@@ -201,33 +201,8 @@ class TillOperationsController extends Controller
         $this->assertCashierUsesAssignedTill($userId, (int) $till->id);
         $this->assertCashierHasNoOtherOpenSession($userId, (int) $till->id);
 
-        $closedTodaySameTill = TillFloatSession::query()
-            ->where('till_id', $till->id)
-            ->where('cashier_id', $userId)
-            ->whereDate('session_date', $this->todaySessionDate())
-            ->where('status', 'closed')
-            ->orderByDesc('id')
-            ->first();
-        if ($closedTodaySameTill) {
-            TillSessionAuthorization::assertCanReopen($request->user(), $closedTodaySameTill);
-            $note = sprintf(
-                'Reopened on %s by %s via open session.',
-                now()->format('Y-m-d H:i'),
-                $request->user()->username ?? ('user #'.$request->user()->id),
-            );
-            $existingNotes = trim((string) ($closedTodaySameTill->notes ?? ''));
-            $closedTodaySameTill->update([
-                'status' => 'open',
-                'closed_at' => null,
-                'closing_amount' => null,
-                'closing_denominations' => null,
-                'expected_amount' => null,
-                'suspended_at' => null,
-                'notes' => $existingNotes !== '' ? $existingNotes."\n".$note : $note,
-            ]);
-
-            return response()->json($closedTodaySameTill->fresh());
-        }
+        // Closed sessions stay closed. Cashiers may open another session the same day
+        // with a new float. Explicit reopen remains on POST .../reopen for managers.
 
         $amount = (float) $data['working_amount'];
         $validator = FloatSessionValidator::forUser($request->user());
@@ -703,9 +678,15 @@ class TillOperationsController extends Controller
             ->where('float_session_id', $floatSessionId)
             ->whereNull('deleted_at')
             ->sum('expense_amount');
-        // Expected / net sales: opening float + total sales − expenses (± till cash movements).
+        // Expected closing balance: opening float + sales − expenses (± cash movements).
+        // Paid debtors are only collected via backoffice order payment today (not external POS),
+        // so they are reported separately and not mixed into expected closing for till recon.
         $expectedNetSales = round(
-            $openingFloat + $netSales - $sessionExpenses - $movementAdjust['out'] + $movementAdjust['in'],
+            $openingFloat
+                + $netSales
+                - $sessionExpenses
+                - $movementAdjust['out']
+                + $movementAdjust['in'],
             2,
         );
         $grossTillTotal = $openingFloat + $netSales;

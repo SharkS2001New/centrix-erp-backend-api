@@ -1410,6 +1410,23 @@ class ReportController extends Controller
         }
         $creditPayments = (float) $creditPaymentsQuery->sum('cip.amount_paid');
 
+        // Paid debtors taken on till sessions (same definition as X/Z Total paid debtors).
+        $paidDebtorsQuery = DB::table('sale_payments as sp')
+            ->join('sales as s', 's.id', '=', 'sp.sale_id')
+            ->join('till_float_sessions as tfs', 'tfs.id', '=', 'sp.float_session_id')
+            ->where(function ($query) {
+                $query->whereNull('s.float_session_id')
+                    ->orWhereColumn('s.float_session_id', '!=', 'sp.float_session_id');
+            })
+            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
+        $this->applyBranchTenantScope($paidDebtorsQuery, $orgId, $branchId, 'tfs.branch_id');
+        if ($isMonthly) {
+            $paidDebtorsQuery->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
+        } else {
+            $paidDebtorsQuery->whereDate('tfs.session_date', $date);
+        }
+        $paidDebtors = (float) $paidDebtorsQuery->sum('sp.amount');
+
         $closingDebtors = (float) DB::table('customers')
             ->whereNull('deleted_at')
             ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
@@ -1421,9 +1438,14 @@ class ReportController extends Controller
             ->sum('current_balance');
 
         $creditSales = (float) ($agg->credit_sales ?? 0);
-        // Opening float + total sales − expenses (± till cash movements).
+        // Expected closing: opening float + total sales − expenses (± cash movements).
+        // Till paid-debtors are tracked separately; cashiers have no POS debt-collection UI yet.
         $expectedNetSales = round(
-            $openingFloat + $netSales - $totalExpenses - $cashMovementsOut + $cashMovementsIn,
+            $openingFloat
+                + $netSales
+                - $totalExpenses
+                - $cashMovementsOut
+                + $cashMovementsIn,
             2,
         );
         $netCashExpected = $expectedNetSales;
@@ -1497,6 +1519,7 @@ class ReportController extends Controller
                 'opening_float' => $openingFloat,
                 'net_sales_minus_float' => $netSalesMinusFloat,
                 'expected_net_sales' => $expectedNetSales,
+                'paid_debtors' => round($paidDebtors, 2),
                 'cash_movements_in' => round($cashMovementsIn, 2),
                 'cash_movements_out' => round($cashMovementsOut, 2),
                 'net_cash_expected' => $netCashExpected,

@@ -222,33 +222,27 @@ class TillSessionFlowTest extends TestCase
     public function test_debtor_payment_collected_in_session_appears_on_x_report(): void
     {
         $session = $this->openFreshSession(5000);
-
-        $cartId = $this->postJson('/api/v1/sales/carts', [
-            'channel' => 'pos',
-            'branch_id' => $this->user->branch_id,
-            'till_id' => $this->till->id,
-        ])->json('id');
-
-        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
-            'product_code' => $this->productCode,
-            'quantity' => 1,
-        ])->assertCreated();
-
-        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
-            'payment_method_code' => 'CREDIT',
-            'is_credit_sale' => true,
-            'float_session_id' => $session->id,
-            'sales_workspace' => 'pos',
-        ]);
-
-        if ($sale->status() === 422) {
-            $this->markTestSkipped('Credit checkout not enabled for demo org.');
-        }
-
-        $saleId = $sale->assertCreated()->json('id');
         $cashMethod = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
 
-        $this->postJson("/api/v1/sales/{$saleId}/payments", [
+        // Prior credit sale outside this till session (classic paid-debtor case).
+        $priorSale = Sale::create([
+            'order_num' => 990100,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'pos',
+            'till_id' => $this->till->id,
+            'float_session_id' => null,
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'order_total' => 2500,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'completed_at' => now()->subDay(),
+        ]);
+
+        $this->postJson("/api/v1/sales/{$priorSale->id}/payments", [
             'payment_method_id' => $cashMethod->id,
             'amount' => 1500,
             'float_session_id' => $session->id,
@@ -258,14 +252,65 @@ class TillSessionFlowTest extends TestCase
             ->assertOk()
             ->json('report');
 
-        $this->assertGreaterThanOrEqual(
+        $this->assertEqualsWithDelta(
             1500,
             (float) ($xReport['sales']['debtor_collections'] ?? 0),
+            0.01,
+        );
+        // Opening float only in gross/expected until POS can collect old credit on-session.
+        // Debtor collections stay reported but are not added into expected closing.
+        $this->assertEqualsWithDelta(
+            5000,
+            (float) ($xReport['till']['gross_total'] ?? 0),
+            0.01,
         );
         $this->assertEqualsWithDelta(
-            6500,
-            (float) ($xReport['till']['gross_total'] ?? 0),
-            1.0,
+            5000,
+            (float) ($xReport['expected_cash'] ?? 0),
+            0.01,
+        );
+        $this->assertEqualsWithDelta(
+            5000,
+            (float) ($xReport['expected_net_sales'] ?? 0),
+            0.01,
+        );
+    }
+
+    public function test_cashier_can_open_second_session_same_day_with_new_float(): void
+    {
+        $first = $this->openFreshSession(5000);
+
+        $this->postJson("/api/v1/pos/sessions/{$first->id}/close", [
+            'closing_amount' => 5000,
+        ])->assertOk()->assertJsonPath('session.status', 'closed');
+
+        $second = $this->postJson('/api/v1/pos/sessions/open', [
+            'till_id' => $this->till->id,
+            'branch_id' => $this->user->branch_id,
+            'working_amount' => 2500,
+            'payment_type' => 'CASH',
+            'float_breakdown' => [
+                ['new_float' => 2500, 'payment_type' => 'CASH'],
+            ],
+        ])->assertCreated()->json();
+
+        $this->assertNotEquals((int) $first->id, (int) $second['id']);
+        $this->assertSame('open', $second['status']);
+        $this->assertEqualsWithDelta(2500, (float) $second['working_amount'], 0.01);
+
+        $this->assertDatabaseHas('till_float_sessions', [
+            'id' => $first->id,
+            'status' => 'closed',
+        ]);
+        $this->assertDatabaseHas('till_float_sessions', [
+            'id' => $second['id'],
+            'status' => 'open',
+            'working_amount' => 2500,
+        ]);
+        $this->assertEquals(
+            now()->toDateString(),
+            TillFloatSession::query()->whereKey($second['id'])->value('session_date')?->format('Y-m-d')
+                ?? TillFloatSession::query()->whereKey($second['id'])->value('session_date'),
         );
     }
 
