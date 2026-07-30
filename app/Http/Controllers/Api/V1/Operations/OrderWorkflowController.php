@@ -11,6 +11,7 @@ use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\User;
+use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
@@ -191,11 +192,17 @@ class OrderWorkflowController extends Controller
             );
         }
 
-        if (! $workflow->canTransition($from, $toStatus, $sale->channel)) {
-            $allowed = array_values(array_filter(
-                $workflow->allowedTransitions($from, $sale->channel),
-                fn (string $status) => $status !== $from && $status !== 'cancelled',
-            ));
+        $canMove = $from === 'cancelled'
+            ? $workflow->canRestoreCancelledSale($sale, $toStatus)
+            : $workflow->canTransition($from, $toStatus, $sale->channel);
+
+        if (! $canMove) {
+            $allowed = $from === 'cancelled'
+                ? array_values(array_filter([$workflow->cancelledRestoreTarget($sale)]))
+                : array_values(array_filter(
+                    $workflow->allowedTransitions($from, $sale->channel),
+                    fn (string $status) => $status !== $from && $status !== 'cancelled',
+                ));
             $hint = $allowed !== []
                 ? ' Allowed next steps: '.implode(', ', array_map([$this, 'humanStatusLabel'], $allowed)).'.'
                 : '';
@@ -287,6 +294,42 @@ class OrderWorkflowController extends Controller
 
             $sale->update($updates);
             $sale = $sale->fresh();
+            $this->notifyWorkflowTransition($sale, $from, $toStatus, $user);
+
+            return $sale;
+        }
+
+        if ($from === 'cancelled') {
+            $meta = $sale->fulfillment_meta ?? [];
+            unset($meta['status_before_cancel']);
+
+            $updates = [
+                'status' => $toStatus,
+                'cancelled_at' => null,
+                'cancelled_by' => null,
+                'fulfillment_meta' => $meta === [] ? null : $meta,
+            ];
+
+            if ($gate->shouldDeductStockOnWorkflowTransition($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
+                $this->deductSaleStockIfNeeded($sale, $user);
+            } elseif ($gate->shouldReserveStockOnTransition($workflow, $toStatus, (string) $sale->channel) && ! $sale->stock_balanced) {
+                $this->reserveSaleStockIfNeeded($sale, $user, $gate);
+            }
+
+            $sale->update($updates);
+            $sale = $sale->fresh();
+
+            app(CustomerInvoiceService::class)->restoreForUncancelledSale($sale, $user);
+
+            app(\App\Services\Audit\AuditLogger::class)->log(
+                $user,
+                'restore',
+                'sales',
+                (int) $sale->id,
+                ['status' => 'cancelled'],
+                ['status' => $toStatus],
+            );
+
             $this->notifyWorkflowTransition($sale, $from, $toStatus, $user);
 
             return $sale;

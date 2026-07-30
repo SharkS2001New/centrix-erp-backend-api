@@ -16,6 +16,12 @@ class OrderCancellationTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->withoutMiddleware([\App\Http\Middleware\EnsureOrganizationLicenseActive::class]);
+    }
+
     public function test_cancelled_unpaid_order_is_excluded_from_unpaid_queue(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
@@ -112,6 +118,62 @@ class OrderCancellationTest extends TestCase
 
         $customer->refresh();
         $this->assertEquals(0.0, (float) $customer->current_balance);
+    }
+
+    public function test_cancelled_order_can_be_restored_to_status_before_cancel(): void
+    {
+        $this->withoutMiddleware([\App\Http\Middleware\EnsureOrganizationLicenseActive::class]);
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $customer = Customer::query()->firstOrFail();
+        $product = Product::query()->firstOrFail();
+
+        $cart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'backend',
+            'branch_id' => $admin->branch_id,
+        ])->assertCreated()->json();
+
+        $this->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 2,
+            'unit_price' => 100,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'customer_num' => $customer->customer_num,
+            'save_only' => true,
+        ])->assertCreated()->json();
+
+        $saleId = (int) $sale['id'];
+        $priorStatus = (string) ($sale['status'] ?? 'unpaid');
+
+        $this->postJson("/api/v1/sales/orders/{$saleId}/transition", [
+            'status' => 'cancelled',
+        ])->assertOk()->assertJsonPath('status', 'cancelled');
+
+        $cancelled = Sale::query()->findOrFail($saleId);
+        $this->assertSame(
+            $priorStatus,
+            (string) data_get($cancelled->fulfillment_meta, 'status_before_cancel'),
+        );
+
+        $restored = $this->postJson("/api/v1/sales/orders/{$saleId}/transition", [
+            'status' => $priorStatus,
+        ])->assertOk()->json();
+
+        $this->assertSame($priorStatus, $restored['status'] ?? null);
+        $this->assertNull($restored['cancelled_at'] ?? null);
+
+        $fresh = Sale::query()->findOrFail($saleId);
+        $this->assertNull($fresh->cancelled_at);
+        $this->assertNull($fresh->cancelled_by);
+        $this->assertArrayNotHasKey('status_before_cancel', $fresh->fulfillment_meta ?? []);
+
+        $this->assertDatabaseHas('customer_invoices', [
+            'sale_id' => $saleId,
+            'deleted_at' => null,
+        ]);
     }
 
     public function test_completed_order_cannot_be_cancelled_via_workflow(): void

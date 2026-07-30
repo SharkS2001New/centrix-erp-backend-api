@@ -253,6 +253,53 @@ class CustomerInvoiceService
         $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
     }
 
+    /** Reinstate the voided AR invoice when a cancelled sale is restored. */
+    public function restoreForUncancelledSale(Sale $sale, User $user): ?CustomerInvoice
+    {
+        if (! $sale->customer_num) {
+            return null;
+        }
+
+        $total = round((float) $sale->order_total, 2);
+        if ($total <= 0.01) {
+            return null;
+        }
+
+        $paid = round((float) $sale->amount_paid, 2);
+        $paymentStatus = $this->paymentStatus($total, $paid);
+
+        $voided = CustomerInvoice::query()
+            ->where('sale_id', $sale->id)
+            ->whereNotNull('deleted_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($voided) {
+            $voided->update([
+                'invoice_number' => $this->allocateInvoiceNumber($sale),
+                'deleted_at' => null,
+                'deleted_by' => null,
+                'invoice_total' => $total,
+                'total_vat' => $sale->total_vat,
+                'amount_paid' => $paid,
+                'payment_status' => $paymentStatus,
+                'customer_num' => $sale->customer_num,
+                'branch_id' => $sale->branch_id,
+            ]);
+
+            $invoice = $voided->fresh();
+            if (CustomerInvoicePayment::query()->where('customer_invoice_id', $invoice->id)->exists()) {
+                $invoice = $this->syncPaidTotalsFromPayments($invoice);
+            }
+
+            $this->refreshCustomerBalance((int) $sale->organization_id, (int) $sale->customer_num);
+
+            return $invoice;
+        }
+
+        return $this->ensureForSale($sale, $user, $total, $paid);
+    }
+
     /**
      * Customer returns shrink sale.order_total (and the observer may sync that into AR).
      * Restore the invoice to the original gross so statements can show Invoice + Credit note separately.

@@ -186,6 +186,11 @@ class OrderWorkflowService
             return $target !== null ? [$target] : [];
         }
 
+        // Cancelled restore target is sale-specific (status_before_cancel); callers use cancelledRestoreTarget().
+        if ($from === 'cancelled') {
+            return [];
+        }
+
         if ($channel) {
             $workflow = $this->forChannel($channel);
             $transitions = $workflow['transitions'][$from] ?? [];
@@ -218,6 +223,37 @@ class OrderWorkflowService
         }
 
         return $this->firstPipelineStatus($this->config());
+    }
+
+    /**
+     * Status to restore a cancelled order to (original status before cancel, else first pipeline step).
+     */
+    public function cancelledRestoreTarget(\App\Models\Sale $sale): ?string
+    {
+        $meta = $sale->fulfillment_meta ?? [];
+        $stored = isset($meta['status_before_cancel'])
+            ? strtolower(trim((string) $meta['status_before_cancel']))
+            : '';
+
+        if (
+            $stored !== ''
+            && ! in_array($stored, ['cancelled', 'expired', 'draft', 'held'], true)
+        ) {
+            return $stored;
+        }
+
+        return $this->restoreTargetStatus($sale->channel ? (string) $sale->channel : null);
+    }
+
+    public function canRestoreCancelledSale(\App\Models\Sale $sale, string $to): bool
+    {
+        if ((string) $sale->status !== 'cancelled') {
+            return false;
+        }
+
+        $target = $this->cancelledRestoreTarget($sale);
+
+        return $target !== null && $to === $target;
     }
 
     public function orderCancellationEnabled(): bool
@@ -347,6 +383,11 @@ class OrderWorkflowService
             $restoreTarget = $this->restoreTargetStatus($channel);
 
             return $restoreTarget !== null && $to === $restoreTarget;
+        }
+
+        // Restore cancelled orders is sale-specific; use canRestoreCancelledSale().
+        if ($from === 'cancelled') {
+            return false;
         }
 
         if ($from === 'pending_approval' && in_array($to, ['booked', 'editable', 'cancelled'], true)) {

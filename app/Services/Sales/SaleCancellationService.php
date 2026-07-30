@@ -47,11 +47,15 @@ class SaleCancellationService
         DB::transaction(function () use ($sale, $user, $gate, $from) {
             $this->restoreCancelledSaleStock($sale, $user);
 
+            $meta = $sale->fulfillment_meta ?? [];
+            $meta['status_before_cancel'] = $from;
+
             $sale->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancelled_by' => $user->id,
                 'stock_balanced' => 0,
+                'fulfillment_meta' => $meta,
             ]);
 
             app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
