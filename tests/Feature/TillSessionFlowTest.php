@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\Organization;
 use App\Models\PaymentMethod;
 use App\Models\Product;
@@ -26,6 +27,7 @@ class TillSessionFlowTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutMiddleware([EnsureOrganizationLicenseActive::class]);
 
         $this->user = User::where('username', 'admin')->firstOrFail();
         $this->productCode = Product::first()->product_code;
@@ -382,7 +384,7 @@ class TillSessionFlowTest extends TestCase
         ])->assertStatus(422);
     }
 
-    public function test_till_delete_is_disabled(): void
+    public function test_till_delete_is_blocked_when_session_history_exists(): void
     {
         $this->deleteJson("/api/v1/tills/{$this->till->id}")
             ->assertStatus(422)
@@ -391,7 +393,57 @@ class TillSessionFlowTest extends TestCase
         $this->assertDatabaseHas('tills', ['id' => $this->till->id]);
     }
 
-    public function test_cashier_can_only_open_one_session_per_day_and_must_reopen(): void
+    public function test_till_can_be_closed_and_reopened_to_free_cashier_assignment(): void
+    {
+        $code = 'TMP-CLOSE-'.now()->format('His');
+        $till = Till::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'till_number' => $code,
+            'till_name' => $code,
+            'is_active' => true,
+            'cashier_id' => $this->user->id,
+        ]);
+
+        $this->postJson("/api/v1/tills/{$till->id}/close")
+            ->assertOk()
+            ->assertJsonPath('is_active', false)
+            ->assertJsonPath('cashier_id', null);
+
+        $this->postJson("/api/v1/tills/{$till->id}/reopen")
+            ->assertOk()
+            ->assertJsonPath('is_active', true)
+            ->assertJsonPath('cashier_id', null);
+    }
+
+    public function test_till_close_requires_no_active_session(): void
+    {
+        $session = $this->openFreshSession(1500);
+
+        $this->postJson("/api/v1/tills/{$session->till_id}/close")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['till']);
+    }
+
+    public function test_till_delete_succeeds_when_no_session_history(): void
+    {
+        $code = 'TMP-DELETE-'.now()->format('His');
+        $till = Till::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'till_number' => $code,
+            'till_name' => $code,
+            'is_active' => true,
+            'cashier_id' => null,
+        ]);
+
+        $this->deleteJson("/api/v1/tills/{$till->id}")
+            ->assertNoContent();
+
+        $this->assertDatabaseMissing('tills', ['id' => $till->id]);
+    }
+
+    public function test_cashier_can_reopen_same_day_session_and_open_fresh_when_no_active_exists(): void
     {
         $session = $this->openFreshSession(2500);
 
@@ -413,16 +465,6 @@ class TillSessionFlowTest extends TestCase
             'closing_amount' => 2500,
         ])->assertOk();
 
-        $otherTill = Till::query()->where('id', '!=', $this->till->id)->first();
-        if ($otherTill) {
-            $this->postJson('/api/v1/pos/sessions/open', [
-                'till_id' => $otherTill->id,
-                'branch_id' => $this->user->branch_id,
-                'working_amount' => 2500,
-                'payment_type' => 'CASH',
-            ])->assertStatus(422);
-        }
-
         $reopened = $this->postJson("/api/v1/pos/sessions/{$session->id}/reopen")
             ->assertOk()
             ->json();
@@ -430,6 +472,24 @@ class TillSessionFlowTest extends TestCase
         $this->assertSame('open', $reopened['status']);
         $this->assertNull($reopened['closed_at']);
         $this->assertSame($session->id, $reopened['id']);
+
+        $this->postJson("/api/v1/pos/sessions/{$session->id}/close", [
+            'closing_amount' => 2500,
+        ])->assertOk();
+
+        TillFloatSession::query()->whereKey($session->id)->update([
+            'session_date' => now()->subDay()->toDateString(),
+        ]);
+
+        $fresh = $this->postJson('/api/v1/pos/sessions/open', [
+            'till_id' => $this->till->id,
+            'branch_id' => $this->user->branch_id,
+            'working_amount' => 2500,
+            'payment_type' => 'CASH',
+        ])->assertCreated()->json();
+
+        $this->assertNotSame($session->id, $fresh['id']);
+        $this->assertSame('open', $fresh['status']);
     }
 
     public function test_pos_expense_groups_are_scoped_to_user_organization(): void

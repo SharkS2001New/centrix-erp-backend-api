@@ -118,21 +118,6 @@ class TillOperationsController extends Controller
         return now()->toDateString();
     }
 
-    protected function assertCashierCanStartNewSessionToday(int $userId): void
-    {
-        $closedToday = TillFloatSession::query()
-            ->where('cashier_id', $userId)
-            ->whereDate('session_date', $this->todaySessionDate())
-            ->where('status', 'closed')
-            ->exists();
-
-        if ($closedToday) {
-            throw new InvalidArgumentException(
-                'You already closed your till session for today. Reopen that session from Till management to continue.',
-            );
-        }
-    }
-
     protected function sessionBusinessDate(TillFloatSession $session): ?string
     {
         if ($session->session_date) {
@@ -212,8 +197,6 @@ class TillOperationsController extends Controller
 
             return response()->json($closedTodaySameTill->fresh());
         }
-
-        $this->assertCashierCanStartNewSessionToday($userId);
 
         $amount = (float) $data['working_amount'];
         $validator = FloatSessionValidator::forUser($request->user());

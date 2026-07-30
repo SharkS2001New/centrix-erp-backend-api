@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Till;
+use App\Models\TillFloatSession;
 use App\Services\Pos\TillNumbering;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
@@ -174,10 +175,60 @@ class TillController extends BaseResourceController
 
     public function destroy(Request $request, string $id)
     {
-        $this->findScopedTill($request, $id);
+        $model = $this->findScopedTill($request, $id);
 
-        throw ValidationException::withMessages([
-            'till' => ['Till deletion is disabled. Close active sessions and edit the till instead.'],
+        $hasOpenSession = TillFloatSession::query()
+            ->where('till_id', $model->id)
+            ->whereIn('status', ['open', 'suspended'])
+            ->exists();
+        if ($hasOpenSession) {
+            throw ValidationException::withMessages([
+                'till' => ['Close active till sessions before deleting this till.'],
+            ]);
+        }
+
+        $hasHistory = TillFloatSession::query()
+            ->where('till_id', $model->id)
+            ->exists();
+        if ($hasHistory) {
+            throw ValidationException::withMessages([
+                'till' => ['This till has session history and cannot be deleted. Close it instead to free assignment.'],
+            ]);
+        }
+
+        $model->delete();
+
+        return response()->json(null, 204);
+    }
+
+    public function close(Request $request, string $id)
+    {
+        $model = $this->findScopedTill($request, $id);
+
+        $hasOpenSession = TillFloatSession::query()
+            ->where('till_id', $model->id)
+            ->whereIn('status', ['open', 'suspended'])
+            ->exists();
+        if ($hasOpenSession) {
+            throw ValidationException::withMessages([
+                'till' => ['Close active till sessions before closing this till.'],
+            ]);
+        }
+
+        $model->update([
+            'is_active' => false,
+            'cashier_id' => null,
         ]);
+
+        return response()->json($model->fresh());
+    }
+
+    public function reopen(Request $request, string $id)
+    {
+        $model = $this->findScopedTill($request, $id);
+
+        $model->update(['is_active' => true]);
+
+        return response()->json($model->fresh());
     }
 }

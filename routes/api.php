@@ -713,6 +713,10 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
 
         Route::middleware('erp.module:sales.pos')->group(function () {
+            Route::post('tills/{till}/close', [TillController::class, 'close'])
+                ->middleware('erp.permission:pos.till|pos.checkout.create|pos.terminal.view');
+            Route::post('tills/{till}/reopen', [TillController::class, 'reopen'])
+                ->middleware('erp.permission:pos.till|pos.checkout.create|pos.terminal.view');
             Route::apiResource('tills', TillController::class)
                 ->middleware('erp.permission:pos.till|pos.checkout.create|pos.terminal.view');
             Route::apiResource('till-float-sessions', TillFloatSessionController::class)
