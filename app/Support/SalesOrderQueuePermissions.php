@@ -163,6 +163,16 @@ class SalesOrderQueuePermissions
             return true;
         }
 
+        // Cashiers may open their own held parks from external POS without backoffice
+        // queue-view permissions.
+        if (
+            (string) $sale->status === 'held'
+            && (int) ($sale->cashier_id ?? 0) === (int) $user->id
+            && $permissions->hasPermission($user, 'sales.create', $gate)
+        ) {
+            return true;
+        }
+
         $channel = (string) ($sale->channel ?: 'backend');
         $status = (string) $sale->status;
         $workflow = OrderWorkflowService::forGate($gate);

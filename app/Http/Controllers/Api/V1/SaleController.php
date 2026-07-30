@@ -101,12 +101,14 @@ class SaleController extends BaseResourceController
         $channel = (string) ($request->input('channel') ?: 'backend');
         $forPosOrderEdit = $request->boolean('for_pos_order_edit')
             && app(PosOrderEditService::class)->posOrderEditEnabled($gate);
+        $statusFilter = data_get($request->input('filter', []), 'status');
+        $isHeldList = strtolower((string) $statusFilter) === 'held';
 
         // Exact order # lookups (returns / invoice load) must see the sale regardless of
         // which sales queue permissions the user has for list browsing.
-        // POS previous-order browse also skips queue gates — cashiers rarely have
-        // backoffice “Paid/Completed queue” view rights.
-        if (! $isExactOrderLookup && ! $forPosOrderEdit) {
+        // POS previous-order browse and held parks also skip queue gates — cashiers rarely
+        // have backoffice queue view rights.
+        if (! $isExactOrderLookup && ! $forPosOrderEdit && ! $isHeldList) {
             SalesOrderQueuePermissions::applyIndexScope(
                 $query,
                 $request->user(),
@@ -129,7 +131,6 @@ class SaleController extends BaseResourceController
             // Previous-order browse is always this cashier's sales (not org-wide).
             $query->where('sales.cashier_id', $request->user()->id);
         }
-        $statusFilter = data_get($request->input('filter', []), 'status');
         if ($statusFilter !== null && $statusFilter !== '' && $statusFilter !== 'all') {
             $statuses = $workflow->statusesForQueueFilter((string) $statusFilter, $channel);
             if ($statuses !== []) {
@@ -138,7 +139,7 @@ class SaleController extends BaseResourceController
         }
 
         // POS held orders are private to the cashier who parked them.
-        if (strtolower((string) $statusFilter) === 'held' && $request->user()) {
+        if ($isHeldList && $request->user()) {
             $query->where('sales.cashier_id', $request->user()->id);
         }
 

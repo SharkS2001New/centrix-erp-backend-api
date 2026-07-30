@@ -914,8 +914,6 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:sales.manage');
             Route::post('sales/mobile-field-attendance/{sessionId}/reopen', [MobileFieldAttendanceController::class, 'reopen'])
                 ->middleware('erp.permission:sales.manage');
-            Route::apiResource('sales', SaleController::class)
-                ->middleware('erp.permission:sales.view');
             Route::apiResource('sale-items', SaleItemController::class)
                 ->middleware('erp.permission:sales.view');
             Route::apiResource('temporary-carts', TemporaryCartController::class)
@@ -959,6 +957,17 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('customer-returns', CustomerReturnController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.manage']);
+        });
+
+        // After specific sales/* routes above so names like mobile-loading-sheets are not
+        // captured by sales/{sale}. Allow sales.pos so external POS can list held parks.
+        Route::middleware(['erp.module:sales.backend,sales.pos'])->group(function () {
+            Route::apiResource('sales', SaleController::class)
+                ->middlewareFor(
+                    ['index', 'show'],
+                    ['erp.permission:sales.view|pos.checkout.create|pos.terminal.view|pos.till_management.create'],
+                )
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:sales.view|sales.manage']);
         });
 
         Route::middleware(['erp.module:payments,accounting'])->group(function () {
