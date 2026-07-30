@@ -113,6 +113,33 @@ class TillOperationsController extends Controller
         }
     }
 
+    protected function closeStaleActiveSessions(?int $cashierId = null, ?int $tillId = null): void
+    {
+        $today = $this->todaySessionDate();
+        $query = TillFloatSession::query()
+            ->whereIn('status', ['open', 'suspended'])
+            ->where(function ($q) use ($today) {
+                $q->whereDate('session_date', '<', $today)
+                    ->orWhere(function ($missingDate) use ($today) {
+                        $missingDate->whereNull('session_date')
+                            ->whereDate('opened_at', '<', $today);
+                    });
+            });
+
+        if ($cashierId !== null) {
+            $query->where('cashier_id', $cashierId);
+        }
+        if ($tillId !== null) {
+            $query->where('till_id', $tillId);
+        }
+
+        $query->update([
+            'status' => 'closed',
+            'closed_at' => now(),
+            'suspended_at' => null,
+        ]);
+    }
+
     protected function todaySessionDate(): string
     {
         return now()->toDateString();
@@ -139,6 +166,11 @@ class TillOperationsController extends Controller
         ]);
 
         $data['branch_id'] = $this->userAccess()->resolveBranchId($request->user(), (int) $data['branch_id']);
+        $userId = (int) $request->user()->id;
+
+        // Auto-close stale prior-day sessions so they do not block today's opening flow.
+        $this->closeStaleActiveSessions($userId, (int) $data['till_id']);
+        $this->closeStaleActiveSessions($userId, null);
 
         $existing = TillFloatSession::query()
             ->where('till_id', $data['till_id'])
@@ -164,7 +196,6 @@ class TillOperationsController extends Controller
         }
 
         $till = $this->findBranchScopedModel(Till::class, (int) $data['till_id'], $request->user(), 'id', $request);
-        $userId = (int) $request->user()->id;
 
         $this->assertTillAssignedToCashier($till, $userId);
         $this->assertCashierUsesAssignedTill($userId, (int) $till->id);
