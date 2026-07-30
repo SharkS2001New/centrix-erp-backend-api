@@ -578,11 +578,13 @@ class TillOperationsController extends Controller
             ->where('float_session_id', $floatSessionId)
             ->whereNull('deleted_at')
             ->sum('expense_amount');
-        $netSalesMinusExpenses = max(0, round($gross - $sessionExpenses, 2));
-        $netSalesMinusVat = max(0, round($netSalesMinusExpenses - $totalVat, 2));
-        $netSalesMinusFloat = max(0, round($netSalesMinusExpenses - $openingFloat, 2));
-        $grossTillTotal = $openingFloat + $cash;
-        $expectedCash = $openingFloat + $cash - $movementAdjust['out'] + $movementAdjust['in'] - $sessionExpenses;
+        // Expected / net sales: opening float + total sales − expenses (± till cash movements).
+        $expectedNetSales = round(
+            $openingFloat + $netSales - $sessionExpenses - $movementAdjust['out'] + $movementAdjust['in'],
+            2,
+        );
+        $grossTillTotal = $openingFloat + $netSales;
+        $expectedCash = $expectedNetSales;
 
         $floatEntries = $this->normalizeFloatEntries(
             is_string($session->float_breakdown ?? null)
@@ -600,9 +602,11 @@ class TillOperationsController extends Controller
                 'gross_sales' => round($gross, 2),
                 'net_sales' => $netSales,
                 'net' => $netSales,
-                'net_sales_minus_expenses' => $netSalesMinusExpenses,
-                'net_sales_minus_vat' => $netSalesMinusVat,
-                'net_sales_minus_float' => $netSalesMinusFloat,
+                'expected_net_sales' => $expectedNetSales,
+                // Legacy aliases kept for older clients; all equal expected net sales.
+                'net_sales_minus_expenses' => $expectedNetSales,
+                'net_sales_minus_vat' => $expectedNetSales,
+                'net_sales_minus_float' => $expectedNetSales,
                 'total_vat' => $totalVat,
                 'order_discounts' => $discounts,
                 'refunds' => $refunds,
@@ -621,6 +625,7 @@ class TillOperationsController extends Controller
             ],
             'payments' => $payments,
             'expected_cash' => $expectedCash,
+            'expected_net_sales' => $expectedNetSales,
             'cash_movements' => $cashMovements,
             'session_expenses' => $sessionExpenses,
         ];

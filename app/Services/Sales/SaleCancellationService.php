@@ -34,7 +34,7 @@ class SaleCancellationService
             return $sale;
         }
 
-        if (! $workflow->canTransition($from, 'cancelled', $sale->channel)) {
+        if (! $workflow->canTransition($from, 'cancelled', $sale->channel, $sale->payment_status)) {
             throw new InvalidArgumentException(
                 "Cannot cancel order from {$from}.",
             );

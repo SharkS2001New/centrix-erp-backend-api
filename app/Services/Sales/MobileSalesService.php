@@ -878,6 +878,7 @@ class MobileSalesService
         return OrderWorkflowService::forGate($gate)->isCancellableStatus(
             (string) $sale->status,
             $sale->channel,
+            $sale->payment_status,
         );
     }
 

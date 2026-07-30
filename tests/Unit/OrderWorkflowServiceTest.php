@@ -345,6 +345,31 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertFalse($service->isCustomerReturnStatus('cancelled'));
     }
 
+    public function test_cancel_paid_stage_covers_pos_completed_status(): void
+    {
+        $org = new \App\Models\Organization([
+            'module_settings' => [
+                'sales' => [
+                    'order_cancellation_enabled' => true,
+                    'cancel_order_statuses' => ['unpaid', 'pending_payment', 'paid'],
+                ],
+            ],
+        ]);
+
+        $service = OrderWorkflowService::forGate(new \App\Services\Erp\CapabilityGate($org));
+
+        $this->assertTrue($service->isCancellableStatus('unpaid'));
+        $this->assertTrue($service->isCancellableStatus('pending_payment'));
+        $this->assertTrue($service->isCancellableStatus('paid'));
+        $this->assertTrue($service->isCancellableStatus('completed'));
+        $this->assertTrue($service->isCancellableStatus('completed', 'pos', 'paid'));
+        $this->assertTrue($service->isCancellableStatus('processed', 'backend', 'unpaid'));
+        $this->assertTrue($service->isCancellableStatus('processed', 'backend', 'partial'));
+        $this->assertTrue($service->isCancellableStatus('processed', 'backend', 'paid'));
+        $this->assertFalse($service->isCancellableStatus('booked', 'backend', 'unpaid'));
+        $this->assertTrue($service->canTransition('completed', 'cancelled', 'pos', 'paid'));
+    }
+
     public function test_mobile_pseudo_stage_allows_actions_on_mobile_channel(): void
     {
         $org = new \App\Models\Organization([

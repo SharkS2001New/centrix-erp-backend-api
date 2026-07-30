@@ -56,7 +56,7 @@ class OrderCancellationRequestService
         }
 
         $workflow = OrderWorkflowService::forGate($gate);
-        if (! $workflow->canTransition((string) $sale->status, 'cancelled', $sale->channel)) {
+        if (! $workflow->canTransition((string) $sale->status, 'cancelled', $sale->channel, $sale->payment_status)) {
             throw ValidationException::withMessages([
                 'status' => 'This order cannot be cancelled.',
             ]);

@@ -1421,10 +1421,14 @@ class ReportController extends Controller
             ->sum('current_balance');
 
         $creditSales = (float) ($agg->credit_sales ?? 0);
-        // Match till X for till cash movements (safe drop / pay out / cash in). Session expenses stay separate.
-        $netCashExpected = round($openingFloat + $cash - $cashMovementsOut + $cashMovementsIn, 2);
-        $netSalesMinusFloat = max(0, round($netSales - $openingFloat, 2));
-        $netPosition = $netCashExpected - $totalExpenses - $closingDebtors;
+        // Opening float + total sales − expenses (± till cash movements).
+        $expectedNetSales = round(
+            $openingFloat + $netSales - $totalExpenses - $cashMovementsOut + $cashMovementsIn,
+            2,
+        );
+        $netCashExpected = $expectedNetSales;
+        $netSalesMinusFloat = $expectedNetSales;
+        $netPosition = $netCashExpected - $closingDebtors;
 
         $dailyBreakdown = null;
         if ($isMonthly) {
@@ -1492,6 +1496,7 @@ class ReportController extends Controller
                 'total_vat' => $totalVat,
                 'opening_float' => $openingFloat,
                 'net_sales_minus_float' => $netSalesMinusFloat,
+                'expected_net_sales' => $expectedNetSales,
                 'cash_movements_in' => round($cashMovementsIn, 2),
                 'cash_movements_out' => round($cashMovementsOut, 2),
                 'net_cash_expected' => $netCashExpected,

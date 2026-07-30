@@ -197,7 +197,7 @@ class OrderWorkflowService
         return ($sales['order_cancellation_enabled'] ?? true) !== false;
     }
 
-    public function isCancellableStatus(string $status, ?string $channel = null): bool
+    public function isCancellableStatus(string $status, ?string $channel = null, ?string $paymentStatus = null): bool
     {
         if (in_array($status, ['cancelled', 'expired', 'held', 'draft'], true)) {
             return false;
@@ -215,7 +215,43 @@ class OrderWorkflowService
 
         $aligned = $this->alignStatusToPipeline($status, $channel);
 
-        return in_array($aligned, $allowed, true);
+        if (in_array($aligned, $allowed, true)) {
+            return true;
+        }
+
+        // POS checkout stores fully-paid as `completed` while Cancel stages often list `paid`.
+        if ($status === 'completed' && in_array('paid', $allowed, true)) {
+            return true;
+        }
+        if ($status === 'paid' && in_array('completed', $allowed, true)) {
+            return true;
+        }
+
+        return $this->isCancellableViaPaymentStatus($status, $paymentStatus, $allowed);
+    }
+
+    /**
+     * Fulfillment stages (processed / delivered / completed) may cancel when payment_status
+     * maps to a configured Unpaid / Partially paid / Paid cancel stage.
+     *
+     * @param  list<string>  $allowed
+     */
+    protected function isCancellableViaPaymentStatus(string $status, ?string $paymentStatus, array $allowed): bool
+    {
+        $normalized = strtolower(trim($status));
+        if (in_array($normalized, ['booked', 'pending', 'pending_approval', 'editable', 'held', 'draft', 'cancelled', 'expired'], true)) {
+            return false;
+        }
+
+        $payment = strtolower(trim((string) $paymentStatus));
+        $mapped = match ($payment) {
+            'unpaid' => 'unpaid',
+            'partial', 'pending_payment' => 'pending_payment',
+            'paid' => 'paid',
+            default => null,
+        };
+
+        return $mapped !== null && in_array($mapped, $allowed, true);
     }
 
     /**
@@ -265,10 +301,10 @@ class OrderWorkflowService
         return in_array($aligned, $allowed, true);
     }
 
-    public function canTransition(string $from, string $to, ?string $channel = null): bool
+    public function canTransition(string $from, string $to, ?string $channel = null, ?string $paymentStatus = null): bool
     {
         if ($to === 'cancelled') {
-            return $this->orderCancellationEnabled() && $this->isCancellableStatus($from, $channel);
+            return $this->orderCancellationEnabled() && $this->isCancellableStatus($from, $channel, $paymentStatus);
         }
 
         if ($to === 'expired') {
