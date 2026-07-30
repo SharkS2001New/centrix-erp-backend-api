@@ -128,7 +128,7 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ---- Sales ----
-    Route::middleware('erp.permission:sales.create')->prefix('sales')->group(function () {
+    Route::middleware('erp.permission:sales.create|pos.checkout.create|pos.terminal.view|pos.till_management.create')->prefix('sales')->group(function () {
         Route::post('carts', [CartOperationsController::class, 'store']);
         Route::get('carts/{cartId}', [CartOperationsController::class, 'show']);
         Route::patch('carts/{cartId}', [CartOperationsController::class, 'update']);

@@ -41,6 +41,8 @@ use App\Services\Sales\MobileCheckoutLocationService;
 use App\Services\Sales\MobileCheckoutSettings;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
 use App\Services\Sales\MobileSalesService;
+use App\Services\Sales\PosCashRounding;
+use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Cache\CompletedSalesCacheService;
 use App\Support\CustomerCreditLimit;
@@ -234,6 +236,22 @@ class CheckoutController extends Controller
             $total = $scaled['order_total'];
             $vat = $scaled['total_vat'];
 
+            $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
+                ? $gate->organization()->module_settings['sales']
+                : [];
+            if (
+                in_array((string) $cart->channel, ['pos', 'backend'], true)
+                && PosCashRoundingSettings::enabled($salesSettings, $customSales)
+            ) {
+                $roundedNet = 0.0;
+                foreach ($lines as $line) {
+                    $roundedNet += PosCashRounding::roundLightStoresAmount((float) $line->amount);
+                }
+                $total = PosCashRounding::roundLightStoresAmount(max(0, $roundedNet - $orderDiscount));
+            }
+
+            $mpesaOnCart = max(0, (float) ($cart->mpesa_payment_amount ?? 0));
+
             $voucherPayment = 0.0;
             if (! empty($salesSettings['enable_vouchers']) && $cart->payment_voucher_id) {
                 $voucher = Voucher::find($cart->payment_voucher_id);
@@ -266,7 +284,7 @@ class CheckoutController extends Controller
                 }
             }
 
-            $cashDue = max(0, $total - $voucherPayment - $pointsPayment);
+            $cashDue = max(0, $total - $voucherPayment - $pointsPayment - $mpesaOnCart);
             $isMobileChannel = (string) $cart->channel === 'mobile';
             $mobileCheckout = app(MobileCheckoutSettings::class);
             $mobileCheckout->applyCheckoutPolicy($salesSettings, $input, (string) $cart->channel);
@@ -291,7 +309,7 @@ class CheckoutController extends Controller
                 }
             }
             $payNow = min($payNow, $cashDue);
-            $amountPaid = $payNow + $voucherPayment + $pointsPayment;
+            $amountPaid = $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             if (! $customerNum && $loyaltyCardId) {
                 $customerNum = LoyaltyCard::find($loyaltyCardId)?->customer_num;
             }
@@ -545,7 +563,11 @@ class CheckoutController extends Controller
                 $splits = $this->normalizeCheckoutPaymentSplits($input['payment_splits'] ?? null);
                 if ($splits !== []) {
                     $splitTotal = round(array_sum(array_column($splits, 'amount')), 2);
-                    if (abs($splitTotal - $payNow) > 0.02) {
+                    $expectedSplitTotal = round($payNow + $mpesaOnCart, 2);
+                    if (
+                        abs($splitTotal - $expectedSplitTotal) > 0.02
+                        && abs($splitTotal - $payNow) > 0.02
+                    ) {
                         throw new InvalidArgumentException('Payment splits must add up to the amount paid now.');
                     }
                     foreach ($splits as $split) {

@@ -17,6 +17,7 @@ return [
     'sales.create' => [
         'sales.orders.create',
         'pos.checkout.create',
+        'pos.till_management.create',
         'pos.terminal.view',
         'mobile_sales.dashboard.view',
         'mobile_sales.orders.view',
