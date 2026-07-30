@@ -1124,12 +1124,17 @@ class ReportController extends Controller
             'sale_month' => 'required_without:sale_date|date_format:Y-m',
             'branch_id' => 'nullable|integer',
             'cashier_id' => 'nullable|integer',
+            'float_session_id' => 'nullable|integer',
         ]);
 
         $branchId = $data['branch_id'] ?? null;
         $cashierId = isset($data['cashier_id']) ? (int) $data['cashier_id'] : null;
         if ($cashierId <= 0) {
             $cashierId = null;
+        }
+        $floatSessionId = isset($data['float_session_id']) ? (int) $data['float_session_id'] : null;
+        if ($floatSessionId <= 0) {
+            $floatSessionId = null;
         }
 
         $access = app(UserAccessService::class);
@@ -1164,6 +1169,9 @@ class ReportController extends Controller
         if ($cashierId) {
             $salesBase->where('cashier_id', $cashierId);
         }
+        if ($floatSessionId) {
+            $salesBase->where('float_session_id', $floatSessionId);
+        }
 
         $agg = (clone $salesBase)->selectRaw('
             COUNT(*) as transactions,
@@ -1185,7 +1193,8 @@ class ReportController extends Controller
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
                 ->whereIn('s.status', $metricStatuses)
                 ->where('s.archived', 0)
-                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
+                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
+                ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
         $this->applySalesTenantScope($lineDiscountQuery, $orgId, $branchId, 's');
@@ -1199,7 +1208,8 @@ class ReportController extends Controller
                 ->join('sales as s', 'si.sale_id', '=', 's.id')
                 ->whereIn('s.status', $metricStatuses)
                 ->where('s.archived', 0)
-                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
+                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
+                ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
         $this->applySalesTenantScope($itemsSoldQuery, $orgId, $branchId, 's');
@@ -1249,8 +1259,22 @@ class ReportController extends Controller
         if ($cashierId) {
             $sessionQ->where('tfs.cashier_id', $cashierId);
         }
+        if ($floatSessionId) {
+            $sessionQ->where('tfs.id', $floatSessionId);
+        }
         $openingFloat = (float) (clone $sessionQ)->sum('working_amount');
-        $sessionRows = (clone $sessionQ)->select('tfs.cash_movements', 'tfs.float_breakdown')->get()->all();
+        $sessionRows = (clone $sessionQ)->select(
+            'tfs.id',
+            'tfs.till_id',
+            'tfs.cashier_id',
+            'tfs.status',
+            'tfs.session_date',
+            'tfs.opened_at',
+            'tfs.closed_at',
+            'tfs.working_amount',
+            'tfs.cash_movements',
+            'tfs.float_breakdown',
+        )->get()->all();
         $cashMovementTotals = $this->sumSessionCashMovements($sessionRows);
         $cashMovementsIn = $cashMovementTotals['in'];
         $cashMovementsOut = $cashMovementTotals['out'];
@@ -1279,13 +1303,27 @@ class ReportController extends Controller
             ->select('float_session_id')
             ->selectRaw('COUNT(*) as txn_count')
             ->selectRaw('COALESCE(SUM(order_total), 0) as gross')
+            ->selectRaw('COALESCE(SUM(total_vat), 0) as total_vat')
+            ->selectRaw('COALESCE(SUM(cash), 0) as cash_collected')
+            ->selectRaw('COALESCE(SUM(mpesa_amount), 0) as mpesa_collected')
+            ->selectRaw('COALESCE(SUM(equity_amount), 0) + COALESCE(SUM(kcb_amount), 0) as bank_collected')
+            ->groupBy('float_session_id');
+
+        $sessionExpenseBySessionSub = DB::table('expenses')
+            ->whereNotNull('float_session_id')
+            ->whereNull('deleted_at')
+            ->select('float_session_id')
+            ->selectRaw('COALESCE(SUM(expense_amount), 0) as expenses_total')
             ->groupBy('float_session_id');
 
         $tillRowsQuery = DB::table('till_float_sessions as tfs')
             ->join('tills as t', 'tfs.till_id', '=', 't.id')
             ->join('users as u', 'tfs.cashier_id', '=', 'u.id')
             ->leftJoinSub($salesBySessionSub, 's', 's.float_session_id', '=', 'tfs.id')
+            ->leftJoinSub($sessionExpenseBySessionSub, 'ex', 'ex.float_session_id', '=', 'tfs.id')
             ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
+        // Intentionally do not filter by float_session_id here — return every session's maths
+        // so the UI can list/filter them. Summary totals remain session-scoped above.
         $this->applyBranchTenantScope($tillRowsQuery, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
             $tillRowsQuery->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
@@ -1293,27 +1331,81 @@ class ReportController extends Controller
             $tillRowsQuery->whereDate('tfs.session_date', $date);
         }
         $tillRows = $tillRowsQuery
+            ->orderBy('tfs.opened_at')
+            ->orderBy('tfs.id')
             ->select(
+                'tfs.id as float_session_id',
+                'tfs.status as session_status',
+                'tfs.session_date',
+                'tfs.opened_at',
+                'tfs.closed_at',
+                'tfs.cash_movements',
                 't.till_number',
                 't.till_name',
-                'u.username as cashier',
+                'tfs.cashier_id',
+                DB::raw('COALESCE(NULLIF(TRIM(u.full_name), ""), u.username) as cashier'),
                 DB::raw('COALESCE(s.gross, 0) as gross_sales'),
+                DB::raw('COALESCE(s.total_vat, 0) as total_vat'),
                 DB::raw('COALESCE(s.txn_count, 0) as transactions'),
+                DB::raw('COALESCE(s.cash_collected, 0) as cash_collected'),
+                DB::raw('COALESCE(s.mpesa_collected, 0) as mpesa_collected'),
+                DB::raw('COALESCE(s.bank_collected, 0) as bank_collected'),
                 'tfs.working_amount as opening_float',
+                DB::raw('COALESCE(ex.expenses_total, 0) as session_expenses'),
             )
             ->get()
             ->map(function ($row) {
-                $row->till_name = $row->till_name ?? $row->till_number;
+                $movements = $this->sumSessionCashMovements([(object) [
+                    'cash_movements' => $row->cash_movements,
+                ]]);
+                $openingFloat = round((float) ($row->opening_float ?? 0), 2);
+                $grossSales = round((float) ($row->gross_sales ?? 0), 2);
+                $sessionExpenses = round((float) ($row->session_expenses ?? 0), 2);
+                $cashIn = round((float) ($movements['in'] ?? 0), 2);
+                $cashOut = round((float) ($movements['out'] ?? 0), 2);
+                $expected = round(
+                    $openingFloat + $grossSales - $sessionExpenses - $cashOut + $cashIn,
+                    2,
+                );
 
-                return $row;
+                return (object) [
+                    'float_session_id' => (int) $row->float_session_id,
+                    'session_status' => (string) ($row->session_status ?? ''),
+                    'session_date' => $row->session_date,
+                    'opened_at' => $row->opened_at,
+                    'closed_at' => $row->closed_at,
+                    'till_number' => $row->till_number,
+                    'till_name' => $row->till_name ?? $row->till_number,
+                    'cashier_id' => (int) ($row->cashier_id ?? 0),
+                    'cashier' => $row->cashier,
+                    'gross_sales' => $grossSales,
+                    'total_vat' => round((float) ($row->total_vat ?? 0), 2),
+                    'transactions' => (int) ($row->transactions ?? 0),
+                    'cash_collected' => round((float) ($row->cash_collected ?? 0), 2),
+                    'mpesa_collected' => round((float) ($row->mpesa_collected ?? 0), 2),
+                    'bank_collected' => round((float) ($row->bank_collected ?? 0), 2),
+                    'opening_float' => $openingFloat,
+                    'session_expenses' => $sessionExpenses,
+                    'cash_movements_in' => $cashIn,
+                    'cash_movements_out' => $cashOut,
+                    'expected_net_sales' => $expected,
+                ];
             });
+
+        $sessions = $tillRows->values()->all();
+        if ($floatSessionId) {
+            $tillRows = $tillRows
+                ->filter(fn ($row) => (int) $row->float_session_id === $floatSessionId)
+                ->values();
+        }
 
         $cashierRowsQuery = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales as s')
                 ->join('users as u', 's.cashier_id', '=', 'u.id')
                 ->whereIn('s.status', $metricStatuses)
                 ->where('s.archived', 0)
-                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId)),
+                ->when($cashierId, fn ($q) => $q->where('s.cashier_id', $cashierId))
+                ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
         $this->applySalesTenantScope($cashierRowsQuery, $orgId, $branchId, 's');
@@ -1332,10 +1424,12 @@ class ReportController extends Controller
                 DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
             )
             ->get()
-            ->map(function ($row) use ($date, $branchId, $orgId, $isMonthly, $periodStartDate, $periodEndDate) {
+            ->map(function ($row) use ($date, $branchId, $orgId, $isMonthly, $periodStartDate, $periodEndDate, $floatSessionId) {
                 $floatQuery = DB::table('till_float_sessions')
                     ->where('cashier_id', $row->cashier_id);
-                if ($isMonthly) {
+                if ($floatSessionId) {
+                    $floatQuery->where('id', $floatSessionId);
+                } elseif ($isMonthly) {
                     $floatQuery->whereBetween('session_date', [$periodStartDate, $periodEndDate]);
                 } else {
                     $floatQuery->whereDate('session_date', $date);
@@ -1348,7 +1442,8 @@ class ReportController extends Controller
 
         $expenseLineQuery = DB::table('expenses as e')
             ->leftJoin('expense_groups as eg', 'eg.id', '=', 'e.expense_group_id')
-            ->whereNull('e.deleted_at');
+            ->whereNull('e.deleted_at')
+            ->when($floatSessionId, fn ($q) => $q->where('e.float_session_id', $floatSessionId));
         if ($orgId && Schema::hasColumn('expenses', 'organization_id')) {
             $expenseLineQuery->where('e.organization_id', $orgId);
         }
@@ -1388,7 +1483,8 @@ class ReportController extends Controller
             ->join('till_float_sessions as tfs', 'e.float_session_id', '=', 'tfs.id')
             ->whereNotNull('e.float_session_id')
             ->whereNull('e.deleted_at')
-            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
+            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId))
+            ->when($floatSessionId, fn ($q) => $q->where('tfs.id', $floatSessionId));
         $this->applyBranchTenantScope($sessionExpenseQ, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
             $sessionExpenseQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
@@ -1396,6 +1492,10 @@ class ReportController extends Controller
             $sessionExpenseQ->whereDate('tfs.session_date', $date);
         }
         $sessionExpenses = (float) $sessionExpenseQ->sum('e.expense_amount');
+        if ($floatSessionId) {
+            // Session view: expected closing uses that session's till expenses only.
+            $totalExpenses = $sessionExpenses;
+        }
 
         $creditPaymentsQuery = DB::table('customer_invoice_payments as cip')
             ->join('customer_invoices as ci', 'ci.id', '=', 'cip.customer_invoice_id');
@@ -1418,7 +1518,8 @@ class ReportController extends Controller
                 $query->whereNull('s.float_session_id')
                     ->orWhereColumn('s.float_session_id', '!=', 'sp.float_session_id');
             })
-            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
+            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId))
+            ->when($floatSessionId, fn ($q) => $q->where('tfs.id', $floatSessionId));
         $this->applyBranchTenantScope($paidDebtorsQuery, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
             $paidDebtorsQuery->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
@@ -1507,6 +1608,7 @@ class ReportController extends Controller
             'branch_name' => $branchName,
             'cashier_id' => $cashierId,
             'cashier_name' => $cashierName,
+            'float_session_id' => $floatSessionId,
             'summary' => [
                 'gross_sales' => $gross,
                 'gross_sales_ex_vat' => $grossSalesExVat,
@@ -1540,6 +1642,7 @@ class ReportController extends Controller
                 'card' => 0,
             ],
             'tills' => $tillRows,
+            'sessions' => $sessions,
             'cashiers' => $cashierRows,
             'float_breakdown' => $floatBreakdownRows,
             'float_breakdown_total' => round($floatBreakdownTotal, 2),
