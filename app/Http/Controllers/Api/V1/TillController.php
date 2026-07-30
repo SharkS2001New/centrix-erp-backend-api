@@ -216,7 +216,6 @@ class TillController extends BaseResourceController
         }
 
         $model->update([
-            'is_active' => false,
             'cashier_id' => null,
         ]);
 

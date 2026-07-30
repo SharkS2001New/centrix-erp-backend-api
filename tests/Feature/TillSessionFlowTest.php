@@ -407,7 +407,7 @@ class TillSessionFlowTest extends TestCase
 
         $this->postJson("/api/v1/tills/{$till->id}/close")
             ->assertOk()
-            ->assertJsonPath('is_active', false)
+            ->assertJsonPath('is_active', true)
             ->assertJsonPath('cashier_id', null);
 
         $this->postJson("/api/v1/tills/{$till->id}/reopen")
