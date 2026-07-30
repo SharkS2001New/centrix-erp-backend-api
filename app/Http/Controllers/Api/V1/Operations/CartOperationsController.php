@@ -38,6 +38,7 @@ use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Inventory\BranchStockService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use InvalidArgumentException;
 use Illuminate\Support\Str;
 
@@ -785,15 +786,11 @@ class CartOperationsController extends Controller
             throw new InvalidArgumentException('You can only cancel your own held orders.');
         }
 
-        DB::transaction(function () use ($sale, $user) {
-            $this->restoreCancelledSaleStock($sale, $user);
+        $deletedId = (int) $sale->id;
+        $orderNum = (int) ($sale->order_num ?? 0);
 
-            $sale->update([
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-                'cancelled_by' => $user->id,
-                'stock_balanced' => 0,
-            ]);
+        DB::transaction(function () use ($sale, $user, $deletedId) {
+            $this->restoreCancelledSaleStock($sale, $user);
 
             $this->reverseSaleJournalIfPosted($sale, $user);
             app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
@@ -801,11 +798,57 @@ class CartOperationsController extends Controller
             app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForSale(
                 $sale->fresh(),
                 $user,
-                'Held order was cancelled.',
+                'Held order was deleted.',
             );
+
+            // Detach / remove dependents that do not cascade, then delete the park completely
+            // so it never appears under Cancelled orders.
+            TemporaryCart::query()
+                ->where('superseded_sale_id', $deletedId)
+                ->update(['superseded_sale_id' => null]);
+
+            if (Schema::hasTable('mpesa_incoming_payments')
+                && Schema::hasColumn('mpesa_incoming_payments', 'applied_sale_id')) {
+                DB::table('mpesa_incoming_payments')
+                    ->where('applied_sale_id', $deletedId)
+                    ->update(['applied_sale_id' => null]);
+            }
+
+            if (Schema::hasTable('kra_responses')) {
+                DB::table('kra_responses')->where('sale_id', $deletedId)->delete();
+            }
+            if (Schema::hasTable('credit_notes')) {
+                DB::table('credit_notes')->where('sale_id', $deletedId)->update(['sale_id' => null]);
+            }
+            if (Schema::hasTable('customer_returns')) {
+                DB::table('customer_returns')->where('sale_id', $deletedId)->update(['sale_id' => null]);
+            }
+            if (Schema::hasTable('returns')) {
+                DB::table('returns')->where('sale_id', $deletedId)->update(['sale_id' => null]);
+            }
+
+            if (Schema::hasTable('customer_invoices')) {
+                $invoiceIds = DB::table('customer_invoices')
+                    ->where('sale_id', $deletedId)
+                    ->pluck('id');
+                if ($invoiceIds->isNotEmpty()) {
+                    if (Schema::hasTable('customer_invoice_payments')) {
+                        DB::table('customer_invoice_payments')
+                            ->whereIn('customer_invoice_id', $invoiceIds)
+                            ->delete();
+                    }
+                    DB::table('customer_invoices')->whereIn('id', $invoiceIds)->delete();
+                }
+            }
+
+            $sale->delete();
         });
 
-        return response()->json($sale->fresh());
+        return response()->json([
+            'deleted' => true,
+            'id' => $deletedId,
+            'order_no' => $orderNum,
+        ]);
     }
 
     /** POST /sales/orders/{saleId}/cancel — cancel a mobile (or editable) order and restore stock. */

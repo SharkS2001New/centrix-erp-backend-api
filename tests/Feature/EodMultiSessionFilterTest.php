@@ -4,10 +4,12 @@ namespace Tests\Feature;
 
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\Organization;
+use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\Till;
 use App\Models\TillFloatSession;
 use App\Models\User;
+use Illuminate\Support\Facades\DB;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -103,6 +105,86 @@ class EodMultiSessionFilterTest extends TestCase
         $filteredIds = collect($filtered['sessions'] ?? [])->pluck('float_session_id')->map(fn ($id) => (int) $id)->all();
         $this->assertContains((int) $first->id, $filteredIds);
         $this->assertContains((int) $second->id, $filteredIds);
+    }
+
+    public function test_eod_attributes_expenses_to_cashier_session_maths(): void
+    {
+        $groupId = (int) DB::table('expense_groups')
+            ->where('organization_id', $this->user->organization_id)
+            ->value('id');
+        $this->assertGreaterThan(0, $groupId);
+        $methodId = (int) PaymentMethod::where('method_code', 'CASH')->value('id');
+        $this->assertGreaterThan(0, $methodId);
+
+        $first = $this->openSession(4000);
+        $this->postJson("/api/v1/pos/sessions/{$first->id}/expenses", [
+            'expense_group_id' => $groupId,
+            'expense_amount' => 100,
+            'description' => 'session-one-expense',
+            'payment_method_id' => $methodId,
+        ])->assertCreated();
+        $this->postJson("/api/v1/pos/sessions/{$first->id}/close", [
+            'closing_amount' => 3900,
+        ])->assertOk();
+
+        $second = $this->openSession(1500);
+        $this->postJson("/api/v1/pos/sessions/{$second->id}/expenses", [
+            'expense_group_id' => $groupId,
+            'expense_amount' => 50,
+            'description' => 'session-two-expense',
+            'payment_method_id' => $methodId,
+        ])->assertCreated();
+
+        // Backoffice / date-only expense — must not enter till EOD maths or summary.
+        $branchOnly = [
+            'branch_id' => $this->user->branch_id,
+            'expense_group_id' => $groupId,
+            'float_session_id' => null,
+            'description' => 'branch-only-expense',
+            'expense_amount' => 9999,
+            'expense_date' => now()->toDateString(),
+            'payment_method_id' => $methodId,
+            'recorded_by' => $this->user->id,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
+        if (\Illuminate\Support\Facades\Schema::hasColumn('expenses', 'organization_id')) {
+            $branchOnly['organization_id'] = $this->user->organization_id;
+        }
+        DB::table('expenses')->insert($branchOnly);
+
+        $date = now()->toDateString();
+        $all = $this->getJson('/api/v1/reports/eod-report?sale_date='.$date.'&cashier_id='.$this->user->id)
+            ->assertOk()
+            ->json();
+
+        $descriptions = collect($all['expenses'] ?? [])->pluck('description')->filter()->all();
+        $this->assertContains('session-one-expense', $descriptions);
+        $this->assertContains('session-two-expense', $descriptions);
+        $this->assertNotContains('branch-only-expense', $descriptions);
+        $this->assertEqualsWithDelta(150, (float) ($all['total_expenses'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(150, (float) ($all['summary']['session_expenses'] ?? 0), 0.01);
+
+        $firstRow = collect($all['sessions'])->firstWhere('float_session_id', (int) $first->id);
+        $secondRow = collect($all['sessions'])->firstWhere('float_session_id', (int) $second->id);
+        $this->assertEqualsWithDelta(100, (float) ($firstRow['session_expenses'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(50, (float) ($secondRow['session_expenses'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(
+            (float) $firstRow['opening_float'] + (float) $firstRow['gross_sales'] - 100,
+            (float) $firstRow['expected_net_sales'],
+            0.01,
+        );
+
+        $filtered = $this->getJson(
+            '/api/v1/reports/eod-report?sale_date='.$date
+            .'&cashier_id='.$this->user->id
+            .'&float_session_id='.$second->id,
+        )->assertOk()->json();
+
+        $filteredDescriptions = collect($filtered['expenses'] ?? [])->pluck('description')->filter()->all();
+        $this->assertSame(['session-two-expense'], array_values($filteredDescriptions));
+        $this->assertEqualsWithDelta(50, (float) ($filtered['total_expenses'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(50, (float) ($filtered['summary']['session_expenses'] ?? 0), 0.01);
     }
 
     protected function openSession(float $float): TillFloatSession

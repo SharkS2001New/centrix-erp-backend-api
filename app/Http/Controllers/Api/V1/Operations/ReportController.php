@@ -1440,25 +1440,34 @@ class ReportController extends Controller
                 return $row;
             });
 
-        $expenseLineQuery = DB::table('expenses as e')
-            ->leftJoin('expense_groups as eg', 'eg.id', '=', 'e.expense_group_id')
+        // Expense summary / expected closing use till-session expenses only (same as X/Z):
+        // attributed to the session cashier via float_session_id — not all branch expenses by date.
+        $sessionExpenseQ = DB::table('expenses as e')
+            ->join('till_float_sessions as tfs', 'e.float_session_id', '=', 'tfs.id')
+            ->whereNotNull('e.float_session_id')
             ->whereNull('e.deleted_at')
-            ->when($floatSessionId, fn ($q) => $q->where('e.float_session_id', $floatSessionId));
-        if ($orgId && Schema::hasColumn('expenses', 'organization_id')) {
-            $expenseLineQuery->where('e.organization_id', $orgId);
-        }
-        $this->applyBranchTenantScope($expenseLineQuery, $orgId, $branchId, 'e.branch_id');
+            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId))
+            ->when($floatSessionId, fn ($q) => $q->where('tfs.id', $floatSessionId));
+        $this->applyBranchTenantScope($sessionExpenseQ, $orgId, $branchId, 'tfs.branch_id');
         if ($isMonthly) {
-            $expenseLineQuery->whereBetween('e.expense_date', [$periodStartDate, $periodEndDate]);
+            $sessionExpenseQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
         } else {
-            $expenseLineQuery->whereDate('e.expense_date', $date);
+            $sessionExpenseQ->whereDate('tfs.session_date', $date);
         }
-        $expenseRows = $expenseLineQuery
+        $sessionExpenses = (float) (clone $sessionExpenseQ)->sum('e.expense_amount');
+        $totalExpenses = $sessionExpenses;
+
+        $expenseRows = (clone $sessionExpenseQ)
+            ->leftJoin('expense_groups as eg', 'eg.id', '=', 'e.expense_group_id')
+            ->leftJoin('users as u', 'tfs.cashier_id', '=', 'u.id')
             ->select([
                 'e.id',
                 'e.description',
                 'eg.group_name',
                 'e.expense_amount',
+                'e.float_session_id',
+                'tfs.cashier_id',
+                DB::raw('COALESCE(NULLIF(TRIM(u.full_name), ""), u.username) as cashier'),
             ])
             ->orderBy('e.id')
             ->get()
@@ -1473,29 +1482,12 @@ class ReportController extends Controller
                         ? $description
                         : ($groupName !== '' ? $groupName : 'Expense'),
                     'amount' => round((float) $row->expense_amount, 2),
+                    'float_session_id' => (int) ($row->float_session_id ?? 0) ?: null,
+                    'cashier_id' => (int) ($row->cashier_id ?? 0) ?: null,
+                    'cashier' => trim((string) ($row->cashier ?? '')) ?: null,
                 ];
             })
             ->values();
-
-        $totalExpenses = $expenseRows->sum(fn ($r) => (float) $r->amount);
-
-        $sessionExpenseQ = DB::table('expenses as e')
-            ->join('till_float_sessions as tfs', 'e.float_session_id', '=', 'tfs.id')
-            ->whereNotNull('e.float_session_id')
-            ->whereNull('e.deleted_at')
-            ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId))
-            ->when($floatSessionId, fn ($q) => $q->where('tfs.id', $floatSessionId));
-        $this->applyBranchTenantScope($sessionExpenseQ, $orgId, $branchId, 'tfs.branch_id');
-        if ($isMonthly) {
-            $sessionExpenseQ->whereBetween('tfs.session_date', [$periodStartDate, $periodEndDate]);
-        } else {
-            $sessionExpenseQ->whereDate('tfs.session_date', $date);
-        }
-        $sessionExpenses = (float) $sessionExpenseQ->sum('e.expense_amount');
-        if ($floatSessionId) {
-            // Session view: expected closing uses that session's till expenses only.
-            $totalExpenses = $sessionExpenses;
-        }
 
         $creditPaymentsQuery = DB::table('customer_invoice_payments as cip')
             ->join('customer_invoices as ci', 'ci.id', '=', 'cip.customer_invoice_id');

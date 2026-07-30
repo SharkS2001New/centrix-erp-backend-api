@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
@@ -22,6 +23,7 @@ class SalesCartCheckoutStockTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutMiddleware([EnsureOrganizationLicenseActive::class]);
 
         $this->user = User::where('username', 'admin')->firstOrFail();
         $this->productCode = Product::first()->product_code;
@@ -161,26 +163,29 @@ class SalesCartCheckoutStockTest extends TestCase
 
     public function test_held_order_can_be_cancelled(): void
     {
-        $cartId = $this->postJson('/api/v1/sales/carts', [
+        $template = Sale::query()->where('organization_id', $this->user->organization_id)->firstOrFail();
+        $heldSale = Sale::create([
+            'order_num' => 92010,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
             'channel' => 'pos',
-            'branch_id' => $this->user->branch_id,
-        ])->json('id');
-
-        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
-            'product_code' => $this->productCode,
-            'quantity' => 1,
-        ])->assertCreated();
-
-        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'order_source' => 'pos',
+            'cashier_id' => $this->user->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
             'status' => 'held',
-            'pay_now' => 0,
-            'save_only' => true,
-        ])->assertCreated()->json();
+            'total_vat' => 0,
+            'order_total' => 500,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
 
-        $this->postJson("/api/v1/sales/orders/{$sale['id']}/cancel-held")
-            ->assertOk();
+        $this->postJson("/api/v1/sales/orders/{$heldSale->id}/cancel-held")
+            ->assertOk()
+            ->assertJsonPath('deleted', true)
+            ->assertJsonPath('id', (int) $heldSale->id);
 
-        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
+        $this->assertNull(Sale::find($heldSale->id));
     }
 
     public function test_held_orders_list_is_scoped_to_current_cashier(): void
