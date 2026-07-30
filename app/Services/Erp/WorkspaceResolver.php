@@ -3,10 +3,20 @@
 namespace App\Services\Erp;
 
 use App\Models\User;
+use App\Services\Auth\UserLoginChannelService;
 use App\Services\Auth\UserPermissionService;
 
 class WorkspaceResolver
 {
+    /** POS checkout needs these shared lookups, but they should not unlock Backoffice. */
+    protected const BACKOFFICE_POS_SHARED_PERMISSION_CODES = [
+        'sales.create',
+        'catalogue.view',
+        'catalogue.products.view',
+        'customers.view',
+        'customers.customers.view',
+    ];
+
     /**
      * @return list<array{id: string, label: string, description: string, icon: string, home_path: string}>
      */
@@ -24,7 +34,10 @@ class WorkspaceResolver
         $available = [];
 
         foreach ($definitions as $id => $def) {
-            if (! $this->workspaceAvailableToUser($user, $def, $gate, $permissionMap)) {
+            if (! $this->workspaceAllowedByLoginChannels((string) $id, $user)) {
+                continue;
+            }
+            if (! $this->workspaceAvailableToUser((string) $id, $user, $def, $gate, $permissionMap)) {
                 continue;
             }
 
@@ -40,11 +53,32 @@ class WorkspaceResolver
         return $available;
     }
 
+    protected function workspaceAllowedByLoginChannels(string $workspaceId, ?User $user): bool
+    {
+        if (! $user) {
+            return true;
+        }
+
+        $channels = app(UserLoginChannelService::class)->channelsFor($user);
+        $workspaceChannel = $this->workspaceLoginChannel($workspaceId);
+
+        return in_array($workspaceChannel, $channels, true);
+    }
+
+    protected function workspaceLoginChannel(string $workspaceId): string
+    {
+        return match ($workspaceId) {
+            'pos', 'hotel_bar_pos' => UserLoginChannelService::POS,
+            default => UserLoginChannelService::BACKOFFICE,
+        };
+    }
+
     /**
      * @param  array<string, mixed>  $definition
      * @param  array<string, bool>  $permissionMap
      */
     protected function workspaceAvailableToUser(
+        string $workspaceId,
         ?User $user,
         array $definition,
         CapabilityGate $gate,
@@ -58,7 +92,7 @@ class WorkspaceResolver
             return true;
         }
 
-        return $this->userHasWorkspacePermission($definition, $permissionMap);
+        return $this->userHasWorkspacePermission($workspaceId, $definition, $permissionMap);
     }
 
     /** @param  array<string, mixed>  $definition */
@@ -80,7 +114,7 @@ class WorkspaceResolver
     }
 
     /** @param  array<string, mixed>  $definition @param  array<string, bool>  $permissionMap */
-    protected function userHasWorkspacePermission(array $definition, array $permissionMap): bool
+    protected function userHasWorkspacePermission(string $workspaceId, array $definition, array $permissionMap): bool
     {
         $entryPermission = $definition['entry_permission'] ?? null;
         if (is_string($entryPermission) && $entryPermission !== '') {
@@ -94,6 +128,12 @@ class WorkspaceResolver
 
         foreach ($permissionMap as $code => $granted) {
             if (! $granted) {
+                continue;
+            }
+            if (
+                $workspaceId === 'backoffice'
+                && in_array((string) $code, self::BACKOFFICE_POS_SHARED_PERMISSION_CODES, true)
+            ) {
                 continue;
             }
             foreach ($prefixes as $prefix) {
