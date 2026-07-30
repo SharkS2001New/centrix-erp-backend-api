@@ -53,12 +53,11 @@ class MobilePickingSheetController extends Controller
     protected function assertFeatureAvailable(Request $request): void
     {
         $gate = $this->erp->gateForUser($request->user());
-        $sales = $gate->moduleSettings('sales');
 
         try {
             $this->sheets->assertAvailable(
-                $gate->enabled('distribution'),
-                $gate->enabled('sales.mobile') && (bool) ($sales['enable_mobile_orders'] ?? true),
+                $gate->distributionOpsEnabled(),
+                $gate->mobileSalesEnabled(),
             );
         } catch (InvalidArgumentException $e) {
             abort(403, $e->getMessage());

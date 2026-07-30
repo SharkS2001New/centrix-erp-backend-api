@@ -27,6 +27,15 @@ class TenantOrganizationSettingsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('general.language', 'sw');
 
+        $this->patchJson('/api/v1/erp/settings/general', [
+            'decimal_places' => 0,
+        ])
+            ->assertOk()
+            ->assertJsonPath('general.decimal_places', 0);
+
+        $org = \App\Models\Organization::findOrFail($orgAdmin->organization_id);
+        $this->assertSame(0, $org->module_settings['general']['decimal_places'] ?? null);
+
         $this->getJson('/api/v1/erp/settings/notifications')->assertOk();
         $this->getJson('/api/v1/erp/settings/security')->assertOk();
         $this->getJson('/api/v1/erp/settings/ai')->assertOk();

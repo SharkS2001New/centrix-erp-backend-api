@@ -15,9 +15,9 @@ class MobilePickingSheetService
         protected LoadingListBuilder $loadingListBuilder,
     ) {}
 
-    public function assertAvailable(bool $distributionEnabled, bool $mobileOrdersEnabled): void
+    public function assertAvailable(bool $distributionOpsEnabled, bool $mobileSalesEnabled): void
     {
-        $this->loadingSheets->assertAvailable($distributionEnabled, $mobileOrdersEnabled);
+        $this->loadingSheets->assertAvailable($distributionOpsEnabled, $mobileSalesEnabled);
     }
 
     /** @return array<int, array<string, mixed>> */

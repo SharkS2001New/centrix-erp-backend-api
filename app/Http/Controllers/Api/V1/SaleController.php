@@ -302,6 +302,8 @@ class SaleController extends BaseResourceController
             $query->select('sales.*');
         }
 
+        $summary = $this->summarizeFilteredOrders($query);
+
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         $sort = $this->resolveOrdersListSort($request, $gate);
@@ -342,7 +344,35 @@ class SaleController extends BaseResourceController
 
         return response()->json(array_merge($paginator->toArray(), [
             'list_scope' => $listScope,
+            'summary' => $summary,
         ]));
+    }
+
+    /** @return array{total: int, revenue: float, unpaid: int, partial: int, paid: int, cancelled: int, expired: int} */
+    protected function summarizeFilteredOrders(Builder $query): array
+    {
+        $row = (clone $query)
+            ->reorder()
+            ->selectRaw("
+                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN 1 ELSE 0 END) as total,
+                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN COALESCE(sales.order_total, 0) ELSE 0 END) as revenue,
+                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) = 'paid' THEN 1 ELSE 0 END) as paid,
+                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) = 'partial' THEN 1 ELSE 0 END) as partial,
+                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) NOT IN ('paid', 'partial') THEN 1 ELSE 0 END) as unpaid,
+                SUM(CASE WHEN sales.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+                SUM(CASE WHEN sales.status = 'expired' THEN 1 ELSE 0 END) as expired
+            ")
+            ->first();
+
+        return [
+            'total' => (int) ($row->total ?? 0),
+            'revenue' => round((float) ($row->revenue ?? 0), 2),
+            'unpaid' => (int) ($row->unpaid ?? 0),
+            'partial' => (int) ($row->partial ?? 0),
+            'paid' => (int) ($row->paid ?? 0),
+            'cancelled' => (int) ($row->cancelled ?? 0),
+            'expired' => (int) ($row->expired ?? 0),
+        ];
     }
 
     public function show(Request $request, string $id)

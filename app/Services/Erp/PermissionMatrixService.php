@@ -159,6 +159,40 @@ class PermissionMatrixService
         return false;
     }
 
+    /**
+     * Delivery routes are used by Field Sales (mobile/backoffice) without the full
+     * Distribution logistics module. Keep route CRUD available whenever sales or
+     * customers modules are on.
+     */
+    public static function routesCatalogEnabled(CapabilityGate $gate): bool
+    {
+        foreach (['distribution', 'sales.mobile', 'sales.backend', 'customers_suppliers'] as $key) {
+            if ($gate->enabled($key)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static function isRoutePermissionCode(string $permissionCode): bool
+    {
+        return str_starts_with($permissionCode, 'fulfillment.routes.');
+    }
+
+    public static function permissionModuleEnabled(
+        string $permissionCode,
+        string $registryModule,
+        CapabilityGate $gate,
+        bool $includeAdminWhenDisabled = false,
+    ): bool {
+        if (self::isRoutePermissionCode($permissionCode)) {
+            return self::routesCatalogEnabled($gate);
+        }
+
+        return self::isRegistryModuleEnabled($registryModule, $gate, $includeAdminWhenDisabled);
+    }
+
     /** @return list<int> Permission ids whose registry module is enabled for the org. */
     public static function enabledPermissionIds(CapabilityGate $gate, bool $includeAdminWhenDisabled = false): array
     {
@@ -166,7 +200,8 @@ class PermissionMatrixService
 
         return Permission::query()
             ->get()
-            ->filter(fn (Permission $permission) => self::isRegistryModuleEnabled(
+            ->filter(fn (Permission $permission) => self::permissionModuleEnabled(
+                (string) $permission->permission_code,
                 (string) $permission->module,
                 $gate,
                 $includeAdminWhenDisabled,

@@ -67,6 +67,32 @@ class TillSessionAuthorization
         return self::hasPermission($user, 'sales.manage');
     }
 
+    public static function assertCanReopen(User $user, TillFloatSession $session): void
+    {
+        if ((int) $session->cashier_id === (int) $user->id) {
+            return;
+        }
+
+        if (self::canManageSessions($user)) {
+            return;
+        }
+
+        throw new AccessDeniedHttpException('Only the session cashier or a manager can reopen this session.');
+    }
+
+    public static function assertCanClose(User $user, TillFloatSession $session): void
+    {
+        if ((int) $session->cashier_id === (int) $user->id) {
+            return;
+        }
+
+        if (self::canManageSessions($user)) {
+            return;
+        }
+
+        throw new AccessDeniedHttpException('Only the session cashier or a manager can close this session.');
+    }
+
     protected static function hasPermission(User $user, string $permission): bool
     {
         if (! $user->role_id) {

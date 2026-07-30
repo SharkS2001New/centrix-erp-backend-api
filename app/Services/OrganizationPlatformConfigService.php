@@ -151,9 +151,14 @@ class OrganizationPlatformConfigService
         }
 
         if (array_key_exists('cancel_order_statuses', $salesPlatform)) {
+            $cancelFallback = OrderWorkflowService::defaultCancelOrderStatusesFromWorkflowConfig(
+                is_array($nextSales['order_workflow'] ?? null)
+                    ? $nextSales['order_workflow']
+                    : $workflowService->config(),
+            );
             $nextSales['cancel_order_statuses'] = $this->normalizeRequiredActionStatuses(
                 $salesPlatform['cancel_order_statuses'],
-                config('erp.module_settings_defaults.sales.cancel_order_statuses', OrderWorkflowService::CANCELLABLE_ORDER_STATUSES),
+                $cancelFallback,
             );
         }
 
@@ -260,6 +265,8 @@ class OrganizationPlatformConfigService
     {
         $isDistribution = $deploymentProfile === 'distribution';
 
+        $workflowDefaults = config('erp.default_order_workflow', []);
+
         return [
             'show_checkout_on_create_order' => true,
             'enable_mobile_orders' => ! in_array($deploymentProfile, ['small_shop', 'supermarket'], true),
@@ -281,7 +288,8 @@ class OrganizationPlatformConfigService
             'enable_pos_cash_rounding' => false,
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
-            'order_workflow' => config('erp.default_order_workflow', []),
+            'order_workflow' => $workflowDefaults,
+            'order_cancellation_enabled' => true,
             'enable_pos_order_edit' => false,
             'enable_backoffice_order_edit' => true,
             'reserve_stock_on_cart' => true,
@@ -293,7 +301,7 @@ class OrganizationPlatformConfigService
             'edit_order_statuses' => ['booked', 'pending', 'editable'],
             'print_invoice_statuses' => null,
             'collect_payment_statuses' => ['unpaid', 'pending_payment'],
-            'cancel_order_statuses' => ['booked', 'pending', 'unpaid', 'processed', 'pending_approval', 'editable'],
+            'cancel_order_statuses' => OrderWorkflowService::defaultCancelOrderStatusesFromWorkflowConfig($workflowDefaults),
             'customer_return_statuses' => ['paid', 'processed', 'delivered', 'completed'],
         ];
     }
@@ -358,7 +366,7 @@ class OrganizationPlatformConfigService
             ),
             'cancel_order_statuses' => $this->normalizeRequiredActionStatuses(
                 $sales['cancel_order_statuses'] ?? null,
-                config('erp.module_settings_defaults.sales.cancel_order_statuses', OrderWorkflowService::CANCELLABLE_ORDER_STATUSES),
+                OrderWorkflowService::defaultCancelOrderStatusesFromWorkflowConfig($workflow),
             ),
             'customer_return_statuses' => $this->normalizeRequiredActionStatuses(
                 $sales['customer_return_statuses'] ?? null,

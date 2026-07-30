@@ -442,4 +442,44 @@ class SaleOrderListDateFilterTest extends TestCase
         $ids = collect($response->json('data'))->pluck('id');
         $this->assertTrue($ids->contains($sale->id));
     }
+
+    public function test_sales_list_summary_aggregates_all_filtered_rows_not_current_page(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $marker = 'SummaryAggTest'.uniqid('', true);
+        $base = [
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_name_override' => $marker,
+            'status' => 'paid',
+            'payment_status' => 'paid',
+            'completed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+            'archived' => 0,
+        ];
+
+        Sale::query()->create(array_merge($base, ['order_num' => 994001, 'order_total' => 100, 'amount_paid' => 100]));
+        Sale::query()->create(array_merge($base, ['order_num' => 994002, 'order_total' => 200, 'amount_paid' => 200]));
+        Sale::query()->create(array_merge($base, [
+            'order_num' => 994003,
+            'order_total' => 50,
+            'amount_paid' => 50,
+            'status' => 'cancelled',
+            'payment_status' => 'unpaid',
+        ]));
+
+        $response = $this->getJson('/api/v1/sales?q='.urlencode($marker).'&per_page=1&date_field=placed');
+
+        $response->assertOk()
+            ->assertJsonCount(1, 'data')
+            ->assertJsonPath('summary.total', 2)
+            ->assertJsonPath('summary.revenue', 300)
+            ->assertJsonPath('summary.paid', 2)
+            ->assertJsonPath('summary.cancelled', 1);
+    }
 }

@@ -457,7 +457,7 @@ return [
             'edit_order_statuses' => ['booked', 'pending', 'editable'],
             'print_invoice_statuses' => null,
             'collect_payment_statuses' => ['unpaid', 'pending_payment'],
-            'cancel_order_statuses' => ['booked', 'pending', 'unpaid', 'processed', 'pending_approval', 'editable'],
+            'cancel_order_statuses' => ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
             'customer_return_statuses' => ['paid', 'processed', 'delivered', 'completed'],
             'discount_approval_enabled' => false,
             'discount_approval_enabled_mobile' => false,

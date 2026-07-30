@@ -114,7 +114,11 @@ class UserPermissionService
                 return true;
             }
 
-            return PermissionMatrixService::isRegistryModuleEnabled((string) $permission->module, $gate);
+            return PermissionMatrixService::permissionModuleEnabled(
+                $permissionCode,
+                (string) $permission->module,
+                $gate,
+            );
         }
 
         if ($this->hasDirectPermission($user, $permissionCode)) {
@@ -161,7 +165,11 @@ class UserPermissionService
             return true;
         }
 
-        return PermissionMatrixService::isRegistryModuleEnabled((string) $permission->module, $gate);
+        return PermissionMatrixService::permissionModuleEnabled(
+            $permissionCode,
+            (string) $permission->module,
+            $gate,
+        );
     }
 
   /** Whether the user holds a feature permission on their role/overrides (no capability aliases). */
@@ -442,7 +450,11 @@ class UserPermissionService
     protected function grantOrgAdminEnabledModulePermissions(array $map, CapabilityGate $gate): array
     {
         foreach (Permission::query()->get() as $permission) {
-            if (! PermissionMatrixService::isRegistryModuleEnabled((string) $permission->module, $gate)) {
+            if (! PermissionMatrixService::permissionModuleEnabled(
+                (string) $permission->permission_code,
+                (string) $permission->module,
+                $gate,
+            )) {
                 continue;
             }
 

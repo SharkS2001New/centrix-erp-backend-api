@@ -116,20 +116,20 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertSame(['editable'], $service->statusesForQueueFilter('editable', 'backend'));
     }
 
-    public function test_cancel_transition_only_allowed_for_early_pipeline_statuses(): void
+    public function test_cancel_transition_allowed_for_default_workflow_pipeline_stages(): void
     {
         $service = OrderWorkflowService::forGate(
             app(\App\Services\Erp\CapabilityGate::class)
         );
 
-        $this->assertTrue($service->canTransition('booked', 'cancelled', 'backend'));
-        $this->assertTrue($service->canTransition('pending', 'cancelled', 'backend'));
-        $this->assertTrue($service->canTransition('unpaid', 'cancelled', 'backend'));
-        $this->assertTrue($service->canTransition('processed', 'cancelled', 'backend'));
-        $this->assertFalse($service->canTransition('pending_payment', 'cancelled', 'backend'));
-        $this->assertFalse($service->canTransition('paid', 'cancelled', 'backend'));
-        $this->assertFalse($service->canTransition('delivered', 'cancelled', 'backend'));
-        $this->assertFalse($service->canTransition('completed', 'cancelled', 'backend'));
+        foreach (
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'] as $status
+        ) {
+            $this->assertTrue(
+                $service->canTransition($status, 'cancelled', 'backend'),
+                "Expected {$status} to allow cancel by default",
+            );
+        }
     }
 
     public function test_cancel_transition_respects_disabled_setting(): void
@@ -258,7 +258,7 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertNull($service->printInvoiceStatuses());
         $this->assertSame(['unpaid', 'pending_payment'], $service->collectPaymentStatuses());
         $this->assertSame(
-            ['booked', 'pending', 'unpaid', 'processed', 'pending_approval', 'editable'],
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
             $service->cancelOrderStatuses(),
         );
         $this->assertSame(
@@ -278,7 +278,7 @@ class OrderWorkflowServiceTest extends TestCase
         $this->assertTrue($service->canCollectPaymentForOrder('processed', 'backend', 'unpaid'));
         $this->assertFalse($service->canCollectPaymentForOrder('booked', 'backend', 'paid'));
         $this->assertTrue($service->isCancellableStatus('booked'));
-        $this->assertFalse($service->isCancellableStatus('paid'));
+        $this->assertTrue($service->isCancellableStatus('paid'));
         $this->assertTrue($service->isCustomerReturnStatus('paid'));
         $this->assertFalse($service->isCustomerReturnStatus('unpaid'));
     }

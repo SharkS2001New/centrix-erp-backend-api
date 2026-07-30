@@ -185,6 +185,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('sessions/{sessionId}/resume', [TillOperationsController::class, 'resumeSession']);
         Route::post('sessions/{sessionId}/handover', [TillOperationsController::class, 'handoverSession']);
         Route::post('sessions/{sessionId}/close', [TillOperationsController::class, 'closeSession']);
+        Route::post('sessions/{sessionId}/reopen', [TillOperationsController::class, 'reopenSession']);
         Route::get('sessions/{sessionId}/x-report', [TillOperationsController::class, 'xReport']);
         Route::get('sessions/{sessionId}/z-report', [TillOperationsController::class, 'zReport']);
     });

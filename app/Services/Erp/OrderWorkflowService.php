@@ -54,6 +54,36 @@ class OrderWorkflowService
 
     public function __construct(protected CapabilityGate $gate) {}
 
+    /**
+     * Default cancel stages for a workflow config: all enabled pipeline steps.
+     *
+     * @param  array<string, mixed>  $workflowConfig
+     * @return list<string>
+     */
+    public static function defaultCancelOrderStatusesFromWorkflowConfig(array $workflowConfig): array
+    {
+        $excluded = ['cancelled', 'expired', 'draft'];
+        $out = [];
+        foreach ($workflowConfig['steps'] ?? [] as $step) {
+            if (! ($step['enabled'] ?? true)) {
+                continue;
+            }
+            $status = (string) ($step['status'] ?? '');
+            if ($status === '' || in_array($status, $excluded, true)) {
+                continue;
+            }
+            $out[] = $status;
+        }
+
+        return $out !== [] ? $out : self::CANCELLABLE_ORDER_STATUSES;
+    }
+
+    /** @return list<string> */
+    public function defaultCancelOrderStatuses(): array
+    {
+        return self::defaultCancelOrderStatusesFromWorkflowConfig($this->config());
+    }
+
     public static function forGate(CapabilityGate $gate): self
     {
         return new self($gate);
@@ -263,7 +293,7 @@ class OrderWorkflowService
     {
         return $this->normalizeRequiredStatusList(
             $this->gate->moduleSettings('sales')['cancel_order_statuses'] ?? null,
-            self::CANCELLABLE_ORDER_STATUSES,
+            $this->defaultCancelOrderStatuses(),
         );
     }
 

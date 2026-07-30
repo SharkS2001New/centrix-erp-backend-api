@@ -3,10 +3,8 @@
 namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Till;
-use App\Models\TillFloatSession;
 use App\Services\Pos\TillNumbering;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 class TillController extends BaseResourceController
@@ -176,34 +174,10 @@ class TillController extends BaseResourceController
 
     public function destroy(Request $request, string $id)
     {
-        $till = $this->findScopedTill($request, $id);
+        $this->findScopedTill($request, $id);
 
-        DB::transaction(function () use ($till) {
-            $sessionIds = TillFloatSession::query()
-                ->where('till_id', $till->id)
-                ->pluck('id');
-
-            TillFloatSession::query()
-                ->where('till_id', $till->id)
-                ->where('status', 'open')
-                ->update([
-                    'status' => 'closed',
-                    'closed_at' => now(),
-                ]);
-
-            DB::table('sales')->where('till_id', $till->id)->update(['till_id' => null]);
-
-            if ($sessionIds->isNotEmpty()) {
-                DB::table('sales')
-                    ->whereIn('float_session_id', $sessionIds)
-                    ->update(['float_session_id' => null]);
-            }
-
-            TillFloatSession::query()->where('till_id', $till->id)->delete();
-
-            $till->delete();
-        });
-
-        return response()->json(null, 204);
+        throw ValidationException::withMessages([
+            'till' => ['Till deletion is disabled. Close active sessions and edit the till instead.'],
+        ]);
     }
 }

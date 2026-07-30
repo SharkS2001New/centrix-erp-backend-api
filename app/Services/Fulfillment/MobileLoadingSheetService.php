@@ -21,16 +21,16 @@ class MobileLoadingSheetService
         protected RouteAccessService $routes,
     ) {}
 
-    public function assertAvailable(bool $distributionEnabled, bool $mobileOrdersEnabled): void
+    public function assertAvailable(bool $distributionOpsEnabled, bool $mobileSalesEnabled): void
     {
-        if ($distributionEnabled) {
+        if ($distributionOpsEnabled) {
             throw new InvalidArgumentException(
                 'Loading sheets for mobile orders are managed under Distribution dispatch trips.',
             );
         }
 
-        if (! $mobileOrdersEnabled) {
-            throw new InvalidArgumentException('Mobile orders are not enabled for this organization.');
+        if (! $mobileSalesEnabled) {
+            throw new InvalidArgumentException('Mobile field sales are not enabled for this organization.');
         }
     }
 

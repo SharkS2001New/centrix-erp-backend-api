@@ -61,8 +61,9 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertSame(['booked', 'pending', 'editable'], $config['edit_order_statuses']);
         $this->assertNull($config['print_invoice_statuses']);
         $this->assertSame(['unpaid', 'pending_payment'], $config['collect_payment_statuses']);
+        $this->assertTrue($config['order_cancellation_enabled']);
         $this->assertSame(
-            ['booked', 'pending', 'unpaid', 'processed', 'pending_approval', 'editable'],
+            ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
             $config['cancel_order_statuses'],
         );
         $this->assertSame(

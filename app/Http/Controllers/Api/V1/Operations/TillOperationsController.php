@@ -113,6 +113,35 @@ class TillOperationsController extends Controller
         }
     }
 
+    protected function todaySessionDate(): string
+    {
+        return now()->toDateString();
+    }
+
+    protected function assertCashierCanStartNewSessionToday(int $userId): void
+    {
+        $closedToday = TillFloatSession::query()
+            ->where('cashier_id', $userId)
+            ->whereDate('session_date', $this->todaySessionDate())
+            ->where('status', 'closed')
+            ->exists();
+
+        if ($closedToday) {
+            throw new InvalidArgumentException(
+                'You already closed your till session for today. Reopen that session from Till management to continue.',
+            );
+        }
+    }
+
+    protected function sessionBusinessDate(TillFloatSession $session): ?string
+    {
+        if ($session->session_date) {
+            return $session->session_date->format('Y-m-d');
+        }
+
+        return $session->opened_at?->toDateString();
+    }
+
     public function openSession(Request $request)
     {
         $data = $request->validate([
@@ -155,6 +184,36 @@ class TillOperationsController extends Controller
         $this->assertTillAssignedToCashier($till, $userId);
         $this->assertCashierUsesAssignedTill($userId, (int) $till->id);
         $this->assertCashierHasNoOtherOpenSession($userId, (int) $till->id);
+
+        $closedTodaySameTill = TillFloatSession::query()
+            ->where('till_id', $till->id)
+            ->where('cashier_id', $userId)
+            ->whereDate('session_date', $this->todaySessionDate())
+            ->where('status', 'closed')
+            ->orderByDesc('id')
+            ->first();
+        if ($closedTodaySameTill) {
+            TillSessionAuthorization::assertCanReopen($request->user(), $closedTodaySameTill);
+            $note = sprintf(
+                'Reopened on %s by %s via open session.',
+                now()->format('Y-m-d H:i'),
+                $request->user()->username ?? ('user #'.$request->user()->id),
+            );
+            $existingNotes = trim((string) ($closedTodaySameTill->notes ?? ''));
+            $closedTodaySameTill->update([
+                'status' => 'open',
+                'closed_at' => null,
+                'closing_amount' => null,
+                'closing_denominations' => null,
+                'expected_amount' => null,
+                'suspended_at' => null,
+                'notes' => $existingNotes !== '' ? $existingNotes."\n".$note : $note,
+            ]);
+
+            return response()->json($closedTodaySameTill->fresh());
+        }
+
+        $this->assertCashierCanStartNewSessionToday($userId);
 
         $amount = (float) $data['working_amount'];
         $validator = FloatSessionValidator::forUser($request->user());
@@ -333,7 +392,7 @@ class TillOperationsController extends Controller
         ]);
 
         $session = $this->findScopedTillSession($sessionId, $request->user());
-        TillSessionAuthorization::assertSessionCashier($request->user(), $session);
+        TillSessionAuthorization::assertCanClose($request->user(), $session);
         if ($session->status !== 'open') {
             throw new InvalidArgumentException('Session is not open.');
         }
@@ -408,6 +467,58 @@ class TillOperationsController extends Controller
         $session->update([
             'status' => 'open',
             'suspended_at' => null,
+        ]);
+
+        return response()->json($session->fresh());
+    }
+
+    public function reopenSession(Request $request, int $sessionId)
+    {
+        $session = $this->findScopedTillSession($sessionId, $request->user());
+        TillSessionAuthorization::assertCanReopen($request->user(), $session);
+
+        if ($session->status !== 'closed') {
+            throw new InvalidArgumentException('Only a closed session can be reopened.');
+        }
+
+        $businessDate = $this->sessionBusinessDate($session);
+        if ($businessDate !== $this->todaySessionDate()) {
+            throw new InvalidArgumentException('Only today\'s session can be reopened.');
+        }
+
+        $tillBusy = TillFloatSession::query()
+            ->where('till_id', $session->till_id)
+            ->whereIn('status', ['open', 'suspended'])
+            ->where('id', '!=', $session->id)
+            ->exists();
+        if ($tillBusy) {
+            throw new InvalidArgumentException('This till already has an active session.');
+        }
+
+        $otherOpen = TillFloatSession::query()
+            ->where('cashier_id', $session->cashier_id)
+            ->whereIn('status', ['open', 'suspended'])
+            ->where('id', '!=', $session->id)
+            ->exists();
+        if ($otherOpen) {
+            throw new InvalidArgumentException('Cashier already has another active session.');
+        }
+
+        $note = sprintf(
+            'Reopened on %s by %s.',
+            now()->format('Y-m-d H:i'),
+            $request->user()->username ?? ('user #'.$request->user()->id),
+        );
+        $existingNotes = trim((string) ($session->notes ?? ''));
+
+        $session->update([
+            'status' => 'open',
+            'closed_at' => null,
+            'closing_amount' => null,
+            'closing_denominations' => null,
+            'expected_amount' => null,
+            'suspended_at' => null,
+            'notes' => $existingNotes !== '' ? $existingNotes."\n".$note : $note,
         ]);
 
         return response()->json($session->fresh());
