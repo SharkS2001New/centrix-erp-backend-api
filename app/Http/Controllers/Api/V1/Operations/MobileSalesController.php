@@ -156,6 +156,8 @@ class MobileSalesController extends Controller
     {
         $routes = $this->mobileScope->listRoutesForUser($request->user());
 
+        $assignedRouteIds = $this->mobileScope->assignedRouteIds($request->user());
+
         return response()->json([
             'data' => $routes->map(static fn ($route) => [
                 'id' => (int) $route->id,
@@ -164,9 +166,8 @@ class MobileSalesController extends Controller
                 'route_markup_price' => $route->route_markup_price,
             ])->values(),
             'route_selection_locked' => $this->mobileScope->isRouteSelectionLocked($request->user()),
-            'assigned_route_id' => $request->user()->assigned_route_id
-                ? (int) $request->user()->assigned_route_id
-                : null,
+            'assigned_route_id' => $assignedRouteIds[0] ?? null,
+            'assigned_route_ids' => $assignedRouteIds,
         ]);
     }
 

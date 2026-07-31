@@ -92,6 +92,13 @@ class MobileCustomerService
     public function store(User $user, array $data): array
     {
         $payload = $this->normalizePayload($data);
+        $assigned = $this->mobileScope->assignedRouteIds($user);
+        if ($assigned !== []) {
+            $payload['customer_type'] = 'route';
+            if (count($assigned) === 1) {
+                $payload['route_id'] = $assigned[0];
+            }
+        }
         if (array_key_exists('branch_id', $payload) && $payload['branch_id'] !== null) {
             $this->access->assertBranchInOrganization($user, (int) $payload['branch_id']);
             $this->access->assertBranchAccess($user, (int) $payload['branch_id']);
@@ -129,6 +136,16 @@ class MobileCustomerService
             ->firstOrFail();
 
         $payload = $this->normalizePayload($data, partial: true);
+        $assigned = $this->mobileScope->assignedRouteIds($user);
+        if ($assigned !== []) {
+            $payload['customer_type'] = 'route';
+            if (count($assigned) === 1) {
+                $payload['route_id'] = $assigned[0];
+            } elseif (! array_key_exists('route_id', $payload) && $customer->route_id) {
+                // Keep existing route when multi-locked and client omits route_id.
+                $payload['route_id'] = (int) $customer->route_id;
+            }
+        }
         if (array_key_exists('branch_id', $payload) && $payload['branch_id'] !== null) {
             $this->access->assertBranchInOrganization($user, (int) $payload['branch_id']);
             $this->access->assertBranchAccess($user, (int) $payload['branch_id']);
@@ -151,8 +168,14 @@ class MobileCustomerService
 
     protected function scopedQuery(User $user, ?int $routeId = null)
     {
-        if ($routeId !== null && $routeId > 0 && ! $user->assigned_route_id) {
-            $this->mobileScope->assertCartRouteId($user, $routeId);
+        $assigned = $this->mobileScope->assignedRouteIds($user);
+        if ($routeId !== null && $routeId > 0) {
+            if ($assigned === []) {
+                $this->mobileScope->assertCartRouteId($user, $routeId);
+            } elseif (! in_array($routeId, $assigned, true)) {
+                // Locked users cannot bypass via query param — ignore and use allowlist.
+                $routeId = null;
+            }
         }
 
         $query = Customer::query()

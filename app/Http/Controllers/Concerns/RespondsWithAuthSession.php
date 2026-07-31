@@ -46,6 +46,12 @@ trait RespondsWithAuthSession
                     ], 403);
                 }
             }
+
+            // Enrich login user with mobile route lock fields (assigned route name, etc.).
+            $result['user'] = array_merge(
+                $user->toArray(),
+                app(\App\Services\Auth\UserMobileOrderScopeService::class)->mobileContext($user),
+            );
         }
 
         $response = response()->json(

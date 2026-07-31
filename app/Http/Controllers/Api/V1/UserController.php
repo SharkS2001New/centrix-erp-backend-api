@@ -47,6 +47,8 @@ class UserController extends BaseResourceController
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile,manager';
         $rules['assigned_route_id'] = app(RouteAccessService::class)->validationNullable($request->user(), $request);
+        $rules['assigned_route_ids'] = 'sometimes|array';
+        $rules['assigned_route_ids.*'] = app(RouteAccessService::class)->validationEach($request->user(), $request);
         $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         $data = $this->access()->validateAccessScope($data, (bool) ($data['is_admin'] ?? false));
@@ -72,6 +74,10 @@ class UserController extends BaseResourceController
         );
         $data = $this->normalizeLoginChannels($data);
         $data = app(UserMobileOrderScopeService::class)->normalizeUserAttributes($data);
+        $assignedRouteIds = array_key_exists('assigned_route_ids', $data)
+            ? $data['assigned_route_ids']
+            : null;
+        unset($data['assigned_route_ids']);
         $data['organization_id'] = $this->access()->organizationId($request->user(), $request);
         app(UsernameValidator::class)->assertUniqueInOrganization(
             (int) $data['organization_id'],
@@ -99,6 +105,13 @@ class UserController extends BaseResourceController
             throw $e;
         }
 
+        if ($assignedRouteIds !== null || array_key_exists('assigned_route_id', $data)) {
+            app(UserMobileOrderScopeService::class)->syncAssignedRoutes(
+                $model,
+                $assignedRouteIds ?? ($data['assigned_route_id'] ? [(int) $data['assigned_route_id']] : []),
+            );
+        }
+
         if ($request->exists('till_id')) {
             app(UserTillAssignmentService::class)->sync($model, $request->input('till_id'));
         }
@@ -115,6 +128,8 @@ class UserController extends BaseResourceController
         $rules['login_channels'] = 'sometimes|array|min:1';
         $rules['login_channels.*'] = 'in:backoffice,pos,mobile,manager';
         $rules['assigned_route_id'] = app(RouteAccessService::class)->validationNullable($request->user(), $request);
+        $rules['assigned_route_ids'] = 'sometimes|array';
+        $rules['assigned_route_ids.*'] = app(RouteAccessService::class)->validationEach($request->user(), $request);
         $rules['must_change_password'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         if (isset($data['access_scope']) || array_key_exists('branch_id', $data)) {
@@ -156,10 +171,20 @@ class UserController extends BaseResourceController
         }
         if (array_key_exists('mobile_order_scope', $data)
             || array_key_exists('assigned_route_id', $data)
+            || array_key_exists('assigned_route_ids', $data)
             || array_key_exists('login_channels', $data)) {
             $merged = array_merge($model->only(['login_channels', 'mobile_order_scope', 'assigned_route_id']), $data);
             $data = array_merge($data, app(UserMobileOrderScopeService::class)->normalizeUserAttributes($merged));
         }
+        $syncAssignedRoutes = array_key_exists('assigned_route_ids', $data)
+            || array_key_exists('assigned_route_id', $data)
+            || (array_key_exists('login_channels', $data) && ($data['assigned_route_ids'] ?? null) === []);
+        $assignedRouteIds = array_key_exists('assigned_route_ids', $data)
+            ? $data['assigned_route_ids']
+            : (array_key_exists('assigned_route_id', $data)
+                ? ($data['assigned_route_id'] ? [(int) $data['assigned_route_id']] : [])
+                : null);
+        unset($data['assigned_route_ids']);
         if (! empty($data['username'])) {
             app(UsernameValidator::class)->assertUniqueInOrganization(
                 (int) $model->organization_id,
@@ -201,6 +226,10 @@ class UserController extends BaseResourceController
         }
         if ($deactivate) {
             $model = app(UserLoginService::class)->disableLogin($model);
+        }
+
+        if ($syncAssignedRoutes && $assignedRouteIds !== null) {
+            app(UserMobileOrderScopeService::class)->syncAssignedRoutes($model->fresh(), $assignedRouteIds);
         }
 
         if ($request->exists('till_id')) {
@@ -350,6 +379,10 @@ class UserController extends BaseResourceController
             $user = $this->withPasswordLockFlag($user, $expiryService);
             $tillId = $tillByCashier->get($user->id);
             $user->setAttribute('till_id', $tillId ? (int) $tillId : null);
+            $user->setAttribute(
+                'assigned_route_ids',
+                app(UserMobileOrderScopeService::class)->assignedRouteIds($user),
+            );
 
             return $user;
         });
@@ -409,6 +442,10 @@ class UserController extends BaseResourceController
         $user->setAttribute(
             'till_id',
             app(UserTillAssignmentService::class)->assignedTillId((int) $user->id),
+        );
+        $user->setAttribute(
+            'assigned_route_ids',
+            app(UserMobileOrderScopeService::class)->assignedRouteIds($user),
         );
 
         return $user;

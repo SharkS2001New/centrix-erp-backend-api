@@ -961,7 +961,11 @@ class CartOperationsController extends Controller
         if ($channel === 'mobile' && $scope === UserMobileOrderScopeService::NORMAL_ONLY) {
             app(UserMobileOrderScopeService::class)->assertCartRouteId($user, $routeId);
         }
-        if ($channel === 'mobile' && $scope === UserMobileOrderScopeService::ROUTE_ONLY && $user->assigned_route_id) {
+        if (
+            $channel === 'mobile'
+            && $scope === UserMobileOrderScopeService::ROUTE_ONLY
+            && app(UserMobileOrderScopeService::class)->isRouteSelectionLocked($user)
+        ) {
             app(UserMobileOrderScopeService::class)->assertCartRouteId($user, $routeId);
         }
 

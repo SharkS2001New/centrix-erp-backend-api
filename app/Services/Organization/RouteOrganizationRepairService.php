@@ -205,6 +205,31 @@ class RouteOrganizationRepairService
                 ->update(['assigned_route_id' => $toRouteId]);
         }
 
+        if (Schema::hasTable('user_assigned_routes')) {
+            $userIds = DB::table('user_assigned_routes')
+                ->where('route_id', $fromRouteId)
+                ->pluck('user_id');
+
+            foreach ($userIds as $userId) {
+                $alreadyHasTarget = DB::table('user_assigned_routes')
+                    ->where('user_id', $userId)
+                    ->where('route_id', $toRouteId)
+                    ->exists();
+
+                if ($alreadyHasTarget) {
+                    DB::table('user_assigned_routes')
+                        ->where('user_id', $userId)
+                        ->where('route_id', $fromRouteId)
+                        ->delete();
+                } else {
+                    DB::table('user_assigned_routes')
+                        ->where('user_id', $userId)
+                        ->where('route_id', $fromRouteId)
+                        ->update(['route_id' => $toRouteId]);
+                }
+            }
+        }
+
         RouteModel::query()->where('id', $fromRouteId)->delete();
 
         return $stats;
@@ -293,24 +318,38 @@ class RouteOrganizationRepairService
 
     protected function clearMismatchedUserAssignedRoutes(): int
     {
-        if (! Schema::hasTable('users')
-            || ! Schema::hasColumn('users', 'assigned_route_id')
-            || ! Schema::hasColumn('users', 'organization_id')) {
-            return 0;
+        $cleared = 0;
+
+        if (Schema::hasTable('users')
+            && Schema::hasColumn('users', 'assigned_route_id')
+            && Schema::hasColumn('users', 'organization_id')) {
+            $cleared += DB::affectingStatement('
+                UPDATE users u
+                LEFT JOIN routes r ON r.id = u.assigned_route_id
+                SET u.assigned_route_id = NULL
+                WHERE u.assigned_route_id IS NOT NULL
+                  AND (
+                    r.id IS NULL
+                    OR r.organization_id IS NULL
+                    OR u.organization_id IS NULL
+                    OR r.organization_id <> u.organization_id
+                  )
+            ');
         }
 
-        return DB::affectingStatement('
-            UPDATE users u
-            LEFT JOIN routes r ON r.id = u.assigned_route_id
-            SET u.assigned_route_id = NULL
-            WHERE u.assigned_route_id IS NOT NULL
-              AND (
-                r.id IS NULL
-                OR r.organization_id IS NULL
-                OR u.organization_id IS NULL
-                OR r.organization_id <> u.organization_id
-              )
-        ');
+        if (Schema::hasTable('user_assigned_routes') && Schema::hasTable('users')) {
+            $cleared += DB::affectingStatement('
+                DELETE uar FROM user_assigned_routes uar
+                INNER JOIN users u ON u.id = uar.user_id
+                LEFT JOIN routes r ON r.id = uar.route_id
+                WHERE r.id IS NULL
+                   OR r.organization_id IS NULL
+                   OR u.organization_id IS NULL
+                   OR r.organization_id <> u.organization_id
+            ');
+        }
+
+        return $cleared;
     }
 
     protected function headOfficeBranchId(int $organizationId): ?int

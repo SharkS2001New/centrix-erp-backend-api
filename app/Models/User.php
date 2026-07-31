@@ -42,6 +42,7 @@ class User extends Authenticatable
     protected $appends = [
         'allowed_customer_types',
         'can_use_all_channels',
+        'route_selection_locked',
     ];
 
     public function getAllowedCustomerTypesAttribute(): array
@@ -54,6 +55,12 @@ class User extends Authenticatable
     {
         return app(\App\Services\Auth\UserMobileOrderScopeService::class)
             ->canUseAllChannels($this);
+    }
+
+    public function getRouteSelectionLockedAttribute(): bool
+    {
+        return app(\App\Services\Auth\UserMobileOrderScopeService::class)
+            ->isRouteSelectionLocked($this);
     }
 
     public function getAuthPassword(): string
@@ -89,6 +96,12 @@ class User extends Authenticatable
     public function role()
     {
         return $this->belongsTo(Role::class);
+    }
+
+    public function assignedRoutes()
+    {
+        return $this->belongsToMany(RouteModel::class, 'user_assigned_routes', 'user_id', 'route_id')
+            ->withTimestamps();
     }
 
     public function memberships()

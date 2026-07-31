@@ -821,8 +821,209 @@ class MobileSalesApiTest extends TestCase
             ->assertOk()
             ->assertJsonPath('route_selection_locked', true)
             ->assertJsonPath('assigned_route_id', $route->id)
+            ->assertJsonPath('assigned_route_ids', [$route->id])
             ->assertJsonCount(1, 'data')
             ->assertJsonPath('data.0.id', $route->id);
+    }
+
+    public function test_route_locked_mobile_user_can_be_assigned_multiple_routes(): void
+    {
+        $routeA = \App\Models\RouteModel::query()->where('is_active', true)->firstOrFail();
+        $routeB = \App\Models\RouteModel::query()
+            ->where('is_active', true)
+            ->where('organization_id', $routeA->organization_id)
+            ->where('id', '!=', $routeA->id)
+            ->first();
+
+        if (! $routeB) {
+            $routeB = \App\Models\RouteModel::create([
+                'organization_id' => $routeA->organization_id,
+                'route_name' => 'Multi Route B '.uniqid(),
+                'route_markup_price' => 0,
+                'direction' => 'west',
+                'is_active' => true,
+            ]);
+        }
+
+        $routeC = \App\Models\RouteModel::query()
+            ->where('is_active', true)
+            ->where('organization_id', $routeA->organization_id)
+            ->whereNotIn('id', [$routeA->id, $routeB->id])
+            ->first();
+
+        if (! $routeC) {
+            $routeC = \App\Models\RouteModel::create([
+                'organization_id' => $routeA->organization_id,
+                'route_name' => 'Multi Route C '.uniqid(),
+                'route_markup_price' => 0,
+                'direction' => 'east',
+                'is_active' => true,
+            ]);
+        }
+
+        $user = $this->makeMobileUser([
+            'assigned_route_id' => $routeA->id,
+        ]);
+        app(\App\Services\Auth\UserMobileOrderScopeService::class)
+            ->syncAssignedRoutes($user, [$routeA->id, $routeB->id]);
+        $user->refresh();
+        $token = $this->loginMobile($user);
+
+        $ids = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/mobile/routes')
+                ->assertOk()
+                ->assertJsonPath('route_selection_locked', true)
+                ->json('data')
+        )->pluck('id')->all();
+
+        $this->assertContains($routeA->id, $ids);
+        $this->assertContains($routeB->id, $ids);
+        $this->assertNotContains($routeC->id, $ids);
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $suffix = uniqid();
+        $nextNum = (int) \App\Models\Customer::query()->max('customer_num') + 1;
+
+        $onA = \App\Models\Customer::create([
+            'customer_num' => $nextNum,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_name' => 'Multi A '.$suffix,
+            'customer_type' => 'route',
+            'route_id' => $routeA->id,
+            'phone_number' => '0704'.random_int(100000, 999999),
+            'customer_status' => 0,
+            'created_by' => $admin->id,
+        ]);
+        $onB = \App\Models\Customer::create([
+            'customer_num' => $nextNum + 1,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_name' => 'Multi B '.$suffix,
+            'customer_type' => 'route',
+            'route_id' => $routeB->id,
+            'phone_number' => '0705'.random_int(100000, 999999),
+            'customer_status' => 0,
+            'created_by' => $admin->id,
+        ]);
+        $onC = \App\Models\Customer::create([
+            'customer_num' => $nextNum + 2,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_name' => 'Multi C '.$suffix,
+            'customer_type' => 'route',
+            'route_id' => $routeC->id,
+            'phone_number' => '0706'.random_int(100000, 999999),
+            'customer_status' => 0,
+            'created_by' => $admin->id,
+        ]);
+
+        $names = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/mobile/customers')
+                ->assertOk()
+                ->json('data')
+        )->pluck('customer_name')->all();
+
+        $this->assertContains($onA->customer_name, $names);
+        $this->assertContains($onB->customer_name, $names);
+        $this->assertNotContains($onC->customer_name, $names);
+
+        $this->withToken($token)
+            ->postJson('/api/v1/mobile/customers', [
+                'customer_name' => 'Outside Lock '.$suffix,
+                'customer_type' => 'route',
+                'route_id' => $routeC->id,
+                'phone_number' => '0707'.random_int(100000, 999999),
+                'town' => 'Nairobi',
+            ])
+            ->assertStatus(422);
+    }
+
+    public function test_route_locked_mobile_user_sees_only_assigned_route_customers(): void
+    {
+        $route = \App\Models\RouteModel::query()->where('is_active', true)->firstOrFail();
+        $otherRoute = \App\Models\RouteModel::query()
+            ->where('is_active', true)
+            ->where('organization_id', $route->organization_id)
+            ->where('id', '!=', $route->id)
+            ->first();
+
+        if (! $otherRoute) {
+            $otherRoute = \App\Models\RouteModel::create([
+                'organization_id' => $route->organization_id,
+                'route_name' => 'Other Route '.uniqid(),
+                'route_markup_price' => 0,
+                'direction' => 'south',
+                'is_active' => true,
+            ]);
+        }
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $suffix = uniqid();
+        $nextNum = (int) \App\Models\Customer::query()->max('customer_num') + 1;
+
+        $mine = \App\Models\Customer::create([
+            'customer_num' => $nextNum,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_name' => 'Locked Mine '.$suffix,
+            'customer_type' => 'route',
+            'route_id' => $route->id,
+            'phone_number' => '0701'.random_int(100000, 999999),
+            'customer_status' => 0,
+            'created_by' => $admin->id,
+        ]);
+
+        $theirs = \App\Models\Customer::create([
+            'customer_num' => $nextNum + 1,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_name' => 'Locked Theirs '.$suffix,
+            'customer_type' => 'route',
+            'route_id' => $otherRoute->id,
+            'phone_number' => '0702'.random_int(100000, 999999),
+            'customer_status' => 0,
+            'created_by' => $admin->id,
+        ]);
+
+        $user = $this->makeMobileUser([
+            'assigned_route_id' => $route->id,
+        ]);
+        $token = $this->loginMobile($user);
+
+        $names = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/mobile/customers')
+                ->assertOk()
+                ->json('data')
+        )->pluck('customer_name')->all();
+
+        $this->assertContains($mine->customer_name, $names);
+        $this->assertNotContains($theirs->customer_name, $names);
+
+        // Client cannot bypass lock by requesting another route_id.
+        $filtered = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/mobile/customers?route_id='.$otherRoute->id)
+                ->assertOk()
+                ->json('data')
+        )->pluck('customer_name')->all();
+
+        $this->assertContains($mine->customer_name, $filtered);
+        $this->assertNotContains($theirs->customer_name, $filtered);
+
+        $this->withToken($token)
+            ->postJson('/api/v1/mobile/customers', [
+                'customer_name' => 'Wrong Route Customer '.$suffix,
+                'customer_type' => 'route',
+                'route_id' => $otherRoute->id,
+                'phone_number' => '0703'.random_int(100000, 999999),
+                'town' => 'Nairobi',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('route_id', $route->id);
     }
 
     public function test_mobile_routes_list_is_scoped_to_user_organization(): void
