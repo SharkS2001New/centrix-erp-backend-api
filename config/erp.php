@@ -420,7 +420,7 @@ return [
             'enable_cheque_number' => false,
             'enable_payment_date' => false,
             'enable_credit_payment' => true,
-            'allow_credit_pay_now' => false,
+            'allow_credit_pay_now' => true,
             'show_checkout_on_create_order' => true,
             'enable_checkout_customer_name' => false,
             'retail_shop_wholesale_store_stock' => false,
@@ -574,6 +574,34 @@ return [
             'model' => '',
             'api_key' => '',
             'base_url' => '',
+            'insights' => [
+                'enabled' => true,
+                'channels' => [
+                    'email' => true,
+                    'whatsapp' => false,
+                    'sms' => false,
+                ],
+                'recipients' => [
+                    'emails' => [],
+                    'phones' => [],
+                    'whatsapp_phones' => [],
+                ],
+                'stock_pulse' => [
+                    'enabled' => false,
+                    'schedule_time' => '07:00',
+                    'lookback_days' => 14,
+                ],
+                'sales_brief' => [
+                    'enabled' => false,
+                    'schedule_time' => '07:00',
+                    'lookback_days' => 7,
+                ],
+                'exception_alerts' => [
+                    'enabled' => false,
+                    'low_stock' => true,
+                    'unpaid_spike' => false,
+                ],
+            ],
         ],
         'whatsapp' => [
             'enable_whatsapp_orders' => false,

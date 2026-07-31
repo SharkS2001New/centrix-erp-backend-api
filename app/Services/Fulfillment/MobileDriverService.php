@@ -484,7 +484,8 @@ class MobileDriverService
                 (float) $sale->order_total,
                 (bool) $sale->is_credit_sale,
                 $code,
-                ! empty($salesSettings['allow_credit_pay_now']),
+                ! empty($salesSettings['allow_credit_pay_now'])
+                    || ! empty($salesSettings['enable_credit_payment']),
             );
 
             $updates = [

@@ -72,7 +72,8 @@ class SalePaymentAllocationService
                 (float) $sale->order_total,
                 (bool) $sale->is_credit_sale,
                 $paymentMethodCode,
-                ! empty($salesSettings['allow_credit_pay_now']),
+                ! empty($salesSettings['allow_credit_pay_now'])
+                    || ! empty($salesSettings['enable_credit_payment']),
             );
 
             $updates = [

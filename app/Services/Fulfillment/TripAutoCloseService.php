@@ -53,7 +53,8 @@ class TripAutoCloseService
                 $orderTotal,
                 (bool) $sale->is_credit_sale,
                 $paymentMethodCode,
-                ! empty($gate->moduleSettings('sales')['allow_credit_pay_now']),
+                ! empty($gate->moduleSettings('sales')['allow_credit_pay_now'])
+                    || ! empty($gate->moduleSettings('sales')['enable_credit_payment']),
             );
 
             if ($fullyPaid && in_array((string) $sale->status, ['delivered', 'completed'], true)) {
@@ -105,7 +106,8 @@ class TripAutoCloseService
                 $orderTotal,
                 (bool) $sale->is_credit_sale,
                 $paymentMethodCode,
-                ! empty($gate->moduleSettings('sales')['allow_credit_pay_now']),
+                ! empty($gate->moduleSettings('sales')['allow_credit_pay_now'])
+                    || ! empty($gate->moduleSettings('sales')['enable_credit_payment']),
             );
 
             if ($fullyPaid && in_array((string) $sale->status, ['delivered', 'completed'], true)) {

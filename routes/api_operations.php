@@ -477,5 +477,14 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('explore', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'explore']);
         Route::post('knowledge/{id}/confirm', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'confirmKnowledge']);
         Route::delete('knowledge/{id}', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'discardKnowledge']);
+
+        Route::prefix('insights')->group(function () {
+            Route::get('dashboard', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'dashboard']);
+            Route::post('analyze-report', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'analyzeReport']);
+            Route::post('ask', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'ask']);
+            Route::post('stock-pulse', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'stockPulse']);
+            Route::post('sales-brief', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'salesBrief']);
+            Route::post('deliver', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'deliver']);
+        });
     });
 });

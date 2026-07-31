@@ -120,6 +120,7 @@ class ErpSettingsController extends Controller
             'use_same_payment_details_for_routes',
             'pos_receipt_payment_details',
             'route_receipt_payment_details',
+            'invoice_payment_details',
             'invoice_print_delivery_terms',
             'invoice_print_footer_lines',
             'show_print_proforma_invoice_option',
@@ -127,6 +128,9 @@ class ErpSettingsController extends Controller
             'proforma_document_template',
             'proforma_valid_days',
             'show_proforma_payment_details',
+            'proforma_payment_details',
+            'use_same_print_phones_for_proforma',
+            'proforma_print_phones',
             'show_proforma_terms',
             'proforma_print_terms',
             'show_proforma_vat_note',
@@ -201,6 +205,7 @@ class ErpSettingsController extends Controller
             'proforma_document_template' => 'sometimes|string|max:40',
             'proforma_valid_days' => 'sometimes|integer|min:0|max:365',
             'show_proforma_payment_details' => 'sometimes|boolean',
+            'use_same_print_phones_for_proforma' => 'sometimes|boolean',
             'show_proforma_terms' => 'sometimes|boolean',
             'proforma_print_terms' => 'sometimes|nullable|string|max:4000',
             'show_proforma_vat_note' => 'sometimes|boolean',
@@ -214,8 +219,13 @@ class ErpSettingsController extends Controller
             'show_proforma_valid_until' => 'sometimes|boolean',
             'show_proforma_payment_terms' => 'sometimes|boolean',
             'show_proforma_totals_breakdown' => 'sometimes|boolean',
+            'proforma_print_phones' => 'sometimes|nullable|array',
+            'proforma_print_phones.tel1' => 'sometimes|nullable|string|max:40',
+            'proforma_print_phones.tel2' => 'sometimes|nullable|string|max:40',
             ...ReceiptPaymentDetailsResolver::validationRules('pos_receipt_payment_details'),
             ...ReceiptPaymentDetailsResolver::validationRules('route_receipt_payment_details'),
+            ...ReceiptPaymentDetailsResolver::validationRules('invoice_payment_details'),
+            ...ReceiptPaymentDetailsResolver::validationRules('proforma_payment_details'),
         ];
         foreach ($salesKeys as $key) {
             // Do not overwrite any rules that were explicitly defined above
@@ -287,20 +297,15 @@ class ErpSettingsController extends Controller
             );
         }
 
-        if (! empty($nextSales['allow_credit_pay_now']) && ! empty($nextSales['enable_credit_payment'])) {
-            if (array_key_exists('enable_credit_payment', $data) && ($data['enable_credit_payment'] ?? false)) {
-                $nextSales['allow_credit_pay_now'] = false;
-            } else {
-                $nextSales['enable_credit_payment'] = false;
-            }
-        }
+        // allow_credit_pay_now (collect small payments) and enable_credit_payment
+        // (POS / inline credit checkout) are independent — debtors often pay in installments.
 
         if (array_key_exists('other_bank_name', $data)) {
             $name = trim((string) $data['other_bank_name']);
             $nextSales['other_bank_name'] = $name !== '' ? $name : 'Other bank';
         }
 
-        foreach (['pos_receipt_payment_details', 'route_receipt_payment_details'] as $detailsKey) {
+        foreach (['pos_receipt_payment_details', 'route_receipt_payment_details', 'invoice_payment_details', 'proforma_payment_details'] as $detailsKey) {
             if (! array_key_exists($detailsKey, $data)) {
                 continue;
             }
@@ -308,6 +313,17 @@ class ErpSettingsController extends Controller
             $nextSales[$detailsKey] = ReceiptPaymentDetailsResolver::normalize(
                 is_array($raw) ? $raw : null,
             ) ?? ReceiptPaymentDetailsResolver::defaults();
+        }
+
+        foreach (['proforma_print_phones'] as $phonesKey) {
+            if (! array_key_exists($phonesKey, $data)) {
+                continue;
+            }
+            $raw = is_array($data[$phonesKey] ?? null) ? $data[$phonesKey] : [];
+            $nextSales[$phonesKey] = [
+                'tel1' => trim((string) ($raw['tel1'] ?? '')),
+                'tel2' => trim((string) ($raw['tel2'] ?? '')),
+            ];
         }
 
         if (array_key_exists('orders_list_default_days', $data)) {
@@ -810,12 +826,24 @@ class ErpSettingsController extends Controller
             'show_organization_on_documents' => 'sometimes|boolean',
             'enable_tab_workspace' => 'sometimes|boolean',
             'document_header_display' => 'sometimes|in:auto,logo,name,logo_and_name',
+            'use_same_print_phones_for_other' => 'sometimes|boolean',
+            'other_print_phones' => 'sometimes|nullable|array',
+            'other_print_phones.tel1' => 'sometimes|nullable|string|max:40',
+            'other_print_phones.tel2' => 'sometimes|nullable|string|max:40',
             ...GeneralSettingsResolver::printFontValidationRules(),
             ...GeneralSettingsResolver::documentLogoValidationRules(),
         ]);
 
         if (! $user->is_super_admin) {
             $data = $this->platformConfig->filterOrgManagerGeneralPayload($data);
+        }
+
+        if (array_key_exists('other_print_phones', $data)) {
+            $raw = is_array($data['other_print_phones'] ?? null) ? $data['other_print_phones'] : [];
+            $data['other_print_phones'] = [
+                'tel1' => trim((string) ($raw['tel1'] ?? '')),
+                'tel2' => trim((string) ($raw['tel2'] ?? '')),
+            ];
         }
 
         $next = GeneralSettingsResolver::normalize(array_merge(
@@ -946,6 +974,8 @@ class ErpSettingsController extends Controller
             'lpo_print_checked_by',
             'lpo_print_authorised_by',
             'lpo_document_template',
+            'use_same_print_phones_for_lpo',
+            'lpo_print_phones',
         ];
 
         $rules = [
@@ -959,6 +989,10 @@ class ErpSettingsController extends Controller
             'lpo_print_checked_by' => 'sometimes|nullable|string|max:120',
             'lpo_print_authorised_by' => 'sometimes|nullable|string|max:120',
             'lpo_document_template' => 'sometimes|string|max:40',
+            'use_same_print_phones_for_lpo' => 'sometimes|boolean',
+            'lpo_print_phones' => 'sometimes|nullable|array',
+            'lpo_print_phones.tel1' => 'sometimes|nullable|string|max:40',
+            'lpo_print_phones.tel2' => 'sometimes|nullable|string|max:40',
         ];
         foreach ($procurementKeys as $key) {
             if (array_key_exists($key, $rules)) {
@@ -968,6 +1002,13 @@ class ErpSettingsController extends Controller
         }
 
         $data = $request->validate($rules);
+        if (array_key_exists('lpo_print_phones', $data)) {
+            $raw = is_array($data['lpo_print_phones'] ?? null) ? $data['lpo_print_phones'] : [];
+            $data['lpo_print_phones'] = [
+                'tel1' => trim((string) ($raw['tel1'] ?? '')),
+                'tel2' => trim((string) ($raw['tel2'] ?? '')),
+            ];
+        }
         $next = ProcurementSettingsResolver::normalize(array_merge(
             $gate->moduleSettings('procurement'),
             array_filter(

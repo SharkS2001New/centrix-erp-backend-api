@@ -77,7 +77,8 @@ class AiSettingsResolver
     /** @param  array<string, mixed>  $settings */
     public static function normalize(array $settings): array
     {
-        $out = array_merge(self::defaults(), $settings);
+        $defaults = self::defaults();
+        $out = array_merge($defaults, $settings);
         $out['enabled'] = (bool) ($out['enabled'] ?? false);
         $provider = (string) ($out['provider'] ?? 'openai');
         $out['provider'] = in_array($provider, ['openai'], true) ? $provider : 'openai';
@@ -85,8 +86,101 @@ class AiSettingsResolver
             $out[$key] = trim((string) ($out[$key] ?? ''));
         }
         unset($out['use_platform_key']);
+        $out['insights'] = self::normalizeInsights(
+            is_array($settings['insights'] ?? null) ? $settings['insights'] : [],
+            is_array($defaults['insights'] ?? null) ? $defaults['insights'] : [],
+        );
 
         return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $incoming
+     * @param  array<string, mixed>  $defaults
+     * @return array<string, mixed>
+     */
+    public static function normalizeInsights(array $incoming, array $defaults = []): array
+    {
+        if ($defaults === []) {
+            $defaults = self::defaults()['insights'] ?? [];
+        }
+        $merged = array_replace_recursive($defaults, $incoming);
+
+        $merged['enabled'] = (bool) ($merged['enabled'] ?? true);
+        $channels = is_array($merged['channels'] ?? null) ? $merged['channels'] : [];
+        $merged['channels'] = [
+            'email' => (bool) ($channels['email'] ?? true),
+            'whatsapp' => (bool) ($channels['whatsapp'] ?? false),
+            'sms' => (bool) ($channels['sms'] ?? false),
+        ];
+
+        $recipients = is_array($merged['recipients'] ?? null) ? $merged['recipients'] : [];
+        $merged['recipients'] = [
+            'emails' => self::normalizeStringList($recipients['emails'] ?? []),
+            'phones' => self::normalizeStringList($recipients['phones'] ?? []),
+            'whatsapp_phones' => self::normalizeStringList($recipients['whatsapp_phones'] ?? []),
+        ];
+
+        foreach (['stock_pulse', 'sales_brief'] as $briefKey) {
+            $brief = is_array($merged[$briefKey] ?? null) ? $merged[$briefKey] : [];
+            $time = preg_match('/^\d{2}:\d{2}$/', (string) ($brief['schedule_time'] ?? ''))
+                ? (string) $brief['schedule_time']
+                : (string) ($defaults[$briefKey]['schedule_time'] ?? '07:00');
+            $merged[$briefKey] = [
+                'enabled' => (bool) ($brief['enabled'] ?? false),
+                'schedule_time' => $time,
+                'lookback_days' => max(1, min(90, (int) ($brief['lookback_days'] ?? ($defaults[$briefKey]['lookback_days'] ?? 7)))),
+            ];
+        }
+
+        $alerts = is_array($merged['exception_alerts'] ?? null) ? $merged['exception_alerts'] : [];
+        $merged['exception_alerts'] = [
+            'enabled' => (bool) ($alerts['enabled'] ?? false),
+            'low_stock' => (bool) ($alerts['low_stock'] ?? true),
+            'unpaid_spike' => (bool) ($alerts['unpaid_spike'] ?? false),
+        ];
+
+        return $merged;
+    }
+
+    /** @param  mixed  $value
+     * @return list<string>
+     */
+    protected static function normalizeStringList(mixed $value): array
+    {
+        if (is_string($value)) {
+            $value = preg_split('/[\s,;]+/', $value) ?: [];
+        }
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($value as $item) {
+            $trimmed = trim((string) $item);
+            if ($trimmed !== '') {
+                $out[] = $trimmed;
+            }
+        }
+
+        return array_values(array_unique($out));
+    }
+
+    /** @return array<string, mixed> */
+    public static function insightsForOrganization(Organization $organization): array
+    {
+        return self::forOrganization($organization)['insights'] ?? self::normalizeInsights([]);
+    }
+
+    public static function insightsEnabled(Organization $organization): bool
+    {
+        $settings = self::forOrganization($organization);
+        if (! ($settings['enabled'] ?? false)) {
+            return false;
+        }
+        $insights = $settings['insights'] ?? [];
+
+        return (bool) ($insights['enabled'] ?? true) && self::isAvailableForOrganization($organization);
     }
 
     public static function platformOrganization(bool $refresh = false): ?Organization
@@ -230,7 +324,15 @@ class AiSettingsResolver
      */
     public static function mergeStored(array $current, array $incoming): array
     {
-        $next = self::normalize(array_merge($current, $incoming));
+        $mergedIncoming = $incoming;
+        if (array_key_exists('insights', $incoming) && is_array($incoming['insights'])) {
+            $mergedIncoming['insights'] = array_replace_recursive(
+                is_array($current['insights'] ?? null) ? $current['insights'] : [],
+                $incoming['insights'],
+            );
+        }
+
+        $next = self::normalize(array_merge($current, $mergedIncoming));
 
         if (array_key_exists('api_key', $incoming)) {
             $key = trim((string) $incoming['api_key']);
@@ -294,6 +396,7 @@ class AiSettingsResolver
             'platform_enabled' => $gate->aiPlatformEnabled(),
             'enabled' => $gate->aiPlatformEnabled() && (bool) ($settings['enabled'] ?? false),
             'available' => $gate->aiPlatformEnabled() && self::isAvailableForOrganization($org),
+            'insights' => $settings['insights'] ?? self::normalizeInsights([]),
         ];
     }
 }
