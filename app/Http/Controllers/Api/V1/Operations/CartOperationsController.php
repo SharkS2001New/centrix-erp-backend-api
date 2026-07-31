@@ -953,20 +953,26 @@ class CartOperationsController extends Controller
         $orderSource = app(\App\Services\Sales\OrderSourceResolver::class)->defaultForCart($input, $token);
 
         $branchId = $this->userAccess()->resolveBranchId($user, $input['branch_id'] ?? null);
-        $routeId = app(UserMobileOrderScopeService::class)->resolveCartRouteId(
+        $mobileScope = app(UserMobileOrderScopeService::class);
+        $routeId = $mobileScope->resolveCartRouteId(
             $user,
             $input['route_id'] ?? null,
         );
-        $scope = app(UserMobileOrderScopeService::class)->scope($user);
+        $scope = $mobileScope->scope($user);
+        $assignedRouteIds = $mobileScope->assignedRouteIds($user);
         if ($channel === 'mobile' && $scope === UserMobileOrderScopeService::NORMAL_ONLY) {
-            app(UserMobileOrderScopeService::class)->assertCartRouteId($user, $routeId);
+            $mobileScope->assertCartRouteId($user, $routeId);
         }
         if (
             $channel === 'mobile'
             && $scope === UserMobileOrderScopeService::ROUTE_ONLY
-            && app(UserMobileOrderScopeService::class)->isRouteSelectionLocked($user)
+            && $mobileScope->isRouteSelectionLocked($user)
         ) {
-            app(UserMobileOrderScopeService::class)->assertCartRouteId($user, $routeId);
+            // Single locked route is inferred above. Multi-route reps may bootstrap a cart
+            // without choosing yet; checkout resolves route from the selected customer.
+            if ($routeId !== null || count($assignedRouteIds) <= 1) {
+                $mobileScope->assertCartRouteId($user, $routeId);
+            }
         }
 
         $cart = TemporaryCart::firstOrCreate(
@@ -1001,7 +1007,8 @@ class CartOperationsController extends Controller
             $cart->update(['order_source' => $orderSource]);
         }
 
-        if ($channel === 'mobile' && $cart->route_id !== $routeId) {
+        // Never wipe an existing cart route with null (multi-route bootstrap / reuse).
+        if ($channel === 'mobile' && $routeId !== null && (int) $cart->route_id !== (int) $routeId) {
             $cart->update(['route_id' => $routeId]);
         }
 

@@ -137,7 +137,63 @@ class GeneralSettingsResolver
             ? $out['document_header_display']
             : 'auto';
 
+        $out = self::normalizeDocumentLogos($out);
+
         return self::normalizePrintFonts($out, $settings);
+    }
+
+    /** @var array<string, array{show: bool, position: string, size: string}> */
+    public const DOCUMENT_LOGO_VARIANT_DEFAULTS = [
+        'receipt' => ['show' => true, 'position' => 'center', 'size' => 'small'],
+        'invoice' => ['show' => true, 'position' => 'right', 'size' => 'large'],
+        'proforma' => ['show' => true, 'position' => 'right', 'size' => 'small'],
+        'lpo' => ['show' => true, 'position' => 'right', 'size' => 'medium'],
+        'loading_sheet' => ['show' => true, 'position' => 'center', 'size' => 'medium'],
+        'picking_list' => ['show' => true, 'position' => 'center', 'size' => 'medium'],
+        'trip_chart' => ['show' => true, 'position' => 'center', 'size' => 'medium'],
+        'payroll_receipt' => ['show' => true, 'position' => 'center', 'size' => 'medium'],
+    ];
+
+    public const DOCUMENT_LOGO_POSITIONS = ['left', 'right', 'center'];
+
+    public const DOCUMENT_LOGO_SIZES = ['small', 'medium', 'large', 'extra_large'];
+
+    /**
+     * @param  array<string, mixed>  $out
+     * @return array<string, mixed>
+     */
+    public static function normalizeDocumentLogos(array $out): array
+    {
+        foreach (self::DOCUMENT_LOGO_VARIANT_DEFAULTS as $variant => $defaults) {
+            $showKey = "print_logo_{$variant}_show";
+            $positionKey = "print_logo_{$variant}_position";
+            $sizeKey = "print_logo_{$variant}_size";
+
+            $out[$showKey] = array_key_exists($showKey, $out)
+                ? (bool) $out[$showKey]
+                : $defaults['show'];
+            $out[$positionKey] = in_array($out[$positionKey] ?? '', self::DOCUMENT_LOGO_POSITIONS, true)
+                ? $out[$positionKey]
+                : $defaults['position'];
+            $out[$sizeKey] = in_array($out[$sizeKey] ?? '', self::DOCUMENT_LOGO_SIZES, true)
+                ? $out[$sizeKey]
+                : $defaults['size'];
+        }
+
+        return $out;
+    }
+
+    /** @return array<string, string> */
+    public static function documentLogoValidationRules(): array
+    {
+        $rules = [];
+        foreach (array_keys(self::DOCUMENT_LOGO_VARIANT_DEFAULTS) as $variant) {
+            $rules["print_logo_{$variant}_show"] = 'sometimes|boolean';
+            $rules["print_logo_{$variant}_position"] = 'sometimes|in:'.implode(',', self::DOCUMENT_LOGO_POSITIONS);
+            $rules["print_logo_{$variant}_size"] = 'sometimes|in:'.implode(',', self::DOCUMENT_LOGO_SIZES);
+        }
+
+        return $rules;
     }
 
     public static function normalizeFooterField(mixed $value): string

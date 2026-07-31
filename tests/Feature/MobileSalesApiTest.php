@@ -931,6 +931,13 @@ class MobileSalesApiTest extends TestCase
         $this->assertNotContains($onC->customer_name, $names);
 
         $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated();
+
+        $this->withToken($token)
             ->postJson('/api/v1/mobile/customers', [
                 'customer_name' => 'Outside Lock '.$suffix,
                 'customer_type' => 'route',

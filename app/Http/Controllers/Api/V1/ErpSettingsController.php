@@ -793,6 +793,7 @@ class ErpSettingsController extends Controller
             'enable_tab_workspace' => 'sometimes|boolean',
             'document_header_display' => 'sometimes|in:auto,logo,name,logo_and_name',
             ...GeneralSettingsResolver::printFontValidationRules(),
+            ...GeneralSettingsResolver::documentLogoValidationRules(),
         ]);
 
         if (! $user->is_super_admin) {
