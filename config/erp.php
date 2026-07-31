@@ -446,6 +446,7 @@ return [
             'invoice_valid_days' => 7,
             'invoice_print_delivery_terms' => "Order valid for the period shown above.\nNo goods shall be received without an invoice or delivery note.\nPlease quote invoice number on all delivery notes.\nKindly attach a copy of this invoice to delivery notes.\nNo oversupply will be accepted.\nEnsure KRA PIN is captured on all supplier invoices.\nGoods must comply with applicable KEBS standards.\nVAT amount will not be paid on invoices without ETR receipt.\nPayment terms as agreed with the customer.",
             'invoice_print_footer_lines' => "No Oversupply will be accepted.\nThis invoice is not valid unless sent directly or signed by an authorised signatory of {organization}.\nOrder only valid for {days} days from above date.\nWe will only receive products with K.E.B.S mark / certificate\nTake note: VAT amount will not be paid on invoices without ETR receipt",
+            'show_print_proforma_invoice_option' => true,
             'proforma_valid_days' => 7,
             'show_proforma_payment_details' => true,
             'show_proforma_terms' => true,
