@@ -482,4 +482,102 @@ class SaleOrderListDateFilterTest extends TestCase
             ->assertJsonPath('summary.paid', 2)
             ->assertJsonPath('summary.cancelled', 1);
     }
+
+    public function test_sales_list_search_finds_orders_by_product_name(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $marker = 'GlobProd'.uniqid('', true);
+        $product = \App\Models\Product::query()->create([
+            'product_code' => 'GP-'.substr(uniqid('', true), -8),
+            'product_name' => $marker.' Cooking Oil 5L',
+            'subcategory_id' => 1,
+            'unit_id' => 1,
+            'vat_id' => 1,
+            'unit_price' => 500,
+            'discount_percentage' => 0,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'stock_in_shop' => 1,
+            'stock_in_store' => 0,
+        ]);
+
+        $withProduct = Sale::query()->create([
+            'order_num' => 995101,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_name_override' => 'Buyer With Oil',
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 500,
+            'amount_paid' => 500,
+            'completed_at' => now(),
+            'archived' => 0,
+        ]);
+        \App\Models\SaleItem::query()->create([
+            'sale_id' => $withProduct->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => 1,
+            'uom' => 'PCS',
+            'selling_price' => 500,
+            'discount_given' => 0,
+            'product_vat' => 0,
+            'amount' => 500,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 995102,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_name_override' => 'Buyer Without Oil',
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 100,
+            'amount_paid' => 100,
+            'completed_at' => now(),
+            'archived' => 0,
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?q='.urlencode($marker.' Cooking').'&per_page=50&date_field=placed');
+        $response->assertOk();
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($withProduct->id));
+        $this->assertFalse($ids->contains(
+            Sale::query()->where('order_num', 995102)->value('id'),
+        ));
+    }
+
+    public function test_sales_list_search_finds_orders_by_amount(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $uniqueTotal = 7788.25;
+        $sale = Sale::query()->create([
+            'order_num' => 995201,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $admin->id,
+            'customer_name_override' => 'Amount Search Customer',
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => $uniqueTotal,
+            'amount_paid' => $uniqueTotal,
+            'completed_at' => now(),
+            'archived' => 0,
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?q='.urlencode((string) $uniqueTotal).'&per_page=50&date_field=placed');
+        $response->assertOk();
+        $this->assertTrue(collect($response->json('data'))->pluck('id')->contains($sale->id));
+    }
 }

@@ -7,6 +7,7 @@ use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Support\SalesOrderQueuePermissions;
+use App\Support\SqlLikeSearch;
 use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\OrderNumberAllocator;
@@ -281,20 +282,11 @@ class SaleController extends BaseResourceController
         }
 
         if ($q = $request->input('q')) {
-            $q = trim((string) $q);
-            if (preg_match('/^#?S0*(\d+)$/i', $q, $matches)) {
-                $query->where('sales.order_num', (int) $matches[1]);
-            } elseif (ctype_digit($q)) {
-                // Exact order number (e.g. returns lookup for 168 / padded 0168).
-                $query->where('sales.order_num', (int) $q);
-            } else {
-                $query->where(function ($sub) use ($q) {
-                    $sub->where('sales.order_num', 'like', "%{$q}%")
-                        ->orWhere('sales.customer_name_override', 'like', "%{$q}%")
-                        ->orWhere('sales.customer_num', 'like', "%{$q}%")
-                        ->orWhereHas('customer', fn ($c) => $c->where('customer_name', 'like', "%{$q}%"));
-                });
-            }
+            SqlLikeSearch::applySalesOrderSearch(
+                $query,
+                trim((string) $q),
+                includeCustomerRelation: true,
+            );
         }
 
         $this->applyColumnFilters($query, $request);

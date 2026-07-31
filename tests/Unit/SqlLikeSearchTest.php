@@ -71,6 +71,24 @@ class SqlLikeSearchTest extends TestCase
         $bindings = $query->getBindings();
         $this->assertContains(42, $bindings);
         $this->assertContains('42%', $bindings);
+        // Amount match for the same digits (e.g. order total 42.00).
+        $this->assertContains(42.0, $bindings);
+    }
+
+    public function test_apply_sales_order_search_s_prefix_is_exact_order_num(): void
+    {
+        $query = DB::table('sales');
+        SqlLikeSearch::applySalesOrderSearch($query, 'S0034');
+
+        $this->assertSame([34], $query->getBindings());
+    }
+
+    public function test_parse_amount_search_term(): void
+    {
+        $this->assertSame(1500.0, SqlLikeSearch::parseAmountSearchTerm('1500'));
+        $this->assertSame(1500.5, SqlLikeSearch::parseAmountSearchTerm('1,500.50'));
+        $this->assertSame(2500.0, SqlLikeSearch::parseAmountSearchTerm('KES 2500'));
+        $this->assertNull(SqlLikeSearch::parseAmountSearchTerm('cooking oil'));
     }
 
     public function test_apply_customer_search_uses_substring_on_all_fields(): void
