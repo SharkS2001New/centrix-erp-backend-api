@@ -43,6 +43,7 @@ class StoredPublicFile
             fclose($stream);
         }, 200, array_merge([
             'Content-Type' => $mime,
+            // Default short private cache — callers can override for mutable URLs (e.g. org logo).
             'Cache-Control' => 'private, max-age=3600',
         ], $headers));
     }

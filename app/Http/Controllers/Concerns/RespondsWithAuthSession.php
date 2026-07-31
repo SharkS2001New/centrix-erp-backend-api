@@ -47,6 +47,11 @@ trait RespondsWithAuthSession
                 }
             }
 
+            // Profile array includes has_logo / logo_file_path for document print branding.
+            if (($result['organization'] ?? null) instanceof \App\Models\Organization) {
+                $result['organization'] = $result['organization']->toProfileArray();
+            }
+
             // Enrich login user with mobile route lock fields (assigned route name, etc.).
             $result['user'] = array_merge(
                 $user->toArray(),

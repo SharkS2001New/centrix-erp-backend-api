@@ -207,7 +207,12 @@ class OrganizationController extends BaseResourceController
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        return StoredPublicFile::response($model->logo, 'image/png');
+        return StoredPublicFile::response($model->logo, 'image/png', [
+            // Stable URL is reused on replace — never serve a stale logo from browser/proxy cache.
+            'Cache-Control' => 'private, no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0',
+        ]);
     }
 
     /** DELETE /organizations/{id}/logo */

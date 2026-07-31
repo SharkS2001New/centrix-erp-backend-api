@@ -88,6 +88,51 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEquals($before - 3, $this->onHandShop());
     }
 
+    public function test_checkout_renumbers_duplicate_cart_line_nos(): void
+    {
+        $second = Product::query()
+            ->where('product_code', '!=', $this->productCode)
+            ->whereNull('deleted_at')
+            ->orderBy('id')
+            ->first();
+        $this->assertNotNull($second, 'Need a second product for multi-line checkout.');
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $second->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        // Simulate concurrent POS add race: cart_lines has no unique on line_no.
+        \App\Models\CartLine::query()
+            ->where('cart_id', $cartId)
+            ->update(['line_no' => 3]);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertCreated()->json();
+
+        $lineNos = \App\Models\SaleItem::query()
+            ->where('sale_id', $sale['id'])
+            ->orderBy('line_no')
+            ->pluck('line_no')
+            ->all();
+        $this->assertSame([1, 2, 3], $lineNos);
+    }
+
     public function test_clear_cart_releases_reservation(): void
     {
         $cartId = $this->postJson('/api/v1/sales/carts', [

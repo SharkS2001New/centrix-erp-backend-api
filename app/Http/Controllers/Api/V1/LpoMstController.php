@@ -13,6 +13,7 @@ use App\Services\LpoModuleService;
 use App\Services\Purchasing\LpoNumberAllocator;
 use App\Services\Purchasing\LpoWorkflowService;
 use App\Services\Purchasing\ProcurementSettingsResolver;
+use App\Services\Kra\SalesVatCalculator;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -302,24 +303,25 @@ class LpoMstController extends BaseResourceController
     {
         $subtotal = 0.0;
         $vat = 0.0;
+        $total = 0.0;
 
         foreach ($lines as $line) {
             $product = Product::with('vat')->where('product_code', $line['product_code'])->first();
             $qty = (float) $line['ordered_qty'];
             $cost = (float) $line['cost_price'];
-            $net = $qty * $cost;
-            $rate = (float) ($product?->vat?->vat_percentage ?? 0);
-            $subtotal += $net;
-            $vat += $net * ($rate / 100);
+            // Cost price is VAT-inclusive — extract VAT; do not add it again.
+            $gross = round($qty * $cost, 2);
+            $rate = SalesVatCalculator::vatRateFromProduct($product);
+            $lineVat = SalesVatCalculator::vatFromInclusiveGross($gross, $rate);
+            $total += $gross;
+            $vat += $lineVat;
+            $subtotal += round($gross - $lineVat, 2);
         }
 
-        $subtotal = round($subtotal, 2);
-        $vat = round($vat, 2);
-
         return [
-            'subtotal' => $subtotal,
-            'vat' => $vat,
-            'total' => round($subtotal + $vat, 2),
+            'subtotal' => round($subtotal, 2),
+            'vat' => round($vat, 2),
+            'total' => round($total, 2),
         ];
     }
 }
