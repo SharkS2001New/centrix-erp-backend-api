@@ -344,17 +344,19 @@ class SaleController extends BaseResourceController
     /** @return array{total: int, revenue: float, unpaid: int, partial: int, paid: int, cancelled: int, expired: int} */
     protected function summarizeFilteredOrders(Builder $query): array
     {
+        // Route / search joins may already have select('sales.*'). selectRaw() adds columns
+        // (does not replace), which breaks ONLY_FULL_GROUP_BY. Replace the select list entirely.
         $row = (clone $query)
             ->reorder()
-            ->selectRaw("
+            ->select(DB::raw("
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN 1 ELSE 0 END) as total,
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN COALESCE(sales.order_total, 0) ELSE 0 END) as revenue,
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) = 'paid' THEN 1 ELSE 0 END) as paid,
-                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) = 'partial' THEN 1 ELSE 0 END) as partial,
-                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) NOT IN ('paid', 'partial') THEN 1 ELSE 0 END) as unpaid,
+                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) IN ('partial', 'partially_paid') THEN 1 ELSE 0 END) as partial,
+                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) NOT IN ('paid', 'partial', 'partially_paid') THEN 1 ELSE 0 END) as unpaid,
                 SUM(CASE WHEN sales.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
                 SUM(CASE WHEN sales.status = 'expired' THEN 1 ELSE 0 END) as expired
-            ")
+            "))
             ->first();
 
         return [

@@ -483,6 +483,48 @@ class SaleOrderListDateFilterTest extends TestCase
             ->assertJsonPath('summary.cancelled', 1);
     }
 
+    public function test_sales_list_with_route_filter_summary_does_not_break_only_full_group_by(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $route = \App\Models\RouteModel::query()
+            ->where('organization_id', $admin->organization_id)
+            ->first();
+        $this->assertNotNull($route);
+
+        $sale = Sale::query()->create([
+            'order_num' => 994101,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'mobile',
+            'order_source' => 'mobile',
+            'cashier_id' => $admin->id,
+            'route_id' => $route->id,
+            'status' => 'paid',
+            'payment_status' => 'paid',
+            'order_total' => 175,
+            'amount_paid' => 175,
+            'completed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+            'archived' => 0,
+        ]);
+
+        $response = $this->getJson(
+            '/api/v1/sales?channel=mobile&route_id='.$route->id.'&per_page=25&date_field=placed'
+            .'&from_date='.now()->subDays(7)->toDateString()
+            .'&to_date='.now()->toDateString()
+        );
+
+        $response->assertOk()
+            ->assertJsonStructure(['data', 'summary' => ['total', 'revenue', 'paid']]);
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertTrue($ids->contains($sale->id));
+        $this->assertGreaterThanOrEqual(1, (int) $response->json('summary.total'));
+    }
+
     public function test_sales_list_search_finds_orders_by_product_name(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
