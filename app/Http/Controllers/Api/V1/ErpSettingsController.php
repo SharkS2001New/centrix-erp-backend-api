@@ -416,6 +416,16 @@ class ErpSettingsController extends Controller
             $data = $this->platformConfig->filterOrgManagerDistributionPayload($data);
         }
 
+        // Without Distribution module, only loading-sheet print keys may change
+        // (field-sales / backoffice loading & picking lists).
+        if (! $gate->enabled('distribution')) {
+            $data = array_filter(
+                $data,
+                static fn ($key) => str_starts_with((string) $key, 'loading_sheet_'),
+                ARRAY_FILTER_USE_KEY,
+            );
+        }
+
         $current = $gate->distributionSettings();
         $next = array_merge($current, array_filter(
             $data,

@@ -255,10 +255,12 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
             ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
+        // Distribution module OR sales.mobile — loading-sheet print flags are needed for
+        // backoffice/mobile picking & loading lists when Distribution ops are off.
         Route::get('erp/settings/distribution', [ErpSettingsController::class, 'distribution'])
-            ->middleware(['erp.module:distribution', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:distribution,sales.mobile', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/distribution', [ErpSettingsController::class, 'updateDistribution'])
-            ->middleware(['erp.module:distribution', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:distribution,sales.mobile', 'erp.permission:admin.manage']);
         Route::get('erp/settings/inventory', [ErpSettingsController::class, 'inventory'])
             ->middleware(['erp.module:inventory', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/inventory', [ErpSettingsController::class, 'updateInventory'])

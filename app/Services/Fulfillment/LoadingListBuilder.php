@@ -224,7 +224,15 @@ class LoadingListBuilder
             ];
         }
 
-        usort($lines, fn ($a, $b) => strcmp($a['product_name'], $b['product_name']));
+        // Highest qty first (mobile picking sheets reuse this aggregation).
+        usort($lines, function ($a, $b) {
+            $qtyCmp = ((float) ($b['quantity'] ?? 0)) <=> ((float) ($a['quantity'] ?? 0));
+            if ($qtyCmp !== 0) {
+                return $qtyCmp;
+            }
+
+            return strcmp($a['product_name'], $b['product_name']);
+        });
         foreach ($lines as $index => &$line) {
             $line['line_no'] = $index + 1;
         }

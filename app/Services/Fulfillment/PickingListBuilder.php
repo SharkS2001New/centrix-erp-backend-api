@@ -88,6 +88,12 @@ class PickingListBuilder
                 }
             }
 
+            // Highest required qty first so pickers clear bulk lines before small ones.
+            $qtyCmp = ((float) ($b['required_qty'] ?? 0)) <=> ((float) ($a['required_qty'] ?? 0));
+            if ($qtyCmp !== 0) {
+                return $qtyCmp;
+            }
+
             return strcmp($a['product_name'], $b['product_name']);
         });
 

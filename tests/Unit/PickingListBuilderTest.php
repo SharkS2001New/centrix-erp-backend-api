@@ -52,7 +52,9 @@ class PickingListBuilderTest extends TestCase
         SaleItem::query()->create([
             'sale_id' => $sale->id,
             'product_code' => $productA->product_code,
+            'line_no' => 1,
             'quantity' => 10,
+            'selling_price' => 50,
             'amount' => 500,
             'product_vat' => 0,
             'discount_given' => 0,
@@ -60,7 +62,9 @@ class PickingListBuilderTest extends TestCase
         SaleItem::query()->create([
             'sale_id' => $sale->id,
             'product_code' => $productB->product_code,
+            'line_no' => 2,
             'quantity' => 5,
+            'selling_price' => 100,
             'amount' => 500,
             'product_vat' => 0,
             'discount_given' => 0,
@@ -83,6 +87,73 @@ class PickingListBuilderTest extends TestCase
 
         $this->assertSame($productA->product_code, $lines[1]->product_code);
         $this->assertSame(10.0, (float) $lines[1]->required_qty);
+    }
+
+    public function test_sync_picking_list_sorts_highest_qty_first_within_shelf(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        $productA = Product::query()->firstOrFail();
+        $productB = Product::query()->where('product_code', '!=', $productA->product_code)->firstOrFail();
+
+        // Same shelf so quantity order decides: 20 before 3.
+        $productA->update(['shelf_location' => 'A1']);
+        $productB->update(['shelf_location' => 'A1']);
+
+        $trip = DispatchTrip::query()->create([
+            'branch_id' => $user->branch_id,
+            'trip_code' => 'TRIP-PICK-TEST-QTY',
+            'scheduled_date' => now()->toDateString(),
+            'status' => 'draft',
+            'created_by' => $user->id,
+        ]);
+
+        $sale = Sale::query()->create([
+            'order_num' => 996010,
+            'branch_id' => $user->branch_id,
+            'organization_id' => $user->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $user->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'order_total' => 1000,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'archived' => 0,
+        ]);
+
+        SaleItem::query()->create([
+            'sale_id' => $sale->id,
+            'product_code' => $productA->product_code,
+            'line_no' => 1,
+            'quantity' => 3,
+            'selling_price' => 100,
+            'amount' => 300,
+            'product_vat' => 0,
+            'discount_given' => 0,
+        ]);
+        SaleItem::query()->create([
+            'sale_id' => $sale->id,
+            'product_code' => $productB->product_code,
+            'line_no' => 2,
+            'quantity' => 20,
+            'selling_price' => 35,
+            'amount' => 700,
+            'product_vat' => 0,
+            'discount_given' => 0,
+        ]);
+
+        $trip->sales()->attach($sale->id, ['stop_seq' => 1]);
+
+        $builder = app(PickingListBuilder::class);
+        $pickingList = $builder->syncPickingList($trip->fresh(['sales', 'branch']));
+        $lines = $pickingList->lines->values()->all();
+
+        $this->assertSame($productB->product_code, $lines[0]->product_code);
+        $this->assertSame(20.0, (float) $lines[0]->required_qty);
+        $this->assertSame($productA->product_code, $lines[1]->product_code);
+        $this->assertSame(3.0, (float) $lines[1]->required_qty);
     }
 
     public function test_update_picked_quantities_records_shortage(): void
@@ -118,7 +189,9 @@ class PickingListBuilderTest extends TestCase
         SaleItem::query()->create([
             'sale_id' => $sale->id,
             'product_code' => $product->product_code,
+            'line_no' => 1,
             'quantity' => 10,
+            'selling_price' => 100,
             'amount' => 1000,
             'product_vat' => 0,
             'discount_given' => 0,
