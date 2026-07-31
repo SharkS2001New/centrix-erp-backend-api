@@ -24,7 +24,7 @@ class ReturnProofService
     {
         $this->deleteExisting($record);
 
-        $processor = app(UploadedImageProcessor::class);
+        $processor = UploadedImageProcessor::forDocument();
 
         $record->forceFill(
             $processor->isProcessableImage($file)

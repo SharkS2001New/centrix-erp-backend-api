@@ -141,7 +141,9 @@ class PodService
         }
 
         $directory = \App\Support\OrganizationPublicStorage::path($organizationId, 'pod', (string) $saleId, $kind);
-        $processor = app(UploadedImageProcessor::class);
+        $processor = $kind === 'signature'
+            ? UploadedImageProcessor::forDocument()
+            : UploadedImageProcessor::forPhoto();
         if ($processor->isProcessableImage($file)) {
             return $processor->storePublicImage($file, $directory)['path'];
         }

@@ -11,10 +11,25 @@ use RuntimeException;
 class UploadedImageProcessor
 {
     public function __construct(
-        protected int $maxWidth = 1600,
-        protected int $maxHeight = 1600,
-        protected int $jpegQuality = 82,
+        protected int $maxWidth = 1200,
+        protected int $maxHeight = 1200,
+        protected int $jpegQuality = 72,
     ) {}
+
+    public static function forLogo(): self
+    {
+        return new self(800, 800, 70);
+    }
+
+    public static function forDocument(): self
+    {
+        return new self(1400, 1400, 74);
+    }
+
+    public static function forPhoto(): self
+    {
+        return new self(1200, 1200, 72);
+    }
 
     public function isProcessableImage(UploadedFile $file): bool
     {

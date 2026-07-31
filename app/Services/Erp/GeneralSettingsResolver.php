@@ -144,7 +144,7 @@ class GeneralSettingsResolver
 
     /** @var array<string, array{show: bool, position: string, size: string}> */
     public const DOCUMENT_LOGO_VARIANT_DEFAULTS = [
-        'receipt' => ['show' => true, 'position' => 'center', 'size' => 'small'],
+        'receipt' => ['show' => false, 'position' => 'center', 'size' => 'small'],
         'invoice' => ['show' => true, 'position' => 'right', 'size' => 'large'],
         'proforma' => ['show' => true, 'position' => 'right', 'size' => 'large'],
         'lpo' => ['show' => true, 'position' => 'right', 'size' => 'medium'],

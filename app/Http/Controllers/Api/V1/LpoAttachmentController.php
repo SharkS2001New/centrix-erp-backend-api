@@ -8,6 +8,7 @@ use App\Models\LpoMst;
 use App\Services\Auth\UserAccessService;
 use Illuminate\Http\Request;
 use App\Support\StoredPublicFile;
+use App\Support\UploadedImageProcessor;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -76,17 +77,32 @@ class LpoAttachmentController extends Controller
         $orgId = (int) ($lpo->organization_id ?? $this->access()->organizationId($request->user(), $request) ?? 0);
 
         $file = $request->file('file');
-        $path = $file->store(
-            \App\Support\OrganizationPublicStorage::path($orgId ?: null, 'lpo', (string) ((int) $data['lpo_no']), 'attachments'),
-            'public',
+        $directory = \App\Support\OrganizationPublicStorage::path(
+            $orgId ?: null,
+            'lpo',
+            (string) ((int) $data['lpo_no']),
+            'attachments',
         );
+        $processor = UploadedImageProcessor::forDocument();
+        if ($processor->isProcessableImage($file)) {
+            $stored = $processor->storePublicImage($file, $directory);
+            $path = $stored['path'];
+            $fileName = $stored['file_name'];
+            $mimeType = $stored['mime_type'];
+            $fileSize = $stored['size'];
+        } else {
+            $path = $file->store($directory, 'public');
+            $fileName = $file->getClientOriginalName();
+            $mimeType = $file->getMimeType();
+            $fileSize = $file->getSize();
+        }
 
         $attachment = LpoAttachment::create([
             'lpo_no' => (int) $data['lpo_no'],
-            'file_name' => $file->getClientOriginalName(),
+            'file_name' => $fileName,
             'file_path' => $path,
-            'mime_type' => $file->getMimeType(),
-            'file_size' => $file->getSize(),
+            'mime_type' => $mimeType,
+            'file_size' => $fileSize,
             'uploaded_by' => $request->user()?->id,
             'created_at' => now(),
         ]);

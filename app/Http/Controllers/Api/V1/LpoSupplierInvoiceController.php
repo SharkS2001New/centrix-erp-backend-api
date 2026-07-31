@@ -7,6 +7,7 @@ use App\Models\LpoMst;
 use App\Models\LpoSupplierInvoice;
 use App\Services\Auth\UserAccessService;
 use App\Support\StoredPublicFile;
+use App\Support\UploadedImageProcessor;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
@@ -57,10 +58,21 @@ class LpoSupplierInvoiceController extends Controller
     {
         $file = $request->file('file');
         $orgId = $request->user()?->organization_id;
-        $path = $file->store(
-            \App\Support\OrganizationPublicStorage::path($orgId, 'lpo', (string) $lpoNo, 'supplier-invoices'),
-            'public',
-        );
+        $directory = \App\Support\OrganizationPublicStorage::path($orgId, 'lpo', (string) $lpoNo, 'supplier-invoices');
+        $processor = UploadedImageProcessor::forDocument();
+        if ($processor->isProcessableImage($file)) {
+            $stored = $processor->storePublicImage($file, $directory);
+
+            return [
+                'file_path' => $stored['path'],
+                'file_name' => $stored['file_name'],
+                'mime_type' => $stored['mime_type'],
+                'file_size' => $stored['size'],
+                'uploaded_by' => $request->user()?->id,
+            ];
+        }
+
+        $path = $file->store($directory, 'public');
 
         return [
             'file_path' => $path,

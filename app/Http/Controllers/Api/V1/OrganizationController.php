@@ -185,7 +185,7 @@ class OrganizationController extends BaseResourceController
             Storage::disk('public')->delete($model->logo);
         }
 
-        $stored = app(UploadedImageProcessor::class)->storePublicImage(
+        $stored = UploadedImageProcessor::forLogo()->storePublicImage(
             $request->file('image'),
             \App\Support\OrganizationPublicStorage::path($model, 'logo'),
         );

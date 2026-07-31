@@ -8,6 +8,7 @@ use App\Models\Employee;
 use App\Models\EmployeeDocument;
 use Illuminate\Http\Request;
 use App\Support\StoredPublicFile;
+use App\Support\UploadedImageProcessor;
 use Illuminate\Support\Facades\Storage;
 use Symfony\Component\HttpFoundation\Response;
 
@@ -36,19 +37,34 @@ class EmployeeDocumentController extends Controller
         ]);
 
         $file = $request->file('file');
-        $path = $file->store(
-            \App\Support\OrganizationPublicStorage::path($emp->organization_id, 'employees', (string) $emp->id, 'documents'),
-            'public',
+        $directory = \App\Support\OrganizationPublicStorage::path(
+            $emp->organization_id,
+            'employees',
+            (string) $emp->id,
+            'documents',
         );
+        $processor = UploadedImageProcessor::forDocument();
+        if ($processor->isProcessableImage($file)) {
+            $stored = $processor->storePublicImage($file, $directory);
+            $path = $stored['path'];
+            $fileName = $stored['file_name'];
+            $mimeType = $stored['mime_type'];
+            $fileSize = $stored['size'];
+        } else {
+            $path = $file->store($directory, 'public');
+            $fileName = $file->getClientOriginalName();
+            $mimeType = $file->getMimeType();
+            $fileSize = $file->getSize();
+        }
 
         $doc = EmployeeDocument::create([
             'employee_id' => $emp->id,
             'document_type' => $data['document_type'] ?? 'other',
             'title' => $data['title'],
             'file_path' => $path,
-            'file_name' => $file->getClientOriginalName(),
-            'mime_type' => $file->getMimeType(),
-            'file_size' => $file->getSize(),
+            'file_name' => $fileName,
+            'mime_type' => $mimeType,
+            'file_size' => $fileSize,
             'uploaded_by' => $request->user()?->id,
             'notes' => $data['notes'] ?? null,
         ]);

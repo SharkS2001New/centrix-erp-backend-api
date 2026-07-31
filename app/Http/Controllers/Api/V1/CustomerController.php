@@ -224,7 +224,7 @@ class CustomerController extends BaseResourceController
             Storage::disk('public')->delete($model->shop_image);
         }
 
-        $stored = app(UploadedImageProcessor::class)->storePublicImage(
+        $stored = UploadedImageProcessor::forPhoto()->storePublicImage(
             $request->file('image'),
             \App\Support\OrganizationPublicStorage::path($model->organization_id ?? $request->user()?->organization_id, 'customers', (string) $model->customer_num),
         );
