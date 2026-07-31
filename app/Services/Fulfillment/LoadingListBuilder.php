@@ -221,14 +221,20 @@ class LoadingListBuilder
                 'line_total' => round($qty * $unitPrice, 2),
                 'on_wholesale_retail' => (int) ($productItems->first()->on_wholesale_retail ?? 0),
                 'price_tier' => ($productItems->first()->on_wholesale_retail ?? 0) ? 'retail' : 'wholesale',
+                'sort_qty' => $this->stockUom->fulfillmentSortQuantity($qty, $uom),
             ];
         }
 
-        // Highest qty first (mobile picking sheets reuse this aggregation).
+        // Highest displayed package count first (26 jer before 4 bag).
         usort($lines, function ($a, $b) {
-            $qtyCmp = ((float) ($b['quantity'] ?? 0)) <=> ((float) ($a['quantity'] ?? 0));
+            $qtyCmp = ((float) ($b['sort_qty'] ?? 0)) <=> ((float) ($a['sort_qty'] ?? 0));
             if ($qtyCmp !== 0) {
                 return $qtyCmp;
+            }
+
+            $baseCmp = ((float) ($b['quantity'] ?? 0)) <=> ((float) ($a['quantity'] ?? 0));
+            if ($baseCmp !== 0) {
+                return $baseCmp;
             }
 
             return strcmp($a['product_name'], $b['product_name']);

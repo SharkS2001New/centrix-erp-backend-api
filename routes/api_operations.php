@@ -168,6 +168,7 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware('erp.permission:sales.orders.edit')->prefix('sales')->group(function () {
         Route::patch('orders/{saleId}/line-quantities', [\App\Http\Controllers\Api\V1\Operations\BackofficeOrderLineEditController::class, 'updateLineQuantities']);
+        Route::post('orders/merge', [\App\Http\Controllers\Api\V1\Operations\SaleMergeController::class, 'merge']);
     });
 
     Route::middleware(['erp.module:payments', 'erp.permission:payments.manage'])->group(function () {

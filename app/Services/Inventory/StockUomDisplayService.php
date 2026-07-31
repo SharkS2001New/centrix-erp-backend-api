@@ -38,6 +38,21 @@ class StockUomDisplayService
         ];
     }
 
+    /**
+     * Sort key for picking lists: count in the outermost package the picker sees
+     * (e.g. 26 jer, 4 bag) — not base kg/pcs, which mis-orders mixed UOMs.
+     */
+    public function fulfillmentSortQuantity(float $baseQty, ?Uom $uom): float
+    {
+        $parts = $this->splitBaseToHierarchy($baseQty, $uom);
+        if ($parts === []) {
+            return 0.0;
+        }
+
+        // Prefer the largest packaging tier count (first hierarchy part).
+        return (float) ($parts[0]['qty'] ?? 0);
+    }
+
     /** @return array<int, array{label: string, qty: float}> */
     public function splitBaseToHierarchy(float $baseQty, ?Uom $uom): array
     {

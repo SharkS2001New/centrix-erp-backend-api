@@ -74,6 +74,7 @@ class PickingListBuilder
                 'shortage_qty' => 0.0,
                 'quantity_label' => $packaging['quantity_label'],
                 'pack_breakdown' => $packaging['pack_breakdown'],
+                'sort_qty' => $this->stockUom->fulfillmentSortQuantity($requiredQty, $uom),
                 'shortage_reason' => null,
             ];
         }
@@ -88,10 +89,16 @@ class PickingListBuilder
                 }
             }
 
-            // Highest required qty first so pickers clear bulk lines before small ones.
-            $qtyCmp = ((float) ($b['required_qty'] ?? 0)) <=> ((float) ($a['required_qty'] ?? 0));
+            // Highest displayed package count first (26 jer before 4 bag).
+            $qtyCmp = ((float) ($b['sort_qty'] ?? 0)) <=> ((float) ($a['sort_qty'] ?? 0));
             if ($qtyCmp !== 0) {
                 return $qtyCmp;
+            }
+
+            // Tie-break on base qty, then name.
+            $baseCmp = ((float) ($b['required_qty'] ?? 0)) <=> ((float) ($a['required_qty'] ?? 0));
+            if ($baseCmp !== 0) {
+                return $baseCmp;
             }
 
             return strcmp($a['product_name'], $b['product_name']);

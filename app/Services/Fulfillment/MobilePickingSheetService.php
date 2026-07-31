@@ -169,14 +169,24 @@ class MobilePickingSheetService
                 'unit_price' => $wholesaleUnitPrice > 0 ? $wholesaleUnitPrice : $retailUnitPrice,
                 'price_label' => implode(' · ', $priceParts),
                 'line_total' => $lineTotal,
+                'sort_qty' => $this->stockUom->fulfillmentSortQuantity(
+                    $wholesaleQty + $retailQty,
+                    $uom,
+                ),
                 'shortage_reason' => null,
             ];
         }
 
         usort($lines, function ($a, $b) {
-            $qtyCmp = ((float) ($b['required_qty'] ?? 0)) <=> ((float) ($a['required_qty'] ?? 0));
+            // Highest displayed package count first (26 jer before 4 bag).
+            $qtyCmp = ((float) ($b['sort_qty'] ?? 0)) <=> ((float) ($a['sort_qty'] ?? 0));
             if ($qtyCmp !== 0) {
                 return $qtyCmp;
+            }
+
+            $baseCmp = ((float) ($b['required_qty'] ?? 0)) <=> ((float) ($a['required_qty'] ?? 0));
+            if ($baseCmp !== 0) {
+                return $baseCmp;
             }
 
             return strcmp((string) $a['product_name'], (string) $b['product_name']);
