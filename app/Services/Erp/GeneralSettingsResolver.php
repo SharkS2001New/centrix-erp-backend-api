@@ -146,7 +146,7 @@ class GeneralSettingsResolver
     public const DOCUMENT_LOGO_VARIANT_DEFAULTS = [
         'receipt' => ['show' => true, 'position' => 'center', 'size' => 'small'],
         'invoice' => ['show' => true, 'position' => 'right', 'size' => 'large'],
-        'proforma' => ['show' => true, 'position' => 'right', 'size' => 'small'],
+        'proforma' => ['show' => true, 'position' => 'right', 'size' => 'large'],
         'lpo' => ['show' => true, 'position' => 'right', 'size' => 'medium'],
         'loading_sheet' => ['show' => true, 'position' => 'center', 'size' => 'medium'],
         'picking_list' => ['show' => true, 'position' => 'center', 'size' => 'medium'],

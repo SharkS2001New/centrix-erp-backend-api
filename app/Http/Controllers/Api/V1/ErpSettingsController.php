@@ -123,6 +123,8 @@ class ErpSettingsController extends Controller
             'invoice_print_delivery_terms',
             'invoice_print_footer_lines',
             'show_print_proforma_invoice_option',
+            'invoice_document_template',
+            'proforma_document_template',
             'proforma_valid_days',
             'show_proforma_payment_details',
             'show_proforma_terms',
@@ -194,6 +196,8 @@ class ErpSettingsController extends Controller
             'invoice_print_delivery_terms' => 'sometimes|nullable|string|max:4000',
             'invoice_print_footer_lines' => 'sometimes|nullable|string|max:4000',
             'show_print_proforma_invoice_option' => 'sometimes|boolean',
+            'invoice_document_template' => 'sometimes|string|max:40',
+            'proforma_document_template' => 'sometimes|string|max:40',
             'proforma_valid_days' => 'sometimes|integer|min:0|max:365',
             'show_proforma_payment_details' => 'sometimes|boolean',
             'show_proforma_terms' => 'sometimes|boolean',
@@ -929,6 +933,7 @@ class ErpSettingsController extends Controller
             'lpo_print_validity_days',
             'lpo_print_checked_by',
             'lpo_print_authorised_by',
+            'lpo_document_template',
         ];
 
         $rules = [
@@ -941,6 +946,7 @@ class ErpSettingsController extends Controller
             'lpo_print_validity_days' => 'sometimes|integer|min:1|max:365',
             'lpo_print_checked_by' => 'sometimes|nullable|string|max:120',
             'lpo_print_authorised_by' => 'sometimes|nullable|string|max:120',
+            'lpo_document_template' => 'sometimes|string|max:40',
         ];
         foreach ($procurementKeys as $key) {
             if (array_key_exists($key, $rules)) {
