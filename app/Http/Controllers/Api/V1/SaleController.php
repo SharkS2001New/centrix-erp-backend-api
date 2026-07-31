@@ -352,8 +352,13 @@ class SaleController extends BaseResourceController
     /** @return array{total: int, revenue: float, unpaid: int, partial: int, paid: int, cancelled: int, expired: int} */
     protected function summarizeFilteredOrders(Builder $query): array
     {
-        $row = (clone $query)
-            ->reorder()
+        // Clone may still carry `select sales.*` from joins. selectRaw() uses addSelect,
+        // so sales.id would leak into an aggregate query and break ONLY_FULL_GROUP_BY.
+        $summaryQuery = clone $query;
+        $summaryQuery->getQuery()->columns = null;
+        $summaryQuery->reorder();
+
+        $row = $summaryQuery
             ->selectRaw("
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN 1 ELSE 0 END) as total,
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN COALESCE(sales.order_total, 0) ELSE 0 END) as revenue,

@@ -482,4 +482,42 @@ class SaleOrderListDateFilterTest extends TestCase
             ->assertJsonPath('summary.paid', 2)
             ->assertJsonPath('summary.cancelled', 1);
     }
+
+    public function test_sales_list_summary_works_with_route_join_under_only_full_group_by(): void
+    {
+        \Illuminate\Support\Facades\DB::statement("SET SESSION sql_mode = CONCAT(@@sql_mode, ',ONLY_FULL_GROUP_BY')");
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $route = \App\Models\RouteModel::query()
+            ->where('organization_id', $admin->organization_id)
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        $marker = 'SummaryRouteJoin'.uniqid('', true);
+        Sale::query()->create([
+            'order_num' => 994101,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $admin->id,
+            'customer_name_override' => $marker,
+            'route_id' => $route->id,
+            'status' => 'paid',
+            'payment_status' => 'paid',
+            'order_total' => 150,
+            'amount_paid' => 150,
+            'completed_at' => now(),
+            'created_at' => now(),
+            'updated_at' => now(),
+            'archived' => 0,
+        ]);
+
+        $this->getJson('/api/v1/sales?q='.urlencode($marker).'&route_id='.$route->id.'&per_page=1&date_field=placed')
+            ->assertOk()
+            ->assertJsonPath('summary.total', 1)
+            ->assertJsonPath('summary.revenue', 150)
+            ->assertJsonPath('summary.paid', 1);
+    }
 }

@@ -159,13 +159,9 @@ class ErpCapabilitiesController extends Controller
 
         if ($org) {
             $payload['capabilities_version'] = OrganizationCache::capabilitiesVersion((int) $org->id);
-            // Rebuild module_settings from the live org row so settings toggles apply on the
-            // next /erp/capabilities fetch even if a stale cached payload was reused.
-            $org->refresh();
-            $live = $gate->forOrganization($org)->toArray($user);
-            if (isset($live['module_settings']) && is_array($live['module_settings'])) {
-                $payload['module_settings'] = $live['module_settings'];
-            }
+            // Do not refresh + rebuild gate->toArray() on every request — that re-queries
+            // system settings, catalog metadata, workflows, etc. Org setting updates already
+            // invalidate the capabilities cache via OrganizationObserver.
         }
 
         $payload['mobile_app'] = app(MobileAppModuleAccessService::class)
