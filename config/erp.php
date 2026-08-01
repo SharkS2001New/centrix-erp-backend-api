@@ -219,6 +219,9 @@ return [
         ],
         'hospitality' => [
             'hotel_pos_grid_columns',
+            'hotel_pos_collect_payment',
+            'hotel_pos_catalog_limit',
+            'services',
         ],
         'ai' => [
             'enable_ai',
@@ -479,6 +482,34 @@ return [
         'hospitality' => [
             /** Hotel & Bar POS product grid columns (platform-controlled). */
             'hotel_pos_grid_columns' => 4,
+            /** When true, primary complete action opens Collect payment; when false, Save order. */
+            'hotel_pos_collect_payment' => true,
+            /** How many top/popular items to show before search (tap grid). */
+            'hotel_pos_catalog_limit' => 30,
+            /** Deduct kitchen/bar stock when a Hotel POS check is settled. */
+            'stock_deduct_on_settle' => false,
+            /** Shop or store location for F&B ingredient deduct. */
+            'stock_location' => 'shop',
+            /** Block settle when stock is insufficient (unless org allows negative stock). */
+            'block_settle_if_insufficient' => true,
+            /** Require an active recipe/direct config for every sold line when deduct is on. */
+            'require_recipe_for_stocked_items' => false,
+            /**
+             * Optional hospitality services (platform-controlled).
+             * Default org: Main outlet (always) + Rooms only.
+             */
+            'services' => [
+                'rooms' => true,
+                'reservations' => false,
+                'front_desk' => false,
+                'folios' => false,
+                'housekeeping' => false,
+                'night_audit' => false,
+                'extra_outlets' => false,
+                'floor_tables' => false,
+                'table_pos' => false,
+                'room_charge' => false,
+            ],
         ],
         'distribution' => [
             'enable_distribution_ops' => true,

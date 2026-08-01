@@ -688,6 +688,28 @@ class ReportController extends Controller
         ]));
     }
 
+    /**
+     * Line-level payments by tender method for backoffice breakdown tabs
+     * (Cash, M-Pesa with code, Card, Bank, …) plus per-tab aggregates.
+     */
+    public function paymentsBreakdown(Request $request)
+    {
+        $access = app(UserAccessService::class);
+        $orgId = $access->organizationId($request->user(), $request);
+        abort_unless($orgId, 403, 'Your account is not linked to an organization.');
+
+        $filters = $this->filters($request);
+        $branchId = ! empty($filters['branch_id']) ? (int) $filters['branch_id'] : null;
+
+        return response()->json(
+            app(\App\Services\Reports\PaymentsBreakdownService::class)->build(
+                $request,
+                (int) $orgId,
+                $branchId,
+            ),
+        );
+    }
+
     public function creditOutstanding(Request $request)
     {
         return response()->json($this->reportFromView('v_credit_outstanding', $this->filters($request), [

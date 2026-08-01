@@ -8,6 +8,7 @@ use App\Services\Erp\ErpContext;
 use App\Services\Hospitality\HospitalityCheckService;
 use App\Services\Hospitality\HospitalityPosCatalogService;
 use App\Services\Hospitality\HospitalityPosSettings;
+use App\Services\Hospitality\HospitalityServices;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -31,9 +32,10 @@ class HospitalityPosController extends Controller
     {
         $org = $this->requireOrg($request->user());
 
-        return response()->json([
-            'hotel_pos_grid_columns' => HospitalityPosSettings::gridColumnsForOrganization($org),
-        ]);
+        return response()->json(array_merge(
+            HospitalityPosSettings::forOrganization($org),
+            HospitalityServices::presentForOrganization($org),
+        ));
     }
 
     public function openCheck(Request $request)
@@ -134,14 +136,32 @@ class HospitalityPosController extends Controller
         $org = $this->requireOrg($user);
         $data = $request->validate([
             'amount' => ['nullable', 'numeric', 'min:0'],
-            'method' => ['nullable', 'string', 'in:CASH'],
+            'method' => ['nullable', 'string', 'max:40'],
+            'payments' => ['nullable', 'array', 'min:1'],
+            'payments.*.method_code' => ['required_with:payments', 'string', 'max:40'],
+            'payments.*.amount' => ['required_with:payments', 'numeric', 'min:0.01'],
+            'payments.*.reference' => ['nullable', 'string', 'max:120'],
         ]);
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
-        $check = $this->checkService->settleCash(
-            $check,
-            $user,
-            array_key_exists('amount', $data) && $data['amount'] !== null ? (float) $data['amount'] : null,
-        );
+
+        if (! empty($data['payments']) && is_array($data['payments'])) {
+            $check = $this->checkService->settleWithPayments($check, $user, $data['payments']);
+        } else {
+            $check = $this->checkService->settleCash(
+                $check,
+                $user,
+                array_key_exists('amount', $data) && $data['amount'] !== null ? (float) $data['amount'] : null,
+            );
+        }
+
+        return response()->json(['check' => $this->checkService->toArray($check)]);
+    }
+
+    public function save(Request $request, int $checkId)
+    {
+        $org = $this->requireOrg($request->user());
+        $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
+        $check = $this->checkService->saveWithoutPayment($check);
 
         return response()->json(['check' => $this->checkService->toArray($check)]);
     }

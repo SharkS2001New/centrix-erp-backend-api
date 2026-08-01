@@ -99,7 +99,61 @@ class HospitalityPosTest extends TestCase
         $this->assertNotFalse($highPos);
         $this->assertNotFalse($lowPos);
         $this->assertLessThan($lowPos, $highPos);
-        $this->assertSame(4, $this->getJson('/api/v1/hospitality/pos/settings')->json('hotel_pos_grid_columns'));
+        $settings = $this->getJson('/api/v1/hospitality/pos/settings')->assertOk()->json();
+        $this->assertSame(4, $settings['hotel_pos_grid_columns']);
+        $this->assertTrue($settings['hotel_pos_collect_payment']);
+        $this->assertSame(30, $settings['hotel_pos_catalog_limit']);
+
+        $catalog = $this->getJson('/api/v1/hospitality/pos/catalog')->assertOk()->json();
+        $this->assertLessThanOrEqual(30, count($catalog['items'] ?? []));
+        $this->assertSame(5, $catalog['popular_days'] ?? null);
+        $this->assertArrayHasKey('has_more', $catalog);
+
+        if (! empty($catalog['has_more'])) {
+            $page2 = $this->getJson('/api/v1/hospitality/pos/catalog?offset='.$catalog['next_offset'])
+                ->assertOk()
+                ->json();
+            $this->assertNotEmpty($page2['items'] ?? []);
+            $firstCodes = array_column($catalog['items'], 'product_code');
+            $secondCodes = array_column($page2['items'], 'product_code');
+            $this->assertEmpty(array_intersect($firstCodes, $secondCodes));
+        }
+    }
+
+    public function test_settle_supports_split_cash_and_mpesa(): void
+    {
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+            ->assertCreated()
+            ->json('check');
+        $checkId = (int) $opened['id'];
+
+        $withLine = $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/lines", [
+            'product_code' => $product->product_code,
+            'qty' => 2,
+        ])
+            ->assertOk()
+            ->json('check');
+
+        $total = (float) $withLine['total'];
+        $cashPart = round($total / 2, 2);
+        $mpesaPart = round($total - $cashPart, 2);
+
+        $settled = $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/settle", [
+            'payments' => [
+                ['method_code' => 'CASH', 'amount' => $cashPart],
+                ['method_code' => 'MPESA', 'amount' => $mpesaPart, 'reference' => 'TESTCODE1'],
+            ],
+        ])
+            ->assertOk()
+            ->json('check');
+
+        $this->assertSame('settled', $settled['status']);
+        $this->assertSame($total, (float) $settled['amount_paid']);
     }
 
     public function test_open_check_tap_add_hold_and_settle_cash(): void

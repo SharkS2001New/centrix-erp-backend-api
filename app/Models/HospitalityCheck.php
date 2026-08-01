@@ -27,6 +27,8 @@ class HospitalityCheck extends Model
         'service_charge',
         'total',
         'amount_paid',
+        'stock_balanced',
+        'stock_deducted_at',
         'opened_at',
         'closed_at',
     ];
@@ -37,8 +39,10 @@ class HospitalityCheck extends Model
         'service_charge' => 'decimal:2',
         'total' => 'decimal:2',
         'amount_paid' => 'decimal:2',
+        'stock_balanced' => 'boolean',
         'opened_at' => 'datetime',
         'closed_at' => 'datetime',
+        'stock_deducted_at' => 'datetime',
     ];
 
     public function outlet(): BelongsTo

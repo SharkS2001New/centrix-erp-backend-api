@@ -200,6 +200,27 @@ class HospitalityCheckService
 
     public function settleCash(HospitalityCheck $check, User $user, ?float $amount = null): HospitalityCheck
     {
+        $due = round((float) $this->recalculate($check->fresh())->total, 2);
+        $pay = $amount === null ? $due : round($amount, 2);
+
+        return $this->settleWithPayments($check, $user, [
+            [
+                'method_code' => 'CASH',
+                'amount' => $due,
+                'reference' => $pay > $due ? 'cash_tendered:'.$pay : null,
+            ],
+        ], $pay);
+    }
+
+    /**
+     * @param  list<array{method_code: string, amount: float|int|string, reference?: ?string}>  $payments
+     */
+    public function settleWithPayments(
+        HospitalityCheck $check,
+        User $user,
+        array $payments,
+        ?float $tenderedTotal = null,
+    ): HospitalityCheck {
         $this->assertEditable($check);
         $check = $this->recalculate($check->fresh());
         if ($check->lines()->count() < 1) {
@@ -207,20 +228,72 @@ class HospitalityCheckService
         }
 
         $due = round((float) $check->total, 2);
-        $pay = $amount === null ? $due : round($amount, 2);
-        if ($pay + 0.001 < $due) {
-            throw ValidationException::withMessages(['amount' => ['Amount is less than the check total.']]);
+        $normalized = [];
+        $paid = 0.0;
+        foreach ($payments as $row) {
+            $code = strtoupper(trim((string) ($row['method_code'] ?? '')));
+            $amount = round((float) ($row['amount'] ?? 0), 2);
+            if ($code === '' || $amount <= 0) {
+                continue;
+            }
+            if (! in_array($code, ['CASH', 'MPESA', 'EQUITY', 'KCB', 'OTHER', 'CARD', 'CHEQUE', 'BANK'], true)) {
+                throw ValidationException::withMessages(['payments' => ["Unsupported payment method: {$code}"]]);
+            }
+            $normalized[] = [
+                'method_code' => $code,
+                'amount' => $amount,
+                'reference' => isset($row['reference']) ? (string) $row['reference'] : null,
+            ];
+            $paid += $amount;
+        }
+        $paid = round($paid, 2);
+        if ($paid + 0.001 < $due) {
+            throw ValidationException::withMessages([
+                'payments' => ['Payment total is less than the check total.'],
+            ]);
         }
 
-        return DB::transaction(function () use ($check, $user, $due, $pay) {
-            HospitalityCheckPayment::create([
-                'organization_id' => $check->organization_id,
-                'check_id' => $check->id,
-                'method_code' => 'CASH',
-                'amount' => $due,
-                'reference' => $pay > $due ? 'cash_tendered:'.$pay : null,
-                'received_by' => $user->id,
-            ]);
+        $tendered = $tenderedTotal === null ? $paid : round($tenderedTotal, 2);
+
+        return DB::transaction(function () use ($check, $user, $due, $normalized, $tendered) {
+            foreach ($normalized as $row) {
+                // Cap recorded amounts so over-tender (change) stays on cash only.
+                $recordAmount = $row['amount'];
+                HospitalityCheckPayment::create([
+                    'organization_id' => $check->organization_id,
+                    'check_id' => $check->id,
+                    'method_code' => $row['method_code'],
+                    'amount' => $recordAmount,
+                    'reference' => $row['reference'],
+                    'received_by' => $user->id,
+                ]);
+            }
+
+            // If cash was over-tendered, store tendered hint on the cash line reference.
+            if ($tendered > $due + 0.001) {
+                $cash = HospitalityCheckPayment::query()
+                    ->where('check_id', $check->id)
+                    ->where('method_code', 'CASH')
+                    ->orderByDesc('id')
+                    ->first();
+                if ($cash && ! $cash->reference) {
+                    $cash->update(['reference' => 'cash_tendered:'.$tendered]);
+                }
+            }
+
+            // Normalize payment rows so sum equals due (excess change on cash).
+            $sum = round((float) HospitalityCheckPayment::query()->where('check_id', $check->id)->sum('amount'), 2);
+            if ($sum > $due + 0.001) {
+                $cash = HospitalityCheckPayment::query()
+                    ->where('check_id', $check->id)
+                    ->where('method_code', 'CASH')
+                    ->orderByDesc('id')
+                    ->first();
+                if ($cash) {
+                    $reduce = round($sum - $due, 2);
+                    $cash->update(['amount' => max(0, round((float) $cash->amount - $reduce, 2))]);
+                }
+            }
 
             $check->update([
                 'status' => 'settled',
@@ -229,8 +302,17 @@ class HospitalityCheckService
                 'closed_at' => now(),
             ]);
 
-            return $this->presentable($check->fresh());
+            $settled = $check->fresh();
+            app(HospitalityCheckStockService::class)->deductForSettledCheck($settled, $user);
+
+            return $this->presentable($settled->fresh());
         });
+    }
+
+    /** Save without collecting payment — same as hold for counter workflow. */
+    public function saveWithoutPayment(HospitalityCheck $check): HospitalityCheck
+    {
+        return $this->hold($check);
     }
 
     public function voidOpen(HospitalityCheck $check): HospitalityCheck

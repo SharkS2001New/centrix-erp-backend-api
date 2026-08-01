@@ -179,6 +179,45 @@ class OrganizationPlatformConfigService
             $currentHospitality['hotel_pos_grid_columns'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeGridColumns(
                 $salesPlatform['hotel_pos_grid_columns'],
             );
+            if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)) {
+                $currentHospitality['hotel_pos_collect_payment'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment(
+                    $salesPlatform['hotel_pos_collect_payment'],
+                );
+            }
+            if (array_key_exists('hotel_pos_catalog_limit', $salesPlatform)) {
+                $currentHospitality['hotel_pos_catalog_limit'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeCatalogLimit(
+                    $salesPlatform['hotel_pos_catalog_limit'],
+                );
+            }
+            if (array_key_exists('hospitality_services', $salesPlatform) && is_array($salesPlatform['hospitality_services'])) {
+                $currentHospitality['services'] = \App\Services\Hospitality\HospitalityServices::normalize(
+                    $salesPlatform['hospitality_services'],
+                );
+            }
+            $moduleSettings['hospitality'] = $currentHospitality;
+        } elseif (
+            array_key_exists('hotel_pos_collect_payment', $salesPlatform)
+            || array_key_exists('hotel_pos_catalog_limit', $salesPlatform)
+            || array_key_exists('hospitality_services', $salesPlatform)
+        ) {
+            $currentHospitality = is_array($moduleSettings['hospitality'] ?? null)
+                ? $moduleSettings['hospitality']
+                : [];
+            if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)) {
+                $currentHospitality['hotel_pos_collect_payment'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment(
+                    $salesPlatform['hotel_pos_collect_payment'],
+                );
+            }
+            if (array_key_exists('hotel_pos_catalog_limit', $salesPlatform)) {
+                $currentHospitality['hotel_pos_catalog_limit'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeCatalogLimit(
+                    $salesPlatform['hotel_pos_catalog_limit'],
+                );
+            }
+            if (array_key_exists('hospitality_services', $salesPlatform) && is_array($salesPlatform['hospitality_services'])) {
+                $currentHospitality['services'] = \App\Services\Hospitality\HospitalityServices::normalize(
+                    $salesPlatform['hospitality_services'],
+                );
+            }
             $moduleSettings['hospitality'] = $currentHospitality;
         }
 
@@ -299,6 +338,9 @@ class OrganizationPlatformConfigService
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
             'hotel_pos_grid_columns' => 4,
+            'hotel_pos_collect_payment' => true,
+            'hotel_pos_catalog_limit' => 30,
+            'hospitality_services' => \App\Services\Hospitality\HospitalityServices::DEFAULTS,
             'order_workflow' => $workflowDefaults,
             'order_cancellation_enabled' => true,
             'enable_pos_order_edit' => false,
@@ -363,6 +405,9 @@ class OrganizationPlatformConfigService
                 ? (string) $sales['external_pos_layout']
                 : 'modern',
             'hotel_pos_grid_columns' => \App\Services\Hospitality\HospitalityPosSettings::gridColumnsForOrganization($org),
+            'hotel_pos_collect_payment' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_collect_payment'],
+            'hotel_pos_catalog_limit' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_catalog_limit'],
+            'hospitality_services' => \App\Services\Hospitality\HospitalityServices::forOrganization($org),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
             'edit_order_statuses' => $this->normalizeRequiredActionStatuses(

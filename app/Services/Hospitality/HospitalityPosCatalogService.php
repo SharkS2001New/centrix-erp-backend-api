@@ -14,19 +14,25 @@ use Illuminate\Support\Facades\Schema;
 
 class HospitalityPosCatalogService
 {
+    public const POPULAR_DAYS_DEFAULT = 5;
+
     public function __construct(
         protected ProductCatalogScopeService $catalogScope,
     ) {}
 
     /**
-     * Active products for hotel POS: most-sold first, then name.
+     * Active products for hotel POS: most-sold (recent window) first, then name.
+     * Paginated for infinite scroll on the tap grid.
      *
-     * @return array{items: list<array<string, mixed>>, grid_columns: int, popular_days: int}
+     * @return array<string, mixed>
      */
     public function catalog(Organization $org, User $user, Request $request): array
     {
-        $days = max(7, min(180, (int) $request->input('popular_days', 90)));
-        $perPage = min(200, max(1, (int) $request->input('per_page', 120)));
+        $days = max(1, min(90, (int) $request->input('popular_days', self::POPULAR_DAYS_DEFAULT)));
+        $settings = HospitalityPosSettings::forOrganization($org);
+        $pageSize = $settings['hotel_pos_catalog_limit'];
+        $perPage = min(100, max(1, (int) $request->input('per_page', $pageSize)));
+        $offset = max(0, (int) $request->input('offset', 0));
         $search = trim((string) $request->input('q', ''));
 
         $query = Product::query()->with('vat:id,vat_percentage,vat_code');
@@ -50,9 +56,10 @@ class HospitalityPosCatalogService
 
         $soldQtyByCode = $this->soldQuantitiesByCode((int) $org->id, $days);
 
+        // Rank the full candidate set, then paginate in PHP (sold qty is not a SQL column).
         $products = $query
             ->orderBy('products.product_name')
-            ->limit($perPage)
+            ->limit(2000)
             ->get([
                 'products.id',
                 'products.product_code',
@@ -62,10 +69,11 @@ class HospitalityPosCatalogService
                 'products.sell_on_retail',
             ]);
 
-        $items = $products
+        $ranked = $products
             ->map(function (Product $product) use ($soldQtyByCode) {
                 $code = (string) $product->product_code;
                 $vatPct = (float) ($product->vat?->vat_percentage ?? 0);
+                $sold = round((float) ($soldQtyByCode[$code] ?? 0), 4);
 
                 return [
                     'id' => (int) $product->id,
@@ -74,8 +82,8 @@ class HospitalityPosCatalogService
                     'unit_price' => round((float) $product->unit_price, 2),
                     'vat_id' => $product->vat_id ? (int) $product->vat_id : null,
                     'vat_percentage' => $vatPct,
-                    'sold_qty' => round((float) ($soldQtyByCode[$code] ?? 0), 4),
-                    'is_popular' => ((float) ($soldQtyByCode[$code] ?? 0)) > 0,
+                    'sold_qty' => $sold,
+                    'is_popular' => $sold > 0,
                 ];
             })
             ->sort(function (array $a, array $b) {
@@ -86,13 +94,27 @@ class HospitalityPosCatalogService
 
                 return strcasecmp($a['product_name'], $b['product_name']);
             })
-            ->values()
-            ->all();
+            ->values();
+
+        $total = $ranked->count();
+        $items = $ranked->slice($offset, $perPage)->values()->all();
+        $nextOffset = $offset + count($items);
+        $hasMore = $nextOffset < $total;
 
         return [
             'items' => $items,
-            'grid_columns' => HospitalityPosSettings::gridColumnsForOrganization($org),
+            'grid_columns' => $settings['hotel_pos_grid_columns'],
+            'catalog_limit' => $settings['hotel_pos_catalog_limit'],
+            'collect_payment' => $settings['hotel_pos_collect_payment'],
+            'stock_deduct_on_settle' => $settings['stock_deduct_on_settle'],
+            'block_settle_if_insufficient' => $settings['block_settle_if_insufficient'],
             'popular_days' => $days,
+            'searching' => $search !== '',
+            'offset' => $offset,
+            'per_page' => $perPage,
+            'next_offset' => $hasMore ? $nextOffset : null,
+            'has_more' => $hasMore,
+            'total' => $total,
         ];
     }
 
