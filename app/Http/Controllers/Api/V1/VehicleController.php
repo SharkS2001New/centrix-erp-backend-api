@@ -78,21 +78,28 @@ class VehicleController extends BaseResourceController
         $orgId = (int) ($this->access()->organizationId($request->user(), $request) ?? 0);
         $branchId = (int) ($request->input('branch_id') ?? $existing?->branch_id ?? 0);
 
+        // Never put "sometimes|required" as a single array element — Laravel will not
+        // explode pipes inside array rule lists and looks for validateSometimes|required.
         $data = $request->validate([
-            'branch_id' => $existing ? 'sometimes|integer|exists:branches,id' : 'required|integer|exists:branches,id',
-            'vehicle_code' => [
-                ($existing ? 'sometimes|' : '').'required',
+            'branch_id' => $existing
+                ? ['sometimes', 'integer', 'exists:branches,id']
+                : ['required', 'integer', 'exists:branches,id'],
+            'vehicle_code' => array_values(array_filter([
+                $existing ? 'sometimes' : null,
+                'required',
                 'string',
                 'max:45',
                 Rule::unique('vehicles', 'vehicle_code')
                     ->where(fn ($query) => $query->where('branch_id', $branchId ?: $request->input('branch_id')))
                     ->ignore($existing?->id),
-            ],
-            'vehicle_name' => ($existing ? 'sometimes|' : '').'required|string|max:200',
-            'plate_number' => 'nullable|string|max:45',
-            'max_weight_kg' => 'nullable|numeric|min:0',
-            'max_volume_m3' => 'nullable|numeric|min:0',
-            'is_active' => 'nullable|boolean',
+            ])),
+            'vehicle_name' => $existing
+                ? ['sometimes', 'required', 'string', 'max:200']
+                : ['required', 'string', 'max:200'],
+            'plate_number' => ['nullable', 'string', 'max:45'],
+            'max_weight_kg' => ['nullable', 'numeric', 'min:0'],
+            'max_volume_m3' => ['nullable', 'numeric', 'min:0'],
+            'is_active' => ['nullable', 'boolean'],
         ]);
 
         if (! empty($data['branch_id'])) {

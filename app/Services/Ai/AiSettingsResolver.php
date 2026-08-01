@@ -121,15 +121,16 @@ class AiSettingsResolver
             'whatsapp_phones' => self::normalizeStringList($recipients['whatsapp_phones'] ?? []),
         ];
 
-        foreach (['stock_pulse', 'sales_brief'] as $briefKey) {
+        foreach (AiInsightCatalog::scheduledTypes() as $briefKey) {
             $brief = is_array($merged[$briefKey] ?? null) ? $merged[$briefKey] : [];
+            $def = AiInsightCatalog::definitions()[$briefKey] ?? [];
             $time = preg_match('/^\d{2}:\d{2}$/', (string) ($brief['schedule_time'] ?? ''))
                 ? (string) $brief['schedule_time']
-                : (string) ($defaults[$briefKey]['schedule_time'] ?? '07:00');
+                : (string) ($defaults[$briefKey]['schedule_time'] ?? ($def['default_time'] ?? '07:00'));
             $merged[$briefKey] = [
                 'enabled' => (bool) ($brief['enabled'] ?? false),
                 'schedule_time' => $time,
-                'lookback_days' => max(1, min(90, (int) ($brief['lookback_days'] ?? ($defaults[$briefKey]['lookback_days'] ?? 7)))),
+                'lookback_days' => max(1, min(90, (int) ($brief['lookback_days'] ?? ($defaults[$briefKey]['lookback_days'] ?? ($def['default_lookback'] ?? 7))))),
             ];
         }
 
@@ -137,7 +138,9 @@ class AiSettingsResolver
         $merged['exception_alerts'] = [
             'enabled' => (bool) ($alerts['enabled'] ?? false),
             'low_stock' => (bool) ($alerts['low_stock'] ?? true),
-            'unpaid_spike' => (bool) ($alerts['unpaid_spike'] ?? false),
+            'unpaid_spike' => (bool) ($alerts['unpaid_spike'] ?? true),
+            'unusual_discounts' => (bool) ($alerts['unusual_discounts'] ?? true),
+            'void_cancel_bursts' => (bool) ($alerts['void_cancel_bursts'] ?? true),
         ];
 
         return $merged;

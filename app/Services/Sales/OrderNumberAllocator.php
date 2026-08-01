@@ -34,9 +34,7 @@ class OrderNumberAllocator
 
     public function nextForOrganization(int $organizationId): int
     {
-        return DB::transaction(function () use ($organizationId): int {
-            // Serialize order number allocation per organization so concurrent checkouts
-            // cannot read the same max(order_num) and collide on insert.
+        return $this->withOrganizationOrderLock($organizationId, function () use ($organizationId): int {
             Organization::query()
                 ->whereKey($organizationId)
                 ->lockForUpdate()
@@ -60,8 +58,7 @@ class OrderNumberAllocator
     {
         $count = max(1, min(self::MAX_RESERVE_BLOCK, $count));
 
-        return DB::transaction(function () use ($organizationId, $count): array {
-            // Prefer org row lock when present (production); watermark lock always serializes.
+        return $this->withOrganizationOrderLock($organizationId, function () use ($organizationId, $count): array {
             Organization::query()
                 ->whereKey($organizationId)
                 ->lockForUpdate()
@@ -83,6 +80,53 @@ class OrderNumberAllocator
                 'end' => $end,
                 'numbers' => $numbers,
             ];
+        });
+    }
+
+    /**
+     * Serialize order-number allocation across nested transactions / app servers.
+     *
+     * @template T
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    protected function withOrganizationOrderLock(int $organizationId, callable $callback): mixed
+    {
+        $lockKey = 'sales_order_num:'.$organizationId;
+
+        return DB::transaction(function () use ($organizationId, $lockKey, $callback) {
+            $lock = DB::selectOne('SELECT GET_LOCK(?, 15) AS acquired', [$lockKey]);
+            if (! $lock || (int) ($lock->acquired ?? 0) !== 1) {
+                throw new \RuntimeException(
+                    "Could not allocate an order number for organization {$organizationId}. Please try again.",
+                );
+            }
+
+            try {
+                return $callback();
+            } finally {
+                DB::select('SELECT RELEASE_LOCK(?)', [$lockKey]);
+            }
+        });
+    }
+
+    /**
+     * Ensure watermark is at least $orderNum so the next allocator skips it.
+     */
+    public function reserveSpecificForOrganization(int $organizationId, int $orderNum): void
+    {
+        if ($orderNum <= 0 || $orderNum >= self::LEGACY_IMPORTED_ORDER_NUM_MIN) {
+            return;
+        }
+
+        $this->withOrganizationOrderLock($organizationId, function () use ($organizationId, $orderNum): void {
+            Organization::query()
+                ->whereKey($organizationId)
+                ->lockForUpdate()
+                ->first();
+
+            $this->lockWatermarkRow($organizationId);
+            $this->writeWatermark($organizationId, $orderNum);
         });
     }
 

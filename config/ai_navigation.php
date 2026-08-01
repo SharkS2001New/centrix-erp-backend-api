@@ -174,5 +174,32 @@ return [
             'permission' => 'payments.manage',
             'module' => 'payments',
         ],
+        [
+            'type' => 'navigate_orders',
+            'label' => 'Open filtered sales orders',
+            'description' => 'Navigate to Sales → Orders with search/filters (product, unpaid, mobile). Confirm to open the list.',
+            'permission' => 'sales.order_queue_all.view',
+            'module' => 'sales.backend',
+        ],
+        [
+            'type' => 'open_lpo',
+            'label' => 'Open LPO / procurement',
+            'description' => 'Open purchase orders so the user can confirm a draft from AI suggestions.',
+            'permission' => 'purchasing.lpo.view',
+            'module' => 'customers_suppliers',
+        ],
+        [
+            'type' => 'open_customer_collections',
+            'label' => 'Open customer for collections',
+            'description' => 'Open a debtor customer record to collect / send statement.',
+            'permission' => 'customers.customers.view',
+            'module' => 'customers_suppliers',
+        ],
+        [
+            'type' => 'open_product',
+            'label' => 'Open product (hold / review SKU)',
+            'description' => 'Open a product card to review stock or mark hold.',
+            'permission' => 'catalogue.products.view',
+        ],
     ],
 ];

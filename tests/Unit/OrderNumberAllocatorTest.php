@@ -56,6 +56,15 @@ class OrderNumberAllocatorTest extends TestCase
         );
     }
 
+    public function test_reserve_specific_advances_watermark(): void
+    {
+        $allocator = app(OrderNumberAllocator::class);
+        $allocator->reserveSpecificForOrganization(99, 50);
+
+        $this->assertSame(51, $allocator->peekNextForOrganization(99));
+        $this->assertSame(51, $allocator->nextForOrganization(99));
+    }
+
     public function test_reserve_block_advances_watermark_ahead_of_sales(): void
     {
         $this->insertSaleRow([

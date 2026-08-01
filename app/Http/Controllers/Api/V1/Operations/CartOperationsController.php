@@ -485,10 +485,13 @@ class CartOperationsController extends Controller
             ]);
 
             $sale->update([
+                // Free the live order number so a later checkout cannot collide on uq_org_order_num.
+                'order_num' => app(OrderNumberAllocator::class)->tombstoneForSupersededSale((int) $sale->id),
                 'status' => 'cancelled',
                 'cancelled_at' => now(),
                 'cancelled_by' => $user->id,
                 'stock_balanced' => 0,
+                'archived' => 1,
                 'fulfillment_meta' => $meta,
             ]);
 

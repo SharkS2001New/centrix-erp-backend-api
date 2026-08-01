@@ -115,10 +115,9 @@ class AiInsightDeliveryService
     {
         $type = (string) ($insight['type'] ?? 'insight');
         $label = match ($type) {
-            'stock_pulse' => 'Stock Pulse',
-            'sales_brief' => 'Sales Brief',
             'report_analyze' => 'Report Analysis',
-            default => 'AI Insight',
+            'ask' => 'AI Follow-up',
+            default => AiInsightCatalog::label($type),
         };
 
         return "Centrix {$label}";

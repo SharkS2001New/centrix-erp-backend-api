@@ -54,11 +54,57 @@ class AiActionExecutor
             'create_employee' => $this->createEmployee($user, $params),
             'create_report_template' => $this->createReportTemplate($user, $params),
             'record_customer_payment' => $this->recordCustomerPayment($user, $params),
+            'navigate_orders', 'open_lpo', 'open_customer_collections', 'open_product' => $this->navigateConfirm($type, $params),
             default => [
                 'success' => false,
                 'message' => 'Unknown action type.',
             ],
         };
+    }
+
+    /**
+     * Closed-loop insight actions: confirm opens a deep link (no silent mutations).
+     *
+     * @param  array<string, mixed>  $params
+     * @return array{success: bool, message: string, result?: array<string, mixed>}
+     */
+    protected function navigateConfirm(string $type, array $params): array
+    {
+        $href = trim((string) ($params['href'] ?? ''));
+        if ($href === '' || ! str_starts_with($href, '/')) {
+            $href = match ($type) {
+                'open_lpo' => '/lpo',
+                'open_customer_collections' => ! empty($params['customer_num'])
+                    ? '/customers/'.rawurlencode((string) $params['customer_num'])
+                    : '/reports/ar-aging',
+                'open_product' => ! empty($params['product_code'])
+                    ? '/products/'.rawurlencode((string) $params['product_code'])
+                    : '/products',
+                default => '/sales/orders',
+            };
+            if ($type === 'navigate_orders' && ! empty($params['q'])) {
+                $href .= '?q='.rawurlencode((string) $params['q']);
+            }
+        }
+
+        $label = match ($type) {
+            'open_lpo' => 'Purchase orders (LPO)',
+            'open_customer_collections' => 'Customer collections',
+            'open_product' => 'Product',
+            default => 'Filtered sales orders',
+        };
+
+        return [
+            'success' => true,
+            'message' => "Ready: {$label}. Use the link below to open it.",
+            'result' => [
+                'navigate' => true,
+                'path' => $href,
+                'href' => $href,
+                'q' => $params['q'] ?? null,
+                'note' => $params['note'] ?? null,
+            ],
+        ];
     }
 
     public function canExecute(User $user, string $type): bool

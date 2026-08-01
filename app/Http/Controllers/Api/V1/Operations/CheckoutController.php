@@ -14,8 +14,6 @@ use App\Models\Customer;
 use App\Services\Sales\SaleRouteResolver;
 use App\Models\KraResponse;
 use App\Models\PaymentMethod;
-use App\Models\Product;
-use App\Models\Organization;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\StockReservation;
@@ -27,24 +25,20 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
+use App\Jobs\FinalizeSaleAfterCheckoutJob;
 use App\Services\Accounting\CustomerInvoiceService;
-use App\Services\Accounting\SaleJournalService;
 use App\Services\Erp\SalePaymentColumnMapper;
-use App\Services\Fulfillment\AutoTripAssignmentService;
 use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
-use App\Services\Notifications\CustomerNotificationService;
 use App\Services\Sales\DiscountApprovalService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\MobileCheckoutLocationService;
 use App\Services\Sales\MobileCheckoutSettings;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
-use App\Services\Sales\MobileSalesService;
 use App\Services\Sales\PosCashRounding;
 use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
-use App\Services\Cache\CompletedSalesCacheService;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -62,27 +56,36 @@ class CheckoutController extends Controller
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $gate = $this->erp->gateForUser($request->user());
+        $channel = (string) $cart->channel;
         try {
-            $sale = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
+            $result = $this->checkoutFromCart($cart, $request->user(), $gate, $request->validated());
         } catch (InvalidArgumentException $e) {
             throw ValidationException::withMessages([
                 'checkout' => $e->getMessage(),
             ]);
         }
 
-        if ($sale->status !== 'pending_approval') {
-            app(AutoTripAssignmentService::class)->tryAssignSale($sale, $request->user());
+        $sale = $result['sale'];
+        $deductStock = (bool) ($result['deduct_stock'] ?? false);
+        $runSideEffects = (bool) ($result['run_side_effects'] ?? false);
+
+        // Stock ledger, journals, SMS/email, trip assignment, and cache invalidation
+        // run after the HTTP response so POS can print immediately.
+        if ($deductStock || $runSideEffects) {
+            FinalizeSaleAfterCheckoutJob::dispatch(
+                (int) $sale->id,
+                (int) $request->user()->id,
+                $deductStock,
+                $runSideEffects,
+            )->afterResponse();
         }
 
         $labels = config('erp.order_status_labels', []);
         $statusName = $labels[$sale->status]
             ?? ucfirst(str_replace('_', ' ', (string) $sale->status));
 
-        app(MobileSalesService::class)->invalidateDashboardForUser($request->user());
-        app(CompletedSalesCacheService::class)->invalidateForSale($sale);
-
         // Mobile only needs confirmation fields; skip full toArray of items/payments.
-        if ((string) $cart->channel === 'mobile') {
+        if ($channel === 'mobile') {
             return response()->json([
                 'id' => (int) $sale->id,
                 'order_num' => (int) $sale->order_num,
@@ -164,7 +167,13 @@ class CheckoutController extends Controller
         ]);
     }
 
-    protected function checkoutFromCart(TemporaryCart $cart, User $user, CapabilityGate $gate, array $input): Sale
+    /**
+     * Persist the sale (and optional KRA) synchronously; stock ledger / journals /
+     * notifications are finalized after the HTTP response.
+     *
+     * @return array{sale: Sale, deduct_stock: bool, run_side_effects: bool}
+     */
+    protected function checkoutFromCart(TemporaryCart $cart, User $user, CapabilityGate $gate, array $input): array
     {
         $lines = CartLine::where('cart_id', $cart->id)->get();
         if ($lines->isEmpty()) {
@@ -178,24 +187,15 @@ class CheckoutController extends Controller
             isset($input['discount_approval_reason']) ? (string) $input['discount_approval_reason'] : null,
         );
 
-        $inventorySettings = $gate->moduleSettings('inventory');
         $salesSettings = $gate->moduleSettings('sales');
-        $txnType = $this->saleTransactionType($cart->channel);
 
-        $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
-
-        return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $inventorySettings, $salesSettings, $txnType, $allowBelowStock) {
-            $stockDeducted = false;
+        return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $salesSettings) {
             $customerNum = $input['customer_num'] ?? null;
             $loyaltyCardIdEarly = $cart->loyalty_card_id ? (int) $cart->loyalty_card_id : null;
             if (! $customerNum && $loyaltyCardIdEarly) {
                 $customerNum = LoyaltyCard::find($loyaltyCardIdEarly)?->customer_num;
             }
-            $orderNum = isset($input['order_num'])
-                ? (int) $input['order_num']
-                : ($cart->held_order_num
-                    ? (int) $cart->held_order_num
-                    : app(OrderNumberAllocator::class)->nextForOrganization((int) $user->organization_id));
+            $orderNum = $this->resolveCheckoutOrderNum($cart, $user, $input);
 
             $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
             app(UserMobileOrderScopeService::class)->assertCheckoutRoute($user, (string) $cart->channel, $routeId);
@@ -319,7 +319,7 @@ class CheckoutController extends Controller
             $allowPartialPayment = false;
             $paymentMethodCode = (string) ($input['payment_method_code'] ?? 'CASH');
 
-            $isSaveOnly = $payNow <= 0 && ! $isCredit && ! empty($input['save_only']);
+            $isSaveOnly = $payNow <= 0 && $amountPaid <= 0.01 && ! $isCredit && ! empty($input['save_only']);
             if ($isSaveOnly) {
                 $requested = isset($input['status']) && is_string($input['status']) ? $input['status'] : null;
                 if ($requested === 'held') {
@@ -327,11 +327,11 @@ class CheckoutController extends Controller
                 } else {
                     $orderStatus = $workflow->resolveSaveStatus($cart->channel);
                 }
-            } elseif ($payNow > 0 || $isCredit) {
+            } elseif ($amountPaid > 0.01 || $payNow > 0 || $isCredit) {
                 $orderStatus = $workflow->resolveCheckoutStatus(
                     $cart->channel,
                     $isCredit,
-                    $payNow,
+                    $amountPaid,
                     $total,
                     $paymentMethodCode,
                     $allowPartialPayment,
@@ -399,7 +399,7 @@ class CheckoutController extends Controller
                 $fulfillmentMeta['sales_workspace'] = (string) $input['sales_workspace'];
             }
 
-            $sale = Sale::create([
+            $sale = $this->createSaleWithOrderNum($orderNum, [
                 'order_num' => $orderNum,
                 'branch_id' => $cart->branch_id ?? $user->branch_id,
                 'organization_id' => $user->organization_id,
@@ -424,44 +424,26 @@ class CheckoutController extends Controller
                 'amount_paid' => $amountPaid,
                 'completed_at' => null,
                 'fulfillment_meta' => $fulfillmentMeta !== [] ? $fulfillmentMeta : null,
-            ]);
+            ], (int) $user->organization_id);
 
             if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel)) {
                 $sale->update(['completed_at' => now()]);
             }
 
-            $stockDeducted = false;
             $deductStockRequested = (bool) ($input['deduct_stock'] ?? true);
             $shouldDeductNow = $deductStockRequested
                 && $gate->shouldDeductStockAtCheckout($workflow, $orderStatus, (string) $cart->channel);
+            // Ledger posting is deferred after the HTTP response. Keep soft holds so
+            // available stock stays blocked (same as cart reservations) until then.
+            $pendingStockDeduct = $shouldDeductNow;
 
-            $productsByCode = $this->orgProductsByCode(
-                (int) $user->organization_id,
-                $lines->pluck('product_code'),
-            );
-
-            foreach ($lines as $i => $line) {
-                $product = $productsByCode->get((string) $line->product_code);
-                $location = $product
-                    ? $this->resolveSaleLineStockLocation(
-                        (string) $cart->channel,
-                        $inventorySettings,
-                        $salesSettings,
-                        $product,
-                        (bool) $line->on_wholesale_retail,
-                    )
-                    : $this->saleLineStockLocation(
-                        (string) $cart->channel,
-                        $inventorySettings,
-                        $salesSettings,
-                        (bool) $line->on_wholesale_retail,
-                    );
-
+            foreach ($lines->values() as $i => $line) {
                 SaleItem::create([
                     'sale_id' => $sale->id,
                     'product_code' => $line->product_code,
-                    'line_no' => $line->line_no ?: ($i + 1),
-                    'item_code' => (string) ($line->line_no ?: ($i + 1)),
+                    // Always renumber — cart line_no can collide under concurrent POS adds.
+                    'line_no' => $i + 1,
+                    'item_code' => (string) ($i + 1),
                     'quantity' => $line->quantity,
                     'uom' => $line->uom,
                     'selling_price' => $line->unit_price,
@@ -473,29 +455,9 @@ class CheckoutController extends Controller
                     'amount' => $line->amount,
                     'on_wholesale_retail' => $line->on_wholesale_retail,
                 ]);
-
-                if ($shouldDeductNow) {
-                    $unitCost = max(0, (float) ($product?->last_cost_price ?? 0));
-                    $this->postStockLedger([
-                        'branch_id' => $sale->branch_id,
-                        'product_code' => $line->product_code,
-                        'stock_location' => $location,
-                        'transaction_type' => $txnType,
-                        'reference_type' => 'sale',
-                        'reference_id' => $sale->id,
-                        'quantity_change' => -abs((float) $line->quantity),
-                        'unit_cost' => $unitCost > 0 ? $unitCost : null,
-                        'created_by' => $user->id,
-                    ], $allowBelowStock);
-                    $stockDeducted = true;
-                }
             }
 
-            if (! empty($stockDeducted)) {
-                $sale->update(['stock_balanced' => 1]);
-                $this->releaseCartReservations((int) $cart->id);
-                $this->releaseSaleReservations((int) $sale->id);
-            } elseif ($gate->shouldHoldStockOnCheckout($workflow, $orderStatus, (string) $cart->channel)) {
+            if ($pendingStockDeduct || $gate->shouldHoldStockOnCheckout($workflow, $orderStatus, (string) $cart->channel)) {
                 $transferred = StockReservation::query()
                     ->where('cart_id', $cart->id)
                     ->whereNull('released_at')
@@ -504,6 +466,11 @@ class CheckoutController extends Controller
                     $this->transferCartReservationsToSale((int) $cart->id, (int) $sale->id);
                 } else {
                     $this->reserveSaleStockIfNeeded($sale->fresh(['items']), $user, $gate);
+                }
+                if ($pendingStockDeduct) {
+                    $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+                    $meta['pending_stock_deduct'] = true;
+                    $sale->update(['fulfillment_meta' => $meta]);
                 }
             } else {
                 $this->releaseCartReservations($cart->id);
@@ -561,6 +528,7 @@ class CheckoutController extends Controller
 
             if ($payNow > 0) {
                 $splits = $this->normalizeCheckoutPaymentSplits($input['payment_splits'] ?? null);
+                $mpesaRecordedInSplits = false;
                 if ($splits !== []) {
                     $splitTotal = round(array_sum(array_column($splits, 'amount')), 2);
                     $expectedSplitTotal = round($payNow + $mpesaOnCart, 2);
@@ -572,6 +540,9 @@ class CheckoutController extends Controller
                     }
                     foreach ($splits as $split) {
                         $methodCode = (string) $split['method_code'];
+                        if (strtoupper($methodCode) === 'MPESA') {
+                            $mpesaRecordedInSplits = true;
+                        }
                         $method = $this->resolveCheckoutPaymentMethod(
                             (int) $sale->organization_id,
                             $methodCode,
@@ -605,6 +576,46 @@ class CheckoutController extends Controller
                         ]);
                     }
                     SalePaymentColumnMapper::applyToSale($sale, $paymentMethodCode, $payNow);
+                    $mpesaRecordedInSplits = strtoupper((string) $paymentMethodCode) === 'MPESA';
+                }
+
+                // Cart-applied M-Pesa is included in amount_paid; ensure a payment row exists
+                // when splits only covered the remaining cash due.
+                if ($mpesaOnCart > 0 && ! $mpesaRecordedInSplits) {
+                    $mpesaMethod = $this->resolveCheckoutPaymentMethod(
+                        (int) $sale->organization_id,
+                        'MPESA',
+                    );
+                    if ($mpesaMethod) {
+                        SalePayment::create([
+                            'sale_id' => $sale->id,
+                            'float_session_id' => $floatSessionId,
+                            'payment_method_id' => $mpesaMethod->id,
+                            'amount' => $mpesaOnCart,
+                            'reference_number' => $cart->mpesa_transaction_code
+                                ?? ($input['payment_reference'] ?? null),
+                            'paid_at' => $input['payment_date'] ?? now(),
+                        ]);
+                        SalePaymentColumnMapper::applyToSale($sale->fresh(), 'MPESA', $mpesaOnCart);
+                    }
+                }
+            } elseif ($mpesaOnCart > 0) {
+                // Fully paid via cart-applied M-Pesa (STK) — pay_now is capped to cash due (0).
+                $mpesaMethod = $this->resolveCheckoutPaymentMethod(
+                    (int) $sale->organization_id,
+                    'MPESA',
+                );
+                if ($mpesaMethod) {
+                    SalePayment::create([
+                        'sale_id' => $sale->id,
+                        'float_session_id' => $floatSessionId,
+                        'payment_method_id' => $mpesaMethod->id,
+                        'amount' => $mpesaOnCart,
+                        'reference_number' => $cart->mpesa_transaction_code
+                            ?? ($input['payment_reference'] ?? null),
+                        'paid_at' => $input['payment_date'] ?? now(),
+                    ]);
+                    SalePaymentColumnMapper::applyToSale($sale->fresh(), 'MPESA', $mpesaOnCart);
                 }
             }
 
@@ -662,19 +673,91 @@ class CheckoutController extends Controller
                 $sale->setRelation('kraResponse', $kraResponse);
             }
 
-            if (! $isParkedOrder && $orderStatus !== 'pending_approval') {
-                app(SaleJournalService::class)->postIfEnabled($sale, $user, $gate);
+            $runSideEffects = ! $isParkedOrder && $orderStatus !== 'pending_approval';
 
-                $organization = Organization::find($user->organization_id);
-                if ($organization) {
-                    app(CustomerNotificationService::class)->notifyOrderPlaced($sale, $organization);
-                }
-            }
-
-            app(\App\Services\Audit\OperationalAuditService::class)->logSaleCheckout($user, $sale);
-
-            return $sale;
+            return [
+                'sale' => $sale,
+                'deduct_stock' => $pendingStockDeduct,
+                'run_side_effects' => $runSideEffects,
+            ];
         });
+    }
+
+    /**
+     * Pick an order number for checkout, freeing stale held/cancelled rows that still
+     * occupy a number the cart intends to reuse (POS edit / double-submit races).
+     *
+     * @param  array<string, mixed>  $input
+     */
+    protected function resolveCheckoutOrderNum(TemporaryCart $cart, User $user, array $input): int
+    {
+        $orgId = (int) $user->organization_id;
+        $allocator = app(OrderNumberAllocator::class);
+        $requested = isset($input['order_num'])
+            ? (int) $input['order_num']
+            : ($cart->held_order_num ? (int) $cart->held_order_num : null);
+
+        if ($requested === null || $requested <= 0) {
+            return $allocator->nextForOrganization($orgId);
+        }
+
+        $existing = Sale::query()
+            ->where('organization_id', $orgId)
+            ->where('order_num', $requested)
+            ->first();
+
+        if (! $existing) {
+            // Claim the watermark so concurrent allocators skip this number.
+            $allocator->reserveSpecificForOrganization($orgId, $requested);
+
+            return $requested;
+        }
+
+        $supersededId = $cart->superseded_sale_id ? (int) $cart->superseded_sale_id : null;
+        $canFree = (int) $existing->id === $supersededId
+            || in_array((string) $existing->status, ['held', 'draft', 'cancelled'], true);
+
+        if ($canFree) {
+            $existing->update([
+                'order_num' => $allocator->tombstoneForSupersededSale((int) $existing->id),
+                'status' => in_array((string) $existing->status, ['held', 'draft'], true)
+                    ? 'cancelled'
+                    : $existing->status,
+                'cancelled_at' => $existing->cancelled_at ?? now(),
+                'cancelled_by' => $existing->cancelled_by ?? $user->id,
+                'archived' => 1,
+            ]);
+            $allocator->reserveSpecificForOrganization($orgId, $requested);
+
+            return $requested;
+        }
+
+        // Live sale already owns this number — allocate a fresh one instead of 500ing.
+        return $allocator->nextForOrganization($orgId);
+    }
+
+    /**
+     * @param  array<string, mixed>  $attributes
+     */
+    protected function createSaleWithOrderNum(int $orderNum, array $attributes, int $organizationId): Sale
+    {
+        $allocator = app(OrderNumberAllocator::class);
+        $attributes['order_num'] = $orderNum;
+        $lastError = null;
+
+        for ($attempt = 0; $attempt < 4; $attempt++) {
+            try {
+                return Sale::create($attributes);
+            } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+                $lastError = $e;
+                if (! str_contains($e->getMessage(), 'uq_org_order_num')) {
+                    throw $e;
+                }
+                $attributes['order_num'] = $allocator->nextForOrganization($organizationId);
+            }
+        }
+
+        throw $lastError ?? new InvalidArgumentException('Could not allocate a unique order number.');
     }
 
     protected function derivePaymentStatus(float $total, float $paid): string

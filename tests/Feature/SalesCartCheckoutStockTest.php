@@ -76,7 +76,9 @@ class SalesCartCheckoutStockTest extends TestCase
         ])->assertCreated()->json();
 
         $this->assertEquals('completed', $sale['status']);
-        $this->assertEquals(1, $sale['stock_balanced']);
+        // Ledger deduct runs afterResponse — response may still show unbalanced,
+        // but the sale must be balanced once the request finishes.
+        $this->assertEquals(1, (int) Sale::query()->findOrFail($sale['id'])->stock_balanced);
         $this->assertDatabaseMissing('cart_lines', ['cart_id' => $cartId]);
 
         $this->assertDatabaseHas('inventory_transactions', [
@@ -506,6 +508,71 @@ class SalesCartCheckoutStockTest extends TestCase
             'released_at' => null,
         ]);
         $this->assertEquals($before - 4, $this->availableStore());
+    }
+
+    public function test_invoice_print_blocked_when_reserved_but_physical_stock_gone(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'unpaid',
+            'is_credit_sale' => true,
+            'pay_now' => 0,
+            'payment_method_code' => 'CREDIT',
+        ])->assertCreated()->json();
+
+        $saleId = (int) $sale['id'];
+        $this->assertDatabaseHas('stock_reservations', [
+            'sale_id' => $saleId,
+            'product_code' => $this->productCode,
+            'released_at' => null,
+        ]);
+
+        // Simulate stock vanishing after reservation (stock take / adjustment).
+        CurrentStock::query()
+            ->where('product_code', $this->productCode)
+            ->where('branch_id', $this->user->branch_id)
+            ->update(['shop_quantity' => 0]);
+
+        $detail = $this->getJson("/api/v1/sales/{$saleId}")->assertOk()->json();
+        $this->assertFalse(
+            (bool) ($detail['can_print_invoice'] ?? true),
+            'Tax invoice print must be blocked when physical stock no longer covers the order',
+        );
+    }
+
+    public function test_invoice_print_allowed_when_sale_reservation_covers_on_hand(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'unpaid',
+            'is_credit_sale' => true,
+            'pay_now' => 0,
+            'payment_method_code' => 'CREDIT',
+        ])->assertCreated()->json();
+
+        $detail = $this->getJson("/api/v1/sales/{$sale['id']}")->assertOk()->json();
+        $this->assertTrue(
+            (bool) ($detail['can_print_invoice'] ?? false),
+            'Print should remain allowed while this sale’s reservation is covered by on-hand stock',
+        );
     }
 
     protected function onHandShop(): float

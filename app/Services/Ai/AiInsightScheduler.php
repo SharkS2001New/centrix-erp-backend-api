@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Runs scheduled Stock Pulse / Sales Brief digests for organizations.
+ * Runs scheduled AI insight digests for organizations.
  */
 class AiInsightScheduler
 {
@@ -18,12 +18,15 @@ class AiInsightScheduler
     ) {}
 
     /**
-     * @return array{orgs_checked: int, stock_pulse: int, sales_brief: int, errors: int}
+     * @return array<string, int>
      */
     public function runDue(?string $nowTime = null): array
     {
         $nowTime = $nowTime ?? now()->format('H:i');
-        $stats = ['orgs_checked' => 0, 'stock_pulse' => 0, 'sales_brief' => 0, 'errors' => 0];
+        $stats = ['orgs_checked' => 0, 'errors' => 0];
+        foreach (AiInsightCatalog::scheduledTypes() as $type) {
+            $stats[$type] = 0;
+        }
 
         Organization::query()
             ->whereNotNull('module_settings')
@@ -40,41 +43,45 @@ class AiInsightScheduler
                         continue;
                     }
 
-                    $stock = $settings['stock_pulse'] ?? [];
-                    if (! empty($stock['enabled']) && ($stock['schedule_time'] ?? '') === $nowTime) {
-                        if ($this->alreadySentToday($organization, 'stock_pulse')) {
+                    foreach (AiInsightCatalog::scheduledTypes() as $type) {
+                        $cfg = $settings[$type] ?? [];
+                        if (empty($cfg['enabled']) || ($cfg['schedule_time'] ?? '') !== $nowTime) {
+                            continue;
+                        }
+                        if ($this->alreadySentToday($organization, $type)) {
                             continue;
                         }
                         try {
-                            $insight = $this->insights->stockPulse($actor, $organization);
+                            $insight = $this->insights->runType($actor, $organization, $type);
                             $this->delivery->deliver($organization, $insight);
-                            $this->markSentToday($organization, 'stock_pulse');
-                            $stats['stock_pulse']++;
+                            $this->markSentToday($organization, $type);
+                            $stats[$type] = ($stats[$type] ?? 0) + 1;
                         } catch (\Throwable $e) {
                             $stats['errors']++;
-                            Log::warning('AI stock pulse digest failed', [
+                            Log::warning('AI insight digest failed', [
                                 'organization_id' => $organization->id,
+                                'type' => $type,
                                 'message' => $e->getMessage(),
                             ]);
                         }
                     }
 
-                    $sales = $settings['sales_brief'] ?? [];
-                    if (! empty($sales['enabled']) && ($sales['schedule_time'] ?? '') === $nowTime) {
-                        if ($this->alreadySentToday($organization, 'sales_brief')) {
-                            continue;
-                        }
-                        try {
-                            $insight = $this->insights->salesBrief($actor, $organization);
-                            $this->delivery->deliver($organization, $insight);
-                            $this->markSentToday($organization, 'sales_brief');
-                            $stats['sales_brief']++;
-                        } catch (\Throwable $e) {
-                            $stats['errors']++;
-                            Log::warning('AI sales brief digest failed', [
-                                'organization_id' => $organization->id,
-                                'message' => $e->getMessage(),
-                            ]);
+                    // Wired exception radar when exception_alerts.enabled (same morning window).
+                    $alerts = $settings['exception_alerts'] ?? [];
+                    if (! empty($alerts['enabled']) && ($settings['exception_radar']['schedule_time'] ?? '07:05') === $nowTime) {
+                        if (! $this->alreadySentToday($organization, 'exception_radar_alerts')) {
+                            try {
+                                $insight = $this->insights->runType($actor, $organization, 'exception_radar');
+                                $this->delivery->deliver($organization, $insight);
+                                $this->markSentToday($organization, 'exception_radar_alerts');
+                                $stats['exception_radar'] = ($stats['exception_radar'] ?? 0) + 1;
+                            } catch (\Throwable $e) {
+                                $stats['errors']++;
+                                Log::warning('AI exception radar failed', [
+                                    'organization_id' => $organization->id,
+                                    'message' => $e->getMessage(),
+                                ]);
+                            }
                         }
                     }
                 }

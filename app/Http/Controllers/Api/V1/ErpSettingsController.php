@@ -111,6 +111,7 @@ class ErpSettingsController extends Controller
             'invoice_valid_days',
             'receipt_copies',
             'show_branch_on_receipt',
+            'show_full_package_uom_on_documents',
             'stock_deduct_on',
             'orders_list_default_days',
             'orders_list_search_days',

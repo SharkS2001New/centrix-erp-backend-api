@@ -480,10 +480,13 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::prefix('insights')->group(function () {
             Route::get('dashboard', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'dashboard']);
+            Route::get('catalog', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'catalog']);
             Route::post('analyze-report', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'analyzeReport']);
             Route::post('ask', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'ask']);
             Route::post('stock-pulse', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'stockPulse']);
             Route::post('sales-brief', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'salesBrief']);
+            Route::post('run', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'run']);
+            Route::post('explain-screen', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'explainScreen']);
             Route::post('deliver', [\App\Http\Controllers\Api\V1\AiInsightsController::class, 'deliver']);
         });
     });

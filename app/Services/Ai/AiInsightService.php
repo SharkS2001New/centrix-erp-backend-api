@@ -43,34 +43,92 @@ class AiInsightService
     /** @return array<string, mixed> */
     public function stockPulse(User $user, Organization $organization, ?int $lookbackDays = null): array
     {
-        $insights = AiSettingsResolver::insightsForOrganization($organization);
-        $days = $lookbackDays ?? (int) ($insights['stock_pulse']['lookback_days'] ?? 14);
-        $slice = $this->dataBuilder->stockPulseSlice($organization, $user, $days);
-        $prompt = <<<'PROMPT'
-You are Centrix stock intelligence for a Kenyan wholesale/retail business (KES).
-Using the JSON data:
-1) List fast-moving items (from fast_movers).
-2) List items below stock / reorder (from low_stock_items) with suggested reorder focus.
-3) Give short, practical purchasing advice.
-Return JSON only with keys: summary (string), findings (array of strings), actions (array of {label, href?}).
-PROMPT;
+        $options = [];
+        if ($lookbackDays !== null) {
+            $options['lookback_days'] = $lookbackDays;
+        }
 
-        return $this->runInsight($user, $organization, 'stock_pulse', $slice, $prompt);
+        return $this->runType($user, $organization, 'stock_pulse', $options);
     }
 
     /** @return array<string, mixed> */
     public function salesBrief(User $user, Organization $organization, ?int $lookbackDays = null): array
     {
-        $insights = AiSettingsResolver::insightsForOrganization($organization);
-        $days = $lookbackDays ?? (int) ($insights['sales_brief']['lookback_days'] ?? 7);
-        $slice = $this->dataBuilder->salesBriefSlice($organization, $user, $days);
-        $prompt = <<<'PROMPT'
-You are Centrix sales intelligence for Kenyan field/backoffice sales (KES).
-Summarize period performance vs previous period, top products/customers, unpaid risk, and 3 actions managers should take.
-Return JSON only with keys: summary (string), findings (array of strings), actions (array of {label, href?}).
-PROMPT;
+        $options = [];
+        if ($lookbackDays !== null) {
+            $options['lookback_days'] = $lookbackDays;
+        }
 
-        return $this->runInsight($user, $organization, 'sales_brief', $slice, $prompt);
+        return $this->runType($user, $organization, 'sales_brief', $options);
+    }
+
+    /**
+     * Run any catalog insight type (digests + on-demand analyses).
+     *
+     * @param  array<string, mixed>  $options
+     * @return array<string, mixed>
+     */
+    public function runType(User $user, Organization $organization, string $type, array $options = []): array
+    {
+        $type = str_replace('-', '_', trim($type));
+        if (! AiInsightCatalog::isKnown($type)) {
+            throw new InvalidArgumentException('Unknown insight type: '.$type);
+        }
+
+        $insights = AiSettingsResolver::insightsForOrganization($organization);
+        $defaultLookback = (int) (AiInsightCatalog::definitions()[$type]['default_lookback'] ?? 7);
+        $days = (array_key_exists('lookback_days', $options) && $options['lookback_days'] !== null)
+            ? (int) $options['lookback_days']
+            : (int) ($insights[$type]['lookback_days'] ?? $defaultLookback);
+
+        $slice = match ($type) {
+            'stock_pulse' => $this->dataBuilder->stockPulseSlice($organization, $user, $days),
+            'sales_brief' => $this->dataBuilder->salesBriefSlice($organization, $user, $days),
+            'debtors_brief' => $this->dataBuilder->debtorsBriefSlice($organization, $user, $days),
+            'cash_till_health' => $this->dataBuilder->cashTillHealthSlice($organization, $user, $days),
+            'route_mobile_debrief' => $this->dataBuilder->routeMobileDebriefSlice($organization, $user, $days),
+            'exception_radar' => $this->dataBuilder->exceptionRadarSlice($organization, $user, $days),
+            'product_demand' => $this->dataBuilder->productDemandSlice(
+                $organization,
+                $user,
+                $days,
+                $options['product_code'] ?? null,
+                $options['product_query'] ?? $options['q'] ?? null,
+            ),
+            'customer_360' => $this->dataBuilder->customer360Slice(
+                $organization,
+                $user,
+                (string) ($options['customer_num'] ?? ''),
+                $days,
+            ),
+            'margin_discount_watchdog' => $this->dataBuilder->marginDiscountWatchdogSlice($organization, $user, $days),
+            'procurement_companion' => $this->dataBuilder->procurementCompanionSlice($organization, $user, $days),
+            'collections_playbook' => $this->dataBuilder->collectionsPlaybookSlice($organization, $user, $days),
+            'anomaly_detection' => $this->dataBuilder->anomalyDetectionSlice($organization, $user, $days),
+            'forecast_light' => $this->dataBuilder->forecastLightSlice($organization, $user, $days),
+            'branch_till_benchmarks' => $this->dataBuilder->branchTillBenchmarksSlice($organization, $user, $days),
+            'explain_screen' => $this->dataBuilder->explainScreenSlice(
+                $organization,
+                $user,
+                (string) ($options['screen_key'] ?? 'screen'),
+                is_array($options['filters'] ?? null) ? $options['filters'] : [],
+                is_array($options['rows'] ?? null) ? $options['rows'] : [],
+                is_array($options['summary'] ?? null) ? $options['summary'] : null,
+                isset($options['question']) ? (string) $options['question'] : null,
+            ),
+            default => throw new InvalidArgumentException('Insight type not implemented: '.$type),
+        };
+
+        if ($type === 'customer_360' && trim((string) ($options['customer_num'] ?? '')) === '') {
+            throw new InvalidArgumentException('customer_num is required for customer_360.');
+        }
+
+        $prompt = AiInsightCatalog::prompt($type);
+        if (! empty($options['question'])) {
+            $prompt .= "\n\nUser question: ".$options['question'];
+        }
+
+        return $this->runInsight($user, $organization, $type, $slice, $prompt);
     }
 
     /**

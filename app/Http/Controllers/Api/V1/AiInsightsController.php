@@ -123,6 +123,74 @@ class AiInsightsController extends Controller
         return response()->json($result);
     }
 
+    public function run(Request $request)
+    {
+        $data = $request->validate([
+            'type' => 'required|string|max:64',
+            'lookback_days' => 'sometimes|integer|min:1|max:90',
+            'product_code' => 'sometimes|nullable|string|max:64',
+            'product_query' => 'sometimes|nullable|string|max:120',
+            'q' => 'sometimes|nullable|string|max:120',
+            'customer_num' => 'sometimes|nullable|string|max:64',
+            'screen_key' => 'sometimes|nullable|string|max:80',
+            'filters' => 'sometimes|array',
+            'rows' => 'sometimes|array|max:200',
+            'summary' => 'sometimes|nullable|array',
+            'question' => 'sometimes|nullable|string|max:2000',
+        ]);
+
+        $user = $request->user();
+        $org = $this->erp->resolveOrganization($request);
+        $this->assertInsightsAvailable($org);
+
+        try {
+            $result = $this->insights->runType($user, $org, $data['type'], $data);
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages(['type' => $e->getMessage()]);
+        }
+
+        return response()->json($result);
+    }
+
+    public function explainScreen(Request $request)
+    {
+        $data = $request->validate([
+            'screen_key' => 'required|string|max:80',
+            'filters' => 'sometimes|array',
+            'rows' => 'sometimes|array|max:200',
+            'summary' => 'sometimes|nullable|array',
+            'question' => 'sometimes|nullable|string|max:2000',
+        ]);
+
+        $user = $request->user();
+        $org = $this->erp->resolveOrganization($request);
+        $this->assertInsightsAvailable($org);
+
+        try {
+            $result = $this->insights->runType($user, $org, 'explain_screen', $data);
+        } catch (\InvalidArgumentException $e) {
+            throw ValidationException::withMessages(['screen_key' => $e->getMessage()]);
+        }
+
+        return response()->json($result);
+    }
+
+    public function catalog()
+    {
+        $defs = [];
+        foreach (\App\Services\Ai\AiInsightCatalog::definitions() as $key => $def) {
+            $defs[] = [
+                'type' => $key,
+                'label' => $def['label'],
+                'scheduled' => (bool) ($def['scheduled'] ?? false),
+                'default_lookback' => $def['default_lookback'] ?? null,
+                'default_time' => $def['default_time'] ?? null,
+            ];
+        }
+
+        return response()->json(['data' => $defs]);
+    }
+
     public function deliver(Request $request)
     {
         $data = $request->validate([

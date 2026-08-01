@@ -4,6 +4,7 @@ namespace App\Services\Ai;
 
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Ai\Concerns\BuildsExtendedInsightSlices;
 use App\Services\Inventory\LowStockReportService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -14,6 +15,8 @@ use Illuminate\Support\Facades\Schema;
  */
 class AiInsightDataBuilder
 {
+    use BuildsExtendedInsightSlices;
+
     public const MAX_REPORT_ROWS = 80;
 
     public function __construct(
@@ -176,7 +179,15 @@ class AiInsightDataBuilder
                     'value' => (int) ($unpaid['order_count'] ?? 0),
                     'hint' => 'KES '.number_format((float) ($unpaid['balance_due'] ?? 0), 2).' due',
                     'href' => '/sales/orders/queues/pending_payment',
-                    'insight_type' => 'sales_brief',
+                    'insight_type' => 'debtors_brief',
+                ],
+                [
+                    'id' => 'exceptions',
+                    'label' => 'Morning radar',
+                    'value' => 'Scan',
+                    'hint' => 'Low stock, unpaid, discounts, voids',
+                    'href' => '/reports',
+                    'insight_type' => 'exception_radar',
                 ],
             ],
         ];
@@ -296,7 +307,7 @@ class AiInsightDataBuilder
         $rows = DB::table('sales')
             ->where('organization_id', $organizationId)
             ->whereNotIn('status', ['cancelled', 'draft', 'held', 'expired'])
-            ->whereIn('payment_status', ['unpaid', 'partially_paid'])
+            ->whereIn('payment_status', ['unpaid', 'partial', 'partially_paid'])
             ->selectRaw('COUNT(*) as order_count, COALESCE(SUM(GREATEST(order_total - amount_paid, 0)), 0) as balance_due')
             ->first();
 

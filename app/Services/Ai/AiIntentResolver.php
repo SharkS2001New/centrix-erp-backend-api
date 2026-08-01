@@ -70,7 +70,73 @@ class AiIntentResolver
             ];
         }
 
+        if ($nav = $this->inferNavigateOrders($message)) {
+            return $nav;
+        }
+
+        if ($this->matchesOpenLpo($text)) {
+            return [
+                'type' => 'open_lpo',
+                'summary' => 'Open purchase orders (LPO)',
+                'params' => ['href' => '/lpo'],
+            ];
+        }
+
         return null;
+    }
+
+    /**
+     * Natural-language ops → filtered orders list (not a paragraph).
+     *
+     * @return array<string, mixed>|null
+     */
+    protected function inferNavigateOrders(string $message): ?array
+    {
+        $text = strtolower($message);
+        if (! preg_match('/\b(show|list|find|filter|open)\b.*\b(order|orders|sale|sales)\b/', $text)
+            && ! preg_match('/\borders?\s+(with|containing|for)\b/', $text)
+            && ! preg_match('/\bwho\s+bought\b/', $text)) {
+            return null;
+        }
+
+        $params = ['href' => '/sales/orders'];
+        $qParts = [];
+
+        if (preg_match('/\bunpaid\b|\bpending\s+payment\b|\bcredit\b|\bdebtor/', $text)) {
+            $params['href'] = '/sales/orders/queues/pending_payment';
+        } elseif (preg_match('/\bmobile\b|\broute\b/', $text)) {
+            $params['href'] = '/sales/orders/queues/mobile';
+        }
+
+        if (preg_match('/\b(?:with|containing|bought|for)\s+([a-z0-9][\w\s\-]{1,60})/i', $message, $m)) {
+            $term = trim($m[1]);
+            $term = preg_replace('/\b(unpaid|this week|today|orders?|mobile|credit)\b/i', '', $term) ?? $term;
+            $term = trim($term);
+            if ($term !== '') {
+                $qParts[] = $term;
+            }
+        }
+
+        if (preg_match('/\bthis\s+week\b/', $text)) {
+            $params['note'] = 'Apply the list date filter to this week after opening.';
+        }
+
+        if ($qParts !== []) {
+            $params['q'] = implode(' ', $qParts);
+            $params['href'] .= (str_contains($params['href'], '?') ? '&' : '?').'q='.rawurlencode($params['q']);
+        }
+
+        return [
+            'type' => 'navigate_orders',
+            'summary' => 'Open filtered sales orders'.(! empty($params['q']) ? ': '.$params['q'] : ''),
+            'params' => $params,
+        ];
+    }
+
+    protected function matchesOpenLpo(string $text): bool
+    {
+        return (bool) preg_match('/\b(open|create|draft)\b.*\b(lpo|purchase\s+order|procurement)\b/', $text)
+            || ((bool) preg_match('/\b(lpo|purchase\s+order)\b/', $text) && (bool) preg_match('/\b(suggest|draft|need)\b/', $text));
     }
 
     protected function entityFromPath(?string $pathname): ?string

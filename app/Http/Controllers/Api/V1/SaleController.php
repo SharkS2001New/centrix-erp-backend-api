@@ -13,6 +13,7 @@ use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\RouteOrderScope;
+use App\Services\Sales\SaleInvoicePrintStockGate;
 use App\Services\Sales\SaleOrderPresentationService;
 use App\Services\Sales\SalesListDateScope;
 use App\Services\Cache\CompletedSalesCacheService;
@@ -309,7 +310,9 @@ class SaleController extends BaseResourceController
         $paginator->setCollection(
             $presentation->enrichCollection($paginator->getCollection(), $request->user(), $gate)
         );
-        $paginator->getCollection()->transform(function (Sale $sale) use ($workflow, $editService, $lineEditService, $request, $gate) {
+        $printStockGate = app(SaleInvoicePrintStockGate::class);
+        $printStockBySaleId = $printStockGate->allowsMany($paginator->getCollection());
+        $paginator->getCollection()->transform(function (Sale $sale) use ($workflow, $editService, $lineEditService, $request, $gate, $printStockBySaleId) {
             $channel = $sale->channel ?: 'backend';
             $status = (string) $sale->status;
             $sale->setAttribute(
@@ -324,7 +327,11 @@ class SaleController extends BaseResourceController
                 'can_edit_lines',
                 $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
             );
-            $sale->setAttribute('can_print_invoice', $workflow->isPrintInvoiceStatus($status, $channel));
+            $sale->setAttribute(
+                'can_print_invoice',
+                $workflow->isPrintInvoiceStatus($status, $channel)
+                    && ($printStockBySaleId[(int) $sale->id] ?? false),
+            );
             $sale->setAttribute(
                 'can_collect_payment',
                 $workflow->canCollectPaymentForOrder($status, $channel, (string) ($sale->payment_status ?? '')),
@@ -406,7 +413,8 @@ class SaleController extends BaseResourceController
             'workflow_status' => $workflowService->alignStatusToPipeline($status, $channel),
             'can_edit' => $editService->canRestoreSaleToCart($sale, $request->user(), $gate),
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $request->user(), $gate),
-            'can_print_invoice' => $workflowService->isPrintInvoiceStatus($status, $channel),
+            'can_print_invoice' => $workflowService->isPrintInvoiceStatus($status, $channel)
+                && app(SaleInvoicePrintStockGate::class)->allows($sale),
             'can_collect_payment' => $workflowService->canCollectPaymentForOrder(
                 $status,
                 $channel,

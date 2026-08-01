@@ -29,12 +29,79 @@ class DispatchTripService
     public function generateTripCode(int $branchId, string $date): string
     {
         $prefix = 'TRIP-'.str_replace('-', '', $date);
-        $count = DispatchTrip::query()
-            ->where('branch_id', $branchId)
-            ->where('trip_code', 'like', "{$prefix}-%")
-            ->count();
+        $lockKey = $this->tripCodeLockKey($branchId, $prefix);
+        $this->acquireTripCodeLock($lockKey);
 
-        return sprintf('%s-%03d', $prefix, $count + 1);
+        try {
+            return $this->nextTripCodeForPrefix($branchId, $prefix);
+        } finally {
+            $this->releaseTripCodeLock($lockKey);
+        }
+    }
+
+    /**
+     * Allocate + insert under one advisory lock so concurrent creates cannot collide
+     * between reading the next sequence and inserting the row.
+     *
+     * @param  callable(string): DispatchTrip  $insert
+     */
+    protected function createTripWithUniqueCode(int $branchId, string $scheduledDate, callable $insert): DispatchTrip
+    {
+        $prefix = 'TRIP-'.str_replace('-', '', $scheduledDate);
+        $lockKey = $this->tripCodeLockKey($branchId, $prefix);
+        $this->acquireTripCodeLock($lockKey);
+
+        try {
+            $lastError = null;
+            for ($attempt = 0; $attempt < 5; $attempt++) {
+                try {
+                    return $insert($this->nextTripCodeForPrefix($branchId, $prefix));
+                } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+                    $lastError = $e;
+                    if (! str_contains($e->getMessage(), 'uq_branch_trip_code')) {
+                        throw $e;
+                    }
+                }
+            }
+
+            throw $lastError ?? new InvalidArgumentException('Could not allocate a unique trip code.');
+        } finally {
+            $this->releaseTripCodeLock($lockKey);
+        }
+    }
+
+    protected function tripCodeLockKey(int $branchId, string $prefix): string
+    {
+        return sprintf('dispatch_trip_code:%d:%s', $branchId, $prefix);
+    }
+
+    protected function acquireTripCodeLock(string $lockKey): void
+    {
+        $lock = DB::selectOne('SELECT GET_LOCK(?, 10) AS acquired', [$lockKey]);
+        if (! $lock || (int) ($lock->acquired ?? 0) !== 1) {
+            throw new InvalidArgumentException('Could not allocate a trip code. Please try again.');
+        }
+    }
+
+    protected function releaseTripCodeLock(string $lockKey): void
+    {
+        DB::select('SELECT RELEASE_LOCK(?)', [$lockKey]);
+    }
+
+    protected function nextTripCodeForPrefix(int $branchId, string $prefix): string
+    {
+        $latest = DispatchTrip::query()
+            ->where('branch_id', $branchId)
+            ->where('trip_code', 'like', $prefix.'-%')
+            ->orderByDesc('trip_code')
+            ->value('trip_code');
+
+        $next = 1;
+        if (is_string($latest) && preg_match('/-(\d+)$/', $latest, $matches)) {
+            $next = (int) $matches[1] + 1;
+        }
+
+        return sprintf('%s-%03d', $prefix, $next);
     }
 
     /** @param  array<string, mixed>  $data */
@@ -72,21 +139,31 @@ class DispatchTripService
         }
 
         return DB::transaction(function () use ($user, $branchId, $scheduledDate, $routeId, $routeIds, $driverId, $vehicleId, $data) {
-            $trip = DispatchTrip::create([
-                'organization_id' => (int) (
-                    $user->organization_id
-                    ?? \App\Support\OrganizationIdResolver::requireForBranch($branchId)
-                ),
-                'branch_id' => $branchId,
-                'trip_code' => $this->generateTripCode($branchId, $scheduledDate),
-                'route_id' => $routeId,
-                'driver_id' => $driverId,
-                'vehicle_id' => $vehicleId,
-                'scheduled_date' => $scheduledDate,
-                'status' => 'draft',
-                'notes' => $data['notes'] ?? null,
-                'created_by' => $user->id,
-            ]);
+            $trip = $this->createTripWithUniqueCode($branchId, $scheduledDate, function (string $tripCode) use (
+                $user,
+                $branchId,
+                $scheduledDate,
+                $routeId,
+                $driverId,
+                $vehicleId,
+                $data,
+            ) {
+                return DispatchTrip::create([
+                    'organization_id' => (int) (
+                        $user->organization_id
+                        ?? \App\Support\OrganizationIdResolver::requireForBranch($branchId)
+                    ),
+                    'branch_id' => $branchId,
+                    'trip_code' => $tripCode,
+                    'route_id' => $routeId,
+                    'driver_id' => $driverId,
+                    'vehicle_id' => $vehicleId,
+                    'scheduled_date' => $scheduledDate,
+                    'status' => 'draft',
+                    'notes' => $data['notes'] ?? null,
+                    'created_by' => $user->id,
+                ]);
+            });
 
             if ($routeIds !== []) {
                 $this->syncTripRoutes($trip, $routeIds);
@@ -161,21 +238,31 @@ class DispatchTripService
                     ->values()
                     ->all();
 
-                $target = DispatchTrip::create([
-                    'organization_id' => (int) (
-                        $user->organization_id
-                        ?? \App\Support\OrganizationIdResolver::requireForBranch($branchId)
-                    ),
-                    'branch_id' => $branchId,
-                    'trip_code' => $this->generateTripCode($branchId, $scheduledDate),
-                    'route_id' => $routeIds[0] ?? null,
-                    'driver_id' => $driverId,
-                    'vehicle_id' => $vehicleId,
-                    'scheduled_date' => $scheduledDate,
-                    'status' => 'draft',
-                    'notes' => $data['notes'] ?? 'Merged trip chart',
-                    'created_by' => $user->id,
-                ]);
+                $target = $this->createTripWithUniqueCode($branchId, $scheduledDate, function (string $tripCode) use (
+                    $user,
+                    $branchId,
+                    $scheduledDate,
+                    $routeIds,
+                    $driverId,
+                    $vehicleId,
+                    $data,
+                ) {
+                    return DispatchTrip::create([
+                        'organization_id' => (int) (
+                            $user->organization_id
+                            ?? \App\Support\OrganizationIdResolver::requireForBranch($branchId)
+                        ),
+                        'branch_id' => $branchId,
+                        'trip_code' => $tripCode,
+                        'route_id' => $routeIds[0] ?? null,
+                        'driver_id' => $driverId,
+                        'vehicle_id' => $vehicleId,
+                        'scheduled_date' => $scheduledDate,
+                        'status' => 'draft',
+                        'notes' => $data['notes'] ?? 'Merged trip chart',
+                        'created_by' => $user->id,
+                    ]);
+                });
                 $this->syncTripRoutes($target, $routeIds);
             } else {
                 $target->update([
