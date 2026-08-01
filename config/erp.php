@@ -161,6 +161,11 @@ return [
                 'hospitality.backend' => true,
                 'hospitality.dashboard' => true,
                 'hospitality.reports' => true,
+                'inventory' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
+                'customers_suppliers' => true,
+                'customers_suppliers.reports' => true,
             ]),
             'default_channels' => ['backend'],
         ],
@@ -519,6 +524,18 @@ return [
                 'unpaid' => true,
                 'partially_paid' => true,
                 'paid' => true,
+            ],
+            /**
+             * Hotel POS maths emails — hourly receipts + running cashier totals,
+             * optional daily rollup, optional email on each settled receipt.
+             */
+            'pos_email_reports' => [
+                'enabled' => false,
+                'send_hourly' => true,
+                'send_daily' => true,
+                'send_on_settle' => false,
+                'daily_at' => '22:00',
+                'recipients' => [],
             ],
         ],
         'distribution' => [

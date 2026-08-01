@@ -106,6 +106,20 @@ class ApplicationProvisioner
         if (! $applications['hospitality_backoffice'] && ! $applications['hotel_bar_pos']) {
             $modules = $this->mergeModulePatch($modules, $this->disablePatch('hospitality_backoffice'));
             $modules = $this->applyDomainDisableRules($modules, $this->disablePatch('hospitality_backoffice'));
+            // Hotel F&B stock/purchasing are shared modules — only clear them when retail
+            // Backoffice / POS are also off (otherwise retail inventory would be wiped).
+            if (! $applications['backoffice'] && ! $applications['pos']) {
+                $stockPatch = [
+                    'inventory' => false,
+                    'inventory.dashboard' => false,
+                    'inventory.reports' => false,
+                    'customers_suppliers' => false,
+                    'customers_suppliers.dashboard' => false,
+                    'customers_suppliers.reports' => false,
+                ];
+                $modules = $this->mergeModulePatch($modules, $stockPatch);
+                $modules = $this->applyDomainDisableRules($modules, $stockPatch);
+            }
         }
 
         foreach (['distribution', 'accounting', 'hr', 'admin'] as $id) {
@@ -184,9 +198,16 @@ class ApplicationProvisioner
     {
         return match ($applicationId) {
             'pos' => (bool) ($enabledModules['sales.pos'] ?? false),
-            'backoffice' => (bool) ($enabledModules['sales.backend'] ?? false)
-                || (bool) ($enabledModules['inventory'] ?? false)
-                || (bool) ($enabledModules['customers_suppliers'] ?? false),
+            'backoffice' => (static function (array $enabledModules): bool {
+                // Hotel inventory/purchasing lives under Hospitality Backoffice — not retail Backoffice.
+                if (($enabledModules['hospitality.backend'] ?? false) || ($enabledModules['hospitality.bar_pos'] ?? false)) {
+                    return (bool) ($enabledModules['sales.backend'] ?? false);
+                }
+
+                return (bool) ($enabledModules['sales.backend'] ?? false)
+                    || (bool) ($enabledModules['inventory'] ?? false)
+                    || (bool) ($enabledModules['customers_suppliers'] ?? false);
+            })($enabledModules),
             'hotel_bar_pos' => (bool) ($enabledModules['hospitality.bar_pos'] ?? false),
             'hospitality_backoffice' => (bool) ($enabledModules['hospitality.backend'] ?? false)
                 || (bool) ($enabledModules['hospitality.dashboard'] ?? false),
@@ -249,6 +270,12 @@ class ApplicationProvisioner
                 'hospitality.backend' => true,
                 'hospitality.dashboard' => true,
                 'hospitality.reports' => true,
+                // Shared stock/purchasing for hotel F&B — not retail sales carts.
+                'inventory' => true,
+                'inventory.dashboard' => true,
+                'inventory.reports' => true,
+                'customers_suppliers' => true,
+                'customers_suppliers.reports' => true,
             ],
             'distribution' => [
                 'distribution' => true,

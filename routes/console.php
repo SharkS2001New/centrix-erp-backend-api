@@ -35,6 +35,11 @@ Schedule::command('erp:send-ai-insights')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/ai-insights-digest.log'));
 
+Schedule::command('erp:send-hospitality-pos-email-reports')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/hospitality-pos-email-reports.log'));
+
 Schedule::command('erp:prune-system-issue-reports')
     ->dailyAt(config('system_issues.prune_time', '03:15'))
     ->withoutOverlapping()

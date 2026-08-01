@@ -184,6 +184,7 @@ class OrganizationProvisioningService
 
         if ($profile === 'hotel_bar') {
             $settings['hospitality'] = [
+                // Legacy enable_* keys (compat) + HospitalityServices map.
                 'enable_rooms' => true,
                 'enable_reservations' => true,
                 'enable_housekeeping' => true,
@@ -193,6 +194,18 @@ class OrganizationProvisioningService
                 'enable_room_service' => true,
                 'enable_takeaway' => true,
                 'enable_tables' => true,
+                'services' => [
+                    'rooms' => true,
+                    'reservations' => true,
+                    'front_desk' => true,
+                    'folios' => true,
+                    'housekeeping' => true,
+                    'night_audit' => false,
+                    'extra_outlets' => false,
+                    'floor_tables' => true,
+                    'table_pos' => true,
+                    'room_charge' => true,
+                ],
             ];
         }
 

@@ -15,7 +15,7 @@ class User extends Authenticatable
 
     protected $table = 'users';
     protected $fillable = [
-        'organization_id', 'branch_id', 'role_id', 'username', 'email', 'email_verified_at', 'password',
+        'organization_id', 'branch_id', 'hospitality_outlet_id', 'role_id', 'username', 'email', 'email_verified_at', 'password',
         'full_name', 'is_admin', 'is_super_admin', 'access_scope', 'is_mobile_user', 'login_channels',
         'mobile_order_scope', 'assigned_route_id', 'is_active', 'must_change_password', 'password_expiry_skip_count',
         'password_changed_at', 'last_login',

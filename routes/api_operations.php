@@ -430,6 +430,15 @@ Route::middleware('auth:sanctum')->group(function () {
             });
         });
 
+        Route::middleware('erp.permission:reports.view|hospitality.reports.view')->group(function () {
+            Route::get('hospitality-occupancy', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'occupancy']);
+            Route::get('hospitality-arrivals-departures', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'arrivalsDepartures']);
+            Route::get('hospitality-folio-balances', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'folioBalances']);
+            Route::get('hospitality-fnb-checks', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'fnbChecks']);
+            Route::get('hospitality-profit-loss', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'profitLoss']);
+            Route::get('hospitality-eod-cashier', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'eodCashier']);
+        });
+
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {
             Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
             Route::get('leave-balance', [HrReportController::class, 'leaveBalance']);

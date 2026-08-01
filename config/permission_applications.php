@@ -60,8 +60,15 @@ return [
         ],
         'hospitality_backoffice' => [
             'label' => 'Hospitality Backoffice',
-            'description' => 'Rooms, front desk, folios, housekeeping, and hotel operations.',
-            'registry_modules' => ['hospitality'],
+            'description' => 'Rooms, front desk, folios, housekeeping, menu catalogue, LPO, and stock receiving for hotel operations.',
+            'registry_modules' => [
+                'hospitality',
+                'catalogue',
+                'inventory',
+                'purchasing',
+                'dashboard',
+                'reports',
+            ],
         ],
         'accounting' => [
             'label' => 'Accounting',

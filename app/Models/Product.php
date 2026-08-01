@@ -21,7 +21,7 @@ class Product extends Model
         'product_code', 'product_name', 'subcategory_id', 'unit_id', 'unit_price',
         'last_selling_price', 'last_cost_price', 'discount_type', 'discount_percentage',
         'discount_value', 'product_weight', 'product_volume_m3', 'stock_in_shop', 'stock_in_store',
-        'shelf_location', 'supplier_id', 'sell_on_retail', 'vat_id', 'organization_id', 'branch_id',
+        'shelf_location', 'supplier_id', 'sell_on_retail', 'sell_on_bar', 'sell_on_hotel', 'vat_id', 'organization_id', 'branch_id',
         'reorder_point', 'low_stock_alert_enabled', 'created_by', 'updated_by',
         'deleted_at', 'deleted_by',
     ];
@@ -51,6 +51,9 @@ class Product extends Model
         'stock_in_shop' => 'float',
         'stock_in_store' => 'float',
         'low_stock_alert_enabled' => 'boolean',
+        'sell_on_retail' => 'boolean',
+        'sell_on_bar' => 'boolean',
+        'sell_on_hotel' => 'boolean',
         'deleted_at' => 'datetime',
     ];
 

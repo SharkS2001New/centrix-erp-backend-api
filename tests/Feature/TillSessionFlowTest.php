@@ -257,23 +257,59 @@ class TillSessionFlowTest extends TestCase
             (float) ($xReport['sales']['debtor_collections'] ?? 0),
             0.01,
         );
-        // Opening float only in gross/expected until POS can collect old credit on-session.
-        // Debtor collections stay reported but are not added into expected closing.
+        // Opening float + debtor collections (legacy DBTTL) enter expected closing.
+        // Tender payment summary stays POS sales only (legacy CASHTTL/MPESATTL from order_masters).
         $this->assertEqualsWithDelta(
-            5000,
+            6500,
             (float) ($xReport['till']['gross_total'] ?? 0),
             0.01,
         );
         $this->assertEqualsWithDelta(
-            5000,
+            6500,
             (float) ($xReport['expected_cash'] ?? 0),
             0.01,
         );
         $this->assertEqualsWithDelta(
-            5000,
+            6500,
             (float) ($xReport['expected_net_sales'] ?? 0),
             0.01,
         );
+        $paymentCodes = collect($xReport['payments'] ?? [])->pluck('method_code')->all();
+        $this->assertNotContains('CASH', $paymentCodes);
+    }
+
+    public function test_unpaid_credit_sale_does_not_inflate_x_report_expected(): void
+    {
+        $session = $this->openFreshSession(997);
+
+        Sale::create([
+            'order_num' => 990200,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'pos',
+            'till_id' => $this->till->id,
+            'float_session_id' => $session->id,
+            'cashier_id' => $this->user->id,
+            'status' => 'completed',
+            'order_total' => 5000,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'cash' => 0,
+            'mpesa_amount' => 0,
+            'payment_status' => 'unpaid',
+            'is_credit_sale' => true,
+            'completed_at' => now(),
+        ]);
+
+        $xReport = $this->getJson("/api/v1/pos/sessions/{$session->id}/x-report")
+            ->assertOk()
+            ->json('report');
+
+        $this->assertSame(0, (int) ($xReport['sales']['transactions'] ?? -1));
+        $this->assertEqualsWithDelta(0, (float) ($xReport['sales']['gross_sales'] ?? -1), 0.01);
+        $this->assertEqualsWithDelta(0, (float) ($xReport['sales']['net_sales'] ?? -1), 0.01);
+        $this->assertEqualsWithDelta(997, (float) ($xReport['expected_cash'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(997, (float) ($xReport['expected_net_sales'] ?? 0), 0.01);
     }
 
     public function test_cashier_can_open_second_session_same_day_with_new_float(): void

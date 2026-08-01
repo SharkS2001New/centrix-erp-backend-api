@@ -28,7 +28,8 @@ class HospitalityOutletController extends Controller
             ->orderBy('id');
 
         if (! HospitalityServices::enabled($org, 'extra_outlets')) {
-            $query->where('code', 'MAIN');
+            // Always expose default Bar (MAIN) + Hotel (HOTEL) for cashier channel assignment.
+            $query->whereIn('code', ['MAIN', 'HOTEL']);
         }
 
         $outlets = $query->get();
@@ -77,7 +78,7 @@ class HospitalityOutletController extends Controller
             ->where('id', $id)
             ->firstOrFail();
 
-        if ($outlet->code === 'MAIN') {
+        if (in_array($outlet->code, ['MAIN', 'HOTEL'], true)) {
             $data = $request->validate([
                 'name' => ['sometimes', 'string', 'max:120'],
                 'outlet_type' => ['nullable', 'string', 'in:bar,restaurant,other'],

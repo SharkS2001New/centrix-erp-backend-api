@@ -1,0 +1,103 @@
+<?php
+
+namespace Tests\Feature;
+
+use App\Http\Middleware\EnsureOrganizationLicenseActive;
+use App\Models\HospitalityOutlet;
+use App\Models\Organization;
+use App\Models\Product;
+use App\Models\User;
+use App\Services\Hospitality\HospitalityCheckService;
+use App\Services\Hospitality\HospitalityReportService;
+use Laravel\Sanctum\Sanctum;
+use Tests\Concerns\RefreshesErpDatabase;
+use Tests\TestCase;
+
+class HospitalityBarHotelChannelTest extends TestCase
+{
+    use RefreshesErpDatabase;
+
+    protected User $user;
+
+    protected Organization $org;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->withoutMiddleware([EnsureOrganizationLicenseActive::class]);
+        $this->user = User::where('username', 'admin')->firstOrFail();
+        $this->org = Organization::query()->findOrFail($this->user->organization_id);
+        $modules = $this->org->enabled_modules ?? [];
+        $modules['hospitality'] = true;
+        $modules['hospitality.bar_pos'] = true;
+        $modules['hospitality.reports'] = true;
+        $this->org->forceFill(['enabled_modules' => $modules])->save();
+        Sanctum::actingAs($this->user);
+    }
+
+    public function test_catalog_filters_by_outlet_channel(): void
+    {
+        $checks = app(HospitalityCheckService::class);
+        $bar = $checks->ensureDefaultOutlet($this->org, null);
+        $hotel = HospitalityOutlet::query()
+            ->where('organization_id', $this->org->id)
+            ->where('code', 'HOTEL')
+            ->firstOrFail();
+
+        $this->assertSame('bar', $bar->outlet_type);
+        $this->assertSame('restaurant', $hotel->outlet_type);
+
+        Product::query()->create([
+            'organization_id' => $this->org->id,
+            'product_code' => 'BARONLY1',
+            'product_name' => 'Bar Only Drink',
+            'unit_price' => 100,
+            'sell_on_bar' => true,
+            'sell_on_hotel' => false,
+            'sell_on_retail' => false,
+        ]);
+        Product::query()->create([
+            'organization_id' => $this->org->id,
+            'product_code' => 'HOTELONLY1',
+            'product_name' => 'Hotel Only Dish',
+            'unit_price' => 200,
+            'sell_on_bar' => false,
+            'sell_on_hotel' => true,
+            'sell_on_retail' => false,
+        ]);
+
+        $this->user->forceFill(['hospitality_outlet_id' => $bar->id])->save();
+        $barCatalog = $this->getJson('/api/v1/hospitality/pos/catalog')->assertOk()->json();
+        $barCodes = collect($barCatalog['items'])->pluck('product_code')->all();
+        $this->assertContains('BARONLY1', $barCodes);
+        $this->assertNotContains('HOTELONLY1', $barCodes);
+        $this->assertSame('bar', $barCatalog['outlet']['menu_channel']);
+
+        $this->user->forceFill(['hospitality_outlet_id' => $hotel->id])->save();
+        $hotelCatalog = $this->getJson('/api/v1/hospitality/pos/catalog')->assertOk()->json();
+        $hotelCodes = collect($hotelCatalog['items'])->pluck('product_code')->all();
+        $this->assertContains('HOTELONLY1', $hotelCodes);
+        $this->assertNotContains('BARONLY1', $hotelCodes);
+        $this->assertSame('hotel', $hotelCatalog['outlet']['menu_channel']);
+    }
+
+    public function test_profit_loss_and_eod_reports_run(): void
+    {
+        $service = app(HospitalityReportService::class);
+        $from = now()->toDateString();
+        $to = now()->toDateString();
+
+        $pl = $service->run($this->org, 'hospitality-profit-loss', $from, $to);
+        $this->assertNotEmpty($pl['columns']);
+        $this->assertCount(1, $pl['rows']);
+        $this->assertArrayHasKey('gross_profit', $pl['rows'][0]);
+        $this->assertArrayHasKey('cogs', $pl['rows'][0]);
+
+        $eod = $service->run($this->org, 'hospitality-eod-cashier', $from, $to);
+        $this->assertNotEmpty($eod['columns']);
+        $this->assertIsArray($eod['rows']);
+
+        $this->getJson('/api/v1/reports/hospitality-profit-loss?from='.$from.'&to='.$to)->assertOk();
+        $this->getJson('/api/v1/reports/hospitality-eod-cashier?from='.$from.'&to='.$to)->assertOk();
+    }
+}

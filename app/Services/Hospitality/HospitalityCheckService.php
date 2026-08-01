@@ -26,22 +26,42 @@ class HospitalityCheckService
 
     public function ensureDefaultOutlet(Organization $org, ?int $branchId = null): HospitalityOutlet
     {
-        $outlet = HospitalityOutlet::query()
+        $this->ensureNamedOutlet($org, $branchId, 'MAIN', 'Main bar', 'bar');
+        $this->ensureNamedOutlet($org, $branchId, 'HOTEL', 'Hotel / restaurant', 'restaurant');
+
+        return HospitalityOutlet::query()
             ->where('organization_id', $org->id)
             ->where('is_active', true)
             ->orderBy('id')
+            ->firstOrFail();
+    }
+
+    protected function ensureNamedOutlet(
+        Organization $org,
+        ?int $branchId,
+        string $code,
+        string $name,
+        string $outletType,
+    ): HospitalityOutlet {
+        $existing = HospitalityOutlet::query()
+            ->where('organization_id', $org->id)
+            ->where('code', $code)
             ->first();
 
-        if ($outlet) {
-            return $outlet;
+        if ($existing) {
+            if (! $existing->is_active) {
+                $existing->update(['is_active' => true]);
+            }
+
+            return $existing->fresh();
         }
 
         return HospitalityOutlet::create([
             'organization_id' => $org->id,
             'branch_id' => $branchId,
-            'code' => 'MAIN',
-            'name' => 'Main outlet',
-            'outlet_type' => 'bar',
+            'code' => $code,
+            'name' => $name,
+            'outlet_type' => $outletType,
             'is_active' => true,
         ]);
     }
@@ -59,7 +79,7 @@ class HospitalityCheckService
                 ->where('id', $outletId)
                 ->where('is_active', true)
                 ->firstOrFail()
-            : $this->ensureDefaultOutlet($org, $branchId);
+            : app(HospitalityPosCatalogService::class)->resolveOutletForUser($org, $user, null);
 
         $tableId = null;
         $serviceMode = 'counter';
@@ -129,6 +149,18 @@ class HospitalityCheckService
             ->where('product_code', $productCode)
             ->whereNull('deleted_at')
             ->firstOrFail();
+
+        $outlet = HospitalityOutlet::query()->find($check->outlet_id);
+        if ($outlet) {
+            $org = Organization::query()->find($check->organization_id);
+            if ($org) {
+                app(HospitalityPosCatalogService::class)->assertProductAllowedForOutlet(
+                    $org,
+                    $outlet,
+                    (string) $product->product_code,
+                );
+            }
+        }
 
         $qty = max(0.0001, $qty);
         $unitPrice = round((float) $product->unit_price, 2);
@@ -423,6 +455,7 @@ class HospitalityCheckService
             $fresh = $check->fresh();
             if ($isFull) {
                 app(HospitalityCheckStockService::class)->deductForSettledCheck($fresh, $user);
+                app(HospitalityPosEmailReportService::class)->notifySettleIfEnabled($org, $fresh);
             }
 
             return $this->presentable($fresh->fresh());

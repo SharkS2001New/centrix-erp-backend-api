@@ -14,6 +14,7 @@ use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\TillSessionAuthorization;
 use App\Services\Erp\TillVarianceJournal;
+use App\Services\Pos\TillReportMetrics;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -631,10 +632,15 @@ class TillOperationsController extends Controller
         }
 
         $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
+        $tillMetrics = app(TillReportMetrics::class);
 
-        $salesAgg = DB::table('sales')
+        // Paid/collected session sales only — unpaid credit must not inflate Total Sales.
+        $salesBase = DB::table('sales')
             ->where('float_session_id', $floatSessionId)
-            ->whereIn('status', $metricStatuses)
+            ->whereIn('status', $metricStatuses);
+        $tillMetrics->applyCollectedSalesFilter($salesBase);
+
+        $salesAgg = (clone $salesBase)
             ->selectRaw('
                 COUNT(*) as transactions,
                 COALESCE(SUM(order_total), 0) as gross,
@@ -647,49 +653,51 @@ class TillOperationsController extends Controller
             ')
             ->first();
 
-        $saleIds = DB::table('sales')
-            ->where('float_session_id', $floatSessionId)
-            ->whereIn('status', $metricStatuses)
-            ->pluck('id');
+        $saleIds = (clone $salesBase)->pluck('id');
 
         $refunds = $saleIds->isEmpty()
             ? 0
             : (float) DB::table('returns')->whereIn('sale_id', $saleIds)->sum('amount');
 
-        $gross = (float) ($salesAgg->gross ?? 0);
+        // Legacy ORDTTL = SUM(order_total) from paid POS orders (order_masters).
+        $ordTtl = max(0, round((float) ($salesAgg->gross ?? 0) - $refunds, 2));
         $discounts = (float) ($salesAgg->discounts ?? 0);
         $cashBreakdown = $this->sessionCashCollected($floatSessionId, $metricStatuses);
         $cash = (float) ($cashBreakdown['cash'] ?? 0);
-        $debtorCollections = (float) ($cashBreakdown['debtor_collections'] ?? 0);
+        // Legacy DBTTL = debtor_payments.amount_paid collected by this cashier/session.
+        $dbTtl = (float) ($cashBreakdown['debtor_collections'] ?? 0);
         $mpesa = (float) ($salesAgg->mpesa ?? 0);
         $equity = (float) ($salesAgg->equity ?? 0);
         $kcb = (float) ($salesAgg->kcb ?? 0);
         $bank = $equity + $kcb;
-        $netSales = max(0, $gross - $refunds);
+        $netSales = $ordTtl;
         $totalVat = round((float) ($salesAgg->total_vat ?? 0), 2);
-        $openingFloat = (float) ($session->working_amount ?? 0);
+        $floatTtl = (float) ($session->working_amount ?? 0);
+        $openingFloat = $floatTtl;
         $cashMovements = $this->normalizeCashMovements(
             is_string($session->cash_movements ?? null)
                 ? json_decode($session->cash_movements, true)
                 : ($session->cash_movements ?? []),
         );
         $movementAdjust = $this->sumCashMovementAdjustments($cashMovements);
-        $sessionExpenses = (float) DB::table('expenses')
+        $expTtl = (float) DB::table('expenses')
             ->where('float_session_id', $floatSessionId)
             ->whereNull('deleted_at')
             ->sum('expense_amount');
-        // Expected closing balance: opening float + sales − expenses (± cash movements).
-        // Paid debtors are only collected via backoffice order payment today (not external POS),
-        // so they are reported separately and not mixed into expected closing for till recon.
-        $expectedNetSales = round(
-            $openingFloat
-                + $netSales
-                - $sessionExpenses
-                - $movementAdjust['out']
-                + $movementAdjust['in'],
-            2,
+        $sessionExpenses = $expTtl;
+
+        // Legacy: netsales = ORDTTL + DBTTL + FLOATTTL − EXPTTL
+        //         totalsales = ORDTTL + DBTTL + FLOATTTL
+        // Cash movements are Centrix-only (±) and default to 0 when unused.
+        $expectedNetSales = $tillMetrics->expectedClosing(
+            $ordTtl,
+            $dbTtl,
+            $floatTtl,
+            $expTtl,
+            $movementAdjust['out'],
+            $movementAdjust['in'],
         );
-        $grossTillTotal = $openingFloat + $netSales;
+        $grossTillTotal = $tillMetrics->totalSales($ordTtl, $dbTtl, $floatTtl);
         $expectedCash = $expectedNetSales;
 
         $floatEntries = $this->normalizeFloatEntries(
@@ -705,7 +713,7 @@ class TillOperationsController extends Controller
             'float_entries' => $floatEntries,
             'sales' => [
                 'transactions' => (int) ($salesAgg->transactions ?? 0),
-                'gross_sales' => round($gross, 2),
+                'gross_sales' => $ordTtl,
                 'net_sales' => $netSales,
                 'net' => $netSales,
                 'expected_net_sales' => $expectedNetSales,
@@ -717,7 +725,8 @@ class TillOperationsController extends Controller
                 'order_discounts' => $discounts,
                 'refunds' => $refunds,
                 'cash' => (float) ($salesAgg->cash ?? 0),
-                'debtor_collections' => $debtorCollections,
+                'debtor_collections' => $dbTtl,
+                'invoice_sales' => $dbTtl,
                 'mpesa' => $mpesa,
                 'bank' => $bank,
                 'equity' => $equity,
@@ -740,13 +749,20 @@ class TillOperationsController extends Controller
     /** @return array{cash: float, debtor_collections: float} */
     protected function sessionCashCollected(int $floatSessionId, array $metricStatuses): array
     {
-        $fromPayments = (float) DB::table('sale_payments as sp')
-            ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
-            ->where('sp.float_session_id', $floatSessionId)
-            ->where('pm.method_code', 'CASH')
-            ->sum('sp.amount');
+        $tillMetrics = app(TillReportMetrics::class);
 
-        $legacyCash = (float) DB::table('sales as s')
+        // Cash tender on THIS session's paid sales only (not debtor collections on other sales).
+        $fromPaymentsQ = DB::table('sale_payments as sp')
+            ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
+            ->join('sales as s', 's.id', '=', 'sp.sale_id')
+            ->where('sp.float_session_id', $floatSessionId)
+            ->where('s.float_session_id', $floatSessionId)
+            ->whereIn('s.status', $metricStatuses)
+            ->where('pm.method_code', 'CASH');
+        $tillMetrics->applyCollectedSalesFilter($fromPaymentsQ, 's');
+        $fromPayments = (float) $fromPaymentsQ->sum('sp.amount');
+
+        $legacyCashQ = DB::table('sales as s')
             ->where('s.float_session_id', $floatSessionId)
             ->whereIn('s.status', $metricStatuses)
             ->whereNotExists(function ($query) {
@@ -754,8 +770,9 @@ class TillOperationsController extends Controller
                     ->from('sale_payments as sp')
                     ->whereColumn('sp.sale_id', 's.id')
                     ->whereNotNull('sp.float_session_id');
-            })
-            ->sum('s.cash');
+            });
+        $tillMetrics->applyCollectedSalesFilter($legacyCashQ, 's');
+        $legacyCash = (float) $legacyCashQ->sum('s.cash');
 
         $cash = $fromPayments + $legacyCash;
 
@@ -777,9 +794,13 @@ class TillOperationsController extends Controller
     /** @return list<array{method_code: string, method_name: string, total: float}> */
     protected function buildPaymentSummary(int $floatSessionId, array $metricStatuses): array
     {
-        $columnAgg = DB::table('sales as s')
+        $tillMetrics = app(TillReportMetrics::class);
+
+        $columnAggQ = DB::table('sales as s')
             ->where('s.float_session_id', $floatSessionId)
-            ->whereIn('s.status', $metricStatuses)
+            ->whereIn('s.status', $metricStatuses);
+        $tillMetrics->applyCollectedSalesFilter($columnAggQ, 's');
+        $columnAgg = $columnAggQ
             ->selectRaw('
                 COALESCE(SUM(s.cash), 0) as cash,
                 COALESCE(SUM(s.mpesa_amount), 0) as mpesa,
@@ -801,11 +822,15 @@ class TillOperationsController extends Controller
 
         $byMethod = [];
 
-        $paymentRows = DB::table('sale_payments as sp')
+        // Tender mix for THIS session's paid sales only — debtor collections stay out of payment summary.
+        $paymentRowsQ = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
             ->where('sp.float_session_id', $floatSessionId)
-            ->whereIn('s.status', $metricStatuses)
+            ->where('s.float_session_id', $floatSessionId)
+            ->whereIn('s.status', $metricStatuses);
+        $tillMetrics->applyCollectedSalesFilter($paymentRowsQ, 's');
+        $paymentRows = $paymentRowsQ
             ->selectRaw('pm.method_code, pm.method_name, COALESCE(SUM(sp.amount), 0) as total')
             ->groupBy('pm.method_code', 'pm.method_name')
             ->get();

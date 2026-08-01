@@ -31,7 +31,10 @@ class HospitalityPosController extends Controller
 
     public function settings(Request $request)
     {
-        $org = $this->requireOrg($request->user());
+        $user = $request->user();
+        $org = $this->requireOrg($user);
+        $outlet = $this->catalogService->resolveOutletForUser($org, $user, null);
+        $channel = HospitalityPosCatalogService::menuChannelForOutlet($outlet);
 
         return response()->json(array_merge(
             HospitalityPosSettings::forOrganization($org),
@@ -40,6 +43,15 @@ class HospitalityPosController extends Controller
             [
                 'table_pos_enabled' => HospitalityServices::enabled($org, 'table_pos'),
                 'floor_tables_enabled' => HospitalityServices::enabled($org, 'floor_tables'),
+                'room_charge_enabled' => HospitalityServices::enabled($org, 'room_charge'),
+                'outlet' => [
+                    'id' => $outlet->id,
+                    'code' => $outlet->code,
+                    'name' => $outlet->name,
+                    'outlet_type' => $outlet->outlet_type,
+                    'menu_channel' => $channel,
+                    'menu_channel_label' => $channel === 'bar' ? 'Bar' : 'Hotel',
+                ],
             ],
         ));
     }
@@ -58,7 +70,9 @@ class HospitalityPosController extends Controller
             $org,
             $user,
             isset($data['branch_id']) ? (int) $data['branch_id'] : ($user->branch_id ? (int) $user->branch_id : null),
-            isset($data['outlet_id']) ? (int) $data['outlet_id'] : null,
+            isset($data['outlet_id'])
+                ? (int) $data['outlet_id']
+                : (($user->hospitality_outlet_id ?? null) ? (int) $user->hospitality_outlet_id : null),
             isset($data['floor_table_id']) ? (int) $data['floor_table_id'] : null,
         );
 

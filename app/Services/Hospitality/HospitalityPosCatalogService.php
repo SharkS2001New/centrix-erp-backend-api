@@ -2,6 +2,7 @@
 
 namespace App\Services\Hospitality;
 
+use App\Models\HospitalityOutlet;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
@@ -11,6 +12,7 @@ use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Validation\ValidationException;
 
 class HospitalityPosCatalogService
 {
@@ -21,8 +23,67 @@ class HospitalityPosCatalogService
     ) {}
 
     /**
+     * Resolve Bar vs Hotel menu channel from an outlet.
+     * bar → bar; restaurant/other → hotel.
+     */
+    public static function menuChannelForOutlet(?HospitalityOutlet $outlet): string
+    {
+        if (! $outlet) {
+            return 'bar';
+        }
+
+        return strtolower((string) $outlet->outlet_type) === 'bar' ? 'bar' : 'hotel';
+    }
+
+    public function resolveOutletForUser(Organization $org, User $user, ?int $outletId = null): HospitalityOutlet
+    {
+        if ($outletId) {
+            return HospitalityOutlet::query()
+                ->where('organization_id', $org->id)
+                ->where('id', $outletId)
+                ->where('is_active', true)
+                ->firstOrFail();
+        }
+
+        if (Schema::hasColumn('users', 'hospitality_outlet_id') && $user->hospitality_outlet_id) {
+            $assigned = HospitalityOutlet::query()
+                ->where('organization_id', $org->id)
+                ->where('id', $user->hospitality_outlet_id)
+                ->where('is_active', true)
+                ->first();
+            if ($assigned) {
+                return $assigned;
+            }
+        }
+
+        return app(HospitalityCheckService::class)->ensureDefaultOutlet(
+            $org,
+            $user->branch_id ? (int) $user->branch_id : null,
+        );
+    }
+
+    public function assertProductAllowedForOutlet(Organization $org, HospitalityOutlet $outlet, string $productCode): void
+    {
+        $channel = self::menuChannelForOutlet($outlet);
+        $column = $channel === 'bar' ? 'sell_on_bar' : 'sell_on_hotel';
+        $product = Product::query()
+            ->where('organization_id', $org->id)
+            ->where('product_code', $productCode)
+            ->first();
+        if (! $product) {
+            throw ValidationException::withMessages(['product_code' => ['Product not found.']]);
+        }
+        if (Schema::hasColumn('products', $column) && ! (bool) ($product->{$column} ?? true)) {
+            $label = $channel === 'bar' ? 'Bar' : 'Hotel';
+            throw ValidationException::withMessages([
+                'product_code' => ["{$product->product_name} is not sellable on {$label} POS."],
+            ]);
+        }
+    }
+
+    /**
      * Active products for hotel POS: most-sold (recent window) first, then name.
-     * Paginated for infinite scroll on the tap grid.
+     * Filtered by cashier outlet channel (Bar vs Hotel).
      *
      * @return array<string, mixed>
      */
@@ -35,8 +96,20 @@ class HospitalityPosCatalogService
         $offset = max(0, (int) $request->input('offset', 0));
         $search = trim((string) $request->input('q', ''));
 
+        $outletId = $request->filled('outlet_id') ? (int) $request->input('outlet_id') : null;
+        $outlet = $this->resolveOutletForUser($org, $user, $outletId);
+        $channel = self::menuChannelForOutlet($outlet);
+
         $query = Product::query()->with('vat:id,vat_percentage,vat_code');
         $this->catalogScope->scopeForUser($query, $user, $request);
+
+        if (Schema::hasColumn('products', 'sell_on_bar') && Schema::hasColumn('products', 'sell_on_hotel')) {
+            if ($channel === 'bar') {
+                $query->where('products.sell_on_bar', true);
+            } else {
+                $query->where('products.sell_on_hotel', true);
+            }
+        }
 
         if ($search !== '') {
             $exact = SqlLikeSearch::restrictToExactProductCodeIfPresent(
@@ -56,18 +129,23 @@ class HospitalityPosCatalogService
 
         $soldQtyByCode = $this->soldQuantitiesByCode((int) $org->id, $days);
 
-        // Rank the full candidate set, then paginate in PHP (sold qty is not a SQL column).
+        $select = [
+            'products.id',
+            'products.product_code',
+            'products.product_name',
+            'products.unit_price',
+            'products.vat_id',
+            'products.sell_on_retail',
+        ];
+        if (Schema::hasColumn('products', 'sell_on_bar')) {
+            $select[] = 'products.sell_on_bar';
+            $select[] = 'products.sell_on_hotel';
+        }
+
         $products = $query
             ->orderBy('products.product_name')
             ->limit(2000)
-            ->get([
-                'products.id',
-                'products.product_code',
-                'products.product_name',
-                'products.unit_price',
-                'products.vat_id',
-                'products.sell_on_retail',
-            ]);
+            ->get($select);
 
         $ranked = $products
             ->map(function (Product $product) use ($soldQtyByCode) {
@@ -84,6 +162,8 @@ class HospitalityPosCatalogService
                     'vat_percentage' => $vatPct,
                     'sold_qty' => $sold,
                     'is_popular' => $sold > 0,
+                    'sell_on_bar' => (bool) ($product->sell_on_bar ?? true),
+                    'sell_on_hotel' => (bool) ($product->sell_on_hotel ?? true),
                 ];
             })
             ->sort(function (array $a, array $b) {
@@ -108,6 +188,14 @@ class HospitalityPosCatalogService
             'collect_payment' => $settings['hotel_pos_collect_payment'],
             'stock_deduct_on_settle' => $settings['stock_deduct_on_settle'],
             'block_settle_if_insufficient' => $settings['block_settle_if_insufficient'],
+            'outlet' => [
+                'id' => $outlet->id,
+                'code' => $outlet->code,
+                'name' => $outlet->name,
+                'outlet_type' => $outlet->outlet_type,
+                'menu_channel' => $channel,
+                'menu_channel_label' => $channel === 'bar' ? 'Bar' : 'Hotel',
+            ],
             'popular_days' => $days,
             'searching' => $search !== '',
             'offset' => $offset,

@@ -37,6 +37,14 @@ class HospitalitySettingsController extends Controller
             'stock_location' => 'sometimes|in:shop,store',
             'block_settle_if_insufficient' => 'sometimes|boolean',
             'require_recipe_for_stocked_items' => 'sometimes|boolean',
+            'pos_email_reports' => 'sometimes|array',
+            'pos_email_reports.enabled' => 'sometimes|boolean',
+            'pos_email_reports.send_hourly' => 'sometimes|boolean',
+            'pos_email_reports.send_daily' => 'sometimes|boolean',
+            'pos_email_reports.send_on_settle' => 'sometimes|boolean',
+            'pos_email_reports.daily_at' => ['sometimes', 'nullable', 'string', 'regex:/^\d{2}:\d{2}$/'],
+            'pos_email_reports.recipients' => 'sometimes|array|max:50',
+            'pos_email_reports.recipients.*' => 'email|max:255',
         ]);
 
         $current = $org->module_settings ?? [];
@@ -46,6 +54,14 @@ class HospitalitySettingsController extends Controller
         $hospitality = is_array($current['hospitality'] ?? null) ? $current['hospitality'] : [];
 
         foreach ($data as $key => $value) {
+            if ($key === 'pos_email_reports') {
+                $merged = array_merge(
+                    is_array($hospitality['pos_email_reports'] ?? null) ? $hospitality['pos_email_reports'] : [],
+                    is_array($value) ? $value : [],
+                );
+                $hospitality['pos_email_reports'] = HospitalityPosSettings::normalizePosEmailReports($merged);
+                continue;
+            }
             $hospitality[$key] = $value;
         }
 

@@ -17,15 +17,16 @@ class ApplicationProvisionerTest extends TestCase
         $this->provisioner = new ApplicationProvisioner;
     }
 
-    public function test_options_payload_lists_six_applications(): void
+    public function test_options_payload_lists_core_applications(): void
     {
         $options = $this->provisioner->optionsPayload();
+        $ids = array_column($options, 'id');
 
-        $this->assertCount(6, $options);
-        $this->assertSame(
-            ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin'],
-            array_column($options, 'id'),
-        );
+        $this->assertContains('pos', $ids);
+        $this->assertContains('backoffice', $ids);
+        $this->assertContains('hotel_bar_pos', $ids);
+        $this->assertContains('hospitality_backoffice', $ids);
+        $this->assertContains('admin', $ids);
     }
 
     public function test_enabled_modules_from_applications_enables_pos_stack(): void
@@ -149,7 +150,44 @@ class ApplicationProvisionerTest extends TestCase
                 'hr' => true,
                 'admin' => true,
             ]],
+            'hotel_bar' => ['hotel_bar', [
+                'pos' => false,
+                'backoffice' => false,
+                'hotel_bar_pos' => true,
+                'hospitality_backoffice' => true,
+                'distribution' => false,
+                'accounting' => false,
+                'hr' => false,
+                'admin' => false,
+            ]],
         ];
+    }
+
+    public function test_hotel_backoffice_enables_stock_and_lpo_without_retail_backoffice(): void
+    {
+        $modules = $this->provisioner->enabledModulesFromApplications([
+            'hotel_bar_pos' => true,
+            'hospitality_backoffice' => true,
+            'pos' => false,
+            'backoffice' => false,
+            'distribution' => false,
+            'accounting' => false,
+            'hr' => false,
+            'admin' => false,
+        ]);
+
+        $this->assertTrue($modules['hospitality.bar_pos']);
+        $this->assertTrue($modules['hospitality.backend']);
+        $this->assertTrue($modules['inventory']);
+        $this->assertTrue($modules['customers_suppliers']);
+        $this->assertFalse($modules['sales.backend'] ?? false);
+        $this->assertFalse($modules['sales.pos'] ?? false);
+
+        $apps = $this->provisioner->applicationsFromEnabledModules($modules);
+        $this->assertTrue($apps['hotel_bar_pos']);
+        $this->assertTrue($apps['hospitality_backoffice']);
+        $this->assertFalse($apps['backoffice']);
+        $this->assertFalse($apps['pos']);
     }
 
     public function test_cascade_never_persists_config_only_keys(): void

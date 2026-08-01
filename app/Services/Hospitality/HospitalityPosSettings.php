@@ -57,7 +57,8 @@ class HospitalityPosSettings
      *   stock_deduct_on_settle: bool,
      *   stock_location: string,
      *   block_settle_if_insufficient: bool,
-     *   require_recipe_for_stocked_items: bool
+     *   require_recipe_for_stocked_items: bool,
+     *   pos_email_reports: array<string, mixed>
      * }
      */
     public static function forOrganization(?Organization $organization): array
@@ -85,6 +86,7 @@ class HospitalityPosSettings
                 $settings['require_recipe_for_stocked_items'] ?? false,
                 false,
             ),
+            'pos_email_reports' => self::normalizePosEmailReports($settings['pos_email_reports'] ?? null),
         ];
     }
 
@@ -96,7 +98,8 @@ class HospitalityPosSettings
      *   stock_deduct_on_settle: bool,
      *   stock_location: string,
      *   block_settle_if_insufficient: bool,
-     *   require_recipe_for_stocked_items: bool
+     *   require_recipe_for_stocked_items: bool,
+     *   pos_email_reports: array<string, mixed>
      * }
      */
     public static function defaults(): array
@@ -109,6 +112,48 @@ class HospitalityPosSettings
             'stock_location' => 'shop',
             'block_settle_if_insufficient' => true,
             'require_recipe_for_stocked_items' => false,
+            'pos_email_reports' => self::normalizePosEmailReports(null),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $raw
+     * @return array{
+     *   enabled: bool,
+     *   send_hourly: bool,
+     *   send_daily: bool,
+     *   send_on_settle: bool,
+     *   daily_at: string,
+     *   recipients: list<string>
+     * }
+     */
+    public static function normalizePosEmailReports(?array $raw): array
+    {
+        $raw = is_array($raw) ? $raw : [];
+        $dailyAt = trim((string) ($raw['daily_at'] ?? '22:00'));
+        if (! preg_match('/^\d{2}:\d{2}$/', $dailyAt)) {
+            $dailyAt = '22:00';
+        }
+
+        $recipients = $raw['recipients'] ?? [];
+        if (! is_array($recipients)) {
+            $recipients = [];
+        }
+        $emails = [];
+        foreach ($recipients as $email) {
+            $email = strtolower(trim((string) $email));
+            if ($email !== '' && filter_var($email, FILTER_VALIDATE_EMAIL) && ! in_array($email, $emails, true)) {
+                $emails[] = $email;
+            }
+        }
+
+        return [
+            'enabled' => self::normalizeBool($raw['enabled'] ?? false, false),
+            'send_hourly' => self::normalizeBool($raw['send_hourly'] ?? true, true),
+            'send_daily' => self::normalizeBool($raw['send_daily'] ?? true, true),
+            'send_on_settle' => self::normalizeBool($raw['send_on_settle'] ?? false, false),
+            'daily_at' => $dailyAt,
+            'recipients' => $emails,
         ];
     }
 

@@ -20,6 +20,7 @@ use App\Services\Legacy\OrganizationLegacyArchiveService;
 use App\Services\LpoModuleService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Pos\TillReportMetrics;
 use App\Services\Sales\CentrixSalesScope;
 use App\Support\AppTimezone;
 use App\Support\EffectiveSaleDate;
@@ -1181,11 +1182,13 @@ class ReportController extends Controller
         $periodEndDate = $periodEnd->toDateString();
 
         $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
+        $tillMetrics = app(TillReportMetrics::class);
         $salesBase = CentrixSalesScope::excludeLegacyMaterialized(
             DB::table('sales')
                 ->whereIn('status', $metricStatuses)
                 ->where('archived', 0),
         );
+        $tillMetrics->applyCollectedSalesFilter($salesBase);
         $this->applySalesTenantScope($salesBase, $orgId, $branchId);
         EffectiveSaleDate::applyFromToDateFilter($salesBase, $periodStartDate, $periodEndDate);
         if ($cashierId) {
@@ -1194,6 +1197,24 @@ class ReportController extends Controller
         if ($floatSessionId) {
             $salesBase->where('float_session_id', $floatSessionId);
         }
+
+        // Credit outstanding for debtor panel (all metric sales, including unpaid credit).
+        $creditSalesBase = CentrixSalesScope::excludeLegacyMaterialized(
+            DB::table('sales')
+                ->whereIn('status', $metricStatuses)
+                ->where('archived', 0),
+        );
+        $this->applySalesTenantScope($creditSalesBase, $orgId, $branchId);
+        EffectiveSaleDate::applyFromToDateFilter($creditSalesBase, $periodStartDate, $periodEndDate);
+        if ($cashierId) {
+            $creditSalesBase->where('cashier_id', $cashierId);
+        }
+        if ($floatSessionId) {
+            $creditSalesBase->where('float_session_id', $floatSessionId);
+        }
+        $creditSales = (float) ((clone $creditSalesBase)->selectRaw(
+            $tillMetrics->creditOutstandingSql().' as credit_outstanding',
+        )->first()->credit_outstanding ?? 0);
 
         $agg = (clone $salesBase)->selectRaw('
             COUNT(*) as transactions,
@@ -1205,7 +1226,6 @@ class ReportController extends Controller
             COALESCE(SUM(mpesa_amount), 0) as mpesa_collected,
             COALESCE(SUM(equity_amount), 0) as equity_collected,
             COALESCE(SUM(kcb_amount), 0) as kcb_collected,
-            COALESCE(SUM(CASE WHEN is_credit_sale = 1 THEN order_total ELSE 0 END), 0) as credit_sales,
             MIN(COALESCE(completed_at, created_at)) as first_sale_at,
             MAX(COALESCE(completed_at, created_at)) as last_sale_at
         ')->first();
@@ -1219,6 +1239,7 @@ class ReportController extends Controller
                 ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
+        $tillMetrics->applyCollectedSalesFilter($lineDiscountQuery, 's');
         $this->applySalesTenantScope($lineDiscountQuery, $orgId, $branchId, 's');
         $lineDiscountQuery
             ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$periodStartDate])
@@ -1234,6 +1255,7 @@ class ReportController extends Controller
                 ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
+        $tillMetrics->applyCollectedSalesFilter($itemsSoldQuery, 's');
         $this->applySalesTenantScope($itemsSoldQuery, $orgId, $branchId, 's');
         $itemsSoldQuery
             ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$periodStartDate])
@@ -1263,7 +1285,8 @@ class ReportController extends Controller
             : round((float) DB::table('sale_items')->whereIn('sale_id', $saleIds)->sum('product_vat'), 2);
         $totalVat = max($headerVat, $lineVat);
         $totalDiscounts = (float) ($agg->order_discounts ?? 0) + $lineDiscounts;
-        $netSales = max(0, $gross - $totalDiscounts - $refunds);
+        // Legacy ORDTTL = SUM(order_total) on paid POS sales; subtract returns only.
+        $netSales = max(0, round($gross - $refunds, 2));
         $grossSalesExVat = max(0, round($gross - $totalVat, 2));
         $netSalesExVat = max(0, round($netSales - $totalVat, 2));
 
@@ -1319,6 +1342,7 @@ class ReportController extends Controller
                 ->whereNotNull('float_session_id')
                 ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId)),
         );
+        $tillMetrics->applyCollectedSalesFilter($salesBySessionSub);
         $this->applySalesTenantScope($salesBySessionSub, $orgId, $branchId);
         EffectiveSaleDate::applyFromToDateFilter($salesBySessionSub, $periodStartDate, $periodEndDate);
         $salesBySessionSub = $salesBySessionSub
@@ -1338,11 +1362,24 @@ class ReportController extends Controller
             ->selectRaw('COALESCE(SUM(expense_amount), 0) as expenses_total')
             ->groupBy('float_session_id');
 
+        // Legacy DBTTL per session — debtor collections taken on the session (not session sales).
+        $paidDebtorsBySessionSub = DB::table('sale_payments as sp')
+            ->join('sales as s', 's.id', '=', 'sp.sale_id')
+            ->whereNotNull('sp.float_session_id')
+            ->where(function ($query) {
+                $query->whereNull('s.float_session_id')
+                    ->orWhereColumn('s.float_session_id', '!=', 'sp.float_session_id');
+            })
+            ->select('sp.float_session_id')
+            ->selectRaw('COALESCE(SUM(sp.amount), 0) as paid_debtors')
+            ->groupBy('sp.float_session_id');
+
         $tillRowsQuery = DB::table('till_float_sessions as tfs')
             ->join('tills as t', 'tfs.till_id', '=', 't.id')
             ->join('users as u', 'tfs.cashier_id', '=', 'u.id')
             ->leftJoinSub($salesBySessionSub, 's', 's.float_session_id', '=', 'tfs.id')
             ->leftJoinSub($sessionExpenseBySessionSub, 'ex', 'ex.float_session_id', '=', 'tfs.id')
+            ->leftJoinSub($paidDebtorsBySessionSub, 'pd', 'pd.float_session_id', '=', 'tfs.id')
             ->when($cashierId, fn ($q) => $q->where('tfs.cashier_id', $cashierId));
         // Intentionally do not filter by float_session_id here — return every session's maths
         // so the UI can list/filter them. Summary totals remain session-scoped above.
@@ -1372,22 +1409,29 @@ class ReportController extends Controller
                 DB::raw('COALESCE(s.cash_collected, 0) as cash_collected'),
                 DB::raw('COALESCE(s.mpesa_collected, 0) as mpesa_collected'),
                 DB::raw('COALESCE(s.bank_collected, 0) as bank_collected'),
+                DB::raw('COALESCE(pd.paid_debtors, 0) as paid_debtors'),
                 'tfs.working_amount as opening_float',
                 DB::raw('COALESCE(ex.expenses_total, 0) as session_expenses'),
             )
             ->get()
-            ->map(function ($row) {
+            ->map(function ($row) use ($tillMetrics) {
                 $movements = $this->sumSessionCashMovements([(object) [
                     'cash_movements' => $row->cash_movements,
                 ]]);
                 $openingFloat = round((float) ($row->opening_float ?? 0), 2);
                 $grossSales = round((float) ($row->gross_sales ?? 0), 2);
+                $paidDebtors = round((float) ($row->paid_debtors ?? 0), 2);
                 $sessionExpenses = round((float) ($row->session_expenses ?? 0), 2);
                 $cashIn = round((float) ($movements['in'] ?? 0), 2);
                 $cashOut = round((float) ($movements['out'] ?? 0), 2);
-                $expected = round(
-                    $openingFloat + $grossSales - $sessionExpenses - $cashOut + $cashIn,
-                    2,
+                // Legacy netsales = ORDTTL + DBTTL + FLOATTTL − EXPTTL
+                $expected = $tillMetrics->expectedClosing(
+                    $grossSales,
+                    $paidDebtors,
+                    $openingFloat,
+                    $sessionExpenses,
+                    $cashOut,
+                    $cashIn,
                 );
 
                 return (object) [
@@ -1401,6 +1445,7 @@ class ReportController extends Controller
                     'cashier_id' => (int) ($row->cashier_id ?? 0),
                     'cashier' => $row->cashier,
                     'gross_sales' => $grossSales,
+                    'paid_debtors' => $paidDebtors,
                     'total_vat' => round((float) ($row->total_vat ?? 0), 2),
                     'transactions' => (int) ($row->transactions ?? 0),
                     'cash_collected' => round((float) ($row->cash_collected ?? 0), 2),
@@ -1430,6 +1475,7 @@ class ReportController extends Controller
                 ->when($floatSessionId, fn ($q) => $q->where('s.float_session_id', $floatSessionId)),
             's',
         );
+        $tillMetrics->applyCollectedSalesFilter($cashierRowsQuery, 's');
         $this->applySalesTenantScope($cashierRowsQuery, $orgId, $branchId, 's');
         EffectiveSaleDate::applyFromToDateFilter($cashierRowsQuery, $periodStartDate, $periodEndDate, 's');
         $cashierRows = $cashierRowsQuery
@@ -1542,30 +1588,21 @@ class ReportController extends Controller
         }
         $paidDebtors = (float) $paidDebtorsQuery->sum('sp.amount');
 
-        $closingDebtors = (float) DB::table('customers')
-            ->whereNull('deleted_at')
-            ->when($orgId, fn ($q) => $q->where('organization_id', $orgId))
-            ->when($branchId, fn ($q) => $q->where('branch_id', $branchId), function ($q) use ($orgId) {
-                if ($orgId) {
-                    $this->scopeOrganizationBranches($q, $orgId);
-                }
-            })
-            ->sum('current_balance');
+        // Period credit outstanding only (legacy INVOICETOTALS analogue) — display, not netsales.
+        $closingDebtors = round(max(0, $creditSales), 2);
 
-        $creditSales = (float) ($agg->credit_sales ?? 0);
-        // Expected closing: opening float + total sales − expenses (± cash movements).
-        // Till paid-debtors are tracked separately; cashiers have no POS debt-collection UI yet.
-        $expectedNetSales = round(
-            $openingFloat
-                + $netSales
-                - $totalExpenses
-                - $cashMovementsOut
-                + $cashMovementsIn,
-            2,
+        // Legacy netsales = ORDTTL + DBTTL + FLOATTTL − EXPTTL (± cash movements).
+        $expectedNetSales = $tillMetrics->expectedClosing(
+            $netSales,
+            $paidDebtors,
+            $openingFloat,
+            $totalExpenses,
+            $cashMovementsOut,
+            $cashMovementsIn,
         );
         $netCashExpected = $expectedNetSales;
         $netSalesMinusFloat = $expectedNetSales;
-        $netPosition = $netCashExpected - $closingDebtors;
+        $netPosition = $expectedNetSales;
 
         $dailyBreakdown = null;
         if ($isMonthly) {
@@ -1575,6 +1612,7 @@ class ReportController extends Controller
                     ->where('archived', 0)
                     ->when($cashierId, fn ($q) => $q->where('cashier_id', $cashierId)),
             );
+            $tillMetrics->applyCollectedSalesFilter($dailyBreakdown);
             $this->applySalesTenantScope($dailyBreakdown, $orgId, $branchId);
             EffectiveSaleDate::applyFromToDateFilter($dailyBreakdown, $periodStartDate, $periodEndDate);
             $dailyBreakdown = $dailyBreakdown
