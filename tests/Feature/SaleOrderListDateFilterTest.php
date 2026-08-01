@@ -269,7 +269,7 @@ class SaleOrderListDateFilterTest extends TestCase
         $this->assertFalse($ids->contains($old->id));
     }
 
-    public function test_sales_list_search_expands_to_one_month_window(): void
+    public function test_sales_list_search_respects_explicit_date_filter(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($admin);
@@ -312,9 +312,49 @@ class SaleOrderListDateFilterTest extends TestCase
             'completed_at' => now()->subDays(45),
         ]);
 
-        // Free-text search stays inside the platform search window (~1 month).
+        // Explicit From/To must not be widened by search — today-only filter excludes older matches.
         $today = now()->toDateString();
         $response = $this->getJson("/api/v1/sales?q=Within%20Month&from_date={$today}&to_date={$today}&per_page=50&date_field=placed");
+
+        $response->assertOk()
+            ->assertJsonPath('list_scope.skipped_for_search', false)
+            ->assertJsonPath('list_scope.search_window', false)
+            ->assertJsonPath('list_scope.from', $today)
+            ->assertJsonPath('list_scope.to', $today);
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertFalse($ids->contains($withinMonth->id));
+
+        $oldName = $this->getJson("/api/v1/sales?q=Too%20Old&from_date={$today}&to_date={$today}&per_page=50&date_field=placed");
+        $oldIds = collect($oldName->json('data'))->pluck('id');
+        $this->assertFalse($oldIds->contains($tooOld->id));
+    }
+
+    public function test_sales_list_search_without_dates_uses_search_window(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $withinMonth = Sale::query()->create([
+            'order_num' => 993303,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 55,
+            'amount_paid' => 55,
+            'completed_at' => now()->subDays(20),
+            'archived' => 0,
+            'customer_name_override' => 'Search Window Co',
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $withinMonth->id)->update([
+            'created_at' => now()->subDays(20),
+            'completed_at' => now()->subDays(20),
+        ]);
+
+        $response = $this->getJson('/api/v1/sales?q=Search%20Window&per_page=50&date_field=placed');
 
         $response->assertOk()
             ->assertJsonPath('list_scope.skipped_for_search', false)
@@ -322,10 +362,42 @@ class SaleOrderListDateFilterTest extends TestCase
 
         $ids = collect($response->json('data'))->pluck('id');
         $this->assertTrue($ids->contains($withinMonth->id));
+    }
 
-        $oldName = $this->getJson("/api/v1/sales?q=Too%20Old&from_date={$today}&to_date={$today}&per_page=50&date_field=placed");
-        $oldIds = collect($oldName->json('data'))->pluck('id');
-        $this->assertFalse($oldIds->contains($tooOld->id));
+    public function test_sales_list_exact_order_lookup_respects_explicit_date_filter(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $old = Sale::query()->create([
+            'order_num' => 993304,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'status' => 'paid',
+            'payment_status' => 'paid',
+            'order_total' => 55,
+            'amount_paid' => 55,
+            'completed_at' => now()->subDays(45),
+            'archived' => 0,
+        ]);
+        \Illuminate\Support\Facades\DB::table('sales')->where('id', $old->id)->update([
+            'created_at' => now()->subDays(45),
+            'completed_at' => now()->subDays(45),
+        ]);
+
+        $today = now()->toDateString();
+        $response = $this->getJson(
+            "/api/v1/sales?q=993304&from_date={$today}&to_date={$today}&per_page=50&date_field=placed",
+        );
+
+        $response->assertOk()
+            ->assertJsonPath('list_scope.skipped_for_search', false)
+            ->assertJsonPath('list_scope.from', $today);
+
+        $ids = collect($response->json('data'))->pluck('id');
+        $this->assertFalse($ids->contains($old->id));
     }
 
     public function test_sales_list_exact_order_number_lookup_skips_date_window(): void

@@ -7,6 +7,7 @@ use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
 use App\Services\Hospitality\HospitalityDemoDataSeeder;
+use App\Support\StoredPublicFile;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -50,6 +51,20 @@ class HospitalityDemoDataSeedTest extends TestCase
                 ->where('product_code', 'like', 'HTL-%')
                 ->count(),
         );
+
+        $withImages = Product::query()
+            ->where('organization_id', $org->id)
+            ->where('product_code', 'like', 'HTL-%')
+            ->whereNotNull('image_path')
+            ->get();
+        $this->assertCount(20, $withImages);
+        foreach ($withImages as $product) {
+            $this->assertTrue(
+                StoredPublicFile::exists($product->image_path),
+                "Missing seeded image for {$product->product_code}",
+            );
+            $this->assertNotEmpty($product->image_url);
+        }
 
         $again = app(HospitalityDemoDataSeeder::class)->seedForOrganization($org);
         $this->assertSame(20, $again['products']);

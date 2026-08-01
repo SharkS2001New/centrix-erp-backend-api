@@ -43,10 +43,13 @@ class SalesListDateScope
         );
         $search = trim((string) $search);
         $searching = $search !== '';
+        $explicitFrom = $this->normalizeDate($fromDate);
+        $explicitTo = $this->normalizeDate($toDate);
+        $hasExplicitDateFilter = $explicitFrom !== null || $explicitTo !== null;
 
-        // Exact order # (168 / S0168) must resolve at any age — returns and invoice lookups.
-        // Free-text / customer search stays inside the platform search window.
-        if ($searching && $this->isExactOrderNumberLookup($search)) {
+        // Exact order # (168 / S0168) may resolve at any age when no date filter is set
+        // (returns / invoice lookups). With explicit From/To, search stays inside that range.
+        if ($searching && $this->isExactOrderNumberLookup($search) && ! $hasExplicitDateFilter) {
             return [
                 'from' => null,
                 'to' => null,
@@ -58,17 +61,17 @@ class SalesListDateScope
             ];
         }
 
-        $to = $this->normalizeDate($toDate) ?? now()->toDateString();
-        $from = $this->normalizeDate($fromDate);
+        $to = $explicitTo ?? now()->toDateString();
+        $from = $explicitFrom;
+        $usedSearchWindow = false;
 
-        if ($searching) {
-            // Name / free-text search: platform search window (default 1 month).
-            $searchFrom = Carbon::parse($to)->subDays($searchWindowDays - 1)->toDateString();
-            if ($from === null || $from > $searchFrom) {
-                $from = $searchFrom;
-            }
+        if ($searching && ! $hasExplicitDateFilter) {
+            // No date filter: free-text search uses the platform search window (default 1 month).
+            $from = Carbon::parse($to)->subDays($searchWindowDays - 1)->toDateString();
             $effectiveHotDays = $searchWindowDays;
+            $usedSearchWindow = true;
         } else {
+            // Explicit From/To (or browse without search): never widen past the filter.
             if ($from === null) {
                 $from = Carbon::parse($to)->subDays($hotWindowDays - 1)->toDateString();
             }
@@ -106,7 +109,7 @@ class SalesListDateScope
             'skipped_for_search' => false,
             'from_archive' => $fromArchive,
             'hot_window_days' => $effectiveHotDays,
-            'search_window' => $searching,
+            'search_window' => $usedSearchWindow,
         ];
     }
 

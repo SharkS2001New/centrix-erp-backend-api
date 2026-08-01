@@ -11,6 +11,8 @@ use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
 use App\Models\Vat;
+use App\Support\SqlLikeSearch;
+use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -514,16 +516,24 @@ class HospitalityCheckService
     }
 
     /**
-     * Recent F&B checks for Hotel Backoffice orders list.
+     * Paginated F&B checks for Hotel Backoffice — search, status, outlet, date range.
      *
-     * @return list<HospitalityCheck>
+     * @param  array{
+     *   status?: string|null,
+     *   outlet_id?: int|null,
+     *   q?: string|null,
+     *   from_date?: string|null,
+     *   to_date?: string|null,
+     *   per_page?: int,
+     *   page?: int
+     * }  $filters
+     * @return LengthAwarePaginator<int, HospitalityCheck>
      */
-    public function listRecent(
-        int $organizationId,
-        ?string $status = null,
-        ?int $outletId = null,
-        int $limit = 100,
-    ): array {
+    public function listRecent(int $organizationId, array $filters = []): LengthAwarePaginator
+    {
+        $limit = max(1, min(200, (int) ($filters['per_page'] ?? 50)));
+        $page = max(1, (int) ($filters['page'] ?? 1));
+
         $query = HospitalityCheck::query()
             ->with([
                 'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
@@ -532,14 +542,25 @@ class HospitalityCheckService
             ])
             ->where('organization_id', $organizationId)
             ->orderByDesc('updated_at')
-            ->limit(max(1, min(200, $limit)));
+            ->orderByDesc('id');
 
+        $outletId = isset($filters['outlet_id']) ? (int) $filters['outlet_id'] : null;
         if ($outletId) {
             $query->where('outlet_id', $outletId);
         }
 
+        $fromDate = trim((string) ($filters['from_date'] ?? ''));
+        if ($fromDate !== '') {
+            $query->whereDate('opened_at', '>=', $fromDate);
+        }
+        $toDate = trim((string) ($filters['to_date'] ?? ''));
+        if ($toDate !== '') {
+            $query->whereDate('opened_at', '<=', $toDate);
+        }
+
+        $status = $filters['status'] ?? null;
         $normalized = $status !== null && $status !== ''
-            ? $this->normalizeStatus(strtolower(trim($status)))
+            ? $this->normalizeStatus(strtolower(trim((string) $status)))
             : null;
 
         if ($normalized === 'open') {
@@ -554,7 +575,62 @@ class HospitalityCheckService
             $query->where('status', $normalized);
         }
 
-        return $query->get()->all();
+        $this->applyCheckListSearch($query, (string) ($filters['q'] ?? ''));
+
+        return $query->paginate($limit, ['*'], 'page', $page);
+    }
+
+    /**
+     * Global search: check #, guest, amount, table, outlet, and line products.
+     *
+     * @param  \Illuminate\Database\Eloquent\Builder<HospitalityCheck>  $query
+     */
+    protected function applyCheckListSearch($query, string $term): void
+    {
+        $term = trim($term);
+        if ($term === '') {
+            return;
+        }
+
+        $escaped = SqlLikeSearch::escape($term);
+        $like = '%'.$escaped.'%';
+        $amount = null;
+        $amountRaw = str_replace([',', ' '], '', $term);
+        if (preg_match('/^\d+(\.\d{1,2})?$/', $amountRaw)) {
+            $amount = round((float) $amountRaw, 2);
+        }
+
+        $query->where(function ($sub) use ($term, $like, $amount) {
+            if (ctype_digit($term)) {
+                $sub->where('check_number', $term)
+                    ->orWhere('check_number', 'like', $term.'%')
+                    ->orWhere('id', (int) $term)
+                    ->orWhere('guest_name', 'like', $like);
+            } else {
+                $sub->where('check_number', 'like', $like)
+                    ->orWhere('guest_name', 'like', $like);
+            }
+
+            if ($amount !== null) {
+                $sub->orWhereRaw('ROUND(total, 2) = ?', [$amount])
+                    ->orWhereRaw('ROUND(COALESCE(amount_paid, 0), 2) = ?', [$amount]);
+            }
+
+            $sub->orWhereHas('floorTable', function ($table) use ($like) {
+                $table->where('label', 'like', $like)
+                    ->orWhere('code', 'like', $like);
+            });
+
+            $sub->orWhereHas('outlet', function ($outlet) use ($like) {
+                $outlet->where('name', 'like', $like)
+                    ->orWhere('code', 'like', $like);
+            });
+
+            $sub->orWhereHas('lines', function ($lines) use ($like) {
+                $lines->where('product_code', 'like', $like)
+                    ->orWhere('description', 'like', $like);
+            });
+        });
     }
 
     /**
@@ -745,18 +821,18 @@ class HospitalityCheckService
 
     protected function nextCheckNumber(int $organizationId): string
     {
-        $prefix = 'H'.now()->format('ymd');
-        $last = HospitalityCheck::query()
+        $numbers = HospitalityCheck::query()
             ->where('organization_id', $organizationId)
-            ->where('check_number', 'like', $prefix.'%')
-            ->orderByDesc('id')
-            ->value('check_number');
+            ->pluck('check_number');
 
-        $seq = 1;
-        if (is_string($last) && preg_match('/(\d+)$/', $last, $m)) {
-            $seq = ((int) $m[1]) + 1;
+        $maxSeq = 0;
+        foreach ($numbers as $number) {
+            if (! is_string($number) || $number === '' || ! ctype_digit($number)) {
+                continue;
+            }
+            $maxSeq = max($maxSeq, (int) $number);
         }
 
-        return $prefix.str_pad((string) $seq, 4, '0', STR_PAD_LEFT);
+        return (string) ($maxSeq + 1);
     }
 }

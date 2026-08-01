@@ -20,17 +20,27 @@ class HospitalityCheckController extends Controller
     public function index(Request $request)
     {
         $org = $this->org($request);
-        $outletId = $request->filled('outlet_id') ? (int) $request->input('outlet_id') : null;
-        $limit = (int) $request->input('per_page', 100);
-        $rows = $this->checks->listRecent(
-            (int) $org->id,
-            $request->input('status'),
-            $outletId,
-            $limit,
-        );
+        $paginator = $this->checks->listRecent((int) $org->id, [
+            'status' => $request->input('status'),
+            'outlet_id' => $request->filled('outlet_id') ? (int) $request->input('outlet_id') : null,
+            'q' => $request->input('q'),
+            'from_date' => $request->input('from_date'),
+            'to_date' => $request->input('to_date'),
+            'per_page' => (int) $request->input('per_page', 50),
+            'page' => (int) $request->input('page', 1),
+        ]);
+
+        $checks = collect($paginator->items())
+            ->map(fn ($c) => $this->checks->toArray($c))
+            ->values()
+            ->all();
 
         return response()->json([
-            'checks' => array_map(fn ($c) => $this->checks->toArray($c), $rows),
+            'checks' => $checks,
+            'current_page' => $paginator->currentPage(),
+            'per_page' => $paginator->perPage(),
+            'total' => $paginator->total(),
+            'last_page' => $paginator->lastPage(),
         ]);
     }
 

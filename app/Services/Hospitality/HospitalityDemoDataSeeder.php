@@ -12,6 +12,7 @@ use App\Models\Uom;
 use App\Models\User;
 use App\Models\Vat;
 use App\Services\Cache\OrganizationCache;
+use App\Support\SeededProductImage;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
@@ -271,6 +272,14 @@ class HospitalityDemoDataSeeder
                     'created_by' => $actorId,
                 ]),
             );
+
+            SeededProductImage::ensureForProduct(
+                $product->fresh(),
+                $org,
+                $item['name'],
+                $item['group'] === 'drinks' ? 'drinks' : 'food',
+            );
+
             $codes[] = (string) $product->product_code;
         }
 

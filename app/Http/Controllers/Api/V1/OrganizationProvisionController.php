@@ -297,7 +297,7 @@ class OrganizationProvisionController extends Controller
 
         return response()->json([
             'message' => sprintf(
-                'Seeded %d menu products and %d tables for Hotel POS testing.',
+                'Seeded %d menu products (with photos) and %d tables for Hotel POS testing.',
                 $result['products'],
                 $result['tables'],
             ),

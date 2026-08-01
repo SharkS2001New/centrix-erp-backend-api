@@ -35,6 +35,7 @@ use App\Models\Uom;
 use App\Models\User;
 use App\Models\Vehicle;
 use App\Models\Vat;
+use App\Support\SeededProductImage;
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
@@ -277,6 +278,8 @@ class DemoDataSeeder extends Seeder
             'updated_by' => $admin->id,
         ]);
 
+        SeededProductImage::ensureForProduct($sugar, $org, $sugar->product_name, 'retail');
+
         RetailPackageSetting::create([
             'product_code' => $sugar->product_code,
             'max_qty_measure' => 50,
@@ -348,6 +351,8 @@ class DemoDataSeeder extends Seeder
             'created_by' => $admin->id,
             'updated_by' => $admin->id,
         ]);
+
+        SeededProductImage::ensureForProduct($flour, $org, $flour->product_name, 'retail');
 
         CurrentStock::create([
             'product_code' => $flour->product_code,
