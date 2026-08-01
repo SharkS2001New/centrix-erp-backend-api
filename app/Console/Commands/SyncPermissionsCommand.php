@@ -11,7 +11,7 @@ use Illuminate\Support\Facades\DB;
 class SyncPermissionsCommand extends Command
 {
     protected $signature = 'erp:permissions-sync
-                            {--grant-admin : Grant every permission to Administrator roles}';
+                            {--grant-admin : Grant every industry-scoped permission to Administrator roles}';
 
     protected $description = 'Sync permission registry and route capability codes into the permissions table';
 
@@ -30,7 +30,8 @@ class SyncPermissionsCommand extends Command
                 ->whereIn('role_name', ['Administrator', 'Admin'])
                 ->pluck('id');
 
-            $permissionIds = Permission::query()->pluck('id');
+            // Union of commerce + hospitality application shells (not orphan/legacy codes).
+            $permissionIds = PermissionMatrixService::allIndustryPermissionIds();
             $granted = 0;
 
             foreach ($adminRoles as $roleId) {
@@ -43,7 +44,7 @@ class SyncPermissionsCommand extends Command
                 }
             }
 
-            $this->info("Granted {$granted} new role-permission links to administrator roles.");
+            $this->info("Granted {$granted} new role-permission links to administrator roles (all industries).");
         }
 
         $this->line('Open Admin → Roles & permissions to review the updated matrix and re-save custom roles if needed.');

@@ -6,14 +6,15 @@ use App\Models\Branch;
 use App\Models\Department;
 use App\Models\Employee;
 use App\Models\Organization;
-use App\Models\Permission;
 use App\Models\Position;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Accounting\FiscalPeriodService;
 use App\Services\Accounting\StandardChartOfAccounts;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\ModuleRegistry;
+use App\Services\Erp\PermissionMatrixService;
 use App\Services\Organization\OrganizationReferenceDataService;
 use App\Services\OrganizationPlatformConfigService;
 use App\Services\Auth\RoleTemplateService;
@@ -72,13 +73,17 @@ class OrganizationProvisioningService
                     'scope' => 'org',
                     'is_active' => true,
                 ]);
+            }
 
-                foreach (Permission::all() as $perm) {
-                    DB::table('role_permissions')->insertOrIgnore([
-                        'role_id' => $role->id,
-                        'permission_id' => $perm->id,
-                    ]);
-                }
+            // Shared global Administrator accumulates industry shells as tenants are provisioned.
+            // Never wipe opposite-industry grants; never attach orphan codes outside industry apps.
+            $industry = IndustryRegistry::industryForProfile((string) $data['deployment_profile']);
+            $permissionIds = PermissionMatrixService::permissionIdsForIndustry($industry);
+            foreach ($permissionIds as $permissionId) {
+                DB::table('role_permissions')->insertOrIgnore([
+                    'role_id' => $role->id,
+                    'permission_id' => $permissionId,
+                ]);
             }
 
             $manager = User::create([

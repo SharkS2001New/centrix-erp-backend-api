@@ -31,4 +31,15 @@ class RoleTemplateServiceTest extends TestCase
         $this->assertNotContains('Cashier', $names);
         $this->assertContains('Warehouse Clerk', $names);
     }
+
+    public function test_hotel_bar_excludes_commerce_roles(): void
+    {
+        $modules = ModuleRegistry::cascade(config('erp.profiles.hotel_bar.modules'));
+        $roles = app(RoleTemplateService::class)->recommendedForProfile('hotel_bar', $modules);
+        $names = array_column($roles, 'role_name');
+
+        $this->assertContains('Hotel Cashier', $names);
+        $this->assertNotContains('Cashier', $names);
+        $this->assertNotContains('Warehouse Clerk', $names);
+    }
 }

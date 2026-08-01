@@ -7,6 +7,7 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Erp\ModuleRegistry;
 use Illuminate\Support\Facades\DB;
 
@@ -20,6 +21,7 @@ class RoleTemplateService
         }
 
         $this->migrateLegacyStockClerkRole();
+        $this->migrateLegacyBranchManagerManagerAppRole();
     }
 
     /**
@@ -42,13 +44,18 @@ class RoleTemplateService
      */
     public function recommendedForProfile(string $profile, array $enabledModules): array
     {
-        $names = $this->resolveRoleNamesForProfile($profile, $enabledModules);
+        $industry = IndustryRegistry::industryForProfile($profile);
+        $names = $this->resolveRoleNamesForProfile($profile, $enabledModules, $industry);
         $definitions = $this->roleDefinitions();
         $result = [];
 
         foreach ($names as $name) {
             $definition = $definitions[$name] ?? null;
             if ($definition === null) {
+                continue;
+            }
+
+            if (! $this->roleMatchesIndustry($definition, $industry)) {
                 continue;
             }
 
@@ -67,11 +74,29 @@ class RoleTemplateService
     }
 
     /**
+     * Global template role names visible for an industry (excludes opposite-industry templates).
+     *
+     * @return list<string>
+     */
+    public function templateRoleNamesForIndustry(string $industry): array
+    {
+        $names = [];
+        foreach ($this->roleDefinitions() as $roleName => $definition) {
+            if ($this->roleMatchesIndustry($definition, $industry)) {
+                $names[] = $roleName;
+            }
+        }
+
+        return $names;
+    }
+
+    /**
      * @param  array<string, bool>  $enabledModules
      * @return list<string>
      */
     public function onboardingSteps(string $profile, array $enabledModules): array
     {
+        $industry = IndustryRegistry::industryForProfile($profile);
         $steps = [
             'Sign in as the administrator and change the default password if needed.',
         ];
@@ -82,16 +107,25 @@ class RoleTemplateService
             $steps[] = 'Use Platform → Organization → Users to create staff accounts with the recommended roles below.';
         }
 
-        if ($enabledModules['sales.pos'] ?? false) {
-            $steps[] = 'Configure payment methods and open a till session before the first POS sale.';
-        }
+        if ($industry === 'hospitality') {
+            if ($enabledModules['hospitality.bar_pos'] ?? false) {
+                $steps[] = 'Open Hotel POS and configure outlets before the first check.';
+            }
+            if ($enabledModules['hospitality.backend'] ?? false) {
+                $steps[] = 'Set up rooms, rate plans, and front-desk defaults in Hotel Backoffice.';
+            }
+        } else {
+            if ($enabledModules['sales.pos'] ?? false) {
+                $steps[] = 'Configure payment methods and open a till session before the first POS sale.';
+            }
 
-        if ($enabledModules['sales.mobile'] ?? false) {
-            $steps[] = 'Assign mobile login channels to field reps and link them to routes.';
-        }
+            if ($enabledModules['sales.mobile'] ?? false) {
+                $steps[] = 'Assign mobile login channels to field reps and link them to routes.';
+            }
 
-        if ($enabledModules['distribution'] ?? false) {
-            $steps[] = 'Set up routes, drivers, vehicles, and route schedules before dispatching orders.';
+            if ($enabledModules['distribution'] ?? false) {
+                $steps[] = 'Set up routes, drivers, vehicles, and route schedules before dispatching orders.';
+            }
         }
 
         if ($enabledModules['inventory'] ?? false) {
@@ -115,11 +149,18 @@ class RoleTemplateService
         return config('role_templates.roles', []);
     }
 
-    /** @param  array<string, bool>  $enabledModules */
-    protected function resolveRoleNamesForProfile(string $profile, array $enabledModules): array
+    /**
+     * @param  array<string, bool>  $enabledModules
+     * @return list<string>
+     */
+    protected function resolveRoleNamesForProfile(string $profile, array $enabledModules, string $industry): array
     {
-        $profileRoles = config("role_templates.profile_roles.{$profile}")
-            ?? config('role_templates.profile_roles.custom', ['Branch Manager', 'Viewer']);
+        $profileRoles = config("role_templates.profile_roles.{$profile}");
+        if (! is_array($profileRoles)) {
+            $profileRoles = $industry === 'hospitality'
+                ? config('role_templates.profile_roles.hotel_bar', ['Hotel Manager', 'Viewer'])
+                : config('role_templates.profile_roles.custom', ['Branch Manager', 'Viewer']);
+        }
 
         $names = $profileRoles;
 
@@ -139,6 +180,18 @@ class RoleTemplateService
         }
 
         return array_values(array_unique($ordered));
+    }
+
+    /** @param  array<string, mixed>  $definition */
+    protected function roleMatchesIndustry(array $definition, string $industry): bool
+    {
+        $industries = $definition['industries'] ?? null;
+        if (! is_array($industries) || $industries === []) {
+            // Untagged legacy templates default to commerce-only.
+            return $industry === 'commerce';
+        }
+
+        return in_array($industry, $industries, true);
     }
 
     /** @param  array<string, mixed>  $definition */
@@ -212,6 +265,22 @@ class RoleTemplateService
         }
 
         CapabilitiesCacheInvalidator::forRole($legacy->fresh());
+    }
+
+    /**
+     * The Manager-app template was previously a second "Branch Manager" key (overwritten in PHP).
+     * Rename any leftover Manager-app permission set onto Field Manager when present.
+     */
+    protected function migrateLegacyBranchManagerManagerAppRole(): void
+    {
+        $fieldManager = $this->roleDefinitions()['Field Manager'] ?? null;
+        if ($fieldManager === null) {
+            return;
+        }
+
+        // Field Manager is created via ensureRole; nothing else to migrate by name.
+        // Users previously assigned the overwritten Branch Manager (manager-app perms)
+        // keep that global Branch Manager row — org Branch Manager template is restored above.
     }
 
     /**

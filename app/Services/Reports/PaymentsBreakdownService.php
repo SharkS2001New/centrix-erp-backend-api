@@ -11,10 +11,13 @@ use Illuminate\Support\Facades\Schema;
 /**
  * Order-level payments breakdown for till follow-up.
  *
+ * Each tender tab lists every paid order that used that method (including
+ * split-tender orders). Mixed orders appear on each participating tab with
+ * a badge naming the other methods — there is no separate Mixed tab.
+ *
  * Classification prefers sale_payments + payment_methods (Payment Module),
- * so admin-added banks (COOP, ABSA, NCBA, …) get their own “alone” tabs.
- * Sale cash/mpesa/equity/kcb columns are only a fallback when a paid sale
- * has no payment rows (legacy).
+ * so admin-added banks get their own tabs. Sale cash/mpesa/equity/kcb columns
+ * are only a fallback when a paid sale has no payment rows (legacy).
  */
 class PaymentsBreakdownService
 {
@@ -27,13 +30,11 @@ class PaymentsBreakdownService
         'KCB' => 4,
         'CARD' => 5,
         'BANK' => 6,
-        'CHEQUE' => 7,
-        'VOUCHER' => 8,
-        'POINTS' => 9,
         'CREDIT' => 10,
         'OTHER' => 90,
-        'MIXED' => 100,
     ];
+
+    private const HIDDEN_METHODS = ['CHEQUE', 'VOUCHER', 'POINTS', 'LOYALTY', 'LOYALTY_POINTS', 'MIXED'];
 
     /**
      * @return array<string, mixed>
@@ -43,6 +44,9 @@ class PaymentsBreakdownService
         $fromDate = $this->nullableDate($request->input('from_date'));
         $toDate = $this->nullableDate($request->input('to_date'));
         $methodCode = $this->normalizeMethodCode((string) $request->input('method_code', ''));
+        if ($methodCode === 'MIXED') {
+            $methodCode = '';
+        }
         $search = trim((string) $request->input('q', ''));
         $cashierId = (int) $request->input('cashier_id', 0);
         if ($cashierId <= 0) {
@@ -70,7 +74,7 @@ class PaymentsBreakdownService
             $sessionStatus,
         );
 
-        // Distinct tenders per sale from Payment Module rows (custom banks included).
+        // One row per (sale, method) from Payment Module — mixed orders expand to each tender.
         $paymentTenderSub = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->where('sp.amount', '>', TillReportMetrics::MIN_COLLECTED)
@@ -79,50 +83,74 @@ class PaymentsBreakdownService
             ->selectRaw('COALESCE(SUM(sp.amount), 0) as method_amount')
             ->groupBy('sp.sale_id', DB::raw($this->normalizedMethodCodeSql('pm.method_code')));
 
-        $paymentClassSub = DB::query()
-            ->fromSub($paymentTenderSub, 'pt')
-            ->select('pt.sale_id')
-            ->selectRaw('COUNT(*) as tender_count')
-            ->selectRaw("CASE WHEN COUNT(*) > 1 THEN 'MIXED' ELSE MAX(pt.method_code) END as alone_method")
-            ->selectRaw('COALESCE(SUM(pt.method_amount), 0) as payments_total')
-            ->groupBy('pt.sale_id');
+        $saleIdsWithPayments = (clone $salesBase)
+            ->joinSub($paymentTenderSub, 'pt0', 'pt0.sale_id', '=', 's.id')
+            ->distinct()
+            ->pluck('s.id');
 
-        $classified = (clone $salesBase)
-            ->leftJoinSub($paymentClassSub, 'pc', 'pc.sale_id', '=', 's.id')
+        $expandedFromPayments = (clone $salesBase)
+            ->joinSub($paymentTenderSub, 'pt', 'pt.sale_id', '=', 's.id')
+            ->select([
+                's.id as sale_id',
+                'pt.method_code',
+                'pt.method_amount',
+            ]);
+
+        // Legacy paid sales with tender columns but no sale_payments rows.
+        $legacySales = (clone $salesBase)
+            ->when($saleIdsWithPayments->isNotEmpty(), fn ($q) => $q->whereNotIn('s.id', $saleIdsWithPayments->all()))
             ->select([
                 's.id',
-                's.order_num',
-                's.branch_id',
-                's.channel',
-                's.cashier_id',
-                's.float_session_id',
-                's.customer_num',
-                's.customer_name_override',
-                's.order_total',
-                's.amount_paid',
                 's.cash',
                 's.mpesa_amount',
                 's.equity_amount',
                 's.kcb_amount',
-                's.voucher_payment_amount',
-                's.points_payment_amount',
-                's.completed_at',
-                's.created_at',
-                DB::raw($this->aloneMethodWithFallbackSql().' as alone_method'),
-                DB::raw($this->tenderCountWithFallbackSql().' as tender_count'),
-                DB::raw('COALESCE(pc.payments_total, 0) as payments_total'),
             ])
-            ->whereRaw('('.$this->aloneMethodWithFallbackSql().") <> 'NONE'");
-
-        $methodRows = DB::query()
-            ->fromSub($classified, 'x')
-            ->select([
-                'alone_method as method_code',
-                DB::raw('COUNT(*) as order_count'),
-                DB::raw('COALESCE(SUM(COALESCE(amount_paid, order_total, 0)), 0) as total_amount'),
-            ])
-            ->groupBy('alone_method')
             ->get();
+
+        $legacyExpanded = [];
+        foreach ($legacySales as $sale) {
+            foreach ($this->tenderBreakdownFromColumns($sale) as $code => $amount) {
+                if (in_array($code, self::HIDDEN_METHODS, true)) {
+                    continue;
+                }
+                $legacyExpanded[] = (object) [
+                    'sale_id' => (int) $sale->id,
+                    'method_code' => $code,
+                    'method_amount' => $amount,
+                ];
+            }
+        }
+
+        $paymentExpandedRows = $expandedFromPayments->get()->map(function ($row) {
+            $code = $this->normalizeMethodCode((string) ($row->method_code ?? ''));
+            if ($code === '' || in_array($code, self::HIDDEN_METHODS, true)) {
+                return null;
+            }
+
+            return (object) [
+                'sale_id' => (int) $row->sale_id,
+                'method_code' => $code,
+                'method_amount' => round((float) ($row->method_amount ?? 0), 2),
+            ];
+        })->filter()->values();
+
+        $allExpanded = $paymentExpandedRows->concat($legacyExpanded)->values();
+
+        // Tab aggregates: sum this method's slice; count distinct orders that used it.
+        $methodAgg = [];
+        foreach ($allExpanded as $row) {
+            $code = $row->method_code;
+            $methodAgg[$code] ??= ['order_ids' => [], 'total_amount' => 0.0];
+            $methodAgg[$code]['order_ids'][$row->sale_id] = true;
+            $methodAgg[$code]['total_amount'] += (float) $row->method_amount;
+        }
+
+        $methodRows = collect($methodAgg)->map(fn ($agg, $code) => (object) [
+            'method_code' => $code,
+            'order_count' => count($agg['order_ids']),
+            'total_amount' => round($agg['total_amount'], 2),
+        ])->values();
 
         $methods = $this->sortAndPresentMethods($methodRows, $catalog);
 
@@ -136,84 +164,102 @@ class PaymentsBreakdownService
             $active = $methods[0];
         }
 
-        $listQuery = DB::query()
-            ->fromSub($classified, 'x')
+        // Sale IDs that used the active method (alone or mixed).
+        $tabSaleIds = $allExpanded
+            ->filter(fn ($row) => $row->method_code === $methodCode)
+            ->pluck('sale_id')
+            ->unique()
+            ->values()
+            ->all();
+
+        $listQuery = (clone $salesBase)
             ->leftJoin('customers as c', function ($join) use ($organizationId) {
-                $join->on('c.customer_num', '=', 'x.customer_num');
+                $join->on('c.customer_num', '=', 's.customer_num');
                 if (Schema::hasColumn('customers', 'organization_id')) {
                     $join->where('c.organization_id', '=', $organizationId);
                 }
             })
-            ->leftJoin('users as u', 'u.id', '=', 'x.cashier_id')
-            ->leftJoin('till_float_sessions as tfs', 'tfs.id', '=', 'x.float_session_id')
+            ->leftJoin('users as u', 'u.id', '=', 's.cashier_id')
+            ->leftJoin('till_float_sessions as tfs', 'tfs.id', '=', 's.float_session_id')
             ->leftJoin('tills as t', 't.id', '=', 'tfs.till_id');
 
-        if ($methodCode !== '') {
-            $listQuery->where('x.alone_method', $methodCode);
+        if ($methodCode !== '' && $tabSaleIds !== []) {
+            $listQuery->whereIn('s.id', $tabSaleIds);
         } else {
             $listQuery->whereRaw('1 = 0');
         }
 
         if ($search !== '') {
             $listQuery->where(function ($inner) use ($search) {
-                $inner->where('x.order_num', 'like', "%{$search}%")
-                    ->orWhere('x.customer_name_override', 'like', "%{$search}%")
+                $inner->where('s.order_num', 'like', "%{$search}%")
+                    ->orWhere('s.customer_name_override', 'like', "%{$search}%")
                     ->orWhere('c.customer_name', 'like', "%{$search}%")
-                    ->orWhere('x.customer_num', 'like', "%{$search}%")
+                    ->orWhere('s.customer_num', 'like', "%{$search}%")
                     ->orWhereExists(function ($sub) use ($search) {
                         $sub->select(DB::raw(1))
                             ->from('sale_payments as sp')
-                            ->whereColumn('sp.sale_id', 'x.id')
+                            ->whereColumn('sp.sale_id', 's.id')
                             ->where('sp.reference_number', 'like', "%{$search}%");
                     });
             });
         }
 
-        $summaryRaw = (clone $listQuery)
-            ->reorder()
-            ->select([
-                DB::raw('COUNT(*) as order_count'),
-                DB::raw('COALESCE(SUM(COALESCE(x.amount_paid, x.order_total, 0)), 0) as total_amount'),
-            ])
-            ->first();
+        // Tab total = sum of this method's amounts on matching orders (search-aware).
+        $matchedSaleIds = (clone $listQuery)->reorder()->pluck('s.id')->map(fn ($id) => (int) $id)->all();
+        $tabAmountBySale = [];
+        foreach ($allExpanded as $row) {
+            if ($row->method_code !== $methodCode) {
+                continue;
+            }
+            $tabAmountBySale[(int) $row->sale_id] = (float) $row->method_amount;
+        }
+        $summaryTotal = 0.0;
+        foreach ($matchedSaleIds as $sid) {
+            $summaryTotal += $tabAmountBySale[$sid] ?? 0;
+        }
 
         $paginator = $listQuery
             ->select([
-                'x.id as sale_id',
-                'x.order_num',
-                'x.branch_id',
-                'x.channel',
-                'x.cashier_id',
-                'x.float_session_id',
-                'x.customer_num',
-                'x.customer_name_override',
+                's.id as sale_id',
+                's.order_num',
+                's.branch_id',
+                's.channel',
+                's.cashier_id',
+                's.float_session_id',
+                's.customer_num',
+                's.customer_name_override',
                 'c.customer_name',
-                'x.order_total',
-                'x.amount_paid',
-                'x.cash',
-                'x.mpesa_amount',
-                'x.equity_amount',
-                'x.kcb_amount',
-                'x.voucher_payment_amount',
-                'x.points_payment_amount',
-                'x.alone_method',
-                'x.tender_count',
-                'x.payments_total',
-                'x.completed_at',
-                'x.created_at',
+                's.order_total',
+                's.amount_paid',
+                's.cash',
+                's.mpesa_amount',
+                's.equity_amount',
+                's.kcb_amount',
+                's.voucher_payment_amount',
+                's.points_payment_amount',
+                's.completed_at',
+                's.created_at',
                 DB::raw('COALESCE(NULLIF(TRIM(u.full_name), ""), u.username) as cashier_name'),
                 'tfs.status as session_status',
                 'tfs.session_date',
                 't.till_number',
                 't.till_name',
             ])
-            ->orderByDesc(DB::raw('COALESCE(x.completed_at, x.created_at)'))
-            ->orderByDesc('x.id')
+            ->orderByDesc(DB::raw('COALESCE(s.completed_at, s.created_at)'))
+            ->orderByDesc('s.id')
             ->paginate($perPage);
 
         $saleIds = collect($paginator->items())->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->all();
         $tendersBySale = $this->tendersFromPaymentsBySale($saleIds);
         $referencesBySale = $this->referencesBySale($saleIds);
+
+        // Fill tenders from columns for legacy rows missing payment tenders.
+        foreach ($paginator->items() as $row) {
+            $sid = (int) $row->sale_id;
+            if (! isset($tendersBySale[$sid]) || $tendersBySale[$sid] === []) {
+                $tendersBySale[$sid] = $this->tenderBreakdownFromColumns($row);
+            }
+        }
 
         $rows = collect($paginator->items())->map(function ($row) use (
             $tendersBySale,
@@ -221,19 +267,45 @@ class PaymentsBreakdownService
             $methodCode,
             $active,
             $catalog,
+            $tabAmountBySale,
         ) {
             $saleId = (int) $row->sale_id;
             $customerName = trim((string) ($row->customer_name_override ?? ''))
                 ?: trim((string) ($row->customer_name ?? ''))
                 ?: null;
             $amountPaid = round((float) ($row->amount_paid ?? $row->order_total ?? 0), 2);
-            $tenders = $tendersBySale[$saleId] ?? $this->tenderBreakdownFromColumns($row);
-            $refs = $referencesBySale[$saleId] ?? [];
+            $tenders = $tendersBySale[$saleId] ?? [];
+            // Hide cheque/voucher/points from badge/tender display.
+            $tenders = array_filter(
+                $tenders,
+                fn ($amount, $code) => ! in_array($this->normalizeMethodCode((string) $code), self::HIDDEN_METHODS, true)
+                    && (float) $amount > TillReportMetrics::MIN_COLLECTED,
+                ARRAY_FILTER_USE_BOTH,
+            );
+            $refsPayload = $referencesBySale[$saleId] ?? ['all' => [], 'by_method' => []];
+            $methodRefs = $refsPayload['by_method'][$methodCode] ?? [];
+            $refs = $methodRefs !== [] ? $methodRefs : ($refsPayload['all'] ?? []);
             $primaryRef = $refs[0] ?? null;
 
-            $displayAmount = $methodCode === 'MIXED'
-                ? $amountPaid
-                : round((float) ($tenders[$methodCode] ?? $amountPaid), 2);
+            $displayAmount = round(
+                (float) ($tabAmountBySale[$saleId] ?? $tenders[$methodCode] ?? 0),
+                2,
+            );
+
+            $isMixed = count($tenders) > 1;
+            $otherMethods = [];
+            foreach ($tenders as $code => $amount) {
+                $code = $this->normalizeMethodCode((string) $code);
+                if ($code === $methodCode) {
+                    continue;
+                }
+                $otherMethods[] = [
+                    'method_code' => $code,
+                    'method_name' => $catalog[$code]['method_name']
+                        ?? $this->displayMethodName($code, ''),
+                    'amount' => round((float) $amount, 2),
+                ];
+            }
 
             $label = $active['method_name']
                 ?? ($catalog[$methodCode]['method_name'] ?? null)
@@ -251,8 +323,10 @@ class PaymentsBreakdownService
                 'amount_paid' => $amountPaid,
                 'order_total' => round((float) ($row->order_total ?? 0), 2),
                 'tenders' => $tenders,
-                'tender_count' => (int) ($row->tender_count ?? count($tenders)),
-                'alone_method' => (string) ($row->alone_method ?? ''),
+                'tender_count' => count($tenders),
+                'is_mixed' => $isMixed,
+                'other_methods' => $otherMethods,
+                'alone_method' => $isMixed ? 'MIXED' : $methodCode,
                 'reference_number' => $primaryRef,
                 'mpesa_code' => $primaryRef,
                 'references' => $refs,
@@ -288,10 +362,11 @@ class PaymentsBreakdownService
             'summary' => [
                 'method_code' => $active['method_code'] ?? $methodCode,
                 'method_name' => $active['method_name'] ?? null,
-                'payment_count' => (int) ($summaryRaw->order_count ?? 0),
-                'order_count' => (int) ($summaryRaw->order_count ?? 0),
-                'total_amount' => round((float) ($summaryRaw->total_amount ?? 0), 2),
+                'payment_count' => count($matchedSaleIds),
+                'order_count' => count($matchedSaleIds),
+                'total_amount' => round($summaryTotal, 2),
                 'grand_total' => round(array_sum(array_column($methods, 'total_amount')), 2),
+                'grand_order_count' => $allExpanded->pluck('sale_id')->unique()->count(),
             ],
             'current_page' => $paginator->currentPage(),
             'per_page' => $paginator->perPage(),
@@ -511,7 +586,7 @@ class PaymentsBreakdownService
 
     /**
      * @param  list<int>  $saleIds
-     * @return array<int, list<string>>
+     * @return array<int, array{all: list<string>, by_method: array<string, list<string>>}>
      */
     protected function referencesBySale(array $saleIds): array
     {
@@ -526,7 +601,7 @@ class PaymentsBreakdownService
             ->where('sp.reference_number', '!=', '')
             ->orderByDesc('sp.paid_at')
             ->orderByDesc('sp.id')
-            ->get(['sp.sale_id', 'sp.reference_number', 'pm.method_code', 'pm.requires_reference']);
+            ->get(['sp.sale_id', 'sp.reference_number', 'pm.method_code']);
 
         $bySale = [];
         foreach ($rows as $row) {
@@ -535,9 +610,16 @@ class PaymentsBreakdownService
             if ($ref === '') {
                 continue;
             }
-            $bySale[$saleId] ??= [];
-            if (! in_array($ref, $bySale[$saleId], true)) {
-                $bySale[$saleId][] = $ref;
+            $code = $this->normalizeMethodCode((string) ($row->method_code ?? ''));
+            $bySale[$saleId] ??= ['all' => [], 'by_method' => []];
+            if (! in_array($ref, $bySale[$saleId]['all'], true)) {
+                $bySale[$saleId]['all'][] = $ref;
+            }
+            if ($code !== '') {
+                $bySale[$saleId]['by_method'][$code] ??= [];
+                if (! in_array($ref, $bySale[$saleId]['by_method'][$code], true)) {
+                    $bySale[$saleId]['by_method'][$code][] = $ref;
+                }
             }
         }
 
@@ -615,7 +697,7 @@ class PaymentsBreakdownService
      */
     protected function sortAndPresentMethods($methodRows, array $catalog): array
     {
-        $hidden = ['CHEQUE', 'VOUCHER', 'POINTS', 'LOYALTY', 'LOYALTY_POINTS'];
+        $hidden = self::HIDDEN_METHODS;
         $byCode = [];
         foreach ($methodRows as $row) {
             $code = $this->normalizeMethodCode((string) ($row->method_code ?? ''));
@@ -655,9 +737,6 @@ class PaymentsBreakdownService
 
     protected function displayMethodName(string $code, string $catalogName = ''): string
     {
-        if ($code === 'MIXED') {
-            return 'Mixed';
-        }
         if ($code === 'CREDIT' || $code === 'DEBTORS' || $code === 'DEBTOR') {
             return 'Debtors';
         }
@@ -700,7 +779,6 @@ class PaymentsBreakdownService
             'CARD' => 'Card',
             'BANK' => 'Bank',
             'CREDIT' => 'Debtors',
-            'MIXED' => 'Mixed',
             'OTHER' => 'Other',
             default => $code,
         };

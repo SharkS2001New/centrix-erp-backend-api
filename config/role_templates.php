@@ -3,14 +3,16 @@
 /**
  * Production role templates — permission sets and profile recommendations.
  *
- * Roles are global (shared across tenants). On provisioning, the API returns
- * which roles fit the tenant's profile and enabled modules.
+ * Roles are global (shared across tenants). Each template is tagged with
+ * `industries` so Retail & Distribution vs Hotel & Hospitality stay separate
+ * in role pickers and provisioning recommendations.
  */
 return [
 
     'roles' => [
         'Branch Manager' => [
             'scope' => 'org',
+            'industries' => ['commerce'],
             'description' => 'Day-to-day branch operations: sales, inventory, purchasing, and basic reports.',
             'permissions' => [
                 'dashboard.overview.view',
@@ -58,6 +60,7 @@ return [
 
         'Cashier' => [
             'scope' => 'branch',
+            'industries' => ['commerce'],
             'description' => 'POS checkout, till sessions, and end-of-day reporting.',
             'requires_modules' => ['sales.pos'],
             'permissions' => [
@@ -72,6 +75,7 @@ return [
 
         'Warehouse Clerk' => [
             'scope' => 'branch',
+            'industries' => ['commerce'],
             'description' => 'Receiving, stock movements, transfers, and stock take.',
             'requires_modules' => ['inventory'],
             'permissions' => [
@@ -96,6 +100,7 @@ return [
 
         'Dispatch Coordinator' => [
             'scope' => 'branch',
+            'industries' => ['commerce'],
             'description' => 'Dispatch board, trips, loading lists, fleet master data, and logistics reports.',
             'requires_modules' => ['distribution'],
             'permissions' => [
@@ -131,6 +136,7 @@ return [
 
         'Mobile Sales Rep' => [
             'scope' => 'branch',
+            'industries' => ['commerce'],
             'description' => 'Field sales on assigned routes via the mobile app.',
             'requires_modules' => ['sales.mobile'],
             'permissions' => [
@@ -155,6 +161,7 @@ return [
 
         'Driver' => [
             'scope' => 'branch',
+            'industries' => ['commerce'],
             'description' => 'Mobile delivery runs: view assigned trip stops, navigate to customers, capture POD, and mark deliveries.',
             'requires_modules' => ['sales.mobile', 'distribution'],
             'permissions' => [
@@ -168,8 +175,9 @@ return [
             ],
         ],
 
-        'Branch Manager' => [
+        'Field Manager' => [
             'scope' => 'branch',
+            'industries' => ['commerce'],
             'description' => 'Centrix Manager app: approvals, executive dashboard, and operational reports.',
             'requires_modules' => ['sales.backend'],
             'permissions' => [
@@ -189,8 +197,125 @@ return [
             ],
         ],
 
+        'Hotel Cashier' => [
+            'scope' => 'branch',
+            'industries' => ['hospitality'],
+            'description' => 'Hotel POS: open checks, room charge, and shift close.',
+            'requires_modules' => ['hospitality.bar_pos'],
+            'permissions' => [
+                'hotel_bar_pos.terminal.view',
+                'hotel_bar_pos.checks.view',
+                'hotel_bar_pos.checks.create',
+                'hotel_bar_pos.checks.edit',
+                'hotel_bar_pos.room_charge.create',
+                'hotel_bar_pos.shift.view',
+                'hotel_bar_pos.shift.create',
+                'catalogue.products.view',
+            ],
+        ],
+
+        'Front Desk' => [
+            'scope' => 'branch',
+            'industries' => ['hospitality'],
+            'description' => 'Reservations, check-in/out, and guest folios.',
+            'requires_modules' => ['hospitality.backend'],
+            'permissions' => [
+                'hospitality.dashboard.view',
+                'hospitality.rooms.view',
+                'hospitality.reservations.view',
+                'hospitality.reservations.create',
+                'hospitality.reservations.edit',
+                'hospitality.frontdesk.view',
+                'hospitality.frontdesk.edit',
+                'hospitality.folios.view',
+                'hospitality.folios.create',
+                'hospitality.folios.edit',
+                'hospitality.housekeeping.view',
+            ],
+        ],
+
+        'Hotel Store Keeper' => [
+            'scope' => 'branch',
+            'industries' => ['hospitality'],
+            'description' => 'Hotel store receiving, stock movements, and LPO visibility.',
+            'requires_modules' => ['inventory'],
+            'permissions' => [
+                'dashboard.overview.view',
+                'dashboard.inventory.view',
+                'inventory.stock.view',
+                'inventory.receipts.view',
+                'inventory.receipts.create',
+                'inventory.movements.view',
+                'inventory.transfers.view',
+                'inventory.transfers.create',
+                'inventory.damages.view',
+                'inventory.damages.create',
+                'inventory.stock_take.view',
+                'inventory.stock_take.create',
+                'purchasing.lpo.view',
+                'purchasing.suppliers.view',
+                'purchasing.supplier_returns.view',
+                'purchasing.supplier_returns.create',
+                'catalogue.products.view',
+            ],
+        ],
+
+        'Hotel Manager' => [
+            'scope' => 'org',
+            'industries' => ['hospitality'],
+            'description' => 'Hotel operations lead: front desk, F&B stock, purchasing, and hotel reports.',
+            'permissions' => [
+                'hospitality.dashboard.view',
+                'hospitality.outlets.view',
+                'hospitality.outlets.create',
+                'hospitality.outlets.edit',
+                'hospitality.rooms.view',
+                'hospitality.rooms.create',
+                'hospitality.rooms.edit',
+                'hospitality.reservations.view',
+                'hospitality.reservations.create',
+                'hospitality.reservations.edit',
+                'hospitality.frontdesk.view',
+                'hospitality.frontdesk.edit',
+                'hospitality.folios.view',
+                'hospitality.folios.create',
+                'hospitality.folios.edit',
+                'hospitality.housekeeping.view',
+                'hospitality.housekeeping.edit',
+                'hospitality.night_audit.view',
+                'hospitality.night_audit.create',
+                'hospitality.reports.view',
+                'hospitality.settings.view',
+                'hotel_bar_pos.terminal.view',
+                'hotel_bar_pos.checks.view',
+                'hotel_bar_pos.shift.view',
+                'dashboard.overview.view',
+                'dashboard.inventory.view',
+                'catalogue.products.view',
+                'catalogue.products.create',
+                'catalogue.products.edit',
+                'inventory.stock.view',
+                'inventory.receipts.view',
+                'inventory.receipts.create',
+                'inventory.transfers.view',
+                'inventory.transfers.create',
+                'inventory.stock_take.view',
+                'inventory.stock_take.approve',
+                'purchasing.lpo.view',
+                'purchasing.lpo.create',
+                'purchasing.lpo.edit',
+                'purchasing.lpo.approve',
+                'purchasing.suppliers.view',
+                'reports.hub.view',
+                'reports.stock_on_hand.view',
+                'admin.branches.view',
+                'admin.users.view',
+            ],
+        ],
+
         'Accountant' => [
             'scope' => 'org',
+            'industries' => ['commerce', 'hospitality'],
             'description' => 'General ledger, journals, fiscal periods, and financial reports.',
             'requires_modules' => ['accounting'],
             'permissions' => [
@@ -223,6 +348,7 @@ return [
 
         'Payroll Clerk' => [
             'scope' => 'org',
+            'industries' => ['commerce', 'hospitality'],
             'description' => 'Employees, attendance, leave, and payroll processing.',
             'requires_modules' => ['hr_payroll'],
             'permissions' => [
@@ -240,7 +366,8 @@ return [
 
         'Viewer' => [
             'scope' => 'branch',
-            'description' => 'Read-only access to catalogue, sales, stock, and basic reports.',
+            'industries' => ['commerce', 'hospitality'],
+            'description' => 'Read-only access to catalogue, stock, and basic reports.',
             'permissions' => [
                 'dashboard.overview.view',
                 'catalogue.products.view',
@@ -252,6 +379,9 @@ return [
                 'purchasing.lpo.view',
                 'purchasing.suppliers.view',
                 'customers.customers.view',
+                'hospitality.dashboard.view',
+                'hospitality.rooms.view',
+                'hospitality.reservations.view',
                 'reports.hub.view',
                 'reports.daily_sales.view',
                 'reports.stock_on_hand.view',
@@ -268,6 +398,7 @@ return [
             'Cashier',
             'Warehouse Clerk',
             'Mobile Sales Rep',
+            'Field Manager',
             'Accountant',
             'Payroll Clerk',
             'Viewer',
@@ -281,6 +412,15 @@ return [
             'Accountant',
             'Viewer',
         ],
+        'hotel_bar' => [
+            'Hotel Manager',
+            'Hotel Cashier',
+            'Front Desk',
+            'Hotel Store Keeper',
+            'Accountant',
+            'Payroll Clerk',
+            'Viewer',
+        ],
         'custom' => ['Branch Manager', 'Viewer'],
     ],
 
@@ -288,10 +428,13 @@ return [
     'module_roles' => [
         'sales.pos' => ['Cashier'],
         'sales.mobile' => ['Mobile Sales Rep', 'Driver'],
+        'sales.backend' => ['Field Manager'],
         'distribution' => ['Dispatch Coordinator'],
         'inventory' => ['Warehouse Clerk'],
         'accounting' => ['Accountant'],
         'hr_payroll' => ['Payroll Clerk'],
+        'hospitality.bar_pos' => ['Hotel Cashier'],
+        'hospitality.backend' => ['Front Desk', 'Hotel Manager'],
     ],
 
 ];

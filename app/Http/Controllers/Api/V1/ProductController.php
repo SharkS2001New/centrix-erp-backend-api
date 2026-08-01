@@ -216,6 +216,10 @@ class ProductController extends BaseResourceController
                 $query->where(function ($inner) {
                     $inner->where('sell_on_retail', false)->orWhereNull('sell_on_retail');
                 });
+            } elseif ($pricing === 'bar') {
+                $query->where('sell_on_bar', true);
+            } elseif ($pricing === 'hotel') {
+                $query->where('sell_on_hotel', true);
             }
         }
 

@@ -212,15 +212,98 @@ class PermissionMatrixService
             ->all();
     }
 
-    /** @return list<array<string, mixed>> */
-    public static function groupedForUi(?CapabilityGate $gate = null, bool $includeAdminWhenDisabled = false): array
+    /**
+     * Permission ids allowed for an industry (application allow-list) and currently enabled modules.
+     *
+     * @return list<int>
+     */
+    public static function industryEnabledPermissionIds(
+        string $industry,
+        CapabilityGate $gate,
+        bool $includeAdminWhenDisabled = false,
+    ): array {
+        $enabled = array_flip(self::enabledPermissionIds($gate, $includeAdminWhenDisabled));
+        $industryModules = array_flip(IndustryRegistry::registryModulesForIndustry($industry));
+
+        if ($industryModules === []) {
+            return array_map('intval', array_keys($enabled));
+        }
+
+        return Permission::query()
+            ->get()
+            ->filter(function (Permission $permission) use ($enabled, $industryModules) {
+                if (! isset($enabled[(int) $permission->id])) {
+                    return false;
+                }
+
+                $module = (string) $permission->module;
+
+                return isset($industryModules[$module]);
+            })
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * All permission ids that belong to any industry application shell (for shared Administrator).
+     *
+     * @return list<int>
+     */
+    public static function allIndustryPermissionIds(): array
     {
+        self::ensure();
+
+        $codes = array_flip(IndustryRegistry::permissionCodesForAllIndustries());
+
+        return Permission::query()
+            ->get()
+            ->filter(fn (Permission $permission) => isset($codes[(string) $permission->permission_code]))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /**
+     * Permission ids for one industry's application shells (ignores org module enablement).
+     *
+     * @return list<int>
+     */
+    public static function permissionIdsForIndustry(string $industry): array
+    {
+        self::ensure();
+
+        $codes = array_flip(IndustryRegistry::permissionCodesForIndustry($industry));
+
+        return Permission::query()
+            ->get()
+            ->filter(fn (Permission $permission) => isset($codes[(string) $permission->permission_code]))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id)
+            ->values()
+            ->all();
+    }
+
+    /** @return list<array<string, mixed>> */
+    public static function groupedForUi(
+        ?CapabilityGate $gate = null,
+        bool $includeAdminWhenDisabled = false,
+        ?string $industry = null,
+    ): array {
         self::ensure();
 
         $byCode = Permission::query()->get()->keyBy('permission_code');
         $groups = [];
+        $industryModules = $industry !== null && $industry !== ''
+            ? array_flip(IndustryRegistry::registryModulesForIndustry($industry))
+            : null;
 
         foreach (config('permission_registry.groups', []) as $moduleKey => $groupDef) {
+            if (is_array($industryModules) && $industryModules !== [] && ! isset($industryModules[$moduleKey])) {
+                continue;
+            }
             if ($gate !== null && ! self::isRegistryModuleEnabled($moduleKey, $gate, $includeAdminWhenDisabled)) {
                 continue;
             }
@@ -265,14 +348,24 @@ class PermissionMatrixService
     }
 
     /** @return list<array<string, mixed>> */
-    public static function applicationsGroupedForUi(?CapabilityGate $gate = null, bool $includeAdminWhenDisabled = false): array
-    {
-        $groupsByModule = collect(self::groupedForUi($gate, $includeAdminWhenDisabled))->keyBy('module');
+    public static function applicationsGroupedForUi(
+        ?CapabilityGate $gate = null,
+        bool $includeAdminWhenDisabled = false,
+        ?string $industry = null,
+    ): array {
+        $groupsByModule = collect(self::groupedForUi($gate, $includeAdminWhenDisabled, $industry))->keyBy('module');
         $applications = [];
+        $industryAppIds = $industry !== null && $industry !== ''
+            ? array_flip(IndustryRegistry::permissionApplicationIdsForIndustry($industry))
+            : null;
 
         foreach (config('permission_applications.order', []) as $appId) {
             $def = config("permission_applications.applications.{$appId}");
             if (! is_array($def)) {
+                continue;
+            }
+
+            if (is_array($industryAppIds) && $industryAppIds !== [] && ! isset($industryAppIds[$appId])) {
                 continue;
             }
 
@@ -364,92 +457,59 @@ class PermissionMatrixService
     /** Org administrators should always be able to give discounts directly. */
     public static function ensureDiscountGiveForAdminRoles(): void
     {
-        $giveId = Permission::query()
-            ->where('permission_code', 'sales.discounts.give')
-            ->value('id');
-
-        if (! $giveId) {
-            return;
-        }
-
-        $roleIds = \App\Models\Role::query()
-            ->whereIn('role_name', ['Administrator', 'Admin'])
-            ->pluck('id');
-
-        foreach ($roleIds as $roleId) {
-            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
-                'role_id' => $roleId,
-                'permission_id' => $giveId,
-            ]);
-        }
+        self::ensureCodesForAdminRoles(['sales.discounts.give']);
     }
 
     /** Org administrators should be able to approve discount requests. */
     public static function ensureSalesOrderApproveForAdminRoles(): void
     {
-        $approveId = Permission::query()
-            ->where('permission_code', 'sales.orders.approve')
-            ->value('id');
-
-        if (! $approveId) {
-            return;
-        }
-
-        $roleIds = \App\Models\Role::query()
-            ->whereIn('role_name', ['Administrator', 'Admin'])
-            ->pluck('id');
-
-        foreach ($roleIds as $roleId) {
-            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
-                'role_id' => $roleId,
-                'permission_id' => $approveId,
-            ]);
-        }
+        self::ensureCodesForAdminRoles(['sales.orders.approve']);
     }
 
     /** Org administrators should be able to approve discount requests. */
     public static function ensureDiscountApprovalsForAdminRoles(): void
     {
-        $approveId = Permission::query()
-            ->where('permission_code', 'admin.discount_approvals.approve')
-            ->value('id');
-
-        if (! $approveId) {
-            return;
-        }
-
-        $roleIds = \App\Models\Role::query()
-            ->whereIn('role_name', ['Administrator', 'Admin'])
-            ->pluck('id');
-
-        foreach ($roleIds as $roleId) {
-            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
-                'role_id' => $roleId,
-                'permission_id' => $approveId,
-            ]);
-        }
+        self::ensureCodesForAdminRoles(['admin.discount_approvals.approve']);
     }
 
     /** Org administrators should be able to approve LPO requests. */
     public static function ensureLpoApproveForAdminRoles(): void
     {
-        $approveId = Permission::query()
-            ->where('permission_code', 'purchasing.lpo.approve')
-            ->value('id');
+        self::ensureCodesForAdminRoles(['purchasing.lpo.approve']);
+    }
 
-        if (! $approveId) {
-            return;
-        }
-
+    /**
+     * Attach industry-catalog codes to Administrator roles only (skip orphans).
+     *
+     * @param  list<string>  $codes
+     */
+    protected static function ensureCodesForAdminRoles(array $codes): void
+    {
+        $industryCodes = array_flip(IndustryRegistry::permissionCodesForAllIndustries());
         $roleIds = \App\Models\Role::query()
             ->whereIn('role_name', ['Administrator', 'Admin'])
             ->pluck('id');
 
-        foreach ($roleIds as $roleId) {
-            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
-                'role_id' => $roleId,
-                'permission_id' => $approveId,
-            ]);
+        if ($roleIds->isEmpty()) {
+            return;
+        }
+
+        foreach ($codes as $code) {
+            if (! isset($industryCodes[$code])) {
+                continue;
+            }
+            $permissionId = Permission::query()
+                ->where('permission_code', $code)
+                ->value('id');
+            if (! $permissionId) {
+                continue;
+            }
+            foreach ($roleIds as $roleId) {
+                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                    'role_id' => $roleId,
+                    'permission_id' => $permissionId,
+                ]);
+            }
         }
     }
 

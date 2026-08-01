@@ -36,13 +36,24 @@ class ApplicationProvisioner
         return array_values(config('erp_applications.order', []));
     }
 
-    /** @return list<array{id: string, label: string, description: string, icon: string}> */
-    public function optionsPayload(): array
+    /**
+     * @param  string|null  $industryId  When set, only return apps for that industry (plus shared shells).
+     * @return list<array{id: string, label: string, description: string, icon: string}>
+     */
+    public function optionsPayload(?string $industryId = null): array
     {
         $definitions = config('erp_applications.definitions', []);
+        $allowedIds = null;
+        if (is_string($industryId) && $industryId !== '') {
+            $allowedIds = array_flip(IndustryRegistry::permissionApplicationIdsForIndustry($industryId));
+        }
+
         $out = [];
 
         foreach (self::ids() as $id) {
+            if (is_array($allowedIds) && $allowedIds !== [] && ! isset($allowedIds[$id])) {
+                continue;
+            }
             $meta = $definitions[$id] ?? [];
             $out[] = [
                 'id' => $id,

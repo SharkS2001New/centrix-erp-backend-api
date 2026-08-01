@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
+use App\Services\Auth\RoleTemplateService;
 use App\Services\Cache\CapabilitiesCacheInvalidator;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\IndustryRegistry;
@@ -28,12 +29,27 @@ class RoleController extends BaseResourceController
     public function index(Request $request)
     {
         $orgId = $this->access()->organizationId($request->user(), $request);
+        $gate = app(ErpContext::class)->gateForRequest($request);
+        $profile = (string) ($gate->organization()?->deployment_profile ?? 'wholesale_retail');
+        $industry = IndustryRegistry::industryForProfile($profile);
+        $allowedTemplateNames = app(RoleTemplateService::class)->templateRoleNamesForIndustry($industry);
+        $allTemplateNames = array_keys(config('role_templates.roles', []));
+        $hiddenTemplateNames = array_values(array_diff($allTemplateNames, $allowedTemplateNames));
+
         $query = Role::query()->where(function ($q) use ($orgId) {
             $q->whereNull('organization_id');
             if ($orgId) {
                 $q->orWhere('organization_id', $orgId);
             }
         });
+
+        // Hide opposite-industry global templates (keep org-custom + Administrator/Admin/legacy).
+        if ($hiddenTemplateNames !== []) {
+            $query->where(function ($q) use ($hiddenTemplateNames) {
+                $q->whereNotIn('role_name', $hiddenTemplateNames)
+                    ->orWhereNotNull('organization_id');
+            });
+        }
 
         $perPage = min((int) $request->input('per_page', 25), 200);
         $payload = $query->paginate($perPage)->toArray();
@@ -58,8 +74,9 @@ class RoleController extends BaseResourceController
         $role = $this->findRoleOrFail($request, $this->resolveResourceId($id, $nestedId));
         $gate = app(ErpContext::class)->gateForRequest($request);
         $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
+        $industry = $this->industryForRequest($gate);
 
-        return response()->json($this->rolePermissionsPayload($role, $gate, $includeAdmin));
+        return response()->json($this->rolePermissionsPayload($role, $gate, $includeAdmin, $industry));
     }
 
     public function syncPermissions(Request $request, string $id, ?string $nestedId = null)
@@ -79,12 +96,35 @@ class RoleController extends BaseResourceController
 
         $gate = app(ErpContext::class)->gateForRequest($request);
         $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
-        $allowedIds = PermissionMatrixService::enabledPermissionIds($gate, $includeAdmin);
-        $permissionIds = array_values(array_intersect($permissionIds, $allowedIds));
+        $industry = $this->industryForRequest($gate);
+        $allowedIds = PermissionMatrixService::industryEnabledPermissionIds($industry, $gate, $includeAdmin);
+        $allowedFlip = array_flip($allowedIds);
+        $permissionIds = array_values(array_filter(
+            $permissionIds,
+            fn (int $id) => isset($allowedFlip[$id]),
+        ));
 
-        DB::transaction(function () use ($role, $permissionIds) {
+        // Global roles are shared across industries — preserve grants outside this industry's matrix
+        // so saving from a retail tenant does not strip hotel permissions (and vice versa).
+        $preservedIds = [];
+        if ($role->organization_id === null) {
+            $existingIds = DB::table('role_permissions')
+                ->where('role_id', $role->id)
+                ->pluck('permission_id')
+                ->map(fn ($v) => (int) $v)
+                ->all();
+            foreach ($existingIds as $existingId) {
+                if (! isset($allowedFlip[$existingId])) {
+                    $preservedIds[] = $existingId;
+                }
+            }
+        }
+
+        $finalIds = array_values(array_unique(array_merge($permissionIds, $preservedIds)));
+
+        DB::transaction(function () use ($role, $finalIds) {
             DB::table('role_permissions')->where('role_id', $role->id)->delete();
-            foreach ($permissionIds as $permissionId) {
+            foreach ($finalIds as $permissionId) {
                 DB::table('role_permissions')->insert([
                     'role_id' => $role->id,
                     'permission_id' => $permissionId,
@@ -94,7 +134,7 @@ class RoleController extends BaseResourceController
 
         CapabilitiesCacheInvalidator::forRole($role->fresh());
 
-        return response()->json($this->rolePermissionsPayload($role, $gate, $includeAdmin));
+        return response()->json($this->rolePermissionsPayload($role, $gate, $includeAdmin, $industry));
     }
 
     public function permissionMatrix(Request $request)
@@ -103,33 +143,29 @@ class RoleController extends BaseResourceController
 
         $gate = app(ErpContext::class)->gateForRequest($request);
         $includeAdmin = $this->includeAdminPermissionsWhenActing($request);
-        $permissions = Permission::query()->orderBy('module')->orderBy('permission_name')->get();
-        $allowedIds = collect(PermissionMatrixService::enabledPermissionIds($gate, $includeAdmin))->flip();
-
         $profile = (string) ($gate->organization()?->deployment_profile ?? 'wholesale_retail');
-        $industryAppIds = IndustryRegistry::permissionApplicationIdsForProfile($profile);
-        // Strict industry isolation — never show Hotel apps on Retail & Distribution (or vice versa)
-        // just because they share inventory/catalogue permission modules.
-        $applications = collect(PermissionMatrixService::applicationsGroupedForUi($gate, $includeAdmin))
-            ->filter(function (array $app) use ($industryAppIds) {
-                if ($industryAppIds === []) {
-                    return true;
-                }
+        $industry = IndustryRegistry::industryForProfile($profile);
+        $allowedIds = collect(PermissionMatrixService::industryEnabledPermissionIds(
+            $industry,
+            $gate,
+            $includeAdmin,
+        ))->flip();
 
-                return in_array((string) ($app['id'] ?? ''), $industryAppIds, true);
-            })
-            ->values()
-            ->all();
+        $applications = PermissionMatrixService::applicationsGroupedForUi($gate, $includeAdmin, $industry);
+        $groups = PermissionMatrixService::groupedForUi($gate, $includeAdmin, $industry);
 
         return response()->json([
-            'permissions' => $permissions
+            'permissions' => Permission::query()
+                ->orderBy('module')
+                ->orderBy('permission_name')
+                ->get()
                 ->filter(fn (Permission $permission) => $allowedIds->has((int) $permission->id))
                 ->values(),
             'applications' => $applications,
-            'groups' => PermissionMatrixService::groupedForUi($gate, $includeAdmin),
+            'groups' => $groups,
             'modules' => PermissionMatrixService::modules(),
             'actions' => PermissionMatrixService::actions(),
-            'industry' => IndustryRegistry::industryForProfile($profile),
+            'industry' => $industry,
         ]);
     }
 
@@ -137,6 +173,13 @@ class RoleController extends BaseResourceController
     private function includeAdminPermissionsWhenActing(Request $request): bool
     {
         return (bool) $request->attributes->get('acting_organization_id');
+    }
+
+    private function industryForRequest(\App\Services\Erp\CapabilityGate $gate): string
+    {
+        $profile = (string) ($gate->organization()?->deployment_profile ?? 'wholesale_retail');
+
+        return IndustryRegistry::industryForProfile($profile);
     }
 
     public function destroy(Request $request, string $id, ?string $nestedId = null)
@@ -180,6 +223,7 @@ class RoleController extends BaseResourceController
         Role $role,
         ?\App\Services\Erp\CapabilityGate $gate = null,
         bool $includeAdminWhenDisabled = false,
+        ?string $industry = null,
     ): array {
         $permissionIds = DB::table('role_permissions')
             ->where('role_id', $role->id)
@@ -189,7 +233,12 @@ class RoleController extends BaseResourceController
             ->all();
 
         if ($gate !== null) {
-            $allowed = array_flip(PermissionMatrixService::enabledPermissionIds($gate, $includeAdminWhenDisabled));
+            $industry ??= $this->industryForRequest($gate);
+            $allowed = array_flip(PermissionMatrixService::industryEnabledPermissionIds(
+                $industry,
+                $gate,
+                $includeAdminWhenDisabled,
+            ));
             $permissionIds = array_values(array_filter(
                 $permissionIds,
                 fn (int $id) => isset($allowed[$id]),

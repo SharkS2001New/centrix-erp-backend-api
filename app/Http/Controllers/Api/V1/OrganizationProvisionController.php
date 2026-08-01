@@ -91,7 +91,12 @@ class OrganizationProvisionController extends Controller
 
         return response()->json([
             'industries' => IndustryRegistry::optionsPayload(),
+            // Full catalog for legacy clients; prefer applications_by_industry for industry isolation.
             'applications' => $this->applications->optionsPayload(),
+            'applications_by_industry' => [
+                'commerce' => $this->applications->optionsPayload('commerce'),
+                'hospitality' => $this->applications->optionsPayload('hospitality'),
+            ],
             'profiles' => $tenantProfiles,
             'modules' => collect(ModuleRegistry::optionsPayload())->values(),
             'default_sales_platform' => $this->platformConfig->defaultSalesPlatformConfig('wholesale_retail'),

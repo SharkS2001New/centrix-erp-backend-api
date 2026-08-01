@@ -90,9 +90,72 @@ class IndustryRegistry
     /** @return list<string> */
     public static function permissionApplicationIdsForProfile(string $profileKey): array
     {
-        $industry = self::industryForProfile($profileKey);
-        $ids = config("erp_industries.definitions.{$industry}.permission_application_ids", []);
+        return self::permissionApplicationIdsForIndustry(self::industryForProfile($profileKey));
+    }
+
+    /** @return list<string> */
+    public static function permissionApplicationIdsForIndustry(string $industryId): array
+    {
+        $ids = config("erp_industries.definitions.{$industryId}.permission_application_ids", []);
 
         return is_array($ids) ? array_values($ids) : [];
+    }
+
+    /**
+     * Registry module keys nested under this industry's permission applications.
+     *
+     * @return list<string>
+     */
+    public static function registryModulesForIndustry(string $industryId): array
+    {
+        $modules = [];
+        foreach (self::permissionApplicationIdsForIndustry($industryId) as $appId) {
+            $def = config("permission_applications.applications.{$appId}");
+            if (! is_array($def)) {
+                continue;
+            }
+            foreach ($def['registry_modules'] ?? [] as $moduleKey) {
+                $modules[(string) $moduleKey] = true;
+            }
+        }
+
+        return array_keys($modules);
+    }
+
+    /**
+     * Permission codes belonging to registry modules for this industry.
+     *
+     * @return list<string>
+     */
+    public static function permissionCodesForIndustry(string $industryId): array
+    {
+        $allowedModules = array_flip(self::registryModulesForIndustry($industryId));
+        $codes = [];
+
+        foreach (config('permission_registry.groups', []) as $moduleKey => $group) {
+            if (! isset($allowedModules[$moduleKey])) {
+                continue;
+            }
+            foreach ($group['features'] ?? [] as $featureKey => $feature) {
+                foreach ($feature['actions'] ?? [] as $action) {
+                    $codes[] = "{$moduleKey}.{$featureKey}.{$action}";
+                }
+            }
+        }
+
+        return $codes;
+    }
+
+    /** Union of permission codes across every configured industry. */
+    public static function permissionCodesForAllIndustries(): array
+    {
+        $codes = [];
+        foreach (self::ids() as $industryId) {
+            foreach (self::permissionCodesForIndustry($industryId) as $code) {
+                $codes[$code] = true;
+            }
+        }
+
+        return array_keys($codes);
     }
 }

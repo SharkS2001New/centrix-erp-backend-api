@@ -29,6 +29,24 @@ class ApplicationProvisionerTest extends TestCase
         $this->assertContains('admin', $ids);
     }
 
+    public function test_options_payload_filters_by_industry(): void
+    {
+        $commerce = array_column($this->provisioner->optionsPayload('commerce'), 'id');
+        $hospitality = array_column($this->provisioner->optionsPayload('hospitality'), 'id');
+
+        $this->assertContains('pos', $commerce);
+        $this->assertContains('distribution', $commerce);
+        $this->assertNotContains('hotel_bar_pos', $commerce);
+        $this->assertNotContains('hospitality_backoffice', $commerce);
+
+        $this->assertContains('hotel_bar_pos', $hospitality);
+        $this->assertContains('hospitality_backoffice', $hospitality);
+        $this->assertContains('admin', $hospitality);
+        $this->assertNotContains('pos', $hospitality);
+        $this->assertNotContains('backoffice', $hospitality);
+        $this->assertNotContains('distribution', $hospitality);
+    }
+
     public function test_enabled_modules_from_applications_enables_pos_stack(): void
     {
         $modules = $this->provisioner->enabledModulesFromApplications([
