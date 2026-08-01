@@ -765,6 +765,12 @@ Route::prefix('v1')->group(function () {
                 ->middleware(['erp.permission:products.manage']);
             Route::post('products/{product}/restore', [ProductController::class, 'restore'])
                 ->middleware(['erp.permission:products.manage']);
+            Route::get('products/{product}/image/file', [ProductController::class, 'imageFile'])
+                ->middleware(['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view|hotel_bar_pos.terminal.view']);
+            Route::post('products/{product}/image', [ProductController::class, 'uploadImage'])
+                ->middleware(['erp.permission:products.manage']);
+            Route::delete('products/{product}/image', [ProductController::class, 'deleteImage'])
+                ->middleware(['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);

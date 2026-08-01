@@ -122,6 +122,12 @@ class ReportExportService
                 if (! is_array($row)) {
                     continue;
                 }
+                if (array_key_exists('__section_title', $row)) {
+                    $title = trim((string) ($row['__section_title'] ?? ''));
+                    $writer->addRow(Row::fromValues([]));
+                    $writer->addRow(Row::fromValues([$title !== '' ? $title : 'Section']));
+                    continue;
+                }
                 $writer->addRow(Row::fromValues(
                     array_map(fn (array $col) => $this->cellValue($row, $col), $columns),
                 ));
@@ -322,15 +328,6 @@ class ReportExportService
                 : '<p>'.$escape($line).'</p>';
         }
 
-        $head = '';
-        foreach ($columns as $column) {
-            if ($this->isPrintAsRowColumn($column)) {
-                continue;
-            }
-            $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
-            $head .= '<th'.$class.'>'.$escape($column['label']).'</th>';
-        }
-
         $tableColumns = array_values(array_filter(
             $columns,
             fn (array $column) => ! $this->isPrintAsRowColumn($column),
@@ -341,43 +338,83 @@ class ReportExportService
         ));
         $colSpan = max(1, count($tableColumns));
 
-        $body = '';
-        $total = count($rows);
-        foreach ($rows as $index => $row) {
-            $body .= '<tr>';
-            foreach ($tableColumns as $column) {
-                $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
-                $body .= '<td'.$class.'>'.$escape($this->cellValue($row, $column)).'</td>';
-            }
-            $body .= '</tr>';
-
-            foreach ($noteColumns as $noteColumn) {
-                $note = trim($this->cellValue($row, $noteColumn));
-                if ($note === '') {
-                    continue;
-                }
-                $label = trim((string) ($noteColumn['label'] ?? 'Reason'));
-                $body .= '<tr class="note-row"><td colspan="'.$colSpan.'"><strong>'
-                    .$escape($label !== '' ? $label : 'Reason')
-                    .':</strong> '
-                    .$escape($note)
-                    .'</td></tr>';
-            }
-
-            if ($onProgress !== null && $total > 0 && ($index + 1) % self::FILE_PROGRESS_CHUNK === 0) {
-                $onProgress(90 + (int) floor((($index + 1) / $total) * 5), 'Building PDF rows…');
-            }
+        $head = '';
+        foreach ($tableColumns as $column) {
+            $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
+            $head .= '<th'.$class.'>'.$escape($column['label']).'</th>';
         }
 
-        $foot = '';
-        if (is_array($footerRow) && $footerRow !== []) {
-            $foot .= '<tfoot><tr>';
-            foreach ($tableColumns as $index => $column) {
-                $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
-                $value = $footerRow[$column['key']] ?? ($index === 0 ? 'Totals' : '');
-                $foot .= '<td'.$class.'>'.$escape($value).'</td>';
+        $sections = $this->splitPrintSections($rows);
+        $hasNamedSections = count($sections) > 1
+            || (($sections[0]['title'] ?? null) !== null && ($sections[0]['title'] ?? '') !== '');
+
+        $sectionsHtml = '';
+        $processed = 0;
+        $total = count($rows);
+        foreach ($sections as $sectionIndex => $section) {
+            $sectionRows = $section['rows'];
+            $sectionTitle = trim((string) ($section['title'] ?? ''));
+            $pageClass = $sectionIndex > 0 ? ' class="print-section print-section-break"' : ' class="print-section"';
+
+            $sectionsHtml .= '<div'.$pageClass.'>';
+            if ($sectionTitle !== '') {
+                $sectionsHtml .= '<h1 class="section-title">'.$escape($sectionTitle).'</h1>';
             }
-            $foot .= '</tr></tfoot>';
+
+            $body = '';
+            foreach ($sectionRows as $row) {
+                $body .= '<tr>';
+                foreach ($tableColumns as $column) {
+                    $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
+                    $body .= '<td'.$class.'>'.$escape($this->cellValue($row, $column)).'</td>';
+                }
+                $body .= '</tr>';
+
+                foreach ($noteColumns as $noteColumn) {
+                    $note = trim($this->cellValue($row, $noteColumn));
+                    if ($note === '') {
+                        continue;
+                    }
+                    $label = trim((string) ($noteColumn['label'] ?? 'Reason'));
+                    $body .= '<tr class="note-row"><td colspan="'.$colSpan.'"><strong>'
+                        .$escape($label !== '' ? $label : 'Reason')
+                        .':</strong> '
+                        .$escape($note)
+                        .'</td></tr>';
+                }
+
+                $processed++;
+                if ($onProgress !== null && $total > 0 && $processed % self::FILE_PROGRESS_CHUNK === 0) {
+                    $onProgress(90 + (int) floor(($processed / $total) * 5), 'Building PDF rows…');
+                }
+            }
+
+            $foot = '';
+            // Global footer only when this is a single untitled section.
+            if (! $hasNamedSections && is_array($footerRow) && $footerRow !== []) {
+                $foot .= '<tfoot><tr>';
+                foreach ($tableColumns as $index => $column) {
+                    $class = ($column['align'] ?? '') === 'right' ? ' class="num"' : '';
+                    $value = $footerRow[$column['key']] ?? ($index === 0 ? 'Totals' : '');
+                    $foot .= '<td'.$class.'>'.$escape($value).'</td>';
+                }
+                $foot .= '</tr></tfoot>';
+            }
+
+            $sectionsHtml .= '<table><thead><tr>'.$head.'</tr></thead><tbody>'.$body.'</tbody>'.$foot.'</table>';
+            $sectionsHtml .= '</div>';
+        }
+
+        // When sections carry their own titles (e.g. Print Cash Payments, Page 1),
+        // drop the generic report title from the shared meta block to avoid duplication.
+        if ($hasNamedSections) {
+            $metaHtml = '';
+            foreach ($this->reportDetailMetaLines($meta) as $index => $line) {
+                if ($index === 0 && trim((string) ($meta['title'] ?? '')) !== '' && $line === (string) $meta['title']) {
+                    continue;
+                }
+                $metaHtml .= '<p>'.$escape($line).'</p>';
+            }
         }
 
         $title = $escape($meta['title'] ?? 'Report');
@@ -391,13 +428,56 @@ class ReportExportService
 '.$styles['base'].'
 '.$styles['watermark'].'
 tr.note-row td { background: #f8fafc; color: #334155; font-size: 0.92em; padding-top: 4px; padding-bottom: 6px; }
+.print-section-break { page-break-before: always; break-before: page; }
+h1.section-title { margin: 0 0 10px; font-size: 18px; font-weight: 700; color: #0f172a; }
 </style></head><body>
 '.$watermarkHtml.'
 '.$orgHeaderHtml.'
 <div class="meta">'.$metaHtml.'</div>
-<table><thead><tr>'.$head.'</tr></thead><tbody>'.$body.'</tbody>'.$foot.'</table>
+'.$sectionsHtml.'
 '.$footerHtml.'
 </body></html>';
+    }
+
+    /**
+     * Split export rows into print sections when `__section_title` markers are present.
+     *
+     * @param  list<array<string, mixed>>  $rows
+     * @return list<array{title: ?string, rows: list<array<string, mixed>>}>
+     */
+    protected function splitPrintSections(array $rows): array
+    {
+        $sections = [];
+        $currentTitle = null;
+        $currentRows = [];
+        $sawMarker = false;
+
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            if (array_key_exists('__section_title', $row)) {
+                $sawMarker = true;
+                if ($currentRows !== [] || $currentTitle !== null) {
+                    $sections[] = ['title' => $currentTitle, 'rows' => $currentRows];
+                }
+                $title = trim((string) ($row['__section_title'] ?? ''));
+                $currentTitle = $title !== '' ? $title : null;
+                $currentRows = [];
+                continue;
+            }
+            $currentRows[] = $row;
+        }
+
+        if ($currentRows !== [] || $currentTitle !== null || $sections === []) {
+            $sections[] = ['title' => $currentTitle, 'rows' => $currentRows];
+        }
+
+        if (! $sawMarker && count($sections) === 1) {
+            $sections[0]['title'] = null;
+        }
+
+        return $sections;
     }
 
     /**

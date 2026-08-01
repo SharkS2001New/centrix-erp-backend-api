@@ -689,6 +689,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.hotel_pos_grid_columns' => 'sometimes|integer|in:4,5',
             'sales_platform.hotel_pos_collect_payment' => 'sometimes|boolean',
             'sales_platform.hotel_pos_catalog_limit' => 'sometimes|integer|min:8|max:60',
+            'sales_platform.hotel_pos_theme_template' => 'sometimes|string|in:'.implode(',', \App\Services\Hospitality\HospitalityPosSettings::THEME_TEMPLATES),
             'sales_platform.hospitality_services' => 'sometimes|array',
             'sales_platform.hospitality_services.rooms' => 'sometimes|boolean',
             'sales_platform.hospitality_services.reservations' => 'sometimes|boolean',

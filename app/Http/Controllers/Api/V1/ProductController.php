@@ -13,12 +13,17 @@ use App\Services\Inventory\OpeningStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileProductListSettings;
+use App\Support\OrganizationPublicStorage;
 use App\Support\ReferentialIntegrityMessage;
 use App\Support\SqlLikeSearch;
+use App\Support\StoredPublicFile;
+use App\Support\UploadedImageProcessor;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
+use Illuminate\Http\Response;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
@@ -787,6 +792,58 @@ class ProductController extends BaseResourceController
             'organization_id' => $product->organization_id ?? $user->organization_id,
             'changed_at' => now(),
         ]);
+    }
+
+    /** GET /products/{product}/image/file — authenticated product image bytes */
+    public function imageFile(Request $request, string $product)
+    {
+        $model = $this->findScopedModel($request, $product);
+
+        if (! StoredPublicFile::exists($model->image_path)) {
+            abort(Response::HTTP_NOT_FOUND);
+        }
+
+        return StoredPublicFile::response($model->image_path, 'image/jpeg');
+    }
+
+    /** POST /products/{product}/image — multipart product photo */
+    public function uploadImage(Request $request, string $product)
+    {
+        $model = $this->findScopedModel($request, $product);
+
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,jpg,png,webp|max:5120',
+        ]);
+
+        if ($model->image_path) {
+            Storage::disk('public')->delete($model->image_path);
+        }
+
+        $stored = UploadedImageProcessor::forPhoto()->storePublicImage(
+            $request->file('image'),
+            OrganizationPublicStorage::path(
+                $model->organization_id ?? $request->user()?->organization_id,
+                'products',
+                (string) $model->product_code,
+            ),
+        );
+
+        $model->update(['image_path' => $stored['path']]);
+
+        return response()->json($this->presentProduct($model->fresh(), $request));
+    }
+
+    /** DELETE /products/{product}/image */
+    public function deleteImage(Request $request, string $product)
+    {
+        $model = $this->findScopedModel($request, $product);
+
+        if ($model->image_path) {
+            Storage::disk('public')->delete($model->image_path);
+            $model->update(['image_path' => null]);
+        }
+
+        return response()->json($this->presentProduct($model->fresh(), $request));
     }
 
     /** @param  array<string, mixed>  $data

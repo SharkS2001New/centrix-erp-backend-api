@@ -1,6 +1,7 @@
 <?php
 namespace App\Models;
 
+use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use App\Models\Branch;
 use App\Models\Uom;
@@ -21,10 +22,12 @@ class Product extends Model
         'product_code', 'product_name', 'subcategory_id', 'unit_id', 'unit_price',
         'last_selling_price', 'last_cost_price', 'discount_type', 'discount_percentage',
         'discount_value', 'product_weight', 'product_volume_m3', 'stock_in_shop', 'stock_in_store',
-        'shelf_location', 'supplier_id', 'sell_on_retail', 'sell_on_bar', 'sell_on_hotel', 'vat_id', 'organization_id', 'branch_id',
+        'shelf_location', 'image_path', 'supplier_id', 'sell_on_retail', 'sell_on_bar', 'sell_on_hotel', 'vat_id', 'organization_id', 'branch_id',
         'reorder_point', 'low_stock_alert_enabled', 'created_by', 'updated_by',
         'deleted_at', 'deleted_by',
     ];
+
+    protected $appends = ['image_url'];
 
     public function unit()
     {
@@ -49,6 +52,20 @@ class Product extends Model
     public function catalogScope(): string
     {
         return $this->branch_id === null ? 'organization' : 'branch';
+    }
+
+    protected function imageUrl(): Attribute
+    {
+        return Attribute::get(function () {
+            if (! $this->image_path) {
+                return null;
+            }
+
+            $base = rtrim((string) config('app.url'), '/');
+            $code = rawurlencode((string) $this->product_code);
+
+            return $base.'/api/v1/products/'.$code.'/image/file';
+        });
     }
 
     protected $casts = [

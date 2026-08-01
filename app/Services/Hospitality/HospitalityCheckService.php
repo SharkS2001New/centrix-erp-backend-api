@@ -12,6 +12,7 @@ use App\Models\Product;
 use App\Models\User;
 use App\Models\Vat;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 
 class HospitalityCheckService
@@ -502,6 +503,50 @@ class HospitalityCheckService
     }
 
     /**
+     * Recent F&B checks for Hotel Backoffice orders list.
+     *
+     * @return list<HospitalityCheck>
+     */
+    public function listRecent(
+        int $organizationId,
+        ?string $status = null,
+        ?int $outletId = null,
+        int $limit = 100,
+    ): array {
+        $query = HospitalityCheck::query()
+            ->with([
+                'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
+                'floorTable:id,code,label',
+                'outlet:id,code,name',
+            ])
+            ->where('organization_id', $organizationId)
+            ->orderByDesc('updated_at')
+            ->limit(max(1, min(200, $limit)));
+
+        if ($outletId) {
+            $query->where('outlet_id', $outletId);
+        }
+
+        $normalized = $status !== null && $status !== ''
+            ? $this->normalizeStatus(strtolower(trim($status)))
+            : null;
+
+        if ($normalized === 'open') {
+            $query->whereIn('status', ['open', 'unpaid', 'held', 'partially_paid']);
+        } elseif ($normalized === 'unpaid') {
+            $query->whereIn('status', self::COLLECTIBLE_STATUSES);
+        } elseif ($normalized === 'paid') {
+            $query->whereIn('status', ['paid', 'settled', 'posted_to_folio']);
+        } elseif ($normalized === 'void') {
+            $query->where('status', 'void');
+        } elseif ($normalized) {
+            $query->where('status', $normalized);
+        }
+
+        return $query->get()->all();
+    }
+
+    /**
      * Unpaid + partially paid checks awaiting cashier collection.
      *
      * @return list<HospitalityCheck>
@@ -563,12 +608,36 @@ class HospitalityCheckService
         $paid = (float) $check->amount_paid;
         $balance = round(max(0, $total - $paid), 2);
 
+        $imageByCode = [];
+        if (Schema::hasColumn('products', 'image_path')) {
+            $codes = $check->lines
+                ->pluck('product_code')
+                ->filter()
+                ->map(fn ($c) => (string) $c)
+                ->unique()
+                ->values()
+                ->all();
+            if ($codes !== []) {
+                $imageByCode = Product::query()
+                    ->where('organization_id', $check->organization_id)
+                    ->whereIn('product_code', $codes)
+                    ->get(['product_code', 'image_path'])
+                    ->mapWithKeys(fn (Product $p) => [(string) $p->product_code => $p->image_url])
+                    ->all();
+            }
+        }
+
         return [
             'id' => $check->id,
             'check_number' => $check->check_number,
             'status' => $this->normalizeStatus((string) $check->status),
             'service_mode' => $check->service_mode,
             'outlet_id' => $check->outlet_id,
+            'outlet' => $check->relationLoaded('outlet') && $check->outlet ? [
+                'id' => $check->outlet->id,
+                'code' => $check->outlet->code,
+                'name' => $check->outlet->name,
+            ] : null,
             'floor_table_id' => $check->floor_table_id,
             'floor_table' => $check->floorTable ? [
                 'id' => $check->floorTable->id,
@@ -583,6 +652,7 @@ class HospitalityCheckService
             'balance_due' => $balance,
             'opened_at' => optional($check->opened_at)?->toIso8601String(),
             'closed_at' => optional($check->closed_at)?->toIso8601String(),
+            'updated_at' => optional($check->updated_at)?->toIso8601String(),
             'lines' => $check->lines->map(fn (HospitalityCheckLine $line) => [
                 'id' => $line->id,
                 'product_id' => $line->product_id,
@@ -593,6 +663,7 @@ class HospitalityCheckService
                 'line_total' => (float) $line->line_total,
                 'vat_amount' => (float) $line->vat_amount,
                 'sort_order' => (int) $line->sort_order,
+                'image_url' => $imageByCode[(string) $line->product_code] ?? null,
             ])->values()->all(),
         ];
     }

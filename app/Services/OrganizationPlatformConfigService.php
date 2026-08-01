@@ -204,15 +204,21 @@ class OrganizationPlatformConfigService
                     $salesPlatform['hospitality_payment_workflow'],
                 );
             }
-            // Save-order mode requires unpaid so cashiers can collect later.
-            if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)
-                && ! \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment($salesPlatform['hotel_pos_collect_payment'])
-            ) {
+            // Checkout mode is XOR: pay-now OR save-for-later (never both).
+            if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)) {
+                $collectNow = \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment(
+                    $salesPlatform['hotel_pos_collect_payment'],
+                );
                 $workflow = is_array($currentHospitality['payment_workflow'] ?? null)
                     ? $currentHospitality['payment_workflow']
                     : \App\Services\Hospitality\HospitalityPaymentWorkflow::DEFAULTS;
-                $workflow['unpaid'] = true;
-                $workflow['paid'] = true;
+                if ($collectNow) {
+                    $workflow['unpaid'] = false;
+                    $workflow['paid'] = true;
+                } else {
+                    $workflow['unpaid'] = true;
+                    $workflow['paid'] = true;
+                }
                 $currentHospitality['payment_workflow'] = \App\Services\Hospitality\HospitalityPaymentWorkflow::normalize($workflow);
             }
             $moduleSettings['hospitality'] = $currentHospitality;
@@ -251,14 +257,20 @@ class OrganizationPlatformConfigService
                     $salesPlatform['hospitality_payment_workflow'],
                 );
             }
-            if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)
-                && ! \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment($salesPlatform['hotel_pos_collect_payment'])
-            ) {
+            if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)) {
+                $collectNow = \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment(
+                    $salesPlatform['hotel_pos_collect_payment'],
+                );
                 $workflow = is_array($currentHospitality['payment_workflow'] ?? null)
                     ? $currentHospitality['payment_workflow']
                     : \App\Services\Hospitality\HospitalityPaymentWorkflow::DEFAULTS;
-                $workflow['unpaid'] = true;
-                $workflow['paid'] = true;
+                if ($collectNow) {
+                    $workflow['unpaid'] = false;
+                    $workflow['paid'] = true;
+                } else {
+                    $workflow['unpaid'] = true;
+                    $workflow['paid'] = true;
+                }
                 $currentHospitality['payment_workflow'] = \App\Services\Hospitality\HospitalityPaymentWorkflow::normalize($workflow);
             }
             $moduleSettings['hospitality'] = $currentHospitality;

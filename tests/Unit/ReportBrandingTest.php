@@ -64,4 +64,32 @@ class ReportBrandingTest extends TestCase
         $this->assertStringContainsString('class="watermark"', $html);
         $this->assertStringContainsString('Sales Summary', $html);
     }
+
+    public function test_build_print_html_paginates_named_sections(): void
+    {
+        $brandingService = new ReportBrandingService;
+        $exporter = new ReportExportService($brandingService);
+        $method = new \ReflectionMethod(ReportExportService::class, 'buildPrintHtml');
+        $method->setAccessible(true);
+
+        $html = $method->invoke($exporter, [
+            'organization_name' => 'Moonlight Express',
+            'title' => 'Payments breakdown',
+            'printed_at' => '1 Aug 2026, 17:12',
+        ], [
+            ['key' => 'order', 'label' => 'Order'],
+            ['key' => 'payment_method', 'label' => 'Payment method'],
+        ], [
+            ['__section_title' => 'Print Cash Payments, Page 1'],
+            ['order' => 'Order #1', 'payment_method' => 'Cash'],
+            ['__section_title' => 'Print M-Pesa Payments, Page 2'],
+            ['order' => 'Order #2', 'payment_method' => 'Mixed payment · Cash'],
+        ], null, null);
+
+        $this->assertStringContainsString('Print Cash Payments, Page 1', $html);
+        $this->assertStringContainsString('Print M-Pesa Payments, Page 2', $html);
+        $this->assertStringContainsString('print-section-break', $html);
+        $this->assertStringContainsString('Payment method', $html);
+        $this->assertStringNotContainsString('<h1>Payments breakdown</h1>', $html);
+    }
 }

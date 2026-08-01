@@ -590,6 +590,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('dashboard', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityDashboardController::class, 'summary'])
             ->middleware('erp.permission:hospitality.dashboard.view');
 
+        Route::get('checks', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityCheckController::class, 'index'])
+            ->middleware('erp.permission:hospitality.dashboard.view|hospitality.reports.view|hotel_bar_pos.checks.view');
+        Route::get('checks/{id}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityCheckController::class, 'show'])
+            ->middleware('erp.permission:hospitality.dashboard.view|hospitality.reports.view|hotel_bar_pos.checks.view')
+            ->whereNumber('id');
+
         Route::get('reservations', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReservationController::class, 'index'])
             ->middleware('erp.permission:hospitality.reservations.view');
         Route::post('reservations', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReservationController::class, 'store'])

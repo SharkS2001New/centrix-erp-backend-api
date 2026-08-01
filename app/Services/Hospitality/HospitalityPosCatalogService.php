@@ -162,6 +162,9 @@ class HospitalityPosCatalogService
             $select[] = 'products.sell_on_bar';
             $select[] = 'products.sell_on_hotel';
         }
+        if (Schema::hasColumn('products', 'image_path')) {
+            $select[] = 'products.image_path';
+        }
 
         $products = $query
             ->orderBy('products.product_name')
@@ -185,6 +188,8 @@ class HospitalityPosCatalogService
                     'is_popular' => $sold > 0,
                     'sell_on_bar' => (bool) ($product->sell_on_bar ?? true),
                     'sell_on_hotel' => (bool) ($product->sell_on_hotel ?? true),
+                    'image_url' => $product->image_url,
+                    'has_image' => ! empty($product->image_path),
                 ];
             })
             ->sort(function (array $a, array $b) {
