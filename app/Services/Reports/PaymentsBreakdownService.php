@@ -322,11 +322,18 @@ class PaymentsBreakdownService
             if ($code === '' || $code === 'MIXED') {
                 continue;
             }
+            // Cheque / voucher / loyalty points are not shown on this breakdown.
+            if (in_array($code, ['CHEQUE', 'VOUCHER', 'POINTS'], true)) {
+                continue;
+            }
             // Prefer org-specific name if both platform + org define the same code.
             if (! isset($catalog[$code]) || $catalog[$code]['method_name'] === '') {
                 $catalog[$code] = [
                     'method_code' => $code,
-                    'method_name' => trim((string) ($row->method_name ?? '')) ?: $this->methodLabel($code, ''),
+                    'method_name' => $this->displayMethodName(
+                        $code,
+                        trim((string) ($row->method_name ?? '')),
+                    ),
                     'requires_reference' => (bool) ($row->requires_reference ?? false),
                 ];
             }
@@ -608,51 +615,27 @@ class PaymentsBreakdownService
      */
     protected function sortAndPresentMethods($methodRows, array $catalog): array
     {
+        $hidden = ['CHEQUE', 'VOUCHER', 'POINTS', 'LOYALTY', 'LOYALTY_POINTS'];
         $byCode = [];
         foreach ($methodRows as $row) {
             $code = $this->normalizeMethodCode((string) ($row->method_code ?? ''));
-            if ($code === '' || $code === 'NONE') {
+            if ($code === '' || $code === 'NONE' || in_array($code, $hidden, true)) {
                 continue;
             }
-            $name = $code === 'MIXED'
-                ? 'Mixed payment'
-                : ($catalog[$code]['method_name'] ?? $this->methodLabel($code, ''));
+            $total = round((float) ($row->total_amount ?? 0), 2);
+            $orders = (int) ($row->order_count ?? 0);
+            // Hide empty methods from the breakdown tabs.
+            if ($total <= 0 && $orders <= 0) {
+                continue;
+            }
+            $name = $this->displayMethodName($code, $catalog[$code]['method_name'] ?? '');
             $byCode[$code] = [
                 'method_code' => $code,
-                'method_name' => $code === 'MIXED' ? $name : $this->aloneTabLabel($code, $name),
-                'payment_count' => (int) ($row->order_count ?? 0),
-                'order_count' => (int) ($row->order_count ?? 0),
-                'total_amount' => round((float) ($row->total_amount ?? 0), 2),
+                'method_name' => $name,
+                'payment_count' => $orders,
+                'order_count' => $orders,
+                'total_amount' => $total,
                 'requires_reference' => (bool) ($catalog[$code]['requires_reference'] ?? false),
-            ];
-        }
-
-        // Always surface Cash, M-Pesa, Mixed, plus every Payment Module method (admin banks).
-        foreach (['CASH' => 'Cash', 'MPESA' => 'M-Pesa', 'MIXED' => 'Mixed payment'] as $code => $fallback) {
-            if (! isset($byCode[$code])) {
-                $name = $code === 'MIXED' ? $fallback : ($catalog[$code]['method_name'] ?? $fallback);
-                $byCode[$code] = [
-                    'method_code' => $code,
-                    'method_name' => $code === 'MIXED' ? $name : $this->aloneTabLabel($code, $name),
-                    'payment_count' => 0,
-                    'order_count' => 0,
-                    'total_amount' => 0.0,
-                    'requires_reference' => (bool) ($catalog[$code]['requires_reference'] ?? false),
-                ];
-            }
-        }
-
-        foreach ($catalog as $code => $meta) {
-            if (isset($byCode[$code])) {
-                continue;
-            }
-            $byCode[$code] = [
-                'method_code' => $code,
-                'method_name' => $this->aloneTabLabel($code, $meta['method_name']),
-                'payment_count' => 0,
-                'order_count' => 0,
-                'total_amount' => 0.0,
-                'requires_reference' => (bool) ($meta['requires_reference'] ?? false),
             ];
         }
 
@@ -660,7 +643,6 @@ class PaymentsBreakdownService
         usort($methods, function (array $a, array $b) {
             $pa = self::METHOD_PRIORITY[$a['method_code']] ?? 40;
             $pb = self::METHOD_PRIORITY[$b['method_code']] ?? 40;
-            // Keep MIXED last; unknown admin banks (priority 40) sort by name.
             if ($pa === $pb) {
                 return strcmp($a['method_name'], $b['method_name']);
             }
@@ -671,14 +653,22 @@ class PaymentsBreakdownService
         return $methods;
     }
 
+    protected function displayMethodName(string $code, string $catalogName = ''): string
+    {
+        if ($code === 'MIXED') {
+            return 'Mixed';
+        }
+        if ($code === 'CREDIT' || $code === 'DEBTORS' || $code === 'DEBTOR') {
+            return 'Debtors';
+        }
+        $base = $catalogName !== '' ? $catalogName : $this->methodLabel($code, '');
+        // Drop legacy "… alone" suffix for cleaner tabs.
+        return (string) preg_replace('/\s+alone$/i', '', $base);
+    }
+
     protected function aloneTabLabel(string $code, string $name): string
     {
-        $base = $name !== '' ? $name : $this->methodLabel($code, '');
-        if (str_ends_with(strtolower($base), ' alone')) {
-            return $base;
-        }
-
-        return $base.' alone';
+        return $this->displayMethodName($code, $name);
     }
 
     protected function normalizeMethodCode(string $code): string
@@ -690,6 +680,8 @@ class PaymentsBreakdownService
             'M_PESA', 'MPESA' => 'MPESA',
             'BANK_TRANSFER', 'TRANSFER' => 'BANK',
             'MIXED_PAYMENT', 'SPLIT', 'SPLIT_PAYMENT' => 'MIXED',
+            'DEBTOR', 'DEBTORS', 'CREDITS' => 'CREDIT',
+            'LOYALTY', 'LOYALTY_POINTS' => 'POINTS',
             default => $normalized,
         };
     }
@@ -707,10 +699,8 @@ class PaymentsBreakdownService
             'KCB' => 'KCB',
             'CARD' => 'Card',
             'BANK' => 'Bank',
-            'CHEQUE' => 'Cheque',
-            'VOUCHER' => 'Voucher',
-            'POINTS' => 'Points',
-            'MIXED' => 'Mixed payment',
+            'CREDIT' => 'Debtors',
+            'MIXED' => 'Mixed',
             'OTHER' => 'Other',
             default => $code,
         };

@@ -85,9 +85,12 @@ class RolePermissionTest extends TestCase
         $applications = collect($res->json('applications'));
 
         $this->assertSame(
-            ['pos', 'hotel_bar_pos', 'mobile', 'manager', 'backoffice', 'hospitality_backoffice', 'accounting', 'hr', 'distribution', 'admin'],
+            ['pos', 'mobile', 'manager', 'backoffice', 'accounting', 'hr', 'distribution', 'admin'],
             $applications->pluck('id')->all(),
         );
+        $this->assertFalse($applications->contains('id', 'hotel_bar_pos'));
+        $this->assertFalse($applications->contains('id', 'hospitality_backoffice'));
+        $this->assertSame('commerce', $res->json('industry'));
 
         $accounting = $applications->firstWhere('id', 'accounting');
         $this->assertSame('Accounting', $accounting['label']);

@@ -276,6 +276,17 @@ class PermissionMatrixService
                 continue;
             }
 
+            // Hotel Backoffice shares catalogue/inventory modules with retail Backoffice.
+            // Only expose it when the hospitality registry module itself is enabled.
+            if ($appId === 'hospitality_backoffice' && ! $groupsByModule->has('hospitality')) {
+                continue;
+            }
+
+            // Hotel POS only when its terminal module is enabled.
+            if ($appId === 'hotel_bar_pos' && ! $groupsByModule->has('hotel_bar_pos')) {
+                continue;
+            }
+
             $modules = [];
             foreach ($def['registry_modules'] ?? [] as $registryModule) {
                 $group = $groupsByModule->get($registryModule);

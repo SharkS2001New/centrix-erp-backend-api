@@ -81,7 +81,11 @@ class OrganizationProvisionController extends Controller
                 'applications' => $this->applications->applicationsFromProfileModules($profile['modules'] ?? []),
                 'application_ids' => array_key_exists('application_ids', $profile)
                     ? $profile['application_ids']
-                    : ApplicationProvisioner::ids(),
+                    : (
+                        ($profile['industry'] ?? IndustryRegistry::industryForProfile($key)) === 'hospitality'
+                            ? ['hotel_bar_pos', 'hospitality_backoffice', 'accounting', 'hr', 'admin']
+                            : ['pos', 'backoffice', 'distribution', 'accounting', 'hr', 'admin']
+                    ),
             ])
             ->values();
 

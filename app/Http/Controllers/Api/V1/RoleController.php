@@ -108,18 +108,15 @@ class RoleController extends BaseResourceController
 
         $profile = (string) ($gate->organization()?->deployment_profile ?? 'wholesale_retail');
         $industryAppIds = IndustryRegistry::permissionApplicationIdsForProfile($profile);
-        // Industry list is the default set; also include any application that already has
-        // enabled modules (e.g. hospitality org that later enables inventory/backoffice).
+        // Strict industry isolation — never show Hotel apps on Retail & Distribution (or vice versa)
+        // just because they share inventory/catalogue permission modules.
         $applications = collect(PermissionMatrixService::applicationsGroupedForUi($gate, $includeAdmin))
             ->filter(function (array $app) use ($industryAppIds) {
                 if ($industryAppIds === []) {
                     return true;
                 }
-                if (in_array((string) ($app['id'] ?? ''), $industryAppIds, true)) {
-                    return true;
-                }
 
-                return ($app['modules'] ?? []) !== [];
+                return in_array((string) ($app['id'] ?? ''), $industryAppIds, true);
             })
             ->values()
             ->all();
