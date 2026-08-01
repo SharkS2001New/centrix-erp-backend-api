@@ -130,9 +130,10 @@ class MpesaPaymentController extends Controller
     public function paymentStatus(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
+        $orgId = (int) $request->user()->organization_id;
         $phone = (string) ($request->query('phone') ?: $cart->mpesa_phone ?: '');
         $stkRequest = MpesaStkRequest::where('cart_id', $cart->id)
-            ->where('organization_id', (int) $request->user()->organization_id)
+            ->where('organization_id', $orgId)
             ->latest('id')
             ->first();
 
@@ -141,9 +142,24 @@ class MpesaPaymentController extends Controller
             $stkError = $this->mpesaFailureMessage($stkRequest->result_code, $stkRequest->result_desc);
         }
 
-        $candidates = $phone !== ''
-            ? $this->incomingPaymentsForCart($cart, $phone, (int) $request->user()->organization_id)->map(fn ($p) => $this->formatIncomingPayment($p))
-            : collect();
+        $expectedAmount = (int) ($stkRequest?->paid_amount ?? $stkRequest?->amount ?? 0);
+        $candidates = $this->incomingPaymentsForCart(
+            $cart,
+            $phone,
+            $orgId,
+            $expectedAmount >= 1 ? $expectedAmount : null,
+            $stkRequest?->id ? (int) $stkRequest->id : null,
+        )->map(fn ($p) => $this->formatIncomingPayment($p));
+
+        // When several people paid the same amount, only surface amount matches for the picker.
+        if ($expectedAmount >= 1 && $candidates->count() > 1) {
+            $amountMatches = $candidates->filter(
+                fn ($p) => (int) ($p['amount'] ?? 0) === $expectedAmount,
+            )->values();
+            if ($amountMatches->isNotEmpty()) {
+                $candidates = $amountMatches;
+            }
+        }
 
         return response()->json([
             'status' => $stkRequest?->status ?? 'none',
@@ -315,6 +331,12 @@ class MpesaPaymentController extends Controller
         $transactionId = (string) ($values['MpesaReceiptNumber'] ?? '');
         $paidAmount = (int) ($values['Amount'] ?? $stkRequest->amount);
         $phoneNumber = (string) ($values['PhoneNumber'] ?? $stkRequest->phone_number);
+        $payerName = trim((string) (
+            $values['FirstName']
+            ?? $values['CustomerName']
+            ?? $values['PayerName']
+            ?? ''
+        ));
 
         if ($transactionId === '') {
             $stkRequest->update([
@@ -343,6 +365,9 @@ class MpesaPaymentController extends Controller
             'stk',
             $stkRequest->organization_id,
             $stkRequest->id,
+            array_filter([
+                'payer_name' => $payerName !== '' ? $payerName : null,
+            ], fn ($value) => $value !== null),
         );
 
         return response()->json(['ResultCode' => 0, 'ResultDesc' => 'Accepted']);

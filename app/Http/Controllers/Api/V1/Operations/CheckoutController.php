@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartAccess;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesCartPayments;
 use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
+use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesMpesaPayments;
 use App\Models\LoyaltyCard;
 use App\Models\Voucher;
 use App\Http\Controllers\Controller;
@@ -48,6 +49,7 @@ class CheckoutController extends Controller
 {
     use HandlesCartAccess;
     use HandlesCartPayments;
+    use HandlesMpesaPayments;
     use HandlesInventory;
 
     public function __construct(protected ErpContext $erp) {}
@@ -629,6 +631,7 @@ class CheckoutController extends Controller
                 );
             }
 
+            $invoice = null;
             if ($orderStatus === 'pending_approval') {
                 $discountApproval->attachCheckoutToSale(
                     $sale,
@@ -637,7 +640,18 @@ class CheckoutController extends Controller
                     isset($input['discount_approval_reason']) ? (string) $input['discount_approval_reason'] : null,
                 );
             } elseif (! in_array($orderStatus, ['held', 'draft'], true)) {
-                app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
+                $invoice = app(CustomerInvoiceService::class)->ensureForSale($sale, $user, $total, $amountPaid);
+            }
+
+            // Link cart-applied STK/till payments to this sale so reconciliation
+            // shows the M-Pesa transaction against the sold order number.
+            if ($mpesaOnCart > 0) {
+                $this->linkCartMpesaPaymentsToSale(
+                    $cart,
+                    $sale,
+                    $user,
+                    $invoice?->id,
+                );
             }
 
             $this->releaseCartReservations($cart->id);

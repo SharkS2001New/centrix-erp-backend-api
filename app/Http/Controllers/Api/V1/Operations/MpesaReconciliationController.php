@@ -41,12 +41,23 @@ class MpesaReconciliationController extends Controller
             ->limit(200)
             ->get();
 
+        $matched = MpesaIncomingPayment::query()
+            ->with('sale:id,order_num')
+            ->where('organization_id', $organizationId)
+            ->where('reconciliation_status', 'matched')
+            ->whereNotNull('applied_sale_id')
+            ->orderByDesc('matched_at')
+            ->limit(100)
+            ->get();
+
         return response()->json([
             'enabled' => true,
             'payments' => $payments->map(fn (MpesaIncomingPayment $payment) => $this->presentPayment($payment)),
+            'matched_payments' => $matched->map(fn (MpesaIncomingPayment $payment) => $this->presentPayment($payment)),
             'summary' => [
                 'count' => $payments->count(),
                 'total_amount' => (int) $payments->sum('amount'),
+                'matched_count' => $matched->count(),
             ],
             'settings' => [
                 'payment_account_hint' => MpesaSettingsResolver::paymentAccountHintForOrganization(
@@ -156,9 +167,11 @@ class MpesaReconciliationController extends Controller
         return [
             'enabled' => false,
             'payments' => [],
+            'matched_payments' => [],
             'summary' => [
                 'count' => 0,
                 'total_amount' => 0,
+                'matched_count' => 0,
             ],
             'settings' => [
                 'payment_account_hint' => MpesaSettingsResolver::paymentAccountHintForOrganization($organization),
@@ -183,6 +196,14 @@ class MpesaReconciliationController extends Controller
 
     protected function presentPayment(MpesaIncomingPayment $payment): array
     {
+        $orderNum = $payment->parsed_order_num ? (int) $payment->parsed_order_num : null;
+        if (! $orderNum && $payment->relationLoaded('sale') && $payment->sale) {
+            $orderNum = $payment->sale->order_num ? (int) $payment->sale->order_num : null;
+        } elseif (! $orderNum && $payment->applied_sale_id) {
+            $orderNum = Sale::query()->where('id', $payment->applied_sale_id)->value('order_num');
+            $orderNum = $orderNum ? (int) $orderNum : null;
+        }
+
         return [
             'id' => (int) $payment->id,
             'transaction_id' => $payment->transaction_id,
@@ -192,6 +213,7 @@ class MpesaReconciliationController extends Controller
             'payer_name' => $payment->payer_name,
             'business_short_code' => $payment->business_short_code,
             'parsed_order_num' => $payment->parsed_order_num ? (int) $payment->parsed_order_num : null,
+            'order_num' => $orderNum,
             'parsed_customer_num' => $payment->parsed_customer_num ? (int) $payment->parsed_customer_num : null,
             'source' => $payment->source,
             'status' => $payment->status,

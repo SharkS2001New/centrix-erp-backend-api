@@ -660,6 +660,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.require_pos_till_float' => 'sometimes|boolean',
             'sales_platform.enable_pos_cash_rounding' => 'sometimes|boolean',
             'sales_platform.external_pos_layout' => 'sometimes|in:modern,classic',
+            'sales_platform.hotel_pos_grid_columns' => 'sometimes|integer|in:4,5',
             'sales_platform.enable_pos_order_edit' => 'sometimes|boolean',
             'sales_platform.enable_backoffice_order_edit' => 'sometimes|boolean',
             'sales_platform.enable_mpesa_stk' => 'sometimes|boolean',

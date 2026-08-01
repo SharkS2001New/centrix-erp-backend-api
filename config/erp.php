@@ -217,6 +217,9 @@ return [
             'enable_mpesa_stk',
             'enable_kra_integration',
         ],
+        'hospitality' => [
+            'hotel_pos_grid_columns',
+        ],
         'ai' => [
             'enable_ai',
         ],
@@ -472,6 +475,10 @@ return [
             'orders_list_default_days' => 14,
             'orders_list_search_days' => 30,
             'orders_list_sort' => '-created_at',
+        ],
+        'hospitality' => [
+            /** Hotel & Bar POS product grid columns (platform-controlled). */
+            'hotel_pos_grid_columns' => 4,
         ],
         'distribution' => [
             'enable_distribution_ops' => true,

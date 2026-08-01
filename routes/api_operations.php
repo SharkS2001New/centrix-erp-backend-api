@@ -468,6 +468,47 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:reports.view|customers.view');
     });
 
+    // ---- Hotel & Bar POS (hospitality checks — not retail carts) ----
+    Route::prefix('hospitality/pos')->group(function () {
+        Route::get('catalog', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'catalog'])
+            ->middleware('erp.permission:hotel_bar_pos.terminal.view');
+        Route::get('settings', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'settings'])
+            ->middleware('erp.permission:hotel_bar_pos.terminal.view');
+        Route::get('checks/held', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'held'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.view');
+        Route::post('checks', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'openCheck'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.create');
+        Route::get('checks/{checkId}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'showCheck'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.view')
+            ->whereNumber('checkId');
+        Route::post('checks/{checkId}/lines', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'addLine'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId');
+        Route::patch('checks/{checkId}/lines/{lineId}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'updateLine'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId')
+            ->whereNumber('lineId');
+        Route::delete('checks/{checkId}/lines/{lineId}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'removeLine'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId')
+            ->whereNumber('lineId');
+        Route::post('checks/{checkId}/clear', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'clear'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId');
+        Route::post('checks/{checkId}/hold', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'hold'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId');
+        Route::post('checks/{checkId}/resume', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'resume'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId');
+        Route::post('checks/{checkId}/settle', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'settle'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId');
+        Route::post('checks/{checkId}/void', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'voidCheck'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId');
+    });
+
     // ---- AI assistant ----
     Route::middleware('erp.permission:ai.assist')->prefix('ai')->group(function () {
         Route::get('status', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'status']);

@@ -2,9 +2,12 @@
 
 namespace App\Http\Controllers\Api\V1\Operations\Concerns;
 
+use App\Models\CustomerInvoice;
 use App\Models\MpesaIncomingPayment;
 use App\Models\MpesaPaymentSkip;
+use App\Models\Sale;
 use App\Models\TemporaryCart;
+use App\Models\User;
 use Illuminate\Support\Collection;
 
 trait HandlesMpesaPayments
@@ -95,7 +98,7 @@ trait HandlesMpesaPayments
     ): MpesaIncomingPayment {
         $displayPhone = $this->displayMpesaPhone($phone);
 
-        return MpesaIncomingPayment::firstOrCreate(
+        $payment = MpesaIncomingPayment::firstOrCreate(
             ['transaction_id' => $transactionId],
             array_merge([
                 'organization_id' => $organizationId,
@@ -108,21 +111,67 @@ trait HandlesMpesaPayments
                 'received_at' => now(),
             ], $metadata),
         );
+
+        // C2B often arrives after STK with the payer name — backfill if missing.
+        $updates = [];
+        if ($organizationId && ! $payment->organization_id) {
+            $updates['organization_id'] = $organizationId;
+        }
+        if ($stkRequestId && ! $payment->stk_request_id) {
+            $updates['stk_request_id'] = $stkRequestId;
+        }
+        foreach (['payer_name', 'bill_ref_number', 'business_short_code', 'parsed_order_num', 'parsed_customer_num'] as $key) {
+            if (! empty($metadata[$key]) && empty($payment->{$key})) {
+                $updates[$key] = $metadata[$key];
+            }
+        }
+        if ($updates !== []) {
+            $payment->update($updates);
+        }
+
+        return $payment->fresh() ?? $payment;
     }
 
-    protected function incomingPaymentsForCart(TemporaryCart $cart, string $phone, ?int $organizationId = null): Collection
-    {
+    /**
+     * Payments eligible to apply to this cart after STK / till pay-in.
+     * Matches the STK amount across recent org payments so cashiers can pick when
+     * several customers paid the same amount at once; also includes phone matches.
+     */
+    protected function incomingPaymentsForCart(
+        TemporaryCart $cart,
+        string $phone,
+        ?int $organizationId = null,
+        ?int $expectedAmount = null,
+        ?int $stkRequestId = null,
+    ): Collection {
         $skippedIds = MpesaPaymentSkip::where('cart_id', $cart->id)->pluck('mpesa_incoming_payment_id');
-        $variants = $this->mpesaPhoneVariants($phone);
+        $variants = $phone !== '' ? $this->mpesaPhoneVariants($phone) : [];
 
         return MpesaIncomingPayment::query()
             ->where('status', 'available')
-            ->whereIn('phone_number', $variants)
-            ->where('received_at', '>=', now()->subDay())
+            ->where('received_at', '>=', now()->subMinutes(45))
             ->when($organizationId, fn ($q) => $q->where('organization_id', $organizationId))
             ->when($skippedIds->isNotEmpty(), fn ($q) => $q->whereNotIn('id', $skippedIds))
+            ->where(function ($query) use ($variants, $expectedAmount, $stkRequestId) {
+                $matched = false;
+                if ($stkRequestId) {
+                    $query->orWhere('stk_request_id', $stkRequestId);
+                    $matched = true;
+                }
+                if ($expectedAmount !== null && $expectedAmount >= 1) {
+                    $query->orWhere('amount', $expectedAmount);
+                    $matched = true;
+                }
+                if ($variants !== []) {
+                    $query->orWhereIn('phone_number', $variants);
+                    $matched = true;
+                }
+                if (! $matched) {
+                    $query->whereRaw('1 = 0');
+                }
+            })
             ->orderByDesc('received_at')
-            ->limit(10)
+            ->limit(20)
             ->get();
     }
 
@@ -160,5 +209,48 @@ trait HandlesMpesaPayments
             ]);
 
         MpesaPaymentSkip::where('cart_id', $cart->id)->delete();
+    }
+
+    /**
+     * After POS checkout, promote cart-applied M-Pesa rows onto the sale so
+     * backoffice reconciliation shows transaction ↔ order number.
+     */
+    protected function linkCartMpesaPaymentsToSale(
+        TemporaryCart $cart,
+        Sale $sale,
+        User $user,
+        ?int $invoiceId = null,
+    ): void {
+        $payments = MpesaIncomingPayment::query()
+            ->where('applied_cart_id', $cart->id)
+            ->where('status', 'applied')
+            ->whereNull('applied_sale_id')
+            ->get();
+
+        if ($payments->isEmpty()) {
+            return;
+        }
+
+        if ($invoiceId === null) {
+            $invoiceId = CustomerInvoice::query()
+                ->where('sale_id', $sale->id)
+                ->value('id');
+        }
+
+        $orderNum = $sale->order_num ? (int) $sale->order_num : null;
+
+        foreach ($payments as $payment) {
+            $matchMethod = $payment->source === 'stk' ? 'stk_request' : 'pos_checkout';
+            $payment->update([
+                'applied_sale_id' => $sale->id,
+                'applied_invoice_id' => $invoiceId ? (int) $invoiceId : null,
+                'parsed_order_num' => $payment->parsed_order_num ?: $orderNum,
+                'reconciliation_status' => 'matched',
+                'match_method' => $payment->match_method ?: $matchMethod,
+                'match_confidence' => $payment->match_confidence ?: 'high',
+                'matched_at' => now(),
+                'matched_by_user_id' => $user->id,
+            ]);
+        }
     }
 }

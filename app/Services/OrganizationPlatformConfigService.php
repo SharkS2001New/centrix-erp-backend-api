@@ -172,6 +172,16 @@ class OrganizationPlatformConfigService
         $moduleSettings = $org->module_settings ?? [];
         $moduleSettings['sales'] = $nextSales;
 
+        if (array_key_exists('hotel_pos_grid_columns', $salesPlatform)) {
+            $currentHospitality = is_array($moduleSettings['hospitality'] ?? null)
+                ? $moduleSettings['hospitality']
+                : [];
+            $currentHospitality['hotel_pos_grid_columns'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeGridColumns(
+                $salesPlatform['hotel_pos_grid_columns'],
+            );
+            $moduleSettings['hospitality'] = $currentHospitality;
+        }
+
         $currentDistribution = is_array($moduleSettings['distribution'] ?? null) ? $moduleSettings['distribution'] : [];
         foreach ($this->platformControlledDistributionKeys() as $key) {
             if (array_key_exists($key, $salesPlatform)) {
@@ -288,6 +298,7 @@ class OrganizationPlatformConfigService
             'enable_pos_cash_rounding' => false,
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
+            'hotel_pos_grid_columns' => 4,
             'order_workflow' => $workflowDefaults,
             'order_cancellation_enabled' => true,
             'enable_pos_order_edit' => false,
@@ -351,6 +362,7 @@ class OrganizationPlatformConfigService
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)
                 ? (string) $sales['external_pos_layout']
                 : 'modern',
+            'hotel_pos_grid_columns' => \App\Services\Hospitality\HospitalityPosSettings::gridColumnsForOrganization($org),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
             'edit_order_statuses' => $this->normalizeRequiredActionStatuses(
