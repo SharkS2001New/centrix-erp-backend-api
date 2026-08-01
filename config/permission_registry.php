@@ -122,7 +122,7 @@ return [
                 'housekeeping' => ['label' => 'Housekeeping', 'actions' => ['view', 'edit']],
                 'night_audit' => ['label' => 'Night audit', 'actions' => ['view', 'create']],
                 'reports' => ['label' => 'Hotel reports', 'actions' => ['view']],
-                'settings' => ['label' => 'Hotel settings', 'actions' => ['view', 'edit']],
+                'settings' => ['label' => 'Hotel F&B settings', 'actions' => ['view', 'edit']],
             ],
         ],
         'payments' => [

@@ -286,6 +286,7 @@ return [
                 'hospitality.night_audit.create',
                 'hospitality.reports.view',
                 'hospitality.settings.view',
+                'hospitality.settings.edit',
                 'hotel_bar_pos.terminal.view',
                 'hotel_bar_pos.checks.view',
                 'hotel_bar_pos.shift.view',

@@ -103,6 +103,21 @@ class HospitalityPosController extends Controller
         return response()->json(['check' => $this->checkService->toArray($check)]);
     }
 
+    public function assignGuest(Request $request, int $checkId)
+    {
+        $org = $this->requireOrg($request->user());
+        $data = $request->validate([
+            'guest_name' => ['nullable', 'string', 'max:160'],
+        ]);
+        $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
+        $check = $this->checkService->assignGuestName(
+            $check,
+            $data['guest_name'] ?? null,
+        );
+
+        return response()->json(['check' => $this->checkService->toArray($check)]);
+    }
+
     public function addLine(Request $request, int $checkId)
     {
         $org = $this->requireOrg($request->user());

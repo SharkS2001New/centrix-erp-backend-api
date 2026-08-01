@@ -141,6 +141,17 @@ class HospitalityCheckService
         return $this->presentable($check->fresh());
     }
 
+    public function assignGuestName(HospitalityCheck $check, ?string $guestName): HospitalityCheck
+    {
+        $this->assertEditable($check);
+        $name = trim((string) ($guestName ?? ''));
+        $check->update([
+            'guest_name' => $name !== '' ? mb_substr($name, 0, 160) : null,
+        ]);
+
+        return $this->presentable($check->fresh());
+    }
+
     public function addProductLine(HospitalityCheck $check, string $productCode, float $qty = 1): HospitalityCheck
     {
         $this->assertEditable($check);
@@ -595,6 +606,8 @@ class HospitalityCheckService
         return $check->load([
             'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
             'floorTable:id,code,label,outlet_id',
+            'outlet:id,code,name',
+            'payments' => fn ($q) => $q->orderBy('id'),
         ]);
     }
 
@@ -632,6 +645,7 @@ class HospitalityCheckService
             'check_number' => $check->check_number,
             'status' => $this->normalizeStatus((string) $check->status),
             'service_mode' => $check->service_mode,
+            'guest_name' => $check->guest_name ? (string) $check->guest_name : null,
             'outlet_id' => $check->outlet_id,
             'outlet' => $check->relationLoaded('outlet') && $check->outlet ? [
                 'id' => $check->outlet->id,
@@ -665,6 +679,15 @@ class HospitalityCheckService
                 'sort_order' => (int) $line->sort_order,
                 'image_url' => $imageByCode[(string) $line->product_code] ?? null,
             ])->values()->all(),
+            'payments' => $check->relationLoaded('payments')
+                ? $check->payments->map(fn (HospitalityCheckPayment $p) => [
+                    'id' => $p->id,
+                    'method_code' => $p->method_code,
+                    'amount' => (float) $p->amount,
+                    'reference' => $p->reference,
+                    'created_at' => optional($p->created_at)?->toIso8601String(),
+                ])->values()->all()
+                : [],
         ];
     }
 

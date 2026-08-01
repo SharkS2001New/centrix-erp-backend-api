@@ -974,6 +974,7 @@ class ErpSettingsController extends Controller
             'check_receipt_copies' => 'sometimes|integer|min:1|max:3',
             'show_outlet_on_check_receipt' => 'sometimes|boolean',
             'show_organization_on_check_receipt' => 'sometimes|boolean',
+            'enable_check_guest_name' => 'sometimes|boolean',
             'check_receipt_footer' => 'sometimes|nullable|string|max:2000',
             'use_same_print_phones_for_check' => 'sometimes|boolean',
             'check_print_phones' => 'sometimes|nullable|array',

@@ -517,6 +517,8 @@ return [
             'check_receipt_copies' => 1,
             'show_outlet_on_check_receipt' => true,
             'show_organization_on_check_receipt' => true,
+            /** Guest/customer name on Hotel POS checks & receipts (default off, like retail). */
+            'enable_check_guest_name' => false,
             'check_receipt_footer' => 'Thank you',
             'use_same_print_phones_for_check' => true,
             'check_print_phones' => [

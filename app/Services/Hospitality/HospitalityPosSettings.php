@@ -125,6 +125,11 @@ class HospitalityPosSettings
                 $settings['show_organization_on_check_receipt'] ?? true,
                 true,
             ),
+            /** When true, Hotel POS can capture a guest/customer name and print it on check receipts. Default off. */
+            'enable_check_guest_name' => self::normalizeBool(
+                $settings['enable_check_guest_name'] ?? false,
+                false,
+            ),
             'check_receipt_footer' => (string) ($settings['check_receipt_footer'] ?? 'Thank you'),
             'use_same_print_phones_for_check' => self::normalizeBool(
                 $settings['use_same_print_phones_for_check'] ?? true,
@@ -169,6 +174,7 @@ class HospitalityPosSettings
             'check_receipt_copies' => 1,
             'show_outlet_on_check_receipt' => true,
             'show_organization_on_check_receipt' => true,
+            'enable_check_guest_name' => false,
             'check_receipt_footer' => 'Thank you',
             'use_same_print_phones_for_check' => true,
             'check_print_phones' => ['tel1' => '', 'tel2' => ''],

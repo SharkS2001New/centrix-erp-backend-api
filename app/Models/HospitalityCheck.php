@@ -20,6 +20,7 @@ class HospitalityCheck extends Model
         'check_number',
         'status',
         'service_mode',
+        'guest_name',
         'opened_by',
         'closed_by',
         'subtotal',

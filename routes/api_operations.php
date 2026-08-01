@@ -505,6 +505,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::patch('checks/{checkId}/table', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'assignTable'])
             ->middleware('erp.permission:hotel_bar_pos.checks.edit')
             ->whereNumber('checkId');
+        Route::patch('checks/{checkId}/guest', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'assignGuest'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId');
         Route::post('checks/{checkId}/lines', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'addLine'])
             ->middleware('erp.permission:hotel_bar_pos.checks.edit')
             ->whereNumber('checkId');
