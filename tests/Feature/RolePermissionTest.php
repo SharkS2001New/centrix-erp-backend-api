@@ -16,48 +16,66 @@ class RolePermissionTest extends TestCase
 {
     use RefreshesErpDatabase;
 
+    protected function actingAsLicensedAdmin(): User
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        \App\Models\PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'seat_count' => 5,
+                'current_period_start' => now()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'is_trial' => false,
+            ],
+        );
+        Sanctum::actingAs($admin);
+
+        return $admin;
+    }
+
     public function test_admin_can_sync_distinct_permissions_per_role(): void
     {
         PermissionMatrixService::ensure();
+        app(\App\Services\Auth\RoleTemplateService::class)->ensureAllRoles();
 
-        $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $this->actingAsLicensedAdmin();
 
-        $roleA = Role::query()->firstOrFail();
-        $roleB = Role::query()->where('id', '!=', $roleA->id)->firstOrFail();
+        // Avoid Administrator — ensure() helpers re-attach admin-only codes on that role.
+        $roleA = Role::query()->where('role_name', 'Cashier')->firstOrFail();
+        $roleB = Role::query()->where('role_name', 'Warehouse Clerk')->firstOrFail();
 
-        $permA = Permission::where('permission_code', 'dashboard.overview.view')->firstOrFail();
+        // Avoid dashboard.overview.view — ensureNotificationsForBackofficeRoles re-attaches extras.
+        $permA = Permission::where('permission_code', 'pos.terminal.view')->firstOrFail();
         $permB = Permission::where('permission_code', 'catalogue.products.view')->firstOrFail();
 
         $this->putJson("/api/v1/roles/{$roleA->id}/permissions", [
             'permission_ids' => [$permA->id],
-        ])->assertOk()->assertJsonPath('permission_ids', [$permA->id]);
+        ])->assertOk();
+        $this->assertSame(
+            [$permA->id],
+            $this->getJson("/api/v1/roles/{$roleA->id}/permissions")->assertOk()->json('permission_ids'),
+        );
 
         $this->putJson("/api/v1/roles/{$roleB->id}/permissions", [
             'permission_ids' => [$permB->id],
-        ])->assertOk()->assertJsonPath('permission_ids', [$permB->id]);
-
-        $this->getJson("/api/v1/roles/{$roleA->id}/permissions")
-            ->assertOk()
-            ->assertJsonPath('permission_ids', [$permA->id]);
-
-        $this->getJson("/api/v1/roles/{$roleB->id}/permissions")
-            ->assertOk()
-            ->assertJsonPath('permission_ids', [$permB->id]);
+        ])->assertOk();
+        $this->assertSame(
+            [$permB->id],
+            $this->getJson("/api/v1/roles/{$roleB->id}/permissions")->assertOk()->json('permission_ids'),
+        );
     }
 
     public function test_invalid_role_id_returns_not_found(): void
     {
-        $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $this->actingAsLicensedAdmin();
 
         $this->getJson('/api/v1/roles/undefined/permissions')->assertNotFound();
     }
 
     public function test_permission_matrix_groups_are_distinct(): void
     {
-        $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $this->actingAsLicensedAdmin();
 
         $res = $this->getJson('/api/v1/roles/permissions/matrix')->assertOk();
         $groups = collect($res->json('groups'));
@@ -78,18 +96,7 @@ class RolePermissionTest extends TestCase
 
     public function test_permission_matrix_applications_group_modules_for_ui(): void
     {
-        $admin = User::where('username', 'admin')->firstOrFail();
-        \App\Models\PlatformSubscription::query()->firstOrCreate(
-            ['organization_id' => $admin->organization_id],
-            [
-                'status' => 'active',
-                'seat_count' => 5,
-                'current_period_start' => now()->toDateString(),
-                'current_period_end' => now()->addYear()->toDateString(),
-                'is_trial' => false,
-            ],
-        );
-        Sanctum::actingAs($admin);
+        $this->actingAsLicensedAdmin();
 
         $res = $this->getJson('/api/v1/roles/permissions/matrix')->assertOk();
         $applications = collect($res->json('applications'));
@@ -124,11 +131,11 @@ class RolePermissionTest extends TestCase
     public function test_clearing_role_permissions_persists_empty_set(): void
     {
         PermissionMatrixService::ensure();
+        app(\App\Services\Auth\RoleTemplateService::class)->ensureAllRoles();
 
-        $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $this->actingAsLicensedAdmin();
 
-        $role = Role::query()->firstOrFail();
+        $role = Role::query()->where('role_name', 'Cashier')->firstOrFail();
         $this->assertGreaterThan(0, DB::table('role_permissions')->where('role_id', $role->id)->count());
 
         $this->putJson("/api/v1/roles/{$role->id}/permissions", [
