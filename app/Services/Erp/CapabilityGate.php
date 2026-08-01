@@ -221,7 +221,15 @@ class CapabilityGate
     public function allowedLoginChannels(): array
     {
         $channels = [];
-        if ($this->enabled('sales.backend')) {
+        // Retail backoffice sales OR hospitality shells use the web/backoffice login channel.
+        if (
+            $this->enabled('sales.backend')
+            || $this->enabled('hospitality.backend')
+            || $this->enabled('hospitality.bar_pos')
+            || $this->enabled('admin')
+            || $this->enabled('accounting')
+            || $this->enabled('hr_payroll')
+        ) {
             $channels[] = \App\Services\Auth\UserLoginChannelService::BACKOFFICE;
         }
         if ($this->enabled('sales.pos')) {
@@ -235,7 +243,7 @@ class CapabilityGate
         }
 
         return $channels !== []
-            ? $channels
+            ? array_values(array_unique($channels))
             : [\App\Services\Auth\UserLoginChannelService::BACKOFFICE];
     }
 

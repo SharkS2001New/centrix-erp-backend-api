@@ -79,6 +79,16 @@ class RolePermissionTest extends TestCase
     public function test_permission_matrix_applications_group_modules_for_ui(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
+        \App\Models\PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'seat_count' => 5,
+                'current_period_start' => now()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'is_trial' => false,
+            ],
+        );
         Sanctum::actingAs($admin);
 
         $res = $this->getJson('/api/v1/roles/permissions/matrix')->assertOk();
@@ -88,8 +98,8 @@ class RolePermissionTest extends TestCase
             ['pos', 'mobile', 'manager', 'backoffice', 'accounting', 'hr', 'distribution', 'admin'],
             $applications->pluck('id')->all(),
         );
-        $this->assertFalse($applications->contains('id', 'hotel_bar_pos'));
-        $this->assertFalse($applications->contains('id', 'hospitality_backoffice'));
+        $this->assertFalse($applications->contains(fn (array $app) => ($app['id'] ?? '') === 'hotel_bar_pos'));
+        $this->assertFalse($applications->contains(fn (array $app) => ($app['id'] ?? '') === 'hospitality_backoffice'));
         $this->assertSame('commerce', $res->json('industry'));
 
         $accounting = $applications->firstWhere('id', 'accounting');

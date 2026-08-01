@@ -109,4 +109,42 @@ class WorkspaceResolverIndustryTest extends TestCase
         $this->assertSame('Hotel POS', config('erp_workspaces.hotel_bar_pos.label'));
         $this->assertSame('Hotel Backoffice', config('erp_workspaces.hospitality_backoffice.label'));
     }
+
+    public function test_hospitality_admin_sees_hotel_pos_on_backoffice_login_channel(): void
+    {
+        $org = new Organization([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => [
+                'hospitality' => true,
+                'hospitality.backend' => true,
+                'hospitality.bar_pos' => true,
+                'hospitality.dashboard' => true,
+                'accounting' => true,
+                'hr_payroll' => true,
+                'admin' => true,
+            ],
+        ]);
+
+        $admin = new User([
+            'is_admin' => true,
+            'is_super_admin' => false,
+            'login_channels' => ['backoffice'],
+        ]);
+
+        $workspaces = app(WorkspaceResolver::class)->availableForUser($admin, new CapabilityGate($org));
+        $ids = array_column($workspaces, 'id');
+        $byId = array_column($workspaces, null, 'id');
+
+        $this->assertContains('hotel_bar_pos', $ids);
+        $this->assertContains('hospitality_backoffice', $ids);
+        $this->assertContains('accounting', $ids);
+        $this->assertContains('hr', $ids);
+        $this->assertContains('admin', $ids);
+        $this->assertNotContains('backoffice', $ids);
+        $this->assertNotContains('pos', $ids);
+
+        $this->assertSame('Hotel POS', $byId['hotel_bar_pos']['label']);
+        $this->assertSame('Hotel Backoffice', $byId['hospitality_backoffice']['label']);
+        $this->assertSame('Administration', $byId['admin']['label']);
+    }
 }

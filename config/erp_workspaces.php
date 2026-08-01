@@ -104,7 +104,7 @@ return [
     'admin' => [
         'label' => 'Administration',
         'description' => 'Users, roles, permissions, company setup, and system settings.',
-        'icon' => 'building',
+        'icon' => 'settings',
         'home_path' => '/admin',
         'domain_modules' => ['admin'],
         'permission_prefixes' => ['admin.'],

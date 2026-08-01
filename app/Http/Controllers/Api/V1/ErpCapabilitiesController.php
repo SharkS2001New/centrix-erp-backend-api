@@ -157,6 +157,12 @@ class ErpCapabilitiesController extends Controller
             $payload['module_settings'] = $gate->maskPlatformDisabledModuleSettings($payload['module_settings']);
         }
 
+        // Workspaces are user + config + industry dependent — always recompute so
+        // Hotel POS / Hotel Backoffice labels and industry filters are not stuck in cache.
+        if (! $user->is_super_admin) {
+            $payload['workspaces'] = app(WorkspaceResolver::class)->availableForUser($user, $gate);
+        }
+
         if ($org) {
             $payload['capabilities_version'] = OrganizationCache::capabilitiesVersion((int) $org->id);
             // Do not refresh + rebuild gate->toArray() on every request — that re-queries

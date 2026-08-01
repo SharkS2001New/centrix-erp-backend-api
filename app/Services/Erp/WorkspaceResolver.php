@@ -44,16 +44,39 @@ class WorkspaceResolver
                 continue;
             }
 
-            $available[] = [
-                'id' => (string) $id,
-                'label' => (string) ($def['label'] ?? $id),
-                'description' => (string) ($def['description'] ?? ''),
-                'icon' => (string) ($def['icon'] ?? 'app'),
-                'home_path' => $this->resolveWorkspaceHomePath((string) $id, $def, $permissionMap),
-            ];
+            $available[] = $this->presentWorkspace((string) $id, $def, $gate, $permissionMap);
         }
 
         return $available;
+    }
+
+    /**
+     * @param  array<string, mixed>  $def
+     * @param  array<string, bool>  $permissionMap
+     * @return array{id: string, label: string, description: string, icon: string, home_path: string}
+     */
+    protected function presentWorkspace(string $id, array $def, CapabilityGate $gate, array $permissionMap): array
+    {
+        $org = $gate->organization();
+        $profile = $org?->deployment_profile ?? 'wholesale_retail';
+        $industry = IndustryRegistry::industryForProfile((string) $profile);
+
+        $label = (string) ($def['label'] ?? $id);
+        $description = (string) ($def['description'] ?? '');
+
+        // Hospitality tenants share Accounting / HR / Admin shells — keep labels distinct from retail Backoffice.
+        if ($industry === 'hospitality' && $id === 'admin') {
+            $label = 'Administration';
+            $description = 'Hotel users, roles, branches, and company setup for this hospitality organization.';
+        }
+
+        return [
+            'id' => $id,
+            'label' => $label,
+            'description' => $description,
+            'icon' => (string) ($def['icon'] ?? 'app'),
+            'home_path' => $this->resolveWorkspaceHomePath($id, $def, $permissionMap),
+        ];
     }
 
     protected function workspaceAllowedByLoginChannels(string $workspaceId, ?User $user): bool
@@ -70,8 +93,11 @@ class WorkspaceResolver
 
     protected function workspaceLoginChannel(string $workspaceId): string
     {
+        // Retail External POS uses the POS token channel.
+        // Hotel POS is a web terminal that calls hospitality APIs (backoffice channel),
+        // same as Hotel Backoffice / Accounting / HR / Admin.
         return match ($workspaceId) {
-            'pos', 'hotel_bar_pos' => UserLoginChannelService::POS,
+            'pos' => UserLoginChannelService::POS,
             default => UserLoginChannelService::BACKOFFICE,
         };
     }
