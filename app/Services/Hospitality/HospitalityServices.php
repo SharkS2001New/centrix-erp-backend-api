@@ -43,7 +43,7 @@ class HospitalityServices
     public const CATALOG = [
         'rooms' => [
             'label' => 'Rooms',
-            'description' => 'Room types and room inventory (default on).',
+            'description' => 'Room types and room inventory. Optional — Hotel & Bar POS sells without rooms.',
         ],
         'reservations' => [
             'label' => 'Reservations',
@@ -75,7 +75,7 @@ class HospitalityServices
         ],
         'table_pos' => [
             'label' => 'Table POS mode',
-            'description' => 'Open and manage checks by table on Hotel & Bar POS.',
+            'description' => 'Cashier must select a floor table before saving or collecting payment.',
         ],
         'room_charge' => [
             'label' => 'Room charge from POS',

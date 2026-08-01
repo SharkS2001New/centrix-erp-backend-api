@@ -217,11 +217,12 @@ return [
             'enable_mpesa_stk',
             'enable_kra_integration',
         ],
-        'hospitality' => [
+            'hospitality' => [
             'hotel_pos_grid_columns',
             'hotel_pos_collect_payment',
             'hotel_pos_catalog_limit',
             'services',
+            'payment_workflow',
         ],
         'ai' => [
             'enable_ai',
@@ -496,7 +497,7 @@ return [
             'require_recipe_for_stocked_items' => false,
             /**
              * Optional hospitality services (platform-controlled).
-             * Default org: Main outlet (always) + Rooms only.
+             * Main outlet is always on. Rooms and everything else are opt-in toggles.
              */
             'services' => [
                 'rooms' => true,
@@ -509,6 +510,15 @@ return [
                 'floor_tables' => false,
                 'table_pos' => false,
                 'room_charge' => false,
+            ],
+            /**
+             * Payment statuses for Hotel & Bar checks (platform-controlled).
+             * Only unpaid / partially_paid / paid — paid cannot be fully disabled.
+             */
+            'payment_workflow' => [
+                'unpaid' => true,
+                'partially_paid' => true,
+                'paid' => true,
             ],
         ],
         'distribution' => [

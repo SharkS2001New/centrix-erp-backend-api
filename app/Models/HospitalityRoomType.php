@@ -28,4 +28,9 @@ class HospitalityRoomType extends Model
     {
         return $this->hasMany(HospitalityRoom::class, 'room_type_id');
     }
+
+    public function ratePlans(): HasMany
+    {
+        return $this->hasMany(HospitalityRatePlan::class, 'room_type_id');
+    }
 }

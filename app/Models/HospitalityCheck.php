@@ -64,4 +64,9 @@ class HospitalityCheck extends Model
     {
         return $this->hasMany(HospitalityCheckPayment::class, 'check_id');
     }
+
+    public function floorTable(): BelongsTo
+    {
+        return $this->belongsTo(HospitalityFloorTable::class, 'floor_table_id');
+    }
 }

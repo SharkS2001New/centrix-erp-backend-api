@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Services\Erp\ErpContext;
 use App\Services\Hospitality\HospitalityCheckService;
+use App\Services\Hospitality\HospitalityPaymentWorkflow;
 use App\Services\Hospitality\HospitalityPosCatalogService;
 use App\Services\Hospitality\HospitalityPosSettings;
 use App\Services\Hospitality\HospitalityServices;
@@ -35,6 +36,11 @@ class HospitalityPosController extends Controller
         return response()->json(array_merge(
             HospitalityPosSettings::forOrganization($org),
             HospitalityServices::presentForOrganization($org),
+            HospitalityPaymentWorkflow::presentForOrganization($org),
+            [
+                'table_pos_enabled' => HospitalityServices::enabled($org, 'table_pos'),
+                'floor_tables_enabled' => HospitalityServices::enabled($org, 'floor_tables'),
+            ],
         ));
     }
 
@@ -45,6 +51,7 @@ class HospitalityPosController extends Controller
         $data = $request->validate([
             'outlet_id' => ['nullable', 'integer'],
             'branch_id' => ['nullable', 'integer'],
+            'floor_table_id' => ['nullable', 'integer'],
         ]);
 
         $check = $this->checkService->openCheck(
@@ -52,6 +59,7 @@ class HospitalityPosController extends Controller
             $user,
             isset($data['branch_id']) ? (int) $data['branch_id'] : ($user->branch_id ? (int) $user->branch_id : null),
             isset($data['outlet_id']) ? (int) $data['outlet_id'] : null,
+            isset($data['floor_table_id']) ? (int) $data['floor_table_id'] : null,
         );
 
         return response()->json(['check' => $this->checkService->toArray($check)], 201);
@@ -61,6 +69,22 @@ class HospitalityPosController extends Controller
     {
         $org = $this->requireOrg($request->user());
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
+
+        return response()->json(['check' => $this->checkService->toArray($check)]);
+    }
+
+    public function assignTable(Request $request, int $checkId)
+    {
+        $org = $this->requireOrg($request->user());
+        $data = $request->validate([
+            'floor_table_id' => ['nullable', 'integer'],
+        ]);
+        $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
+        $check = $this->checkService->assignFloorTable(
+            $check,
+            $org,
+            isset($data['floor_table_id']) ? (int) $data['floor_table_id'] : null,
+        );
 
         return response()->json(['check' => $this->checkService->toArray($check)]);
     }
@@ -116,7 +140,7 @@ class HospitalityPosController extends Controller
     {
         $org = $this->requireOrg($request->user());
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
-        $check = $this->checkService->hold($check);
+        $check = $this->checkService->hold($check, $org);
 
         return response()->json(['check' => $this->checkService->toArray($check)]);
     }
@@ -141,15 +165,28 @@ class HospitalityPosController extends Controller
             'payments.*.method_code' => ['required_with:payments', 'string', 'max:40'],
             'payments.*.amount' => ['required_with:payments', 'numeric', 'min:0.01'],
             'payments.*.reference' => ['nullable', 'string', 'max:120'],
+            'floor_table_id' => ['nullable', 'integer'],
+            'folio_id' => ['nullable', 'integer'],
         ]);
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
+        if (array_key_exists('floor_table_id', $data) && $data['floor_table_id']) {
+            $check = $this->checkService->assignFloorTable($check, $org, (int) $data['floor_table_id']);
+        }
 
         if (! empty($data['payments']) && is_array($data['payments'])) {
-            $check = $this->checkService->settleWithPayments($check, $user, $data['payments']);
+            $check = $this->checkService->settleWithPayments(
+                $check,
+                $user,
+                $org,
+                $data['payments'],
+                null,
+                isset($data['folio_id']) ? (int) $data['folio_id'] : null,
+            );
         } else {
             $check = $this->checkService->settleCash(
                 $check,
                 $user,
+                $org,
                 array_key_exists('amount', $data) && $data['amount'] !== null ? (float) $data['amount'] : null,
             );
         }
@@ -160,8 +197,14 @@ class HospitalityPosController extends Controller
     public function save(Request $request, int $checkId)
     {
         $org = $this->requireOrg($request->user());
+        $data = $request->validate([
+            'floor_table_id' => ['nullable', 'integer'],
+        ]);
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
-        $check = $this->checkService->saveWithoutPayment($check);
+        if (array_key_exists('floor_table_id', $data) && $data['floor_table_id']) {
+            $check = $this->checkService->assignFloorTable($check, $org, (int) $data['floor_table_id']);
+        }
+        $check = $this->checkService->saveWithoutPayment($check, $org);
 
         return response()->json(['check' => $this->checkService->toArray($check)]);
     }
@@ -177,9 +220,14 @@ class HospitalityPosController extends Controller
 
     public function held(Request $request)
     {
+        return $this->collectible($request);
+    }
+
+    public function collectible(Request $request)
+    {
         $org = $this->requireOrg($request->user());
         $outletId = $request->filled('outlet_id') ? (int) $request->input('outlet_id') : null;
-        $checks = $this->checkService->listHeld((int) $org->id, $outletId);
+        $checks = $this->checkService->listCollectible((int) $org->id, $outletId);
 
         return response()->json([
             'checks' => array_map(fn ($c) => $this->checkService->toArray($c), $checks),

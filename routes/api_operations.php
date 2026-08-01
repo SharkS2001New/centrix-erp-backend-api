@@ -477,10 +477,15 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hotel_bar_pos.terminal.view');
         Route::get('checks/held', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'held'])
             ->middleware('erp.permission:hotel_bar_pos.checks.view');
+        Route::get('checks/collectible', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'collectible'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.view');
         Route::post('checks', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'openCheck'])
             ->middleware('erp.permission:hotel_bar_pos.checks.create');
         Route::get('checks/{checkId}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'showCheck'])
             ->middleware('erp.permission:hotel_bar_pos.checks.view')
+            ->whereNumber('checkId');
+        Route::patch('checks/{checkId}/table', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'assignTable'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
             ->whereNumber('checkId');
         Route::post('checks/{checkId}/lines', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'addLine'])
             ->middleware('erp.permission:hotel_bar_pos.checks.edit')
@@ -538,12 +543,95 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hospitality.outlets.edit')
             ->whereNumber('id');
 
+        Route::get('floor-tables', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFloorTableController::class, 'index'])
+            ->middleware('erp.permission:hospitality.outlets.view');
+        Route::post('floor-tables', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFloorTableController::class, 'store'])
+            ->middleware('erp.permission:hospitality.outlets.create');
+        Route::patch('floor-tables/{id}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFloorTableController::class, 'update'])
+            ->middleware('erp.permission:hospitality.outlets.edit')
+            ->whereNumber('id');
+
         Route::apiResource('room-types', \App\Http\Controllers\Api\V1\Hospitality\HospitalityRoomTypeController::class)
             ->middlewareFor(['index', 'show'], ['erp.permission:hospitality.rooms.view'])
             ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hospitality.rooms.create|hospitality.rooms.edit']);
         Route::apiResource('rooms', \App\Http\Controllers\Api\V1\Hospitality\HospitalityRoomController::class)
             ->middlewareFor(['index', 'show'], ['erp.permission:hospitality.rooms.view'])
             ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hospitality.rooms.create|hospitality.rooms.edit']);
+
+        Route::get('rate-plans', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityRatePlanController::class, 'index'])
+            ->middleware('erp.permission:hospitality.rooms.view');
+        Route::post('rate-plans', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityRatePlanController::class, 'store'])
+            ->middleware('erp.permission:hospitality.rooms.create|hospitality.rooms.edit');
+        Route::put('rate-plans/{id}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityRatePlanController::class, 'update'])
+            ->middleware('erp.permission:hospitality.rooms.edit')
+            ->whereNumber('id');
+        Route::delete('rate-plans/{id}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityRatePlanController::class, 'destroy'])
+            ->middleware('erp.permission:hospitality.rooms.edit')
+            ->whereNumber('id');
+
+        Route::get('dashboard', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityDashboardController::class, 'summary'])
+            ->middleware('erp.permission:hospitality.dashboard.view');
+
+        Route::get('reservations', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReservationController::class, 'index'])
+            ->middleware('erp.permission:hospitality.reservations.view');
+        Route::post('reservations', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReservationController::class, 'store'])
+            ->middleware('erp.permission:hospitality.reservations.create');
+        Route::get('reservations/{id}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReservationController::class, 'show'])
+            ->middleware('erp.permission:hospitality.reservations.view')
+            ->whereNumber('id');
+        Route::put('reservations/{id}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReservationController::class, 'update'])
+            ->middleware('erp.permission:hospitality.reservations.edit')
+            ->whereNumber('id');
+        Route::post('reservations/{id}/status', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReservationController::class, 'setStatus'])
+            ->middleware('erp.permission:hospitality.reservations.edit')
+            ->whereNumber('id');
+
+        Route::get('folios', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFolioController::class, 'index'])
+            ->middleware('erp.permission:hospitality.folios.view');
+        Route::get('folios/open', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFolioController::class, 'openList'])
+            ->middleware('erp.permission:hospitality.folios.view|hotel_bar_pos.room_charge.create');
+        Route::post('folios', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFolioController::class, 'store'])
+            ->middleware('erp.permission:hospitality.folios.create');
+        Route::get('folios/{id}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFolioController::class, 'show'])
+            ->middleware('erp.permission:hospitality.folios.view')
+            ->whereNumber('id');
+        Route::post('folios/{id}/charges', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFolioController::class, 'addCharge'])
+            ->middleware('erp.permission:hospitality.folios.edit')
+            ->whereNumber('id');
+        Route::post('folios/{id}/payments', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFolioController::class, 'addPayment'])
+            ->middleware('erp.permission:hospitality.folios.edit')
+            ->whereNumber('id');
+
+        Route::get('front-desk/arrivals', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'arrivals'])
+            ->middleware('erp.permission:hospitality.frontdesk.view');
+        Route::get('front-desk/departures', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'departures'])
+            ->middleware('erp.permission:hospitality.frontdesk.view');
+        Route::get('front-desk/in-house', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'inHouse'])
+            ->middleware('erp.permission:hospitality.frontdesk.view');
+        Route::post('front-desk/check-in', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'checkIn'])
+            ->middleware('erp.permission:hospitality.frontdesk.edit');
+        Route::post('front-desk/folios/{folioId}/check-out', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'checkOut'])
+            ->middleware('erp.permission:hospitality.frontdesk.edit')
+            ->whereNumber('folioId');
+        Route::post('front-desk/folios/{folioId}/assign-room', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'assignRoom'])
+            ->middleware('erp.permission:hospitality.frontdesk.edit')
+            ->whereNumber('folioId');
+
+        Route::get('housekeeping', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityHousekeepingController::class, 'board'])
+            ->middleware('erp.permission:hospitality.housekeeping.view');
+        Route::patch('housekeeping/rooms/{roomId}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityHousekeepingController::class, 'setStatus'])
+            ->middleware('erp.permission:hospitality.housekeeping.edit')
+            ->whereNumber('roomId');
+
+        Route::get('night-audit/preview', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityNightAuditController::class, 'preview'])
+            ->middleware('erp.permission:hospitality.night_audit.view');
+        Route::get('night-audit/history', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityNightAuditController::class, 'history'])
+            ->middleware('erp.permission:hospitality.night_audit.view');
+        Route::post('night-audit/run', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityNightAuditController::class, 'run'])
+            ->middleware('erp.permission:hospitality.night_audit.create');
+
+        Route::get('reports/{slug}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'show'])
+            ->middleware('erp.permission:hospitality.reports.view');
     });
 
     // ---- AI assistant ----

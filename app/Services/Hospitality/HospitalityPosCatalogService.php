@@ -156,7 +156,7 @@ class HospitalityPosCatalogService
             $rows = DB::table('hospitality_check_lines as hcl')
                 ->join('hospitality_checks as hc', 'hc.id', '=', 'hcl.check_id')
                 ->where('hc.organization_id', $organizationId)
-                ->whereIn('hc.status', ['settled', 'posted_to_folio'])
+                ->whereIn('hc.status', ['paid', 'settled', 'posted_to_folio'])
                 ->where(function ($q) use ($since) {
                     $q->where('hc.closed_at', '>=', $since)
                         ->orWhere(function ($inner) use ($since) {

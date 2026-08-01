@@ -5,6 +5,7 @@ namespace App\Services\Hospitality;
 use App\Models\HospitalityCheck;
 use App\Models\HospitalityCheckLine;
 use App\Models\HospitalityCheckPayment;
+use App\Models\HospitalityFloorTable;
 use App\Models\HospitalityOutlet;
 use App\Models\Organization;
 use App\Models\Product;
@@ -15,6 +16,14 @@ use Illuminate\Validation\ValidationException;
 
 class HospitalityCheckService
 {
+    /** Draft + collectible statuses that can still receive payments / edits. */
+    public const EDITABLE_STATUSES = ['open', 'unpaid', 'partially_paid'];
+
+    /** Legacy aliases still accepted when reading older rows before migrate. */
+    public const COLLECTIBLE_STATUSES = ['unpaid', 'partially_paid', 'held'];
+
+    public const PAID_STATUSES = ['paid', 'settled'];
+
     public function ensureDefaultOutlet(Organization $org, ?int $branchId = null): HospitalityOutlet
     {
         $outlet = HospitalityOutlet::query()
@@ -37,8 +46,13 @@ class HospitalityCheckService
         ]);
     }
 
-    public function openCheck(Organization $org, User $user, ?int $branchId = null, ?int $outletId = null): HospitalityCheck
-    {
+    public function openCheck(
+        Organization $org,
+        User $user,
+        ?int $branchId = null,
+        ?int $outletId = null,
+        ?int $floorTableId = null,
+    ): HospitalityCheck {
         $outlet = $outletId
             ? HospitalityOutlet::query()
                 ->where('organization_id', $org->id)
@@ -47,13 +61,22 @@ class HospitalityCheckService
                 ->firstOrFail()
             : $this->ensureDefaultOutlet($org, $branchId);
 
+        $tableId = null;
+        $serviceMode = 'counter';
+        if ($floorTableId) {
+            $table = $this->resolveFloorTable($org, (int) $outlet->id, $floorTableId);
+            $tableId = $table->id;
+            $serviceMode = 'table';
+        }
+
         return HospitalityCheck::create([
             'organization_id' => $org->id,
             'branch_id' => $branchId ?? $outlet->branch_id,
             'outlet_id' => $outlet->id,
+            'floor_table_id' => $tableId,
             'check_number' => $this->nextCheckNumber((int) $org->id),
             'status' => 'open',
-            'service_mode' => 'counter',
+            'service_mode' => $serviceMode,
             'opened_by' => $user->id,
             'subtotal' => 0,
             'vat_total' => 0,
@@ -67,10 +90,34 @@ class HospitalityCheckService
     public function findOwnedCheck(int $checkId, int $organizationId): HospitalityCheck
     {
         return HospitalityCheck::query()
-            ->with(['lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id')])
+            ->with([
+                'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
+                'floorTable:id,code,label,outlet_id',
+            ])
             ->where('organization_id', $organizationId)
             ->where('id', $checkId)
             ->firstOrFail();
+    }
+
+    public function assignFloorTable(HospitalityCheck $check, Organization $org, ?int $floorTableId): HospitalityCheck
+    {
+        $this->assertEditable($check);
+        if (! $floorTableId) {
+            $check->update([
+                'floor_table_id' => null,
+                'service_mode' => 'counter',
+            ]);
+
+            return $this->presentable($check->fresh());
+        }
+
+        $table = $this->resolveFloorTable($org, (int) $check->outlet_id, $floorTableId);
+        $check->update([
+            'floor_table_id' => $table->id,
+            'service_mode' => 'table',
+        ]);
+
+        return $this->presentable($check->fresh());
     }
 
     public function addProductLine(HospitalityCheck $check, string $productCode, float $qty = 1): HospitalityCheck
@@ -172,42 +219,49 @@ class HospitalityCheckService
     public function clearLines(HospitalityCheck $check): HospitalityCheck
     {
         $this->assertEditable($check);
+        if (round((float) $check->amount_paid, 2) > 0) {
+            throw ValidationException::withMessages([
+                'check' => ['Cannot clear lines after a partial payment has been recorded.'],
+            ]);
+        }
         HospitalityCheckLine::query()->where('check_id', $check->id)->delete();
 
         return $this->recalculate($check->fresh());
     }
 
-    public function hold(HospitalityCheck $check): HospitalityCheck
+    /** Park / hold an open check as unpaid (same payment queue as Save order). */
+    public function hold(HospitalityCheck $check, Organization $org): HospitalityCheck
     {
-        $this->assertEditable($check);
-        if ($check->lines()->count() < 1) {
-            throw ValidationException::withMessages(['check' => ['Add at least one item before holding.']]);
-        }
-        $check->update(['status' => 'held']);
-
-        return $this->presentable($check->fresh());
+        return $this->saveWithoutPayment($check, $org);
     }
 
     public function resume(HospitalityCheck $check): HospitalityCheck
     {
-        if (! in_array($check->status, ['held', 'open'], true)) {
-            throw ValidationException::withMessages(['check' => ['Only held or open checks can be resumed.']]);
+        if (! in_array($check->status, self::COLLECTIBLE_STATUSES, true) && $check->status !== 'open') {
+            throw ValidationException::withMessages(['check' => ['Only unpaid or open checks can be resumed.']]);
         }
-        $check->update(['status' => 'open']);
+        if (in_array($check->status, self::PAID_STATUSES, true) || $check->status === 'void') {
+            throw ValidationException::withMessages(['check' => ['This check cannot be resumed.']]);
+        }
+        // Keep unpaid / partially_paid for collect-later; reopen only when still zero paid draft-held.
+        if (round((float) $check->amount_paid, 2) <= 0 && in_array($check->status, ['unpaid', 'held'], true)) {
+            $check->update(['status' => 'open']);
+        }
 
         return $this->presentable($check->fresh());
     }
 
-    public function settleCash(HospitalityCheck $check, User $user, ?float $amount = null): HospitalityCheck
+    public function settleCash(HospitalityCheck $check, User $user, Organization $org, ?float $amount = null): HospitalityCheck
     {
-        $due = round((float) $this->recalculate($check->fresh())->total, 2);
-        $pay = $amount === null ? $due : round($amount, 2);
+        $check = $this->recalculate($check->fresh());
+        $balance = $this->balanceDue($check);
+        $pay = $amount === null ? $balance : round($amount, 2);
 
-        return $this->settleWithPayments($check, $user, [
+        return $this->settleWithPayments($check, $user, $org, [
             [
                 'method_code' => 'CASH',
-                'amount' => $due,
-                'reference' => $pay > $due ? 'cash_tendered:'.$pay : null,
+                'amount' => $pay,
+                'reference' => $pay > $balance ? 'cash_tendered:'.$pay : null,
             ],
         ], $pay);
     }
@@ -218,107 +272,196 @@ class HospitalityCheckService
     public function settleWithPayments(
         HospitalityCheck $check,
         User $user,
+        Organization $org,
         array $payments,
         ?float $tenderedTotal = null,
+        ?int $folioId = null,
     ): HospitalityCheck {
-        $this->assertEditable($check);
+        $this->assertCollectable($check);
+        $this->assertTableSelectedIfRequired($check, $org);
         $check = $this->recalculate($check->fresh());
         if ($check->lines()->count() < 1) {
-            throw ValidationException::withMessages(['check' => ['Cannot settle an empty check.']]);
+            throw ValidationException::withMessages(['check' => ['Cannot collect payment on an empty check.']]);
+        }
+
+        $workflow = HospitalityPaymentWorkflow::forOrganization($org);
+        if (! $workflow['paid'] && ! $workflow['partially_paid']) {
+            throw ValidationException::withMessages([
+                'workflow' => ['No payment statuses are enabled for this organization.'],
+            ]);
         }
 
         $due = round((float) $check->total, 2);
+        $alreadyPaid = round((float) $check->amount_paid, 2);
+        $balance = round(max(0, $due - $alreadyPaid), 2);
+
         $normalized = [];
-        $paid = 0.0;
+        $incoming = 0.0;
+        $hasRoomCharge = false;
         foreach ($payments as $row) {
             $code = strtoupper(trim((string) ($row['method_code'] ?? '')));
             $amount = round((float) ($row['amount'] ?? 0), 2);
             if ($code === '' || $amount <= 0) {
                 continue;
             }
-            if (! in_array($code, ['CASH', 'MPESA', 'EQUITY', 'KCB', 'OTHER', 'CARD', 'CHEQUE', 'BANK'], true)) {
+            if (! in_array($code, ['CASH', 'MPESA', 'EQUITY', 'KCB', 'OTHER', 'CARD', 'CHEQUE', 'BANK', 'ROOM'], true)) {
                 throw ValidationException::withMessages(['payments' => ["Unsupported payment method: {$code}"]]);
+            }
+            if ($code === 'ROOM') {
+                $hasRoomCharge = true;
             }
             $normalized[] = [
                 'method_code' => $code,
                 'amount' => $amount,
                 'reference' => isset($row['reference']) ? (string) $row['reference'] : null,
             ];
-            $paid += $amount;
+            $incoming += $amount;
         }
-        $paid = round($paid, 2);
-        if ($paid + 0.001 < $due) {
+
+        $targetFolioId = $folioId ?? ($check->folio_id ? (int) $check->folio_id : null);
+        if ($hasRoomCharge) {
+            if (! HospitalityServices::enabled($org, 'room_charge')) {
+                throw ValidationException::withMessages([
+                    'payments' => ['Room charge is not enabled for this organization.'],
+                ]);
+            }
+            if (! $targetFolioId) {
+                throw ValidationException::withMessages([
+                    'folio_id' => ['Select an open guest folio for room charge.'],
+                ]);
+            }
+        }
+        $incoming = round($incoming, 2);
+        if ($incoming <= 0) {
+            throw ValidationException::withMessages(['payments' => ['Enter at least one payment amount.']]);
+        }
+
+        $tendered = $tenderedTotal === null ? $incoming : round($tenderedTotal, 2);
+        $appliedTowardBalance = min($incoming, $balance);
+        $newPaid = round($alreadyPaid + $appliedTowardBalance, 2);
+        $isFull = $newPaid + 0.001 >= $due;
+        $isPartial = ! $isFull && $newPaid > 0.001;
+
+        if ($isPartial && ! $workflow['partially_paid']) {
             throw ValidationException::withMessages([
-                'payments' => ['Payment total is less than the check total.'],
+                'payments' => ['Partial payments are not enabled. Collect the full balance.'],
             ]);
         }
+        if ($isFull && ! $workflow['paid']) {
+            throw ValidationException::withMessages([
+                'payments' => ['Paid status is not enabled for this organization.'],
+            ]);
+        }
+        if (! $isFull && ! $isPartial) {
+            throw ValidationException::withMessages(['payments' => ['Payment total must be greater than zero.']]);
+        }
 
-        $tendered = $tenderedTotal === null ? $paid : round($tenderedTotal, 2);
+        $appliedTowardBalance = min($incoming, $balance);
 
-        return DB::transaction(function () use ($check, $user, $due, $normalized, $tendered) {
+        return DB::transaction(function () use (
+            $check,
+            $user,
+            $org,
+            $normalized,
+            $tendered,
+            $balance,
+            $newPaid,
+            $isFull,
+            $appliedTowardBalance,
+            $hasRoomCharge,
+            $targetFolioId,
+        ) {
+            $remainingToRecord = $appliedTowardBalance;
+            $roomChargeAmount = 0.0;
             foreach ($normalized as $row) {
-                // Cap recorded amounts so over-tender (change) stays on cash only.
-                $recordAmount = $row['amount'];
+                if ($remainingToRecord <= 0.001) {
+                    break;
+                }
+                $recordAmount = min($row['amount'], $remainingToRecord);
+                $remainingToRecord = round($remainingToRecord - $recordAmount, 2);
+                $reference = $row['reference'];
+                if ($row['method_code'] === 'CASH' && $tendered > $balance + 0.001 && ! $reference) {
+                    $reference = 'cash_tendered:'.$tendered;
+                }
+                if ($row['method_code'] === 'ROOM') {
+                    $roomChargeAmount = round($roomChargeAmount + $recordAmount, 2);
+                }
                 HospitalityCheckPayment::create([
                     'organization_id' => $check->organization_id,
                     'check_id' => $check->id,
                     'method_code' => $row['method_code'],
                     'amount' => $recordAmount,
-                    'reference' => $row['reference'],
+                    'reference' => $reference,
                     'received_by' => $user->id,
                 ]);
             }
 
-            // If cash was over-tendered, store tendered hint on the cash line reference.
-            if ($tendered > $due + 0.001) {
-                $cash = HospitalityCheckPayment::query()
-                    ->where('check_id', $check->id)
-                    ->where('method_code', 'CASH')
-                    ->orderByDesc('id')
-                    ->first();
-                if ($cash && ! $cash->reference) {
-                    $cash->update(['reference' => 'cash_tendered:'.$tendered]);
-                }
+            if ($hasRoomCharge && $roomChargeAmount > 0 && $targetFolioId) {
+                $folioService = app(HospitalityFolioService::class);
+                $folio = $folioService->find($org, $targetFolioId);
+                $folioService->addCharge(
+                    $folio,
+                    $user,
+                    'fnb',
+                    'F&B check '.$check->check_number,
+                    $roomChargeAmount,
+                    (float) $check->vat_total,
+                    (int) $check->id,
+                );
+                $check->folio_id = $targetFolioId;
             }
 
-            // Normalize payment rows so sum equals due (excess change on cash).
-            $sum = round((float) HospitalityCheckPayment::query()->where('check_id', $check->id)->sum('amount'), 2);
-            if ($sum > $due + 0.001) {
-                $cash = HospitalityCheckPayment::query()
-                    ->where('check_id', $check->id)
-                    ->where('method_code', 'CASH')
-                    ->orderByDesc('id')
-                    ->first();
-                if ($cash) {
-                    $reduce = round($sum - $due, 2);
-                    $cash->update(['amount' => max(0, round((float) $cash->amount - $reduce, 2))]);
-                }
-            }
-
+            $status = $isFull ? 'paid' : 'partially_paid';
             $check->update([
-                'status' => 'settled',
-                'amount_paid' => $due,
-                'closed_by' => $user->id,
-                'closed_at' => now(),
+                'status' => $status,
+                'amount_paid' => $newPaid,
+                'folio_id' => $check->folio_id,
+                'closed_by' => $isFull ? $user->id : $check->closed_by,
+                'closed_at' => $isFull ? now() : $check->closed_at,
             ]);
 
-            $settled = $check->fresh();
-            app(HospitalityCheckStockService::class)->deductForSettledCheck($settled, $user);
+            $fresh = $check->fresh();
+            if ($isFull) {
+                app(HospitalityCheckStockService::class)->deductForSettledCheck($fresh, $user);
+            }
 
-            return $this->presentable($settled->fresh());
+            return $this->presentable($fresh->fresh());
         });
     }
 
-    /** Save without collecting payment — same as hold for counter workflow. */
-    public function saveWithoutPayment(HospitalityCheck $check): HospitalityCheck
+    /** Save without collecting payment → unpaid (receipt for later collection). */
+    public function saveWithoutPayment(HospitalityCheck $check, Organization $org): HospitalityCheck
     {
-        return $this->hold($check);
+        $this->assertEditable($check);
+        $this->assertTableSelectedIfRequired($check, $org);
+        if ($check->lines()->count() < 1) {
+            throw ValidationException::withMessages(['check' => ['Add at least one item before saving.']]);
+        }
+        if (! HospitalityPaymentWorkflow::enabled($org, 'unpaid')) {
+            throw ValidationException::withMessages([
+                'workflow' => ['Unpaid orders are not enabled. Use Collect payment instead.'],
+            ]);
+        }
+        if (round((float) $check->amount_paid, 2) > 0) {
+            throw ValidationException::withMessages([
+                'check' => ['This check already has payments — collect the balance instead of saving unpaid.'],
+            ]);
+        }
+
+        $check->update(['status' => 'unpaid']);
+
+        return $this->presentable($check->fresh());
     }
 
     public function voidOpen(HospitalityCheck $check): HospitalityCheck
     {
-        if (! in_array($check->status, ['open', 'held'], true)) {
-            throw ValidationException::withMessages(['check' => ['Only open or held checks can be voided.']]);
+        if (! in_array($check->status, ['open', 'unpaid', 'held'], true)) {
+            throw ValidationException::withMessages([
+                'check' => ['Only open or unpaid checks with no payments can be voided.'],
+            ]);
+        }
+        if (round((float) $check->amount_paid, 2) > 0) {
+            throw ValidationException::withMessages(['check' => ['Cannot void a check that has payments.']]);
         }
         $check->update(['status' => 'void', 'closed_at' => now()]);
 
@@ -326,22 +469,33 @@ class HospitalityCheckService
     }
 
     /**
+     * Unpaid + partially paid checks awaiting cashier collection.
+     *
      * @return list<HospitalityCheck>
      */
-    public function listHeld(int $organizationId, ?int $outletId = null): array
+    public function listCollectible(int $organizationId, ?int $outletId = null): array
     {
         $query = HospitalityCheck::query()
-            ->with(['lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id')])
+            ->with([
+                'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
+                'floorTable:id,code,label',
+            ])
             ->where('organization_id', $organizationId)
-            ->where('status', 'held')
+            ->whereIn('status', self::COLLECTIBLE_STATUSES)
             ->orderByDesc('updated_at')
-            ->limit(50);
+            ->limit(80);
 
         if ($outletId) {
             $query->where('outlet_id', $outletId);
         }
 
         return $query->get()->all();
+    }
+
+    /** @deprecated use listCollectible */
+    public function listHeld(int $organizationId, ?int $outletId = null): array
+    {
+        return $this->listCollectible($organizationId, $outletId);
     }
 
     public function recalculate(HospitalityCheck $check): HospitalityCheck
@@ -360,7 +514,10 @@ class HospitalityCheckService
 
     public function presentable(HospitalityCheck $check): HospitalityCheck
     {
-        return $check->load(['lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id')]);
+        return $check->load([
+            'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
+            'floorTable:id,code,label,outlet_id',
+        ]);
     }
 
     /**
@@ -369,18 +526,28 @@ class HospitalityCheckService
     public function toArray(HospitalityCheck $check): array
     {
         $check = $this->presentable($check);
+        $total = (float) $check->total;
+        $paid = (float) $check->amount_paid;
+        $balance = round(max(0, $total - $paid), 2);
 
         return [
             'id' => $check->id,
             'check_number' => $check->check_number,
-            'status' => $check->status,
+            'status' => $this->normalizeStatus((string) $check->status),
             'service_mode' => $check->service_mode,
             'outlet_id' => $check->outlet_id,
+            'floor_table_id' => $check->floor_table_id,
+            'floor_table' => $check->floorTable ? [
+                'id' => $check->floorTable->id,
+                'code' => $check->floorTable->code,
+                'label' => $check->floorTable->label,
+            ] : null,
             'subtotal' => (float) $check->subtotal,
             'vat_total' => (float) $check->vat_total,
             'service_charge' => (float) $check->service_charge,
-            'total' => (float) $check->total,
-            'amount_paid' => (float) $check->amount_paid,
+            'total' => $total,
+            'amount_paid' => $paid,
+            'balance_due' => $balance,
             'opened_at' => optional($check->opened_at)?->toIso8601String(),
             'closed_at' => optional($check->closed_at)?->toIso8601String(),
             'lines' => $check->lines->map(fn (HospitalityCheckLine $line) => [
@@ -397,11 +564,56 @@ class HospitalityCheckService
         ];
     }
 
+    public function balanceDue(HospitalityCheck $check): float
+    {
+        return round(max(0, (float) $check->total - (float) $check->amount_paid), 2);
+    }
+
+    protected function normalizeStatus(string $status): string
+    {
+        return match ($status) {
+            'held' => 'unpaid',
+            'settled', 'posted_to_folio' => 'paid',
+            default => $status,
+        };
+    }
+
     protected function assertEditable(HospitalityCheck $check): void
     {
-        if (! in_array($check->status, ['open', 'held'], true)) {
+        $status = $this->normalizeStatus((string) $check->status);
+        if (! in_array($status, self::EDITABLE_STATUSES, true)) {
             throw ValidationException::withMessages(['check' => ['This check can no longer be edited.']]);
         }
+    }
+
+    protected function assertCollectable(HospitalityCheck $check): void
+    {
+        $status = $this->normalizeStatus((string) $check->status);
+        if (! in_array($status, ['open', 'unpaid', 'partially_paid'], true)) {
+            throw ValidationException::withMessages(['check' => ['This check cannot accept payments.']]);
+        }
+    }
+
+    protected function assertTableSelectedIfRequired(HospitalityCheck $check, Organization $org): void
+    {
+        if (! HospitalityServices::enabled($org, 'table_pos')) {
+            return;
+        }
+        if (! $check->floor_table_id) {
+            throw ValidationException::withMessages([
+                'floor_table_id' => ['Select a table before saving or collecting payment.'],
+            ]);
+        }
+    }
+
+    protected function resolveFloorTable(Organization $org, int $outletId, int $floorTableId): HospitalityFloorTable
+    {
+        return HospitalityFloorTable::query()
+            ->where('organization_id', $org->id)
+            ->where('outlet_id', $outletId)
+            ->where('id', $floorTableId)
+            ->where('is_active', true)
+            ->firstOrFail();
     }
 
     protected function nextCheckNumber(int $organizationId): string

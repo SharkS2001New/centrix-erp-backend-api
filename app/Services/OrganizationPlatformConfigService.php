@@ -194,11 +194,28 @@ class OrganizationPlatformConfigService
                     $salesPlatform['hospitality_services'],
                 );
             }
+            if (array_key_exists('hospitality_payment_workflow', $salesPlatform) && is_array($salesPlatform['hospitality_payment_workflow'])) {
+                $currentHospitality['payment_workflow'] = \App\Services\Hospitality\HospitalityPaymentWorkflow::normalize(
+                    $salesPlatform['hospitality_payment_workflow'],
+                );
+            }
+            // Save-order mode requires unpaid so cashiers can collect later.
+            if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)
+                && ! \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment($salesPlatform['hotel_pos_collect_payment'])
+            ) {
+                $workflow = is_array($currentHospitality['payment_workflow'] ?? null)
+                    ? $currentHospitality['payment_workflow']
+                    : \App\Services\Hospitality\HospitalityPaymentWorkflow::DEFAULTS;
+                $workflow['unpaid'] = true;
+                $workflow['paid'] = true;
+                $currentHospitality['payment_workflow'] = \App\Services\Hospitality\HospitalityPaymentWorkflow::normalize($workflow);
+            }
             $moduleSettings['hospitality'] = $currentHospitality;
         } elseif (
             array_key_exists('hotel_pos_collect_payment', $salesPlatform)
             || array_key_exists('hotel_pos_catalog_limit', $salesPlatform)
             || array_key_exists('hospitality_services', $salesPlatform)
+            || array_key_exists('hospitality_payment_workflow', $salesPlatform)
         ) {
             $currentHospitality = is_array($moduleSettings['hospitality'] ?? null)
                 ? $moduleSettings['hospitality']
@@ -217,6 +234,21 @@ class OrganizationPlatformConfigService
                 $currentHospitality['services'] = \App\Services\Hospitality\HospitalityServices::normalize(
                     $salesPlatform['hospitality_services'],
                 );
+            }
+            if (array_key_exists('hospitality_payment_workflow', $salesPlatform) && is_array($salesPlatform['hospitality_payment_workflow'])) {
+                $currentHospitality['payment_workflow'] = \App\Services\Hospitality\HospitalityPaymentWorkflow::normalize(
+                    $salesPlatform['hospitality_payment_workflow'],
+                );
+            }
+            if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)
+                && ! \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment($salesPlatform['hotel_pos_collect_payment'])
+            ) {
+                $workflow = is_array($currentHospitality['payment_workflow'] ?? null)
+                    ? $currentHospitality['payment_workflow']
+                    : \App\Services\Hospitality\HospitalityPaymentWorkflow::DEFAULTS;
+                $workflow['unpaid'] = true;
+                $workflow['paid'] = true;
+                $currentHospitality['payment_workflow'] = \App\Services\Hospitality\HospitalityPaymentWorkflow::normalize($workflow);
             }
             $moduleSettings['hospitality'] = $currentHospitality;
         }
@@ -341,6 +373,7 @@ class OrganizationPlatformConfigService
             'hotel_pos_collect_payment' => true,
             'hotel_pos_catalog_limit' => 30,
             'hospitality_services' => \App\Services\Hospitality\HospitalityServices::DEFAULTS,
+            'hospitality_payment_workflow' => \App\Services\Hospitality\HospitalityPaymentWorkflow::DEFAULTS,
             'order_workflow' => $workflowDefaults,
             'order_cancellation_enabled' => true,
             'enable_pos_order_edit' => false,
@@ -408,6 +441,7 @@ class OrganizationPlatformConfigService
             'hotel_pos_collect_payment' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_collect_payment'],
             'hotel_pos_catalog_limit' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_catalog_limit'],
             'hospitality_services' => \App\Services\Hospitality\HospitalityServices::forOrganization($org),
+            'hospitality_payment_workflow' => \App\Services\Hospitality\HospitalityPaymentWorkflow::forOrganization($org),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
             'edit_order_statuses' => $this->normalizeRequiredActionStatuses(

@@ -17,6 +17,7 @@ class HospitalityFolioCharge extends Model
         'description',
         'amount',
         'vat_amount',
+        'business_date',
         'posted_by',
         'posted_at',
     ];
@@ -24,6 +25,7 @@ class HospitalityFolioCharge extends Model
     protected $casts = [
         'amount' => 'decimal:2',
         'vat_amount' => 'decimal:2',
+        'business_date' => 'date',
         'posted_at' => 'datetime',
     ];
 

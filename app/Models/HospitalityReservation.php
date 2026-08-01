@@ -15,6 +15,7 @@ class HospitalityReservation extends Model
         'room_type_id',
         'room_id',
         'folio_id',
+        'rate_plan_id',
         'confirmation_code',
         'guest_name',
         'guest_phone',
@@ -22,12 +23,15 @@ class HospitalityReservation extends Model
         'departure_date',
         'status',
         'deposit_amount',
+        'adults',
+        'notes',
     ];
 
     protected $casts = [
         'arrival_date' => 'date',
         'departure_date' => 'date',
         'deposit_amount' => 'decimal:2',
+        'adults' => 'integer',
     ];
 
     public function folio(): BelongsTo
@@ -38,5 +42,15 @@ class HospitalityReservation extends Model
     public function room(): BelongsTo
     {
         return $this->belongsTo(HospitalityRoom::class, 'room_id');
+    }
+
+    public function roomType(): BelongsTo
+    {
+        return $this->belongsTo(HospitalityRoomType::class, 'room_type_id');
+    }
+
+    public function ratePlan(): BelongsTo
+    {
+        return $this->belongsTo(HospitalityRatePlan::class, 'rate_plan_id');
     }
 }
