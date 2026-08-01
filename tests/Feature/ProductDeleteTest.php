@@ -102,4 +102,63 @@ class ProductDeleteTest extends TestCase
             'product_code' => $code,
         ]);
     }
+
+    public function test_restore_soft_deleted_product(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->ensureActiveSubscription($admin);
+        Sanctum::actingAs($admin);
+
+        $code = 'DEL-RESTORE-'.uniqid();
+        $product = Product::query()->create([
+            'product_code' => $code,
+            'product_name' => 'Restore target',
+            'subcategory_id' => 1,
+            'unit_id' => 1,
+            'unit_price' => 10,
+            'vat_id' => 1,
+            'organization_id' => $admin->organization_id,
+            'created_by' => $admin->id,
+            'deleted_by' => $admin->id,
+        ]);
+        $product->delete();
+
+        $this->postJson('/api/v1/products/'.rawurlencode($code).'/restore')
+            ->assertOk()
+            ->assertJsonPath('product_code', $code);
+
+        $this->assertDatabaseHas('products', [
+            'product_code' => $code,
+            'organization_id' => $admin->organization_id,
+            'deleted_at' => null,
+        ]);
+    }
+
+    public function test_active_status_excludes_soft_deleted_products(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->ensureActiveSubscription($admin);
+        Sanctum::actingAs($admin);
+
+        $code = 'DEL-ACTIVE-LIST-'.uniqid();
+        $product = Product::query()->create([
+            'product_code' => $code,
+            'product_name' => 'Soft deleted list target',
+            'subcategory_id' => 1,
+            'unit_id' => 1,
+            'unit_price' => 10,
+            'vat_id' => 1,
+            'organization_id' => $admin->organization_id,
+            'created_by' => $admin->id,
+        ]);
+        $product->delete();
+
+        $this->getJson('/api/v1/products?status=active&q='.rawurlencode($code))
+            ->assertOk()
+            ->assertJsonMissing(['product_code' => $code]);
+
+        $this->getJson('/api/v1/products?status=inactive&q='.rawurlencode($code))
+            ->assertOk()
+            ->assertJsonFragment(['product_code' => $code]);
+    }
 }

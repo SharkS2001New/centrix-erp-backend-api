@@ -181,7 +181,11 @@ class ProductController extends BaseResourceController
             $this->catalogScope->scopeForUser($query, $user, $request);
         }
 
+        // POS / mobile sell channels never see soft-deleted products.
         $status = (string) $request->input('status', 'active');
+        if (in_array($this->salesLoginChannel($request), ['mobile', 'pos'], true)) {
+            $status = 'active';
+        }
         if ($status === 'inactive') {
             $query->onlyTrashed();
         } elseif ($status === 'all') {
@@ -647,13 +651,12 @@ class ProductController extends BaseResourceController
 
     public function destroy(Request $request, string $id)
     {
-        // Include inactive (soft-deleted) rows — catalogue "Delete" on inactive
-        // previously 404'd because findScopedProduct excluded deleted_at.
+        // Soft-delete active products; permanent delete only when already trashed
+        // (Deleted products page). Sell channels never list trashed rows.
         $model = $this->findScopedProduct($request, $id, withTrashed: true);
 
         try {
             if ($model->trashed()) {
-                // Already inactive: permanently remove (matches "cannot be undone").
                 $this->purgeProductDependents($model);
                 $this->forceDeleteProductRow($model);
             } else {
@@ -674,6 +677,23 @@ class ProductController extends BaseResourceController
         }
 
         return response()->json(null, 204);
+    }
+
+    /** Restore a soft-deleted product back to the active catalogue. */
+    public function restore(Request $request, string $id)
+    {
+        $model = $this->findScopedProduct($request, $id, withTrashed: true);
+
+        if ($model->trashed()) {
+            $model->restore();
+            $model->forceFill(['deleted_by' => null])->save();
+        }
+
+        $model->refresh();
+
+        return response()->json(
+            $this->presentProduct($model->load('branch:id,branch_code,branch_name'), $request),
+        );
     }
 
     protected function findScopedProduct(Request $request, string $id, bool $withTrashed = false): Product

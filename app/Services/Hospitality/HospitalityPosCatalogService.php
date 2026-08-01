@@ -111,6 +111,27 @@ class HospitalityPosCatalogService
             }
         }
 
+        $menuGroup = strtolower(trim((string) $request->input('menu_group', '')));
+        if (in_array($menuGroup, ['food', 'drinks'], true)) {
+            $query->whereHas('subCategory.category', function ($q) use ($org, $menuGroup) {
+                $q->where('categories.organization_id', $org->id);
+                if ($menuGroup === 'food') {
+                    $q->where(function ($inner) {
+                        $inner->whereRaw('LOWER(categories.category_name) LIKE ?', ['%food%'])
+                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%kitchen%'])
+                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%meal%']);
+                    });
+                } else {
+                    $q->where(function ($inner) {
+                        $inner->whereRaw('LOWER(categories.category_name) LIKE ?', ['%drink%'])
+                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%beverage%'])
+                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%bar%'])
+                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%alcohol%']);
+                    });
+                }
+            });
+        }
+
         if ($search !== '') {
             $exact = SqlLikeSearch::restrictToExactProductCodeIfPresent(
                 $query,

@@ -343,6 +343,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin', 'erp.org_provisioning']);
         Route::get('admin/organizations/{organization}', [OrganizationProvisionController::class, 'show'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/organizations/{organization}/hospitality/seed-demo-data', [OrganizationProvisionController::class, 'seedHospitalityDemoData'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/organizations/{organization}/provision-snapshot', [OrganizationProvisionController::class, 'provisionSnapshot'])
             ->middleware(['erp.super_admin']);
         Route::patch('admin/organizations/{organization}', [OrganizationProvisionController::class, 'update'])
@@ -760,6 +762,8 @@ Route::prefix('v1')->group(function () {
             Route::post('products/import-batch', [ProductImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::post('retail-package-settings/import-batch', [RetailPackageImportController::class, 'store'])
+                ->middleware(['erp.permission:products.manage']);
+            Route::post('products/{product}/restore', [ProductController::class, 'restore'])
                 ->middleware(['erp.permission:products.manage']);
             Route::apiResource('products', ProductController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])

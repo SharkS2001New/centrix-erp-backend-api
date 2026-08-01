@@ -36,6 +36,11 @@ class Product extends Model
         return $this->belongsTo(Vat::class, 'vat_id');
     }
 
+    public function subCategory()
+    {
+        return $this->belongsTo(SubCategory::class, 'subcategory_id');
+    }
+
     public function branch()
     {
         return $this->belongsTo(Branch::class, 'branch_id');

@@ -288,6 +288,23 @@ class OrganizationProvisionController extends Controller
         return response()->json($this->organizationPayload($org->fresh()));
     }
 
+    /** POST /api/v1/admin/organizations/{organization}/hospitality/seed-demo-data */
+    public function seedHospitalityDemoData(Request $request, int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+        $result = app(\App\Services\Hospitality\HospitalityDemoDataSeeder::class)
+            ->seedForOrganization($org, $request->user());
+
+        return response()->json([
+            'message' => sprintf(
+                'Seeded %d menu products and %d tables for Hotel POS testing.',
+                $result['products'],
+                $result['tables'],
+            ),
+            ...$result,
+        ]);
+    }
+
     /** DELETE /api/v1/admin/organizations/{organization} */
     public function destroy(Request $request, int $organization)
     {
