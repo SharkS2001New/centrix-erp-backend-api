@@ -20,7 +20,9 @@ class SalePaymentColumnMapper
             'MPESA', 'AIRTEL' => ['mpesa_amount' => $amount],
             'EQUITY' => ['equity_amount' => $amount],
             'KCB' => ['kcb_amount' => $amount],
-            default => ['cash' => $amount],
+            // Admin / platform banks (COOP, ABSA, …) live on sale_payments only —
+            // do not dump them into cash (that would break alone/mixed till maths).
+            default => [],
         };
     }
 

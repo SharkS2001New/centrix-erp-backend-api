@@ -432,11 +432,20 @@ Route::middleware('auth:sanctum')->group(function () {
 
         Route::middleware('erp.permission:reports.view|hospitality.reports.view')->group(function () {
             Route::get('hospitality-occupancy', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'occupancy']);
+            Route::get('hospitality-kpi-occupancy', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'kpiOccupancy']);
             Route::get('hospitality-arrivals-departures', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'arrivalsDepartures']);
             Route::get('hospitality-folio-balances', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'folioBalances']);
+            Route::get('hospitality-room-revenue', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'roomRevenue']);
             Route::get('hospitality-fnb-checks', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'fnbChecks']);
+            Route::get('hospitality-fnb-by-outlet', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'fnbByOutlet']);
+            Route::get('hospitality-fnb-by-hour', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'fnbByHour']);
+            Route::get('hospitality-fnb-by-category', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'fnbByCategory']);
+            Route::get('hospitality-open-checks', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'openChecks']);
+            Route::get('hospitality-voids', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'voids']);
+            Route::get('hospitality-manager-flash', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'managerFlash']);
             Route::get('hospitality-profit-loss', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'profitLoss']);
             Route::get('hospitality-eod-cashier', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'eodCashier']);
+            Route::get('hospitality-consumption-variance', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'consumptionVariance']);
         });
 
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {

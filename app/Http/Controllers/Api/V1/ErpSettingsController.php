@@ -956,6 +956,56 @@ class ErpSettingsController extends Controller
         ]);
     }
 
+    public function hospitality(Request $request)
+    {
+        $settings = \App\Services\Hospitality\HospitalityPosSettings::forOrganization(
+            $this->erp->resolveOrganization($request),
+        );
+
+        return response()->json([
+            'hospitality' => $settings,
+        ]);
+    }
+
+    public function updateHospitality(Request $request)
+    {
+        $org = $this->erp->resolveOrganization($request);
+        $data = $request->validate([
+            'check_receipt_copies' => 'sometimes|integer|min:1|max:3',
+            'show_outlet_on_check_receipt' => 'sometimes|boolean',
+            'show_organization_on_check_receipt' => 'sometimes|boolean',
+            'check_receipt_footer' => 'sometimes|nullable|string|max:2000',
+            'use_same_print_phones_for_check' => 'sometimes|boolean',
+            'check_print_phones' => 'sometimes|nullable|array',
+            'check_print_phones.tel1' => 'sometimes|nullable|string|max:40',
+            'check_print_phones.tel2' => 'sometimes|nullable|string|max:40',
+        ]);
+
+        $current = $org->module_settings ?? [];
+        if (! is_array($current)) {
+            $current = [];
+        }
+        $hospitality = is_array($current['hospitality'] ?? null) ? $current['hospitality'] : [];
+
+        foreach ($data as $key => $value) {
+            if ($key === 'check_print_phones') {
+                $raw = is_array($value) ? $value : [];
+                $hospitality['check_print_phones'] = [
+                    'tel1' => trim((string) ($raw['tel1'] ?? '')),
+                    'tel2' => trim((string) ($raw['tel2'] ?? '')),
+                ];
+                continue;
+            }
+            $hospitality[$key] = $value;
+        }
+
+        $org->putModuleSettingsSection('hospitality', $hospitality);
+
+        return response()->json([
+            'hospitality' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org->fresh()),
+        ]);
+    }
+
     public function updateProcurement(Request $request)
     {
         $user = $request->user();

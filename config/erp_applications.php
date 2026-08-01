@@ -30,12 +30,12 @@ return [
             'icon' => 'building',
         ],
         'hotel_bar_pos' => [
-            'label' => 'Hotel & Bar POS',
-            'description' => 'Kenya-ready hospitality front POS (bar, restaurant, room charge). Uses hospitality checks — not retail sales tables. Turning this on also enables Hospitality Backoffice (including stock & LPO).',
+            'label' => 'Hotel POS',
+            'description' => 'Kenya-ready hotel front POS (bar, restaurant, room charge). Uses hospitality checks — not retail sales tables. Turning this on also enables Hotel Backoffice (including stock & LPO).',
             'icon' => 'pos',
         ],
         'hospitality_backoffice' => [
-            'label' => 'Hospitality Backoffice',
+            'label' => 'Hotel Backoffice',
             'description' => 'Rooms, front desk, folios, housekeeping, menu products, LPO, stock receiving, and hotel reports. Does not use retail sales order tables.',
             'icon' => 'building',
         ],

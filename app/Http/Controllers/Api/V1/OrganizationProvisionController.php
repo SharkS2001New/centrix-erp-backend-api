@@ -96,7 +96,7 @@ class OrganizationProvisionController extends Controller
                 ->get(['id', 'name', 'description', 'deployment_profile', 'enabled_modules', 'sales_platform']),
             'notes' => [
                 'industry' => 'Select industry first (Retail & Distribution vs Hotel & Hospitality). Applications and roles follow that industry.',
-                'applications' => 'Enable or disable tenant applications for this setup type. Hotel & Hospitality only exposes Hotel & Bar POS and Hospitality Backoffice.',
+                'applications' => 'Enable or disable tenant applications for this setup type. Hotel & Hospitality only exposes Hotel POS and Hotel Backoffice.',
                 'custom_profile' => 'Within Retail & Distribution, Custom setup starts from a blank module map.',
                 'sales_platform' => 'Checkout vs save order, order workflow, and stock timing are configured by the platform super admin — not the organization manager.',
                 'org_settings' => 'Organization managers configure day-to-day preferences (payment fields, receipts, SMTP, M-Pesa, etc.) under Administration → Organization settings when Administration is enabled.',

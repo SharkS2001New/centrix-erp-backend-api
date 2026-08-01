@@ -96,11 +96,14 @@ class HospitalityOpsMvpTest extends TestCase
             ->assertOk()
             ->json();
         $this->assertGreaterThanOrEqual(1, (int) ($preview['rooms_count'] ?? 0));
+        $this->assertArrayHasKey('manager_flash', $preview);
+        $this->assertNotEmpty($preview['manager_flash']['rows'] ?? []);
 
         $this->postJson('/api/v1/hospitality/night-audit/run', [
             'business_date' => now()->toDateString(),
         ])->assertOk()
-            ->assertJsonPath('rooms_posted', 1);
+            ->assertJsonPath('rooms_posted', 1)
+            ->assertJsonStructure(['manager_flash' => ['columns', 'rows']]);
 
         $folio = $this->getJson("/api/v1/hospitality/folios/{$folioId}")
             ->assertOk()

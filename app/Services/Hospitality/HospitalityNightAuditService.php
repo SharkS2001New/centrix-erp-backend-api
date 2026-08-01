@@ -17,6 +17,7 @@ class HospitalityNightAuditService
 {
     public function __construct(
         protected HospitalityFolioService $folios,
+        protected HospitalityReportService $reports,
     ) {}
 
     public function preview(Organization $org, ?string $businessDate = null): array
@@ -28,6 +29,7 @@ class HospitalityNightAuditService
             ->first();
 
         $candidates = $this->candidates($org, $date);
+        $flash = $this->reports->run($org, 'hospitality-manager-flash', $date, $date);
 
         return [
             'business_date' => $date,
@@ -40,6 +42,7 @@ class HospitalityNightAuditService
             'candidates' => $candidates,
             'total_amount' => round(array_sum(array_column($candidates, 'amount')), 2),
             'rooms_count' => count($candidates),
+            'manager_flash' => $flash,
         ];
     }
 
@@ -84,13 +87,18 @@ class HospitalityNightAuditService
                 $details[] = $row;
             }
 
+            $flash = $this->reports->run($org, 'hospitality-manager-flash', $date, $date);
+
             $audit = HospitalityNightAudit::create([
                 'organization_id' => $org->id,
                 'business_date' => $date,
                 'ran_by' => $user->id,
                 'rooms_posted' => $posted,
                 'amount_posted' => round($amount, 2),
-                'details' => $details,
+                'details' => [
+                    'posted' => $details,
+                    'manager_flash' => $flash,
+                ],
             ]);
 
             return [
@@ -98,6 +106,7 @@ class HospitalityNightAuditService
                 'rooms_posted' => (int) $audit->rooms_posted,
                 'amount_posted' => (float) $audit->amount_posted,
                 'details' => $details,
+                'manager_flash' => $flash,
             ];
         });
     }

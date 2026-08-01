@@ -36,8 +36,8 @@ return [
         ],
     ],
     'hotel_bar_pos' => [
-        'label' => 'Hotel & Bar POS',
-        'description' => 'Hospitality front POS for bars, restaurants, and room charging.',
+        'label' => 'Hotel POS',
+        'description' => 'Front POS for bars, restaurants, and room charging.',
         'icon' => 'pos',
         'home_path' => '/hotel-bar-pos',
         'module_keys' => ['hospitality.bar_pos'],
@@ -45,11 +45,13 @@ return [
         'entry_permission' => 'hotel_bar_pos.terminal.view',
     ],
     'hospitality_backoffice' => [
-        'label' => 'Hospitality Backoffice',
+        'label' => 'Hotel Backoffice',
         'description' => 'Rooms, front desk, folios, menu products, LPO, stock receiving, and hotel operations.',
         'icon' => 'building',
         'home_path' => '/hospitality',
         'module_keys' => ['hospitality.backend'],
+        // domain_modules describe nav domains inside this shell; they do not unlock it
+        // (see WorkspaceResolver — only module_keys gate availability).
         'domain_modules' => ['hospitality', 'inventory', 'customers_suppliers'],
         'permission_prefixes' => [
             'hospitality.',

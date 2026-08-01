@@ -19,6 +19,11 @@ class HospitalityReportController extends Controller
         return $this->respond($request, 'hospitality-occupancy');
     }
 
+    public function kpiOccupancy(Request $request)
+    {
+        return $this->respond($request, 'hospitality-kpi-occupancy');
+    }
+
     public function arrivalsDepartures(Request $request)
     {
         return $this->respond($request, 'hospitality-arrivals-departures');
@@ -29,9 +34,44 @@ class HospitalityReportController extends Controller
         return $this->respond($request, 'hospitality-folio-balances');
     }
 
+    public function roomRevenue(Request $request)
+    {
+        return $this->respond($request, 'hospitality-room-revenue');
+    }
+
     public function fnbChecks(Request $request)
     {
         return $this->respond($request, 'hospitality-fnb-checks');
+    }
+
+    public function fnbByOutlet(Request $request)
+    {
+        return $this->respond($request, 'hospitality-fnb-by-outlet');
+    }
+
+    public function fnbByHour(Request $request)
+    {
+        return $this->respond($request, 'hospitality-fnb-by-hour');
+    }
+
+    public function fnbByCategory(Request $request)
+    {
+        return $this->respond($request, 'hospitality-fnb-by-category');
+    }
+
+    public function openChecks(Request $request)
+    {
+        return $this->respond($request, 'hospitality-open-checks');
+    }
+
+    public function voids(Request $request)
+    {
+        return $this->respond($request, 'hospitality-voids');
+    }
+
+    public function managerFlash(Request $request)
+    {
+        return $this->respond($request, 'hospitality-manager-flash');
     }
 
     public function profitLoss(Request $request)
@@ -44,6 +84,11 @@ class HospitalityReportController extends Controller
         return $this->respond($request, 'hospitality-eod-cashier');
     }
 
+    public function consumptionVariance(Request $request)
+    {
+        return $this->respond($request, 'hospitality-consumption-variance');
+    }
+
     public function show(Request $request, string $slug)
     {
         return $this->respond($request, $slug);
@@ -52,19 +97,10 @@ class HospitalityReportController extends Controller
     protected function respond(Request $request, string $slug)
     {
         $org = $this->erp->resolveOrganization($request);
-        $allowed = [
-            'hospitality-occupancy',
-            'hospitality-arrivals-departures',
-            'hospitality-folio-balances',
-            'hospitality-fnb-checks',
-            'hospitality-profit-loss',
-            'hospitality-eod-cashier',
-        ];
-        if (! in_array($slug, $allowed, true)) {
+        if (! in_array($slug, HospitalityReportService::slugs(), true)) {
             abort(404);
         }
 
-        // EOD defaults to a single day when only one date is provided.
         $from = $request->input('from') ?? $request->input('sale_date') ?? $request->input('from_date');
         $to = $request->input('to') ?? $request->input('sale_date') ?? $request->input('to_date') ?? $from;
 

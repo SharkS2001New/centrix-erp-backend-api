@@ -28,8 +28,8 @@ return [
             'registry_modules' => ['pos'],
         ],
         'hotel_bar_pos' => [
-            'label' => 'Hotel & Bar POS',
-            'description' => 'Hospitality front POS (checks, outlets, room charge) — separate from retail sales.',
+            'label' => 'Hotel POS',
+            'description' => 'Hotel front POS (checks, outlets, room charge) — separate from retail sales.',
             'registry_modules' => ['hotel_bar_pos'],
         ],
         'mobile' => [
@@ -59,7 +59,7 @@ return [
             ],
         ],
         'hospitality_backoffice' => [
-            'label' => 'Hospitality Backoffice',
+            'label' => 'Hotel Backoffice',
             'description' => 'Rooms, front desk, folios, housekeeping, menu catalogue, LPO, and stock receiving for hotel operations.',
             'registry_modules' => [
                 'hospitality',

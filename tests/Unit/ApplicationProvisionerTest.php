@@ -156,9 +156,9 @@ class ApplicationProvisionerTest extends TestCase
                 'hotel_bar_pos' => true,
                 'hospitality_backoffice' => true,
                 'distribution' => false,
-                'accounting' => false,
-                'hr' => false,
-                'admin' => false,
+                'accounting' => true,
+                'hr' => true,
+                'admin' => true,
             ]],
         ];
     }

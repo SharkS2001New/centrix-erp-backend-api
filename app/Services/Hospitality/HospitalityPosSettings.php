@@ -13,6 +13,20 @@ class HospitalityPosSettings
 
     public const CATALOG_LIMIT_DEFAULT = 30;
 
+    public const THEME_TEMPLATE_DEFAULT = 'centrix';
+
+    public const THEME_TEMPLATES = [
+        'centrix',
+        'ocean',
+        'midnight',
+        'gold',
+        'safari',
+        'sunset',
+        'emerald',
+        'slate',
+        'rose',
+    ];
+
     /**
      * @param  array<string, mixed>|null  $hospitalitySettings
      */
@@ -47,6 +61,19 @@ class HospitalityPosSettings
         }
 
         return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+    }
+
+    public static function normalizeThemeTemplate(mixed $value): string
+    {
+        $key = strtolower(trim((string) $value));
+        if ($key === 'default') {
+            return self::THEME_TEMPLATE_DEFAULT;
+        }
+        if (in_array($key, self::THEME_TEMPLATES, true)) {
+            return $key;
+        }
+
+        return self::THEME_TEMPLATE_DEFAULT;
     }
 
     /**
@@ -86,6 +113,31 @@ class HospitalityPosSettings
                 $settings['require_recipe_for_stocked_items'] ?? false,
                 false,
             ),
+            'hotel_pos_theme_template' => self::normalizeThemeTemplate(
+                $settings['hotel_pos_theme_template'] ?? self::THEME_TEMPLATE_DEFAULT,
+            ),
+            'check_receipt_copies' => max(1, min(3, (int) ($settings['check_receipt_copies'] ?? 1))),
+            'show_outlet_on_check_receipt' => self::normalizeBool(
+                $settings['show_outlet_on_check_receipt'] ?? true,
+                true,
+            ),
+            'show_organization_on_check_receipt' => self::normalizeBool(
+                $settings['show_organization_on_check_receipt'] ?? true,
+                true,
+            ),
+            'check_receipt_footer' => (string) ($settings['check_receipt_footer'] ?? 'Thank you'),
+            'use_same_print_phones_for_check' => self::normalizeBool(
+                $settings['use_same_print_phones_for_check'] ?? true,
+                true,
+            ),
+            'check_print_phones' => [
+                'tel1' => (string) (is_array($settings['check_print_phones'] ?? null)
+                    ? ($settings['check_print_phones']['tel1'] ?? '')
+                    : ''),
+                'tel2' => (string) (is_array($settings['check_print_phones'] ?? null)
+                    ? ($settings['check_print_phones']['tel2'] ?? '')
+                    : ''),
+            ],
             'pos_email_reports' => self::normalizePosEmailReports($settings['pos_email_reports'] ?? null),
         ];
     }
@@ -99,6 +151,7 @@ class HospitalityPosSettings
      *   stock_location: string,
      *   block_settle_if_insufficient: bool,
      *   require_recipe_for_stocked_items: bool,
+     *   hotel_pos_theme_template: string,
      *   pos_email_reports: array<string, mixed>
      * }
      */
@@ -112,6 +165,13 @@ class HospitalityPosSettings
             'stock_location' => 'shop',
             'block_settle_if_insufficient' => true,
             'require_recipe_for_stocked_items' => false,
+            'hotel_pos_theme_template' => self::THEME_TEMPLATE_DEFAULT,
+            'check_receipt_copies' => 1,
+            'show_outlet_on_check_receipt' => true,
+            'show_organization_on_check_receipt' => true,
+            'check_receipt_footer' => 'Thank you',
+            'use_same_print_phones_for_check' => true,
+            'check_print_phones' => ['tel1' => '', 'tel2' => ''],
             'pos_email_reports' => self::normalizePosEmailReports(null),
         ];
     }

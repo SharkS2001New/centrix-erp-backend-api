@@ -102,18 +102,18 @@ return [
             ],
         ],
         'hotel_bar_pos' => [
-            'label' => 'Hotel & Bar POS',
+            'label' => 'Hotel POS',
             'features' => [
-                'terminal' => ['label' => 'Hotel & Bar terminal', 'actions' => ['view']],
+                'terminal' => ['label' => 'Hotel POS terminal', 'actions' => ['view']],
                 'checks' => ['label' => 'Open / close checks', 'actions' => ['view', 'create', 'edit']],
                 'room_charge' => ['label' => 'Post to guest folio', 'actions' => ['create']],
                 'shift' => ['label' => 'Shift close', 'actions' => ['view', 'create']],
             ],
         ],
         'hospitality' => [
-            'label' => 'Hospitality Backoffice',
+            'label' => 'Hotel Backoffice',
             'features' => [
-                'dashboard' => ['label' => 'Hospitality dashboard', 'actions' => ['view']],
+                'dashboard' => ['label' => 'Hotel dashboard', 'actions' => ['view']],
                 'outlets' => ['label' => 'Outlets & floor', 'actions' => ['view', 'create', 'edit']],
                 'rooms' => ['label' => 'Rooms & rate plans', 'actions' => ['view', 'create', 'edit']],
                 'reservations' => ['label' => 'Reservations', 'actions' => ['view', 'create', 'edit']],
@@ -121,8 +121,8 @@ return [
                 'folios' => ['label' => 'Guest folios', 'actions' => ['view', 'create', 'edit']],
                 'housekeeping' => ['label' => 'Housekeeping', 'actions' => ['view', 'edit']],
                 'night_audit' => ['label' => 'Night audit', 'actions' => ['view', 'create']],
-                'reports' => ['label' => 'Hospitality reports', 'actions' => ['view']],
-                'settings' => ['label' => 'Hospitality settings', 'actions' => ['view', 'edit']],
+                'reports' => ['label' => 'Hotel reports', 'actions' => ['view']],
+                'settings' => ['label' => 'Hotel settings', 'actions' => ['view', 'edit']],
             ],
         ],
         'payments' => [

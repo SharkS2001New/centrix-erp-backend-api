@@ -181,6 +181,23 @@ class ReportController extends Controller
                 ['key' => 'contract-expiry', 'path' => '/reports/contract-expiry', 'label' => 'Contract expiry'],
                 ['key' => 'hr-dashboard-kpi', 'path' => '/reports/hr-dashboard-kpi', 'label' => 'Workforce summary'],
             ],
+            'hospitality' => [
+                ['key' => 'hospitality-kpi-occupancy', 'path' => '/reports/hospitality-kpi-occupancy', 'label' => 'Occupancy KPI (ADR / RevPAR)'],
+                ['key' => 'hospitality-occupancy', 'path' => '/reports/hospitality-occupancy', 'label' => 'Room status'],
+                ['key' => 'hospitality-arrivals-departures', 'path' => '/reports/hospitality-arrivals-departures', 'label' => 'Arrivals & departures'],
+                ['key' => 'hospitality-folio-balances', 'path' => '/reports/hospitality-folio-balances', 'label' => 'Open folio balances'],
+                ['key' => 'hospitality-room-revenue', 'path' => '/reports/hospitality-room-revenue', 'label' => 'Room revenue by type'],
+                ['key' => 'hospitality-manager-flash', 'path' => '/reports/hospitality-manager-flash', 'label' => 'Manager flash'],
+                ['key' => 'hospitality-fnb-checks', 'path' => '/reports/hospitality-fnb-checks', 'label' => 'F&B check sales'],
+                ['key' => 'hospitality-fnb-by-outlet', 'path' => '/reports/hospitality-fnb-by-outlet', 'label' => 'F&B by outlet'],
+                ['key' => 'hospitality-fnb-by-hour', 'path' => '/reports/hospitality-fnb-by-hour', 'label' => 'F&B by hour'],
+                ['key' => 'hospitality-fnb-by-category', 'path' => '/reports/hospitality-fnb-by-category', 'label' => 'F&B by category'],
+                ['key' => 'hospitality-open-checks', 'path' => '/reports/hospitality-open-checks', 'label' => 'Open / unpaid checks'],
+                ['key' => 'hospitality-voids', 'path' => '/reports/hospitality-voids', 'label' => 'Voided checks'],
+                ['key' => 'hospitality-eod-cashier', 'path' => '/reports/hospitality-eod-cashier', 'label' => 'Hotel POS EOD by cashier'],
+                ['key' => 'hospitality-profit-loss', 'path' => '/reports/hospitality-profit-loss', 'label' => 'Hospitality P&L'],
+                ['key' => 'hospitality-consumption-variance', 'path' => '/reports/hospitality-consumption-variance', 'label' => 'Consumption variance'],
+            ],
             'customer' => [
                 ['key' => 'customer-statement', 'path' => '/reports/customers/{customerNum}/statement', 'label' => 'Customer statement'],
             ],
@@ -690,8 +707,8 @@ class ReportController extends Controller
     }
 
     /**
-     * Line-level payments by tender method for backoffice breakdown tabs
-     * (Cash, M-Pesa with code, Card, Bank, …) plus per-tab aggregates.
+     * Order-level paid tenders: Cash alone, M-Pesa alone, Equity/KCB alone, Mixed, …
+     * with optional cashier / till-session filters for session follow-up.
      */
     public function paymentsBreakdown(Request $request)
     {

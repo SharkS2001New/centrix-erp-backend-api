@@ -301,6 +301,10 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:customers_suppliers', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/procurement', [ErpSettingsController::class, 'updateProcurement'])
             ->middleware(['erp.module:customers_suppliers', 'erp.permission:admin.manage']);
+        Route::get('erp/settings/hospitality', [ErpSettingsController::class, 'hospitality'])
+            ->middleware(['erp.module:hospitality', 'erp.permission:admin.manage|hospitality.settings.view']);
+        Route::patch('erp/settings/hospitality', [ErpSettingsController::class, 'updateHospitality'])
+            ->middleware(['erp.module:hospitality', 'erp.permission:admin.manage|hospitality.settings.edit']);
         Route::get('erp/settings/security', [ErpSettingsController::class, 'security'])
             ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/security', [ErpSettingsController::class, 'updateSecurity'])
@@ -582,6 +586,8 @@ Route::prefix('v1')->group(function () {
                 Route::patch('notifications', [ErpSettingsController::class, 'updateNotifications']);
                 Route::get('procurement', [ErpSettingsController::class, 'procurement']);
                 Route::patch('procurement', [ErpSettingsController::class, 'updateProcurement']);
+                Route::get('hospitality', [ErpSettingsController::class, 'hospitality']);
+                Route::patch('hospitality', [ErpSettingsController::class, 'updateHospitality']);
                 Route::get('security', [ErpSettingsController::class, 'security']);
                 Route::patch('security', [ErpSettingsController::class, 'updateSecurity']);
                 Route::get('local-printing', [ErpSettingsController::class, 'localPrinting']);

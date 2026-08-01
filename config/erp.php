@@ -153,8 +153,15 @@ return [
         'hotel_bar' => [
             'label' => 'Hotel & Bar',
             'industry' => 'hospitality',
-            // Only these two appear on the Applications tab for hotel tenants.
-            'application_ids' => ['hotel_bar_pos', 'hospitality_backoffice'],
+            // Hotel POS + Hotel Backoffice; shared Admin / HR / Accounting.
+            // Retail POS / Backoffice / Distribution stay off for this industry.
+            'application_ids' => [
+                'hotel_bar_pos',
+                'hospitality_backoffice',
+                'accounting',
+                'hr',
+                'admin',
+            ],
             'modules' => array_merge($allModulesFalse, [
                 'hospitality' => true,
                 'hospitality.bar_pos' => true,
@@ -166,6 +173,14 @@ return [
                 'inventory.reports' => true,
                 'customers_suppliers' => true,
                 'customers_suppliers.reports' => true,
+                'admin' => true,
+                'accounting' => true,
+                'payments' => true,
+                'accounting.dashboard' => true,
+                'accounting.reports' => true,
+                'hr_payroll' => true,
+                'hr_payroll.dashboard' => true,
+                'hr_payroll.reports' => true,
             ]),
             'default_channels' => ['backend'],
         ],
@@ -226,6 +241,7 @@ return [
             'hotel_pos_grid_columns',
             'hotel_pos_collect_payment',
             'hotel_pos_catalog_limit',
+            'hotel_pos_theme_template',
             'services',
             'payment_workflow',
         ],
@@ -492,6 +508,21 @@ return [
             'hotel_pos_collect_payment' => true,
             /** How many top/popular items to show before search (tap grid). */
             'hotel_pos_catalog_limit' => 30,
+            /** Visual theme template for Hotel & Bar POS (platform-controlled). */
+            'hotel_pos_theme_template' => 'centrix',
+            /**
+             * Hotel check receipt printouts (Admin → Printouts).
+             * Independent from retail sales receipt / A4 invoice settings.
+             */
+            'check_receipt_copies' => 1,
+            'show_outlet_on_check_receipt' => true,
+            'show_organization_on_check_receipt' => true,
+            'check_receipt_footer' => 'Thank you',
+            'use_same_print_phones_for_check' => true,
+            'check_print_phones' => [
+                'tel1' => '',
+                'tel2' => '',
+            ],
             /** Deduct kitchen/bar stock when a Hotel POS check is settled. */
             'stock_deduct_on_settle' => false,
             /** Shop or store location for F&B ingredient deduct. */

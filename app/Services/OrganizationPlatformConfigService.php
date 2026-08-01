@@ -189,6 +189,11 @@ class OrganizationPlatformConfigService
                     $salesPlatform['hotel_pos_catalog_limit'],
                 );
             }
+            if (array_key_exists('hotel_pos_theme_template', $salesPlatform)) {
+                $currentHospitality['hotel_pos_theme_template'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeThemeTemplate(
+                    $salesPlatform['hotel_pos_theme_template'],
+                );
+            }
             if (array_key_exists('hospitality_services', $salesPlatform) && is_array($salesPlatform['hospitality_services'])) {
                 $currentHospitality['services'] = \App\Services\Hospitality\HospitalityServices::normalize(
                     $salesPlatform['hospitality_services'],
@@ -214,6 +219,7 @@ class OrganizationPlatformConfigService
         } elseif (
             array_key_exists('hotel_pos_collect_payment', $salesPlatform)
             || array_key_exists('hotel_pos_catalog_limit', $salesPlatform)
+            || array_key_exists('hotel_pos_theme_template', $salesPlatform)
             || array_key_exists('hospitality_services', $salesPlatform)
             || array_key_exists('hospitality_payment_workflow', $salesPlatform)
         ) {
@@ -228,6 +234,11 @@ class OrganizationPlatformConfigService
             if (array_key_exists('hotel_pos_catalog_limit', $salesPlatform)) {
                 $currentHospitality['hotel_pos_catalog_limit'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeCatalogLimit(
                     $salesPlatform['hotel_pos_catalog_limit'],
+                );
+            }
+            if (array_key_exists('hotel_pos_theme_template', $salesPlatform)) {
+                $currentHospitality['hotel_pos_theme_template'] = \App\Services\Hospitality\HospitalityPosSettings::normalizeThemeTemplate(
+                    $salesPlatform['hotel_pos_theme_template'],
                 );
             }
             if (array_key_exists('hospitality_services', $salesPlatform) && is_array($salesPlatform['hospitality_services'])) {
@@ -372,6 +383,7 @@ class OrganizationPlatformConfigService
             'hotel_pos_grid_columns' => 4,
             'hotel_pos_collect_payment' => true,
             'hotel_pos_catalog_limit' => 30,
+            'hotel_pos_theme_template' => 'centrix',
             'hospitality_services' => \App\Services\Hospitality\HospitalityServices::DEFAULTS,
             'hospitality_payment_workflow' => \App\Services\Hospitality\HospitalityPaymentWorkflow::DEFAULTS,
             'order_workflow' => $workflowDefaults,
@@ -440,6 +452,7 @@ class OrganizationPlatformConfigService
             'hotel_pos_grid_columns' => \App\Services\Hospitality\HospitalityPosSettings::gridColumnsForOrganization($org),
             'hotel_pos_collect_payment' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_collect_payment'],
             'hotel_pos_catalog_limit' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_catalog_limit'],
+            'hotel_pos_theme_template' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_theme_template'],
             'hospitality_services' => \App\Services\Hospitality\HospitalityServices::forOrganization($org),
             'hospitality_payment_workflow' => \App\Services\Hospitality\HospitalityPaymentWorkflow::forOrganization($org),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),

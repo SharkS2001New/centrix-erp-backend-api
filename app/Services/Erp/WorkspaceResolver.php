@@ -37,6 +37,9 @@ class WorkspaceResolver
             if (! $this->workspaceAllowedByLoginChannels((string) $id, $user)) {
                 continue;
             }
+            if (! $this->workspaceAllowedByIndustry((string) $id, $gate)) {
+                continue;
+            }
             if (! $this->workspaceAvailableToUser((string) $id, $user, $def, $gate, $permissionMap)) {
                 continue;
             }
@@ -98,10 +101,18 @@ class WorkspaceResolver
     /** @param  array<string, mixed>  $definition */
     protected function workspaceModulesEnabled(array $definition, CapabilityGate $gate): bool
     {
-        foreach ($definition['module_keys'] ?? [] as $key) {
-            if ($gate->enabled((string) $key)) {
-                return true;
+        $moduleKeys = $definition['module_keys'] ?? [];
+        // When explicit module_keys exist, they alone decide availability.
+        // Do NOT fall through to domain_modules (inventory/customers_suppliers are shared
+        // by retail Backoffice and Hotel Backoffice and must not unlock the other industry).
+        if ($moduleKeys !== []) {
+            foreach ($moduleKeys as $key) {
+                if ($gate->enabled((string) $key)) {
+                    return true;
+                }
             }
+
+            return false;
         }
 
         foreach ($definition['domain_modules'] ?? [] as $module) {
@@ -110,7 +121,24 @@ class WorkspaceResolver
             }
         }
 
-        return ($definition['module_keys'] ?? []) === [] && ($definition['domain_modules'] ?? []) === [];
+        return ($definition['domain_modules'] ?? []) === [];
+    }
+
+    /**
+     * Commerce vs hospitality industries never share POS / backoffice shells.
+     */
+    protected function workspaceAllowedByIndustry(string $workspaceId, CapabilityGate $gate): bool
+    {
+        $org = $gate->organization();
+        $profile = $org?->deployment_profile ?? 'wholesale_retail';
+        $industry = IndustryRegistry::industryForProfile((string) $profile);
+
+        if ($industry === 'hospitality') {
+            return ! in_array($workspaceId, ['pos', 'backoffice', 'distribution'], true);
+        }
+
+        // Retail & Distribution (and other commerce profiles).
+        return ! in_array($workspaceId, ['hotel_bar_pos', 'hospitality_backoffice'], true);
     }
 
     /** @param  array<string, mixed>  $definition @param  array<string, bool>  $permissionMap */
