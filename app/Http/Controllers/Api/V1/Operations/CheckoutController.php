@@ -409,6 +409,38 @@ class CheckoutController extends Controller
                 ? trim((string) ($customer->customer_name ?? ''))
                 : trim((string) ($input['customer_name_override'] ?? ''));
 
+            // Previous-order edit / offline sync: TemporaryCart has no customer columns, so
+            // restore the buyer from the sale being superseded when the request omitted them.
+            if (
+                ($customerNum === null || $customerNameOverride === '')
+                && $cart->superseded_sale_id
+            ) {
+                $priorSale = Sale::query()->find((int) $cart->superseded_sale_id);
+                if ($priorSale) {
+                    if ($customerNum === null && $priorSale->customer_num) {
+                        $customerNum = (int) $priorSale->customer_num;
+                        $customer = app(UserMobileOrderScopeService::class)->findCheckoutCustomer(
+                            $user,
+                            (int) $customerNum,
+                            (string) $cart->channel,
+                        );
+                        if ($customer) {
+                            $customerNameOverride = trim((string) ($customer->customer_name ?? ''));
+                        }
+                    }
+                    if ($customerNameOverride === '') {
+                        $fromPrior = trim((string) ($priorSale->customer_name_override ?? ''));
+                        if ($fromPrior === '') {
+                            $priorSale->loadMissing('customer:customer_num,customer_name,organization_id');
+                            $fromPrior = trim((string) ($priorSale->customer?->customer_name ?? ''));
+                        }
+                        if ($fromPrior !== '') {
+                            $customerNameOverride = $fromPrior;
+                        }
+                    }
+                }
+            }
+
             $fulfillmentMeta = $locationMeta !== [] ? ['location_check' => $locationMeta] : [];
             if ($prepared['meta'] !== null) {
                 $fulfillmentMeta['route_markup'] = $prepared['meta'];
