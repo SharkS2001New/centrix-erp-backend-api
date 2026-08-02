@@ -334,8 +334,8 @@ class TillOperationsController extends Controller
         }
 
         $organizationId = (int) (
-            $request->user()->organization_id
-            ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $session->branch_id)
+                $request->user()->organization_id
+                ?? \App\Support\OrganizationIdResolver::requireForBranch((int) $session->branch_id)
         );
 
         $expenseGroupExists = DB::table('expense_groups')
