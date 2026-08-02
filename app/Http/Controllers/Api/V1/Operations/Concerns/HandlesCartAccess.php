@@ -6,6 +6,7 @@ use App\Models\Product;
 use App\Models\TemporaryCart;
 use App\Models\User;
 use App\Services\Sales\OrderNumberAllocator;
+use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\SaleLineQuantityDisplayService;
 
 trait HandlesCartAccess
@@ -79,6 +80,19 @@ trait HandlesCartAccess
             // Peek only (no lock); real allocation still happens at checkout.
             $payload['next_order_num'] = app(OrderNumberAllocator::class)
                 ->peekNextForOrganization((int) $user->organization_id);
+
+            $channel = strtolower(trim((string) ($cart->channel ?? '')));
+            $source = strtolower(trim((string) ($cart->order_source ?? '')));
+            if ($channel === 'pos' || $source === 'pos') {
+                $posPeek = app(PosDailyOrderNumberAllocator::class)->peekNextForCashier(
+                    (int) $user->organization_id,
+                    (int) $user->id,
+                );
+                if ($posPeek !== null) {
+                    $payload['next_pos_order_num'] = $posPeek['pos_order_num'];
+                    $payload['next_pos_order_date'] = $posPeek['pos_order_date'];
+                }
+            }
         }
 
         $productCodes = $cart->lines->pluck('product_code')->filter()->unique()->values()->all();

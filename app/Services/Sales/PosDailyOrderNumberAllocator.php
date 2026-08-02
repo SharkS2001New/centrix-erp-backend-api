@@ -17,6 +17,29 @@ class PosDailyOrderNumberAllocator
     public const MAX_RESERVE_BLOCK = 50;
 
     /**
+     * Next daily POS ticket preview for cart/UI — no locks / no watermark write.
+     *
+     * @return array{pos_order_num: int, pos_order_date: string}|null
+     */
+    public function peekNextForCashier(
+        int $organizationId,
+        int $cashierId,
+        ?string $businessDate = null,
+    ): ?array {
+        if (! Schema::hasColumn('sales', 'pos_order_num')) {
+            return null;
+        }
+
+        $date = $this->normalizeDate($businessDate) ?? now()->toDateString();
+        $next = $this->ceilingForCashierDay($organizationId, $cashierId, $date, locked: false) + 1;
+
+        return [
+            'pos_order_num' => $next,
+            'pos_order_date' => $date,
+        ];
+    }
+
+    /**
      * @return array{pos_order_num: int, pos_order_date: string}|null
      */
     public function allocateForCheckout(
