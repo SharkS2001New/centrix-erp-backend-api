@@ -41,6 +41,7 @@ use App\Services\Sales\PosCashRounding;
 use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
+use App\Services\Sales\PosOfflineCheckoutIdempotency;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -193,13 +194,30 @@ class CheckoutController extends Controller
         $salesSettings = $gate->moduleSettings('sales');
 
         return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $salesSettings) {
+            $idempotency = app(PosOfflineCheckoutIdempotency::class);
+            $existing = $idempotency->findExisting($user, $input);
+            if ($existing) {
+                $existing->loadMissing([
+                    'items.product.unit',
+                    'payments.paymentMethod',
+                    'kraResponse',
+                    'cashier:id,username,full_name',
+                ]);
+
+                return [
+                    'sale' => $existing,
+                    'deduct_stock' => false,
+                    'run_side_effects' => false,
+                ];
+            }
+
             $customerNum = $input['customer_num'] ?? null;
             $loyaltyCardIdEarly = $cart->loyalty_card_id ? (int) $cart->loyalty_card_id : null;
             if (! $customerNum && $loyaltyCardIdEarly) {
                 $customerNum = LoyaltyCard::find($loyaltyCardIdEarly)?->customer_num;
             }
             $orderNum = $this->resolveCheckoutOrderNum($cart, $user, $input);
-            $posOrderFields = $this->resolvePosDailyOrderFields($cart, $user);
+            $posOrderFields = $this->resolvePosDailyOrderFields($cart, $user, $input);
 
             $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
             app(UserMobileOrderScopeService::class)->assertCheckoutRoute($user, (string) $cart->channel, $routeId);
@@ -402,6 +420,10 @@ class CheckoutController extends Controller
             if (! empty($input['sales_workspace'])) {
                 $fulfillmentMeta['sales_workspace'] = (string) $input['sales_workspace'];
             }
+            $fulfillmentMeta = app(PosOfflineCheckoutIdempotency::class)->stampFulfillmentMeta(
+                $fulfillmentMeta,
+                $input,
+            );
 
             $sale = $this->createSaleWithOrderNum($orderNum, [
                 'order_num' => $orderNum,
@@ -706,7 +728,7 @@ class CheckoutController extends Controller
      *
      * @return array{pos_order_num?: int, pos_order_date?: string}
      */
-    protected function resolvePosDailyOrderFields(TemporaryCart $cart, User $user): array
+    protected function resolvePosDailyOrderFields(TemporaryCart $cart, User $user, array $input = []): array
     {
         if (! $this->isPosCheckoutChannel($cart)) {
             return [];
@@ -721,6 +743,27 @@ class CheckoutController extends Controller
                 if ($taken !== null) {
                     return $taken;
                 }
+            }
+        }
+
+        $clientPos = isset($input['pos_order_num']) ? (int) $input['pos_order_num'] : 0;
+        $clientDate = trim((string) ($input['pos_order_date'] ?? ''));
+        if (
+            $clientPos > 0
+            && $clientDate !== ''
+            && filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN)
+        ) {
+            $claimed = $allocator->claimReservedForCheckout(
+                (int) $user->organization_id,
+                (int) $user->id,
+                $clientPos,
+                $clientDate,
+            );
+            if ($claimed) {
+                return [
+                    'pos_order_num' => $clientPos,
+                    'pos_order_date' => $clientDate,
+                ];
             }
         }
 
