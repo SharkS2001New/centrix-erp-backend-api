@@ -46,7 +46,10 @@ trait HandlesCartAccess
             $query->with('lines');
         }
 
-        $cart = $query->findOrFail($cartId);
+        $cart = $query->find($cartId);
+        if (! $cart) {
+            abort(404, 'Cart not found. It may have already been checked out — reopen the order to continue editing.');
+        }
         if ((int) $cart->user_id !== (int) $user->id) {
             abort(403, 'This cart belongs to another cashier.');
         }
