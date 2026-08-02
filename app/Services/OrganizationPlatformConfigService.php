@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Services\Erp\AdvancedDataImportPageRegistry;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Sales\ClassicPosThemeSettings;
 use App\Services\Sales\PosCashRoundingSettings;
 use Illuminate\Validation\ValidationException;
 
@@ -124,6 +125,12 @@ class OrganizationPlatformConfigService
             $nextSales['external_pos_layout'] = in_array($layout, ['modern', 'classic'], true)
                 ? $layout
                 : 'modern';
+        }
+
+        if (array_key_exists('classic_pos_theme_template', $salesPlatform)) {
+            $nextSales['classic_pos_theme_template'] = ClassicPosThemeSettings::normalizeThemeTemplate(
+                $salesPlatform['classic_pos_theme_template'],
+            );
         }
 
         if (array_key_exists('enable_backoffice_order_edit', $salesPlatform)) {
@@ -392,6 +399,7 @@ class OrganizationPlatformConfigService
             'enable_pos_cash_rounding' => false,
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
+            'classic_pos_theme_template' => ClassicPosThemeSettings::THEME_TEMPLATE_DEFAULT,
             'hotel_pos_grid_columns' => 4,
             'hotel_pos_collect_payment' => true,
             'hotel_pos_catalog_limit' => 30,
@@ -461,6 +469,9 @@ class OrganizationPlatformConfigService
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)
                 ? (string) $sales['external_pos_layout']
                 : 'modern',
+            'classic_pos_theme_template' => ClassicPosThemeSettings::normalizeThemeTemplate(
+                $sales['classic_pos_theme_template'] ?? ClassicPosThemeSettings::THEME_TEMPLATE_DEFAULT,
+            ),
             'hotel_pos_grid_columns' => \App\Services\Hospitality\HospitalityPosSettings::gridColumnsForOrganization($org),
             'hotel_pos_collect_payment' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_collect_payment'],
             'hotel_pos_catalog_limit' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_catalog_limit'],
