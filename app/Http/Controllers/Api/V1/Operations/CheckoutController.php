@@ -747,7 +747,10 @@ class CheckoutController extends Controller
         }
 
         $clientPos = isset($input['pos_order_num']) ? (int) $input['pos_order_num'] : 0;
-        $clientDate = trim((string) ($input['pos_order_date'] ?? ''));
+        $clientDateRaw = trim((string) ($input['pos_order_date'] ?? ''));
+        $clientDate = $clientDateRaw !== ''
+            ? (app(PosDailyOrderNumberAllocator::class)->normalizeBusinessDate($clientDateRaw) ?? '')
+            : '';
         if (
             $clientPos > 0
             && $clientDate !== ''

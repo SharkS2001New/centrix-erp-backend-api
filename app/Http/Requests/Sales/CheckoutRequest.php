@@ -48,7 +48,7 @@ class CheckoutRequest extends FormRequest
             'client_sale_uuid' => 'nullable|string|max:64',
             'content_revision' => 'nullable|integer|min:1',
             'pos_order_num' => 'nullable|integer|min:1',
-            'pos_order_date' => 'nullable|date_format:Y-m-d',
+            'pos_order_date' => 'nullable|date',
             'checkout_latitude' => 'nullable|numeric|between:-90,90',
             'checkout_longitude' => 'nullable|numeric|between:-180,180',
             'discount_approval_reason' => 'nullable|string|max:500',

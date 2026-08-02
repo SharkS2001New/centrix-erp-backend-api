@@ -200,6 +200,14 @@ class PosDailyOrderNumberAllocator
         });
     }
 
+    /**
+     * Public helper: accept ISO / Y-m-d / other parseable dates → Y-m-d.
+     */
+    public function normalizeBusinessDate(?string $value): ?string
+    {
+        return $this->normalizeDate($value);
+    }
+
     protected function normalizeDate(?string $value): ?string
     {
         $value = trim((string) $value);
