@@ -509,7 +509,21 @@ class SaleController extends BaseResourceController
                 $query->where(function ($sub) use ($order) {
                     $sub->where('sales.order_num', 'like', "%{$order}%")
                         ->orWhereRaw('CAST(sales.order_num AS CHAR) LIKE ?', ["%{$order}%"]);
+                    if (ctype_digit($order)) {
+                        $sub->orWhere('sales.pos_order_num', (int) $order);
+                    } else {
+                        $sub->orWhereRaw('CAST(sales.pos_order_num AS CHAR) LIKE ?', ["%{$order}%"]);
+                    }
                 });
+            }
+        }
+
+        $posOrder = trim((string) $request->input('filter_pos_order', ''));
+        if ($posOrder !== '') {
+            if (ctype_digit($posOrder)) {
+                $query->where('sales.pos_order_num', (int) $posOrder);
+            } else {
+                $query->whereRaw('CAST(sales.pos_order_num AS CHAR) LIKE ?', ["%{$posOrder}%"]);
             }
         }
 

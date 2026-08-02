@@ -151,11 +151,13 @@ class SqlLikeSearch
             if ($isDigits) {
                 $orderNum = (int) $term;
                 $sub->where('sales.order_num', $orderNum)
+                    ->orWhere('sales.pos_order_num', $orderNum)
                     ->orWhere('sales.customer_num', $orderNum)
                     ->orWhere('sales.order_num', 'like', $prefix);
             } else {
                 $sub->where('sales.customer_name_override', 'like', $like)
                     ->orWhereRaw('CAST(sales.order_num AS CHAR) LIKE ?', [$like])
+                    ->orWhereRaw('CAST(sales.pos_order_num AS CHAR) LIKE ?', [$like])
                     ->orWhereRaw('CAST(sales.customer_num AS CHAR) LIKE ?', [$like]);
             }
 

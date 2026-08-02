@@ -47,7 +47,7 @@ class Sale extends Model
     }
 
     protected $fillable = [
-        'order_num', 'branch_id', 'organization_id', 'channel', 'order_source', 'till_id',
+        'order_num', 'pos_order_num', 'pos_order_date', 'branch_id', 'organization_id', 'channel', 'order_source', 'till_id',
         'float_session_id', 'cashier_id', 'customer_num', 'customer_name_override',
         'route_id', 'required_date', 'delivery_date', 'status', 'total_vat', 'order_total', 'order_discount',
         'voucher_payment_amount', 'points_payment_amount', 'loyalty_card_id',
@@ -61,6 +61,7 @@ class Sale extends Model
         'fulfillment_meta' => 'array',
         'amount_paid' => 'decimal:2',
         'required_date' => 'date',
+        'pos_order_date' => 'date',
         'delivery_date' => 'datetime',
         'completed_at' => 'datetime',
         'cancelled_at' => 'datetime',

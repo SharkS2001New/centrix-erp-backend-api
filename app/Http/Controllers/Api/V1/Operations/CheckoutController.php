@@ -40,6 +40,7 @@ use App\Services\Sales\MobileRouteMarkupCheckoutService;
 use App\Services\Sales\PosCashRounding;
 use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
+use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -198,6 +199,7 @@ class CheckoutController extends Controller
                 $customerNum = LoyaltyCard::find($loyaltyCardIdEarly)?->customer_num;
             }
             $orderNum = $this->resolveCheckoutOrderNum($cart, $user, $input);
+            $posOrderFields = $this->resolvePosDailyOrderFields($cart, $user);
 
             $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
             app(UserMobileOrderScopeService::class)->assertCheckoutRoute($user, (string) $cart->channel, $routeId);
@@ -403,6 +405,8 @@ class CheckoutController extends Controller
 
             $sale = $this->createSaleWithOrderNum($orderNum, [
                 'order_num' => $orderNum,
+                'pos_order_num' => $posOrderFields['pos_order_num'] ?? null,
+                'pos_order_date' => $posOrderFields['pos_order_date'] ?? null,
                 'branch_id' => $cart->branch_id ?? $user->branch_id,
                 'organization_id' => $user->organization_id,
                 'channel' => $cart->channel,
@@ -698,6 +702,45 @@ class CheckoutController extends Controller
     }
 
     /**
+     * Daily per-cashier POS ticket # for thermal Cash Sales # (independent of S00xx).
+     *
+     * @return array{pos_order_num?: int, pos_order_date?: string}
+     */
+    protected function resolvePosDailyOrderFields(TemporaryCart $cart, User $user): array
+    {
+        if (! $this->isPosCheckoutChannel($cart)) {
+            return [];
+        }
+
+        $allocator = app(PosDailyOrderNumberAllocator::class);
+
+        if ($cart->superseded_sale_id) {
+            $superseded = Sale::query()->find((int) $cart->superseded_sale_id);
+            if ($superseded) {
+                $taken = $allocator->takeFromSale($superseded);
+                if ($taken !== null) {
+                    return $taken;
+                }
+            }
+        }
+
+        $allocated = $allocator->allocateForCheckout(
+            (int) $user->organization_id,
+            (int) $user->id,
+        );
+
+        return $allocated ?? [];
+    }
+
+    protected function isPosCheckoutChannel(TemporaryCart $cart): bool
+    {
+        $channel = strtolower(trim((string) ($cart->channel ?? '')));
+        $source = strtolower(trim((string) ($cart->order_source ?? '')));
+
+        return $channel === 'pos' || $source === 'pos';
+    }
+
+    /**
      * Pick an order number for checkout, freeing stale held/cancelled rows that still
      * occupy a number the cart intends to reuse (POS edit / double-submit races).
      *
@@ -764,10 +807,29 @@ class CheckoutController extends Controller
                 return Sale::create($attributes);
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
                 $lastError = $e;
-                if (! str_contains($e->getMessage(), 'uq_org_order_num')) {
-                    throw $e;
+                $message = $e->getMessage();
+                if (str_contains($message, 'uq_org_order_num')) {
+                    $attributes['order_num'] = $allocator->nextForOrganization($organizationId);
+                    continue;
                 }
-                $attributes['order_num'] = $allocator->nextForOrganization($organizationId);
+                if (
+                    str_contains($message, 'uq_pos_daily_order_num')
+                    && ! empty($attributes['cashier_id'])
+                    && ! empty($attributes['organization_id'])
+                ) {
+                    $pos = app(PosDailyOrderNumberAllocator::class)->allocateForCheckout(
+                        (int) $attributes['organization_id'],
+                        (int) $attributes['cashier_id'],
+                        isset($attributes['pos_order_date']) ? (string) $attributes['pos_order_date'] : null,
+                    );
+                    if ($pos === null) {
+                        throw $e;
+                    }
+                    $attributes['pos_order_num'] = $pos['pos_order_num'];
+                    $attributes['pos_order_date'] = $pos['pos_order_date'];
+                    continue;
+                }
+                throw $e;
             }
         }
 

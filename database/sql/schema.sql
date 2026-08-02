@@ -701,6 +701,8 @@ DROP TABLE IF EXISTS sales;
 CREATE TABLE sales (
     id                     BIGINT        PRIMARY KEY AUTO_INCREMENT,
     order_num              INT           NOT NULL,
+    pos_order_num          INT UNSIGNED  NULL,
+    pos_order_date         DATE          NULL,
     branch_id              INT           NOT NULL,
     organization_id        INT           NOT NULL,
     channel                ENUM('pos','mobile','backend') NOT NULL DEFAULT 'pos',
@@ -755,6 +757,7 @@ CREATE TABLE sales (
     FOREIGN KEY (expired_by)       REFERENCES users(id),
     FOREIGN KEY (deleted_by)       REFERENCES users(id),
     UNIQUE KEY uq_org_order_num (organization_id, order_num),
+    UNIQUE KEY uq_pos_daily_order_num (organization_id, cashier_id, pos_order_date, pos_order_num),
     INDEX idx_order_num     (order_num),
     INDEX idx_branch_id     (branch_id),
     INDEX idx_channel       (channel),

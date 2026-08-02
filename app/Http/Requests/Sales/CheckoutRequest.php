@@ -45,6 +45,7 @@ class CheckoutRequest extends FormRequest
             'save_only' => 'nullable|boolean',
             'submit_kra' => 'nullable|boolean',
             'offline_order' => 'nullable|boolean',
+            'client_sale_uuid' => 'nullable|string|max:64',
             'checkout_latitude' => 'nullable|numeric|between:-90,90',
             'checkout_longitude' => 'nullable|numeric|between:-180,180',
             'discount_approval_reason' => 'nullable|string|max:500',
