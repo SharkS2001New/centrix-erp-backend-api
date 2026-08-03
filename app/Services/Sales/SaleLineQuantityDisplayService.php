@@ -55,29 +55,26 @@ class SaleLineQuantityDisplayService
         ?float $sellingPricePerBase = null,
         ?float $storedDisplayUnitPrice = null,
     ): float {
-        // Prefer the pack/sold unit price already calculated on the cart/client
-        // (includes retail/wholesale/route markups from computePosLine).
-        if ($storedDisplayUnitPrice !== null && $storedDisplayUnitPrice > 0) {
-            return round($storedDisplayUnitPrice, 2);
-        }
-
         $entryQty = $this->entryQtyFromBase($baseQty, $product, $isRetailLine);
         if ($entryQty <= 0) {
             return 0.0;
         }
 
-        // When the line was already priced (amount set), recover the sold-unit
-        // gross from that priced total so retail/wholesale/route markups baked
-        // into amount are preserved. Do not fall back to bare catalog price —
-        // catalog omits markups.
+        // Always reverse from the priced line total so mobile route markup (and retail
+        // tier add-ons) that live on the amount — not the catalog unit — show correctly.
+        // Whole KES: matches Sales & Orders / Edit Order (no decimals).
         $gross = $lineAmount + max(0.0, $discountGiven);
         if ($gross > 0.0001) {
-            return round($gross / $entryQty, 2);
+            return (float) (int) round($gross / $entryQty);
+        }
+
+        if ($storedDisplayUnitPrice !== null && $storedDisplayUnitPrice > 0) {
+            return (float) (int) round($storedDisplayUnitPrice);
         }
 
         $catalogPack = (float) ($product->unit_price ?? 0);
         if ($catalogPack > 0) {
-            return round($catalogPack, 2);
+            return (float) (int) round($catalogPack);
         }
 
         $perBase = $sellingPricePerBase;
@@ -85,7 +82,7 @@ class SaleLineQuantityDisplayService
             return 0.0;
         }
 
-        return round($perBase * ($baseQty / $entryQty), 2);
+        return (float) (int) round($perBase * ($baseQty / $entryQty));
     }
 
     /** Cashier-facing discount per display/pack unit (matches POS per-unit discount input). */

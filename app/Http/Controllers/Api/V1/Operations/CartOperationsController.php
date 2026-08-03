@@ -400,31 +400,22 @@ class CartOperationsController extends Controller
             }
 
             $meta = array_merge($sale->fulfillment_meta ?? [], [
-                'superseded_by_edit' => true,
-                'superseded_at' => now()->toIso8601String(),
+                'pos_editing_in_progress' => true,
+                'pos_editing_at' => now()->toIso8601String(),
+                'pos_editing_by' => (int) $user->id,
                 'original_order_num' => $heldOrderNum,
                 'original_status' => (string) $sale->status,
                 'original_stock_balanced' => (bool) $sale->stock_balanced,
             ]);
 
+            // Keep the sale visible in Sales & Orders / X/Z until checkout commits the
+            // revision. Cancelling here made the order vanish for the whole edit and
+            // wrecked till maths (ORDTTL dropped then jumped). Checkout frees the
+            // order_num via resolveCheckoutOrderNum when superseded_sale_id matches.
             $sale->update([
-                'order_num' => app(OrderNumberAllocator::class)->tombstoneForSupersededSale((int) $sale->id),
-                'status' => 'cancelled',
-                'cancelled_at' => now(),
-                'cancelled_by' => $user->id,
                 'stock_balanced' => 0,
-                'archived' => 1,
                 'fulfillment_meta' => $meta,
             ]);
-
-            $this->reverseSaleJournalIfPosted($sale, $user);
-            app(CustomerInvoiceService::class)->voidForCancelledSale($sale->fresh(), $user);
-
-            app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForSale(
-                $sale->fresh(),
-                $user,
-                'Order superseded for editing.',
-            );
 
             return $cart->fresh('lines');
         });
@@ -1631,7 +1622,9 @@ class CartOperationsController extends Controller
     }
 
     /**
-     * Undo restoreHeldOrder tombstone when the edit cart is cleared without checkout.
+     * Undo restoreHeldOrder when the edit cart is cleared without checkout.
+     * New flow keeps the sale live (pos_editing_in_progress); older clients may
+     * still have cancelled+archived tombstones that need full reinstate.
      */
     protected function reinstateSupersededSale(int $saleId, User $user): void
     {
@@ -1641,6 +1634,37 @@ class CartOperationsController extends Controller
         }
 
         $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+
+        // Live sale still visible while editing — put stock/journal back and clear edit flags.
+        if (! empty($meta['pos_editing_in_progress'])
+            && (string) $sale->status !== 'cancelled'
+            && (int) ($sale->archived ?? 0) !== 1) {
+            $shouldBalanceStock = (bool) ($meta['original_stock_balanced'] ?? true);
+            unset(
+                $meta['pos_editing_in_progress'],
+                $meta['pos_editing_at'],
+                $meta['pos_editing_by'],
+                $meta['original_order_num'],
+                $meta['original_status'],
+                $meta['original_stock_balanced'],
+            );
+
+            $sale->update([
+                'fulfillment_meta' => $meta === [] ? null : $meta,
+            ]);
+
+            $sale = $sale->fresh(['items']);
+            if ($shouldBalanceStock && $sale && ! $sale->stock_balanced) {
+                $this->deductSaleStockAfterReinstate($sale, $user);
+            }
+            if ($sale) {
+                $gate = $this->erp->gateForUser($user);
+                app(\App\Services\Accounting\SaleJournalService::class)->postIfEnabled($sale, $user, $gate);
+            }
+
+            return;
+        }
+
         $originalOrderNum = (int) ($meta['original_order_num'] ?? 0);
         if ($originalOrderNum <= 0 || $originalOrderNum >= 9_000_000) {
             return;
@@ -1664,6 +1688,9 @@ class CartOperationsController extends Controller
             $meta['original_order_num'],
             $meta['original_status'],
             $meta['original_stock_balanced'],
+            $meta['pos_editing_in_progress'],
+            $meta['pos_editing_at'],
+            $meta['pos_editing_by'],
         );
 
         $sale->update([

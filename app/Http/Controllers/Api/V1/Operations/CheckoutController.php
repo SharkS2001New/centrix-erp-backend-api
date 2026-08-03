@@ -990,13 +990,31 @@ class CheckoutController extends Controller
         if ($canFree) {
             $existing->update([
                 'order_num' => $allocator->tombstoneForSupersededSale((int) $existing->id),
-                'status' => in_array((string) $existing->status, ['held', 'draft'], true)
-                    ? 'cancelled'
-                    : $existing->status,
+                'status' => 'cancelled',
                 'cancelled_at' => $existing->cancelled_at ?? now(),
                 'cancelled_by' => $existing->cancelled_by ?? $user->id,
                 'archived' => 1,
+                'fulfillment_meta' => array_merge(
+                    is_array($existing->fulfillment_meta) ? $existing->fulfillment_meta : [],
+                    [
+                        'superseded_by_edit' => true,
+                        'superseded_at' => now()->toIso8601String(),
+                        'original_order_num' => $requested,
+                    ],
+                ),
             ]);
+            app(\App\Services\Accounting\ReferenceJournalReversalService::class)->reverseIfEnabled(
+                'sale',
+                (int) $existing->id,
+                $user,
+                app(ErpContext::class)->gateForUser($user),
+            );
+            app(CustomerInvoiceService::class)->voidForCancelledSale($existing->fresh(), $user);
+            app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForSale(
+                $existing->fresh(),
+                $user,
+                'Order superseded by revised checkout.',
+            );
             $allocator->reserveSpecificForOrganization($orgId, $requested);
 
             return $requested;
