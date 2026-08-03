@@ -278,11 +278,29 @@ class CheckoutController extends Controller
                 $lines = $sameDayAppend->priorItemsAsCheckoutLines($appendPriorSale)
                     ->concat($lines)
                     ->values();
+            }
+
+            $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
+                ? $gate->organization()->module_settings['sales']
+                : [];
+            $cashRound = in_array((string) $cart->channel, ['pos', 'backend', 'mobile'], true)
+                && PosCashRoundingSettings::enabled($salesSettings, $customSales);
+            if ($cashRound) {
+                $lines = $lines->map(function ($line) {
+                    $line->amount = PosCashRounding::roundLightStoresAmount((float) $line->amount);
+
+                    return $line;
+                });
+            }
+
+            if ($appendPriorSale) {
                 $lineNet = round((float) $lines->sum('amount'), 2);
                 $vat = round((float) $lines->sum('product_vat'), 2);
             } else {
-                $lineNet = (float) $prepared['order_total'];
-                $vat = (float) ($input['total_vat'] ?? $prepared['total_vat']);
+                $lineNet = round((float) $lines->sum('amount'), 2);
+                $vat = $cashRound
+                    ? round((float) $lines->sum('product_vat'), 2)
+                    : (float) ($input['total_vat'] ?? $prepared['total_vat']);
             }
             $isCredit = (bool) ($input['is_credit_sale'] ?? false);
             $payNow = (float) ($input['pay_now'] ?? 0);
@@ -311,16 +329,10 @@ class CheckoutController extends Controller
             $total = $scaled['order_total'];
             $vat = $scaled['total_vat'];
 
-            $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
-                ? $gate->organization()->module_settings['sales']
-                : [];
-            if (
-                in_array((string) $cart->channel, ['pos', 'backend'], true)
-                && PosCashRoundingSettings::enabled($salesSettings, $customSales)
-            ) {
+            if ($cashRound) {
                 $roundedNet = 0.0;
                 foreach ($lines as $line) {
-                    $roundedNet += PosCashRounding::roundLightStoresAmount((float) $line->amount);
+                    $roundedNet += (float) $line->amount;
                 }
                 $total = PosCashRounding::roundLightStoresAmount(max(0, $roundedNet - $orderDiscount));
             }
@@ -365,9 +377,13 @@ class CheckoutController extends Controller
             $mobileCheckout->applyCheckoutPolicy($salesSettings, $input, (string) $cart->channel);
 
             $adjustmentRows = $this->normalizeCheckoutPaymentAdjustments($input['payment_adjustments'] ?? null);
-            $isPosEditSettlement = (int) ($cart->superseded_sale_id ?? 0) > 0 && $adjustmentRows !== [];
+            // Previous-order edit (not same-day append): rebuild net tenders from the
+            // superseded sale. Do not post pay_now as a fresh CASH/Equity payment — that
+            // zeros or doubles method totals on X/Z/EOD after offline sync.
+            $isPreviousOrderEditSettlement = (int) ($cart->superseded_sale_id ?? 0) > 0
+                && $appendPriorSale === null;
 
-            if (! $isCredit && $payNow <= 0 && $cashDue > 0 && empty($input['save_only']) && ! $isPosEditSettlement) {
+            if (! $isCredit && $payNow <= 0 && $cashDue > 0 && empty($input['save_only']) && ! $isPreviousOrderEditSettlement) {
                 if ($isMobileChannel) {
                     if ($mobileCheckout->shouldDefaultMobileSaveOnly(
                         $salesSettings,
@@ -386,7 +402,7 @@ class CheckoutController extends Controller
                     $payNow = $cashDue;
                 }
             }
-            if ($isPosEditSettlement) {
+            if ($isPreviousOrderEditSettlement) {
                 $payNow = 0;
                 $amountPaid = $total;
             } else {
@@ -590,7 +606,19 @@ class CheckoutController extends Controller
                 ]);
             }
 
-            if ($appendPriorSale) {
+            if ($isPreviousOrderEditSettlement) {
+                $priorSale = Sale::query()->find((int) $cart->superseded_sale_id);
+                if ($priorSale) {
+                    $this->applyPreviousOrderEditTenders(
+                        $priorSale,
+                        $sale,
+                        $adjustmentRows,
+                        $floatSessionId,
+                        $total,
+                        $input['payment_date'] ?? now(),
+                    );
+                }
+            } elseif ($appendPriorSale) {
                 $this->copyPriorSalePaymentsToSale($appendPriorSale, $sale, $floatSessionId);
             }
 
@@ -1192,6 +1220,160 @@ class CheckoutController extends Controller
         }
 
         return $normalized;
+    }
+
+    /**
+     * Rebuild sale_payments + tender columns for a previous-order edit.
+     * Prior mix +/- return/topup adjustments = net tenders that match the new total.
+     * Keeps X/Z/EOD Equity/Cash/M-Pesa correct after offline sync (no wipe, no CASH reclass).
+     *
+     * @param  list<array{method_code: string, amount: float, adjustment_type: string, reference_number: ?string}>  $adjustmentRows
+     */
+    protected function applyPreviousOrderEditTenders(
+        Sale $prior,
+        Sale $sale,
+        array $adjustmentRows,
+        ?int $floatSessionId,
+        float $newTotal,
+        mixed $paidAt,
+    ): void {
+        $map = $this->priorSaleTenderMap($prior);
+
+        foreach ($adjustmentRows as $row) {
+            $code = strtoupper((string) ($row['method_code'] ?? ''));
+            $amount = round((float) ($row['amount'] ?? 0), 2);
+            if ($code === '' || $amount <= 0) {
+                continue;
+            }
+            $current = (float) ($map[$code] ?? 0);
+            if (($row['adjustment_type'] ?? '') === 'return') {
+                $map[$code] = max(0, round($current - $amount, 2));
+            } else {
+                $map[$code] = round($current + $amount, 2);
+            }
+        }
+
+        $map = array_filter(
+            $map,
+            static fn (float $amount) => $amount > 0.009,
+        );
+
+        $map = $this->normalizeTenderMapToTotal($map, $newTotal);
+
+        SalePayment::query()->where('sale_id', $sale->id)->delete();
+        SalePaymentColumnMapper::replaceFromMethodMap($sale, $map);
+
+        foreach ($map as $methodCode => $amount) {
+            $method = $this->resolveCheckoutPaymentMethod(
+                (int) $sale->organization_id,
+                (string) $methodCode,
+            );
+            if (! $method) {
+                continue;
+            }
+            SalePayment::create([
+                'sale_id' => $sale->id,
+                'float_session_id' => $floatSessionId,
+                'payment_method_id' => $method->id,
+                'amount' => round((float) $amount, 2),
+                'reference_number' => null,
+                'paid_at' => $paidAt,
+            ]);
+        }
+    }
+
+    /**
+     * @return array<string, float> method_code => amount
+     */
+    protected function priorSaleTenderMap(Sale $prior): array
+    {
+        $prior->loadMissing('payments.paymentMethod');
+        $map = [];
+
+        foreach ($prior->payments ?? [] as $payment) {
+            $code = strtoupper((string) ($payment->paymentMethod?->method_code ?? ''));
+            if ($code === '') {
+                continue;
+            }
+            // Prefer column identity when the payment row was aliased (EQUITY→BANK).
+            if (in_array($code, ['BANK', 'BANK_TRANSFER'], true)) {
+                if ((float) ($prior->equity_amount ?? 0) > 0.009 && ! isset($map['EQUITY'])) {
+                    $code = 'EQUITY';
+                } elseif ((float) ($prior->kcb_amount ?? 0) > 0.009 && ! isset($map['KCB'])) {
+                    $code = 'KCB';
+                }
+            }
+            $map[$code] = round((float) ($map[$code] ?? 0) + (float) $payment->amount, 2);
+        }
+
+        if ($map !== []) {
+            return $map;
+        }
+
+        // Legacy / column-only tenders.
+        foreach ([
+            'CASH' => (float) ($prior->cash ?? 0),
+            'MPESA' => (float) ($prior->mpesa_amount ?? 0),
+            'EQUITY' => (float) ($prior->equity_amount ?? 0),
+            'KCB' => (float) ($prior->kcb_amount ?? 0),
+        ] as $code => $amount) {
+            if ($amount > 0.009) {
+                $map[$code] = round($amount, 2);
+            }
+        }
+
+        if ($map === [] && (float) ($prior->amount_paid ?? 0) > 0.009) {
+            $fallback = strtoupper((string) ($prior->payment_method_code ?? 'CASH')) ?: 'CASH';
+            $map[$fallback] = round((float) $prior->amount_paid, 2);
+        }
+
+        return $map;
+    }
+
+    /**
+     * Scale / pad tender mix so it equals the revised order total.
+     *
+     * @param  array<string, float>  $map
+     * @return array<string, float>
+     */
+    protected function normalizeTenderMapToTotal(array $map, float $newTotal): array
+    {
+        $newTotal = max(0, round($newTotal, 2));
+        if ($newTotal <= 0.009) {
+            return [];
+        }
+
+        $sum = round(array_sum($map), 2);
+        if ($sum <= 0.009) {
+            return ['CASH' => $newTotal];
+        }
+
+        if (abs($sum - $newTotal) < 0.02) {
+            return $map;
+        }
+
+        $factor = $newTotal / $sum;
+        $scaled = [];
+        foreach ($map as $code => $amount) {
+            $scaled[$code] = round((float) $amount * $factor, 2);
+        }
+
+        $scaledSum = round(array_sum($scaled), 2);
+        $drift = round($newTotal - $scaledSum, 2);
+        if (abs($drift) >= 0.01) {
+            $largest = array_key_first($scaled);
+            foreach ($scaled as $code => $amount) {
+                if ($amount >= ($scaled[$largest] ?? 0)) {
+                    $largest = $code;
+                }
+            }
+            $scaled[$largest] = round(($scaled[$largest] ?? 0) + $drift, 2);
+        }
+
+        return array_filter(
+            $scaled,
+            static fn (float $amount) => $amount > 0.009,
+        );
     }
 
     protected function copyPriorSalePaymentsToSale(Sale $prior, Sale $sale, ?int $floatSessionId): void

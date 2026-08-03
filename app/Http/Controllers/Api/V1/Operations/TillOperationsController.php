@@ -872,13 +872,23 @@ class TillOperationsController extends Controller
             }
         } else {
             foreach ($columnMethods as $code => $total) {
-                if (($byMethod[$code]['total'] ?? 0) <= 0) {
-                    $byMethod[$code] = [
-                        'method_code' => $code,
-                        'method_name' => $this->paymentMethodLabel($code, $code),
-                        'total' => $total,
-                    ];
+                if (($byMethod[$code]['total'] ?? 0) > 0) {
+                    continue;
                 }
+                // EQUITY/KCB often resolve to a BANK payment_method row while columns
+                // still store equity_amount — do not count both.
+                if (in_array($code, ['EQUITY', 'KCB'], true)) {
+                    $bankAlready = (float) ($byMethod['BANK']['total'] ?? 0)
+                        + (float) ($byMethod['BANK_TRANSFER']['total'] ?? 0);
+                    if ($bankAlready > 0.009) {
+                        continue;
+                    }
+                }
+                $byMethod[$code] = [
+                    'method_code' => $code,
+                    'method_name' => $this->paymentMethodLabel($code, $code),
+                    'total' => $total,
+                ];
             }
         }
 

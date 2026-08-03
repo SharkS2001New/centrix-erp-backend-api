@@ -16,6 +16,8 @@ use App\Services\Erp\OrderWorkflowService;
 use App\Services\Kra\SalesVatCalculator;
 use App\Services\Sales\DiscountApprovalService;
 use App\Services\Sales\MobileRouteMarkupCheckoutService;
+use App\Services\Sales\PosCashRounding;
+use App\Services\Sales\PosCashRoundingSettings;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
@@ -137,8 +139,10 @@ class BackofficeOrderLineEditService
         $this->assertLineEditAllowed($sale, $user, $gate);
         $wasEditable = (string) $sale->status === 'editable';
         $allowDiscountEdit = $this->allowsLineDiscountEdit($gate);
+        $salesSettings = $gate->moduleSettings('sales');
+        $cashRound = $this->cashRoundingEnabled($gate, $salesSettings);
 
-        return DB::transaction(function () use ($sale, $user, $items, $gate, $wasEditable, $allowDiscountEdit, $removeItemIds, $customerNum) {
+        return DB::transaction(function () use ($sale, $user, $items, $gate, $wasEditable, $allowDiscountEdit, $removeItemIds, $customerNum, $cashRound) {
             $sale = Sale::with('items')->lockForUpdate()->findOrFail($sale->id);
             $itemsById = $sale->items->keyBy('id');
             $salesSettings = $gate->moduleSettings('sales');
@@ -209,6 +213,7 @@ class BackofficeOrderLineEditService
                         $salesSettings,
                         $inventorySettings,
                         $allowBelowStock,
+                        $cashRound,
                     );
                     $lineChanged = true;
                     $qtyChanged = true;
@@ -264,6 +269,14 @@ class BackofficeOrderLineEditService
                     false,
                     $user->organization_id,
                 );
+                [$unitPrice, $amount] = $this->finalizePricedLineAmounts(
+                    $product,
+                    $newQty,
+                    $isRetail,
+                    $unitPrice,
+                    $amount,
+                    $cashRound,
+                );
                 $product->loadMissing('vat');
                 $productVat = SalesVatCalculator::vatFromInclusiveGross(
                     max(0, $amount),
@@ -295,6 +308,11 @@ class BackofficeOrderLineEditService
             $scaled = CentrixSalesScope::scaleVatForOrderDiscount($lineGross, $lineVat, $orderDiscount);
             $orderTotal = $scaled['order_total'];
             $totalVat = $scaled['total_vat'];
+            if ($cashRound) {
+                $orderTotal = PosCashRounding::roundLightStoresAmount(
+                    max(0, $lineGross - (float) $scaled['order_discount']),
+                );
+            }
             $amountPaid = min((float) ($sale->amount_paid ?? 0), $orderTotal);
 
             $updates = [
@@ -425,6 +443,7 @@ class BackofficeOrderLineEditService
         array $salesSettings,
         array $inventorySettings,
         bool $allowBelowStock,
+        bool $cashRound = false,
     ): SaleItem {
         $productCode = trim((string) ($row['product_code'] ?? ''));
         if ($productCode === '') {
@@ -453,6 +472,14 @@ class BackofficeOrderLineEditService
             null,
             false,
             $user->organization_id,
+        );
+        [$unitPrice, $amount] = $this->finalizePricedLineAmounts(
+            $product,
+            $newQty,
+            $isRetail,
+            $unitPrice,
+            $amount,
+            $cashRound,
         );
 
         $product->loadMissing(['vat', 'unit']);
@@ -532,6 +559,40 @@ class BackofficeOrderLineEditService
         }
 
         return $routeId;
+    }
+
+    /** @param  array<string, mixed>  $salesSettings */
+    protected function cashRoundingEnabled(CapabilityGate $gate, array $salesSettings): bool
+    {
+        $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
+            ? $gate->organization()->module_settings['sales']
+            : [];
+
+        return PosCashRoundingSettings::enabled($salesSettings, $customSales);
+    }
+
+    /** @return array{0: float, 1: float} unit price, line amount */
+    protected function finalizePricedLineAmounts(
+        Product $product,
+        float $baseQty,
+        bool $isRetailLine,
+        float $unitPrice,
+        float $amount,
+        bool $cashRound,
+    ): array {
+        if (! $cashRound) {
+            return [$unitPrice, round($amount, 2)];
+        }
+
+        $roundedAmount = PosCashRounding::roundLightStoresAmount($amount);
+        $product->loadMissing('unit');
+        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+        $entryQty = $factor > 1 && ! $isRetailLine ? $baseQty / $factor : $baseQty;
+        $displayUnit = $entryQty > 0
+            ? PosCashRounding::roundLightStoresAmount($roundedAmount / $entryQty)
+            : $unitPrice;
+
+        return [$displayUnit, $roundedAmount];
     }
 
     protected function adjustStockForQtyChange(
