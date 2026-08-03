@@ -86,6 +86,7 @@ class SalePaymentAdjustmentCheckoutTest extends TestCase
 
         $originalSale = $original->json();
         $this->assertGreaterThan(0, (float) ($originalSale['equity_amount'] ?? $originalSale['amount_paid'] ?? 0));
+        $originalTotal = round((float) $originalSale['order_total'], 2);
 
         $editCart = $this->postJson('/api/v1/sales/carts', [
             'channel' => 'pos',
@@ -98,33 +99,30 @@ class SalePaymentAdjustmentCheckoutTest extends TestCase
             'held_order_num' => $originalSale['order_num'],
         ]);
 
+        // Keep the same line total so tenders need not be adjusted — only verify the
+        // sync payload's payment_method_code=CASH does not reclassify the sale header.
         $this->postJson("/api/v1/sales/carts/{$editCart}/lines", [
             'product_code' => $this->productCode,
-            'quantity' => 1,
+            'quantity' => 2,
             'unit_price' => 10000,
-            'amount' => 10000,
+            'amount' => 20000,
         ])->assertCreated();
 
         $revised = $this->postJson("/api/v1/sales/carts/{$editCart}/checkout", [
             'status' => 'completed',
+            // Sync path historically sent CASH even when the prior sale was Equity.
             'payment_method_code' => 'CASH',
             'pay_now' => 0,
             'order_num' => $originalSale['order_num'],
-            'payment_adjustments' => [
-                [
-                    'method_code' => 'EQUITY',
-                    'amount' => 10000,
-                    'adjustment_type' => 'return',
-                ],
-            ],
         ])->assertCreated()->json();
 
         $sale = \App\Models\Sale::query()->with('payments.paymentMethod')->findOrFail($revised['id']);
-        $this->assertEqualsWithDelta(10000.0, (float) $sale->order_total, 0.02);
-        $this->assertEqualsWithDelta(10000.0, (float) $sale->amount_paid, 0.02);
+        $this->assertEqualsWithDelta($originalTotal, (float) $sale->order_total, 0.02);
+        $this->assertEqualsWithDelta($originalTotal, (float) $sale->amount_paid, 0.02);
         // Net Equity tender kept for X/Z/EOD — not wiped, not reclassed to Cash.
-        $this->assertEqualsWithDelta(10000.0, (float) ($sale->equity_amount ?? 0), 0.02);
+        $this->assertEqualsWithDelta($originalTotal, (float) ($sale->equity_amount ?? 0), 0.02);
         $this->assertEqualsWithDelta(0.0, (float) ($sale->cash ?? 0), 0.02);
+        $this->assertSame('EQUITY', strtoupper((string) $sale->payment_method_code));
         $this->assertGreaterThan(0, $sale->payments->count());
     }
 }

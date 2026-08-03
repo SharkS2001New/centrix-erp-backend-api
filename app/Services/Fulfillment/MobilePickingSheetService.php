@@ -12,7 +12,8 @@ use InvalidArgumentException;
 
 /**
  * Product-aggregated picking lists for mobile route orders when Distribution is disabled.
- * Lines combine wholesale + retail for the same product with W/R qty, prices, and line totals.
+ * Lines keep wholesale and retail distinct (W/R qty labels + sold prices) and show a
+ * per-customer retail breakdown under qty for warehouse pickers.
  */
 class MobilePickingSheetService
 {
@@ -79,7 +80,8 @@ class MobilePickingSheetService
     }
 
     /**
-     * One row per product: wholesale + retail quantities, prices, and line amount.
+     * One row per product with explicit W/R quantities, sold unit prices (not averages),
+     * and a per-customer retail qty ghost under Quantity.
      *
      * @param  array<int, int>  $saleIds
      * @return array<int, array<string, mixed>>
@@ -92,6 +94,7 @@ class MobilePickingSheetService
         }
 
         $items = SaleItem::query()
+            ->with(['sale.customer'])
             ->whereIn('sale_id', $saleIds)
             ->get();
 
@@ -124,29 +127,36 @@ class MobilePickingSheetService
             $retailQty = (float) $retailItems->sum('quantity');
             $lineTotal = round((float) $productItems->sum('amount'), 2);
 
-            $wholesaleLabel = $wholesaleQty > 0.0001
-                ? $this->stockUom->formatMixedStockDisplay($wholesaleQty, $uom)['text']
-                : '';
-            $retailLabel = $retailQty > 0.0001
-                ? $this->stockUom->formatMixedStockDisplay($retailQty, $uom)['text']
-                : '';
+            // Wholesale → pack labels (bags); retail stays in small units (kg/pcs).
+            // Never convert retail kg into bags — that erases the W/R distinction.
+            $wholesaleLabel = $this->formatWholesaleQtyLabel($wholesaleQty, $uom);
+            $retailLabel = $this->formatRetailQtyLabel($retailQty, $uom);
 
-            $quantityParts = array_values(array_filter([$wholesaleLabel, $retailLabel], fn ($v) => $v !== ''));
+            $quantityParts = [];
+            if ($wholesaleLabel !== '') {
+                $quantityParts[] = 'W '.$wholesaleLabel;
+            }
+            if ($retailLabel !== '') {
+                $quantityParts[] = 'R '.$retailLabel;
+            }
             $quantityLabel = implode(', ', $quantityParts);
 
-            $retailBreakdown = $this->buildRetailBreakdown($retailItems, $uom);
-            $wholesaleUnitPrice = $this->resolveTierDisplayUnitPrice($wholesaleItems, $uom, false);
-            $retailUnitPrice = $this->resolveTierDisplayUnitPrice($retailItems, $uom, true);
+            $retailBreakdown = $this->buildRetailCustomerBreakdown($retailItems, $uom);
+            $wholesalePrices = $this->distinctSoldUnitPrices($wholesaleItems, $uom, false);
+            $retailPrices = $this->distinctSoldUnitPrices($retailItems, $uom, true);
             $fullLabel = $this->fullPackageLabel($uom);
             $smallLabel = $this->smallPackagingLabel($uom);
 
             $priceParts = [];
-            if ($wholesaleUnitPrice > 0) {
-                $priceParts[] = 'Ksh '.$this->formatMoney($wholesaleUnitPrice).' / '.$fullLabel;
+            if ($wholesalePrices !== []) {
+                $priceParts[] = 'W Ksh '.$this->formatPriceList($wholesalePrices).' / '.$fullLabel;
             }
-            if ($retailUnitPrice > 0) {
-                $priceParts[] = 'Ksh '.$this->formatMoney($retailUnitPrice).' / '.$smallLabel;
+            if ($retailPrices !== []) {
+                $priceParts[] = 'R Ksh '.$this->formatPriceList($retailPrices).' / '.$smallLabel;
             }
+
+            $wholesaleUnitPrice = $wholesalePrices[0] ?? 0.0;
+            $retailUnitPrice = $retailPrices[0] ?? 0.0;
 
             $lines[] = [
                 'line_no' => $lineNo++,
@@ -160,19 +170,20 @@ class MobilePickingSheetService
                 'wholesale_qty' => $wholesaleQty,
                 'retail_qty' => $retailQty,
                 'quantity_label' => $quantityLabel,
-                'wholesale_qty_label' => $wholesaleLabel,
-                'retail_qty_label' => $retailLabel,
+                'wholesale_qty_label' => $wholesaleLabel !== '' ? 'W '.$wholesaleLabel : '',
+                'retail_qty_label' => $retailLabel !== '' ? 'R '.$retailLabel : '',
                 'retail_breakdown' => $retailBreakdown,
                 'pack_breakdown' => '',
                 'wholesale_unit_price' => $wholesaleUnitPrice,
                 'retail_unit_price' => $retailUnitPrice,
+                'wholesale_unit_prices' => $wholesalePrices,
+                'retail_unit_prices' => $retailPrices,
                 'unit_price' => $wholesaleUnitPrice > 0 ? $wholesaleUnitPrice : $retailUnitPrice,
                 'price_label' => implode(' · ', $priceParts),
                 'line_total' => $lineTotal,
-                'sort_qty' => $this->stockUom->fulfillmentSortQuantity(
-                    $wholesaleQty + $retailQty,
-                    $uom,
-                ),
+                'sort_qty' => $wholesaleQty > 0.0001
+                    ? $this->stockUom->fulfillmentSortQuantity($wholesaleQty, $uom)
+                    : $retailQty,
                 'shortage_reason' => null,
             ];
         }
@@ -199,76 +210,155 @@ class MobilePickingSheetService
         return $lines;
     }
 
-    /** @param  Collection<int, SaleItem>  $retailItems */
-    protected function buildRetailBreakdown(Collection $retailItems, ?Uom $uom): string
+    /**
+     * Per-customer retail qty under the main R total — e.g. "John 20 kg, Mary 15 kg".
+     *
+     * @param  Collection<int, SaleItem>  $retailItems
+     */
+    protected function buildRetailCustomerBreakdown(Collection $retailItems, ?Uom $uom): string
     {
         if ($retailItems->isEmpty()) {
             return '';
         }
 
-        $parts = [];
+        /** @var array<string, float> $byCustomer */
+        $byCustomer = [];
         foreach ($retailItems as $item) {
             $qty = (float) ($item->quantity ?? 0);
             if ($qty <= 0.0001) {
                 continue;
             }
-            $parts[] = $this->stockUom->formatMixedStockDisplay($qty, $uom)['text'];
+            $name = $this->customerNameForItem($item);
+            $byCustomer[$name] = ($byCustomer[$name] ?? 0.0) + $qty;
         }
 
-        if ($parts === []) {
+        if ($byCustomer === []) {
             return '';
         }
 
-        // Collapse identical purchase sizes: "5 kg ×2, 3 kg"
-        $counts = [];
-        foreach ($parts as $part) {
-            $counts[$part] = ($counts[$part] ?? 0) + 1;
-        }
-        $collapsed = [];
-        foreach ($counts as $label => $count) {
-            $collapsed[] = $count > 1 ? "{$label} ×{$count}" : $label;
+        uasort($byCustomer, function ($a, $b) {
+            $qtyCmp = $b <=> $a;
+            if ($qtyCmp !== 0) {
+                return $qtyCmp;
+            }
+
+            return 0;
+        });
+
+        $parts = [];
+        foreach ($byCustomer as $name => $qty) {
+            $qtyText = $this->formatRetailQtyLabel((float) $qty, $uom);
+            if ($qtyText === '') {
+                continue;
+            }
+            $parts[] = $name.' '.$qtyText;
         }
 
-        return implode(', ', $collapsed);
+        return implode(', ', $parts);
     }
 
-    /** @param  Collection<int, SaleItem>  $items */
-    protected function resolveTierDisplayUnitPrice(Collection $items, ?Uom $uom, bool $isRetail): float
+    /** Wholesale: bags / jer / packs (mixed UOM hierarchy). */
+    protected function formatWholesaleQtyLabel(float $baseQty, ?Uom $uom): string
+    {
+        if ($baseQty <= 0.0001) {
+            return '';
+        }
+
+        return $this->stockUom->formatMixedStockDisplay($baseQty, $uom)['text'];
+    }
+
+    /** Retail: always small packaging (kg / pcs) — never fold into wholesale bags. */
+    protected function formatRetailQtyLabel(float $baseQty, ?Uom $uom): string
+    {
+        if ($baseQty <= 0.0001) {
+            return '';
+        }
+
+        return $this->formatDisplayQty($baseQty).' '.$this->smallPackagingLabel($uom);
+    }
+
+    protected function formatDisplayQty(float $qty): string
+    {
+        if (abs($qty - round($qty)) < 0.0001) {
+            return number_format((int) round($qty), 0, '.', ',');
+        }
+
+        $formatted = rtrim(rtrim(number_format($qty, 3, '.', ','), '0'), '.');
+
+        return $formatted === '' ? '0' : $formatted;
+    }
+
+    protected function customerNameForItem(SaleItem $item): string
+    {
+        $sale = $item->sale;
+        if ($sale) {
+            $name = trim($sale->customerDisplayName());
+            if ($name !== '') {
+                return $name;
+            }
+        }
+
+        return 'Customer';
+    }
+
+    /**
+     * Distinct sold unit prices from sale_items (display_unit_price / reverse from amount).
+     * Never averages — pickers see the prices that were actually sold.
+     *
+     * @param  Collection<int, SaleItem>  $items
+     * @return list<float>
+     */
+    protected function distinctSoldUnitPrices(Collection $items, ?Uom $uom, bool $isRetail): array
     {
         if ($items->isEmpty()) {
-            return 0.0;
+            return [];
         }
 
-        $weighted = 0.0;
-        $weight = 0.0;
-
+        $prices = [];
         foreach ($items as $item) {
-            $baseQty = (float) ($item->quantity ?? 0);
-            if ($baseQty <= 0.0001) {
+            $price = $this->soldDisplayUnitPrice($item, $uom, $isRetail);
+            if ($price <= 0) {
                 continue;
             }
-
-            $soldQty = $isRetail ? $baseQty : $this->packageCount($baseQty, $uom);
-            if ($soldQty <= 0.0001) {
-                continue;
-            }
-
-            $display = (float) ($item->display_unit_price ?? 0);
-            if ($display <= 0) {
-                $amount = (float) ($item->amount ?? 0);
-                $discount = (float) ($item->discount_given ?? 0);
-                $display = ($amount + $discount) / $soldQty;
-            }
-
-            $weighted += $display * $soldQty;
-            $weight += $soldQty;
+            $key = (string) $price;
+            $prices[$key] = $price;
         }
 
-        if ($weight <= 0.0001) {
+        $list = array_values($prices);
+        sort($list, SORT_NUMERIC);
+
+        return $list;
+    }
+
+    protected function soldDisplayUnitPrice(SaleItem $item, ?Uom $uom, bool $isRetail): float
+    {
+        $baseQty = (float) ($item->quantity ?? 0);
+        if ($baseQty <= 0.0001) {
             return 0.0;
         }
 
-        return round($weighted / $weight, 2);
+        $soldQty = $isRetail ? $baseQty : $this->packageCount($baseQty, $uom);
+        if ($soldQty <= 0.0001) {
+            return 0.0;
+        }
+
+        $display = (float) ($item->display_unit_price ?? 0);
+        if ($display > 0) {
+            return (float) (int) round($display);
+        }
+
+        $gross = (float) ($item->amount ?? 0) + max(0.0, (float) ($item->discount_given ?? 0));
+        if ($gross > 0.0001) {
+            return (float) (int) round($gross / $soldQty);
+        }
+
+        return 0.0;
+    }
+
+    /** @param  list<float>  $prices */
+    protected function formatPriceList(array $prices): string
+    {
+        return implode(', ', array_map(fn (float $p) => $this->formatMoney($p), $prices));
     }
 
     protected function packageCount(float $baseQty, ?Uom $uom): float

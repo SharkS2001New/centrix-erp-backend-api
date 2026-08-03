@@ -31,7 +31,7 @@ class PosDailyOrderNumberAllocator
         }
 
         $date = $this->normalizeDate($businessDate) ?? now()->toDateString();
-        $next = $this->ceilingForCashierDay($organizationId, $cashierId, $date, locked: false) + 1;
+        $next = $this->nextTicketForCashierDay($organizationId, $cashierId, $date, locked: false);
 
         return [
             'pos_order_num' => $next,
@@ -58,7 +58,7 @@ class PosDailyOrderNumberAllocator
             $cashierId,
             $date,
         ): array {
-            $next = $this->ceilingForCashierDay($organizationId, $cashierId, $date, locked: true) + 1;
+            $next = $this->nextTicketForCashierDay($organizationId, $cashierId, $date, locked: true);
             $this->writeWatermark($organizationId, $cashierId, $date, $next);
 
             return [
@@ -251,6 +251,35 @@ class PosDailyOrderNumberAllocator
         string $date,
         bool $locked = false,
     ): int {
+        $saleMax = $this->saleMaxForCashierDay($organizationId, $cashierId, $date, $locked);
+        $watermark = $this->readWatermark($organizationId, $cashierId, $date);
+
+        return max($saleMax, $watermark);
+    }
+
+    /**
+     * Next Cash Sales # for this cashier/day.
+     *
+     * Empty day → 1. After sales → saleMax+1 when no outstanding offline reserve.
+     * When a reserve block advanced the watermark ahead of sales, continue after
+     * the watermark so another till cannot steal reserved tickets — the POS UI
+     * should claim a reserved slot (`pos_order_num`) instead, which starts at 1.
+     */
+    protected function nextTicketForCashierDay(
+        int $organizationId,
+        int $cashierId,
+        string $date,
+        bool $locked = false,
+    ): int {
+        return $this->ceilingForCashierDay($organizationId, $cashierId, $date, $locked) + 1;
+    }
+
+    protected function saleMaxForCashierDay(
+        int $organizationId,
+        int $cashierId,
+        string $date,
+        bool $locked = false,
+    ): int {
         $query = Sale::query()
             ->where('organization_id', $organizationId)
             ->where('cashier_id', $cashierId)
@@ -261,10 +290,7 @@ class PosDailyOrderNumberAllocator
             $query->lockForUpdate();
         }
 
-        $saleMax = (int) ($query->max('pos_order_num') ?? 0);
-        $watermark = $this->readWatermark($organizationId, $cashierId, $date);
-
-        return max($saleMax, $watermark);
+        return (int) ($query->max('pos_order_num') ?? 0);
     }
 
     protected function readWatermark(int $organizationId, int $cashierId, string $date): int

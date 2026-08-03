@@ -565,6 +565,7 @@ class CheckoutController extends Controller
                 'amount_paid' => $amountPaid,
                 'completed_at' => null,
                 'fulfillment_meta' => $fulfillmentMeta !== [] ? $fulfillmentMeta : null,
+                '__lock_pos_ticket' => ! empty($posOrderFields['__lock_pos_ticket']),
             ], (int) $user->organization_id);
 
             if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel)) {
@@ -897,11 +898,10 @@ class CheckoutController extends Controller
         $clientDate = $clientDateRaw !== ''
             ? (app(PosDailyOrderNumberAllocator::class)->normalizeBusinessDate($clientDateRaw) ?? '')
             : '';
-        if (
-            $clientPos > 0
-            && $clientDate !== ''
-            && filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN)
-        ) {
+        $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
+        // External POS always prefers the client ticket (reserved slot or printed receipt).
+        // Offline sync MUST keep that number — never silently reallocate a different Cash Sales #.
+        if ($clientPos > 0 && $clientDate !== '') {
             $claimed = $allocator->claimReservedForCheckout(
                 (int) $user->organization_id,
                 (int) $user->id,
@@ -912,13 +912,21 @@ class CheckoutController extends Controller
                 return [
                     'pos_order_num' => $clientPos,
                     'pos_order_date' => $clientDate,
+                    '__lock_pos_ticket' => true,
                 ];
+            }
+            if ($offlineOrder) {
+                throw new InvalidArgumentException(
+                    "Cash Sales #{$clientPos} could not be claimed for {$clientDate}. "
+                    .'Reprint after reconnect, or contact support if this ticket was already used.',
+                );
             }
         }
 
         $allocated = $allocator->allocateForCheckout(
             (int) $user->organization_id,
             (int) $user->id,
+            $clientDate !== '' ? $clientDate : null,
         );
 
         return $allocated ?? [];
@@ -1031,6 +1039,8 @@ class CheckoutController extends Controller
     {
         $allocator = app(OrderNumberAllocator::class);
         $attributes['order_num'] = $orderNum;
+        $lockPosTicket = ! empty($attributes['__lock_pos_ticket']);
+        unset($attributes['__lock_pos_ticket']);
         $lastError = null;
 
         for ($attempt = 0; $attempt < 4; $attempt++) {
@@ -1048,6 +1058,13 @@ class CheckoutController extends Controller
                     && ! empty($attributes['cashier_id'])
                     && ! empty($attributes['organization_id'])
                 ) {
+                    // Printed / reserved Cash Sales # must not be silently swapped on sync.
+                    if ($lockPosTicket) {
+                        throw new InvalidArgumentException(
+                            'Cash Sales #'.($attributes['pos_order_num'] ?? '').' is already used. '
+                            .'Keep the printed ticket and contact support if sync cannot complete.',
+                        );
+                    }
                     $pos = app(PosDailyOrderNumberAllocator::class)->allocateForCheckout(
                         (int) $attributes['organization_id'],
                         (int) $attributes['cashier_id'],
@@ -1281,6 +1298,10 @@ class CheckoutController extends Controller
         SalePayment::query()->where('sale_id', $sale->id)->delete();
         SalePaymentColumnMapper::replaceFromMethodMap($sale, $map);
 
+        $sale->update([
+            'payment_method_code' => $this->primaryPaymentMethodCode($map, $prior),
+        ]);
+
         foreach ($map as $methodCode => $amount) {
             $method = $this->resolveCheckoutPaymentMethod(
                 (int) $sale->organization_id,
@@ -1392,6 +1413,35 @@ class CheckoutController extends Controller
             $scaled,
             static fn (float $amount) => $amount > 0.009,
         );
+    }
+
+    /**
+     * Header payment method for a previous-order edit — keep the prior method when it
+     * still has tender, otherwise the largest remaining tender (never force CASH).
+     *
+     * @param  array<string, float>  $map
+     */
+    protected function primaryPaymentMethodCode(array $map, Sale $prior): string
+    {
+        $priorCode = strtoupper(trim((string) ($prior->payment_method_code ?? '')));
+        if ($priorCode !== '' && isset($map[$priorCode]) && (float) $map[$priorCode] > 0.009) {
+            return $priorCode;
+        }
+
+        if ($map === []) {
+            return $priorCode !== '' ? $priorCode : 'CASH';
+        }
+
+        $largest = array_key_first($map);
+        foreach ($map as $code => $amount) {
+            if ((float) $amount >= (float) ($map[$largest] ?? 0)) {
+                $largest = $code;
+            }
+        }
+
+        $code = strtoupper(trim((string) $largest));
+
+        return $code !== '' ? $code : 'CASH';
     }
 
     protected function copyPriorSalePaymentsToSale(Sale $prior, Sale $sale, ?int $floatSessionId): void

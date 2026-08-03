@@ -116,8 +116,53 @@ class PosDailyOrderNumberAllocatorTest extends TestCase
         $this->assertCount(3, $block['tickets']);
         $this->assertSame(1, $block['tickets'][0]['pos_order_num']);
 
+        // Without claiming a reserved ticket, allocate continues after the block
+        // (multi-till safe). POS UI must claim reserved slots so receipts still start at 1.
         $next = $allocator->allocateForCheckout((int) $admin->organization_id, (int) $admin->id, $day);
         $this->assertSame(4, $next['pos_order_num']);
+    }
+
+    public function test_claim_reserved_ticket_keeps_starting_sequence_from_one(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $allocator = app(PosDailyOrderNumberAllocator::class);
+        $day = now()->toDateString();
+
+        $block = $allocator->reserveBlockForCashier(
+            (int) $admin->organization_id,
+            (int) $admin->id,
+            5,
+            $day,
+        );
+        $this->assertSame(1, $block['start']);
+
+        $this->assertTrue($allocator->claimReservedForCheckout(
+            (int) $admin->organization_id,
+            (int) $admin->id,
+            1,
+            $day,
+        ));
+
+        Sale::query()->create([
+            'order_num' => 880020,
+            'pos_order_num' => 1,
+            'pos_order_date' => $day,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 10,
+            'amount_paid' => 10,
+        ]);
+
+        $this->assertTrue($allocator->claimReservedForCheckout(
+            (int) $admin->organization_id,
+            (int) $admin->id,
+            2,
+            $day,
+        ));
     }
 
     public function test_claim_reserved_for_checkout_rejects_duplicate_ticket(): void
