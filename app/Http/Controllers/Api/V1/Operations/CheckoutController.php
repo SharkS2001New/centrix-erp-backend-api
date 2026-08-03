@@ -93,6 +93,8 @@ class CheckoutController extends Controller
 
         // Mobile only needs confirmation fields; skip full toArray of items/payments.
         if ($channel === 'mobile') {
+            $fulfillmentMeta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+
             return response()->json([
                 'id' => (int) $sale->id,
                 'order_num' => (int) $sale->order_num,
@@ -101,6 +103,7 @@ class CheckoutController extends Controller
                 'status_name' => $statusName,
                 'payment_status' => $sale->payment_status,
                 'amount_paid' => round((float) $sale->amount_paid, 2),
+                'same_day_customer_append' => ! empty($fulfillmentMeta['same_day_customer_append']),
             ], 201);
         }
 
