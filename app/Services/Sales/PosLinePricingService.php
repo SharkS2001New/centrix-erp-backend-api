@@ -135,14 +135,15 @@ class PosLinePricingService
             return $tiers;
         }
 
-        $isPack = $conversion > 1.0;
+        $legacyRetailMax = (float) ($rps->max_qty_measure ?? 0);
+        $legacyLooksLikePackMarkup = $conversion > 1.0 && $legacyRetailMax > max(1.0, $conversion / 2.0);
         $tiers = [];
-        if ((float) ($rps->max_qty_measure ?? 0) > 0) {
+        if ($legacyRetailMax > 0) {
             $tiers[] = [
                 'min_qty' => 1.0,
-                'max_qty' => (float) $rps->max_qty_measure,
-                'measure_level' => $isPack ? 'full' : 'small',
-                'price_mode' => $isPack ? 'wholesale' : 'retail',
+                'max_qty' => $legacyRetailMax,
+                'measure_level' => $legacyLooksLikePackMarkup ? 'full' : 'small',
+                'price_mode' => $legacyLooksLikePackMarkup ? 'wholesale' : 'retail',
                 'markup_price' => (float) ($rps->markup_price ?? 0),
             ];
         }
@@ -150,7 +151,7 @@ class PosLinePricingService
             $tiers[] = [
                 'min_qty' => (float) ($rps->max_qty_measure ?? 0) + 0.001,
                 'max_qty' => (float) $rps->wholesale_qty_measure,
-                'measure_level' => $isPack ? 'middle' : 'small',
+                'measure_level' => $legacyLooksLikePackMarkup ? 'middle' : 'small',
                 'price_mode' => 'wholesale',
                 'markup_price' => (float) ($rps->wholesale_markup_price ?? 0),
             ];

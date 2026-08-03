@@ -203,6 +203,74 @@ class SalesReportsTest extends TestCase
         );
     }
 
+    public function test_sales_by_user_overall_summary_aggregates_across_dates(): void
+    {
+        $dayOne = now()->subDays(2)->toDateString();
+        $dayTwo = now()->subDay()->toDateString();
+
+        $saleOne = Sale::query()->create([
+            'order_num' => 995020,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $this->admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 1000,
+            'total_vat' => 100,
+            'amount_paid' => 1000,
+            'archived' => 0,
+            'completed_at' => $dayOne.' 10:00:00',
+        ]);
+        $saleOne->forceFill(['created_at' => $dayOne.' 09:00:00'])->save();
+
+        $saleTwo = Sale::query()->create([
+            'order_num' => 995021,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $this->admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 2500,
+            'total_vat' => 250,
+            'amount_paid' => 2500,
+            'archived' => 0,
+            'completed_at' => $dayTwo.' 12:00:00',
+        ]);
+        $saleTwo->forceFill(['created_at' => $dayTwo.' 11:00:00'])->save();
+
+        $overall = $this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$dayOne}&to_date={$dayTwo}&date_column=sale_date&cashier_id={$this->admin->id}&overall_summary=1&per_page=50"
+        )->assertOk();
+
+        $overallRows = collect($overall->json('data'));
+        $this->assertTrue(
+            $overallRows->every(fn ($row) => ! array_key_exists('sale_date', $row) || $row['sale_date'] === null),
+            'Overall summary rows should not include a sale_date breakdown.',
+        );
+
+        $posOverall = $overallRows->firstWhere('channel', 'pos');
+        $this->assertNotNull($posOverall);
+        $this->assertSame(2, (int) ($posOverall['order_count'] ?? 0));
+        $this->assertEqualsWithDelta(3500.0, (float) ($posOverall['gross_sales'] ?? 0), 0.01);
+
+        $byDate = $this->getJson(
+            "/api/v1/reports/sales-by-user?from_date={$dayOne}&to_date={$dayTwo}&date_column=sale_date&cashier_id={$this->admin->id}&overall_summary=0&per_page=50"
+        )->assertOk();
+
+        $dateRows = collect($byDate->json('data'));
+        $this->assertGreaterThanOrEqual(2, $dateRows->count());
+        $this->assertTrue(
+            $dateRows->contains(fn ($row) => ($row['sale_date'] ?? null) === $dayOne),
+            'Date breakdown should include the first sale day.',
+        );
+        $this->assertTrue(
+            $dateRows->contains(fn ($row) => ($row['sale_date'] ?? null) === $dayTwo),
+            'Date breakdown should include the second sale day.',
+        );
+    }
+
     public function test_dispatch_orders_match_orders_without_required_date_using_created_at(): void
     {
         $route = RouteModel::query()->firstOrFail();

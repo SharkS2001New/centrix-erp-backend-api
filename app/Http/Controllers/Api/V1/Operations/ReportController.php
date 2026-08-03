@@ -544,8 +544,85 @@ class ReportController extends Controller
 
     public function salesByUser(Request $request)
     {
-        return response()->json($this->reportFromView('v_sales_by_user', $this->filters($request), [
-            'sale_date', 'branch_id', 'cashier_id', 'channel',
+        $filters = $this->filters($request);
+        $allowedCols = ['sale_date', 'branch_id', 'cashier_id', 'channel'];
+        $overallSummary = $request->boolean('overall_summary', true);
+
+        if (! $overallSummary) {
+            return response()->json($this->reportFromView('v_sales_by_user', $filters, $allowedCols, function ($q) {
+                $q->orderByDesc('sale_date')->orderBy('salesperson');
+            }));
+        }
+
+        $q = DB::table('v_sales_by_user');
+        $this->scopeReportQueryToOrganization($q, $request, 'v_sales_by_user', $allowedCols);
+
+        $filterColumns = $allowedCols;
+        if ($this->viewColumnExists('v_sales_by_user', 'branch_id') && ! in_array('branch_id', $filterColumns, true)) {
+            $filterColumns[] = 'branch_id';
+        }
+
+        foreach ($filterColumns as $col) {
+            if (isset($filters[$col]) && $filters[$col] !== '') {
+                $q->where($col, $filters[$col]);
+            }
+        }
+        if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
+            $dateColumn = $filters['date_column'];
+            if ($this->viewColumnExists('v_sales_by_user', $dateColumn)) {
+                $q->where($dateColumn, '>=', $filters['from_date']);
+            }
+        }
+        if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
+            $dateColumn = $filters['date_column'];
+            if ($this->viewColumnExists('v_sales_by_user', $dateColumn)) {
+                $q->where($dateColumn, '<=', $filters['to_date']);
+            }
+        }
+
+        $aggregated = DB::query()
+            ->fromSub($q, 'filtered_daily_user_sales')
+            ->select([
+                'organization_id',
+                'branch_id',
+                'cashier_id',
+                'salesperson',
+                'channel',
+            ])
+            ->selectRaw('SUM(order_count) as order_count')
+            ->selectRaw('SUM(gross_sales) as gross_sales')
+            ->selectRaw('SUM(total_vat) as total_vat')
+            ->selectRaw('SUM(net_sales) as net_sales')
+            ->selectRaw('SUM(amount_collected) as amount_collected')
+            ->groupBy('organization_id', 'branch_id', 'cashier_id', 'salesperson', 'channel')
+            ->orderByDesc('gross_sales')
+            ->orderBy('salesperson');
+
+        $summaryRaw = DB::query()
+            ->fromSub(clone $aggregated, 'user_sales_totals')
+            ->selectRaw('COUNT(*) as row_count')
+            ->selectRaw('COALESCE(SUM(order_count), 0) as order_count')
+            ->selectRaw('COALESCE(SUM(gross_sales), 0) as gross_sales')
+            ->selectRaw('COALESCE(SUM(total_vat), 0) as total_vat')
+            ->selectRaw('COALESCE(SUM(net_sales), 0) as net_sales')
+            ->selectRaw('COALESCE(SUM(amount_collected), 0) as amount_collected')
+            ->first();
+
+        $perPage = min((int) ($filters['per_page'] ?? 20), 200);
+        $paginator = $aggregated->paginate($perPage);
+
+        $summary = [
+            'row_count' => (int) ($summaryRaw->row_count ?? 0),
+            'order_count' => (int) ($summaryRaw->order_count ?? 0),
+            'gross_sales' => round((float) ($summaryRaw->gross_sales ?? 0), 2),
+            'total_vat' => round((float) ($summaryRaw->total_vat ?? 0), 2),
+            'net_sales' => round((float) ($summaryRaw->net_sales ?? 0), 2),
+            'net_ex_vat' => round((float) ($summaryRaw->net_sales ?? 0), 2),
+            'amount_collected' => round((float) ($summaryRaw->amount_collected ?? 0), 2),
+        ];
+
+        return response()->json(array_merge($paginator->toArray(), [
+            'summary' => $summary,
         ]));
     }
 
