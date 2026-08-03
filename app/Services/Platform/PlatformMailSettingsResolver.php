@@ -519,9 +519,9 @@ class PlatformMailSettingsResolver
             ] as $key) {
                 if (array_key_exists($key, $data)) {
                     $account[$key] = $data[$key];
-                }
             }
-            if (! empty($data['smtp_password'])) {
+        }
+        if (! empty($data['smtp_password'])) {
                 $account['smtp_password'] = $data['smtp_password'];
         }
         if (! empty($data['imap_password'])) {

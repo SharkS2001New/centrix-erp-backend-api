@@ -57,11 +57,11 @@ class CustomerInvoiceService
                 $updates['total_vat'] = $sale->total_vat;
             }
             if (! $hasPayments) {
-                if (round((float) $existing->amount_paid, 2) !== $paid) {
-                    $updates['amount_paid'] = $paid;
-                }
-                if ((int) $existing->payment_status !== $paymentStatus) {
-                    $updates['payment_status'] = $paymentStatus;
+            if (round((float) $existing->amount_paid, 2) !== $paid) {
+                $updates['amount_paid'] = $paid;
+            }
+            if ((int) $existing->payment_status !== $paymentStatus) {
+                $updates['payment_status'] = $paymentStatus;
                 }
             }
             if ($updates !== []) {
