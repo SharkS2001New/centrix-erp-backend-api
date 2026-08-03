@@ -496,7 +496,15 @@ class CheckoutController extends Controller
             ], (int) $user->organization_id);
 
             if ($workflow->isTerminalStatus($orderStatus, (string) $cart->channel)) {
-                $sale->update(['completed_at' => now()]);
+                $clientCompleted = $this->resolveOfflineClientCompletedAt($input);
+                if ($clientCompleted !== null) {
+                    $sale->forceFill([
+                        'created_at' => $clientCompleted,
+                        'completed_at' => $clientCompleted,
+                    ])->save();
+                } else {
+                    $sale->update(['completed_at' => now()]);
+                }
             }
 
             $deductStockRequested = (bool) ($input['deduct_stock'] ?? true);
@@ -834,6 +842,27 @@ class CheckoutController extends Controller
         $source = strtolower(trim((string) ($cart->order_source ?? '')));
 
         return $channel === 'pos' || $source === 'pos';
+    }
+
+    /**
+     * Preserve the cashier's local sale timestamp when replaying offline POS checkout.
+     */
+    protected function resolveOfflineClientCompletedAt(array $input): ?\Carbon\Carbon
+    {
+        if (! filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            return null;
+        }
+
+        $raw = trim((string) ($input['client_completed_at'] ?? ''));
+        if ($raw === '') {
+            return null;
+        }
+
+        try {
+            return \Carbon\Carbon::parse($raw)->timezone(config('app.timezone'));
+        } catch (\Throwable) {
+            return null;
+        }
     }
 
     /**

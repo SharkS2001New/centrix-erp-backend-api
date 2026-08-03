@@ -195,6 +195,9 @@ class ProductController extends BaseResourceController
             $query->onlyTrashed();
         } elseif ($status === 'all') {
             $query->withTrashed();
+        } else {
+            // Active catalogue — never expose soft-deleted rows (POS/mobile/backend lists).
+            $query->whereNull('products.deleted_at');
         }
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
