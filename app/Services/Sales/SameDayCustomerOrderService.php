@@ -1,0 +1,135 @@
+<?php
+
+namespace App\Services\Sales;
+
+use App\Models\Sale;
+use App\Models\User;
+use App\Services\Erp\CapabilityGate;
+use Carbon\Carbon;
+use Illuminate\Support\Collection;
+
+/**
+ * Org setting: append new POS/backoffice sales for a registered customer onto
+ * their open order from the same calendar day (same branch) instead of a new ticket.
+ */
+class SameDayCustomerOrderService
+{
+    public function enabled(array $salesSettings): bool
+    {
+        return ! empty($salesSettings['append_same_day_customer_orders']);
+    }
+
+    /**
+     * Latest non-cancelled/expired sale for this customer today at the branch.
+     */
+    public function findOpenOrderToday(
+        User $user,
+        int $customerNum,
+        ?int $branchId = null,
+        ?string $channel = null,
+    ): ?Sale {
+        if ($customerNum <= 0) {
+            return null;
+        }
+
+        $orgId = (int) ($user->organization_id ?? 0);
+        if ($orgId <= 0) {
+            return null;
+        }
+
+        $tz = (string) config('app.timezone', 'Africa/Nairobi');
+        $dayStart = Carbon::now($tz)->startOfDay()->utc();
+        $dayEnd = Carbon::now($tz)->endOfDay()->utc();
+
+        $query = Sale::query()
+            ->where('organization_id', $orgId)
+            ->where('customer_num', $customerNum)
+            ->whereNotIn('status', ['cancelled', 'expired', 'held', 'draft'])
+            ->whereBetween('created_at', [$dayStart, $dayEnd])
+            ->orderByDesc('id');
+
+        $resolvedBranch = $branchId ?? ($user->branch_id ? (int) $user->branch_id : null);
+        if ($resolvedBranch) {
+            $query->where('branch_id', $resolvedBranch);
+        }
+
+        if ($channel !== null && $channel !== '') {
+            $query->where('channel', $channel);
+        }
+
+        return $query->first();
+    }
+
+    /**
+     * When setting is on and checkout has a customer but is not already an edit
+     * of today's order, return that order so checkout can continue it.
+     *
+     * @param  array<string, mixed>  $salesSettings
+     * @param  array<string, mixed>  $input
+     */
+    public function resolveAppendTarget(
+        CapabilityGate $gate,
+        User $user,
+        array $salesSettings,
+        ?int $customerNum,
+        ?int $branchId,
+        string $channel,
+        ?int $alreadySupersededSaleId,
+        ?int $heldOrderNum,
+    ): ?Sale {
+        if (! $this->enabled($salesSettings)) {
+            return null;
+        }
+        if (! $customerNum || $customerNum <= 0) {
+            return null;
+        }
+        // Walk-in / anonymous checkouts never append.
+        if (! in_array($channel, ['pos', 'backend'], true)) {
+            return null;
+        }
+
+        $existing = $this->findOpenOrderToday($user, $customerNum, $branchId, $channel);
+        if (! $existing) {
+            return null;
+        }
+
+        // Already editing this (or another) order — leave explicit edit sessions alone.
+        if ($alreadySupersededSaleId && (int) $alreadySupersededSaleId === (int) $existing->id) {
+            return null;
+        }
+        if ($heldOrderNum && (int) $heldOrderNum === (int) $existing->order_num) {
+            return null;
+        }
+        if ($alreadySupersededSaleId || $heldOrderNum) {
+            return null;
+        }
+
+        return $existing;
+    }
+
+    /**
+     * Build synthetic cart-line shaped objects from a prior sale's items.
+     *
+     * @return Collection<int, object>
+     */
+    public function priorItemsAsCheckoutLines(Sale $sale): Collection
+    {
+        $sale->loadMissing('items');
+
+        return collect($sale->items ?? [])->map(function ($item) {
+            return (object) [
+                'product_code' => $item->product_code,
+                'quantity' => (float) $item->quantity,
+                'uom' => $item->uom,
+                'unit_price' => (float) $item->selling_price,
+                'display_unit_price' => $item->display_unit_price !== null
+                    ? (float) $item->display_unit_price
+                    : null,
+                'discount_given' => (float) ($item->discount_given ?? 0),
+                'product_vat' => (float) ($item->product_vat ?? 0),
+                'amount' => (float) $item->amount,
+                'on_wholesale_retail' => (int) ($item->on_wholesale_retail ?? 0),
+            ];
+        })->values();
+    }
+}
