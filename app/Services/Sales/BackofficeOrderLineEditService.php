@@ -30,6 +30,11 @@ class BackofficeOrderLineEditService
         protected DiscountApprovalService $discounts,
     ) {}
 
+    /**
+     * Whether this sale can be line-edited from Sales → Edit order.
+     * POS, mobile, and backoffice orders are all eligible — source does not matter.
+     * Status / cancelled / legacy gates still apply in assertLineEditAllowed().
+     */
     public function isBackofficeOrder(Sale $sale, ?CapabilityGate $gate = null): bool
     {
         if ((string) $sale->status === 'editable') {
@@ -44,32 +49,13 @@ class BackofficeOrderLineEditService
         $source = strtolower((string) ($sale->order_source ?? ''));
         $channel = strtolower((string) ($sale->channel ?: ''));
 
-        if ($channel === 'mobile' || $source === 'mobile') {
+        $allowed = ['pos', 'mobile', 'backend', 'backoffice', 'erp', 'whatsapp'];
+
+        if (in_array($channel, $allowed, true) || in_array($source, $allowed, true)) {
             return true;
         }
 
-        if ($gate !== null && ! $gate->enabled('sales.pos')) {
-            if (in_array($source, ['pos', 'backend', 'backoffice', 'erp', 'whatsapp'], true)) {
-                return true;
-            }
-            if (in_array($channel, ['pos', 'backend', 'backoffice', 'erp', 'whatsapp'], true)) {
-                return true;
-            }
-        }
-
-        if (in_array($source, ['pos'], true) || $channel === 'pos') {
-            return false;
-        }
-
-        if (in_array($source, ['backoffice', 'backend', 'whatsapp'], true)) {
-            return true;
-        }
-
-        if (in_array($channel, ['backend', 'whatsapp'], true)) {
-            return true;
-        }
-
-        return ($meta['sales_workspace'] ?? null) === 'backoffice';
+        return false;
     }
 
     public function backofficeOrderEditEnabled(CapabilityGate $gate): bool
