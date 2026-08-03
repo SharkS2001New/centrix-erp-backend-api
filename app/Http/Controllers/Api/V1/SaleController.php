@@ -292,11 +292,12 @@ class SaleController extends BaseResourceController
 
         $this->applyColumnFilters($query, $request);
 
+        // Summary must run before select('sales.*'); aggregate select replaces columns on a clone.
+        $summary = $this->summarizeFilteredOrders($query);
+
         if (! empty($query->getQuery()->joins)) {
             $query->select('sales.*');
         }
-
-        $summary = $this->summarizeFilteredOrders($query);
 
         $perPage = min((int) $request->input('per_page', 25), 200);
 
@@ -351,11 +352,11 @@ class SaleController extends BaseResourceController
     /** @return array{total: int, revenue: float, unpaid: int, partial: int, paid: int, cancelled: int, expired: int} */
     protected function summarizeFilteredOrders(Builder $query): array
     {
-        // Route / search joins may already have select('sales.*'). selectRaw() adds columns
-        // (does not replace), which breaks ONLY_FULL_GROUP_BY. Replace the select list entirely.
+        // Joined list queries may carry select('sales.*'). selectRaw() appends columns and breaks
+        // ONLY_FULL_GROUP_BY; drop any prior select/order before aggregating.
         $row = (clone $query)
-            ->reorder()
-            ->select(DB::raw("
+            ->cloneWithout(['columns', 'orders'])
+            ->selectRaw("
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN 1 ELSE 0 END) as total,
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN COALESCE(sales.order_total, 0) ELSE 0 END) as revenue,
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) = 'paid' THEN 1 ELSE 0 END) as paid,
@@ -363,7 +364,7 @@ class SaleController extends BaseResourceController
                 SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) NOT IN ('paid', 'partial', 'partially_paid') THEN 1 ELSE 0 END) as unpaid,
                 SUM(CASE WHEN sales.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
                 SUM(CASE WHEN sales.status = 'expired' THEN 1 ELSE 0 END) as expired
-            "))
+            ")
             ->first();
 
         return [

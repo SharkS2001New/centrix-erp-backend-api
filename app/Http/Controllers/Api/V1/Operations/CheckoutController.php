@@ -42,6 +42,7 @@ use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\PosOfflineCheckoutIdempotency;
+use App\Services\Sales\SaleRouteResolver;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
