@@ -112,6 +112,10 @@ class OrganizationPlatformConfigService
             $nextSales['enable_pos_order_edit'] = (bool) $salesPlatform['enable_pos_order_edit'];
         }
 
+        if (array_key_exists('append_same_day_customer_orders', $salesPlatform)) {
+            $nextSales['append_same_day_customer_orders'] = (bool) $salesPlatform['append_same_day_customer_orders'];
+        }
+
         if (array_key_exists('enable_pos_cash_rounding', $salesPlatform)) {
             $nextSales['enable_pos_cash_rounding'] = (bool) $salesPlatform['enable_pos_cash_rounding'];
         }
@@ -409,6 +413,7 @@ class OrganizationPlatformConfigService
             'order_workflow' => $workflowDefaults,
             'order_cancellation_enabled' => true,
             'enable_pos_order_edit' => false,
+            'append_same_day_customer_orders' => false,
             'enable_backoffice_order_edit' => true,
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
@@ -479,6 +484,7 @@ class OrganizationPlatformConfigService
             'hospitality_services' => \App\Services\Hospitality\HospitalityServices::forOrganization($org),
             'hospitality_payment_workflow' => \App\Services\Hospitality\HospitalityPaymentWorkflow::forOrganization($org),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
+            'append_same_day_customer_orders' => (bool) ($sales['append_same_day_customer_orders'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
             'edit_order_statuses' => $this->normalizeRequiredActionStatuses(
                 $sales['edit_order_statuses'] ?? null,

@@ -139,6 +139,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('carts/{cartId}/lines/{lineRef}', [CartOperationsController::class, 'deleteLine']);
         Route::delete('carts/{cartId}/lines', [CartOperationsController::class, 'clear']);
         Route::get('customers/lookup', [CartOperationsController::class, 'lookupCustomers']);
+        Route::get('orders/same-day-for-customer', [CartOperationsController::class, 'sameDayForCustomer']);
         Route::get('loyalty-cards/lookup', [CartOperationsController::class, 'lookupLoyaltyCard']);
         Route::post('carts/{cartId}/loyalty', [CartOperationsController::class, 'attachLoyaltyCard']);
         Route::post('carts/{cartId}/payment/voucher', [CartOperationsController::class, 'applyVoucherPayment']);

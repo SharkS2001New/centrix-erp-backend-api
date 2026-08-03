@@ -42,6 +42,8 @@ use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\PosOfflineCheckoutIdempotency;
+use App\Services\Sales\PosOrderEditService;
+use App\Services\Sales\SameDayCustomerOrderService;
 use App\Services\Sales\SaleRouteResolver;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
@@ -217,7 +219,46 @@ class CheckoutController extends Controller
             if (! $customerNum && $loyaltyCardIdEarly) {
                 $customerNum = LoyaltyCard::find($loyaltyCardIdEarly)?->customer_num;
             }
+
+            $sameDayAppend = app(SameDayCustomerOrderService::class);
+            $appendPriorSale = $sameDayAppend->resolveAppendTarget(
+                $gate,
+                $user,
+                $salesSettings,
+                $customerNum ? (int) $customerNum : null,
+                $cart->branch_id ? (int) $cart->branch_id : ($user->branch_id ? (int) $user->branch_id : null),
+                (string) $cart->channel,
+                $cart->superseded_sale_id ? (int) $cart->superseded_sale_id : null,
+                $cart->held_order_num ? (int) $cart->held_order_num : null,
+            );
+            $appendPriorPaid = 0.0;
+            if ($appendPriorSale) {
+                app(PosOrderEditService::class)->fiscalVoidBeforeEdit($appendPriorSale, $user, $gate);
+                if ($appendPriorSale->stock_balanced) {
+                    $this->reverseSaleStockDeductions($appendPriorSale, $user);
+                } else {
+                    $this->releaseSaleReservations((int) $appendPriorSale->id);
+                }
+                $cart->superseded_sale_id = (int) $appendPriorSale->id;
+                $cart->held_order_num = (int) $appendPriorSale->order_num;
+                $input['order_num'] = (int) $appendPriorSale->order_num;
+                $appendPriorPaid = max(0, (float) ($appendPriorSale->amount_paid ?? 0));
+            }
+
             $orderNum = $this->resolveCheckoutOrderNum($cart, $user, $input);
+            if ($appendPriorSale) {
+                $appendPriorSale->refresh();
+                if ((string) $appendPriorSale->status !== 'cancelled') {
+                    $appendPriorSale->update([
+                        'status' => 'cancelled',
+                        'cancelled_at' => $appendPriorSale->cancelled_at ?? now(),
+                        'cancelled_by' => $appendPriorSale->cancelled_by ?? $user->id,
+                        'archived' => 1,
+                        'stock_balanced' => 0,
+                    ]);
+                }
+                app(CustomerInvoiceService::class)->voidForCancelledSale($appendPriorSale->fresh(), $user);
+            }
             $posOrderFields = $this->resolvePosDailyOrderFields($cart, $user, $input);
 
             $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
@@ -230,8 +271,16 @@ class CheckoutController extends Controller
                 $gate,
             );
             $lines = $prepared['lines'];
-            $lineNet = (float) $prepared['order_total'];
-            $vat = (float) ($input['total_vat'] ?? $prepared['total_vat']);
+            if ($appendPriorSale) {
+                $lines = $sameDayAppend->priorItemsAsCheckoutLines($appendPriorSale)
+                    ->concat($lines)
+                    ->values();
+                $lineNet = round((float) $lines->sum('amount'), 2);
+                $vat = round((float) $lines->sum('product_vat'), 2);
+            } else {
+                $lineNet = (float) $prepared['order_total'];
+                $vat = (float) ($input['total_vat'] ?? $prepared['total_vat']);
+            }
             $isCredit = (bool) ($input['is_credit_sale'] ?? false);
             $payNow = (float) ($input['pay_now'] ?? 0);
 
@@ -307,7 +356,7 @@ class CheckoutController extends Controller
                 }
             }
 
-            $cashDue = max(0, $total - $voucherPayment - $pointsPayment - $mpesaOnCart);
+            $cashDue = max(0, $total - $appendPriorPaid - $voucherPayment - $pointsPayment - $mpesaOnCart);
             $isMobileChannel = (string) $cart->channel === 'mobile';
             $mobileCheckout = app(MobileCheckoutSettings::class);
             $mobileCheckout->applyCheckoutPolicy($salesSettings, $input, (string) $cart->channel);
@@ -339,7 +388,7 @@ class CheckoutController extends Controller
                 $amountPaid = $total;
             } else {
                 $payNow = min($payNow, $cashDue);
-                $amountPaid = $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
+                $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             }
             if (! $customerNum && $loyaltyCardId) {
                 $customerNum = LoyaltyCard::find($loyaltyCardId)?->customer_num;
@@ -458,6 +507,10 @@ class CheckoutController extends Controller
                 $fulfillmentMeta['supersedes_sale_id'] = (int) $cart->superseded_sale_id;
                 $fulfillmentMeta['pos_edit'] = true;
             }
+            if ($appendPriorSale) {
+                $fulfillmentMeta['same_day_customer_append'] = true;
+                $fulfillmentMeta['appended_to_sale_id'] = (int) $appendPriorSale->id;
+            }
             if (! empty($input['sales_workspace'])) {
                 $fulfillmentMeta['sales_workspace'] = (string) $input['sales_workspace'];
             }
@@ -532,6 +585,10 @@ class CheckoutController extends Controller
                     'amount' => $line->amount,
                     'on_wholesale_retail' => $line->on_wholesale_retail,
                 ]);
+            }
+
+            if ($appendPriorSale) {
+                $this->copyPriorSalePaymentsToSale($appendPriorSale, $sale, $floatSessionId);
             }
 
             if ($pendingStockDeduct || $gate->shouldHoldStockOnCheckout($workflow, $orderStatus, (string) $cart->channel)) {
@@ -1132,6 +1189,27 @@ class CheckoutController extends Controller
         }
 
         return $normalized;
+    }
+
+    protected function copyPriorSalePaymentsToSale(Sale $prior, Sale $sale, ?int $floatSessionId): void
+    {
+        $prior->loadMissing('payments');
+        foreach ($prior->payments ?? [] as $payment) {
+            SalePayment::create([
+                'sale_id' => $sale->id,
+                'float_session_id' => $floatSessionId ?? $payment->float_session_id,
+                'payment_method_id' => $payment->payment_method_id,
+                'amount' => (float) $payment->amount,
+                'reference_number' => $payment->reference_number,
+                'paid_at' => $payment->paid_at ?? now(),
+            ]);
+            $methodCode = strtoupper((string) ($payment->paymentMethod?->method_code
+                ?? PaymentMethod::query()->find($payment->payment_method_id)?->method_code
+                ?? ''));
+            if ($methodCode !== '') {
+                SalePaymentColumnMapper::applyToSale($sale->fresh(), $methodCode, (float) $payment->amount);
+            }
+        }
     }
 
     protected function resolveCheckoutPaymentMethod(int $organizationId, string $methodCode): ?PaymentMethod

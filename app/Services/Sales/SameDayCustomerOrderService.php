@@ -9,8 +9,9 @@ use Carbon\Carbon;
 use Illuminate\Support\Collection;
 
 /**
- * Org setting: append new POS/backoffice sales for a registered customer onto
- * their open order from the same calendar day (same branch) instead of a new ticket.
+ * Org setting: append new mobile sales for a registered customer onto
+ * their open mobile order from the same calendar day (same branch) instead of a new ticket.
+ * POS and backoffice checkouts are never affected.
  */
 class SameDayCustomerOrderService
 {
@@ -20,13 +21,13 @@ class SameDayCustomerOrderService
     }
 
     /**
-     * Latest non-cancelled/expired sale for this customer today at the branch.
+     * Latest non-cancelled/expired mobile sale for this customer today at the branch.
      */
     public function findOpenOrderToday(
         User $user,
         int $customerNum,
         ?int $branchId = null,
-        ?string $channel = null,
+        ?string $channel = 'mobile',
     ): ?Sale {
         if ($customerNum <= 0) {
             return null;
@@ -37,6 +38,12 @@ class SameDayCustomerOrderService
             return null;
         }
 
+        // Feature is mobile-only — never match POS/backoffice tickets.
+        $channel = strtolower(trim((string) ($channel ?: 'mobile')));
+        if ($channel !== 'mobile') {
+            return null;
+        }
+
         $tz = (string) config('app.timezone', 'Africa/Nairobi');
         $dayStart = Carbon::now($tz)->startOfDay()->utc();
         $dayEnd = Carbon::now($tz)->endOfDay()->utc();
@@ -44,6 +51,7 @@ class SameDayCustomerOrderService
         $query = Sale::query()
             ->where('organization_id', $orgId)
             ->where('customer_num', $customerNum)
+            ->where('channel', 'mobile')
             ->whereNotIn('status', ['cancelled', 'expired', 'held', 'draft'])
             ->whereBetween('created_at', [$dayStart, $dayEnd])
             ->orderByDesc('id');
@@ -53,19 +61,14 @@ class SameDayCustomerOrderService
             $query->where('branch_id', $resolvedBranch);
         }
 
-        if ($channel !== null && $channel !== '') {
-            $query->where('channel', $channel);
-        }
-
         return $query->first();
     }
 
     /**
-     * When setting is on and checkout has a customer but is not already an edit
-     * of today's order, return that order so checkout can continue it.
+     * When setting is on and mobile checkout has a customer but is not already an edit
+     * of today's mobile order, return that order so checkout can continue it.
      *
      * @param  array<string, mixed>  $salesSettings
-     * @param  array<string, mixed>  $input
      */
     public function resolveAppendTarget(
         CapabilityGate $gate,
@@ -83,12 +86,12 @@ class SameDayCustomerOrderService
         if (! $customerNum || $customerNum <= 0) {
             return null;
         }
-        // Walk-in / anonymous checkouts never append.
-        if (! in_array($channel, ['pos', 'backend'], true)) {
+        // Mobile field sales only — POS / backoffice always create a new ticket.
+        if (strtolower(trim($channel)) !== 'mobile') {
             return null;
         }
 
-        $existing = $this->findOpenOrderToday($user, $customerNum, $branchId, $channel);
+        $existing = $this->findOpenOrderToday($user, $customerNum, $branchId, 'mobile');
         if (! $existing) {
             return null;
         }

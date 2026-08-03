@@ -556,6 +556,59 @@ class CartOperationsController extends Controller
         return response()->json(['data' => $rows]);
     }
 
+    /**
+     * GET /sales/orders/same-day-for-customer
+     * When org setting append_same_day_customer_orders is on, returns today's open
+     * mobile order for the customer (same branch) so the field app can continue it.
+     */
+    public function sameDayForCustomer(Request $request)
+    {
+        $data = $request->validate([
+            'customer_num' => 'required|integer|min:1',
+            'channel' => 'sometimes|nullable|string|in:mobile',
+            'branch_id' => 'sometimes|nullable|integer|min:1',
+        ]);
+
+        $user = $request->user();
+        $gate = $this->erp->gateForUser($user);
+        $salesSettings = $gate->moduleSettings('sales');
+        $service = app(\App\Services\Sales\SameDayCustomerOrderService::class);
+
+        if (! $service->enabled($salesSettings)) {
+            return response()->json(['sale' => null, 'enabled' => false]);
+        }
+
+        $branchId = isset($data['branch_id'])
+            ? (int) $data['branch_id']
+            : ($user->branch_id ? (int) $user->branch_id : null);
+
+        $sale = $service->findOpenOrderToday(
+            $user,
+            (int) $data['customer_num'],
+            $branchId,
+            'mobile',
+        );
+
+        if (! $sale) {
+            return response()->json(['sale' => null, 'enabled' => true]);
+        }
+
+        return response()->json([
+            'enabled' => true,
+            'sale' => [
+                'id' => (int) $sale->id,
+                'order_num' => (int) $sale->order_num,
+                'pos_order_num' => $sale->pos_order_num != null ? (int) $sale->pos_order_num : null,
+                'status' => $sale->status,
+                'payment_status' => $sale->payment_status,
+                'order_total' => round((float) $sale->order_total, 2),
+                'amount_paid' => round((float) $sale->amount_paid, 2),
+                'customer_num' => (int) $sale->customer_num,
+                'item_count' => $sale->items()->count(),
+            ],
+        ]);
+    }
+
     public function lookupLoyaltyCard(Request $request)
     {
         $gate = $this->erp->gateForUser($request->user());

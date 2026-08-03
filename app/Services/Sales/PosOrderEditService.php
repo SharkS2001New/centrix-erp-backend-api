@@ -129,7 +129,10 @@ class PosOrderEditService
      */
     public function fiscalVoidBeforeEdit(Sale $sale, User $user, CapabilityGate $gate): void
     {
-        if (! $this->posOrderEditEnabled($gate)) {
+        $sales = $gate->moduleSettings('sales');
+        $allowed = (bool) ($sales['enable_pos_order_edit'] ?? false)
+            || (bool) ($sales['append_same_day_customer_orders'] ?? false);
+        if (! $allowed) {
             return;
         }
 
