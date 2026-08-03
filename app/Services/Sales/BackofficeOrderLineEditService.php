@@ -564,9 +564,8 @@ class BackofficeOrderLineEditService
     /** @param  array<string, mixed>  $salesSettings */
     protected function cashRoundingEnabled(CapabilityGate $gate, array $salesSettings): bool
     {
-        $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
-            ? $gate->organization()->module_settings['sales']
-            : [];
+        $orgSettings = $gate->organization()?->module_settings ?? [];
+        $customSales = is_array($orgSettings['sales'] ?? null) ? $orgSettings['sales'] : [];
 
         return PosCashRoundingSettings::enabled($salesSettings, $customSales);
     }
