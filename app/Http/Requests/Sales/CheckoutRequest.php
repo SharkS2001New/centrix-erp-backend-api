@@ -52,6 +52,12 @@ class CheckoutRequest extends FormRequest
             'checkout_latitude' => 'nullable|numeric|between:-90,90',
             'checkout_longitude' => 'nullable|numeric|between:-180,180',
             'discount_approval_reason' => 'nullable|string|max:500',
+            'pay_now' => 'nullable|numeric|min:0',
+            'payment_adjustments' => 'nullable|array',
+            'payment_adjustments.*.method_code' => 'required|string|max:45',
+            'payment_adjustments.*.amount' => 'required|numeric|min:0.01',
+            'payment_adjustments.*.adjustment_type' => 'required|in:return,topup',
+            'payment_adjustments.*.reference_number' => 'nullable|string|max:120',
         ];
     }
 }

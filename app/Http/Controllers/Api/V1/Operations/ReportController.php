@@ -530,100 +530,50 @@ class ReportController extends Controller
 
     public function salesByProduct(Request $request)
     {
-        return response()->json($this->reportFromView('v_sales_by_product', $this->filters($request), [
-            'sale_date', 'branch_id', 'product_code', 'channel',
-        ]));
+        $filters = $this->filters($request);
+
+        return response()->json($this->reportFromViewOverall(
+            'v_sales_by_product',
+            $filters,
+            ['sale_date', 'branch_id', 'product_code', 'channel'],
+            ['organization_id', 'branch_id', 'product_code', 'product_name', 'channel', 'sell_uom'],
+            ['qty_sold', 'total_revenue', 'total_vat', 'total_discount'],
+            $this->salesLineUomMaxColumns(),
+            fn ($q) => $q->orderBy('product_name')->orderBy('channel'),
+        ));
     }
 
     public function salesBySupplier(Request $request)
     {
-        return response()->json($this->reportFromView('v_sales_by_supplier', $this->filters($request), [
-            'sale_date', 'branch_id', 'supplier_id', 'channel', 'product_code',
-        ]));
+        $filters = $this->filters($request);
+
+        return response()->json($this->reportFromViewOverall(
+            'v_sales_by_supplier',
+            $filters,
+            ['sale_date', 'branch_id', 'supplier_id', 'channel', 'product_code'],
+            [
+                'organization_id', 'branch_id', 'supplier_id', 'supplier_name', 'supplier_code',
+                'product_code', 'product_name', 'channel',
+            ],
+            ['order_count', 'qty_sold', 'total_revenue', 'total_vat', 'total_discount'],
+            $this->salesLineUomMaxColumns(),
+            fn ($q) => $q->orderBy('supplier_name')->orderBy('product_name')->orderBy('channel'),
+        ));
     }
 
     public function salesByUser(Request $request)
     {
         $filters = $this->filters($request);
-        $allowedCols = ['sale_date', 'branch_id', 'cashier_id', 'channel'];
-        $overallSummary = $request->boolean('overall_summary', true);
 
-        if (! $overallSummary) {
-            return response()->json($this->reportFromView('v_sales_by_user', $filters, $allowedCols, function ($q) {
-                $q->orderByDesc('sale_date')->orderBy('salesperson');
-            }));
-        }
-
-        $q = DB::table('v_sales_by_user');
-        $this->scopeReportQueryToOrganization($q, $request, 'v_sales_by_user', $allowedCols);
-
-        $filterColumns = $allowedCols;
-        if ($this->viewColumnExists('v_sales_by_user', 'branch_id') && ! in_array('branch_id', $filterColumns, true)) {
-            $filterColumns[] = 'branch_id';
-        }
-
-        foreach ($filterColumns as $col) {
-            if (isset($filters[$col]) && $filters[$col] !== '') {
-                $q->where($col, $filters[$col]);
-            }
-        }
-        if (! empty($filters['from_date']) && ! empty($filters['date_column'])) {
-            $dateColumn = $filters['date_column'];
-            if ($this->viewColumnExists('v_sales_by_user', $dateColumn)) {
-                $q->where($dateColumn, '>=', $filters['from_date']);
-            }
-        }
-        if (! empty($filters['to_date']) && ! empty($filters['date_column'])) {
-            $dateColumn = $filters['date_column'];
-            if ($this->viewColumnExists('v_sales_by_user', $dateColumn)) {
-                $q->where($dateColumn, '<=', $filters['to_date']);
-            }
-        }
-
-        $aggregated = DB::query()
-            ->fromSub($q, 'filtered_daily_user_sales')
-            ->select([
-                'organization_id',
-                'branch_id',
-                'cashier_id',
-                'salesperson',
-                'channel',
-            ])
-            ->selectRaw('SUM(order_count) as order_count')
-            ->selectRaw('SUM(gross_sales) as gross_sales')
-            ->selectRaw('SUM(total_vat) as total_vat')
-            ->selectRaw('SUM(net_sales) as net_sales')
-            ->selectRaw('SUM(amount_collected) as amount_collected')
-            ->groupBy('organization_id', 'branch_id', 'cashier_id', 'salesperson', 'channel')
-            ->orderByDesc('gross_sales')
-            ->orderBy('salesperson');
-
-        $summaryRaw = DB::query()
-            ->fromSub(clone $aggregated, 'user_sales_totals')
-            ->selectRaw('COUNT(*) as row_count')
-            ->selectRaw('COALESCE(SUM(order_count), 0) as order_count')
-            ->selectRaw('COALESCE(SUM(gross_sales), 0) as gross_sales')
-            ->selectRaw('COALESCE(SUM(total_vat), 0) as total_vat')
-            ->selectRaw('COALESCE(SUM(net_sales), 0) as net_sales')
-            ->selectRaw('COALESCE(SUM(amount_collected), 0) as amount_collected')
-            ->first();
-
-        $perPage = min((int) ($filters['per_page'] ?? 20), 200);
-        $paginator = $aggregated->paginate($perPage);
-
-        $summary = [
-            'row_count' => (int) ($summaryRaw->row_count ?? 0),
-            'order_count' => (int) ($summaryRaw->order_count ?? 0),
-            'gross_sales' => round((float) ($summaryRaw->gross_sales ?? 0), 2),
-            'total_vat' => round((float) ($summaryRaw->total_vat ?? 0), 2),
-            'net_sales' => round((float) ($summaryRaw->net_sales ?? 0), 2),
-            'net_ex_vat' => round((float) ($summaryRaw->net_sales ?? 0), 2),
-            'amount_collected' => round((float) ($summaryRaw->amount_collected ?? 0), 2),
-        ];
-
-        return response()->json(array_merge($paginator->toArray(), [
-            'summary' => $summary,
-        ]));
+        return response()->json($this->reportFromViewOverall(
+            'v_sales_by_user',
+            $filters,
+            ['sale_date', 'branch_id', 'cashier_id', 'channel'],
+            ['organization_id', 'branch_id', 'cashier_id', 'salesperson', 'channel'],
+            ['order_count', 'gross_sales', 'total_vat', 'net_sales', 'amount_collected'],
+            [],
+            fn ($q) => $q->orderByDesc('gross_sales')->orderBy('salesperson'),
+        ));
     }
 
     public function salesByCustomer(Request $request)
@@ -691,9 +641,17 @@ class ReportController extends Controller
 
     public function salesByChannel(Request $request)
     {
-        return response()->json($this->reportFromView('v_sales_by_channel', $this->filters($request), [
-            'sale_date', 'branch_id', 'channel', 'payment_status',
-        ]));
+        $filters = $this->filters($request);
+
+        return response()->json($this->reportFromViewOverall(
+            'v_sales_by_channel',
+            $filters,
+            ['sale_date', 'branch_id', 'channel', 'payment_status'],
+            ['organization_id', 'branch_id', 'branch_name', 'channel', 'payment_status'],
+            ['order_count', 'gross_sales', 'collected', 'total_vat', 'net_sales', 'credit_sales'],
+            [],
+            fn ($q) => $q->orderByDesc('gross_sales')->orderBy('channel'),
+        ));
     }
 
     public function dailySales(Request $request)
@@ -764,9 +722,20 @@ class ReportController extends Controller
 
     public function categorySales(Request $request)
     {
-        return response()->json($this->reportFromView('v_category_sales', $this->filters($request), [
-            'sale_date', 'branch_id', 'category_id', 'sub_category_id', 'product_code',
-        ]));
+        $filters = $this->filters($request);
+
+        return response()->json($this->reportFromViewOverall(
+            'v_category_sales',
+            $filters,
+            ['sale_date', 'branch_id', 'category_id', 'sub_category_id', 'product_code'],
+            [
+                'organization_id', 'branch_id', 'category_id', 'category_name',
+                'sub_category_id', 'subcategory_name', 'product_code', 'product_name',
+            ],
+            ['qty_sold', 'revenue', 'vat', 'discounts'],
+            $this->salesLineUomMaxColumns(),
+            fn ($q) => $q->orderBy('category_name')->orderBy('subcategory_name')->orderBy('product_name'),
+        ));
     }
 
     public function discountSummary(Request $request)
@@ -2316,7 +2285,84 @@ class ReportController extends Controller
         return $filters;
     }
 
-    protected function reportFromView(string $view, array $filters, array $allowedCols, ?callable $orderBy = null): array
+    /**
+     * @return array<int, string>
+     */
+    protected function salesLineUomMaxColumns(): array
+    {
+        return [
+            'uom_name',
+            'conversion_factor',
+            'small_packaging_label',
+            'middle_packaging_label',
+            'middle_factor',
+            'uom_type',
+        ];
+    }
+
+    /**
+     * Aggregate daily view rows into period totals (date range still filters included sales).
+     *
+     * @param  array<int, string>  $allowedCols
+     * @param  array<int, string>  $groupBy
+     * @param  array<int, string>  $sumColumns
+     * @param  array<int, string>  $maxColumns
+     */
+    protected function reportFromViewOverall(
+        string $view,
+        array $filters,
+        array $allowedCols,
+        array $groupBy,
+        array $sumColumns,
+        array $maxColumns = [],
+        ?callable $orderBy = null,
+    ): array {
+        $filtered = $this->buildFilteredReportViewQuery($view, $filters, $allowedCols);
+
+        $aggregated = DB::query()->fromSub($filtered, 'filtered_daily_rows');
+        foreach ($groupBy as $col) {
+            if ($this->viewColumnExists($view, $col)) {
+                $aggregated->addSelect($col);
+            }
+        }
+        foreach ($sumColumns as $col) {
+            if ($this->viewColumnExists($view, $col)) {
+                $escaped = str_replace('`', '``', $col);
+                $aggregated->selectRaw("SUM(`{$escaped}`) as `{$escaped}`");
+            }
+        }
+        foreach ($maxColumns as $col) {
+            if ($this->viewColumnExists($view, $col)) {
+                $escaped = str_replace('`', '``', $col);
+                $aggregated->selectRaw("MAX(`{$escaped}`) as `{$escaped}`");
+            }
+        }
+
+        $groupCols = array_values(array_filter(
+            $groupBy,
+            fn ($col) => $this->viewColumnExists($view, $col),
+        ));
+        if ($groupCols !== []) {
+            $aggregated->groupBy(...$groupCols);
+        }
+
+        if ($orderBy) {
+            $orderBy($aggregated);
+        }
+
+        $summary = $this->aggregateFilteredReportSummary(clone $aggregated, $view);
+        $paginator = $aggregated->paginate(min((int) ($filters['per_page'] ?? 20), 200));
+
+        return array_merge($paginator->toArray(), [
+            'summary' => $summary,
+        ]);
+    }
+
+    /**
+     * @param  array<int, string>  $allowedCols
+     * @return \Illuminate\Database\Query\Builder
+     */
+    protected function buildFilteredReportViewQuery(string $view, array $filters, array $allowedCols)
     {
         $request = request();
         $q = DB::table($view);
@@ -2364,6 +2410,13 @@ class ReportController extends Controller
         }
 
         $this->applyProductSubcategoryFilter($q, $request, $view);
+
+        return $q;
+    }
+
+    protected function reportFromView(string $view, array $filters, array $allowedCols, ?callable $orderBy = null): array
+    {
+        $q = $this->buildFilteredReportViewQuery($view, $filters, $allowedCols);
 
         // Full-filter aggregates for KPI / footer cards (not just the current page).
         $summary = $this->aggregateFilteredReportSummary(clone $q, $view);

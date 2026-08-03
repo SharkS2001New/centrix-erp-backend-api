@@ -241,34 +241,20 @@ class SalesReportsTest extends TestCase
         $saleTwo->forceFill(['created_at' => $dayTwo.' 11:00:00'])->save();
 
         $overall = $this->getJson(
-            "/api/v1/reports/sales-by-user?from_date={$dayOne}&to_date={$dayTwo}&date_column=sale_date&cashier_id={$this->admin->id}&overall_summary=1&per_page=50"
+            "/api/v1/reports/sales-by-user?from_date={$dayOne}&to_date={$dayTwo}&date_column=sale_date&cashier_id={$this->admin->id}&per_page=50"
         )->assertOk();
 
         $overallRows = collect($overall->json('data'));
         $this->assertTrue(
             $overallRows->every(fn ($row) => ! array_key_exists('sale_date', $row) || $row['sale_date'] === null),
-            'Overall summary rows should not include a sale_date breakdown.',
+            'Sales by user rows should not include a sale_date breakdown.',
         );
 
         $posOverall = $overallRows->firstWhere('channel', 'pos');
         $this->assertNotNull($posOverall);
         $this->assertSame(2, (int) ($posOverall['order_count'] ?? 0));
         $this->assertEqualsWithDelta(3500.0, (float) ($posOverall['gross_sales'] ?? 0), 0.01);
-
-        $byDate = $this->getJson(
-            "/api/v1/reports/sales-by-user?from_date={$dayOne}&to_date={$dayTwo}&date_column=sale_date&cashier_id={$this->admin->id}&overall_summary=0&per_page=50"
-        )->assertOk();
-
-        $dateRows = collect($byDate->json('data'));
-        $this->assertGreaterThanOrEqual(2, $dateRows->count());
-        $this->assertTrue(
-            $dateRows->contains(fn ($row) => ($row['sale_date'] ?? null) === $dayOne),
-            'Date breakdown should include the first sale day.',
-        );
-        $this->assertTrue(
-            $dateRows->contains(fn ($row) => ($row['sale_date'] ?? null) === $dayTwo),
-            'Date breakdown should include the second sale day.',
-        );
+        $this->assertCount(1, $overallRows->where('channel', 'pos'));
     }
 
     public function test_dispatch_orders_match_orders_without_required_date_using_created_at(): void

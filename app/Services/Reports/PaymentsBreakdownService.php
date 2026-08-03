@@ -137,19 +137,33 @@ class PaymentsBreakdownService
 
         $allExpanded = $paymentExpandedRows->concat($legacyExpanded)->values();
 
+        $adjustmentAggRows = $this->adjustmentAggregatesForFilteredSales(clone $salesBase);
+
         // Tab aggregates: sum this method's slice; count distinct orders that used it.
         $methodAgg = [];
         foreach ($allExpanded as $row) {
             $code = $row->method_code;
-            $methodAgg[$code] ??= ['order_ids' => [], 'total_amount' => 0.0];
+            $methodAgg[$code] ??= ['order_ids' => [], 'total_amount' => 0.0, 'return_amount' => 0.0, 'topup_amount' => 0.0];
             $methodAgg[$code]['order_ids'][$row->sale_id] = true;
             $methodAgg[$code]['total_amount'] += (float) $row->method_amount;
+        }
+        foreach ($adjustmentAggRows as $adj) {
+            $code = $adj->method_code;
+            $methodAgg[$code] ??= ['order_ids' => [], 'total_amount' => 0.0, 'return_amount' => 0.0, 'topup_amount' => 0.0];
+            $methodAgg[$code]['order_ids'][$adj->sale_id] = true;
+            if ($adj->adjustment_type === 'return') {
+                $methodAgg[$code]['return_amount'] += (float) $adj->method_amount;
+            } else {
+                $methodAgg[$code]['topup_amount'] += (float) $adj->method_amount;
+            }
         }
 
         $methodRows = collect($methodAgg)->map(fn ($agg, $code) => (object) [
             'method_code' => $code,
             'order_count' => count($agg['order_ids']),
             'total_amount' => round($agg['total_amount'], 2),
+            'return_amount' => round($agg['return_amount'], 2),
+            'topup_amount' => round($agg['topup_amount'], 2),
         ])->values();
 
         $methods = $this->sortAndPresentMethods($methodRows, $catalog);
@@ -164,10 +178,15 @@ class PaymentsBreakdownService
             $active = $methods[0];
         }
 
-        // Sale IDs that used the active method (alone or mixed).
+        // Sale IDs that used the active method (payment and/or edit adjustment).
         $tabSaleIds = $allExpanded
             ->filter(fn ($row) => $row->method_code === $methodCode)
             ->pluck('sale_id')
+            ->merge(
+                collect($adjustmentAggRows)
+                    ->filter(fn ($row) => $row->method_code === $methodCode)
+                    ->pluck('sale_id'),
+            )
             ->unique()
             ->values()
             ->all();
@@ -252,6 +271,7 @@ class PaymentsBreakdownService
         $saleIds = collect($paginator->items())->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->all();
         $tendersBySale = $this->tendersFromPaymentsBySale($saleIds);
         $referencesBySale = $this->referencesBySale($saleIds);
+        $adjustmentsBySale = $this->adjustmentsBySaleAndMethod($saleIds);
 
         // Fill tenders from columns for legacy rows missing payment tenders.
         foreach ($paginator->items() as $row) {
@@ -268,6 +288,7 @@ class PaymentsBreakdownService
             $active,
             $catalog,
             $tabAmountBySale,
+            $adjustmentsBySale,
         ) {
             $saleId = (int) $row->sale_id;
             $customerName = trim((string) ($row->customer_name_override ?? ''))
@@ -311,6 +332,8 @@ class PaymentsBreakdownService
                 ?? ($catalog[$methodCode]['method_name'] ?? null)
                 ?? $this->methodLabel($methodCode, '');
 
+            $adjustment = $adjustmentsBySale[$saleId][$methodCode] ?? ['return' => 0.0, 'topup' => 0.0];
+
             return [
                 'sale_id' => $saleId,
                 'payment_id' => $saleId,
@@ -320,6 +343,8 @@ class PaymentsBreakdownService
                 'customer_num' => $row->customer_num !== null ? (int) $row->customer_num : null,
                 'customer_name' => $customerName,
                 'amount' => $displayAmount,
+                'return_amount' => round((float) ($adjustment['return'] ?? 0), 2),
+                'topup_amount' => round((float) ($adjustment['topup'] ?? 0), 2),
                 'amount_paid' => $amountPaid,
                 'order_total' => round((float) ($row->order_total ?? 0), 2),
                 'tenders' => $tenders,
@@ -586,6 +611,92 @@ class PaymentsBreakdownService
 
     /**
      * @param  list<int>  $saleIds
+     * @return array<int, array<string, array{return: float, topup: float}>>
+     */
+    protected function adjustmentsBySaleAndMethod(array $saleIds): array
+    {
+        if ($saleIds === [] || ! Schema::hasTable('sale_payment_adjustments')) {
+            return [];
+        }
+
+        $rows = DB::table('sale_payment_adjustments as spa')
+            ->join('payment_methods as pm', 'pm.id', '=', 'spa.payment_method_id')
+            ->whereIn('spa.sale_id', $saleIds)
+            ->select([
+                'spa.sale_id',
+                'spa.adjustment_type',
+                DB::raw($this->normalizedMethodCodeSql('pm.method_code').' as method_code'),
+                DB::raw('COALESCE(SUM(spa.amount), 0) as total'),
+            ])
+            ->groupBy('spa.sale_id', 'spa.adjustment_type', DB::raw($this->normalizedMethodCodeSql('pm.method_code')))
+            ->get();
+
+        $bySale = [];
+        foreach ($rows as $row) {
+            $saleId = (int) $row->sale_id;
+            $code = $this->normalizeMethodCode((string) ($row->method_code ?? ''));
+            if ($code === '') {
+                continue;
+            }
+            $bySale[$saleId] ??= [];
+            $bySale[$saleId][$code] ??= ['return' => 0.0, 'topup' => 0.0];
+            $key = $row->adjustment_type === 'return' ? 'return' : 'topup';
+            $bySale[$saleId][$code][$key] = round(
+                ($bySale[$saleId][$code][$key] ?? 0) + (float) ($row->total ?? 0),
+                2,
+            );
+        }
+
+        return $bySale;
+    }
+
+    /**
+     * @return \Illuminate\Support\Collection<int, object{sale_id: int, method_code: string, adjustment_type: string, method_amount: float}>
+     */
+    protected function adjustmentAggregatesForFilteredSales($salesBaseQuery)
+    {
+        if (! Schema::hasTable('sale_payment_adjustments')) {
+            return collect();
+        }
+
+        return DB::query()
+            ->fromSub(
+                (clone $salesBaseQuery)->select('s.id as sale_id'),
+                'filtered_sales',
+            )
+            ->join('sale_payment_adjustments as spa', 'spa.sale_id', '=', 'filtered_sales.sale_id')
+            ->join('payment_methods as pm', 'pm.id', '=', 'spa.payment_method_id')
+            ->select([
+                'filtered_sales.sale_id',
+                'spa.adjustment_type',
+                DB::raw($this->normalizedMethodCodeSql('pm.method_code').' as method_code'),
+                DB::raw('COALESCE(SUM(spa.amount), 0) as method_amount'),
+            ])
+            ->groupBy(
+                'filtered_sales.sale_id',
+                'spa.adjustment_type',
+                DB::raw($this->normalizedMethodCodeSql('pm.method_code')),
+            )
+            ->get()
+            ->map(function ($row) {
+                $code = $this->normalizeMethodCode((string) ($row->method_code ?? ''));
+                if ($code === '' || in_array($code, self::HIDDEN_METHODS, true)) {
+                    return null;
+                }
+
+                return (object) [
+                    'sale_id' => (int) $row->sale_id,
+                    'method_code' => $code,
+                    'adjustment_type' => (string) $row->adjustment_type,
+                    'method_amount' => round((float) ($row->method_amount ?? 0), 2),
+                ];
+            })
+            ->filter()
+            ->values();
+    }
+
+    /**
+     * @param  list<int>  $saleIds
      * @return array<int, array{all: list<string>, by_method: array<string, list<string>>}>
      */
     protected function referencesBySale(array $saleIds): array
@@ -706,8 +817,10 @@ class PaymentsBreakdownService
             }
             $total = round((float) ($row->total_amount ?? 0), 2);
             $orders = (int) ($row->order_count ?? 0);
+            $returnAmount = round((float) ($row->return_amount ?? 0), 2);
+            $topupAmount = round((float) ($row->topup_amount ?? 0), 2);
             // Hide empty methods from the breakdown tabs.
-            if ($total <= 0 && $orders <= 0) {
+            if ($total <= 0 && $orders <= 0 && $returnAmount <= 0 && $topupAmount <= 0) {
                 continue;
             }
             $name = $this->displayMethodName($code, $catalog[$code]['method_name'] ?? '');
@@ -717,6 +830,8 @@ class PaymentsBreakdownService
                 'payment_count' => $orders,
                 'order_count' => $orders,
                 'total_amount' => $total,
+                'return_amount' => $returnAmount,
+                'topup_amount' => $topupAmount,
                 'requires_reference' => (bool) ($catalog[$code]['requires_reference'] ?? false),
             ];
         }

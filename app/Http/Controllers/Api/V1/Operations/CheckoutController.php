@@ -12,7 +12,7 @@ use App\Http\Controllers\Controller;
 use App\Http\Requests\Sales\CheckoutRequest;
 use App\Models\CartLine;
 use App\Models\Customer;
-use App\Services\Sales\SaleRouteResolver;
+use App\Services\Sales\SalePaymentAdjustmentService;
 use App\Models\KraResponse;
 use App\Models\PaymentMethod;
 use App\Models\Sale;
@@ -311,7 +311,10 @@ class CheckoutController extends Controller
             $mobileCheckout = app(MobileCheckoutSettings::class);
             $mobileCheckout->applyCheckoutPolicy($salesSettings, $input, (string) $cart->channel);
 
-            if (! $isCredit && $payNow <= 0 && $cashDue > 0 && empty($input['save_only'])) {
+            $adjustmentRows = $this->normalizeCheckoutPaymentAdjustments($input['payment_adjustments'] ?? null);
+            $isPosEditSettlement = (int) ($cart->superseded_sale_id ?? 0) > 0 && $adjustmentRows !== [];
+
+            if (! $isCredit && $payNow <= 0 && $cashDue > 0 && empty($input['save_only']) && ! $isPosEditSettlement) {
                 if ($isMobileChannel) {
                     if ($mobileCheckout->shouldDefaultMobileSaveOnly(
                         $salesSettings,
@@ -330,8 +333,13 @@ class CheckoutController extends Controller
                     $payNow = $cashDue;
                 }
             }
-            $payNow = min($payNow, $cashDue);
-            $amountPaid = $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
+            if ($isPosEditSettlement) {
+                $payNow = 0;
+                $amountPaid = $total;
+            } else {
+                $payNow = min($payNow, $cashDue);
+                $amountPaid = $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
+            }
             if (! $customerNum && $loyaltyCardId) {
                 $customerNum = LoyaltyCard::find($loyaltyCardId)?->customer_num;
             }
@@ -712,6 +720,15 @@ class CheckoutController extends Controller
                 );
             }
 
+            if ($adjustmentRows !== []) {
+                app(SalePaymentAdjustmentService::class)->recordForSale(
+                    $sale,
+                    $adjustmentRows,
+                    $floatSessionId,
+                    $input['payment_date'] ?? now(),
+                );
+            }
+
             $this->releaseCartReservations($cart->id);
             CartLine::where('cart_id', $cart->id)->delete();
             $cart->delete();
@@ -1049,6 +1066,37 @@ class CheckoutController extends Controller
             $normalized[] = [
                 'method_code' => $methodCode,
                 'amount' => $amount,
+                'reference_number' => $reference !== '' ? $reference : null,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @return list<array{method_code: string, amount: float, adjustment_type: string, reference_number: ?string}>
+     */
+    protected function normalizeCheckoutPaymentAdjustments(mixed $raw): array
+    {
+        if (! is_array($raw)) {
+            return [];
+        }
+        $normalized = [];
+        foreach ($raw as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $methodCode = strtoupper(trim((string) ($row['method_code'] ?? '')));
+            $type = strtolower(trim((string) ($row['adjustment_type'] ?? '')));
+            $amount = round((float) ($row['amount'] ?? 0), 2);
+            if ($methodCode === '' || $amount <= 0 || ! in_array($type, ['return', 'topup'], true)) {
+                continue;
+            }
+            $reference = trim((string) ($row['reference_number'] ?? ''));
+            $normalized[] = [
+                'method_code' => $methodCode,
+                'amount' => $amount,
+                'adjustment_type' => $type,
                 'reference_number' => $reference !== '' ? $reference : null,
             ];
         }
