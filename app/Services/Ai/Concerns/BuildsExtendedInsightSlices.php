@@ -332,7 +332,11 @@ trait BuildsExtendedInsightSlices
         $voids = DB::table('sales')
             ->where('organization_id', $orgId)
             ->whereIn('status', ['cancelled', 'void', 'expired'])
-            ->whereRaw('DATE(COALESCE(updated_at, created_at)) BETWEEN ? AND ?', [$from, now()->toDateString()])
+            // sales has no updated_at (Sale::UPDATED_AT = null); use cancel/expire timestamps.
+            ->whereRaw(
+                'DATE(COALESCE(cancelled_at, expired_at, created_at)) BETWEEN ? AND ?',
+                [$from, now()->toDateString()],
+            )
             ->selectRaw('status, COUNT(*) as c, ROUND(SUM(order_total), 2) as amount')
             ->groupBy('status')
             ->get()

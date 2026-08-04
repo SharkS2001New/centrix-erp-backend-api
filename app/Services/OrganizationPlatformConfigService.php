@@ -833,7 +833,6 @@ class OrganizationPlatformConfigService
             'source',
             'placed_by',
         ];
-        $required = ['order', 'customer', 'amount', 'status', 'method', 'placed_by'];
         $incoming = is_array($value)
             ? $value
             : config('erp.module_settings_defaults.sales.orders_list_visible_columns', $allowed);
@@ -847,12 +846,6 @@ class OrganizationPlatformConfigService
             }
             $seen[$key] = true;
             $out[] = $key;
-        }
-        foreach ($required as $key) {
-            if (! isset($seen[$key])) {
-                $seen[$key] = true;
-                $out[] = $key;
-            }
         }
 
         return $out;
