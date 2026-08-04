@@ -43,11 +43,53 @@ class ErpSettingsController extends Controller
 
         $sales = $gate->moduleSettings('sales');
         $sales['order_workflow'] = OrderWorkflowService::forGate($gate)->config();
+        $sales['pricing_formulas'] = \App\Services\Sales\PricingFormulaSettings::normalize(
+            $sales['pricing_formulas'] ?? null,
+        );
+        $sales['pricing_formula_defaults'] = \App\Services\Sales\PricingFormulaSettings::defaults();
+        $sales['pricing_formula_placeholders'] = \App\Services\Sales\PricingFormulaSettings::placeholdersByKey();
+        $sales['pricing_formula_examples'] = \App\Services\Sales\PricingFormulaSettings::examplesByKey();
 
         return response()->json([
             'sales' => $sales,
             'allow_negative_stock' => (bool) ($system?->allow_below_stock ?? false),
         ]);
+    }
+
+    public function previewPricingFormula(Request $request)
+    {
+        $org = $this->erp->resolveOrganization($request);
+        $data = $request->validate([
+            'product_code' => 'required|string|max:64',
+            'qty' => 'required|numeric|min:0.0001',
+            'is_retail' => 'sometimes|boolean',
+            'route_id' => 'nullable|integer',
+            'pricing_formulas' => 'sometimes|array',
+            'pricing_formulas.retail_line' => 'sometimes|nullable|string|max:250',
+            'pricing_formulas.wholesale_line' => 'sometimes|nullable|string|max:250',
+            'pricing_formulas.route_retail' => 'sometimes|nullable|string|max:250',
+            'pricing_formulas.route_wholesale' => 'sometimes|nullable|string|max:250',
+        ]);
+
+        $product = \App\Models\Product::query()
+            ->where('organization_id', $org->id)
+            ->where('product_code', $data['product_code'])
+            ->firstOrFail();
+
+        $formulas = array_key_exists('pricing_formulas', $data)
+            ? \App\Services\Sales\PricingFormulaSettings::normalizeForSave($data['pricing_formulas'])
+            : null;
+
+        $preview = app(\App\Services\Sales\PosLinePricingService::class)->previewLine(
+            $product,
+            (float) $data['qty'],
+            (bool) ($data['is_retail'] ?? true),
+            isset($data['route_id']) ? (int) $data['route_id'] : null,
+            (int) $org->id,
+            $formulas,
+        );
+
+        return response()->json(['preview' => $preview]);
     }
 
     public function updateSales(Request $request)
@@ -148,6 +190,7 @@ class ErpSettingsController extends Controller
             'show_proforma_payment_terms',
             'show_proforma_totals_breakdown',
             'classic_pos_theme_template',
+            'pricing_formulas',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -157,6 +200,11 @@ class ErpSettingsController extends Controller
             'other_bank_name' => 'sometimes|string|max:100',
             'pos_order_type_mode' => 'sometimes|in:normal,route,toggle',
             'backoffice_order_type_mode' => 'sometimes|in:normal,route,toggle',
+            'pricing_formulas' => 'sometimes|array',
+            'pricing_formulas.retail_line' => 'sometimes|nullable|string|max:250',
+            'pricing_formulas.wholesale_line' => 'sometimes|nullable|string|max:250',
+            'pricing_formulas.route_retail' => 'sometimes|nullable|string|max:250',
+            'pricing_formulas.route_wholesale' => 'sometimes|nullable|string|max:250',
             'order_document_type' => 'sometimes|in:receipt,invoice,both',
             'classic_pos_theme_template' => 'sometimes|string|in:'.implode(',', \App\Services\Sales\ClassicPosThemeSettings::THEME_TEMPLATES),
             'classic_pos_theme_colors' => 'sometimes|array',
@@ -294,6 +342,12 @@ class ErpSettingsController extends Controller
 
         $this->assertValidStockSourceSettings($nextSales);
         $this->normalizeStockSourceSettings($nextSales);
+
+        if (array_key_exists('pricing_formulas', $data)) {
+            $nextSales['pricing_formulas'] = \App\Services\Sales\PricingFormulaSettings::normalizeForSave(
+                $data['pricing_formulas'],
+            );
+        }
 
         if (empty($nextSales['add_route_markup_prices'])) {
             $nextSales['pos_order_type_mode'] = 'normal';

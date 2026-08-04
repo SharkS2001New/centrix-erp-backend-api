@@ -460,6 +460,12 @@ return [
             'enable_checkout_customer_name' => false,
             'retail_shop_wholesale_store_stock' => false,
             'add_route_markup_prices' => false,
+            'pricing_formulas' => [
+                'retail_line' => '{aggregate_wholesale} + {tier_markup} * {markup_apps}',
+                'wholesale_line' => '{aggregate_wholesale} + {tier_markup}',
+                'route_retail' => '{line} + {route_markup}',
+                'route_wholesale' => '{line} + {route_markup} * {pack_qty}',
+            ],
             'backoffice_order_type_mode' => 'toggle',
             'pos_order_type_mode' => 'normal',
             'enable_mobile_orders' => true,

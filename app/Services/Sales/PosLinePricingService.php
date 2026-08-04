@@ -25,6 +25,7 @@ class PosLinePricingService
             return 0.0;
         }
 
+        $formulas = PricingFormulaSettings::forOrganizationId($organizationId);
         $product->loadMissing('unit');
         $rps = RetailPackageSetting::where('product_code', $product->product_code)->first();
         $baseUnitPrice = (float) $product->unit_price;
@@ -34,7 +35,7 @@ class PosLinePricingService
         $packQty = $conversion > 1 ? $baseQty / $conversion : $baseQty;
 
         if ($isRetailLine && $rps && $tiers !== []) {
-            $lineAmount = $this->linePrice($baseUnitPrice, $tiers, $baseQty, true, $conversion, $middleFactor);
+            $lineAmount = $this->linePrice($baseUnitPrice, $tiers, $baseQty, true, $conversion, $middleFactor, $formulas);
         } elseif ($tiers !== []) {
             $wholesaleTiers = $this->tiersWithPriceMode($tiers, 'wholesale');
             $tier = $this->tierForQuantity($wholesaleTiers, $baseQty);
@@ -46,6 +47,7 @@ class PosLinePricingService
                     $conversion,
                     $middleFactor,
                     scaleMarkup: false,
+                    formulas: $formulas,
                 );
             } else {
                 $wholesaleMarkup = (float) ($rps->wholesale_markup_price ?? 0);
@@ -63,6 +65,7 @@ class PosLinePricingService
             $isRetailLine,
             $routeId,
             $organizationId,
+            $formulas,
         ), 2);
     }
 
@@ -306,6 +309,7 @@ class PosLinePricingService
     }
 
     /** @param  array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}  $tier */
+    /** @param  array<string, string>|null  $formulas */
     protected function linePriceForTier(
         float $baseUnitPrice,
         array $tier,
@@ -313,22 +317,60 @@ class PosLinePricingService
         float $conversion,
         float $middleFactor,
         bool $scaleMarkup = false,
+        ?array $formulas = null,
     ): float {
         $markup = (float) $tier['markup_price'];
-        $stableBase = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion) * $qty;
+        $perSmall = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion);
+        $stableBase = $perSmall * $qty;
         $mode = $this->normalizeTierPriceMode($tier);
+        $packQty = $conversion > 1 ? $qty / $conversion : $qty;
+        $formulas ??= PricingFormulaSettings::defaults();
 
         // Aggregate wholesale for qty, then add package markup (never fold markup into unit).
         if ($mode === 'wholesale' && ! $scaleMarkup) {
-            return round($stableBase + $markup, 2);
+            $fallback = round($stableBase + $markup, 2);
+            $vars = PricingFormulaSettings::lineVars(
+                $stableBase,
+                $markup,
+                1.0,
+                $qty,
+                $packQty,
+                $conversion,
+                $perSmall,
+                $middleFactor,
+                $baseUnitPrice,
+            );
+
+            return PricingFormulaEvaluator::evaluate(
+                $formulas[PricingFormulaSettings::WHOLESALE_LINE] ?? PricingFormulaSettings::defaults()[PricingFormulaSettings::WHOLESALE_LINE],
+                $vars,
+                $fallback,
+            );
         }
 
         $apps = $this->retailMarkupApplications($qty, $tier, $conversion, $middleFactor);
+        $fallback = round($stableBase + ($markup * $apps), 2);
+        $vars = PricingFormulaSettings::lineVars(
+            $stableBase,
+            $markup,
+            $apps,
+            $qty,
+            $packQty,
+            $conversion,
+            $perSmall,
+            $middleFactor,
+            $baseUnitPrice,
+        );
 
-        return round($stableBase + ($markup * $apps), 2);
+        return PricingFormulaEvaluator::evaluate(
+            $formulas[PricingFormulaSettings::RETAIL_LINE] ?? PricingFormulaSettings::defaults()[PricingFormulaSettings::RETAIL_LINE],
+            $vars,
+            $fallback,
+        );
     }
 
     /** @param  list<array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}>  $tiers */
+    /** @param  array<string, string>|null  $formulas */
     protected function linePrice(
         float $baseUnitPrice,
         array $tiers,
@@ -336,6 +378,7 @@ class PosLinePricingService
         bool $isRetail,
         float $conversion,
         float $middleFactor,
+        ?array $formulas = null,
     ): float {
         if ($tiers === []) {
             $perSmall = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion);
@@ -358,9 +401,11 @@ class PosLinePricingService
             $conversion,
             $middleFactor,
             scaleMarkup: $isRetail,
+            formulas: $formulas,
         );
     }
 
+    /** @param  array<string, string>|null  $formulas */
     protected function applyRouteMarkup(
         float $lineAmount,
         float $baseQty,
@@ -368,6 +413,7 @@ class PosLinePricingService
         bool $isRetailLine,
         ?int $routeId,
         ?int $organizationId = null,
+        ?array $formulas = null,
     ): float {
         if (! $routeId) {
             return $lineAmount;
@@ -387,12 +433,113 @@ class PosLinePricingService
             return $lineAmount;
         }
 
+        $formulas ??= PricingFormulaSettings::forOrganizationId($organizationId);
+        $wholesaleQty = max(0.0, $packQty > 0 ? $packQty : $baseQty);
+        $vars = PricingFormulaSettings::routeVars($lineAmount, $routeMarkup, $wholesaleQty, $baseQty);
+
         if ($isRetailLine) {
-            return $lineAmount + $routeMarkup;
+            $fallback = $lineAmount + $routeMarkup;
+
+            return PricingFormulaEvaluator::evaluate(
+                $formulas[PricingFormulaSettings::ROUTE_RETAIL] ?? PricingFormulaSettings::defaults()[PricingFormulaSettings::ROUTE_RETAIL],
+                $vars,
+                $fallback,
+            );
         }
 
-        $wholesaleQty = max(0.0, $packQty > 0 ? $packQty : $baseQty);
+        $fallback = $lineAmount + ($routeMarkup * $wholesaleQty);
 
-        return $lineAmount + ($routeMarkup * $wholesaleQty);
+        return PricingFormulaEvaluator::evaluate(
+            $formulas[PricingFormulaSettings::ROUTE_WHOLESALE] ?? PricingFormulaSettings::defaults()[PricingFormulaSettings::ROUTE_WHOLESALE],
+            $vars,
+            $fallback,
+        );
+    }
+
+    /**
+     * Preview breakdown for org-admin formula tester.
+     *
+     * @param  array<string, string>|null  $draftFormulas
+     * @return array<string, mixed>
+     */
+    public function previewLine(
+        Product $product,
+        float $baseQty,
+        bool $isRetailLine,
+        ?int $routeId,
+        ?int $organizationId,
+        ?array $draftFormulas = null,
+    ): array {
+        $formulas = PricingFormulaSettings::normalize($draftFormulas ?? PricingFormulaSettings::forOrganizationId($organizationId));
+        $product->loadMissing('unit');
+        $rps = RetailPackageSetting::where('product_code', $product->product_code)->first();
+        $baseUnitPrice = (float) $product->unit_price;
+        $conversion = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+        $middleFactor = $this->resolvedMiddleFactor($product->unit?->middle_factor, $conversion);
+        $tiers = $this->tiersForRetailPackage($rps, $conversion);
+        $packQty = $conversion > 1 ? $baseQty / $conversion : $baseQty;
+        $perSmall = $this->wholesalePricePerSmallUnit($baseUnitPrice, $conversion);
+        $aggregateWholesale = round($perSmall * $baseQty, 4);
+
+        $tier = null;
+        $apps = 0.0;
+        $tierMarkup = 0.0;
+        if ($tiers !== []) {
+            $applicable = $isRetailLine ? $tiers : $this->tiersWithPriceMode($tiers, 'wholesale');
+            $tier = $this->tierForQuantity($applicable, $baseQty, $isRetailLine);
+            if ($tier) {
+                $tierMarkup = (float) $tier['markup_price'];
+                $apps = $isRetailLine || $this->normalizeTierPriceMode($tier) === 'retail'
+                    ? $this->retailMarkupApplications($baseQty, $tier, $conversion, $middleFactor)
+                    : 1.0;
+            }
+        }
+
+        $lineBeforeRoute = $this->linePrice(
+            $baseUnitPrice,
+            $tiers,
+            $baseQty,
+            $isRetailLine,
+            $conversion,
+            $middleFactor,
+            $formulas,
+        );
+        $lineAfterRoute = $this->applyRouteMarkup(
+            $lineBeforeRoute,
+            $baseQty,
+            $packQty,
+            $isRetailLine,
+            $routeId,
+            $organizationId,
+            $formulas,
+        );
+
+        $routeMarkup = 0.0;
+        if ($routeId) {
+            $routeQuery = RouteModel::query()->where('id', $routeId);
+            if ($organizationId !== null) {
+                $routeQuery->where('organization_id', $organizationId);
+            }
+            $routeMarkup = max(0.0, (float) ($routeQuery->value('route_markup_price') ?? 0));
+        }
+
+        return [
+            'product_code' => $product->product_code,
+            'product_name' => $product->product_name,
+            'base_qty' => $baseQty,
+            'is_retail' => $isRetailLine,
+            'conversion_factor' => $conversion,
+            'per_small' => round($perSmall, 4),
+            'aggregate_wholesale' => $aggregateWholesale,
+            'tier' => $tier,
+            'tier_markup' => $tierMarkup,
+            'markup_apps' => $apps,
+            'pack_qty' => round($packQty, 4),
+            'route_markup' => $routeMarkup,
+            'line_before_route' => $lineBeforeRoute,
+            'line_total' => $lineAfterRoute,
+            'formulas_used' => $formulas,
+            'has_retail_package' => (bool) $rps,
+        ];
     }
 }

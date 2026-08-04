@@ -7,8 +7,8 @@ class ClassicPosThemeSettings
     public const THEME_TEMPLATE_DEFAULT = 'centrix';
 
     public const THEME_TEMPLATES = [
-        'legacy',
         'centrix',
+        'legacy',
         'ocean',
         'midnight',
         'gold',

@@ -256,6 +256,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
             ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
+        Route::post('erp/settings/sales/pricing-formula-preview', [ErpSettingsController::class, 'previewPricingFormula'])
+            ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
         // Distribution module OR sales.mobile — loading-sheet print flags are needed for
         // backoffice/mobile picking & loading lists when Distribution ops are off.
         Route::get('erp/settings/distribution', [ErpSettingsController::class, 'distribution'])
@@ -359,6 +361,10 @@ Route::prefix('v1')->group(function () {
         Route::get('admin/platform-health', [\App\Http\Controllers\Api\V1\PlatformHealthController::class, 'show'])
             ->middleware(['erp.super_admin']);
         Route::post('admin/platform-health/reverb-test', [\App\Http\Controllers\Api\V1\PlatformHealthController::class, 'sendReverbTest'])
+            ->middleware(['erp.super_admin']);
+        Route::get('admin/platform-theme', [\App\Http\Controllers\Api\V1\PlatformThemeController::class, 'show'])
+            ->middleware(['erp.super_admin']);
+        Route::patch('admin/platform-theme', [\App\Http\Controllers\Api\V1\PlatformThemeController::class, 'update'])
             ->middleware(['erp.super_admin']);
         Route::delete('admin/active-sessions/{token}', [PlatformActiveSessionsController::class, 'destroy'])
             ->middleware(['erp.super_admin']);
@@ -573,6 +579,7 @@ Route::prefix('v1')->group(function () {
             ->group(function () {
                 Route::get('sales', [ErpSettingsController::class, 'sales']);
                 Route::patch('sales', [ErpSettingsController::class, 'updateSales']);
+                Route::post('sales/pricing-formula-preview', [ErpSettingsController::class, 'previewPricingFormula']);
                 Route::get('distribution', [ErpSettingsController::class, 'distribution']);
                 Route::patch('distribution', [ErpSettingsController::class, 'updateDistribution']);
                 Route::get('inventory', [ErpSettingsController::class, 'inventory']);
