@@ -45,7 +45,11 @@ class PlatformInvoiceController extends Controller
     public function store(Request $request)
     {
         $data = $this->validateInvoice($request);
-        $totals = $this->billing->calculateTotals($data['line_items'], (float) $data['tax_rate']);
+        $totals = $this->billing->calculateTotals(
+            $data['line_items'],
+            (float) ($data['tax_rate'] ?? 0),
+            $data['invoice_options'] ?? [],
+        );
 
         $invoice = PlatformInvoice::query()->create([
             ...$data,
@@ -67,7 +71,11 @@ class PlatformInvoiceController extends Controller
     {
         $model = PlatformInvoice::query()->findOrFail($invoice);
         $data = $this->validateInvoice($request, $model);
-        $totals = $this->billing->calculateTotals($data['line_items'], (float) $data['tax_rate']);
+        $totals = $this->billing->calculateTotals(
+            $data['line_items'],
+            (float) ($data['tax_rate'] ?? 0),
+            $data['invoice_options'] ?? [],
+        );
 
         $model->fill([
             ...$data,
@@ -246,6 +254,7 @@ class PlatformInvoiceController extends Controller
             'invoice_options.print_font_family' => 'nullable|string|max:40',
             'invoice_options.print_font_scale' => 'nullable|in:compact,standard,large,extra_large',
             'invoice_options.print_spacing' => 'nullable|in:compact,comfortable,spacious',
+            'invoice_options.prices_include_vat' => 'nullable|boolean',
             'line_items' => 'required|array|min:1',
             'line_items.*.module_key' => 'nullable|string|max:80',
             'line_items.*.description' => 'required|string|max:2000',
@@ -263,6 +272,15 @@ class PlatformInvoiceController extends Controller
     protected function invoicePayload(PlatformInvoice $invoice): array
     {
         $payload = $invoice->toArray();
+        $options = is_array($invoice->invoice_options) ? $invoice->invoice_options : [];
+        $totals = $this->billing->calculateTotals(
+            is_array($invoice->line_items) ? $invoice->line_items : [],
+            (float) ($invoice->tax_rate ?? 0),
+            $options,
+        );
+        $payload['subtotal'] = $totals['subtotal'];
+        $payload['tax_amount'] = $totals['tax_amount'];
+        $payload['total'] = $totals['total'];
         $payload['organization'] = $invoice->organization
             ? $invoice->organization->only(['id', 'company_code', 'org_name'])
             : null;

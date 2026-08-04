@@ -142,7 +142,11 @@ class SubscriptionRenewalReminderService
             'included' => true,
         ]];
         $taxRate = (float) ($resolved['tax_rate'] ?? 0);
-        $totals = $this->billing->calculateTotals($lineItems, $taxRate);
+        $totals = $this->billing->calculateTotals(
+            $lineItems,
+            $taxRate,
+            is_array($resolved['invoice_options'] ?? null) ? $resolved['invoice_options'] : [],
+        );
 
         $invoice = PlatformInvoice::query()->create([
             'invoice_number' => $this->billing->nextInvoiceNumber(),

@@ -64,6 +64,20 @@ class PlatformInvoiceDocumentService
             ->filter(fn ($row) => ($row['included'] ?? true) !== false)
             ->values();
 
+        $totals = app(PlatformInvoiceBillingService::class)->calculateTotals(
+            $lines->all(),
+            (float) ($invoice->tax_rate ?? 0),
+            $options,
+        );
+        $subtotal = $totals['subtotal'];
+        $taxAmount = $totals['tax_amount'];
+        $total = $totals['total'];
+        $pricesIncludeVat = (bool) ($options['prices_include_vat'] ?? true);
+        $vatLabel = $pricesIncludeVat
+            ? 'VAT ('.$this->money($invoice->tax_rate).'% included)'
+            : 'VAT ('.$this->money($invoice->tax_rate).'%)';
+        $amountHeader = $pricesIncludeVat ? 'Amount (inc. VAT)' : 'Amount (ex. VAT)';
+
         $accent = $theme['accent'];
         $bg = $theme['bg'];
         $header = $theme['header'];
@@ -157,14 +171,14 @@ class PlatformInvoiceDocumentService
                     <th>#</th>
                     <th>Description</th>
                     '.$qtyHeader.'
-                    <th style="text-align:right;">Amount</th>
+                    <th style="text-align:right;">'.$amountHeader.'</th>
                 </tr></thead>
                 <tbody>'.$rowHtml.'</tbody>
             </table>
             <table class="totals">
-                <tr><td>Subtotal</td><td style="text-align:right;">'.$currency.' '.$this->money($invoice->subtotal).'</td></tr>
-                <tr><td>Tax ('.$this->money($invoice->tax_rate).'%)</td><td style="text-align:right;">'.$currency.' '.$this->money($invoice->tax_amount).'</td></tr>
-                <tr class="total"><td>Total</td><td style="text-align:right;">'.$currency.' '.$this->money($invoice->total).'</td></tr>
+                <tr><td>Subtotal (ex. VAT)</td><td style="text-align:right;">'.$currency.' '.$this->money($subtotal).'</td></tr>
+                <tr><td>'.$vatLabel.'</td><td style="text-align:right;">'.$currency.' '.$this->money($taxAmount).'</td></tr>
+                <tr class="total"><td>Total due</td><td style="text-align:right;">'.$currency.' '.$this->money($total).'</td></tr>
             </table>
             '.($invoice->notes ? '<div class="notes"><strong>Notes</strong><br>'.nl2br(e($invoice->notes)).'</div>' : '').'
             '.($invoice->terms ? '<div class="notes"><strong>Terms</strong><br>'.nl2br(e($invoice->terms)).'</div>' : '').'

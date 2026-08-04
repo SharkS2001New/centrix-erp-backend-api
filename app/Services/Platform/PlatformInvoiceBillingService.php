@@ -188,11 +188,12 @@ class PlatformInvoiceBillingService
 
     /**
      * @param  list<array<string, mixed>>  $lineItems
+     * @param  array<string, mixed>  $options
      * @return array{subtotal: float, tax_amount: float, total: float}
      */
-    public function calculateTotals(array $lineItems, float $taxRate): array
+    public function calculateTotals(array $lineItems, float $taxRate, array $options = []): array
     {
-        $subtotal = 0.0;
+        $gross = 0.0;
         foreach ($lineItems as $item) {
             if (($item['included'] ?? true) === false) {
                 continue;
@@ -200,10 +201,33 @@ class PlatformInvoiceBillingService
             $qty = (float) ($item['quantity'] ?? 1);
             $unit = (float) ($item['unit_price'] ?? 0);
             $amount = isset($item['amount']) ? (float) $item['amount'] : round($qty * $unit, 2);
-            $subtotal += $amount;
+            $gross += $amount;
         }
 
-        $subtotal = round($subtotal, 2);
+        $gross = round($gross, 2);
+        if ($taxRate <= 0) {
+            return [
+                'subtotal' => $gross,
+                'tax_amount' => 0.0,
+                'total' => $gross,
+            ];
+        }
+
+        $pricesIncludeVat = (bool) ($options['prices_include_vat'] ?? true);
+        if ($pricesIncludeVat) {
+            // Line amounts are VAT-inclusive — total due equals the sum of entered figures.
+            $total = $gross;
+            $subtotal = round($total / (1 + ($taxRate / 100)), 2);
+            $taxAmount = round($total - $subtotal, 2);
+
+            return [
+                'subtotal' => $subtotal,
+                'tax_amount' => $taxAmount,
+                'total' => $total,
+            ];
+        }
+
+        $subtotal = $gross;
         $taxAmount = round($subtotal * ($taxRate / 100), 2);
         $total = round($subtotal + $taxAmount, 2);
 
