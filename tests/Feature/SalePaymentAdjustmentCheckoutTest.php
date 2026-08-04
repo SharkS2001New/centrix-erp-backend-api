@@ -3,7 +3,9 @@
 namespace Tests\Feature;
 
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
+use App\Models\Organization;
 use App\Models\Product;
+use App\Models\Sale;
 use App\Models\User;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -124,5 +126,100 @@ class SalePaymentAdjustmentCheckoutTest extends TestCase
         $this->assertEqualsWithDelta(0.0, (float) ($sale->cash ?? 0), 0.02);
         $this->assertSame('EQUITY', strtoupper((string) $sale->payment_method_code));
         $this->assertGreaterThan(0, $sale->payments->count());
+    }
+
+    public function test_empty_previous_order_edit_cancels_sale_and_records_return(): void
+    {
+        $this->setPosOrderEditEnabled(true);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertCreated()->json();
+
+        $orderNum = (int) $sale['order_num'];
+        $orderTotal = round((float) $sale['order_total'], 2);
+        $this->assertGreaterThan(0, $orderTotal);
+
+        $editCart = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+        $editCartId = $editCart['id'];
+        $this->assertSame((int) $sale['id'], (int) ($editCart['superseded_sale_id'] ?? 0));
+
+        $this->putJson("/api/v1/sales/carts/{$editCartId}/lines", [
+            'lines' => [],
+            'order_discount' => 0,
+        ])->assertOk()
+            ->assertJsonPath('lines', []);
+
+        $cancelled = $this->postJson("/api/v1/sales/carts/{$editCartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => 0,
+            'order_num' => $orderNum,
+            'payment_adjustments' => [
+                [
+                    'method_code' => 'CASH',
+                    'amount' => $orderTotal,
+                    'adjustment_type' => 'return',
+                    'reference_number' => null,
+                ],
+            ],
+        ])->assertCreated()->json();
+
+        $this->assertSame('cancelled', $cancelled['status']);
+        $this->assertSame($orderNum, (int) $cancelled['order_num']);
+        $this->assertSame((int) $sale['id'], (int) $cancelled['id']);
+
+        $this->assertDatabaseHas('sale_payment_adjustments', [
+            'sale_id' => $sale['id'],
+            'adjustment_type' => 'return',
+            'amount' => $orderTotal,
+        ]);
+
+        $this->assertDatabaseMissing('temporary_carts', ['id' => $editCartId]);
+
+        $fresh = Sale::query()->findOrFail($sale['id']);
+        $this->assertSame('cancelled', $fresh->status);
+        $this->assertSame($orderNum, (int) $fresh->order_num);
+        $this->assertTrue((bool) (($fresh->fulfillment_meta ?? [])['cancelled_via_empty_previous_order_edit'] ?? false));
+    }
+
+    public function test_normal_cart_rejects_empty_replace_lines(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $this->putJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'lines' => [],
+        ])->assertStatus(422);
+    }
+
+    protected function setPosOrderEditEnabled(bool $enabled): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'enable_pos_order_edit' => $enabled,
+        ]);
+        $org->update(['module_settings' => $settings]);
     }
 }

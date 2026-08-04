@@ -275,8 +275,11 @@ class CartOperationsController extends Controller
         $cart = $this->findOwnedCart($cartId, $user);
         $gate = $this->erp->gateForUser($user);
 
+        // Previous-order edits may clear every line (empty revision → cancel + return on checkout).
+        // Use present|array (not required) so lines:[] is accepted — Laravel treats [] as empty.
+        $allowEmptyLines = (int) ($cart->superseded_sale_id ?? 0) > 0;
         $data = $request->validate([
-            'lines' => 'required|array|min:1',
+            'lines' => $allowEmptyLines ? 'present|array' : 'required|array|min:1',
             'lines.*.product_code' => 'required|string|max:64',
             'lines.*.quantity' => 'required|numeric|gt:0',
             'lines.*.unit_price' => 'nullable|numeric|min:0',
@@ -299,9 +302,13 @@ class CartOperationsController extends Controller
 
         $heldOrderNum = $cart->held_order_num;
         $supersededSaleId = $cart->superseded_sale_id;
+        $lines = array_values(array_filter(
+            $data['lines'] ?? [],
+            static fn ($row) => is_array($row),
+        ));
 
         // Retry on MySQL deadlock while releasing/re-reserving many SKUs at once.
-        $cart = DB::transaction(function () use ($cart, $data, $user, $gate, $heldOrderNum, $supersededSaleId) {
+        $cart = DB::transaction(function () use ($cart, $data, $user, $gate, $heldOrderNum, $supersededSaleId, $lines) {
             $this->releaseCartReservations((int) $cart->id);
             CartLine::where('cart_id', $cart->id)->delete();
 
@@ -315,7 +322,9 @@ class CartOperationsController extends Controller
             $cart->update($updates);
             $cart->refresh();
 
-            $this->addDraftLinesToCart($cart, $data['lines'], $user, $gate);
+            if ($lines !== []) {
+                $this->addDraftLinesToCart($cart, $lines, $user, $gate);
+            }
 
             return $cart->fresh('lines');
         }, 5);

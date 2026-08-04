@@ -28,10 +28,12 @@ use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
 use App\Jobs\FinalizeSaleAfterCheckoutJob;
 use App\Services\Accounting\CustomerInvoiceService;
+use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\SalePaymentColumnMapper;
 use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
+use App\Services\Notifications\ActionRequestService;
 use App\Services\Sales\DiscountApprovalService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\MobileCheckoutLocationService;
@@ -187,6 +189,10 @@ class CheckoutController extends Controller
     {
         $lines = CartLine::where('cart_id', $cart->id)->get();
         if ($lines->isEmpty()) {
+            // Empty previous-order edit → cancel the live sale and record the full return.
+            if ((int) ($cart->superseded_sale_id ?? 0) > 0) {
+                return $this->checkoutEmptyPreviousOrderEditCancel($cart, $user, $gate, $input);
+            }
             throw new InvalidArgumentException('Cart is empty.');
         }
 
@@ -1271,6 +1277,176 @@ class CheckoutController extends Controller
         }
 
         return $normalized;
+    }
+
+    /**
+     * Previous-order edit with every line removed: cancel the live sale in place
+     * (same order_num), record the full return as payment_adjustments, clear the cart.
+     * Stock/fiscal were already reversed on restore-to-cart — do not re-deduct.
+     *
+     * @return array{sale: Sale, deduct_stock: bool, run_side_effects: bool}
+     */
+    protected function checkoutEmptyPreviousOrderEditCancel(
+        TemporaryCart $cart,
+        User $user,
+        CapabilityGate $gate,
+        array $input,
+    ): array {
+        return DB::transaction(function () use ($cart, $user, $gate, $input) {
+            $idempotency = app(PosOfflineCheckoutIdempotency::class);
+            $existing = $idempotency->findExisting($user, $input);
+            if ($existing) {
+                $existing->loadMissing([
+                    'items.product.unit',
+                    'payments.paymentMethod',
+                    'kraResponse',
+                    'cashier:id,username,full_name',
+                ]);
+
+                return [
+                    'sale' => $existing,
+                    'deduct_stock' => false,
+                    'run_side_effects' => false,
+                ];
+            }
+
+            $supersededId = (int) ($cart->superseded_sale_id ?? 0);
+            $sale = Sale::query()->find($supersededId);
+            if (! $sale) {
+                throw new InvalidArgumentException('Previous order for this empty edit was not found.');
+            }
+
+            $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+            $alreadyCancelled = (string) $sale->status === 'cancelled';
+            $editingInProgress = ! empty($meta['pos_editing_in_progress']);
+            if (! $editingInProgress && ! $alreadyCancelled) {
+                throw new InvalidArgumentException(
+                    'This order is not open for an empty previous-order edit cancel.',
+                );
+            }
+
+            // Idempotent retry after cart was recreated: sale already cancelled with return.
+            if ($alreadyCancelled && ! empty($meta['cancelled_via_empty_previous_order_edit'])) {
+                $this->releaseCartReservations($cart->id);
+                CartLine::where('cart_id', $cart->id)->delete();
+                $cart->delete();
+                $sale = $sale->fresh([
+                    'items.product.unit',
+                    'payments.paymentMethod',
+                    'kraResponse',
+                    'cashier:id,username,full_name',
+                ]);
+
+                return [
+                    'sale' => $sale,
+                    'deduct_stock' => false,
+                    'run_side_effects' => false,
+                ];
+            }
+
+            $adjustmentRows = $this->normalizeCheckoutPaymentAdjustments($input['payment_adjustments'] ?? null);
+            $returnTotal = round(array_sum(array_map(
+                static fn (array $row) => ($row['adjustment_type'] ?? '') === 'return'
+                    ? (float) ($row['amount'] ?? 0)
+                    : 0.0,
+                $adjustmentRows,
+            )), 2);
+            $expectedReturn = round(max(
+                (float) ($sale->order_total ?? 0),
+                (float) ($sale->amount_paid ?? 0),
+            ), 2);
+            if ($expectedReturn > 0.009 && abs($returnTotal - $expectedReturn) > 0.02) {
+                throw new InvalidArgumentException(
+                    'Record the full return of '.number_format($expectedReturn, 2, '.', '')
+                    .' before cancelling this empty order edit.',
+                );
+            }
+            if ($expectedReturn > 0.009 && $returnTotal <= 0.009) {
+                throw new InvalidArgumentException(
+                    'Record how the return was paid before cancelling this empty order edit.',
+                );
+            }
+            foreach ($adjustmentRows as $row) {
+                if (($row['adjustment_type'] ?? '') === 'topup') {
+                    throw new InvalidArgumentException(
+                        'Empty previous-order edits only accept return payment adjustments.',
+                    );
+                }
+            }
+
+            $statusBefore = (string) ($meta['original_status'] ?? $sale->status);
+            if ($statusBefore === '' || $statusBefore === 'cancelled') {
+                $statusBefore = 'completed';
+            }
+            unset(
+                $meta['pos_editing_in_progress'],
+                $meta['pos_editing_at'],
+                $meta['pos_editing_by'],
+            );
+            $meta['status_before_cancel'] = $statusBefore;
+            $meta['cancelled_via_empty_previous_order_edit'] = true;
+            $meta['cancelled_via_empty_previous_order_edit_at'] = now()->toIso8601String();
+            $meta = $idempotency->stampFulfillmentMeta($meta, $input);
+
+            $orderNum = (int) ($cart->held_order_num ?? $sale->order_num);
+            if ($orderNum > 0 && (int) $sale->order_num !== $orderNum && (int) $sale->order_num >= 9_000_000) {
+                // Older restore flows tombstoned the order_num — reclaim the live number.
+                $sale->order_num = $orderNum;
+            }
+
+            $sale->update([
+                'status' => 'cancelled',
+                'cancelled_at' => $sale->cancelled_at ?? now(),
+                'cancelled_by' => $sale->cancelled_by ?? $user->id,
+                'stock_balanced' => 0,
+                'archived' => 0,
+                'fulfillment_meta' => $meta === [] ? null : $meta,
+                'order_num' => (int) $sale->order_num > 0 ? (int) $sale->order_num : $orderNum,
+            ]);
+
+            $sale = $sale->fresh();
+            app(CustomerInvoiceService::class)->voidForCancelledSale($sale, $user);
+            app(ReferenceJournalReversalService::class)->reverseIfEnabled(
+                'sale',
+                (int) $sale->id,
+                $user,
+                $gate,
+            );
+            app(ActionRequestService::class)->cancelAllPendingForSale(
+                $sale,
+                $user,
+                'Order cancelled after all lines were removed in a previous-order edit.',
+            );
+
+            $floatSessionId = isset($input['float_session_id'])
+                ? (int) $input['float_session_id']
+                : ($cart->float_session_id ? (int) $cart->float_session_id : null);
+            if ($adjustmentRows !== []) {
+                app(SalePaymentAdjustmentService::class)->recordForSale(
+                    $sale,
+                    $adjustmentRows,
+                    $floatSessionId,
+                    $input['payment_date'] ?? now(),
+                );
+            }
+
+            $this->releaseCartReservations($cart->id);
+            CartLine::where('cart_id', $cart->id)->delete();
+            $cart->delete();
+
+            $sale = $sale->fresh([
+                'items.product.unit',
+                'payments.paymentMethod',
+                'kraResponse',
+                'cashier:id,username,full_name',
+            ]);
+
+            return [
+                'sale' => $sale,
+                'deduct_stock' => false,
+                'run_side_effects' => false,
+            ];
+        });
     }
 
     /**
