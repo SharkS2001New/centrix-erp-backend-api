@@ -8,12 +8,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * POS thermal ticket numbers: start at 1 each calendar day per cashier.
- * Independent of the org-wide {@see OrderNumberAllocator} (S00xx).
+ * POS thermal ticket numbers (Cash Sales #): start at 1 each calendar day per cashier.
+ * Sequence is driven only by completed sales — never by offline org-order reserves.
+ * Independent of the org-wide {@see OrderNumberAllocator} (S00xx), which may jump.
  */
 class PosDailyOrderNumberAllocator
 {
-    /** Max POS thermal tickets a single reserve request may claim (matches org order block). */
+    /** Max POS thermal tickets a single reserve request may claim (legacy; unused for sequencing). */
     public const MAX_RESERVE_BLOCK = 50;
 
     /**
@@ -31,7 +32,7 @@ class PosDailyOrderNumberAllocator
         }
 
         $date = $this->normalizeDate($businessDate) ?? now()->toDateString();
-        $next = $this->nextTicketForCashierDay($organizationId, $cashierId, $date, locked: false);
+        $next = $this->saleMaxForCashierDay($organizationId, $cashierId, $date, locked: false) + 1;
 
         return [
             'pos_order_num' => $next,
@@ -58,7 +59,7 @@ class PosDailyOrderNumberAllocator
             $cashierId,
             $date,
         ): array {
-            $next = $this->nextTicketForCashierDay($organizationId, $cashierId, $date, locked: true);
+            $next = $this->saleMaxForCashierDay($organizationId, $cashierId, $date, locked: true) + 1;
             $this->writeWatermark($organizationId, $cashierId, $date, $next);
 
             return [
@@ -69,7 +70,9 @@ class PosDailyOrderNumberAllocator
     }
 
     /**
-     * Reserve a block of daily thermal ticket numbers for offline External POS.
+     * Preview-only helpers for offline UI. Does NOT reserve or advance Cash Sales #.
+     * Org S00xx numbers are reserved separately; POS tickets are assigned at sale time
+     * as saleMax+1 so each cashier stays on 1, 2, 3… with no reserve-block gaps.
      *
      * @return array{pos_order_date: string, start: int, end: int, tickets: list<array{pos_order_num: int, pos_order_date: string}>}
      */
@@ -79,49 +82,51 @@ class PosDailyOrderNumberAllocator
         int $count,
         ?string $businessDate = null,
     ): array {
+        $date = $this->normalizeDate($businessDate) ?? now()->toDateString();
         if (! Schema::hasColumn('sales', 'pos_order_num')) {
             return [
-                'pos_order_date' => now()->toDateString(),
+                'pos_order_date' => $date,
                 'start' => 0,
                 'end' => 0,
                 'tickets' => [],
             ];
         }
 
-        $count = max(1, min(self::MAX_RESERVE_BLOCK, $count));
-        $date = $this->normalizeDate($businessDate) ?? now()->toDateString();
+        $peek = $this->peekNextForCashier($organizationId, $cashierId, $date);
+        $next = (int) ($peek['pos_order_num'] ?? 1);
 
-        return $this->withCashierDayLock($organizationId, $cashierId, $date, function () use (
-            $organizationId,
-            $cashierId,
-            $date,
-            $count,
-        ): array {
-            $start = $this->ceilingForCashierDay($organizationId, $cashierId, $date, locked: true) + 1;
-            $end = $start + $count - 1;
-            $this->writeWatermark($organizationId, $cashierId, $date, $end);
-
-            $tickets = [];
-            for ($n = $start; $n <= $end; $n++) {
-                $tickets[] = [
-                    'pos_order_num' => $n,
-                    'pos_order_date' => $date,
-                ];
-            }
-
-            return [
-                'pos_order_date' => $date,
-                'start' => $start,
-                'end' => $end,
-                'tickets' => $tickets,
-            ];
-        });
+        // Return empty tickets — callers must not pre-bind Cash Sales # to org slots.
+        return [
+            'pos_order_date' => $date,
+            'start' => $next,
+            'end' => $next,
+            'tickets' => [],
+            'next_pos_order_num' => $next,
+        ];
     }
 
     /**
-     * Claim a client-reserved thermal ticket at checkout (offline sync replay).
+     * Claim a free Cash Sales # for this cashier/day (legacy name).
+     * Prefer {@see claimPrintedTicketForCheckout}.
      */
     public function claimReservedForCheckout(
+        int $organizationId,
+        int $cashierId,
+        int $posOrderNum,
+        string $businessDate,
+    ): bool {
+        return $this->claimPrintedTicketForCheckout(
+            $organizationId,
+            $cashierId,
+            $posOrderNum,
+            $businessDate,
+        );
+    }
+
+    /**
+     * Claim a free printed Cash Sales # for this cashier/day.
+     */
+    public function claimPrintedTicketForCheckout(
         int $organizationId,
         int $cashierId,
         int $posOrderNum,
@@ -243,35 +248,6 @@ class PosDailyOrderNumberAllocator
         } catch (\Throwable) {
             return null;
         }
-    }
-
-    protected function ceilingForCashierDay(
-        int $organizationId,
-        int $cashierId,
-        string $date,
-        bool $locked = false,
-    ): int {
-        $saleMax = $this->saleMaxForCashierDay($organizationId, $cashierId, $date, $locked);
-        $watermark = $this->readWatermark($organizationId, $cashierId, $date);
-
-        return max($saleMax, $watermark);
-    }
-
-    /**
-     * Next Cash Sales # for this cashier/day.
-     *
-     * Empty day → 1. After sales → saleMax+1 when no outstanding offline reserve.
-     * When a reserve block advanced the watermark ahead of sales, continue after
-     * the watermark so another till cannot steal reserved tickets — the POS UI
-     * should claim a reserved slot (`pos_order_num`) instead, which starts at 1.
-     */
-    protected function nextTicketForCashierDay(
-        int $organizationId,
-        int $cashierId,
-        string $date,
-        bool $locked = false,
-    ): int {
-        return $this->ceilingForCashierDay($organizationId, $cashierId, $date, $locked) + 1;
     }
 
     protected function saleMaxForCashierDay(

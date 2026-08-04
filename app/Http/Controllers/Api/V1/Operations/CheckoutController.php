@@ -899,28 +899,53 @@ class CheckoutController extends Controller
             ? (app(PosDailyOrderNumberAllocator::class)->normalizeBusinessDate($clientDateRaw) ?? '')
             : '';
         $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
-        // External POS always prefers the client ticket (reserved slot or printed receipt).
-        // Offline sync MUST keep that number — never silently reallocate a different Cash Sales #.
+        // Cash Sales # is per cashier 1,2,3… from completed sales only.
+        // Offline/local-first: keep the printed ticket when it is still free.
+        // Online: only accept a client ticket when it is exactly the next sequential #.
         if ($clientPos > 0 && $clientDate !== '') {
-            $claimed = $allocator->claimReservedForCheckout(
-                (int) $user->organization_id,
-                (int) $user->id,
-                $clientPos,
-                $clientDate,
-            );
-            if ($claimed) {
-                return [
-                    'pos_order_num' => $clientPos,
-                    'pos_order_date' => $clientDate,
-                    '__lock_pos_ticket' => true,
-                ];
-            }
             if ($offlineOrder) {
+                $claimed = $allocator->claimPrintedTicketForCheckout(
+                    (int) $user->organization_id,
+                    (int) $user->id,
+                    $clientPos,
+                    $clientDate,
+                );
+                if ($claimed) {
+                    return [
+                        'pos_order_num' => $clientPos,
+                        'pos_order_date' => $clientDate,
+                        '__lock_pos_ticket' => true,
+                    ];
+                }
                 throw new InvalidArgumentException(
                     "Cash Sales #{$clientPos} could not be claimed for {$clientDate}. "
                     .'Reprint after reconnect, or contact support if this ticket was already used.',
                 );
             }
+
+            $peek = $allocator->peekNextForCashier(
+                (int) $user->organization_id,
+                (int) $user->id,
+                $clientDate,
+            );
+            $expectedNext = (int) ($peek['pos_order_num'] ?? 0);
+            if ($clientPos === $expectedNext) {
+                $claimed = $allocator->claimPrintedTicketForCheckout(
+                    (int) $user->organization_id,
+                    (int) $user->id,
+                    $clientPos,
+                    $clientDate,
+                );
+                if ($claimed) {
+                    return [
+                        'pos_order_num' => $clientPos,
+                        'pos_order_date' => $clientDate,
+                        '__lock_pos_ticket' => true,
+                    ];
+                }
+            }
+            // Stale reserved-block tickets (e.g. #27 while next is #7) are ignored —
+            // allocate the true next Cash Sales # below.
         }
 
         $allocated = $allocator->allocateForCheckout(

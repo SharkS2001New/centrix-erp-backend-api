@@ -34,7 +34,9 @@ class OrderNumberReserveController extends Controller
 
         try {
             $block = $allocator->reserveBlockForOrganization($orgId, $count);
-            $posBlock = $posAllocator->reserveBlockForCashier($orgId, (int) $user->id, count($block['numbers']));
+            // Cash Sales # is NOT reserved here — only org S00xx numbers.
+            // POS tickets stay per-cashier 1,2,3… assigned at sale time from sale max.
+            $posPeek = $posAllocator->peekNextForCashier($orgId, (int) $user->id);
         } catch (InvalidArgumentException $e) {
             throw ValidationException::withMessages([
                 'organization' => $e->getMessage(),
@@ -42,12 +44,12 @@ class OrderNumberReserveController extends Controller
         }
 
         $slots = [];
-        foreach ($block['numbers'] as $i => $orderNum) {
-            $ticket = $posBlock['tickets'][$i] ?? null;
+        foreach ($block['numbers'] as $orderNum) {
             $slots[] = [
                 'order_num' => $orderNum,
-                'pos_order_num' => $ticket['pos_order_num'] ?? null,
-                'pos_order_date' => $ticket['pos_order_date'] ?? null,
+                // Bound at sale time so reserve blocks cannot jump Cash Sales #.
+                'pos_order_num' => null,
+                'pos_order_date' => $posPeek['pos_order_date'] ?? null,
             ];
         }
 
@@ -57,8 +59,9 @@ class OrderNumberReserveController extends Controller
             'end' => $block['end'],
             'numbers' => $block['numbers'],
             'count' => count($block['numbers']),
-            'pos_order_date' => $posBlock['pos_order_date'] ?? null,
-            'pos_tickets' => $posBlock['tickets'] ?? [],
+            'pos_order_date' => $posPeek['pos_order_date'] ?? null,
+            'next_pos_order_num' => $posPeek['pos_order_num'] ?? null,
+            'pos_tickets' => [],
             'slots' => $slots,
         ]);
     }
