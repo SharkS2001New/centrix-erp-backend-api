@@ -5,7 +5,7 @@
     "require": {
         "php": "^8.2",
         "dompdf/dompdf": "^3.1",
-        "guzzlehttp/guzzle": "^7.14.2",
+        "guzzlehttp/guzzle": "^7.15.2",
         "guzzlehttp/psr7": "^2.13.0",
         "laravel/framework": "^12.61.1",
         "laravel/reverb": "^1.10",
