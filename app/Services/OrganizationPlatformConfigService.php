@@ -491,6 +491,8 @@ class OrganizationPlatformConfigService
         return [
             'show_checkout_on_create_order' => (bool) ($sales['show_checkout_on_create_order'] ?? true),
             'enable_mobile_orders' => (bool) ($sales['enable_mobile_orders'] ?? true),
+            'enable_mobile_orders_returns_card' => (bool) ($sales['enable_mobile_orders_returns_card'] ?? false),
+            'enable_mobile_orders_payments_card' => (bool) ($sales['enable_mobile_orders_payments_card'] ?? false),
             'mobile_enable_field_attendance' => (bool) ($sales['mobile_enable_field_attendance'] ?? false),
             'mobile_enable_driver_app' => (bool) ($distribution['mobile_enable_driver_app'] ?? true),
             'mobile_enable_driver_attendance' => (bool) ($distribution['mobile_enable_driver_attendance'] ?? false),
@@ -644,7 +646,11 @@ class OrganizationPlatformConfigService
 
         if ($gate && ! $gate->mobileSalesEnabled()) {
             foreach (array_keys($data) as $key) {
-                if (str_starts_with($key, 'mobile_') || $key === 'enable_mobile_orders') {
+                if (
+                    str_starts_with($key, 'mobile_')
+                    || $key === 'enable_mobile_orders'
+                    || str_starts_with($key, 'enable_mobile_orders_')
+                ) {
                     unset($data[$key]);
                 }
             }

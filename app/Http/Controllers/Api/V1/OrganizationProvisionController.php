@@ -680,6 +680,8 @@ class OrganizationProvisionController extends Controller
             'sales_platform' => 'sometimes|array',
             'sales_platform.show_checkout_on_create_order' => 'sometimes|boolean',
             'sales_platform.enable_mobile_orders' => 'sometimes|boolean',
+            'sales_platform.enable_mobile_orders_returns_card' => 'sometimes|boolean',
+            'sales_platform.enable_mobile_orders_payments_card' => 'sometimes|boolean',
             'sales_platform.mobile_enable_field_attendance' => 'sometimes|boolean',
             'sales_platform.mobile_enable_driver_app' => 'sometimes|boolean',
             'sales_platform.mobile_enable_driver_attendance' => 'sometimes|boolean',

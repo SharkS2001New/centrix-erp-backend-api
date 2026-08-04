@@ -170,18 +170,18 @@ class NotificationSettingsResolver
         $out['notify_on_delivery'] = (bool) ($out['notify_on_delivery'] ?? false);
         $out['notify_on_order_placed'] = (bool) ($out['notify_on_order_placed'] ?? false);
         $out['notify_on_debtor_payment'] = (bool) ($out['notify_on_debtor_payment'] ?? false);
+        $out['notify_on_debt_reminder'] = (bool) ($out['notify_on_debt_reminder'] ?? false);
         $out['notify_on_approval_request'] = (bool) ($out['notify_on_approval_request'] ?? false);
         $out['notify_on_approval_outcome'] = (bool) ($out['notify_on_approval_outcome'] ?? false);
         foreach (InAppNotificationEvents::organizationEvents() as $event) {
             $key = InAppNotificationEvents::settingKey($event);
             $out[$key] = (bool) ($out[$key] ?? self::defaults()[$key] ?? false);
         }
-        $out['order_placed_scope'] = in_array($out['order_placed_scope'] ?? '', ['all', 'debtors', 'route_orders'], true)
-            ? $out['order_placed_scope']
-            : 'all';
-        $out['debtor_payment_scope'] = in_array($out['debtor_payment_scope'] ?? '', ['all', 'debtors', 'route_orders'], true)
-            ? $out['debtor_payment_scope']
-            : 'debtors';
+        $out['order_placed_scope'] = self::normalizeScopes($out['order_placed_scope'] ?? 'all', 'all');
+        $out['debtor_payment_scope'] = self::normalizeScopes($out['debtor_payment_scope'] ?? 'debtors', 'debtors');
+        $out['debt_reminder_scope'] = self::normalizeScopes($out['debt_reminder_scope'] ?? 'debtors', 'debtors');
+        $days = (int) ($out['debt_reminder_after_days'] ?? 7);
+        $out['debt_reminder_after_days'] = max(1, min(365, $days > 0 ? $days : 7));
         $out['sms_provider'] = in_array($out['sms_provider'] ?? '', ['africas_talking'], true)
             ? $out['sms_provider']
             : 'africas_talking';
@@ -203,6 +203,8 @@ class NotificationSettingsResolver
             'order_placed_email_template',
             'debtor_payment_sms_template',
             'debtor_payment_email_template',
+            'debt_reminder_sms_template',
+            'debt_reminder_email_template',
             'approval_request_email_subject',
             'approval_request_email_template',
             'approval_outcome_email_subject',
@@ -228,6 +230,43 @@ class NotificationSettingsResolver
         $defaults = config('erp.platform_notifications', []);
 
         return (bool) ($defaults[$key] ?? false);
+    }
+
+    /**
+     * Normalize a scope setting to a list of allowed values (supports legacy string).
+     *
+     * @return list<string>
+     */
+    public static function normalizeScopes(mixed $value, string $default = 'all'): array
+    {
+        $allowed = CustomerNotificationService::SCOPE_OPTIONS;
+
+        if (is_string($value) && $value !== '') {
+            $value = [$value];
+        }
+
+        if (! is_array($value)) {
+            return in_array($default, $allowed, true) ? [$default] : ['all'];
+        }
+
+        $out = [];
+        foreach ($value as $item) {
+            $key = strtolower(trim((string) $item));
+            if (in_array($key, $allowed, true) && ! in_array($key, $out, true)) {
+                $out[] = $key;
+            }
+        }
+
+        if ($out === []) {
+            return in_array($default, $allowed, true) ? [$default] : ['all'];
+        }
+
+        // "all" is exclusive — keep only that when present.
+        if (in_array('all', $out, true)) {
+            return ['all'];
+        }
+
+        return $out;
     }
 
     public static function renderTemplate(string $template, array $vars): string

@@ -55,6 +55,11 @@ Schedule::command('erp:send-subscription-renewal-reminders')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/subscription-renewal-reminders.log'));
 
+Schedule::command('erp:send-debt-reminders')
+    ->dailyAt('09:30')
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/debt-reminders.log'));
+
 Schedule::command('erp:close-idle-mobile-rep-attendance')
     ->dailyAt('00:05')
     ->withoutOverlapping()

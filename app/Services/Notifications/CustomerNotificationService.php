@@ -10,6 +10,8 @@ use App\Models\Sale;
 
 class CustomerNotificationService
 {
+    public const SCOPE_OPTIONS = ['all', 'mobile', 'debtors', 'route_orders'];
+
     public function __construct(protected CustomerNotificationDispatcher $dispatcher) {}
 
     public function notifyOrderPlaced(Sale $sale, Organization $organization): void
@@ -19,7 +21,11 @@ class CustomerNotificationService
             return;
         }
 
-        if (! $this->matchesScope($sale, (string) ($settings['order_placed_scope'] ?? 'all'))) {
+        $scopes = NotificationSettingsResolver::normalizeScopes(
+            $settings['order_placed_scope'] ?? 'all',
+            'all',
+        );
+        if (! $this->matchesAnyScope($sale, $scopes)) {
             return;
         }
 
@@ -40,12 +46,11 @@ class CustomerNotificationService
             return;
         }
 
-        if (! $this->matchesScope($sale, (string) ($settings['debtor_payment_scope'] ?? 'debtors'))) {
-            return;
-        }
-
-        $scope = (string) ($settings['debtor_payment_scope'] ?? 'debtors');
-        if ($scope === 'debtors' && ! $this->isDebtorSale($sale)) {
+        $scopes = NotificationSettingsResolver::normalizeScopes(
+            $settings['debtor_payment_scope'] ?? 'debtors',
+            'debtors',
+        );
+        if (! $this->matchesAnyScope($sale, $scopes)) {
             return;
         }
 
@@ -61,6 +66,61 @@ class CustomerNotificationService
             'Payment received for order {order_num}',
             $vars,
         );
+    }
+
+    public function notifyDebtReminder(Sale $sale, Organization $organization): bool
+    {
+        $settings = NotificationSettingsResolver::forOrganization($organization);
+        if (empty($settings['notify_on_debt_reminder'])) {
+            return false;
+        }
+
+        $scopes = NotificationSettingsResolver::normalizeScopes(
+            $settings['debt_reminder_scope'] ?? 'debtors',
+            'debtors',
+        );
+        if (! $this->matchesAnyScope($sale, $scopes)) {
+            return false;
+        }
+
+        $balance = max(0, (float) $sale->order_total - (float) $sale->amount_paid);
+        if ($balance <= 0.01) {
+            return false;
+        }
+
+        $vars = array_merge($this->saleTemplateVars($sale), [
+            'days_overdue' => (string) $this->unpaidAgeDays($sale),
+        ]);
+
+        $this->dispatcher->notifySaleCustomer(
+            $organization,
+            $sale,
+            $settings['debt_reminder_sms_template']
+                ?: 'Reminder: order {order_num} still has an unpaid balance of KES {balance_due}. Please arrange payment. Thank you.',
+            $settings['debt_reminder_email_template'] ?? '',
+            'Payment reminder for order {order_num}',
+            $vars,
+        );
+
+        return true;
+    }
+
+    /**
+     * @param  list<string>  $scopes
+     */
+    public function saleMatchesNotificationScopes(Sale $sale, array $scopes): bool
+    {
+        return $this->matchesAnyScope($sale, $scopes);
+    }
+
+    public function unpaidAgeDays(Sale $sale): int
+    {
+        $anchor = $sale->completed_at ?? $sale->created_at;
+        if (! $anchor) {
+            return 0;
+        }
+
+        return max(0, (int) $anchor->diffInDays(now()));
     }
 
     public function notifyInvoicePayment(CustomerInvoicePayment $payment, Organization $organization): void
@@ -83,15 +143,32 @@ class CustomerNotificationService
             return;
         }
 
+        $scopes = NotificationSettingsResolver::normalizeScopes(
+            $settings['debtor_payment_scope'] ?? 'debtors',
+            'debtors',
+        );
+
+        // Invoice-only payments (no linked sale): allow when all/debtors; skip mobile/route-only filters
+        // unless the customer has a route for route_orders.
+        if (! in_array('all', $scopes, true) && ! in_array('debtors', $scopes, true)) {
+            if (in_array('route_orders', $scopes, true)) {
+                $customer = Customer::query()
+                    ->where('customer_num', $payment->customer_num)
+                    ->where('organization_id', $payment->organization_id)
+                    ->first();
+                if (! $customer?->route_id) {
+                    return;
+                }
+            } else {
+                return;
+            }
+        }
+
         $customer = Customer::query()
             ->where('customer_num', $payment->customer_num)
             ->where('organization_id', $payment->organization_id)
             ->first();
         if (! $customer) {
-            return;
-        }
-
-        if (($settings['debtor_payment_scope'] ?? 'debtors') === 'route_orders' && ! $customer->route_id) {
             return;
         }
 
@@ -114,13 +191,42 @@ class CustomerNotificationService
         );
     }
 
+    /**
+     * @param  list<string>  $scopes
+     */
+    protected function matchesAnyScope(Sale $sale, array $scopes): bool
+    {
+        if ($scopes === [] || in_array('all', $scopes, true)) {
+            return true;
+        }
+
+        foreach ($scopes as $scope) {
+            if ($this->matchesScope($sale, $scope)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     protected function matchesScope(Sale $sale, string $scope): bool
     {
         return match ($scope) {
+            'all' => true,
+            'mobile' => $this->isMobileSale($sale),
             'debtors' => $this->isDebtorSale($sale),
             'route_orders' => ! empty($sale->route_id),
-            default => true,
+            default => false,
         };
+    }
+
+    protected function isMobileSale(Sale $sale): bool
+    {
+        if (strtolower(trim((string) ($sale->channel ?? ''))) === 'mobile') {
+            return true;
+        }
+
+        return strtolower(trim((string) ($sale->order_source ?? ''))) === 'mobile';
     }
 
     protected function isDebtorSale(Sale $sale): bool

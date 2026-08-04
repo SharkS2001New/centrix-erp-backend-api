@@ -4,7 +4,7 @@ namespace App\Services\Sales;
 
 class ClassicPosThemeSettings
 {
-    public const THEME_TEMPLATE_DEFAULT = 'legacy';
+    public const THEME_TEMPLATE_DEFAULT = 'centrix';
 
     public const THEME_TEMPLATES = [
         'legacy',

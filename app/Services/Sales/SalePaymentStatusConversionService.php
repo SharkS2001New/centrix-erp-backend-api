@@ -10,6 +10,7 @@ use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
 use App\Services\Erp\SalePaymentColumnMapper;
+use App\Services\Notifications\CustomerNotificationService;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
@@ -21,14 +22,16 @@ class SalePaymentStatusConversionService
 {
     public function __construct(protected ErpContext $erp) {}
 
-    public function convertToPaid(Sale $sale, User $user): Sale
+    public function convertToPaid(Sale $sale, User $user, bool $skipStatusGate = false): Sale
     {
-        return DB::transaction(function () use ($sale, $user) {
+        $notifiedAmount = 0.0;
+
+        $sale = DB::transaction(function () use ($sale, $user, $skipStatusGate, &$notifiedAmount) {
             $sale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
             $gate = $this->erp->gateForUser($user);
             $workflow = OrderWorkflowService::forGate($gate);
 
-            if (! $workflow->canConvertToPaidForOrder(
+            if (! $skipStatusGate && ! $workflow->canConvertToPaidForOrder(
                 (string) $sale->status,
                 $sale->channel ?: null,
                 (string) ($sale->payment_status ?? ''),
@@ -47,6 +50,7 @@ class SalePaymentStatusConversionService
             }
 
             $balance = round(max(0, $total - $alreadyPaid), 2);
+            $notifiedAmount = $balance;
             $method = $this->resolveConversionPaymentMethod((int) $sale->organization_id, (string) ($sale->payment_method_code ?? 'CASH'));
 
             if ($balance > 0.009 && $method) {
@@ -97,6 +101,24 @@ class SalePaymentStatusConversionService
 
             return $sale;
         });
+
+        if ($notifiedAmount > 0.009) {
+            try {
+                $organization = $sale->organization
+                    ?? \App\Models\Organization::query()->find($sale->organization_id);
+                if ($organization) {
+                    app(CustomerNotificationService::class)->notifyDebtorPayment(
+                        $sale,
+                        $organization,
+                        $notifiedAmount,
+                    );
+                }
+            } catch (\Throwable) {
+                // Customer SMS/email must not roll back payment conversion.
+            }
+        }
+
+        return $sale;
     }
 
     public function convertToUnpaid(Sale $sale, User $user): Sale

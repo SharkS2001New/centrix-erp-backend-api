@@ -4,7 +4,9 @@ namespace App\Services\Sales;
 
 use App\Models\Customer;
 use App\Models\CustomerReturn;
+use App\Models\Product;
 use App\Models\Sale;
+use App\Models\SaleItem;
 use App\Models\User;
 use App\Services\Auth\UserAccessService;
 use App\Services\Auth\UserMobileOrderScopeService;
@@ -13,6 +15,7 @@ use App\Services\Cache\OrganizationCache;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Services\Inventory\StockUomDisplayService;
 use App\Support\SqlLikeSearch;
 use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Builder;
@@ -297,22 +300,27 @@ class MobileSalesService
             ->with(['customer:customer_num,customer_name,organization_id'])
             ->withSum('items', 'discount_given');
 
-        $workflowStatus = in_array((string) ($filters['status'] ?? ''), ['pending_approval', 'editable'], true)
-            ? (string) $filters['status']
-            : null;
+        $statusFilter = strtolower(trim((string) ($filters['status'] ?? '')));
+        $knownStatuses = [
+            'draft', 'held', 'booked', 'pending', 'unpaid', 'pending_payment', 'paid',
+            'processed', 'delivered', 'completed', 'cancelled', 'expired',
+            'pending_approval', 'editable',
+        ];
+        $workflowStatus = in_array($statusFilter, $knownStatuses, true) ? $statusFilter : null;
 
         $search = trim((string) ($filters['q'] ?? ''));
+        $isExactOrderLookup = $search !== '' && ctype_digit($search);
+        $hasExplicitDates = filled($filters['from_date'] ?? null) || filled($filters['to_date'] ?? null);
 
-        if ($workflowStatus) {
-            $query->where('status', $workflowStatus);
-        } elseif ($search === '') {
+        // Date window: always when dates are sent (Sales by date / Today).
+        // Default browse without status → today. Approval queues without dates stay unscoped.
+        if (! $isExactOrderLookup && ($hasExplicitDates || $workflowStatus === null)) {
             $this->applyCreatedAtDayRange($query, $from, $to);
-            $query->where('status', '!=', 'cancelled');
+        }
+
+        if ($workflowStatus !== null) {
+            $query->where('status', $workflowStatus);
         } else {
-            // Keep search within a reasonable window unless looking up a specific order #.
-            if (! ctype_digit($search)) {
-                $this->applyCreatedAtDayRange($query, $from, $to);
-            }
             $query->where('status', '!=', 'cancelled');
         }
 
@@ -322,7 +330,8 @@ class MobileSalesService
             SqlLikeSearch::applySalesOrderSearch($query, $search, includeCustomerRelation: ! ctype_digit($search));
         }
 
-        $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 50);
+        $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
+        $listSummary = $this->buildOrderListSummary(clone $query, $search, (int) ($user->organization_id ?? 0));
         $page = $query->paginate($perPage);
         $gate = $this->erp->gateForUser($user);
         $presentation = app(SaleOrderPresentationService::class);
@@ -341,6 +350,7 @@ class MobileSalesService
                 'last_page' => $page->lastPage(),
                 'per_page' => $page->perPage(),
                 'total' => $page->total(),
+                'summary' => $listSummary,
             ],
         ];
 
@@ -374,6 +384,103 @@ class MobileSalesService
         }
 
         return $result;
+    }
+
+    /**
+     * KPI strip for mobile Today / Sales-by-date lists.
+     * When q matches line products, also return sold qty labels (e.g. "3 Bag, 20 kg").
+     *
+     * @param  Builder<Sale>  $query
+     * @return array{
+     *     order_count: int,
+     *     order_total: float,
+     *     matched_qty_label: ?string,
+     *     matched_products: list<array{product_code: string, product_name: string, qty_label: string, qty: float}>
+     * }
+     */
+    protected function buildOrderListSummary(Builder $query, string $search, int $organizationId): array
+    {
+        $orderCount = (int) (clone $query)->toBase()->getCountForPagination();
+        $orderTotal = round((float) (clone $query)->sum('sales.order_total'), 2);
+
+        $summary = [
+            'order_count' => $orderCount,
+            'order_total' => $orderTotal,
+            'matched_qty_label' => null,
+            'matched_products' => [],
+        ];
+
+        $term = trim($search);
+        if ($term === '' || ctype_digit($term) || preg_match('/^#?S0*\d+$/i', $term)) {
+            return $summary;
+        }
+
+        $saleIds = (clone $query)->select('sales.id')->pluck('sales.id');
+        if ($saleIds->isEmpty()) {
+            return $summary;
+        }
+
+        $like = '%'.SqlLikeSearch::escape($term).'%';
+        $aggRows = SaleItem::query()
+            ->whereIn('sale_id', $saleIds)
+            ->where(function ($items) use ($like) {
+                $items->where('sale_items.product_code', 'like', $like)
+                    ->orWhere('sale_items.item_code', 'like', $like)
+                    ->orWhereHas('product', function ($product) use ($like) {
+                        $product->where('product_name', 'like', $like)
+                            ->orWhere('product_code', 'like', $like);
+                    });
+            })
+            ->selectRaw('sale_items.product_code, SUM(sale_items.quantity) as qty_sum')
+            ->groupBy('sale_items.product_code')
+            ->orderByDesc('qty_sum')
+            ->limit(12)
+            ->get();
+
+        if ($aggRows->isEmpty()) {
+            return $summary;
+        }
+
+        $codes = $aggRows->pluck('product_code')->filter()->values()->all();
+        $products = Product::query()
+            ->when($organizationId > 0, fn ($q) => $q->where('organization_id', $organizationId))
+            ->whereIn('product_code', $codes)
+            ->with(['unit'])
+            ->get()
+            ->keyBy('product_code');
+
+        $qtyDisplay = app(StockUomDisplayService::class);
+        $matched = [];
+        foreach ($aggRows as $row) {
+            $code = (string) $row->product_code;
+            $qty = (float) ($row->qty_sum ?? 0);
+            if ($qty <= 0) {
+                continue;
+            }
+            $product = $products->get($code);
+            $label = $qtyDisplay->formatMixedStockDisplay($qty, $product?->unit)['text'];
+            $matched[] = [
+                'product_code' => $code,
+                'product_name' => (string) ($product?->product_name ?? $code),
+                'qty_label' => $label,
+                'qty' => round($qty, 4),
+            ];
+        }
+
+        if ($matched === []) {
+            return $summary;
+        }
+
+        $summary['matched_products'] = $matched;
+        // Prefer a single combined label when one product dominates the search.
+        $summary['matched_qty_label'] = count($matched) === 1
+            ? $matched[0]['qty_label']
+            : collect($matched)
+                ->take(3)
+                ->map(fn (array $row) => $row['product_name'].': '.$row['qty_label'])
+                ->implode(' · ');
+
+        return $summary;
     }
 
     /** @return array<string, mixed> */

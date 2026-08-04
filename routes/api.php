@@ -18,6 +18,7 @@ use App\Http\Controllers\Api\V1\CustomerInvoiceController;
 use App\Http\Controllers\Api\V1\CustomerInvoicePaymentController;
 use App\Http\Controllers\Api\V1\CreditNoteController;
 use App\Http\Controllers\Api\V1\CustomerReturnController;
+use App\Http\Controllers\Api\V1\MobileOrdersQuickActionsController;
 use App\Http\Controllers\Api\V1\LegacyOrdersController;
 use App\Http\Controllers\Api\V1\LegacyReturnsController;
 use App\Http\Controllers\Api\V1\DamageController;
@@ -956,6 +957,14 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.legacy_archive')
                 ->middlewareFor(['index', 'show'], ['erp.permission:sales.view'])
                 ->middlewareFor(['store'], ['erp.permission:sales.manage']);
+            Route::get('sales/mobile-orders/pending-returns', [MobileOrdersQuickActionsController::class, 'pendingReturns'])
+                ->middleware('erp.permission:sales.view|sales.manage');
+            Route::get('sales/mobile-orders/performed-returns', [MobileOrdersQuickActionsController::class, 'performedReturns'])
+                ->middleware('erp.permission:sales.view|sales.manage');
+            Route::post('sales/mobile-orders/approve-returns', [MobileOrdersQuickActionsController::class, 'approveReturns'])
+                ->middleware('erp.permission:sales.manage');
+            Route::post('sales/mobile-orders/mark-paid', [MobileOrdersQuickActionsController::class, 'markPaid'])
+                ->middleware('erp.permission:sales.manage');
             Route::get('sales/{saleId}/return-lines', [CustomerReturnController::class, 'saleLines'])
                 ->middleware('erp.permission:sales.view');
             Route::post('credit-notes/{id}/approve', [CreditNoteController::class, 'approve'])

@@ -9,10 +9,11 @@ class ClassicPosThemeSettingsTest extends TestCase
 {
     public function test_normalize_theme_template(): void
     {
-        $this->assertSame('legacy', ClassicPosThemeSettings::normalizeThemeTemplate(null));
-        $this->assertSame('legacy', ClassicPosThemeSettings::normalizeThemeTemplate('invalid'));
+        $this->assertSame('centrix', ClassicPosThemeSettings::normalizeThemeTemplate(null));
+        $this->assertSame('centrix', ClassicPosThemeSettings::normalizeThemeTemplate('invalid'));
         $this->assertSame('centrix', ClassicPosThemeSettings::normalizeThemeTemplate('centrix'));
-        $this->assertSame('legacy', ClassicPosThemeSettings::normalizeThemeTemplate('default'));
+        $this->assertSame('centrix', ClassicPosThemeSettings::normalizeThemeTemplate('default'));
+        $this->assertSame('legacy', ClassicPosThemeSettings::normalizeThemeTemplate('legacy'));
     }
 
     public function test_normalize_theme_colors(): void
