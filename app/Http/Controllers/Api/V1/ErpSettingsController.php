@@ -103,6 +103,8 @@ class ErpSettingsController extends Controller
             'mobile_checkout_mode',
             'mobile_product_list_mode',
             'mobile_enable_field_attendance',
+            'mobile_show_customer_phone',
+            'mobile_sheets_default_days',
             'require_pos_till_float',
             'require_backoffice_till_float',
             'blind_till_close',
@@ -196,6 +198,7 @@ class ErpSettingsController extends Controller
             'mobile_checkout_location_radius_metres' => 'sometimes|numeric|min:1|max:500',
             'mobile_checkout_mode' => 'sometimes|in:save_only,payment,ask',
             'mobile_product_list_mode' => 'sometimes|in:in_stock_only,all_products',
+            'mobile_sheets_default_days' => 'sometimes|integer|min:1|max:90',
             'show_receipt_payment_details' => 'sometimes|boolean',
             'show_invoice_payment_details' => 'sometimes|boolean',
             'use_same_payment_details_for_routes' => 'sometimes|boolean',
@@ -295,6 +298,13 @@ class ErpSettingsController extends Controller
             $nextSales['mobile_checkout_location_radius_metres'] = max(
                 1,
                 min(500, (float) ($data['mobile_checkout_location_radius_metres'] ?? 5)),
+            );
+        }
+
+        if (array_key_exists('mobile_sheets_default_days', $data)) {
+            $nextSales['mobile_sheets_default_days'] = max(
+                1,
+                min(90, (int) ($data['mobile_sheets_default_days'] ?? 5)),
             );
         }
 

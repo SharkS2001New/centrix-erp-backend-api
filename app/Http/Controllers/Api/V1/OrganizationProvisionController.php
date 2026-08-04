@@ -753,6 +753,11 @@ class OrganizationProvisionController extends Controller
             'sales_platform.orders_list_default_days' => 'sometimes|integer|min:1|max:90',
             'sales_platform.orders_list_search_days' => 'sometimes|integer|min:1|max:90',
             'sales_platform.orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
+            'sales_platform.orders_list_visible_columns' => 'sometimes|array|min:1',
+            'sales_platform.orders_list_visible_columns.*' => 'required|string|in:order,customer,branch,route,delivery_date,connectivity,amount,amount_paid,balance,discount,vat,status,method,source,placed_by',
+            'sales_platform.orders_list_visible_columns_by_queue' => 'sometimes|array',
+            'sales_platform.orders_list_visible_columns_by_queue.*' => 'sometimes|array|min:1',
+            'sales_platform.orders_list_visible_columns_by_queue.*.*' => 'required|string|in:order,customer,branch,route,delivery_date,connectivity,amount,amount_paid,balance,discount,vat,status,method,source,placed_by',
         ];
     }
 

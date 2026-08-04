@@ -365,6 +365,16 @@ class OrganizationPlatformConfigService
         if (array_key_exists('orders_list_sort', $nextSales)) {
             $nextSales['orders_list_sort'] = $this->normalizeOrdersListSort($nextSales['orders_list_sort']);
         }
+        if (array_key_exists('orders_list_visible_columns', $nextSales)) {
+            $nextSales['orders_list_visible_columns'] = $this->normalizeOrdersListVisibleColumns(
+                $nextSales['orders_list_visible_columns'],
+            );
+        }
+        if (array_key_exists('orders_list_visible_columns_by_queue', $nextSales)) {
+            $nextSales['orders_list_visible_columns_by_queue'] = $this->normalizeOrdersListVisibleColumnsByQueue(
+                $nextSales['orders_list_visible_columns_by_queue'],
+            );
+        }
 
         $org->forceFill(['module_settings' => $moduleSettings])->save();
 
@@ -421,6 +431,12 @@ class OrganizationPlatformConfigService
             'orders_list_default_days' => $isDistribution ? 30 : 14,
             'orders_list_search_days' => $isDistribution ? 60 : 30,
             'orders_list_sort' => '-created_at',
+            'orders_list_visible_columns' => $this->normalizeOrdersListVisibleColumns(
+                config('erp.module_settings_defaults.sales.orders_list_visible_columns', []),
+            ),
+            'orders_list_visible_columns_by_queue' => $this->normalizeOrdersListVisibleColumnsByQueue(
+                config('erp.module_settings_defaults.sales.orders_list_visible_columns_by_queue', []),
+            ),
             'edit_order_statuses' => ['booked', 'pending', 'editable'],
             'print_invoice_statuses' => null,
             'collect_payment_statuses' => ['unpaid', 'pending_payment'],
@@ -521,6 +537,12 @@ class OrganizationPlatformConfigService
                 $this->normalizeOrdersListDefaultDays($sales['orders_list_default_days'] ?? null),
             ),
             'orders_list_sort' => $this->normalizeOrdersListSort($sales['orders_list_sort'] ?? null),
+            'orders_list_visible_columns' => $this->normalizeOrdersListVisibleColumns(
+                $sales['orders_list_visible_columns'] ?? null,
+            ),
+            'orders_list_visible_columns_by_queue' => $this->normalizeOrdersListVisibleColumnsByQueue(
+                $sales['orders_list_visible_columns_by_queue'] ?? null,
+            ),
         ];
     }
 
@@ -787,6 +809,91 @@ class OrganizationPlatformConfigService
         $sort = (string) ($value ?? '-created_at');
 
         return in_array($sort, $allowed, true) ? $sort : '-created_at';
+    }
+
+    /**
+     * @return list<string>
+     */
+    public function normalizeOrdersListVisibleColumns(mixed $value): array
+    {
+        $allowed = [
+            'order',
+            'customer',
+            'branch',
+            'route',
+            'delivery_date',
+            'connectivity',
+            'amount',
+            'amount_paid',
+            'balance',
+            'discount',
+            'vat',
+            'status',
+            'method',
+            'source',
+            'placed_by',
+        ];
+        $required = ['order', 'customer', 'amount', 'status', 'method', 'placed_by'];
+        $incoming = is_array($value)
+            ? $value
+            : config('erp.module_settings_defaults.sales.orders_list_visible_columns', $allowed);
+
+        $seen = [];
+        $out = [];
+        foreach ($incoming as $item) {
+            $key = trim((string) $item);
+            if ($key === '' || isset($seen[$key]) || ! in_array($key, $allowed, true)) {
+                continue;
+            }
+            $seen[$key] = true;
+            $out[] = $key;
+        }
+        foreach ($required as $key) {
+            if (! isset($seen[$key])) {
+                $seen[$key] = true;
+                $out[] = $key;
+            }
+        }
+
+        return $out;
+    }
+
+    /**
+     * @return array<string, list<string>>
+     */
+    public function normalizeOrdersListVisibleColumnsByQueue(mixed $value): array
+    {
+        $allowedQueues = [
+            'all',
+            'booked',
+            'pending',
+            'unpaid',
+            'pending_payment',
+            'paid',
+            'processed',
+            'delivered',
+            'completed',
+            'mobile',
+            'whatsapp',
+            'pending_approval',
+            'editable',
+            'cancelled',
+            'expired',
+        ];
+        if (! is_array($value)) {
+            return [];
+        }
+
+        $out = [];
+        foreach ($value as $queue => $columns) {
+            $key = trim((string) $queue);
+            if ($key === '' || ! in_array($key, $allowedQueues, true)) {
+                continue;
+            }
+            $out[$key] = $this->normalizeOrdersListVisibleColumns($columns);
+        }
+
+        return $out;
     }
 
     /**
