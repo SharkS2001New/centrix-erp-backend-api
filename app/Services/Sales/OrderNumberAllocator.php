@@ -4,6 +4,7 @@ namespace App\Services\Sales;
 
 use App\Models\Organization;
 use App\Models\Sale;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
@@ -29,7 +30,11 @@ class OrderNumberAllocator
      */
     public function peekNextForOrganization(int $organizationId): int
     {
-        return $this->ceilingForOrganization($organizationId) + 1;
+        $key = $this->peekCacheKey($organizationId);
+
+        return (int) Cache::remember($key, 10, function () use ($organizationId): int {
+            return $this->ceilingForOrganization($organizationId) + 1;
+        });
     }
 
     public function nextForOrganization(int $organizationId): int
@@ -205,6 +210,13 @@ class OrderNumberAllocator
                 'created_at' => now(),
             ],
         );
+
+        Cache::forget($this->peekCacheKey($organizationId));
+    }
+
+    protected function peekCacheKey(int $organizationId): string
+    {
+        return 'sales_order_num_peek:'.$organizationId;
     }
 
     protected function watermarkTableReady(): bool

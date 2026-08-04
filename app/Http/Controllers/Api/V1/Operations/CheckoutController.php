@@ -834,6 +834,13 @@ class CheckoutController extends Controller
             CartLine::where('cart_id', $cart->id)->delete();
             $cart->delete();
 
+            $this->syncSaleTenderColumnsFromPayments($sale);
+
+            $orderChange = round((float) ($input['order_change'] ?? 0), 2);
+            if ($orderChange > 0) {
+                $sale->update(['order_change' => $orderChange]);
+            }
+
             $sale = $sale->fresh(['items.product.unit', 'payments.paymentMethod']);
 
             // Held/draft parks are unfinished — do not fiscalize, invoice, journal, or notify.
@@ -1516,5 +1523,41 @@ class CheckoutController extends Controller
             ->where('organization_id', $organizationId)
             ->whereIn('method_code', $aliases)
             ->first();
+    }
+
+    /**
+     * Rebuild sales.cash / mpesa_amount / … from sale_payments so thermal receipts
+     * never print zeros when payment rows were created successfully.
+     */
+    protected function syncSaleTenderColumnsFromPayments(Sale $sale): void
+    {
+        $payments = $sale->relationLoaded('payments')
+            ? $sale->payments
+            : $sale->payments()->with('paymentMethod')->get();
+
+        if ($payments->isEmpty()) {
+            $payments = $sale->payments()->with('paymentMethod')->get();
+        } else {
+            $payments->loadMissing('paymentMethod');
+        }
+
+        if ($payments->isEmpty()) {
+            return;
+        }
+
+        $map = [];
+        foreach ($payments as $payment) {
+            $code = strtoupper(trim((string) ($payment->paymentMethod?->method_code ?? '')));
+            if ($code === '') {
+                continue;
+            }
+            $map[$code] = ($map[$code] ?? 0) + (float) $payment->amount;
+        }
+
+        if ($map === []) {
+            return;
+        }
+
+        SalePaymentColumnMapper::replaceFromMethodMap($sale, $map);
     }
 }

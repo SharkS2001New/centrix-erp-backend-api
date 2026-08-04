@@ -167,7 +167,7 @@ class OrganizationLicenseService
             ?? $payload['trial_ends_at']
             ?? ($isTrial
                 ? now()->addDays((int) ($payload['trial_days'] ?? 14))->toDateString()
-                : now()->addDays(($plan?->interval === 'annual') ? 365 : 30)->toDateString());
+                : $this->periodEndForPlanInterval($start, $plan?->interval));
 
         $attrs = [
             'plan_id' => $plan?->id,
@@ -195,5 +195,17 @@ class OrganizationLicenseService
             ['organization_id' => $org->id],
             $attrs,
         )->load('plan', 'organization', 'invoice');
+    }
+
+    /** Next period end from start + plan interval (yearly/annual → +1 calendar year). */
+    public function periodEndForPlanInterval(string $start, ?string $interval): string
+    {
+        $key = strtolower(trim((string) $interval));
+        $from = Carbon::parse($start)->startOfDay();
+        if (in_array($key, ['annual', 'yearly', 'year'], true)) {
+            return $from->copy()->addYear()->toDateString();
+        }
+
+        return $from->copy()->addDays(30)->toDateString();
     }
 }

@@ -54,6 +54,28 @@ class SubscriptionRenewalReminderServiceTest extends TestCase
         }
     }
 
+    public function test_platform_admin_copy_includes_from_address_and_super_admins(): void
+    {
+        $service = $this->makeService();
+        $settings = [
+            'from_address' => 'platform@centrix.test',
+            'reply_to' => 'billing-ops@centrix.test',
+        ];
+
+        $super = User::query()->where('is_super_admin', true)->where('is_active', true)->first();
+        if ($super) {
+            $super->forceFill(['email' => 'superadmin@centrix.test'])->save();
+        }
+
+        $emails = $service->platformAdminCopyEmails($settings)->all();
+
+        $this->assertContains('platform@centrix.test', $emails);
+        $this->assertContains('billing-ops@centrix.test', $emails);
+        if ($super) {
+            $this->assertContains('superadmin@centrix.test', $emails);
+        }
+    }
+
     public function test_creates_draft_renewal_invoice(): void
     {
         $org = Organization::query()

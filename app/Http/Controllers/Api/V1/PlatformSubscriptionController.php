@@ -70,10 +70,13 @@ class PlatformSubscriptionController extends Controller
             'trial_ends_at' => 'nullable|date',
             'first_payment_price' => 'nullable|numeric|min:0',
             'renewal_price' => 'nullable|numeric|min:0',
+            'currency' => 'sometimes|string|max:8',
             'license_basis' => 'sometimes|in:org,user',
             'workspace_keys' => 'sometimes|array',
             'module_keys' => 'sometimes|array',
             'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
+            /** When true with plan_id, copy prices / seats / apps from the new plan. */
+            'sync_from_plan' => 'sometimes|boolean',
         ]);
 
         if (array_key_exists('invoice_id', $data)) {
@@ -83,11 +86,36 @@ class PlatformSubscriptionController extends Controller
             );
         }
 
+        $syncFromPlan = ! $request->exists('sync_from_plan') || $request->boolean('sync_from_plan');
+        unset($data['sync_from_plan']);
+
+        $planIdChanging = array_key_exists('plan_id', $data)
+            && (int) ($data['plan_id'] ?? 0) !== (int) ($platform_subscription->plan_id ?? 0);
+
+        // Changing package: pull commercial terms from the new plan unless overridden.
+        if ($planIdChanging && $syncFromPlan) {
+            $plan = $data['plan_id']
+                ? \App\Models\PlatformPlan::query()->find($data['plan_id'])
+                : null;
+            if ($plan) {
+                $data['first_payment_price'] ??= $plan->first_payment_price ?? $plan->price;
+                $data['renewal_price'] ??= $plan->renewal_price ?? $plan->price;
+                $data['currency'] ??= $plan->currency ?? $platform_subscription->currency;
+                $data['license_basis'] ??= $plan->license_basis ?? $platform_subscription->license_basis;
+                $data['workspace_keys'] ??= $plan->workspace_keys;
+                $data['module_keys'] ??= $plan->module_keys;
+                if (! array_key_exists('seat_count', $data) && $plan->seat_limit) {
+                    $data['seat_count'] = (int) $plan->seat_limit;
+                }
+                $data['amount'] = $data['renewal_price'] ?? $plan->renewal_price ?? $plan->price;
+            }
+        }
+
         $platform_subscription->update($data);
 
         return response()->json([
             'data' => $platform_subscription->fresh()->load(['organization', 'plan', 'invoice']),
-            'message' => 'Subscription updated.',
+            'message' => $planIdChanging ? 'Subscription package updated.' : 'Subscription updated.',
         ]);
     }
 

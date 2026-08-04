@@ -77,7 +77,10 @@ class CartOperationsController extends Controller
     {
         $user = request()->user();
 
-        return $this->cartResponse($this->findOwnedCart($cartId, $user), $user, includeNextOrderNum: true);
+        // Mobile warm-start and cart polls do not need next_order_num. Peeking
+        // scans sales order_num ceilings and was a common mobile timeout amplifier.
+        // Create / checkout paths still request the peek when needed.
+        return $this->cartResponse($this->findOwnedCart($cartId, $user), $user, includeNextOrderNum: false);
     }
 
     public function update(\Illuminate\Http\Request $request, int|string $cartId)
@@ -297,6 +300,7 @@ class CartOperationsController extends Controller
         $heldOrderNum = $cart->held_order_num;
         $supersededSaleId = $cart->superseded_sale_id;
 
+        // Retry on MySQL deadlock while releasing/re-reserving many SKUs at once.
         $cart = DB::transaction(function () use ($cart, $data, $user, $gate, $heldOrderNum, $supersededSaleId) {
             $this->releaseCartReservations((int) $cart->id);
             CartLine::where('cart_id', $cart->id)->delete();
@@ -314,7 +318,7 @@ class CartOperationsController extends Controller
             $this->addDraftLinesToCart($cart, $data['lines'], $user, $gate);
 
             return $cart->fresh('lines');
-        });
+        }, 5);
 
         return $this->cartResponse($cart, $user, includeNextOrderNum: false);
     }
@@ -1539,19 +1543,46 @@ class CartOperationsController extends Controller
         );
 
         if ($settings['reserve_stock_on_cart'] ?? true) {
-            $this->releaseLineReservation($row->id);
             $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
-            $this->reserveStock(
-                (int) $cart->branch_id,
-                $product->product_code,
-                $qty,
-                $location,
-                $user->id,
-                $cart->id,
+            $expiresAt = $this->reservationExpiresAtForUser($user, $settings);
+            $branchId = (int) $cart->branch_id;
+            $reserveQty = $qty;
+            $reserveLocation = $location;
+            $reserveProductCode = $product->product_code;
+            $lineId = (int) $row->id;
+            $cartId = (int) $cart->id;
+            $userId = (int) $user->id;
+
+            $replaceReservation = function () use (
+                $lineId,
+                $branchId,
+                $reserveProductCode,
+                $reserveQty,
+                $reserveLocation,
+                $userId,
+                $cartId,
                 $allowBelowStock,
-                $row->id,
-                $this->reservationExpiresAtForUser($user, $settings),
-            );
+                $expiresAt,
+            ): void {
+                $this->releaseLineReservation($lineId);
+                $this->reserveStock(
+                    $branchId,
+                    $reserveProductCode,
+                    $reserveQty,
+                    $reserveLocation,
+                    $userId,
+                    $cartId,
+                    $allowBelowStock,
+                    $lineId,
+                    $expiresAt,
+                );
+            };
+
+            if (DB::transactionLevel() > 0) {
+                $replaceReservation();
+            } else {
+                DB::transaction($replaceReservation, 5);
+            }
         }
 
         $grossForVat = max(0, $amount);

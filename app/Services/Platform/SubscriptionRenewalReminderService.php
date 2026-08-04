@@ -305,6 +305,11 @@ class SubscriptionRenewalReminderService
             'mime' => 'application/pdf',
         ]];
 
+        $platformCc = $this->platformAdminCopyEmails($settings)
+            ->reject(fn ($email) => $recipients->contains($email))
+            ->values()
+            ->all();
+
         foreach ($recipients as $to) {
             $this->mailbox->send(
                 $to,
@@ -320,6 +325,7 @@ class SubscriptionRenewalReminderService
                 ],
                 null,
                 $attachments,
+                $platformCc,
             );
         }
 
@@ -454,6 +460,35 @@ class SubscriptionRenewalReminderService
             ->filter(fn ($e) => filter_var($e, FILTER_VALIDATE_EMAIL) !== false);
 
         return $emails->merge($adminEmails)->unique()->values();
+    }
+
+    /**
+     * Platform admin copy recipients for renewal reminders (CC).
+     * Uses mailbox from_address / reply_to plus active super-admin users.
+     *
+     * @param  array<string, mixed>  $settings
+     * @return Collection<int, string>
+     */
+    public function platformAdminCopyEmails(array $settings = []): Collection
+    {
+        $emails = collect();
+
+        foreach (['from_address', 'reply_to'] as $key) {
+            $candidate = strtolower(trim((string) ($settings[$key] ?? '')));
+            if (filter_var($candidate, FILTER_VALIDATE_EMAIL) !== false) {
+                $emails->push($candidate);
+            }
+        }
+
+        $superAdmins = User::query()
+            ->where('is_super_admin', true)
+            ->where('is_active', true)
+            ->whereNotNull('email')
+            ->pluck('email')
+            ->map(fn ($e) => strtolower(trim((string) $e)))
+            ->filter(fn ($e) => filter_var($e, FILTER_VALIDATE_EMAIL) !== false);
+
+        return $emails->merge($superAdmins)->unique()->values();
     }
 
     public function primaryRecipientEmail(Organization $org): ?string

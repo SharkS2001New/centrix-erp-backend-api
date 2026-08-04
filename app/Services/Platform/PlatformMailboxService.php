@@ -19,6 +19,7 @@ class PlatformMailboxService
         array $meta = [],
         ?PlatformMailMessage $replyTo = null,
         array $attachments = [],
+        array $cc = [],
     ): PlatformMailMessage {
         $kind = (string) ($meta['kind'] ?? '');
         $isAuthMail = (bool) ($meta['no_reply'] ?? false)
@@ -69,6 +70,14 @@ class PlatformMailboxService
         }
 
         $inReplyTo = $replyTo?->message_id;
+        $ccList = collect($cc)
+            ->map(fn ($email) => strtolower(trim((string) $email)))
+            ->filter(fn ($email) => filter_var($email, FILTER_VALIDATE_EMAIL) !== false)
+            ->reject(fn ($email) => $email === strtolower(trim($to)))
+            ->unique()
+            ->values()
+            ->all();
+
         \Illuminate\Support\Facades\Mail::raw($body, function ($message) use (
             $to,
             $subject,
@@ -79,8 +88,12 @@ class PlatformMailboxService
             $isNoReply,
             $fromAddress,
             $fromName,
+            $ccList,
         ) {
             $message->to($to)->subject($subject);
+            if ($ccList !== []) {
+                $message->cc($ccList);
+            }
             if ($fromAddress !== '') {
                 $message->from($fromAddress, $fromName !== '' ? $fromName : null);
             }
@@ -113,6 +126,7 @@ class PlatformMailboxService
             'from_address' => $fromAddress !== '' ? $fromAddress : ($settings['from_address'] ?? ''),
             'from_name' => $fromName !== '' ? $fromName : ($settings['from_name'] ?? null),
             'to_addresses' => [$to],
+            'cc_addresses' => $ccList !== [] ? $ccList : null,
             'subject' => $subject,
             'body_text' => $this->bodyForMailboxStorage($body, $meta),
             'organization_id' => $meta['organization_id'] ?? $replyTo?->organization_id,

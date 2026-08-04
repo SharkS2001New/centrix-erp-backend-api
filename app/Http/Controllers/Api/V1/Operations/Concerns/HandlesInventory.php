@@ -14,6 +14,7 @@ use App\Services\Inventory\ProductStockDenormService;
 use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Inventory\StockValuationService;
 use App\Support\OrganizationIdResolver;
+use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 
@@ -235,28 +236,86 @@ trait HandlesInventory
         ?\Illuminate\Support\Carbon $expiresAt = null,
         ?int $saleId = null,
     ): StockReservation {
-        if (! $allowBelowStock) {
-            $this->releaseExpiredReservations($cartId);
-            $available = $this->stockNetAvailable($productCode, $branchId, $location);
-            if ($quantity > $available) {
-                throw new InvalidArgumentException(
-                    "Cannot reserve {$quantity}; available {$available}."
-                );
+        $run = function () use (
+            $branchId,
+            $productCode,
+            $quantity,
+            $location,
+            $userId,
+            $cartId,
+            $allowBelowStock,
+            $cartLineId,
+            $expiresAt,
+            $saleId,
+        ): StockReservation {
+            // Serialize reserves for the same SKU/branch so concurrent POS line adds
+            // do not deadlock on stock_reservations index gap locks (MySQL 1213).
+            $this->lockCurrentStockForUpdate($productCode, $branchId);
+
+            if (! $allowBelowStock) {
+                $this->releaseExpiredReservations($cartId, $productCode);
+                $available = $this->stockNetAvailable($productCode, $branchId, $location);
+                if ($quantity > $available) {
+                    throw new InvalidArgumentException(
+                        "Cannot reserve {$quantity}; available {$available}."
+                    );
+                }
             }
+
+            return StockReservation::create([
+                'organization_id' => OrganizationIdResolver::requireForBranch($branchId),
+                'branch_id' => $branchId,
+                'product_code' => $productCode,
+                'stock_location' => $location,
+                'quantity' => $quantity,
+                'cart_id' => $cartId,
+                'cart_line_id' => $cartLineId,
+                'sale_id' => $saleId,
+                'reserved_by' => $userId,
+                'expires_at' => $saleId ? null : ($expiresAt ?? $this->reservationExpiresAt($userId)),
+            ]);
+        };
+
+        // Nested callers (checkout / replace-lines) own the outer transaction + retry.
+        if (DB::transactionLevel() > 0) {
+            return $run();
         }
 
-        return StockReservation::create([
-            'organization_id' => OrganizationIdResolver::requireForBranch($branchId),
-            'branch_id' => $branchId,
-            'product_code' => $productCode,
-            'stock_location' => $location,
-            'quantity' => $quantity,
-            'cart_id' => $cartId,
-            'cart_line_id' => $cartLineId,
-            'sale_id' => $saleId,
-            'reserved_by' => $userId,
-            'expires_at' => $saleId ? null : ($expiresAt ?? $this->reservationExpiresAt($userId)),
-        ]);
+        return DB::transaction($run, 5);
+    }
+
+    /**
+     * Take an exclusive row lock on current_stock so reservation check+insert
+     * for one product/branch cannot interleave with another request.
+     */
+    protected function lockCurrentStockForUpdate(string $productCode, int $branchId): void
+    {
+        $row = CurrentStock::query()
+            ->where('product_code', $productCode)
+            ->where('branch_id', $branchId)
+            ->lockForUpdate()
+            ->first();
+
+        if ($row) {
+            return;
+        }
+
+        try {
+            CurrentStock::query()->insert([
+                'product_code' => $productCode,
+                'branch_id' => $branchId,
+                'shop_quantity' => 0,
+                'store_quantity' => 0,
+            ]);
+        } catch (QueryException) {
+            // Concurrent insert of the zero row — re-lock below.
+        }
+
+        CurrentStock::query()
+            ->where('product_code', $productCode)
+            ->where('branch_id', $branchId)
+            ->lockForUpdate()
+            ->first();
     }
 
     protected function reservationExpiresAtForUser(User $user, array $inventorySettings): ?\Illuminate\Support\Carbon
@@ -427,8 +486,12 @@ trait HandlesInventory
             });
     }
 
-    /** Release expired reservations so abandoned carts stop blocking stock. */
-    protected function releaseExpiredReservations(?int $cartId = null): int
+    /**
+     * Release expired reservations so abandoned carts stop blocking stock.
+     *
+     * @param  string|null  $productCode  When set, only release holds for this SKU (narrower locks on hot POS path).
+     */
+    protected function releaseExpiredReservations(?int $cartId = null, ?string $productCode = null): int
     {
         $query = StockReservation::query()
             ->whereNull('released_at')
@@ -437,6 +500,10 @@ trait HandlesInventory
 
         if ($cartId !== null) {
             $query->where('cart_id', $cartId);
+        }
+
+        if ($productCode !== null && $productCode !== '') {
+            $query->where('product_code', $productCode);
         }
 
         return $query->update(['released_at' => now()]);
