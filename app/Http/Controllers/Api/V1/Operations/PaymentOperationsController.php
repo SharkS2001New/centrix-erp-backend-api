@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\SalePaymentAllocationService;
+use App\Services\Sales\SalePaymentStatusConversionService;
 use Illuminate\Http\Request;
 
 class PaymentOperationsController extends Controller
@@ -30,6 +31,22 @@ class PaymentOperationsController extends Controller
             $data,
             $request->user(),
         );
+
+        return response()->json($sale);
+    }
+
+    public function convertToPaid(Request $request, int $saleId)
+    {
+        $sale = $this->findScopedSale($saleId, $request->user());
+        $sale = app(SalePaymentStatusConversionService::class)->convertToPaid($sale, $request->user());
+
+        return response()->json($sale);
+    }
+
+    public function convertToUnpaid(Request $request, int $saleId)
+    {
+        $sale = $this->findScopedSale($saleId, $request->user());
+        $sale = app(SalePaymentStatusConversionService::class)->convertToUnpaid($sale, $request->user());
 
         return response()->json($sale);
     }

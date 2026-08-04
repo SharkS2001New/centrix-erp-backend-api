@@ -370,6 +370,64 @@ class UserLoginChannelTest extends TestCase
             ->assertJsonPath('user.id', $user->id);
     }
 
+    public function test_mobile_capabilities_payload_is_slimmed_for_mobile_channel(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $settings = is_array($org->module_settings) ? $org->module_settings : [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'enable_mobile_orders' => true,
+        ]);
+        $org->forceFill(['module_settings' => $settings])->save();
+
+        $user = $this->makeUser([
+            'login_channels' => ['mobile'],
+            'is_admin' => true,
+        ]);
+
+        $token = $user->createToken('MOBILE_SLIM_TEST', ['*']);
+        $token->accessToken->forceFill([
+            'organization_id' => $user->organization_id,
+            'login_channel' => 'mobile',
+        ])->save();
+
+        $response = $this->withToken($token->plainTextToken)
+            ->getJson('/api/v1/erp/capabilities')
+            ->assertOk();
+
+        $capabilities = $response->json();
+        $this->assertArrayHasKey('mobile_app', $capabilities);
+        $this->assertArrayHasKey('permissions', $capabilities);
+        $this->assertArrayNotHasKey('workspaces', $capabilities);
+        $this->assertArrayNotHasKey('modules', $capabilities);
+        $this->assertArrayNotHasKey('assigned_permissions', $capabilities);
+        $this->assertArrayNotHasKey('manager_app', $capabilities);
+        $this->assertArrayNotHasKey('workflows', $capabilities);
+
+        $moduleSettings = $capabilities['module_settings'] ?? [];
+        $this->assertArrayHasKey('sales', $moduleSettings);
+        $this->assertArrayNotHasKey('accounting', $moduleSettings);
+        $this->assertArrayNotHasKey('hospitality', $moduleSettings);
+        $this->assertArrayNotHasKey('hr', $moduleSettings);
+
+        foreach (array_keys($capabilities['permissions'] ?? []) as $code) {
+            $this->assertTrue(
+                str_starts_with((string) $code, 'mobile')
+                    || $code === 'sales.discounts.give'
+                    || str_starts_with((string) $code, 'approvals.')
+                    || str_starts_with((string) $code, 'discount'),
+                "Unexpected permission on mobile capabilities payload: {$code}",
+            );
+        }
+
+        // Login-embedded capabilities must also slim even before the Bearer token is current.
+        $loginCaps = app(\App\Http\Controllers\Api\V1\ErpCapabilitiesController::class)
+            ->resolveForUser($user, 'mobile');
+        $this->assertArrayNotHasKey('workspaces', $loginCaps);
+        $this->assertArrayNotHasKey('modules', $loginCaps);
+        $this->assertArrayHasKey('mobile_app', $loginCaps);
+    }
+
     protected function makeUser(array $overrides = []): User
     {
         $admin = User::where('username', 'admin')->firstOrFail();

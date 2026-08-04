@@ -213,7 +213,6 @@ return [
             'require_pos_till_float',
             'enable_pos_cash_rounding',
             'external_pos_layout',
-            'classic_pos_theme_template',
             'enable_pos_order_edit',
             'append_same_day_customer_orders',
             'order_expiry_enabled',
@@ -229,6 +228,8 @@ return [
             'print_invoice_statuses',
             'collect_payment_statuses',
             'cancel_order_statuses',
+            'convert_to_paid_statuses',
+            'convert_to_unpaid_statuses',
             'customer_return_statuses',
         ],
         'distribution' => [
@@ -472,6 +473,7 @@ return [
             'enable_pos_cash_rounding' => false,
             'external_pos_layout' => 'modern',
             'classic_pos_theme_template' => 'legacy',
+            'classic_pos_theme_colors' => [],
             'require_backoffice_till_float' => false,
             'blind_till_close' => false,
             'enable_backoffice_order_edit' => true,
@@ -495,6 +497,10 @@ return [
             'print_invoice_statuses' => null,
             'collect_payment_statuses' => ['unpaid', 'pending_payment'],
             'cancel_order_statuses' => ['booked', 'pending', 'unpaid', 'pending_payment', 'paid', 'processed', 'delivered', 'completed'],
+            /** Empty = Convert to paid disabled until platform enables stages (unpaid / partial / mobile / whatsapp). */
+            'convert_to_paid_statuses' => [],
+            /** Empty = Convert to unpaid disabled until platform enables stages. */
+            'convert_to_unpaid_statuses' => [],
             'customer_return_statuses' => ['paid', 'processed', 'delivered', 'completed'],
             'discount_approval_enabled' => false,
             'discount_approval_enabled_mobile' => false,

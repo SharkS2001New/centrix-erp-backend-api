@@ -137,6 +137,12 @@ class OrganizationPlatformConfigService
             );
         }
 
+        if (array_key_exists('classic_pos_theme_colors', $salesPlatform)) {
+            $nextSales['classic_pos_theme_colors'] = ClassicPosThemeSettings::normalizeThemeColors(
+                $salesPlatform['classic_pos_theme_colors'],
+            );
+        }
+
         if (array_key_exists('enable_backoffice_order_edit', $salesPlatform)) {
             $nextSales['enable_backoffice_order_edit'] = (bool) $salesPlatform['enable_backoffice_order_edit'];
         }
@@ -170,6 +176,18 @@ class OrganizationPlatformConfigService
             $nextSales['cancel_order_statuses'] = $this->normalizeRequiredActionStatuses(
                 $salesPlatform['cancel_order_statuses'],
                 $cancelFallback,
+            );
+        }
+
+        if (array_key_exists('convert_to_paid_statuses', $salesPlatform)) {
+            $nextSales['convert_to_paid_statuses'] = $this->normalizeActionStatusList(
+                $salesPlatform['convert_to_paid_statuses'],
+            );
+        }
+
+        if (array_key_exists('convert_to_unpaid_statuses', $salesPlatform)) {
+            $nextSales['convert_to_unpaid_statuses'] = $this->normalizeActionStatusList(
+                $salesPlatform['convert_to_unpaid_statuses'],
             );
         }
 
@@ -414,6 +432,7 @@ class OrganizationPlatformConfigService
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
             'classic_pos_theme_template' => ClassicPosThemeSettings::THEME_TEMPLATE_DEFAULT,
+            'classic_pos_theme_colors' => [],
             'hotel_pos_grid_columns' => 4,
             'hotel_pos_collect_payment' => true,
             'hotel_pos_catalog_limit' => 30,
@@ -441,6 +460,8 @@ class OrganizationPlatformConfigService
             'print_invoice_statuses' => null,
             'collect_payment_statuses' => ['unpaid', 'pending_payment'],
             'cancel_order_statuses' => OrderWorkflowService::defaultCancelOrderStatusesFromWorkflowConfig($workflowDefaults),
+            'convert_to_paid_statuses' => [],
+            'convert_to_unpaid_statuses' => [],
             'customer_return_statuses' => ['paid', 'processed', 'delivered', 'completed'],
         ];
     }
@@ -493,6 +514,9 @@ class OrganizationPlatformConfigService
             'classic_pos_theme_template' => ClassicPosThemeSettings::normalizeThemeTemplate(
                 $sales['classic_pos_theme_template'] ?? ClassicPosThemeSettings::THEME_TEMPLATE_DEFAULT,
             ),
+            'classic_pos_theme_colors' => ClassicPosThemeSettings::normalizeThemeColors(
+                $sales['classic_pos_theme_colors'] ?? [],
+            ),
             'hotel_pos_grid_columns' => \App\Services\Hospitality\HospitalityPosSettings::gridColumnsForOrganization($org),
             'hotel_pos_collect_payment' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_collect_payment'],
             'hotel_pos_catalog_limit' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_catalog_limit'],
@@ -516,6 +540,12 @@ class OrganizationPlatformConfigService
             'cancel_order_statuses' => $this->normalizeRequiredActionStatuses(
                 $sales['cancel_order_statuses'] ?? null,
                 OrderWorkflowService::defaultCancelOrderStatusesFromWorkflowConfig($workflow),
+            ),
+            'convert_to_paid_statuses' => $this->normalizeActionStatusList(
+                $sales['convert_to_paid_statuses'] ?? [],
+            ),
+            'convert_to_unpaid_statuses' => $this->normalizeActionStatusList(
+                $sales['convert_to_unpaid_statuses'] ?? [],
             ),
             'customer_return_statuses' => $this->normalizeRequiredActionStatuses(
                 $sales['customer_return_statuses'] ?? null,

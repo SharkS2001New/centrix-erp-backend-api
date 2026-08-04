@@ -402,7 +402,18 @@ class CheckoutController extends Controller
             }
             if ($isPreviousOrderEditSettlement) {
                 $payNow = 0;
-                $amountPaid = $total;
+                // Preserve prior payment — do not invent a full settlement for unpaid/partial
+                // mobile (or WhatsApp) restores. Fully-paid POS re-edits still settle at the
+                // revised total so tenders/X-Z stay correct.
+                $priorForSettlement = Sale::query()->find((int) $cart->superseded_sale_id);
+                $priorPaid = $priorForSettlement
+                    ? round((float) ($priorForSettlement->amount_paid ?? 0), 2)
+                    : 0.0;
+                $priorTotal = $priorForSettlement
+                    ? round((float) ($priorForSettlement->order_total ?? 0), 2)
+                    : 0.0;
+                $priorFullyPaid = $priorPaid > 0.01 && $priorPaid + 0.01 >= $priorTotal;
+                $amountPaid = $priorFullyPaid ? $total : min($priorPaid, $total);
             } else {
                 $payNow = min($payNow, $cashDue);
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
@@ -619,6 +630,7 @@ class CheckoutController extends Controller
                         $adjustmentRows,
                         $floatSessionId,
                         $total,
+                        (float) $amountPaid,
                         $input['payment_date'] ?? now(),
                     );
                 }
@@ -1294,7 +1306,8 @@ class CheckoutController extends Controller
 
     /**
      * Rebuild sale_payments + tender columns for a previous-order edit.
-     * Prior mix +/- return/topup adjustments = net tenders that match the new total.
+     * Prior mix +/- return/topup adjustments = net tenders that match $targetPaid
+     * (revised total when prior was fully paid; preserved prior paid when unpaid/partial).
      * Keeps X/Z/EOD Equity/Cash/M-Pesa correct after offline sync (no wipe, no CASH reclass).
      *
      * @param  list<array{method_code: string, amount: float, adjustment_type: string, reference_number: ?string}>  $adjustmentRows
@@ -1305,6 +1318,7 @@ class CheckoutController extends Controller
         array $adjustmentRows,
         ?int $floatSessionId,
         float $newTotal,
+        float $targetPaid,
         mixed $paidAt,
     ): void {
         $map = $this->priorSaleTenderMap($prior);
@@ -1328,13 +1342,20 @@ class CheckoutController extends Controller
             static fn (float $amount) => $amount > 0.009,
         );
 
-        $map = $this->normalizeTenderMapToTotal($map, $newTotal);
+        $targetPaid = max(0, round($targetPaid, 2));
+        // Unpaid prior (and no adjustments): keep empty tenders — never invent CASH.
+        $map = $targetPaid <= 0.009
+            ? []
+            : $this->normalizeTenderMapToTotal($map, $targetPaid);
 
         SalePayment::query()->where('sale_id', $sale->id)->delete();
         SalePaymentColumnMapper::replaceFromMethodMap($sale, $map);
 
+        $paidFromTenders = round(array_sum($map), 2);
         $sale->update([
             'payment_method_code' => $this->primaryPaymentMethodCode($map, $prior),
+            'amount_paid' => $paidFromTenders,
+            'payment_status' => $this->derivePaymentStatus($newTotal, $paidFromTenders),
         ]);
 
         foreach ($map as $methodCode => $amount) {
@@ -1419,7 +1440,9 @@ class CheckoutController extends Controller
 
         $sum = round(array_sum($map), 2);
         if ($sum <= 0.009) {
-            return ['CASH' => $newTotal];
+            // Do not invent a full CASH tender for unpaid priors — callers that need a
+            // settlement must pass a non-empty mix (paid POS re-edit) or a zero target.
+            return [];
         }
 
         if (abs($sum - $newTotal) < 0.02) {

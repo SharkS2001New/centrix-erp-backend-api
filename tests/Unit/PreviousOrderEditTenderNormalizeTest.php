@@ -51,4 +51,13 @@ class PreviousOrderEditTenderNormalizeTest extends TestCase
         $this->assertEqualsWithDelta(7500.0, (float) ($scaled['EQUITY'] ?? 0), 0.02);
         $this->assertEqualsWithDelta(2500.0, (float) ($scaled['CASH'] ?? 0), 0.02);
     }
+
+    public function test_empty_tender_map_stays_empty_instead_of_inventing_cash(): void
+    {
+        $controller = app(CheckoutController::class);
+        $method = new ReflectionMethod(CheckoutController::class, 'normalizeTenderMapToTotal');
+        $method->setAccessible(true);
+
+        $this->assertSame([], $method->invoke($controller, [], 15000.0));
+    }
 }

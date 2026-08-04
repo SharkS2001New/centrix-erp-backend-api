@@ -40,10 +40,10 @@ class OrderWorkflowService
      *
      * @var list<string>
      */
-    public const ACTION_PSEUDO_STAGES = ['mobile'];
+    public const ACTION_PSEUDO_STAGES = ['mobile', 'whatsapp'];
 
     /**
-     * Allowed values for edit/print/collect/cancel/return stage lists.
+     * Allowed values for edit/print/collect/cancel/return/convert stage lists.
      *
      * @return list<string>
      */
@@ -628,6 +628,112 @@ class OrderWorkflowService
         return $this->isCollectPaymentStatus($paymentStage, $channel);
     }
 
+    /**
+     * Stages where Convert to paid is offered. Empty = feature off (default).
+     *
+     * @return list<string>
+     */
+    public function convertToPaidStatuses(): array
+    {
+        return $this->normalizeStatusList(
+            $this->gate->moduleSettings('sales')['convert_to_paid_statuses'] ?? null,
+        );
+    }
+
+    /**
+     * Stages where Convert to unpaid is offered. Empty = feature off (default).
+     *
+     * @return list<string>
+     */
+    public function convertToUnpaidStatuses(): array
+    {
+        return $this->normalizeStatusList(
+            $this->gate->moduleSettings('sales')['convert_to_unpaid_statuses'] ?? null,
+        );
+    }
+
+    public function canConvertToPaidForOrder(
+        string $status,
+        ?string $channel = null,
+        ?string $paymentStatus = null,
+    ): bool {
+        $allowed = $this->convertToPaidStatuses();
+        if ($allowed === []) {
+            return false;
+        }
+
+        $normalized = strtolower(trim($status));
+        if (in_array($normalized, ['cancelled', 'expired', 'held', 'draft'], true)) {
+            return false;
+        }
+
+        $payment = strtolower(trim((string) $paymentStatus));
+        if (! in_array($payment, ['unpaid', 'partial'], true)) {
+            return false;
+        }
+
+        return $this->matchesConvertibleActionStages($normalized, $channel, $payment, $allowed);
+    }
+
+    public function canConvertToUnpaidForOrder(
+        string $status,
+        ?string $channel = null,
+        ?string $paymentStatus = null,
+    ): bool {
+        $allowed = $this->convertToUnpaidStatuses();
+        if ($allowed === []) {
+            return false;
+        }
+
+        $normalized = strtolower(trim($status));
+        if (in_array($normalized, ['cancelled', 'expired', 'held', 'draft'], true)) {
+            return false;
+        }
+
+        $payment = strtolower(trim((string) $paymentStatus));
+        if (! in_array($payment, ['paid', 'partial'], true)) {
+            return false;
+        }
+
+        return $this->matchesConvertibleActionStages($normalized, $channel, $payment, $allowed);
+    }
+
+    /**
+     * @param  list<string>  $allowed
+     */
+    protected function matchesConvertibleActionStages(
+        string $status,
+        ?string $channel,
+        string $paymentStatus,
+        array $allowed,
+    ): bool {
+        if (in_array($status, $allowed, true)) {
+            return true;
+        }
+
+        if ($this->actionStagesAllowChannelPseudo($allowed, $channel)) {
+            return true;
+        }
+
+        $aligned = $this->alignStatusToPipeline($status, $channel);
+        if (in_array($aligned, $allowed, true)) {
+            return true;
+        }
+
+        if ($status === 'completed' && in_array('paid', $allowed, true)) {
+            return true;
+        }
+
+        $mapped = match ($paymentStatus) {
+            'unpaid' => 'unpaid',
+            'partial', 'pending_payment' => 'pending_payment',
+            'paid' => 'paid',
+            default => null,
+        };
+
+        return $mapped !== null && in_array($mapped, $allowed, true);
+    }
+
     protected function collectPaymentStageForPaymentStatus(?string $paymentStatus, ?string $channel = null): ?string
     {
         $normalized = strtolower(trim((string) $paymentStatus));
@@ -650,11 +756,27 @@ class OrderWorkflowService
      */
     protected function actionStagesAllowMobileChannel(array $allowed, ?string $channel): bool
     {
-        if (! in_array('mobile', $allowed, true)) {
-            return false;
+        return $this->actionStagesAllowChannelPseudo($allowed, $channel);
+    }
+
+    /**
+     * Mobile / WhatsApp pseudo-stages in action checklists.
+     *
+     * @param  list<string>  $allowed
+     */
+    protected function actionStagesAllowChannelPseudo(array $allowed, ?string $channel): bool
+    {
+        $raw = strtolower(trim((string) ($channel ?? '')));
+
+        if ($raw === 'mobile' && in_array('mobile', $allowed, true)) {
+            return true;
         }
 
-        return $this->normalizeSalesChannel((string) ($channel ?? '')) === 'mobile';
+        if ($raw === 'whatsapp' && in_array('whatsapp', $allowed, true)) {
+            return true;
+        }
+
+        return false;
     }
 
     /**

@@ -55,10 +55,13 @@ class ErpCapabilitiesController extends Controller
     }
 
     /** @return array<string, mixed> */
-    public function resolveForUser(User $user): array
+    public function resolveForUser(User $user, ?string $loginChannel = null): array
     {
         $request = Request::create('/api/v1/erp/capabilities', 'GET');
         $request->setUserResolver(fn () => $user);
+        if (is_string($loginChannel) && $loginChannel !== '') {
+            $request->attributes->set('login_channel', strtolower(trim($loginChannel)));
+        }
 
         return $this->resolveForRequest($request);
     }
@@ -183,6 +186,11 @@ class ErpCapabilitiesController extends Controller
 
     protected function requestLoginChannel(Request $request): string
     {
+        $fromAttribute = strtolower(trim((string) $request->attributes->get('login_channel', '')));
+        if ($fromAttribute !== '') {
+            return $fromAttribute;
+        }
+
         $token = $request->user()?->currentAccessToken();
 
         return strtolower((string) ($token?->login_channel ?? ''));
@@ -205,6 +213,15 @@ class ErpCapabilitiesController extends Controller
             $payload['whatsapp_orders'],
             $payload['platform_tab_workspace_enabled'],
             $payload['workflows'],
+            $payload['modules'],
+            $payload['assigned_permissions'],
+            $payload['channels'],
+            $payload['allowed_login_channels'],
+            $payload['platform_whatsapp_enabled'],
+            $payload['industry'],
+            $payload['industry_label'],
+            $payload['deployment_profile'],
+            $payload['profile_label'],
         );
 
         if ($channel === 'mobile') {
@@ -212,7 +229,8 @@ class ErpCapabilitiesController extends Controller
         }
 
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
-            $keep = ['sales', 'inventory', 'general', 'security', 'mobile', 'fulfillment', 'notifications'];
+            // Sales + distribution power mobile sales/driver; inventory/security for stock & session.
+            $keep = ['sales', 'distribution', 'inventory', 'general', 'security', 'notifications'];
             $payload['module_settings'] = array_intersect_key(
                 $payload['module_settings'],
                 array_flip($keep),
@@ -228,21 +246,26 @@ class ErpCapabilitiesController extends Controller
                     }
                     $code = (string) $code;
 
+                    // Mobile app gates on mobile_* codes (+ sales.discounts.give for auto-approve).
                     return str_starts_with($code, 'mobile')
-                        || str_starts_with($code, 'sales')
-                        || str_starts_with($code, 'products')
-                        || str_starts_with($code, 'catalogue')
-                        || str_starts_with($code, 'customers')
-                        || str_starts_with($code, 'inventory')
-                        || str_starts_with($code, 'fulfillment')
-                        || str_starts_with($code, 'reports')
-                        || str_starts_with($code, 'approvals')
+                        || $code === 'sales.discounts.give'
+                        || str_starts_with($code, 'approvals.')
                         || str_starts_with($code, 'discount');
                 },
                 ARRAY_FILTER_USE_BOTH,
             );
             // Keep JSON object `{}` (not `[]`) so mobile clients parse permissions as a map.
             $payload['permissions'] = $filtered === [] ? new \stdClass : $filtered;
+        }
+
+        if (isset($payload['approval_permissions']) && is_array($payload['approval_permissions'])) {
+            $filteredApprovals = array_filter(
+                $payload['approval_permissions'],
+                static fn ($granted) => (bool) $granted,
+            );
+            $payload['approval_permissions'] = $filteredApprovals === []
+                ? new \stdClass
+                : $filteredApprovals;
         }
 
         return $payload;

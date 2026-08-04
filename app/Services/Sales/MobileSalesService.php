@@ -204,6 +204,16 @@ class MobileSalesService
                             $channel,
                             (string) ($row['payment_status'] ?? ''),
                         ),
+                        'can_convert_to_paid' => $workflow->canConvertToPaidForOrder(
+                            $status,
+                            $channel,
+                            (string) ($row['payment_status'] ?? ''),
+                        ),
+                        'can_convert_to_unpaid' => $workflow->canConvertToUnpaidForOrder(
+                            $status,
+                            $channel,
+                            (string) ($row['payment_status'] ?? ''),
+                        ),
                         'can_return' => $workflow->isCustomerReturnStatus($status, $channel),
                     ]);
                 })
@@ -352,6 +362,8 @@ class MobileSalesService
                             'can_request_cancellation',
                             'can_print_invoice',
                             'can_collect_payment',
+                            'can_convert_to_paid',
+                            'can_convert_to_unpaid',
                             'can_return',
                         ])->all())
                         ->values()
@@ -406,6 +418,8 @@ class MobileSalesService
                     'can_request_cancellation',
                     'can_print_invoice',
                     'can_collect_payment',
+                    'can_convert_to_paid',
+                    'can_convert_to_unpaid',
                     'can_return',
                 ])->all());
             }
@@ -445,6 +459,16 @@ class MobileSalesService
                 'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel)
                     && app(SaleInvoicePrintStockGate::class)->allows($sale),
                 'can_collect_payment' => $workflow->canCollectPaymentForOrder(
+                    $status,
+                    $channel,
+                    (string) ($sale->payment_status ?? ''),
+                ),
+                'can_convert_to_paid' => $workflow->canConvertToPaidForOrder(
+                    $status,
+                    $channel,
+                    (string) ($sale->payment_status ?? ''),
+                ),
+                'can_convert_to_unpaid' => $workflow->canConvertToUnpaidForOrder(
                     $status,
                     $channel,
                     (string) ($sale->payment_status ?? ''),

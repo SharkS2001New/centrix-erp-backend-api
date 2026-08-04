@@ -147,6 +147,7 @@ class ErpSettingsController extends Controller
             'show_proforma_valid_until',
             'show_proforma_payment_terms',
             'show_proforma_totals_breakdown',
+            'classic_pos_theme_template',
         ];
 
         $statusRule = Rule::in(OrderWorkflowService::ALL_STATUSES);
@@ -157,6 +158,13 @@ class ErpSettingsController extends Controller
             'pos_order_type_mode' => 'sometimes|in:normal,route,toggle',
             'backoffice_order_type_mode' => 'sometimes|in:normal,route,toggle',
             'order_document_type' => 'sometimes|in:receipt,invoice,both',
+            'classic_pos_theme_template' => 'sometimes|string|in:'.implode(',', \App\Services\Sales\ClassicPosThemeSettings::THEME_TEMPLATES),
+            'classic_pos_theme_colors' => 'sometimes|array',
+            'classic_pos_theme_colors.workspace' => 'sometimes|nullable|string|max:9',
+            'classic_pos_theme_colors.header' => 'sometimes|nullable|string|max:9',
+            'classic_pos_theme_colors.footer' => 'sometimes|nullable|string|max:9',
+            'classic_pos_theme_colors.button' => 'sometimes|nullable|string|max:9',
+            'classic_pos_theme_colors.select' => 'sometimes|nullable|string|max:9',
             'invoice_valid_days' => 'sometimes|integer|min:0|max:365',
             'order_workflow' => 'sometimes|array',
             'order_workflow.steps' => 'sometimes|array',
@@ -236,7 +244,7 @@ class ErpSettingsController extends Controller
             if (array_key_exists($key, $rules)) {
                 continue;
             }
-            if (in_array($key, ['other_bank_name', 'pos_order_type_mode', 'backoffice_order_type_mode', 'order_document_type'], true)) {
+            if (in_array($key, ['other_bank_name', 'pos_order_type_mode', 'backoffice_order_type_mode', 'order_document_type', 'classic_pos_theme_template'], true)) {
                 continue;
             }
             if (in_array($key, ['point_cash_value', 'points_earn_per_kes'], true)) {
@@ -264,6 +272,17 @@ class ErpSettingsController extends Controller
             fn ($key) => in_array($key, $salesKeys, true),
             ARRAY_FILTER_USE_KEY
         ));
+
+        if (array_key_exists('classic_pos_theme_template', $data)) {
+            $nextSales['classic_pos_theme_template'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeTemplate(
+                $data['classic_pos_theme_template'],
+            );
+        }
+        if (array_key_exists('classic_pos_theme_colors', $data)) {
+            $nextSales['classic_pos_theme_colors'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeColors(
+                $data['classic_pos_theme_colors'],
+            );
+        }
 
         if (array_key_exists('order_workflow', $data) && is_array($data['order_workflow']) && $user->is_super_admin) {
             $workflowService = OrderWorkflowService::forGate($gate);

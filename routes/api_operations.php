@@ -174,6 +174,8 @@ Route::middleware('auth:sanctum')->group(function () {
 
     Route::middleware(['erp.module:payments', 'erp.permission:payments.manage'])->group(function () {
         Route::post('sales/{saleId}/payments', [PaymentOperationsController::class, 'paySale']);
+        Route::post('sales/{saleId}/convert-to-paid', [PaymentOperationsController::class, 'convertToPaid']);
+        Route::post('sales/{saleId}/convert-to-unpaid', [PaymentOperationsController::class, 'convertToUnpaid']);
     });
 
     // ---- POS till ----

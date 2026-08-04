@@ -19,7 +19,10 @@ trait RespondsWithAuthSession
         if (($result['user'] ?? null) instanceof User) {
             /** @var User $user */
             $user = $result['user'];
-            $result['capabilities'] = app(ErpCapabilitiesController::class)->resolveForUser($user);
+            $result['capabilities'] = app(ErpCapabilitiesController::class)->resolveForUser(
+                $user,
+                $this->resolveAuthLoginChannel($request, $result),
+            );
 
             if (! $user->is_super_admin) {
                 $org = $result['organization'] ?? $user->organization;
@@ -81,5 +84,34 @@ trait RespondsWithAuthSession
         }
 
         return $response->withCookie(ApiTokenCookie::forget());
+    }
+
+    /**
+     * Prefer the channel used for this auth response so login-embedded capabilities
+     * are slimmed for mobile/manager even before the Bearer token is on the request.
+     *
+     * @param  array<string, mixed>  $result
+     */
+    protected function resolveAuthLoginChannel(Request $request, array $result): ?string
+    {
+        $fromBody = strtolower(trim((string) $request->input('login_channel', '')));
+        if (in_array($fromBody, ['backoffice', 'pos', 'mobile', 'manager'], true)) {
+            return $fromBody;
+        }
+
+        $token = $result['token'] ?? null;
+        if (is_string($token) && $token !== '') {
+            // Newly issued Sanctum token is not yet currentAccessToken on $user.
+            $user = $result['user'] ?? null;
+            if ($user instanceof User) {
+                $latest = $user->tokens()->latest('id')->first();
+                $channel = strtolower((string) ($latest?->login_channel ?? ''));
+                if ($channel !== '') {
+                    return $channel;
+                }
+            }
+        }
+
+        return null;
     }
 }

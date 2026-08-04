@@ -337,6 +337,14 @@ class SaleController extends BaseResourceController
                 'can_collect_payment',
                 $workflow->canCollectPaymentForOrder($status, $channel, (string) ($sale->payment_status ?? '')),
             );
+            $sale->setAttribute(
+                'can_convert_to_paid',
+                $workflow->canConvertToPaidForOrder($status, $channel, (string) ($sale->payment_status ?? '')),
+            );
+            $sale->setAttribute(
+                'can_convert_to_unpaid',
+                $workflow->canConvertToUnpaidForOrder($status, $channel, (string) ($sale->payment_status ?? '')),
+            );
             $sale->setAttribute('order_connectivity', $sale->mobileOrderConnectivity());
             $sale->setAttribute('is_offline_order', $sale->isOfflineMobileOrder());
 
@@ -421,6 +429,16 @@ class SaleController extends BaseResourceController
                 $channel,
                 (string) ($sale->payment_status ?? ''),
             ),
+            'can_convert_to_paid' => $workflowService->canConvertToPaidForOrder(
+                $status,
+                $channel,
+                (string) ($sale->payment_status ?? ''),
+            ),
+            'can_convert_to_unpaid' => $workflowService->canConvertToUnpaidForOrder(
+                $status,
+                $channel,
+                (string) ($sale->payment_status ?? ''),
+            ),
             'order_connectivity' => $sale->mobileOrderConnectivity(),
             'is_offline_order' => $sale->isOfflineMobileOrder(),
         ]);
@@ -430,6 +448,7 @@ class SaleController extends BaseResourceController
             if ($orgId > 0) {
                 $cache->putSaleDetail($orgId, (int) $sale->id, 'web', collect($payload)->except([
                     'can_edit', 'can_edit_lines', 'can_print_invoice', 'can_collect_payment',
+                    'can_convert_to_paid', 'can_convert_to_unpaid',
                 ])->all());
             }
         }
