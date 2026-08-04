@@ -152,6 +152,7 @@ class PosDailyOrderNumberAllocator
                 ->where('cashier_id', $cashierId)
                 ->whereDate('pos_order_date', $date)
                 ->where('pos_order_num', $posOrderNum)
+                ->whereNotIn('status', ['held', 'draft', 'cancelled'])
                 ->lockForUpdate()
                 ->exists();
 
@@ -260,7 +261,9 @@ class PosDailyOrderNumberAllocator
             ->where('organization_id', $organizationId)
             ->where('cashier_id', $cashierId)
             ->whereDate('pos_order_date', $date)
-            ->whereNotNull('pos_order_num');
+            ->whereNotNull('pos_order_num')
+            // Parks and voids must not hold or advance Cash Sales #.
+            ->whereNotIn('status', ['held', 'draft', 'cancelled']);
 
         if ($locked) {
             $query->lockForUpdate();

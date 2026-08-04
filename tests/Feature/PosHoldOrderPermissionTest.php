@@ -52,7 +52,7 @@ class PosHoldOrderPermissionTest extends TestCase
             'quantity' => 1,
         ])->assertCreated();
 
-        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
             'status' => 'held',
             'pay_now' => 0,
             'save_only' => true,
@@ -61,7 +61,10 @@ class PosHoldOrderPermissionTest extends TestCase
             'customer_name_override' => 'Walk-in',
         ])
             ->assertCreated()
-            ->assertJsonPath('status', 'held');
+            ->assertJsonPath('status', 'held')
+            ->json();
+
+        $this->assertNull($sale['pos_order_num'] ?? null);
     }
 
     public function test_till_operator_can_list_and_open_own_held_orders(): void

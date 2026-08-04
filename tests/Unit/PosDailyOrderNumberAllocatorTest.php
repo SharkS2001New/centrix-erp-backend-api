@@ -155,6 +155,58 @@ class PosDailyOrderNumberAllocatorTest extends TestCase
         $this->assertSame(4, $peek['pos_order_num']);
     }
 
+    public function test_held_and_cancelled_sales_do_not_advance_cash_sales_sequence(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $allocator = app(PosDailyOrderNumberAllocator::class);
+        $day = now()->toDateString();
+
+        Sale::query()->create([
+            'order_num' => 880032,
+            'pos_order_num' => 2,
+            'pos_order_date' => $day,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 10,
+            'amount_paid' => 10,
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 880033,
+            'pos_order_num' => 99,
+            'pos_order_date' => $day,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $admin->id,
+            'status' => 'held',
+            'payment_status' => 'unpaid',
+            'order_total' => 10,
+            'amount_paid' => 0,
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 880034,
+            'pos_order_num' => 100,
+            'pos_order_date' => $day,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $admin->id,
+            'status' => 'cancelled',
+            'payment_status' => 'unpaid',
+            'order_total' => 10,
+            'amount_paid' => 0,
+        ]);
+
+        $peek = $allocator->peekNextForCashier((int) $admin->organization_id, (int) $admin->id, $day);
+        $this->assertSame(3, $peek['pos_order_num']);
+    }
+
     public function test_claim_reserved_for_checkout_rejects_duplicate_ticket(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

@@ -262,8 +262,6 @@ class CheckoutController extends Controller
                 }
                 app(CustomerInvoiceService::class)->voidForCancelledSale($appendPriorSale->fresh(), $user);
             }
-            $posOrderFields = $this->resolvePosDailyOrderFields($cart, $user, $input);
-
             $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
             app(UserMobileOrderScopeService::class)->assertCheckoutRoute($user, (string) $cart->channel, $routeId);
 
@@ -457,6 +455,11 @@ class CheckoutController extends Controller
             if ($pendingDiscountApproval) {
                 $orderStatus = 'pending_approval';
             }
+
+            // Held/draft parks use their own hold sequence — never consume Cash Sales #.
+            $posOrderFields = in_array($orderStatus, ['held', 'draft'], true)
+                ? []
+                : $this->resolvePosDailyOrderFields($cart, $user, $input);
 
             $floatSessionId = FloatSessionValidator::forUser($user)->resolveForCheckout($cart, $user, $input);
 
