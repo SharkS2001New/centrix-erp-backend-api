@@ -21,7 +21,7 @@ class MobilePickingSheetServiceTest extends TestCase
         parent::tearDown();
     }
 
-    public function test_retail_breakdown_lists_each_customer_qty_not_size_counts(): void
+    public function test_retail_breakdown_lists_qty_amounts_without_customer_names(): void
     {
         $stockUom = Mockery::mock(StockUomDisplayService::class);
         $service = $this->makeService($stockUom);
@@ -33,9 +33,10 @@ class MobilePickingSheetServiceTest extends TestCase
             $this->retailItem('Jane Wanjiku', 8), // same customer → merge to 20 kg
         ]);
 
-        $breakdown = $this->invoke($service, 'buildRetailCustomerBreakdown', [$items, $uom]);
+        $breakdown = $this->invoke($service, 'buildRetailQtyBreakdown', [$items, $uom]);
 
-        $this->assertSame('Jane Wanjiku 20 kg, Peter Otieno 10 kg', $breakdown);
+        $this->assertSame('20 kg, 10 kg', $breakdown);
+        $this->assertStringNotContainsString('Jane', $breakdown);
         $this->assertStringNotContainsString('×', $breakdown);
     }
 

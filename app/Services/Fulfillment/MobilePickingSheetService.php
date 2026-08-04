@@ -12,8 +12,8 @@ use InvalidArgumentException;
 
 /**
  * Product-aggregated picking lists for mobile route orders when Distribution is disabled.
- * Lines keep wholesale and retail distinct (W/R qty labels + sold prices) and show a
- * per-customer retail breakdown under qty for warehouse pickers.
+ * Lines show wholesale/retail quantities and sold prices without W/R prefixes;
+ * retail ghost lines list kg amounts only (no customer names).
  */
 class MobilePickingSheetService
 {
@@ -80,8 +80,8 @@ class MobilePickingSheetService
     }
 
     /**
-     * One row per product with explicit W/R quantities, sold unit prices (not averages),
-     * and a per-customer retail qty ghost under Quantity.
+     * One row per product with wholesale/retail quantities, sold unit prices (not averages),
+     * and per-line retail qty amounts under Quantity (no customer names).
      *
      * @param  array<int, int>  $saleIds
      * @return array<int, array<string, mixed>>
@@ -134,14 +134,14 @@ class MobilePickingSheetService
 
             $quantityParts = [];
             if ($wholesaleLabel !== '') {
-                $quantityParts[] = 'W '.$wholesaleLabel;
+                $quantityParts[] = $wholesaleLabel;
             }
             if ($retailLabel !== '') {
-                $quantityParts[] = 'R '.$retailLabel;
+                $quantityParts[] = $retailLabel;
             }
             $quantityLabel = implode(', ', $quantityParts);
 
-            $retailBreakdown = $this->buildRetailCustomerBreakdown($retailItems, $uom);
+            $retailBreakdown = $this->buildRetailQtyBreakdown($retailItems, $uom);
             $wholesalePrices = $this->distinctSoldUnitPrices($wholesaleItems, $uom, false);
             $retailPrices = $this->distinctSoldUnitPrices($retailItems, $uom, true);
             $fullLabel = $this->fullPackageLabel($uom);
@@ -149,10 +149,10 @@ class MobilePickingSheetService
 
             $priceParts = [];
             if ($wholesalePrices !== []) {
-                $priceParts[] = 'W Ksh '.$this->formatPriceList($wholesalePrices).' / '.$fullLabel;
+                $priceParts[] = $this->formatPriceWithUnit($wholesalePrices, $fullLabel);
             }
             if ($retailPrices !== []) {
-                $priceParts[] = 'R Ksh '.$this->formatPriceList($retailPrices).' / '.$smallLabel;
+                $priceParts[] = $this->formatPriceWithUnit($retailPrices, $smallLabel);
             }
 
             $wholesaleUnitPrice = $wholesalePrices[0] ?? 0.0;
@@ -170,16 +170,18 @@ class MobilePickingSheetService
                 'wholesale_qty' => $wholesaleQty,
                 'retail_qty' => $retailQty,
                 'quantity_label' => $quantityLabel,
-                'wholesale_qty_label' => $wholesaleLabel !== '' ? 'W '.$wholesaleLabel : '',
-                'retail_qty_label' => $retailLabel !== '' ? 'R '.$retailLabel : '',
+                'wholesale_qty_label' => $wholesaleLabel,
+                'retail_qty_label' => $retailLabel,
                 'retail_breakdown' => $retailBreakdown,
                 'pack_breakdown' => '',
                 'wholesale_unit_price' => $wholesaleUnitPrice,
                 'retail_unit_price' => $retailUnitPrice,
                 'wholesale_unit_prices' => $wholesalePrices,
                 'retail_unit_prices' => $retailPrices,
+                'wholesale_pack_label' => $fullLabel,
+                'retail_pack_label' => $smallLabel,
                 'unit_price' => $wholesaleUnitPrice > 0 ? $wholesaleUnitPrice : $retailUnitPrice,
-                'price_label' => implode(' · ', $priceParts),
+                'price_label' => implode(', ', $priceParts),
                 'line_total' => $lineTotal,
                 'sort_qty' => $wholesaleQty > 0.0001
                     ? $this->stockUom->fulfillmentSortQuantity($wholesaleQty, $uom)
@@ -211,11 +213,11 @@ class MobilePickingSheetService
     }
 
     /**
-     * Per-customer retail qty under the main R total — e.g. "John 20 kg, Mary 15 kg".
+     * Retail qty amounts under the main total — e.g. "45 kg, 10 kg" (no customer names).
      *
      * @param  Collection<int, SaleItem>  $retailItems
      */
-    protected function buildRetailCustomerBreakdown(Collection $retailItems, ?Uom $uom): string
+    protected function buildRetailQtyBreakdown(Collection $retailItems, ?Uom $uom): string
     {
         if ($retailItems->isEmpty()) {
             return '';
@@ -246,12 +248,12 @@ class MobilePickingSheetService
         });
 
         $parts = [];
-        foreach ($byCustomer as $name => $qty) {
+        foreach ($byCustomer as $qty) {
             $qtyText = $this->formatRetailQtyLabel((float) $qty, $uom);
             if ($qtyText === '') {
                 continue;
             }
-            $parts[] = $name.' '.$qtyText;
+            $parts[] = $qtyText;
         }
 
         return implode(', ', $parts);
@@ -279,13 +281,7 @@ class MobilePickingSheetService
 
     protected function formatDisplayQty(float $qty): string
     {
-        if (abs($qty - round($qty)) < 0.0001) {
-            return number_format((int) round($qty), 0, '.', ',');
-        }
-
-        $formatted = rtrim(rtrim(number_format($qty, 3, '.', ','), '0'), '.');
-
-        return $formatted === '' ? '0' : $formatted;
+        return number_format((int) round($qty), 0, '.', ',');
     }
 
     protected function customerNameForItem(SaleItem $item): string
@@ -361,6 +357,22 @@ class MobilePickingSheetService
         return implode(', ', array_map(fn (float $p) => $this->formatMoney($p), $prices));
     }
 
+    /** e.g. "2,250 per bag" or "48, 52 per kg". */
+    protected function formatPriceWithUnit(array $prices, string $unit): string
+    {
+        if ($prices === []) {
+            return '';
+        }
+
+        $list = $this->formatPriceList($prices);
+        $unitText = strtolower(trim($unit));
+        if ($unitText === '') {
+            return $list;
+        }
+
+        return $list.' per '.$unitText;
+    }
+
     protected function packageCount(float $baseQty, ?Uom $uom): float
     {
         $factor = (float) ($uom?->conversion_factor ?? 1);
@@ -395,10 +407,6 @@ class MobilePickingSheetService
 
     protected function formatMoney(float $amount): string
     {
-        if (abs($amount - round($amount)) < 0.0001) {
-            return number_format((int) round($amount), 0, '.', ',');
-        }
-
-        return number_format($amount, 2, '.', ',');
+        return number_format((int) round($amount), 0, '.', ',');
     }
 }
