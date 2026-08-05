@@ -120,6 +120,9 @@ class ErpCapabilitiesController extends Controller
         $payload['is_admin'] = (bool) $user->is_admin;
         $payload['access_scope'] = $user->access_scope ?? 'org';
         $payload['branch_id'] = $user->branch_id;
+        $payload['hospitality_outlet_id'] = $user->hospitality_outlet_id
+            ? (int) $user->hospitality_outlet_id
+            : null;
         $payload['allow_org_provisioning'] = (bool) $user->is_super_admin
             && config('erp.allow_org_provisioning');
         $payload['password_expiry'] = app(PasswordExpiryService::class)->statusForUser($user);

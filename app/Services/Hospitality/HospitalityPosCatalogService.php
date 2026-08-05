@@ -74,7 +74,7 @@ class HospitalityPosCatalogService
             throw ValidationException::withMessages(['product_code' => ['Product not found.']]);
         }
         if (Schema::hasColumn('products', $column) && ! (bool) ($product->{$column} ?? true)) {
-            $label = $channel === 'bar' ? 'Bar' : 'Hotel';
+            $label = $channel === 'bar' ? 'Bar' : 'Restaurant';
             throw ValidationException::withMessages([
                 'product_code' => ["{$product->product_name} is not sellable on {$label} POS."],
             ]);
@@ -100,7 +100,11 @@ class HospitalityPosCatalogService
         $outlet = $this->resolveOutletForUser($org, $user, $outletId);
         $channel = self::menuChannelForOutlet($outlet);
 
-        $query = Product::query()->with('vat:id,vat_percentage,vat_code');
+        $query = Product::query()->with([
+            'vat:id,vat_percentage,vat_code',
+            'subCategory:id,category_id,subcategory_name',
+            'subCategory.category:id,category_name,organization_id',
+        ]);
         $this->catalogScope->scopeForUser($query, $user, $request);
 
         if (Schema::hasColumn('products', 'sell_on_bar') && Schema::hasColumn('products', 'sell_on_hotel')) {
@@ -176,6 +180,8 @@ class HospitalityPosCatalogService
                 $code = (string) $product->product_code;
                 $vatPct = (float) ($product->vat?->vat_percentage ?? 0);
                 $sold = round((float) ($soldQtyByCode[$code] ?? 0), 4);
+                $categoryName = strtolower((string) ($product->subCategory?->category?->category_name ?? ''));
+                $menuGroup = $this->menuGroupForCategoryName($categoryName);
 
                 return [
                     'id' => (int) $product->id,
@@ -188,6 +194,10 @@ class HospitalityPosCatalogService
                     'is_popular' => $sold > 0,
                     'sell_on_bar' => (bool) ($product->sell_on_bar ?? true),
                     'sell_on_hotel' => (bool) ($product->sell_on_hotel ?? true),
+                    'menu_group' => $menuGroup,
+                    'category_name' => $product->subCategory?->category?->category_name
+                        ? (string) $product->subCategory->category->category_name
+                        : null,
                     'image_url' => $product->image_url,
                     'has_image' => ! empty($product->image_path),
                 ];
@@ -220,8 +230,9 @@ class HospitalityPosCatalogService
                 'name' => $outlet->name,
                 'outlet_type' => $outlet->outlet_type,
                 'menu_channel' => $channel,
-                'menu_channel_label' => $channel === 'bar' ? 'Bar' : 'Hotel',
+                'menu_channel_label' => $channel === 'bar' ? 'Bar' : 'Restaurant',
             ],
+            'menu_channel' => $channel,
             'popular_days' => $days,
             'searching' => $search !== '',
             'offset' => $offset,
@@ -230,6 +241,31 @@ class HospitalityPosCatalogService
             'has_more' => $hasMore,
             'total' => $total,
         ];
+    }
+
+    /** Classify Food vs Drinks chips from category name (same rules as menu_group filter). */
+    protected function menuGroupForCategoryName(string $categoryName): ?string
+    {
+        if ($categoryName === '') {
+            return null;
+        }
+        if (
+            str_contains($categoryName, 'food')
+            || str_contains($categoryName, 'kitchen')
+            || str_contains($categoryName, 'meal')
+        ) {
+            return 'food';
+        }
+        if (
+            str_contains($categoryName, 'drink')
+            || str_contains($categoryName, 'beverage')
+            || str_contains($categoryName, 'bar')
+            || str_contains($categoryName, 'alcohol')
+        ) {
+            return 'drinks';
+        }
+
+        return null;
     }
 
     /**

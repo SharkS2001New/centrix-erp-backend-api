@@ -16,6 +16,7 @@ Repeatable go-live checklists per deployment profile. Run each checklist on a **
 | [supermarket.md](supermarket.md) | `supermarket` | Cashier, branch manager |
 | [wholesale_retail.md](wholesale_retail.md) | `wholesale_retail` | Cashier, mobile rep, warehouse, accountant |
 | [distribution.md](distribution.md) | `distribution` | Warehouse, dispatch, mobile rep, driver |
+| [hotel_bar.md](hotel_bar.md) | `hotel_bar` | Bar cashier, restaurant cashier, hotel front desk |
 | [custom_setup.md](custom_setup.md) | `custom` | Any bespoke module mix |
 
 ## Regression smoke (all profiles)

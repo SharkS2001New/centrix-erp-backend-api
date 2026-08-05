@@ -11,7 +11,8 @@ use Illuminate\Support\Str;
 
 /**
  * Attach demo product photos on the public disk.
- * Prefers curated Unsplash JPEGs; falls back to GD placeholders when offline / no GD network.
+ * Prefers bundled JPEGs in resources/seed-images/hospitality, then remote URLs,
+ * then GD placeholders.
  */
 class SeededProductImage
 {
@@ -123,6 +124,14 @@ class SeededProductImage
      */
     protected static function resolveJpegBytes(string $label, string $tone, ?string $photoKey): ?string
     {
+        $key = self::resolvePhotoKey($photoKey, $label);
+        if ($key) {
+            $bundled = self::loadBundledJpeg($key);
+            if ($bundled !== null) {
+                return $bundled;
+            }
+        }
+
         $url = self::photoUrlFor($photoKey, $label, $tone);
         if ($url) {
             $downloaded = self::downloadJpeg($url);
@@ -132,6 +141,36 @@ class SeededProductImage
         }
 
         return self::renderJpeg($label, $tone);
+    }
+
+    protected static function resolvePhotoKey(?string $photoKey, string $label): ?string
+    {
+        $key = strtolower(trim((string) $photoKey));
+        if ($key !== '') {
+            return $key;
+        }
+
+        return self::guessPhotoKey($label);
+    }
+
+    protected static function loadBundledJpeg(string $photoKey): ?string
+    {
+        $key = strtolower(trim($photoKey));
+        if ($key === '' || str_contains($key, '..') || str_contains($key, '/')) {
+            return null;
+        }
+
+        $path = resource_path('seed-images/hospitality/'.$key.'.jpg');
+        if (! is_file($path)) {
+            return null;
+        }
+
+        $bytes = @file_get_contents($path);
+        if (! is_string($bytes) || strlen($bytes) < 512) {
+            return null;
+        }
+
+        return $bytes;
     }
 
     /**

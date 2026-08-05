@@ -47,11 +47,19 @@ class HospitalityBarHotelChannelTest extends TestCase
         $this->assertSame('bar', $bar->outlet_type);
         $this->assertSame('restaurant', $hotel->outlet_type);
 
+        $template = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
         Product::query()->create([
             'organization_id' => $this->org->id,
             'product_code' => 'BARONLY1',
             'product_name' => 'Bar Only Drink',
             'unit_price' => 100,
+            'subcategory_id' => $template->subcategory_id,
+            'unit_id' => $template->unit_id,
+            'vat_id' => $template->vat_id,
             'sell_on_bar' => true,
             'sell_on_hotel' => false,
             'sell_on_retail' => false,
@@ -61,6 +69,9 @@ class HospitalityBarHotelChannelTest extends TestCase
             'product_code' => 'HOTELONLY1',
             'product_name' => 'Hotel Only Dish',
             'unit_price' => 200,
+            'subcategory_id' => $template->subcategory_id,
+            'unit_id' => $template->unit_id,
+            'vat_id' => $template->vat_id,
             'sell_on_bar' => false,
             'sell_on_hotel' => true,
             'sell_on_retail' => false,
@@ -72,6 +83,7 @@ class HospitalityBarHotelChannelTest extends TestCase
         $this->assertContains('BARONLY1', $barCodes);
         $this->assertNotContains('HOTELONLY1', $barCodes);
         $this->assertSame('bar', $barCatalog['outlet']['menu_channel']);
+        $this->assertSame('Bar', $barCatalog['outlet']['menu_channel_label']);
 
         $this->user->forceFill(['hospitality_outlet_id' => $hotel->id])->save();
         $hotelCatalog = $this->getJson('/api/v1/hospitality/pos/catalog')->assertOk()->json();
@@ -79,6 +91,7 @@ class HospitalityBarHotelChannelTest extends TestCase
         $this->assertContains('HOTELONLY1', $hotelCodes);
         $this->assertNotContains('BARONLY1', $hotelCodes);
         $this->assertSame('hotel', $hotelCatalog['outlet']['menu_channel']);
+        $this->assertSame('Restaurant', $hotelCatalog['outlet']['menu_channel_label']);
     }
 
     public function test_profit_loss_and_eod_reports_run(): void

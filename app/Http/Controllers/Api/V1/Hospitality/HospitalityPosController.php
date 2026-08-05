@@ -51,7 +51,7 @@ class HospitalityPosController extends Controller
                     'name' => $outlet->name,
                     'outlet_type' => $outlet->outlet_type,
                     'menu_channel' => $channel,
-                    'menu_channel_label' => $channel === 'bar' ? 'Bar' : 'Hotel',
+                    'menu_channel_label' => $channel === 'bar' ? 'Bar' : 'Restaurant',
                 ],
             ],
         ));
