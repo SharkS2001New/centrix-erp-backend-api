@@ -137,8 +137,8 @@ class ReportController extends Controller
                 ['key' => 'eod-report', 'path' => '/reports/eod-report', 'label' => 'End of day report'],
             ],
             'compliance' => [
-                ['key' => 'kra-compliance-summary', 'path' => '/reports/kra-compliance-summary', 'label' => 'KRA compliance summary'],
-                ['key' => 'kra-receipts', 'path' => '/reports/kra-receipts', 'label' => 'KRA receipts (per invoice)'],
+                ['key' => 'kra-compliance-summary', 'path' => '/reports/kra-compliance-summary', 'label' => 'KRA compliance'],
+                ['key' => 'kra-receipts', 'path' => '/reports/kra-receipts', 'label' => 'KRA receipts'],
                 ['key' => 'kra-unfiscalized-sales', 'path' => '/reports/kra-unfiscalized-sales', 'label' => 'Unfiscalized sales'],
                 ['key' => 'vat-collected', 'path' => '/reports/vat-collected', 'label' => 'VAT collected'],
                 ['key' => 'audit-trail', 'path' => '/reports/audit-trail', 'label' => 'Audit trail'],
@@ -159,8 +159,8 @@ class ReportController extends Controller
                 ['key' => 'invoice-payments', 'path' => '/reports/invoice-payments', 'label' => 'Customer invoice payments'],
                 ['key' => 'expenses', 'path' => '/reports/expenses', 'label' => 'Expenses by group'],
                 ['key' => 'journal-register', 'path' => '/reports/journal-register', 'label' => 'Journal register'],
-                ['key' => 'kra-compliance-summary', 'path' => '/reports/kra-compliance-summary', 'label' => 'KRA compliance summary'],
-                ['key' => 'kra-receipts', 'path' => '/reports/kra-receipts', 'label' => 'KRA receipts (per invoice)'],
+                ['key' => 'kra-compliance-summary', 'path' => '/reports/kra-compliance-summary', 'label' => 'KRA compliance'],
+                ['key' => 'kra-receipts', 'path' => '/reports/kra-receipts', 'label' => 'KRA receipts'],
                 ['key' => 'kra-unfiscalized-sales', 'path' => '/reports/kra-unfiscalized-sales', 'label' => 'Unfiscalized sales'],
             ],
             'operations' => [

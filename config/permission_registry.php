@@ -251,8 +251,8 @@ return [
                 'journal_register' => ['label' => 'Journal register', 'actions' => ['view']],
                 'subledger_reconciliation' => ['label' => 'Subledger reconciliation', 'actions' => ['view']],
                 // Compliance / tax
-                'kra_receipts' => ['label' => 'KRA receipts (per invoice)', 'actions' => ['view']],
-                'kra_compliance_summary' => ['label' => 'KRA compliance summary', 'actions' => ['view']],
+                'kra_receipts' => ['label' => 'KRA receipts', 'actions' => ['view']],
+                'kra_compliance_summary' => ['label' => 'KRA compliance', 'actions' => ['view']],
                 'kra_unfiscalized_sales' => ['label' => 'Unfiscalized sales', 'actions' => ['view']],
                 // HR (shown under Human Resources in the roles matrix)
                 'payroll_summary' => ['label' => 'Payroll summary', 'actions' => ['view']],
