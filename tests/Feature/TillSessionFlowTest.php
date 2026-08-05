@@ -638,4 +638,121 @@ class TillSessionFlowTest extends TestCase
         $this->assertNotContains('Other Org Fuel', $names);
         $this->assertNotContains('Other Org Rent', $names);
     }
+
+    public function test_session_history_supports_date_filter_and_pagination(): void
+    {
+        $this->clearCashierSessionsForToday();
+
+        $yesterday = now()->subDay()->toDateString();
+        $yesterdaySession = TillFloatSession::create([
+            'organization_id' => $this->user->organization_id,
+            'till_id' => $this->till->id,
+            'branch_id' => $this->user->branch_id,
+            'cashier_id' => $this->user->id,
+            'session_date' => $yesterday,
+            'working_amount' => 1000,
+            'float_breakdown' => [],
+            'status' => 'closed',
+            'opened_at' => now()->subDay(),
+            'closed_at' => now()->subDay(),
+        ]);
+
+        $todaySession = $this->openFreshSession(1500);
+        $todaySession->update(['status' => 'closed', 'closed_at' => now()]);
+
+        $todayResponse = $this->getJson('/api/v1/till-float-sessions?'.http_build_query([
+            'session_date' => now()->toDateString(),
+            'per_page' => 10,
+            'page' => 1,
+        ]))->assertOk();
+
+        $todayIds = array_column($todayResponse->json('data'), 'id');
+        $this->assertContains($todaySession->id, $todayIds);
+        $this->assertNotContains($yesterdaySession->id, $todayIds);
+        $this->assertSame(10, (int) $todayResponse->json('per_page'));
+
+        $yesterdayResponse = $this->getJson('/api/v1/till-float-sessions?'.http_build_query([
+            'session_date' => $yesterday,
+            'per_page' => 10,
+        ]))->assertOk();
+
+        $yesterdayIds = array_column($yesterdayResponse->json('data'), 'id');
+        $this->assertContains($yesterdaySession->id, $yesterdayIds);
+        $this->assertNotContains($todaySession->id, $yesterdayIds);
+    }
+
+    public function test_computer_locked_till_allows_second_cashier_session(): void
+    {
+        $deviceId = 'test-pos-device-001';
+        $this->till->update([
+            'lock_mode' => 'computer',
+            'ip_address' => $deviceId,
+            'cashier_id' => null,
+        ]);
+
+        $this->clearCashierSessionsForToday();
+
+        $first = $this->postJson('/api/v1/pos/sessions/open', [
+            'till_id' => $this->till->id,
+            'branch_id' => $this->user->branch_id,
+            'working_amount' => 1000,
+            'payment_type' => 'CASH',
+            'device_identifier' => $deviceId,
+        ])->assertCreated()->json();
+
+        $secondUser = User::query()
+            ->where('organization_id', $this->user->organization_id)
+            ->where('id', '!=', $this->user->id)
+            ->where('branch_id', $this->user->branch_id)
+            ->first();
+        $this->assertNotNull($secondUser);
+        Sanctum::actingAs($secondUser);
+
+        TillFloatSession::query()
+            ->where('cashier_id', $secondUser->id)
+            ->whereDate('session_date', now()->toDateString())
+            ->update([
+                'status' => 'closed',
+                'closed_at' => now(),
+                'session_date' => now()->subDay()->toDateString(),
+            ]);
+
+        $second = $this->postJson('/api/v1/pos/sessions/open', [
+            'till_id' => $this->till->id,
+            'branch_id' => $secondUser->branch_id,
+            'working_amount' => 500,
+            'payment_type' => 'CASH',
+            'device_identifier' => $deviceId,
+        ])->assertCreated()->json();
+
+        $this->assertNotSame($first['id'], $second['id']);
+        $this->assertSame($this->till->id, $second['till_id']);
+        $this->assertSame($secondUser->id, $second['cashier_id']);
+    }
+
+    public function test_user_lock_clears_previous_till_assignment(): void
+    {
+        $otherTill = Till::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'till_number' => 'Till99',
+            'till_name' => 'Till99',
+            'is_active' => true,
+            'cashier_id' => $this->user->id,
+            'lock_mode' => 'user',
+        ]);
+
+        $this->patchJson("/api/v1/tills/{$this->till->id}", [
+            'lock_mode' => 'user',
+            'cashier_id' => $this->user->id,
+        ])->assertOk();
+
+        $otherTill->refresh();
+        $this->till->refresh();
+
+        $this->assertNull($otherTill->cashier_id);
+        $this->assertNull($otherTill->lock_mode);
+        $this->assertSame($this->user->id, $this->till->cashier_id);
+        $this->assertSame('user', $this->till->lock_mode);
+    }
 }

@@ -42,7 +42,7 @@ class UserTillAssignmentService
     {
         Till::query()
             ->where('cashier_id', $userId)
-            ->update(['cashier_id' => null]);
+            ->update(['cashier_id' => null, 'lock_mode' => null]);
     }
 
     public function assignTill(User $user, int $tillId): Till
@@ -67,15 +67,21 @@ class UserTillAssignmentService
         }
 
         // Locked to another cashier — never reassign via auto or accidental pick.
-        if ($till->cashier_id && (int) $till->cashier_id !== (int) $user->id) {
+        if ($till->lock_mode === 'user' && $till->cashier_id && (int) $till->cashier_id !== (int) $user->id) {
             throw ValidationException::withMessages([
                 'till_id' => ['That till is locked to another cashier and cannot be assigned.'],
             ]);
         }
 
+        if ($till->lock_mode === 'computer') {
+            throw ValidationException::withMessages([
+                'till_id' => ['That till is locked to a computer and cannot be assigned to a user.'],
+            ]);
+        }
+
         $this->clearAssignment((int) $user->id);
 
-        $till->update(['cashier_id' => $user->id]);
+        $till->update(['cashier_id' => $user->id, 'lock_mode' => 'user', 'ip_address' => null]);
 
         return $till->fresh();
     }
@@ -107,6 +113,9 @@ class UserTillAssignmentService
             ->where('branch_id', $branchId)
             ->where('is_active', true)
             ->whereNull('cashier_id')
+            ->where(function ($q) {
+                $q->whereNull('lock_mode')->orWhere('lock_mode', '!=', 'computer');
+            })
             ->get()
             ->sortBy(fn (Till $till) => TillNumbering::sortKey($till))
             ->values();
@@ -131,6 +140,7 @@ class UserTillAssignmentService
             'till_name' => $label,
             'is_active' => true,
             'cashier_id' => $user->id,
+            'lock_mode' => 'user',
         ]);
     }
 }

@@ -1843,11 +1843,11 @@ class CartOperationsController extends Controller
 
     protected function resolveClientCartLineAmount(array $line, float $computedAmount): float
     {
-        if (array_key_exists('amount', $line) && $line['amount'] !== null) {
-            return max(0, (float) $line['amount']);
+        if (! array_key_exists('amount', $line)) {
+            return round(max(0.0, $computedAmount), 2);
         }
 
-        return $computedAmount;
+        return \App\Services\Sales\CartLineAmountResolver::resolve($line['amount'], $computedAmount);
     }
 
     protected function resolveLineDiscountGiven(array $salesSettings, float $amount): float

@@ -69,6 +69,99 @@ class TillController extends BaseResourceController
         }
     }
 
+    /** @param  array<string, mixed>  $data */
+    protected function normalizeTillLockFields(array $data, ?Till $existing = null): array
+    {
+        $lockMode = array_key_exists('lock_mode', $data)
+            ? ($data['lock_mode'] !== null && $data['lock_mode'] !== '' ? (string) $data['lock_mode'] : null)
+            : ($existing?->lock_mode ?? null);
+
+        if ($lockMode !== null && ! in_array($lockMode, ['user', 'computer'], true)) {
+            throw new \InvalidArgumentException('lock_mode must be user, computer, or empty.');
+        }
+
+        if ($lockMode === 'user') {
+            $cashierId = array_key_exists('cashier_id', $data)
+                ? ($data['cashier_id'] !== null && $data['cashier_id'] !== '' ? (int) $data['cashier_id'] : null)
+                : ($existing?->cashier_id !== null ? (int) $existing->cashier_id : null);
+            if (! $cashierId) {
+                throw new \InvalidArgumentException('Select a cashier when locking a till to a user.');
+            }
+            Till::query()
+                ->where('cashier_id', $cashierId)
+                ->when($existing?->id, fn ($q) => $q->where('id', '!=', $existing->id))
+                ->update(['cashier_id' => null, 'lock_mode' => null]);
+            $data['cashier_id'] = $cashierId;
+            $data['ip_address'] = null;
+            $data['lock_mode'] = 'user';
+        } elseif ($lockMode === 'computer') {
+            $deviceId = array_key_exists('ip_address', $data)
+                ? trim((string) ($data['ip_address'] ?? ''))
+                : trim((string) ($existing?->ip_address ?? ''));
+            if ($deviceId === '') {
+                throw new \InvalidArgumentException('Enter a computer identifier when locking a till to a computer.');
+            }
+            $data['ip_address'] = $deviceId;
+            $data['cashier_id'] = null;
+            $data['lock_mode'] = 'computer';
+        } else {
+            if (array_key_exists('lock_mode', $data)) {
+                $data['lock_mode'] = null;
+                $data['cashier_id'] = null;
+                $data['ip_address'] = null;
+            }
+        }
+
+        return $data;
+    }
+
+    protected function assertCashierLockAllowed(int $cashierId, ?int $exceptTillId = null): void
+    {
+        $conflict = Till::query()
+            ->where('cashier_id', $cashierId)
+            ->when($exceptTillId !== null, fn ($q) => $q->where('id', '!=', $exceptTillId))
+            ->exists();
+        if ($conflict) {
+            throw new \InvalidArgumentException('That cashier is already assigned to another till.');
+        }
+
+        $activeSession = TillFloatSession::query()
+            ->where('cashier_id', $cashierId)
+            ->whereIn('status', ['open', 'suspended'])
+            ->exists();
+        if ($activeSession) {
+            throw new \InvalidArgumentException('That cashier has an active session. Close it before reassigning the till.');
+        }
+    }
+
+    protected function assertTillLockAllowed(Till $till): void
+    {
+        $hasOpenSession = TillFloatSession::query()
+            ->where('till_id', $till->id)
+            ->whereIn('status', ['open', 'suspended'])
+            ->exists();
+        if ($hasOpenSession) {
+            throw new \InvalidArgumentException('Close active sessions on this till before changing its lock.');
+        }
+    }
+
+    protected function assertComputerIdentifierUnique(string $deviceId, ?int $exceptTillId = null): void
+    {
+        $normalized = strtolower(trim($deviceId));
+        if ($normalized === '') {
+            return;
+        }
+
+        $query = Till::query()
+            ->whereRaw('LOWER(TRIM(ip_address)) = ?', [$normalized]);
+        if ($exceptTillId !== null) {
+            $query->where('id', '!=', $exceptTillId);
+        }
+        if ($query->exists()) {
+            throw new \InvalidArgumentException('That computer identifier is already assigned to another till.');
+        }
+    }
+
     public function store(\Illuminate\Http\Request $request)
     {
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
@@ -104,23 +197,19 @@ class TillController extends BaseResourceController
             $this->assertUniqueTillCode($branchId, (string) $data['till_name']);
         }
 
-        // Float belongs to POS sessions — not stored on the till record.
-        // Optional cashier_id ties a cashier to this till (user admin / POS create).
         if (array_key_exists('cashier_id', $data)) {
             $cashierId = $data['cashier_id'] !== null && $data['cashier_id'] !== ''
                 ? (int) $data['cashier_id']
                 : null;
-            if ($cashierId) {
-                $conflict = Till::query()
-                    ->where('cashier_id', $cashierId)
-                    ->exists();
-                if ($conflict) {
-                    throw new \InvalidArgumentException('That cashier is already assigned to another till.');
-                }
-            }
             $data['cashier_id'] = $cashierId;
         } else {
             $data['cashier_id'] = null;
+        }
+
+        $data = $this->normalizeTillLockFields($data);
+
+        if (($data['lock_mode'] ?? null) === 'computer' && ! empty($data['ip_address'])) {
+            $this->assertComputerIdentifierUnique((string) $data['ip_address']);
         }
 
         $model = Till::create($data);
@@ -149,23 +238,31 @@ class TillController extends BaseResourceController
             $cashierId = $data['cashier_id'] !== null && $data['cashier_id'] !== ''
                 ? (int) $data['cashier_id']
                 : null;
-            if ($cashierId) {
-                $conflict = Till::query()
-                    ->where('cashier_id', $cashierId)
-                    ->where('id', '!=', $model->id)
-                    ->exists();
-                if ($conflict) {
-                    throw new \InvalidArgumentException('That cashier is already assigned to another till.');
-                }
-            }
             $data['cashier_id'] = $cashierId;
+        }
+
+        $changingLock = array_key_exists('lock_mode', $data)
+            || array_key_exists('cashier_id', $data)
+            || array_key_exists('ip_address', $data);
+        if ($changingLock) {
+            $this->assertTillLockAllowed($model);
+        }
+
+        $data = $this->normalizeTillLockFields($data, $model);
+
+        if (($data['lock_mode'] ?? $model->lock_mode) === 'computer') {
+            $deviceId = (string) ($data['ip_address'] ?? $model->ip_address ?? '');
+            if ($deviceId !== '') {
+                $this->assertComputerIdentifierUnique($deviceId, (int) $model->id);
+            }
+        }
+
+        if (array_key_exists('till_name', $data) && ! empty(trim((string) $data['till_name']))) {
+            $this->assertUniqueTillCode($branchId, (string) $data['till_name'], (int) $model->id);
         }
 
         if (array_key_exists('till_number', $data) && $data['till_number'] !== null) {
             $this->assertUniqueTillCode($branchId, (string) $data['till_number'], (int) $model->id);
-        }
-        if (array_key_exists('till_name', $data) && ! empty(trim((string) $data['till_name']))) {
-            $this->assertUniqueTillCode($branchId, (string) $data['till_name'], (int) $model->id);
         }
 
         $model->update($data);
@@ -217,6 +314,8 @@ class TillController extends BaseResourceController
 
         $model->update([
             'cashier_id' => null,
+            'lock_mode' => null,
+            'ip_address' => null,
         ]);
 
         return response()->json($model->fresh());

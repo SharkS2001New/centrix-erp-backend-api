@@ -177,6 +177,7 @@ CREATE TABLE tills (
     is_active       BOOLEAN       DEFAULT TRUE,
     ip_address      VARCHAR(45)   UNIQUE,
     cashier_id      INT           NULL,
+    lock_mode       VARCHAR(20)   NULL,
     created_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     FOREIGN KEY (branch_id)  REFERENCES branches(id),

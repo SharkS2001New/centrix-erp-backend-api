@@ -36,6 +36,15 @@ class TillFloatSessionController extends BaseResourceController
             }
         }
 
+        if ($request->filled('session_date')) {
+            $query->whereDate('session_date', $request->input('session_date'));
+        } elseif ($request->filled('from_date')) {
+            $query->whereDate('session_date', '>=', $request->input('from_date'));
+        }
+        if ($request->filled('to_date')) {
+            $query->whereDate('session_date', '<=', $request->input('to_date'));
+        }
+
         if ($q = $request->input('q')) {
             $searchCol = $this->routeKeyColumn() !== 'id'
                 ? $this->routeKeyColumn()

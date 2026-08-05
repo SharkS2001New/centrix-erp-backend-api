@@ -80,6 +80,9 @@ class TillOperationsController extends Controller
 
     protected function assertTillAssignedToCashier(Till $till, int $userId): void
     {
+        if ($till->lock_mode === 'computer') {
+            return;
+        }
         if ($till->cashier_id !== null && (int) $till->cashier_id !== $userId) {
             throw new InvalidArgumentException('This till is assigned to another cashier.');
         }
@@ -89,6 +92,7 @@ class TillOperationsController extends Controller
     {
         $assignedTill = Till::query()
             ->where('cashier_id', $userId)
+            ->where('lock_mode', 'user')
             ->where('is_active', true)
             ->first();
 
@@ -97,6 +101,33 @@ class TillOperationsController extends Controller
                 'You are already assigned to '.$assignedTill->till_number.'. Use your assigned till.',
             );
         }
+    }
+
+    protected function isComputerLockedTill(Till $till): bool
+    {
+        return $till->lock_mode === 'computer' && trim((string) ($till->ip_address ?? '')) !== '';
+    }
+
+    protected function assertDeviceMatchesComputerLock(Request $request, Till $till): void
+    {
+        if (! $this->isComputerLockedTill($till)) {
+            return;
+        }
+
+        $deviceId = trim((string) ($request->input('device_identifier') ?? $request->ip() ?? ''));
+        $expected = trim((string) ($till->ip_address ?? ''));
+        if ($expected === '' || strcasecmp($deviceId, $expected) !== 0) {
+            throw new InvalidArgumentException('This till is locked to another computer.');
+        }
+    }
+
+    protected function findUserOpenSessionOnTill(int $tillId, int $userId): ?TillFloatSession
+    {
+        return TillFloatSession::query()
+            ->where('till_id', $tillId)
+            ->where('cashier_id', $userId)
+            ->whereIn('status', ['open', 'suspended'])
+            ->first();
     }
 
     protected function assertCashierHasNoOtherOpenSession(int $userId, int $tillId): void
@@ -164,6 +195,7 @@ class TillOperationsController extends Controller
             'payment_type' => 'required|string|max:45',
             'float_breakdown' => 'nullable|array',
             'notes' => 'nullable|string',
+            'device_identifier' => 'nullable|string|max:255',
         ]);
 
         $data['branch_id'] = $this->userAccess()->resolveBranchId($request->user(), (int) $data['branch_id']);
@@ -173,30 +205,36 @@ class TillOperationsController extends Controller
         $this->closeStaleActiveSessions($userId, (int) $data['till_id']);
         $this->closeStaleActiveSessions($userId, null);
 
-        $existing = TillFloatSession::query()
-            ->where('till_id', $data['till_id'])
-            ->whereIn('status', ['open', 'suspended'])
-            ->first();
-        if ($existing) {
-            if ((int) $existing->cashier_id === (int) $request->user()->id) {
-                if ($existing->status === 'suspended') {
-                    $existing->update([
-                        'status' => 'open',
-                        'suspended_at' => null,
-                    ]);
+        $till = $this->findBranchScopedModel(Till::class, (int) $data['till_id'], $request->user(), 'id', $request);
+        $computerLocked = $this->isComputerLockedTill($till);
 
-                    return response()->json($existing->fresh());
-                }
+        $this->assertDeviceMatchesComputerLock($request, $till);
 
-                return response()->json($existing->fresh());
+        $ownSession = $this->findUserOpenSessionOnTill((int) $data['till_id'], $userId);
+        if ($ownSession) {
+            if ($ownSession->status === 'suspended') {
+                $ownSession->update([
+                    'status' => 'open',
+                    'suspended_at' => null,
+                ]);
+
+                return response()->json($ownSession->fresh());
             }
 
-            throw new InvalidArgumentException(
-                'This till already has an open session by another cashier. Close that session first or choose another till.',
-            );
+            return response()->json($ownSession->fresh());
         }
 
-        $till = $this->findBranchScopedModel(Till::class, (int) $data['till_id'], $request->user(), 'id', $request);
+        if (! $computerLocked) {
+            $existing = TillFloatSession::query()
+                ->where('till_id', $data['till_id'])
+                ->whereIn('status', ['open', 'suspended'])
+                ->first();
+            if ($existing) {
+                throw new InvalidArgumentException(
+                    'This till already has an open session by another cashier. Close that session first or choose another till.',
+                );
+            }
+        }
 
         $this->assertTillAssignedToCashier($till, $userId);
         $this->assertCashierUsesAssignedTill($userId, (int) $till->id);
@@ -239,7 +277,7 @@ class TillOperationsController extends Controller
             'status' => 'open',
         ]);
 
-        if ($till->cashier_id === null) {
+        if ($till->cashier_id === null && $till->lock_mode !== 'computer') {
             $till->update(['cashier_id' => $userId]);
         }
 
@@ -481,7 +519,9 @@ class TillOperationsController extends Controller
             ->whereIn('status', ['open', 'suspended'])
             ->where('id', '!=', $session->id)
             ->exists();
-        if ($tillBusy) {
+        $till = Till::find($session->till_id);
+        $allowsConcurrent = $till && $this->isComputerLockedTill($till);
+        if ($tillBusy && ! $allowsConcurrent) {
             throw new InvalidArgumentException('This till already has an active session.');
         }
 
