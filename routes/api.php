@@ -252,10 +252,12 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module:admin', 'erp.permission:admin.company.edit|admin.manage']);
         Route::get('erp/profiles', [ErpCapabilitiesController::class, 'profiles'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.manage']);
+        // Sales settings include Centrix ERP Themes (sidebar + primary buttons). Hotel orgs
+        // store the same classic_pos_theme_* fields without enabling retail `sales`.
         Route::get('erp/settings/sales', [ErpSettingsController::class, 'sales'])
-            ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:sales,hospitality,hospitality.backend', 'erp.permission:admin.manage|admin.settings.view|admin.settings.edit']);
         Route::patch('erp/settings/sales', [ErpSettingsController::class, 'updateSales'])
-            ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module:sales,hospitality,hospitality.backend', 'erp.permission:admin.manage|admin.settings.edit']);
         Route::post('erp/settings/sales/pricing-formula-preview', [ErpSettingsController::class, 'previewPricingFormula'])
             ->middleware(['erp.module:sales', 'erp.permission:admin.manage']);
         // Distribution module OR sales.mobile — loading-sheet print flags are needed for

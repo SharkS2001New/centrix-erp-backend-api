@@ -82,4 +82,48 @@ class ClassicPosThemeColorsSettingsTest extends TestCase
         $org = Organization::findOrFail($orgAdmin->organization_id)->fresh();
         $this->assertSame([], $org->module_settings['sales']['classic_pos_theme_colors'] ?? null);
     }
+
+    public function test_hotel_org_without_sales_module_can_save_centrix_erp_theme(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        $this->seedLicense($orgAdmin);
+
+        $org = Organization::findOrFail($orgAdmin->organization_id);
+        $modules = $org->enabled_modules ?? [];
+        foreach (array_keys($modules) as $key) {
+            if (str_starts_with((string) $key, 'sales')) {
+                $modules[$key] = false;
+            }
+        }
+        $modules['hospitality'] = true;
+        $modules['hospitality.backend'] = true;
+        $modules['admin'] = true;
+        $org->forceFill([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => $modules,
+        ])->save();
+
+        Sanctum::actingAs($orgAdmin);
+
+        $this->getJson('/api/v1/erp/settings/sales')
+            ->assertOk();
+
+        $this->patchJson('/api/v1/erp/settings/sales', [
+            'classic_pos_theme_template' => 'midnight',
+            'classic_pos_theme_colors' => [
+                'header' => '#0F172A',
+                'button' => '#38BDF8',
+            ],
+        ])
+            ->assertOk()
+            ->assertJsonPath('sales.classic_pos_theme_template', 'midnight')
+            ->assertJsonPath('sales.classic_pos_theme_colors.header', '#0f172a')
+            ->assertJsonPath('sales.classic_pos_theme_colors.button', '#38bdf8');
+
+        $caps = $this->getJson('/api/v1/erp/capabilities')->assertOk()->json();
+        $this->assertSame(
+            'midnight',
+            $caps['module_settings']['sales']['classic_pos_theme_template'] ?? null,
+        );
+    }
 }
