@@ -33,24 +33,19 @@ class ClassicPosThemeColorsSettingsTest extends TestCase
         $this->seedLicense($orgAdmin);
         Sanctum::actingAs($orgAdmin);
 
-        $response = $this->patchJson('/api/v1/erp/settings/sales', [
+        $this->patchJson('/api/v1/erp/settings/sales', [
             'classic_pos_theme_template' => 'rose',
             'classic_pos_theme_colors' => [
                 'header' => '#BE185D',
                 'button' => '#112233',
                 'workspace' => '#CDB48B',
             ],
-        ]);
-        $response->assertOk();
-        $sales = $response->json('sales');
-        $org = Organization::findOrFail($orgAdmin->organization_id)->fresh();
-        fwrite(STDERR, 'response template=' . json_encode($sales['classic_pos_theme_template'] ?? null) . "\n");
-        fwrite(STDERR, 'response colors=' . json_encode($sales['classic_pos_theme_colors'] ?? null) . "\n");
-        fwrite(STDERR, 'stored template=' . json_encode($org->module_settings['sales']['classic_pos_theme_template'] ?? null) . "\n");
-        fwrite(STDERR, 'stored colors=' . json_encode($org->module_settings['sales']['classic_pos_theme_colors'] ?? null) . "\n");
-
-        $this->assertSame('rose', $sales['classic_pos_theme_template'] ?? null);
-        $this->assertSame('#be185d', $sales['classic_pos_theme_colors']['header'] ?? null);
+        ])
+            ->assertOk()
+            ->assertJsonPath('sales.classic_pos_theme_template', 'rose')
+            ->assertJsonPath('sales.classic_pos_theme_colors.header', '#be185d')
+            ->assertJsonPath('sales.classic_pos_theme_colors.button', '#112233')
+            ->assertJsonPath('sales.classic_pos_theme_colors.workspace', '#cdb48b');
 
         $org = Organization::findOrFail($orgAdmin->organization_id)->fresh();
         $stored = $org->module_settings['sales']['classic_pos_theme_colors'] ?? null;

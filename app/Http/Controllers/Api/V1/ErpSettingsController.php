@@ -322,14 +322,15 @@ class ErpSettingsController extends Controller
             ARRAY_FILTER_USE_KEY
         ));
 
-        if (array_key_exists('classic_pos_theme_template', $data)) {
+        if (array_key_exists('classic_pos_theme_template', $data) || $request->exists('classic_pos_theme_template')) {
             $nextSales['classic_pos_theme_template'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeTemplate(
-                $data['classic_pos_theme_template'],
+                $data['classic_pos_theme_template'] ?? $request->input('classic_pos_theme_template'),
             );
         }
-        if (array_key_exists('classic_pos_theme_colors', $data)) {
+        // Empty `{}` / `[]` must clear overrides — Laravel may omit empty arrays from validated().
+        if (array_key_exists('classic_pos_theme_colors', $data) || $request->exists('classic_pos_theme_colors')) {
             $nextSales['classic_pos_theme_colors'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeColors(
-                $data['classic_pos_theme_colors'],
+                $data['classic_pos_theme_colors'] ?? $request->input('classic_pos_theme_colors'),
             );
         }
 

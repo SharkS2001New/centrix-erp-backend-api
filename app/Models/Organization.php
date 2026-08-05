@@ -148,9 +148,7 @@ class Organization extends Model
 
         // Settings PATCH responses re-read via CapabilityGate; drop request-scoped
         // org/gate caches so the same request sees these updates.
-        if (app()->bound(\App\Services\Erp\ErpContext::class)) {
-            app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $this->getKey());
-        }
+        app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $this->getKey());
 
         return $this;
     }

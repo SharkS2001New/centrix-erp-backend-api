@@ -35,7 +35,11 @@ class PlatformThemeController extends Controller
             'classic_pos_theme_colors.select' => 'sometimes|nullable|string|max:9',
         ]);
 
-        if ($data === []) {
+        if (
+            $data === []
+            && ! $request->exists('classic_pos_theme_template')
+            && ! $request->exists('classic_pos_theme_colors')
+        ) {
             throw ValidationException::withMessages([
                 'classic_pos_theme_template' => ['Provide a theme template or custom colors.'],
             ]);
@@ -45,14 +49,15 @@ class PlatformThemeController extends Controller
         $settings = $org->module_settings ?? [];
         $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
 
-        if (array_key_exists('classic_pos_theme_template', $data)) {
+        if (array_key_exists('classic_pos_theme_template', $data) || $request->exists('classic_pos_theme_template')) {
             $sales['classic_pos_theme_template'] = ClassicPosThemeSettings::normalizeThemeTemplate(
-                $data['classic_pos_theme_template'],
+                $data['classic_pos_theme_template'] ?? $request->input('classic_pos_theme_template'),
             );
         }
-        if (array_key_exists('classic_pos_theme_colors', $data)) {
+        // Empty `{}` / `[]` must clear overrides — Laravel may omit empty arrays from validated().
+        if (array_key_exists('classic_pos_theme_colors', $data) || $request->exists('classic_pos_theme_colors')) {
             $sales['classic_pos_theme_colors'] = ClassicPosThemeSettings::normalizeThemeColors(
-                $data['classic_pos_theme_colors'],
+                $data['classic_pos_theme_colors'] ?? $request->input('classic_pos_theme_colors'),
             );
         }
 
