@@ -532,6 +532,8 @@ class PosLinePricingService
             'per_small' => round($perSmall, 4),
             'aggregate_wholesale' => $aggregateWholesale,
             'tier' => $tier,
+            'tiers' => $tiers,
+            'applicable_tiers' => $applicable,
             'tier_markup' => $tierMarkup,
             'markup_apps' => $apps,
             'pack_qty' => round($packQty, 4),

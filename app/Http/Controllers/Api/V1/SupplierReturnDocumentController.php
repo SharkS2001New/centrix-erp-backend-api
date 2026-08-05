@@ -35,6 +35,7 @@ class SupplierReturnDocumentController extends Controller
     public function store(Request $request)
     {
         $this->decodeMultipartJsonFields($request, ['lines']);
+        $this->normalizeSupplierReturnLines($request);
 
         $data = $request->validate([
             'supplier_id' => 'required|integer|exists:suppliers,id',
@@ -76,6 +77,7 @@ class SupplierReturnDocumentController extends Controller
     {
         $doc = $this->service->findForUser($request->user(), (int) $id);
         $this->decodeMultipartJsonFields($request, ['lines']);
+        $this->normalizeSupplierReturnLines($request);
 
         $data = $request->validate([
             'supplier_id' => 'sometimes|integer|exists:suppliers,id',
@@ -163,5 +165,39 @@ class SupplierReturnDocumentController extends Controller
         return StoredPublicFile::response($doc->proof_file_path, $doc->proof_file_mime_type ?: 'application/octet-stream', [
             'Content-Disposition' => 'inline; filename="'.($doc->proof_file_name ?: 'proof').'"',
         ]);
+    }
+
+    /** Map stock-take measure keys (full, small, middle) to API package_type values. */
+    protected function normalizeSupplierReturnLines(Request $request): void
+    {
+        $lines = $request->input('lines');
+        if (! is_array($lines)) {
+            return;
+        }
+
+        foreach ($lines as $i => $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $lines[$i]['package_type'] = $this->normalizeSupplierReturnPackageType($line['package_type'] ?? null);
+        }
+
+        $request->merge(['lines' => $lines]);
+    }
+
+    protected function normalizeSupplierReturnPackageType(?string $value): ?string
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        $v = strtolower(trim($value));
+
+        return match ($v) {
+            'full', 'full_package' => 'full_package',
+            'pieces', 'small' => 'pieces',
+            'partial', 'middle' => 'partial',
+            default => in_array($v, ['full_package', 'partial', 'pieces'], true) ? $v : null,
+        };
     }
 }
