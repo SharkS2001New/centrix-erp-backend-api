@@ -110,7 +110,6 @@ return [
                 'terminal' => ['label' => 'Hotel POS terminal', 'actions' => ['view']],
                 'checks' => ['label' => 'Open / close checks', 'actions' => ['view', 'create', 'edit']],
                 'room_charge' => ['label' => 'Post to guest folio', 'actions' => ['create']],
-                'shift' => ['label' => 'Shift close', 'actions' => ['view', 'create']],
             ],
         ],
         'hospitality' => [

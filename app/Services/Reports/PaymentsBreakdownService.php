@@ -137,15 +137,46 @@ class PaymentsBreakdownService
 
         $allExpanded = $paymentExpandedRows->concat($legacyExpanded)->values();
 
+        $expandedSaleIds = $allExpanded->pluck('sale_id')->unique()->filter()->map(fn ($id) => (int) $id)->values()->all();
+        $orderTotalBySale = $expandedSaleIds === []
+            ? collect()
+            : (clone $salesBase)
+                ->whereIn('s.id', $expandedSaleIds)
+                ->pluck('s.order_total', 's.id')
+                ->map(fn ($v) => round((float) $v, 2));
+
+        // Scale tender slices so each sale's method amounts sum to order_total.
+        // Top-ups / returns already revise order_total — never add adjustment amounts into sales totals.
+        $paymentSumBySale = [];
+        foreach ($allExpanded as $row) {
+            $sid = (int) $row->sale_id;
+            $paymentSumBySale[$sid] = ($paymentSumBySale[$sid] ?? 0) + (float) $row->method_amount;
+        }
+        $allExpanded = $allExpanded->map(function ($row) use ($orderTotalBySale, $paymentSumBySale) {
+            $sid = (int) $row->sale_id;
+            $methodAmount = round((float) ($row->method_amount ?? 0), 2);
+            $orderTotal = round((float) ($orderTotalBySale[$sid] ?? 0), 2);
+            $paySum = round((float) ($paymentSumBySale[$sid] ?? 0), 2);
+            $salesAmount = $methodAmount;
+            if ($orderTotal > TillReportMetrics::MIN_COLLECTED && $paySum > TillReportMetrics::MIN_COLLECTED) {
+                $salesAmount = round($methodAmount * ($orderTotal / $paySum), 2);
+            } elseif ($orderTotal <= TillReportMetrics::MIN_COLLECTED) {
+                $salesAmount = 0.0;
+            }
+            $row->sales_amount = $salesAmount;
+
+            return $row;
+        })->values();
+
         $adjustmentAggRows = $this->adjustmentAggregatesForFilteredSales(clone $salesBase);
 
-        // Tab aggregates: sum this method's slice; count distinct orders that used it.
+        // Tab aggregates: sales total from order_total-scaled tender; adjustments are informational only.
         $methodAgg = [];
         foreach ($allExpanded as $row) {
             $code = $row->method_code;
             $methodAgg[$code] ??= ['order_ids' => [], 'total_amount' => 0.0, 'return_amount' => 0.0, 'topup_amount' => 0.0];
             $methodAgg[$code]['order_ids'][$row->sale_id] = true;
-            $methodAgg[$code]['total_amount'] += (float) $row->method_amount;
+            $methodAgg[$code]['total_amount'] += (float) ($row->sales_amount ?? $row->method_amount);
         }
         foreach ($adjustmentAggRows as $adj) {
             $code = $adj->method_code;
@@ -223,19 +254,24 @@ class PaymentsBreakdownService
             });
         }
 
-        // Tab total = sum of this method's amounts on matching orders (search-aware).
+        // Tab total = order_total-scaled tender for this method on matching orders (search-aware).
         $matchedSaleIds = (clone $listQuery)->reorder()->pluck('s.id')->map(fn ($id) => (int) $id)->all();
         $tabAmountBySale = [];
         foreach ($allExpanded as $row) {
             if ($row->method_code !== $methodCode) {
                 continue;
             }
-            $tabAmountBySale[(int) $row->sale_id] = (float) $row->method_amount;
+            $tabAmountBySale[(int) $row->sale_id] = (float) ($row->sales_amount ?? $row->method_amount);
         }
         $summaryTotal = 0.0;
         foreach ($matchedSaleIds as $sid) {
             $summaryTotal += $tabAmountBySale[$sid] ?? 0;
         }
+
+        $salesTotalForFilter = round(
+            (clone $salesBase)->sum('s.order_total'),
+            2,
+        );
 
         $paginator = $listQuery
             ->select([
@@ -390,8 +426,9 @@ class PaymentsBreakdownService
                 'payment_count' => count($matchedSaleIds),
                 'order_count' => count($matchedSaleIds),
                 'total_amount' => round($summaryTotal, 2),
-                'grand_total' => round(array_sum(array_column($methods, 'total_amount')), 2),
-                'grand_order_count' => $allExpanded->pluck('sale_id')->unique()->count(),
+                // Visible-tabs / sales total = SUM(order_total); never payment + top-up + return.
+                'grand_total' => $salesTotalForFilter,
+                'grand_order_count' => (clone $salesBase)->count(),
             ],
             'current_page' => $paginator->currentPage(),
             'per_page' => $paginator->perPage(),

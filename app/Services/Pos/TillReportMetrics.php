@@ -12,7 +12,9 @@ use Illuminate\Database\Query\Builder;
  *   totalsales = ORDTTL + DBTTL + FLOATTTL
  *
  * Centrix mapping:
- *   ORDTTL  = paid POS sales on the till session (order_masters equivalent)
+ *   ORDTTL  = SUM(order_total) on paid POS sales for the till session
+ *             (order_total already reflects edit top-ups / returns — do not
+ *             add adjustment amounts or subtract returns again)
  *   DBTTL   = debtor / invoice collections taken on the session (debtor_payments)
  *   FLOATTTL = session working float
  *   EXPTTL  = session expenses

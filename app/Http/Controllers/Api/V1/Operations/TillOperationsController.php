@@ -699,8 +699,9 @@ class TillOperationsController extends Controller
             ? 0
             : (float) DB::table('returns')->whereIn('sale_id', $saleIds)->sum('amount');
 
-        // Legacy ORDTTL = SUM(order_total) from paid POS orders (order_masters).
-        $ordTtl = max(0, round((float) ($salesAgg->gross ?? 0) - $refunds, 2));
+        // Gross / ORDTTL = SUM(order_total) only. Edit top-ups and returns already
+        // revise order_total — do not subtract returns again (double-count).
+        $ordTtl = round((float) ($salesAgg->gross ?? 0), 2);
         $discounts = (float) ($salesAgg->discounts ?? 0);
         $cashBreakdown = $this->sessionCashCollected($floatSessionId, $metricStatuses);
         $cash = (float) ($cashBreakdown['cash'] ?? 0);

@@ -1378,8 +1378,9 @@ class ReportController extends Controller
             : round((float) DB::table('sale_items')->whereIn('sale_id', $saleIds)->sum('product_vat'), 2);
         $totalVat = max($headerVat, $lineVat);
         $totalDiscounts = (float) ($agg->order_discounts ?? 0) + $lineDiscounts;
-        // Legacy ORDTTL = SUM(order_total) on paid POS sales; subtract returns only.
-        $netSales = max(0, round($gross - $refunds, 2));
+        // Gross / net sales = SUM(order_total). Top-ups and returns already revise
+        // order_total on edit — keep returns as an informational figure only.
+        $netSales = round($gross, 2);
         $grossSalesExVat = max(0, round($gross - $totalVat, 2));
         $netSalesExVat = max(0, round($netSales - $totalVat, 2));
 
