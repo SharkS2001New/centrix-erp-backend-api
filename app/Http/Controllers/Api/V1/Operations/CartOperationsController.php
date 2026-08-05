@@ -1067,6 +1067,19 @@ class CartOperationsController extends Controller
             $cart->update(['order_source' => $orderSource]);
         }
 
+        // Sticky TemporaryCart rows survive overnight. When the cashier opens a new
+        // till session (often a new till after "start day"), refresh till_id so
+        // checkout does not fail with "Cart till does not match the open session."
+        if (array_key_exists('till_id', $input)) {
+            $nextTillId = $input['till_id'] !== null && $input['till_id'] !== ''
+                ? (int) $input['till_id']
+                : null;
+            $currentTillId = $cart->till_id !== null ? (int) $cart->till_id : null;
+            if ($currentTillId !== $nextTillId) {
+                $cart->update(['till_id' => $nextTillId]);
+            }
+        }
+
         // Never wipe an existing cart route with null (multi-route bootstrap / reuse).
         if ($channel === 'mobile' && $routeId !== null && (int) $cart->route_id !== (int) $routeId) {
             $cart->update(['route_id' => $routeId]);

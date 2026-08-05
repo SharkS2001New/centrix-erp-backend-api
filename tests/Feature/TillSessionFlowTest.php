@@ -103,6 +103,47 @@ class TillSessionFlowTest extends TestCase
         ])->assertStatus(422);
     }
 
+    public function test_checkout_realigns_sticky_cart_till_to_open_session(): void
+    {
+        $session = $this->openFreshSession(5000);
+
+        $staleTill = Till::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'till_number' => 'STALE-'.now()->format('His'),
+            'till_name' => 'Stale Till '.uniqid(),
+            'is_active' => true,
+        ]);
+        $staleTillId = $staleTill->id;
+
+        // Reuse the cashier POS TemporaryCart with yesterday's till id.
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+            'till_id' => $staleTillId,
+        ])->json('id');
+
+        $this->assertDatabaseHas('temporary_carts', [
+            'id' => $cartId,
+            'till_id' => $staleTillId,
+        ]);
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'payment_method_code' => 'CASH',
+            'float_session_id' => $session->id,
+            'sales_workspace' => 'pos',
+        ])->assertCreated()->json();
+
+        $this->assertEquals('completed', $sale['status']);
+        $this->assertSame((int) $this->till->id, (int) ($sale['till_id'] ?? 0));
+        $this->assertDatabaseMissing('temporary_carts', ['id' => $cartId]);
+    }
+
     public function test_open_checkout_x_close_z_flow_records_cash_sales(): void
     {
         $session = $this->openFreshSession(5000);

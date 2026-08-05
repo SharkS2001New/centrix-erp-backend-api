@@ -19,11 +19,11 @@ class PricingFormulaSettings
     {
         return [
             // Scaled: markup × chunk applications (e.g. half-bags). Once on line: drop * {markup_apps}.
-            self::RETAIL_LINE => '{aggregate_wholesale} + {tier_markup} * {markup_apps}',
+            self::RETAIL_LINE => '{wholesale_total} + {tier_markup} * {markup_apps}',
             // Flat markup once on the whole line. Per qty: use * {qty} instead.
-            self::WHOLESALE_LINE => '{aggregate_wholesale} + {tier_markup}',
-            self::ROUTE_RETAIL => '{line} + {route_markup}',
-            self::ROUTE_WHOLESALE => '{line} + {route_markup} * {pack_qty}',
+            self::WHOLESALE_LINE => '{wholesale_total} + {tier_markup}',
+            self::ROUTE_RETAIL => '{line_total} + {route_markup}',
+            self::ROUTE_WHOLESALE => '{line_total} + {route_markup} * {pack_qty}',
         ];
     }
 
@@ -37,8 +37,8 @@ class PricingFormulaSettings
     {
         return [
             // Wholesale base for the sold qty
-            'aggregate_wholesale',
             'wholesale_total',
+            'aggregate_wholesale',
             'base_price',
             'per_small',
             'wholesale_unit',
@@ -68,8 +68,8 @@ class PricingFormulaSettings
     public static function routePlaceholders(): array
     {
         return [
-            'line',
             'line_total',
+            'line',
             'route_markup',
             'markup',
             'flat_route',
@@ -98,25 +98,25 @@ class PricingFormulaSettings
     {
         return [
             self::RETAIL_LINE => [
-                ['label' => 'Per markup chunk (default)', 'formula' => '{aggregate_wholesale} + {tier_markup} * {markup_apps}'],
-                ['label' => 'Once on whole line', 'formula' => '{aggregate_wholesale} + {tier_markup}'],
-                ['label' => 'Per small unit qty', 'formula' => '{aggregate_wholesale} + {tier_markup} * {qty}'],
-                ['label' => 'Per pack', 'formula' => '{aggregate_wholesale} + {tier_markup} * {pack_qty}'],
+                ['label' => 'Per markup chunk (default)', 'formula' => '{wholesale_total} + {tier_markup} * {markup_apps}'],
+                ['label' => 'Once on whole line', 'formula' => '{wholesale_total} + {tier_markup}'],
+                ['label' => 'Per small unit qty', 'formula' => '{wholesale_total} + {tier_markup} * {qty}'],
+                ['label' => 'Per pack', 'formula' => '{wholesale_total} + {tier_markup} * {pack_qty}'],
             ],
             self::WHOLESALE_LINE => [
-                ['label' => 'Once on whole line (default)', 'formula' => '{aggregate_wholesale} + {tier_markup}'],
-                ['label' => 'Per small unit qty', 'formula' => '{aggregate_wholesale} + {tier_markup} * {qty}'],
-                ['label' => 'Per pack', 'formula' => '{aggregate_wholesale} + {tier_markup} * {pack_qty}'],
+                ['label' => 'Once on whole line (default)', 'formula' => '{wholesale_total} + {tier_markup}'],
+                ['label' => 'Per small unit qty', 'formula' => '{wholesale_total} + {tier_markup} * {qty}'],
+                ['label' => 'Per pack', 'formula' => '{wholesale_total} + {tier_markup} * {pack_qty}'],
             ],
             self::ROUTE_RETAIL => [
-                ['label' => 'Once on line (default)', 'formula' => '{line} + {route_markup}'],
-                ['label' => 'Per small unit qty', 'formula' => '{line} + {route_markup} * {qty}'],
-                ['label' => 'Per pack', 'formula' => '{line} + {route_markup} * {pack_qty}'],
+                ['label' => 'Once on line (default)', 'formula' => '{line_total} + {route_markup}'],
+                ['label' => 'Per small unit qty', 'formula' => '{line_total} + {route_markup} * {qty}'],
+                ['label' => 'Per pack', 'formula' => '{line_total} + {route_markup} * {pack_qty}'],
             ],
             self::ROUTE_WHOLESALE => [
-                ['label' => 'Per pack (default)', 'formula' => '{line} + {route_markup} * {pack_qty}'],
-                ['label' => 'Once on line', 'formula' => '{line} + {route_markup}'],
-                ['label' => 'Per small unit qty', 'formula' => '{line} + {route_markup} * {qty}'],
+                ['label' => 'Per pack (default)', 'formula' => '{line_total} + {route_markup} * {pack_qty}'],
+                ['label' => 'Once on line', 'formula' => '{line_total} + {route_markup}'],
+                ['label' => 'Per small unit qty', 'formula' => '{line_total} + {route_markup} * {qty}'],
             ],
         ];
     }

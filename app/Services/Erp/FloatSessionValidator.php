@@ -86,13 +86,16 @@ class FloatSessionValidator
             throw new InvalidArgumentException('Till session belongs to another cashier.');
         }
 
-        if ($cart->till_id && (int) $cart->till_id !== (int) $session->till_id) {
-            throw new InvalidArgumentException('Cart till does not match the open session.');
-        }
-
         $branchId = $cart->branch_id ?? $user->branch_id;
         if ($branchId && (int) $session->branch_id !== (int) $branchId) {
             throw new InvalidArgumentException('Till session belongs to another branch.');
+        }
+
+        if ($cart->till_id && (int) $cart->till_id !== (int) $session->till_id) {
+            // TemporaryCart is reused per cashier+channel and often keeps yesterday's till.
+            // Align to the open session when the cashier/branch already match.
+            $cart->till_id = (int) $session->till_id;
+            $cart->save();
         }
 
         return $sessionId;
