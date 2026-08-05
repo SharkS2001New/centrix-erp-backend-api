@@ -9,6 +9,7 @@ use App\Services\Hospitality\HospitalityCheckService;
 use App\Services\Hospitality\HospitalityCheckNumberAllocator;
 use App\Services\Hospitality\HospitalityPaymentWorkflow;
 use App\Services\Hospitality\HospitalityPosCatalogService;
+use App\Services\Hospitality\HospitalityPosRoomSaleService;
 use App\Services\Hospitality\HospitalityPosSettings;
 use App\Services\Hospitality\HospitalityServices;
 use Illuminate\Http\Request;
@@ -131,6 +132,42 @@ class HospitalityPosController extends Controller
             $check,
             (string) $data['product_code'],
             isset($data['qty']) ? (float) $data['qty'] : 1,
+        );
+
+        return response()->json(['check' => $this->checkService->toArray($check)]);
+    }
+
+    public function sellableRooms(Request $request)
+    {
+        $org = $this->requireOrg($request->user());
+        $rooms = app(HospitalityPosRoomSaleService::class)->listSellableRooms(
+            $org,
+            $request->input('q'),
+        );
+
+        return response()->json([
+            'data' => $rooms,
+            'rooms_enabled' => HospitalityServices::enabled($org, 'rooms'),
+        ]);
+    }
+
+    public function addRoomStay(Request $request, int $checkId)
+    {
+        $org = $this->requireOrg($request->user());
+        $data = $request->validate([
+            'room_id' => ['required', 'integer'],
+            'nights' => ['required', 'integer', 'min:1', 'max:90'],
+            'checkout_at' => ['required', 'date'],
+            'guest_name' => ['nullable', 'string', 'max:160'],
+        ]);
+        $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
+        $check = $this->checkService->addRoomStayLine(
+            $check,
+            $org,
+            (int) $data['room_id'],
+            (int) $data['nights'],
+            \Carbon\Carbon::parse($data['checkout_at']),
+            $data['guest_name'] ?? null,
         );
 
         return response()->json(['check' => $this->checkService->toArray($check)]);

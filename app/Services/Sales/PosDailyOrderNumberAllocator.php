@@ -59,7 +59,10 @@ class PosDailyOrderNumberAllocator
             $cashierId,
             $date,
         ): array {
+            // Include cancelled sales in the max — cancelled Cash Sales #s are consumed
+            // (274 cancelled → next is 275), never reused.
             $next = $this->saleMaxForCashierDay($organizationId, $cashierId, $date, locked: true) + 1;
+            $next = $this->nextFreeTicketForCashierDay($organizationId, $cashierId, $date, $next);
             $this->writeWatermark($organizationId, $cashierId, $date, $next);
 
             return [
@@ -147,14 +150,17 @@ class PosDailyOrderNumberAllocator
             $date,
             $posOrderNum,
         ): bool {
-            $taken = Sale::query()
-                ->where('organization_id', $organizationId)
-                ->where('cashier_id', $cashierId)
-                ->whereDate('pos_order_date', $date)
-                ->where('pos_order_num', $posOrderNum)
-                ->whereNotIn('status', ['held', 'draft', 'cancelled'])
-                ->lockForUpdate()
-                ->exists();
+            // Held/draft parks must not block the unique key; cancelled tickets stay
+            // consumed and are never reclaimed (274 cancelled → skip to 275).
+            $this->releaseParkedTicketHolders($organizationId, $cashierId, $date, $posOrderNum);
+
+            $taken = $this->ticketIsConsumed(
+                $organizationId,
+                $cashierId,
+                $date,
+                $posOrderNum,
+                locked: true,
+            );
 
             if ($taken) {
                 return false;
@@ -201,6 +207,93 @@ class PosDailyOrderNumberAllocator
     }
 
     /**
+     * Clear Cash Sales # from held/draft parks only. Cancelled tickets stay assigned
+     * so the number is never reused (sequence skips to the next free #).
+     */
+    public function releaseParkedTicketHolders(
+        int $organizationId,
+        int $cashierId,
+        string $businessDate,
+        int $posOrderNum,
+    ): int {
+        if (! Schema::hasColumn('sales', 'pos_order_num') || $posOrderNum <= 0) {
+            return 0;
+        }
+
+        $date = $this->normalizeDate($businessDate);
+        if ($date === null) {
+            return 0;
+        }
+
+        return Sale::query()
+            ->where('organization_id', $organizationId)
+            ->where('cashier_id', $cashierId)
+            ->whereDate('pos_order_date', $date)
+            ->where('pos_order_num', $posOrderNum)
+            ->whereIn('status', ['held', 'draft'])
+            ->update([
+                'pos_order_num' => null,
+                'pos_order_date' => null,
+            ]);
+    }
+
+    /** @deprecated use releaseParkedTicketHolders */
+    public function releaseInactiveTicketHolders(
+        int $organizationId,
+        int $cashierId,
+        string $businessDate,
+        int $posOrderNum,
+    ): int {
+        return $this->releaseParkedTicketHolders($organizationId, $cashierId, $businessDate, $posOrderNum);
+    }
+
+    /**
+     * True when a live or cancelled sale already owns this Cash Sales #.
+     * Held/draft are ignored (and should be cleared via {@see releaseParkedTicketHolders}).
+     */
+    protected function ticketIsConsumed(
+        int $organizationId,
+        int $cashierId,
+        string $date,
+        int $posOrderNum,
+        bool $locked = false,
+    ): bool {
+        $query = Sale::query()
+            ->where('organization_id', $organizationId)
+            ->where('cashier_id', $cashierId)
+            ->whereDate('pos_order_date', $date)
+            ->where('pos_order_num', $posOrderNum)
+            ->whereNotIn('status', ['held', 'draft']);
+
+        if ($locked) {
+            $query->lockForUpdate();
+        }
+
+        return $query->exists();
+    }
+
+    /**
+     * Next ticket free of live + cancelled holders (cancelled numbers are skipped).
+     */
+    protected function nextFreeTicketForCashierDay(
+        int $organizationId,
+        int $cashierId,
+        string $date,
+        int $start,
+    ): int {
+        $candidate = max(1, $start);
+        for ($i = 0; $i < 50; $i++) {
+            $this->releaseParkedTicketHolders($organizationId, $cashierId, $date, $candidate);
+            if (! $this->ticketIsConsumed($organizationId, $cashierId, $date, $candidate, locked: true)) {
+                return $candidate;
+            }
+            $candidate++;
+        }
+
+        return $candidate;
+    }
+
+    /**
      * @template T
      * @param  callable(): T  $callback
      * @return T
@@ -213,11 +306,11 @@ class PosDailyOrderNumberAllocator
     ): mixed {
         $lockKey = sprintf('pos_daily_order_num:%d:%d:%s', $organizationId, $cashierId, $date);
 
-        return DB::transaction(function () use ($lockKey, $callback) {
+        $run = function () use ($lockKey, $callback) {
             $lock = DB::selectOne('SELECT GET_LOCK(?, 15) AS acquired', [$lockKey]);
             if (! $lock || (int) ($lock->acquired ?? 0) !== 1) {
-                throw new \RuntimeException(
-                    'Could not allocate a POS order number. Please try again.',
+                throw new \InvalidArgumentException(
+                    'Could not allocate a Cash Sales #. Please try sync again.',
                 );
             }
 
@@ -226,7 +319,15 @@ class PosDailyOrderNumberAllocator
             } finally {
                 DB::select('SELECT RELEASE_LOCK(?)', [$lockKey]);
             }
-        });
+        };
+
+        // Checkout already opens a transaction — nesting another one around GET_LOCK
+        // can time out / deadlock under concurrent POS sync. Reuse the outer txn.
+        if (DB::transactionLevel() > 0) {
+            return $run();
+        }
+
+        return DB::transaction($run);
     }
 
     /**
@@ -262,8 +363,9 @@ class PosDailyOrderNumberAllocator
             ->where('cashier_id', $cashierId)
             ->whereDate('pos_order_date', $date)
             ->whereNotNull('pos_order_num')
-            // Parks and voids must not hold or advance Cash Sales #.
-            ->whereNotIn('status', ['held', 'draft', 'cancelled']);
+            // Parks must not advance Cash Sales #. Cancelled sales DO — the number
+            // was issued and must be skipped (274 cancelled → next is 275).
+            ->whereNotIn('status', ['held', 'draft']);
 
         if ($locked) {
             $query->lockForUpdate();

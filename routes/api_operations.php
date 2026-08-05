@@ -499,6 +499,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('hospitality/pos')->group(function () {
         Route::get('catalog', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'catalog'])
             ->middleware('erp.permission:hotel_bar_pos.terminal.view');
+        Route::get('rooms', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'sellableRooms'])
+            ->middleware('erp.permission:hotel_bar_pos.terminal.view');
         Route::get('settings', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'settings'])
             ->middleware('erp.permission:hotel_bar_pos.terminal.view');
         Route::get('checks/held', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'held'])
@@ -521,6 +523,9 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hotel_bar_pos.checks.edit')
             ->whereNumber('checkId');
         Route::post('checks/{checkId}/lines', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'addLine'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit')
+            ->whereNumber('checkId');
+        Route::post('checks/{checkId}/room-stays', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'addRoomStay'])
             ->middleware('erp.permission:hotel_bar_pos.checks.edit')
             ->whereNumber('checkId');
         Route::patch('checks/{checkId}/lines/{lineId}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'updateLine'])

@@ -40,6 +40,11 @@ Schedule::command('erp:send-hospitality-pos-email-reports')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/hospitality-pos-email-reports.log'));
 
+Schedule::command('erp:release-expired-hotel-room-stays')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/release-expired-hotel-room-stays.log'));
+
 Schedule::command('erp:prune-system-issue-reports')
     ->dailyAt(config('system_issues.prune_time', '03:15'))
     ->withoutOverlapping()

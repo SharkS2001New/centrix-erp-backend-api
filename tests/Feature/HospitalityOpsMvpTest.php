@@ -179,4 +179,72 @@ class HospitalityOpsMvpTest extends TestCase
         $this->assertSame('dirty', $fresh->status);
         $this->assertNull($fresh->guest_name);
     }
+
+    public function test_pos_room_sale_occupies_until_checkout_then_releases(): void
+    {
+        $modules = $this->org->enabled_modules ?? [];
+        $modules['hospitality.bar_pos'] = true;
+        $this->org->forceFill(['enabled_modules' => $modules])->save();
+
+        $settings = $this->org->module_settings ?? [];
+        $hospitality = is_array($settings['hospitality'] ?? null) ? $settings['hospitality'] : [];
+        $hospitality['services'] = array_merge(HospitalityServices::DEFAULTS, [
+            'rooms' => true,
+            'front_desk' => true,
+            'folios' => false,
+            'table_pos' => false,
+            'room_charge' => false,
+        ]);
+        $this->org->putModuleSettingsSection('hospitality', $hospitality);
+
+        $type = HospitalityRoomType::query()->create([
+            'organization_id' => $this->org->id,
+            'code' => 'POS'.random_int(10, 99),
+            'name' => 'POS Twin',
+            'base_rate' => 4500,
+            'max_occupancy' => 2,
+            'is_active' => true,
+        ]);
+        $room = HospitalityRoom::query()->create([
+            'organization_id' => $this->org->id,
+            'room_type_id' => $type->id,
+            'room_number' => 'R'.random_int(100, 999),
+            'floor' => '2',
+            'status' => 'vacant',
+            'is_active' => true,
+        ]);
+
+        $rooms = $this->getJson('/api/v1/hospitality/pos/rooms')->assertOk()->json('data');
+        $this->assertTrue(collect($rooms)->contains(fn ($r) => (int) $r['id'] === (int) $room->id));
+
+        $checkId = (int) $this->postJson('/api/v1/hospitality/pos/checks', [])
+            ->assertCreated()
+            ->json('check.id');
+
+        $checkout = now()->addDays(2)->setTime(10, 0)->toIso8601String();
+        $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/room-stays", [
+            'room_id' => $room->id,
+            'nights' => 2,
+            'checkout_at' => $checkout,
+            'guest_name' => 'Walk-in Guest',
+        ])->assertOk()
+            ->assertJsonPath('check.guest_name', 'Walk-in Guest');
+
+        $this->assertSame('vacant', $room->fresh()->status);
+
+        $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/settle", [
+            'payments' => [['method_code' => 'CASH', 'amount' => 9000]],
+        ])->assertOk();
+
+        $fresh = $room->fresh();
+        $this->assertSame('occupied', $fresh->status);
+        $this->assertSame('Walk-in Guest', $fresh->guest_name);
+        $this->assertNotNull($fresh->expected_checkout_at);
+
+        $released = app(\App\Services\Hospitality\HospitalityPosRoomSaleService::class)
+            ->releaseExpiredStays(now()->addDays(3));
+        $this->assertGreaterThanOrEqual(1, $released['released']);
+        $this->assertSame('vacant', $room->fresh()->status);
+        $this->assertNull($room->fresh()->guest_name);
+    }
 }

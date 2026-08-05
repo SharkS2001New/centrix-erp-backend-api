@@ -204,6 +204,8 @@ class HospitalityFrontDeskService
                     'guest_name' => null,
                     'guest_phone' => null,
                     'checked_in_at' => null,
+                    'expected_checkout_at' => null,
+                    'sold_check_id' => null,
                 ]);
             }
 
@@ -258,6 +260,8 @@ class HospitalityFrontDeskService
                 'guest_name' => null,
                 'guest_phone' => null,
                 'checked_in_at' => null,
+                'expected_checkout_at' => null,
+                'sold_check_id' => null,
             ]);
 
             return ['occupancy' => $snapshot, 'room' => $room->fresh()];
@@ -341,17 +345,21 @@ class HospitalityFrontDeskService
             $guestPhone = $from->guest_phone;
             $checkedInAt = $from->checked_in_at ?? now();
 
-            $to->update([
+              $to->update([
                 'status' => 'occupied',
                 'guest_name' => $guestName,
                 'guest_phone' => $guestPhone,
                 'checked_in_at' => $checkedInAt,
+                'expected_checkout_at' => $from->expected_checkout_at,
+                'sold_check_id' => $from->sold_check_id,
             ]);
             $from->update([
                 'status' => 'dirty',
                 'guest_name' => null,
                 'guest_phone' => null,
                 'checked_in_at' => null,
+                'expected_checkout_at' => null,
+                'sold_check_id' => null,
             ]);
 
             HospitalityReservation::query()

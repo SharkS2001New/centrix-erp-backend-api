@@ -358,6 +358,26 @@ class HospitalityCheckService
         return $this->recalculate($check->fresh());
     }
 
+    public function addRoomStayLine(
+        HospitalityCheck $check,
+        Organization $org,
+        int $roomId,
+        int $nights,
+        \Carbon\Carbon $checkoutAt,
+        ?string $guestName = null,
+    ): HospitalityCheck {
+        $this->assertEditable($check);
+
+        return app(HospitalityPosRoomSaleService::class)->addRoomStayLine(
+            $check,
+            $org,
+            $roomId,
+            $nights,
+            $checkoutAt,
+            $guestName,
+        );
+    }
+
     public function updateLineQty(HospitalityCheck $check, int $lineId, float $qty): HospitalityCheck
     {
         $this->assertEditable($check);
@@ -365,6 +385,18 @@ class HospitalityCheckService
             ->where('check_id', $check->id)
             ->where('id', $lineId)
             ->firstOrFail();
+
+        $mods = is_array($line->modifiers) ? $line->modifiers : [];
+        if (($mods['type'] ?? null) === HospitalityPosRoomSaleService::LINE_TYPE) {
+            if ($qty <= 0) {
+                $line->delete();
+
+                return $this->recalculate($check->fresh());
+            }
+            throw ValidationException::withMessages([
+                'qty' => ['Remove the room line and add it again to change nights or checkout time.'],
+            ]);
+        }
 
         if ($qty <= 0) {
             $line->delete();
@@ -608,6 +640,7 @@ class HospitalityCheckService
 
             $fresh = $check->fresh();
             if ($isFull) {
+                app(HospitalityPosRoomSaleService::class)->occupyRoomsFromSettledCheck($fresh, $user);
                 app(HospitalityCheckStockService::class)->deductForSettledCheck($fresh, $user);
                 app(HospitalityPosEmailReportService::class)->notifySettleIfEnabled($org, $fresh);
             }
@@ -911,6 +944,9 @@ class HospitalityCheckService
                 'line_total' => (float) $line->line_total,
                 'vat_amount' => (float) $line->vat_amount,
                 'sort_order' => (int) $line->sort_order,
+                'modifiers' => is_array($line->modifiers) ? $line->modifiers : null,
+                'is_room_stay' => is_array($line->modifiers)
+                    && ($line->modifiers['type'] ?? null) === HospitalityPosRoomSaleService::LINE_TYPE,
                 'image_url' => $imageByCode[(string) $line->product_code] ?? null,
             ])->values()->all(),
             'payments' => $check->relationLoaded('payments')
@@ -960,6 +996,18 @@ class HospitalityCheckService
         if (! HospitalityServices::enabled($org, 'table_pos')) {
             return;
         }
+
+        $hasFnBLine = $check->lines()
+            ->where(function ($q) {
+                $q->whereNotNull('product_code')
+                    ->where('product_code', '!=', '');
+            })
+            ->exists();
+        if (! $hasFnBLine) {
+            // Room-only (or empty) tickets do not require a floor table.
+            return;
+        }
+
         if (! $check->floor_table_id) {
             throw ValidationException::withMessages([
                 'floor_table_id' => ['Select a table before saving or collecting payment.'],

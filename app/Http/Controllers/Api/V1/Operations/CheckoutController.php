@@ -73,6 +73,10 @@ class CheckoutController extends Controller
             throw ValidationException::withMessages([
                 'checkout' => $e->getMessage(),
             ]);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
+            throw ValidationException::withMessages([
+                'checkout' => 'Could not save this sale because an order number collided. Please try sync again.',
+            ]);
         }
 
         $sale = $result['sale'];
@@ -269,6 +273,8 @@ class CheckoutController extends Controller
                         'cancelled_by' => $appendPriorSale->cancelled_by ?? $user->id,
                         'archived' => 1,
                         'stock_balanced' => 0,
+                        'pos_order_num' => null,
+                        'pos_order_date' => null,
                     ]);
                 }
                 app(CustomerInvoiceService::class)->voidForCancelledSale($appendPriorSale->fresh(), $user);
@@ -1070,6 +1076,9 @@ class CheckoutController extends Controller
                 'cancelled_at' => $existing->cancelled_at ?? now(),
                 'cancelled_by' => $existing->cancelled_by ?? $user->id,
                 'archived' => 1,
+                // Ticket already moved via takeFromSale for POS edits; ensure unique key is free for the replacement.
+                'pos_order_num' => null,
+                'pos_order_date' => null,
                 'fulfillment_meta' => array_merge(
                     is_array($existing->fulfillment_meta) ? $existing->fulfillment_meta : [],
                     [
@@ -1110,7 +1119,7 @@ class CheckoutController extends Controller
         unset($attributes['__lock_pos_ticket']);
         $lastError = null;
 
-        for ($attempt = 0; $attempt < 4; $attempt++) {
+        for ($attempt = 0; $attempt < 6; $attempt++) {
             try {
                 return Sale::create($attributes);
             } catch (\Illuminate\Database\UniqueConstraintViolationException $e) {
@@ -1133,17 +1142,27 @@ class CheckoutController extends Controller
                         isset($attributes['pos_order_date']) ? (string) $attributes['pos_order_date'] : null,
                     );
                     if ($pos === null) {
-                        throw $e;
+                        throw new InvalidArgumentException(
+                            'Cash Sales #'.($attributes['pos_order_num'] ?? '').' is already used and a free ticket could not be allocated. Try sync again.',
+                        );
                     }
                     $attributes['pos_order_num'] = $pos['pos_order_num'];
                     $attributes['pos_order_date'] = $pos['pos_order_date'];
                     continue;
                 }
-                throw $e;
+                throw new InvalidArgumentException(
+                    'Could not save this sale because an order number collided. Please try sync again.',
+                    0,
+                    $e,
+                );
             }
         }
 
-        throw $lastError ?? new InvalidArgumentException('Could not allocate a unique order number.');
+        throw new InvalidArgumentException(
+            'Could not allocate a unique order or Cash Sales number. Please try sync again.',
+            0,
+            $lastError,
+        );
     }
 
     protected function derivePaymentStatus(float $total, float $paid): string
@@ -1403,6 +1422,7 @@ class CheckoutController extends Controller
                 $sale->order_num = $orderNum;
             }
 
+            // Keep Cash Sales # on the cancelled sale so it is never reallocated.
             $sale->update([
                 'status' => 'cancelled',
                 'cancelled_at' => $sale->cancelled_at ?? now(),

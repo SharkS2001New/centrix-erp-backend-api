@@ -20,12 +20,15 @@ class HospitalityRoom extends Model
         'guest_name',
         'guest_phone',
         'checked_in_at',
+        'expected_checkout_at',
+        'sold_check_id',
         'is_active',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
         'checked_in_at' => 'datetime',
+        'expected_checkout_at' => 'datetime',
     ];
 
     public function roomType(): BelongsTo

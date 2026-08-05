@@ -50,6 +50,8 @@ class SaleCancellationService
             $meta = $sale->fulfillment_meta ?? [];
             $meta['status_before_cancel'] = $from;
 
+            // Keep pos_order_num on cancelled sales so Cash Sales # stays consumed
+            // (never reallocated — sequence continues at N+1 locally and online).
             $sale->update([
                 'status' => 'cancelled',
                 'cancelled_at' => now(),

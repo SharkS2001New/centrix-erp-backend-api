@@ -28,15 +28,31 @@ class OrderNumberReserveController extends Controller
         }
 
         $data = $request->validate([
-            'count' => 'nullable|integer|min:1|max:'.OrderNumberAllocator::MAX_RESERVE_BLOCK,
+            // count=0 → peek Cash Sales # only (no org S00xx reserve). Used on POS reload.
+            'count' => 'nullable|integer|min:0|max:'.OrderNumberAllocator::MAX_RESERVE_BLOCK,
         ]);
         $count = (int) ($data['count'] ?? 20);
 
         try {
+            $posPeek = $posAllocator->peekNextForCashier($orgId, (int) $user->id);
+            if ($count <= 0) {
+                return response()->json([
+                    'organization_id' => $orgId,
+                    'start' => null,
+                    'end' => null,
+                    'numbers' => [],
+                    'count' => 0,
+                    'pos_order_date' => $posPeek['pos_order_date'] ?? null,
+                    'next_pos_order_num' => $posPeek['pos_order_num'] ?? null,
+                    'pos_tickets' => [],
+                    'slots' => [],
+                ]);
+            }
+
             $block = $allocator->reserveBlockForOrganization($orgId, $count);
             // Cash Sales # is NOT reserved here — only org S00xx numbers.
-            // POS tickets stay per-cashier 1,2,3… assigned at sale time from sale max.
-            $posPeek = $posAllocator->peekNextForCashier($orgId, (int) $user->id);
+            // POS tickets stay per-cashier 1,2,3… assigned at sale time from sale max
+            // (cancelled tickets stay consumed so next skips e.g. 274 → 275).
         } catch (InvalidArgumentException $e) {
             throw ValidationException::withMessages([
                 'organization' => $e->getMessage(),
