@@ -506,7 +506,7 @@ class HospitalityCheckService
 
         $targetFolioId = $folioId ?? ($check->folio_id ? (int) $check->folio_id : null);
         if ($hasRoomCharge) {
-            if (! HospitalityServices::enabled($org, 'room_charge')) {
+            if (! HospitalityServices::enabled($org, 'room_charge') || ! HospitalityServices::enabled($org, 'folios')) {
                 throw ValidationException::withMessages([
                     'payments' => ['Room charge is not enabled for this organization.'],
                 ]);

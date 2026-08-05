@@ -196,20 +196,21 @@ class OrganizationProvisioningService
                 'enable_night_audit' => true,
                 'enable_dining_outlet' => true,
                 'enable_bar_outlet' => true,
-                'enable_room_service' => true,
-                'enable_takeaway' => true,
+                'enable_room_service' => false,
+                'enable_takeaway' => false,
                 'enable_tables' => true,
                 'services' => [
                     'rooms' => true,
                     'reservations' => true,
                     'front_desk' => true,
-                    'folios' => true,
+                    // Pay-at-check-in / pay-at-till by default. Enable folios for pay-later + room charge.
+                    'folios' => false,
                     'housekeeping' => true,
-                    'night_audit' => true,
+                    'night_audit' => false,
                     'extra_outlets' => false,
                     'floor_tables' => true,
                     'table_pos' => true,
-                    'room_charge' => true,
+                    'room_charge' => false,
                 ],
             ];
         }

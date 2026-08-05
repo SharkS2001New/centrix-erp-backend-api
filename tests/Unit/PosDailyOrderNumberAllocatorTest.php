@@ -155,6 +155,38 @@ class PosDailyOrderNumberAllocatorTest extends TestCase
         $this->assertSame(4, $peek['pos_order_num']);
     }
 
+    public function test_claim_fails_when_taken_and_allocate_returns_next_free(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $allocator = app(PosDailyOrderNumberAllocator::class);
+        $day = now()->toDateString();
+
+        Sale::query()->create([
+            'order_num' => 880041,
+            'pos_order_num' => 274,
+            'pos_order_date' => $day,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 10,
+            'amount_paid' => 10,
+        ]);
+
+        $claimed = $allocator->claimPrintedTicketForCheckout(
+            (int) $admin->organization_id,
+            (int) $admin->id,
+            274,
+            $day,
+        );
+        $this->assertFalse($claimed, 'Taken Cash Sales # must not be reclaimable');
+
+        $next = $allocator->allocateForCheckout((int) $admin->organization_id, (int) $admin->id, $day);
+        $this->assertSame(275, $next['pos_order_num'], 'Offline sync should bump to next free Cash Sales #');
+    }
+
     public function test_held_and_cancelled_sales_do_not_advance_cash_sales_sequence(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

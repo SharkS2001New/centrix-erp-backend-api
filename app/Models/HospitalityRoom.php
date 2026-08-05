@@ -17,11 +17,15 @@ class HospitalityRoom extends Model
         'room_number',
         'floor',
         'status',
+        'guest_name',
+        'guest_phone',
+        'checked_in_at',
         'is_active',
     ];
 
     protected $casts = [
         'is_active' => 'boolean',
+        'checked_in_at' => 'datetime',
     ];
 
     public function roomType(): BelongsTo

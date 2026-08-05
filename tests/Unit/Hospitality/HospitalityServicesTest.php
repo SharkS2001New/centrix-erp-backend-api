@@ -50,4 +50,25 @@ class HospitalityServicesTest extends TestCase
         $this->assertTrue($presented['services']['rooms']);
         $this->assertSame(HospitalityServices::CATALOG, $presented['catalog']);
     }
+
+    #[Test]
+    public function room_charge_and_night_audit_require_folios(): void
+    {
+        $normalized = HospitalityServices::normalize([
+            'room_charge' => true,
+            'folios' => false,
+        ]);
+
+        $this->assertTrue($normalized['folios']);
+        $this->assertTrue($normalized['room_charge']);
+
+        $cleared = HospitalityServices::normalize([
+            'folios' => false,
+            'room_charge' => false,
+            'night_audit' => false,
+        ]);
+        $this->assertFalse($cleared['folios']);
+        $this->assertFalse($cleared['room_charge']);
+        $this->assertFalse($cleared['night_audit']);
+    }
 }

@@ -54,8 +54,8 @@ class HospitalityServices
             'description' => 'Check-in / check-out and room assignment.',
         ],
         'folios' => [
-            'label' => 'Guest folios',
-            'description' => 'Guest accounts, charges, and folio payments.',
+            'label' => 'Guest folios (pay later)',
+            'description' => 'Running guest bill for room + extras. Leave off for pay-at-check-in hotels — front desk just assigns the room.',
         ],
         'housekeeping' => [
             'label' => 'Housekeeping',
@@ -63,7 +63,7 @@ class HospitalityServices
         ],
         'night_audit' => [
             'label' => 'Night audit',
-            'description' => 'End-of-day close and room charge posting.',
+            'description' => 'End-of-day close and room charge posting to open folios. Requires Guest folios.',
         ],
         'extra_outlets' => [
             'label' => 'Extra outlets',
@@ -79,7 +79,7 @@ class HospitalityServices
         ],
         'room_charge' => [
             'label' => 'Room charge from POS',
-            'description' => 'Post bar/restaurant checks to a guest folio.',
+            'description' => 'Post bar/restaurant checks to an open guest folio. Requires Guest folios. Leave off if F&B is pay-at-till only.',
         ],
     ];
 
@@ -97,6 +97,15 @@ class HospitalityServices
             if (array_key_exists($key, $raw)) {
                 $out[$key] = filter_var($raw[$key], FILTER_VALIDATE_BOOLEAN);
             }
+        }
+
+        // Room charge and night audit need open guest folios.
+        if ($out['room_charge'] || $out['night_audit']) {
+            $out['folios'] = true;
+        }
+        if (! $out['folios']) {
+            $out['room_charge'] = false;
+            $out['night_audit'] = false;
         }
 
         return $out;

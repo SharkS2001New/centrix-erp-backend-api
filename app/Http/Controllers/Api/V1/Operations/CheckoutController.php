@@ -961,35 +961,34 @@ class CheckoutController extends Controller
                         '__lock_pos_ticket' => true,
                     ];
                 }
-                throw new InvalidArgumentException(
-                    "Cash Sales #{$clientPos} could not be claimed for {$clientDate}. "
-                    .'Reprint after reconnect, or contact support if this ticket was already used.',
-                );
-            }
-
-            $peek = $allocator->peekNextForCashier(
-                (int) $user->organization_id,
-                (int) $user->id,
-                $clientDate,
-            );
-            $expectedNext = (int) ($peek['pos_order_num'] ?? 0);
-            if ($clientPos === $expectedNext) {
-                $claimed = $allocator->claimPrintedTicketForCheckout(
+                // Ticket already taken (another till synced first, or counter drifted).
+                // Fall through and allocate the next free Cash Sales # so offline sync
+                // still uploads — the sale response carries the new ticket for reprint.
+            } else {
+                $peek = $allocator->peekNextForCashier(
                     (int) $user->organization_id,
                     (int) $user->id,
-                    $clientPos,
                     $clientDate,
                 );
-                if ($claimed) {
-                    return [
-                        'pos_order_num' => $clientPos,
-                        'pos_order_date' => $clientDate,
-                        '__lock_pos_ticket' => true,
-                    ];
+                $expectedNext = (int) ($peek['pos_order_num'] ?? 0);
+                if ($clientPos === $expectedNext) {
+                    $claimed = $allocator->claimPrintedTicketForCheckout(
+                        (int) $user->organization_id,
+                        (int) $user->id,
+                        $clientPos,
+                        $clientDate,
+                    );
+                    if ($claimed) {
+                        return [
+                            'pos_order_num' => $clientPos,
+                            'pos_order_date' => $clientDate,
+                            '__lock_pos_ticket' => true,
+                        ];
+                    }
                 }
+                // Stale reserved-block tickets (e.g. #27 while next is #7) are ignored —
+                // allocate the true next Cash Sales # below.
             }
-            // Stale reserved-block tickets (e.g. #27 while next is #7) are ignored —
-            // allocate the true next Cash Sales # below.
         }
 
         $allocated = $allocator->allocateForCheckout(
@@ -1108,7 +1107,6 @@ class CheckoutController extends Controller
     {
         $allocator = app(OrderNumberAllocator::class);
         $attributes['order_num'] = $orderNum;
-        $lockPosTicket = ! empty($attributes['__lock_pos_ticket']);
         unset($attributes['__lock_pos_ticket']);
         $lastError = null;
 
@@ -1127,13 +1125,8 @@ class CheckoutController extends Controller
                     && ! empty($attributes['cashier_id'])
                     && ! empty($attributes['organization_id'])
                 ) {
-                    // Printed / reserved Cash Sales # must not be silently swapped on sync.
-                    if ($lockPosTicket) {
-                        throw new InvalidArgumentException(
-                            'Cash Sales #'.($attributes['pos_order_num'] ?? '').' is already used. '
-                            .'Keep the printed ticket and contact support if sync cannot complete.',
-                        );
-                    }
+                    // Collision on Cash Sales # (offline sync race / counter drift):
+                    // bump to the next free ticket so the sale still uploads.
                     $pos = app(PosDailyOrderNumberAllocator::class)->allocateForCheckout(
                         (int) $attributes['organization_id'],
                         (int) $attributes['cashier_id'],

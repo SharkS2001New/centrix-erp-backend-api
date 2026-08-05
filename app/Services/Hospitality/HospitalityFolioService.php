@@ -195,6 +195,7 @@ class HospitalityFolioService
     {
         $row = [
             'id' => $folio->id,
+            'kind' => 'folio',
             'folio_number' => $folio->folio_number,
             'guest_name' => $folio->guest_name,
             'guest_phone' => $folio->guest_phone,

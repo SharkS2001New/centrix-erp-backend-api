@@ -126,4 +126,57 @@ class HospitalityOpsMvpTest extends TestCase
 
         $this->getJson('/api/v1/reports/hospitality-occupancy')->assertOk();
     }
+
+    public function test_front_desk_check_in_without_folios_occupies_room(): void
+    {
+        $settings = $this->org->module_settings ?? [];
+        $hospitality = is_array($settings['hospitality'] ?? null) ? $settings['hospitality'] : [];
+        $hospitality['services'] = array_merge(HospitalityServices::DEFAULTS, [
+            'rooms' => true,
+            'reservations' => true,
+            'front_desk' => true,
+            'folios' => false,
+            'room_charge' => false,
+            'night_audit' => false,
+        ]);
+        $this->org->putModuleSettingsSection('hospitality', $hospitality);
+
+        $type = HospitalityRoomType::query()->create([
+            'organization_id' => $this->org->id,
+            'code' => 'PAY'.random_int(10, 99),
+            'name' => 'Pay Now',
+            'base_rate' => 3000,
+            'max_occupancy' => 2,
+            'is_active' => true,
+        ]);
+        $room = HospitalityRoom::query()->create([
+            'organization_id' => $this->org->id,
+            'room_type_id' => $type->id,
+            'room_number' => 'P'.random_int(100, 999),
+            'floor' => '1',
+            'status' => 'vacant',
+            'is_active' => true,
+        ]);
+
+        $checkIn = $this->postJson('/api/v1/hospitality/front-desk/check-in', [
+            'guest_name' => 'Cash Guest',
+            'guest_phone' => '0700000000',
+            'room_id' => $room->id,
+        ])->assertCreated();
+
+        $this->assertNull($checkIn->json('folio'));
+        $this->assertSame('Cash Guest', $checkIn->json('occupancy.guest_name'));
+        $this->assertSame('occupied', $room->fresh()->status);
+        $this->assertSame('Cash Guest', $room->fresh()->guest_name);
+
+        $inHouse = $this->getJson('/api/v1/hospitality/front-desk/in-house')->assertOk()->json('data');
+        $this->assertTrue(collect($inHouse)->contains(fn ($row) => ($row['room_id'] ?? null) == $room->id));
+
+        $this->postJson("/api/v1/hospitality/front-desk/rooms/{$room->id}/check-out", [])
+            ->assertOk();
+
+        $fresh = $room->fresh();
+        $this->assertSame('dirty', $fresh->status);
+        $this->assertNull($fresh->guest_name);
+    }
 }

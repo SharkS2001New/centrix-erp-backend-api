@@ -74,6 +74,14 @@ class HospitalityFrontDeskController extends Controller
         );
     }
 
+    public function checkOutRoom(Request $request, int $roomId)
+    {
+        $org = $this->org($request);
+        $this->assertEnabled($org);
+
+        return response()->json($this->frontDesk->checkOutRoom($org, $roomId));
+    }
+
     public function assignRoom(Request $request, int $folioId)
     {
         $org = $this->org($request);
@@ -84,6 +92,19 @@ class HospitalityFrontDeskController extends Controller
 
         return response()->json(
             $this->frontDesk->assignRoom($org, $folioId, (int) $data['room_id'])
+        );
+    }
+
+    public function reassignOccupiedRoom(Request $request, int $roomId)
+    {
+        $org = $this->org($request);
+        $this->assertEnabled($org);
+        $data = $request->validate([
+            'room_id' => ['required', 'integer'],
+        ]);
+
+        return response()->json(
+            $this->frontDesk->reassignOccupiedRoom($org, $roomId, (int) $data['room_id'])
         );
     }
 

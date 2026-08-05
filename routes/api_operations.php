@@ -655,6 +655,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('front-desk/folios/{folioId}/assign-room', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'assignRoom'])
             ->middleware('erp.permission:hospitality.frontdesk.edit')
             ->whereNumber('folioId');
+        Route::post('front-desk/rooms/{roomId}/check-out', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'checkOutRoom'])
+            ->middleware('erp.permission:hospitality.frontdesk.edit')
+            ->whereNumber('roomId');
+        Route::post('front-desk/rooms/{roomId}/assign-room', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityFrontDeskController::class, 'reassignOccupiedRoom'])
+            ->middleware('erp.permission:hospitality.frontdesk.edit')
+            ->whereNumber('roomId');
 
         Route::get('housekeeping', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityHousekeepingController::class, 'board'])
             ->middleware('erp.permission:hospitality.housekeeping.view');
