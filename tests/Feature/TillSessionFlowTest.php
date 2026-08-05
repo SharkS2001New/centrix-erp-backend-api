@@ -614,6 +614,23 @@ class TillSessionFlowTest extends TestCase
         $this->assertSame('open', $fresh['status']);
     }
 
+    public function test_cannot_reopen_session_from_a_prior_day(): void
+    {
+        $session = $this->openFreshSession(2500);
+
+        $this->postJson("/api/v1/pos/sessions/{$session->id}/close", [
+            'closing_amount' => 2500,
+        ])->assertOk();
+
+        TillFloatSession::query()->whereKey($session->id)->update([
+            'session_date' => now()->subDay()->toDateString(),
+        ]);
+
+        $this->postJson("/api/v1/pos/sessions/{$session->id}/reopen")
+            ->assertStatus(422)
+            ->assertJsonFragment(['message' => 'Only today\'s session can be reopened.']);
+    }
+
     public function test_pos_expense_groups_are_scoped_to_user_organization(): void
     {
         $orgId = (int) $this->user->organization_id;

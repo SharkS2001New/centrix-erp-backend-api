@@ -10,6 +10,7 @@ use App\Services\Platform\OrganizationLicenseService;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Schema;
 
 class PlatformSubscriptionController extends Controller
 {
@@ -17,7 +18,12 @@ class PlatformSubscriptionController extends Controller
 
     public function index(Request $request)
     {
-        $q = PlatformSubscription::query()->with(['organization', 'plan', 'invoice'])->orderByDesc('id');
+        $with = ['organization', 'plan', 'invoice'];
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            $with[] = 'initialInvoice';
+        }
+
+        $q = PlatformSubscription::query()->with($with)->orderByDesc('id');
         if ($request->filled('status') && $request->status !== 'all') {
             $q->where('status', $request->status);
         }
@@ -45,10 +51,15 @@ class PlatformSubscriptionController extends Controller
             'module_keys' => 'sometimes|array',
             'contract_id' => 'nullable|integer',
             'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
+            'initial_invoice_id' => 'nullable|integer|exists:platform_invoices,id',
         ]);
 
         $this->assertInvoiceBelongsToOrganization(
             $data['invoice_id'] ?? null,
+            (int) $data['organization_id'],
+        );
+        $this->assertInvoiceBelongsToOrganization(
+            $data['initial_invoice_id'] ?? null,
             (int) $data['organization_id'],
         );
 
@@ -75,13 +86,24 @@ class PlatformSubscriptionController extends Controller
             'workspace_keys' => 'sometimes|array',
             'module_keys' => 'sometimes|array',
             'invoice_id' => 'nullable|integer|exists:platform_invoices,id',
+            'initial_invoice_id' => 'nullable|integer|exists:platform_invoices,id',
             /** When true with plan_id, copy prices / seats / apps from the new plan. */
             'sync_from_plan' => 'sometimes|boolean',
         ]);
 
+        if (! Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            unset($data['initial_invoice_id']);
+        }
+
         if (array_key_exists('invoice_id', $data)) {
             $this->assertInvoiceBelongsToOrganization(
                 $data['invoice_id'],
+                (int) $platform_subscription->organization_id,
+            );
+        }
+        if (array_key_exists('initial_invoice_id', $data)) {
+            $this->assertInvoiceBelongsToOrganization(
+                $data['initial_invoice_id'],
                 (int) $platform_subscription->organization_id,
             );
         }
@@ -113,8 +135,13 @@ class PlatformSubscriptionController extends Controller
 
         $platform_subscription->update($data);
 
+        $with = ['organization', 'plan', 'invoice'];
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            $with[] = 'initialInvoice';
+        }
+
         return response()->json([
-            'data' => $platform_subscription->fresh()->load(['organization', 'plan', 'invoice']),
+            'data' => $platform_subscription->fresh()->load($with),
             'message' => $planIdChanging ? 'Subscription package updated.' : 'Subscription updated.',
         ]);
     }
@@ -147,8 +174,13 @@ class PlatformSubscriptionController extends Controller
                 : $platform_subscription->status),
         ]);
 
+        $with = ['organization', 'plan', 'invoice'];
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            $with[] = 'initialInvoice';
+        }
+
         return response()->json([
-            'data' => $platform_subscription->fresh()->load(['organization', 'plan', 'invoice']),
+            'data' => $platform_subscription->fresh()->load($with),
             'message' => 'Licence extended.',
         ]);
     }
@@ -165,8 +197,13 @@ class PlatformSubscriptionController extends Controller
             $this->licenses->revokeOrganizationSessions($org);
         }
 
+        $with = ['organization', 'plan', 'invoice'];
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            $with[] = 'initialInvoice';
+        }
+
         return response()->json([
-            'data' => $platform_subscription->fresh()->load(['organization', 'plan', 'invoice']),
+            'data' => $platform_subscription->fresh()->load($with),
             'message' => 'Licence revoked. Organization users have been signed out.',
         ]);
     }
@@ -184,8 +221,13 @@ class PlatformSubscriptionController extends Controller
 
     public function forOrganization(Organization $organization)
     {
+        $with = ['plan', 'invoice'];
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            $with[] = 'initialInvoice';
+        }
+
         $sub = PlatformSubscription::query()
-            ->with(['plan', 'invoice'])
+            ->with($with)
             ->where('organization_id', $organization->id)
             ->first();
 
@@ -199,8 +241,13 @@ class PlatformSubscriptionController extends Controller
             return response()->json(['data' => null]);
         }
 
+        $with = ['plan', 'invoice'];
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            $with[] = 'initialInvoice';
+        }
+
         $sub = PlatformSubscription::query()
-            ->with(['plan', 'invoice'])
+            ->with($with)
             ->where('organization_id', $org->id)
             ->first();
 

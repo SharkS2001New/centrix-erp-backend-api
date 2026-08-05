@@ -7,6 +7,7 @@ use App\Models\PlatformSubscription;
 use App\Models\User;
 use Carbon\Carbon;
 use Illuminate\Http\Exceptions\HttpResponseException;
+use Illuminate\Support\Facades\Schema;
 use Laravel\Sanctum\PersonalAccessToken;
 
 class OrganizationLicenseService
@@ -190,11 +191,21 @@ class OrganizationLicenseService
         if (array_key_exists('invoice_id', $payload)) {
             $attrs['invoice_id'] = $payload['invoice_id'];
         }
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')
+            && array_key_exists('initial_invoice_id', $payload)
+        ) {
+            $attrs['initial_invoice_id'] = $payload['initial_invoice_id'];
+        }
+
+        $with = ['plan', 'organization', 'invoice'];
+        if (Schema::hasColumn('platform_subscriptions', 'initial_invoice_id')) {
+            $with[] = 'initialInvoice';
+        }
 
         return PlatformSubscription::query()->updateOrCreate(
             ['organization_id' => $org->id],
             $attrs,
-        )->load('plan', 'organization', 'invoice');
+        )->load($with);
     }
 
     /** Next period end from start + plan interval (yearly/annual → +1 calendar year). */
