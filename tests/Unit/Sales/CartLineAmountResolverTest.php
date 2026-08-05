@@ -23,6 +23,12 @@ class CartLineAmountResolverTest extends TestCase
         $this->assertSame(3600.0, CartLineAmountResolver::resolve(92000, 3600));
     }
 
+    public function test_accepts_workspace_line_amount_lower_than_miscomputed_total(): void
+    {
+        // Tier-priced POS line: workspace 3600, naive unit×qty recompute 92000.
+        $this->assertSame(3600.0, CartLineAmountResolver::resolve(3600, 92000));
+    }
+
     public function test_accepts_matching_client_amount(): void
     {
         $this->assertSame(3155.0, CartLineAmountResolver::resolve(3155, 3155));

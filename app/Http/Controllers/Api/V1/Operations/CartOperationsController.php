@@ -1317,7 +1317,14 @@ class CartOperationsController extends Controller
                 SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
             );
 
-            $amount = $this->resolveClientCartLineAmount($line, $amount);
+            [$unitPrice, $amount] = $this->applyAuthoritativeClientLineAmount(
+                $line,
+                $product,
+                $qty,
+                $isRetail,
+                $unitPrice,
+                $amount,
+            );
 
             $grossForVat = max(0, $amount);
             $productVat = array_key_exists('product_vat', $line) && $line['product_vat'] !== null
@@ -1438,7 +1445,14 @@ class CartOperationsController extends Controller
             SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
 
-        $amount = $this->resolveClientCartLineAmount($line, $amount);
+        [$unitPrice, $amount] = $this->applyAuthoritativeClientLineAmount(
+            $line,
+            $product,
+            $qty,
+            $isRetail,
+            $unitPrice,
+            $amount,
+        );
 
         $product->loadMissing('vat');
         $grossForVat = max(0, $amount);
@@ -1553,7 +1567,14 @@ class CartOperationsController extends Controller
             SalesCheckoutSettings::allowsEditableUnitPrice($salesSettings, $cart->order_source),
         );
 
-        $amount = $this->resolveClientCartLineAmount($input, $amount);
+        [$unitPrice, $amount] = $this->applyAuthoritativeClientLineAmount(
+            $input,
+            $product,
+            $qty,
+            $isRetail,
+            $unitPrice,
+            $amount,
+        );
 
         $settings = $gate->moduleSettings('inventory');
         $location = $this->resolveSaleLineStockLocation(
@@ -1848,6 +1869,42 @@ class CartOperationsController extends Controller
         }
 
         return \App\Services\Sales\CartLineAmountResolver::resolve($line['amount'], $computedAmount);
+    }
+
+    /**
+     * When the POS workspace sends an authoritative line amount, keep it and align
+     * stored unit price for display instead of naive unit×qty recomputation.
+     *
+     * @return array{0: float, 1: float}
+     */
+    protected function applyAuthoritativeClientLineAmount(
+        array $line,
+        Product $product,
+        float $qty,
+        bool $isRetail,
+        float $unitPrice,
+        float $computedAmount,
+    ): array {
+        if (! array_key_exists('amount', $line) || $line['amount'] === null || $line['amount'] === '') {
+            return [$unitPrice, round(max(0.0, $computedAmount), 2)];
+        }
+
+        $finalAmount = $this->resolveClientCartLineAmount($line, $computedAmount);
+        $clientAmount = round(max(0.0, (float) $line['amount']), 2);
+
+        if (
+            abs($finalAmount - $clientAmount) < 0.01
+            && abs($finalAmount - round($computedAmount, 2)) > 0.01
+        ) {
+            $product->loadMissing('unit');
+            $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+            $entryQty = $factor > 1 && ! $isRetail ? $qty / $factor : $qty;
+            if ($entryQty > 0) {
+                $unitPrice = round($finalAmount / $entryQty, 4);
+            }
+        }
+
+        return [$unitPrice, $finalAmount];
     }
 
     protected function resolveLineDiscountGiven(array $salesSettings, float $amount): float

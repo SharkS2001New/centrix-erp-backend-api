@@ -16,20 +16,27 @@ final class CartLineAmountResolver
      */
     public static function resolve(mixed $clientAmount, float $computedAmount): float
     {
+        $computed = round(max(0.0, $computedAmount), 2);
+
         if ($clientAmount === null || $clientAmount === '') {
-            return round(max(0.0, $computedAmount), 2);
+            return $computed;
         }
 
-        $client = max(0.0, (float) $clientAmount);
-        $computed = round(max(0.0, $computedAmount), 2);
+        $client = round(max(0.0, (float) $clientAmount), 2);
         $delta = abs($client - $computed);
 
         // Last-digit cash rounding is typically ≤ 5; allow a little headroom for floats.
         $tolerance = max(5.0, abs($computed) * 0.02);
         if ($delta <= $tolerance) {
-            return round($client, 2);
+            return $client;
         }
 
-        return $computed;
+        // Reject only inflated client totals (e.g. pack price × base qty). When the POS
+        // workspace line amount is lower than a naive unit×qty recompute, keep it.
+        if ($client > $computed) {
+            return $computed;
+        }
+
+        return $client;
     }
 }
