@@ -115,6 +115,29 @@ class RolePermissionTest extends TestCase
         $moduleKeys = collect($accounting['modules'])->pluck('module')->all();
         $this->assertContains('accounting', $moduleKeys);
         $this->assertContains('payments', $moduleKeys);
+        $this->assertContains('reports', $moduleKeys);
+
+        $accountingReports = collect($accounting['modules'])->firstWhere('module', 'reports');
+        $this->assertNotNull($accountingReports);
+        $this->assertSame('Financial reports', $accountingReports['label']);
+        $accountingReportFeatures = collect($accountingReports['features'])->pluck('key')->all();
+        $this->assertContains('profit_loss', $accountingReportFeatures);
+        $this->assertContains('journal_register', $accountingReportFeatures);
+        $this->assertNotContains('payroll_summary', $accountingReportFeatures);
+        $this->assertNotContains('daily_sales', $accountingReportFeatures);
+
+        $hr = $applications->firstWhere('id', 'hr');
+        $this->assertNotNull($hr);
+        $hrReports = collect($hr['modules'])->firstWhere('module', 'reports');
+        $this->assertNotNull($hrReports);
+        $this->assertSame('HR reports', $hrReports['label']);
+        $this->assertSame(['payroll_summary'], collect($hrReports['features'])->pluck('key')->all());
+
+        $distribution = $applications->firstWhere('id', 'distribution');
+        $this->assertNotNull($distribution);
+        $distributionReports = collect($distribution['modules'])->firstWhere('module', 'reports');
+        $this->assertNotNull($distributionReports);
+        $this->assertContains('dispatch_trips', collect($distributionReports['features'])->pluck('key')->all());
 
         $externalErp = $applications->firstWhere('id', 'pos');
         $this->assertNotNull($externalErp);
@@ -139,6 +162,16 @@ class RolePermissionTest extends TestCase
         $this->assertContains('end_of_day', $tillFeatures);
         $this->assertNotContains('terminal', $tillFeatures);
         $this->assertNotContains('checkout', $tillFeatures);
+
+        $backofficeReports = collect($backoffice['modules'])->firstWhere('module', 'reports');
+        $this->assertNotNull($backofficeReports);
+        $this->assertSame('Operational reports', $backofficeReports['label']);
+        $backofficeReportFeatures = collect($backofficeReports['features'])->pluck('key')->all();
+        $this->assertContains('daily_sales', $backofficeReportFeatures);
+        $this->assertContains('stock_on_hand', $backofficeReportFeatures);
+        $this->assertNotContains('payroll_summary', $backofficeReportFeatures);
+        $this->assertNotContains('profit_loss', $backofficeReportFeatures);
+        $this->assertNotContains('dispatch_trips', $backofficeReportFeatures);
 
         $mobile = $applications->firstWhere('id', 'mobile');
         $this->assertNotNull($mobile);

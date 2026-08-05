@@ -78,6 +78,62 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
         $this->assertTrue($codes->contains('dashboard.inventory.view'));
         $this->assertTrue($codes->contains('reports.sales_by_product.view'));
         $this->assertTrue($codes->contains('reports.low_stock.view'));
+        $this->assertTrue($codes->contains('reports.payroll_summary.view'));
+        $this->assertTrue($codes->contains('reports.profit_loss.view'));
         $this->assertTrue($codes->contains('admin.notifications.view'));
+
+        $apps = collect($res->json('applications'));
+        $featureKeysByApp = $apps->mapWithKeys(function (array $app) {
+            $keys = collect($app['modules'] ?? [])
+                ->filter(fn (array $module) => ($module['module'] ?? '') === 'reports')
+                ->flatMap(fn (array $module) => $module['features'] ?? [])
+                ->pluck('key')
+                ->all();
+
+            return [$app['id'] => $keys];
+        });
+
+        $this->assertContains('payroll_summary', $featureKeysByApp->get('hr', []));
+        $this->assertNotContains('payroll_summary', $featureKeysByApp->get('backoffice', []));
+        $this->assertContains('profit_loss', $featureKeysByApp->get('accounting', []));
+        $this->assertNotContains('profit_loss', $featureKeysByApp->get('backoffice', []));
+    }
+
+    public function test_every_registry_report_feature_appears_in_exactly_one_application(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->seedLicense($admin);
+        Sanctum::actingAs($admin);
+
+        PermissionMatrixService::ensure();
+
+        $registryReportFeatures = array_keys(config('permission_registry.groups.reports.features', []));
+        $this->assertNotEmpty($registryReportFeatures);
+
+        $apps = collect($this->getJson('/api/v1/roles/permissions/matrix')->assertOk()->json('applications'));
+        $placements = [];
+        foreach ($apps as $app) {
+            foreach ($app['modules'] ?? [] as $module) {
+                if (($module['module'] ?? '') !== 'reports') {
+                    continue;
+                }
+                foreach ($module['features'] ?? [] as $feature) {
+                    $key = (string) ($feature['key'] ?? '');
+                    if ($key === '') {
+                        continue;
+                    }
+                    $placements[$key][] = (string) $app['id'];
+                }
+            }
+        }
+
+        foreach ($registryReportFeatures as $feature) {
+            $appsForFeature = $placements[$feature] ?? [];
+            $this->assertCount(
+                1,
+                $appsForFeature,
+                "Report feature [{$feature}] should appear in exactly one application, got: ".implode(',', $appsForFeature),
+            );
+        }
     }
 }

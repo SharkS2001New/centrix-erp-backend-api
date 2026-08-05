@@ -247,8 +247,9 @@ return [
                 'expenses' => ['label' => 'Expenses report', 'actions' => ['view']],
                 'journal_register' => ['label' => 'Journal register', 'actions' => ['view']],
                 'subledger_reconciliation' => ['label' => 'Subledger reconciliation', 'actions' => ['view']],
-                // Compliance
+                // Compliance / tax
                 'kra_receipts' => ['label' => 'KRA receipts', 'actions' => ['view']],
+                // HR (shown under Human Resources in the roles matrix)
                 'payroll_summary' => ['label' => 'Payroll summary', 'actions' => ['view']],
                 'legacy_archive' => ['label' => 'Legacy sales archive', 'actions' => ['view']],
             ],
