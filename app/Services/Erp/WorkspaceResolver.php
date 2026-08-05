@@ -117,10 +117,8 @@ class WorkspaceResolver
             return false;
         }
 
-        if ($user?->is_admin) {
-            return true;
-        }
-
+        // Org admins still go through permission checks. Their permission map already
+        // includes every feature for org-enabled modules (UserPermissionService).
         return $this->userHasWorkspacePermission($workspaceId, $definition, $permissionMap);
     }
 

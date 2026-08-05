@@ -90,8 +90,11 @@ return [
         'description' => 'General ledger, payments, receivables, expenses, and financial reports.',
         'icon' => 'chart',
         'home_path' => '/accounting',
-        'domain_modules' => ['accounting', 'payments'],
-        'permission_prefixes' => ['accounting.', 'payments.'],
+        // Org must have Accounting licensed — payments alone must not unlock this shell.
+        'domain_modules' => ['accounting'],
+        // Require a real Accounting entry right (not payments.sale_payments.* / expenses-only via bypass).
+        'permission_prefixes' => ['accounting.'],
+        'entry_permission' => 'accounting.dashboard.view',
     ],
     'hr' => [
         'label' => 'Human Resources',
@@ -99,6 +102,7 @@ return [
         'icon' => 'people',
         'home_path' => '/hr',
         'domain_modules' => ['hr_payroll'],
+        // Any hr.* feature permission unlocks the shell (employees, payroll, leave, …).
         'permission_prefixes' => ['hr.'],
     ],
     'admin' => [

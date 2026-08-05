@@ -146,21 +146,47 @@ class HospitalityDemoDataSeeder
 
     protected function ensureMainOutlet(Organization $org): HospitalityOutlet
     {
-        $outlet = HospitalityOutlet::query()
+        $hotel = HospitalityOutlet::query()
+            ->where('organization_id', $org->id)
+            ->where('code', 'HOTEL')
+            ->first();
+        if (! $hotel) {
+            $hotel = HospitalityOutlet::query()->create([
+                'organization_id' => $org->id,
+                'code' => 'HOTEL',
+                'name' => 'Hotel / restaurant',
+                'outlet_type' => 'restaurant',
+                'is_active' => true,
+            ]);
+        } else {
+            $hotel->fill([
+                'name' => 'Hotel / restaurant',
+                'outlet_type' => 'restaurant',
+                'is_active' => true,
+            ])->save();
+        }
+
+        $bar = HospitalityOutlet::query()
             ->where('organization_id', $org->id)
             ->where('code', 'MAIN')
             ->first();
-        if ($outlet) {
-            return $outlet;
+        if (! $bar) {
+            HospitalityOutlet::query()->create([
+                'organization_id' => $org->id,
+                'code' => 'MAIN',
+                'name' => 'Main bar',
+                'outlet_type' => 'bar',
+                'is_active' => true,
+            ]);
+        } else {
+            $bar->fill([
+                'name' => 'Main bar',
+                'outlet_type' => 'bar',
+                'is_active' => true,
+            ])->save();
         }
 
-        return HospitalityOutlet::query()->create([
-            'organization_id' => $org->id,
-            'code' => 'MAIN',
-            'name' => 'Main outlet',
-            'outlet_type' => 'restaurant',
-            'is_active' => true,
-        ]);
+        return $hotel;
     }
 
     /**
@@ -198,6 +224,8 @@ class HospitalityDemoDataSeeder
     }
 
     /**
+     * Hotel kitchen / soft menu + Bar alcohol & softs.
+     *
      * @param  array{food: SubCategory, drinks: SubCategory}  $categories
      * @param  array<string, Uom>  $uoms
      * @return list<string>
@@ -211,28 +239,49 @@ class HospitalityDemoDataSeeder
     ): array {
         $fallback = $uoms['piece'] ?? reset($uoms);
         $items = [
-            // Food (10)
-            ['code' => self::SEED_PREFIX.'-F01', 'name' => 'Ugali plate', 'price' => 250, 'group' => 'food', 'uom' => 'plate'],
-            ['code' => self::SEED_PREFIX.'-F02', 'name' => 'Chicken stew', 'price' => 650, 'group' => 'food', 'uom' => 'portion'],
-            ['code' => self::SEED_PREFIX.'-F03', 'name' => 'Beef stew', 'price' => 700, 'group' => 'food', 'uom' => 'portion'],
-            ['code' => self::SEED_PREFIX.'-F04', 'name' => 'Fish fillet', 'price' => 850, 'group' => 'food', 'uom' => 'portion'],
-            ['code' => self::SEED_PREFIX.'-F05', 'name' => 'Chips', 'price' => 300, 'group' => 'food', 'uom' => 'portion'],
-            ['code' => self::SEED_PREFIX.'-F06', 'name' => 'Chapati (2pcs)', 'price' => 100, 'group' => 'food', 'uom' => 'piece'],
-            ['code' => self::SEED_PREFIX.'-F07', 'name' => 'Vegetable salad', 'price' => 350, 'group' => 'food', 'uom' => 'portion'],
-            ['code' => self::SEED_PREFIX.'-F08', 'name' => 'Pilau', 'price' => 550, 'group' => 'food', 'uom' => 'plate'],
-            ['code' => self::SEED_PREFIX.'-F09', 'name' => 'Githeri special', 'price' => 400, 'group' => 'food', 'uom' => 'plate'],
-            ['code' => self::SEED_PREFIX.'-F10', 'name' => 'Nyama choma platter', 'price' => 1200, 'group' => 'food', 'uom' => 'plate'],
-            // Drinks (10)
-            ['code' => self::SEED_PREFIX.'-D01', 'name' => 'Tusker lager 500ml', 'price' => 350, 'group' => 'drinks', 'uom' => 'bottle'],
-            ['code' => self::SEED_PREFIX.'-D02', 'name' => 'White Cap 500ml', 'price' => 350, 'group' => 'drinks', 'uom' => 'bottle'],
-            ['code' => self::SEED_PREFIX.'-D03', 'name' => 'Soft drink 300ml', 'price' => 150, 'group' => 'drinks', 'uom' => 'bottle'],
-            ['code' => self::SEED_PREFIX.'-D04', 'name' => 'Mineral water 500ml', 'price' => 100, 'group' => 'drinks', 'uom' => 'bottle'],
-            ['code' => self::SEED_PREFIX.'-D05', 'name' => 'Fresh juice', 'price' => 250, 'group' => 'drinks', 'uom' => 'glass'],
-            ['code' => self::SEED_PREFIX.'-D06', 'name' => 'House coffee', 'price' => 200, 'group' => 'drinks', 'uom' => 'cup'],
-            ['code' => self::SEED_PREFIX.'-D07', 'name' => 'Tea', 'price' => 120, 'group' => 'drinks', 'uom' => 'cup'],
-            ['code' => self::SEED_PREFIX.'-D08', 'name' => 'Red wine glass', 'price' => 600, 'group' => 'drinks', 'uom' => 'glass'],
-            ['code' => self::SEED_PREFIX.'-D09', 'name' => 'Whisky single', 'price' => 450, 'group' => 'drinks', 'uom' => 'shot'],
-            ['code' => self::SEED_PREFIX.'-D10', 'name' => 'Cocktail of the day', 'price' => 750, 'group' => 'drinks', 'uom' => 'glass'],
+            // ---- Hotel menu (kitchen + hotel drinks) ----
+            ['code' => self::SEED_PREFIX.'-F01', 'name' => 'Ugali plate', 'price' => 250, 'group' => 'food', 'uom' => 'plate', 'hotel' => true, 'bar' => false, 'photo' => 'ugali'],
+            ['code' => self::SEED_PREFIX.'-F02', 'name' => 'Chicken stew', 'price' => 650, 'group' => 'food', 'uom' => 'portion', 'hotel' => true, 'bar' => false, 'photo' => 'chicken-stew'],
+            ['code' => self::SEED_PREFIX.'-F03', 'name' => 'Beef stew', 'price' => 700, 'group' => 'food', 'uom' => 'portion', 'hotel' => true, 'bar' => false, 'photo' => 'beef-stew'],
+            ['code' => self::SEED_PREFIX.'-F04', 'name' => 'Fish fillet', 'price' => 850, 'group' => 'food', 'uom' => 'portion', 'hotel' => true, 'bar' => false, 'photo' => 'fish'],
+            ['code' => self::SEED_PREFIX.'-F05', 'name' => 'Chips', 'price' => 300, 'group' => 'food', 'uom' => 'portion', 'hotel' => true, 'bar' => false, 'photo' => 'chips'],
+            ['code' => self::SEED_PREFIX.'-F06', 'name' => 'Chapati (2pcs)', 'price' => 100, 'group' => 'food', 'uom' => 'piece', 'hotel' => true, 'bar' => false, 'photo' => 'chapati'],
+            ['code' => self::SEED_PREFIX.'-F07', 'name' => 'Vegetable salad', 'price' => 350, 'group' => 'food', 'uom' => 'portion', 'hotel' => true, 'bar' => false, 'photo' => 'salad'],
+            ['code' => self::SEED_PREFIX.'-F08', 'name' => 'Pilau', 'price' => 550, 'group' => 'food', 'uom' => 'plate', 'hotel' => true, 'bar' => false, 'photo' => 'pilau'],
+            ['code' => self::SEED_PREFIX.'-F09', 'name' => 'Githeri special', 'price' => 400, 'group' => 'food', 'uom' => 'plate', 'hotel' => true, 'bar' => false, 'photo' => 'githeri'],
+            ['code' => self::SEED_PREFIX.'-F10', 'name' => 'Nyama choma platter', 'price' => 1200, 'group' => 'food', 'uom' => 'plate', 'hotel' => true, 'bar' => false, 'photo' => 'nyama-choma'],
+            ['code' => self::SEED_PREFIX.'-H01', 'name' => 'Soda', 'price' => 150, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => true, 'bar' => true, 'photo' => 'soda'],
+            ['code' => self::SEED_PREFIX.'-H02', 'name' => 'Milk and Tea', 'price' => 180, 'group' => 'drinks', 'uom' => 'cup', 'hotel' => true, 'bar' => false, 'photo' => 'milk-tea'],
+            ['code' => self::SEED_PREFIX.'-H03', 'name' => 'Black Coffee', 'price' => 200, 'group' => 'drinks', 'uom' => 'cup', 'hotel' => true, 'bar' => false, 'photo' => 'black-coffee'],
+
+            // ---- Bar: 20 alcoholic drinks ----
+            ['code' => self::SEED_PREFIX.'-A01', 'name' => 'Tusker lager 500ml', 'price' => 350, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'lager'],
+            ['code' => self::SEED_PREFIX.'-A02', 'name' => 'White Cap 500ml', 'price' => 350, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'lager'],
+            ['code' => self::SEED_PREFIX.'-A03', 'name' => 'Guinness 500ml', 'price' => 400, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'guinness'],
+            ['code' => self::SEED_PREFIX.'-A04', 'name' => 'Pilsner 500ml', 'price' => 320, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'lager'],
+            ['code' => self::SEED_PREFIX.'-A05', 'name' => 'Heineken 330ml', 'price' => 400, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'heineken'],
+            ['code' => self::SEED_PREFIX.'-A06', 'name' => 'Balozi lager 500ml', 'price' => 300, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'lager'],
+            ['code' => self::SEED_PREFIX.'-A07', 'name' => 'Senator keg glass', 'price' => 250, 'group' => 'drinks', 'uom' => 'glass', 'hotel' => false, 'bar' => true, 'photo' => 'beer'],
+            ['code' => self::SEED_PREFIX.'-A08', 'name' => 'Smirnoff Ice 275ml', 'price' => 350, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'smirnoff-ice'],
+            ['code' => self::SEED_PREFIX.'-A09', 'name' => 'Savanna cider 330ml', 'price' => 350, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'cider'],
+            ['code' => self::SEED_PREFIX.'-A10', 'name' => 'Red wine glass', 'price' => 600, 'group' => 'drinks', 'uom' => 'glass', 'hotel' => false, 'bar' => true, 'photo' => 'wine-red'],
+            ['code' => self::SEED_PREFIX.'-A11', 'name' => 'White wine glass', 'price' => 600, 'group' => 'drinks', 'uom' => 'glass', 'hotel' => false, 'bar' => true, 'photo' => 'wine-white'],
+            ['code' => self::SEED_PREFIX.'-A12', 'name' => 'Champagne glass', 'price' => 900, 'group' => 'drinks', 'uom' => 'glass', 'hotel' => false, 'bar' => true, 'photo' => 'champagne'],
+            ['code' => self::SEED_PREFIX.'-A13', 'name' => 'Whisky single', 'price' => 450, 'group' => 'drinks', 'uom' => 'shot', 'hotel' => false, 'bar' => true, 'photo' => 'whisky'],
+            ['code' => self::SEED_PREFIX.'-A14', 'name' => 'Vodka single', 'price' => 400, 'group' => 'drinks', 'uom' => 'shot', 'hotel' => false, 'bar' => true, 'photo' => 'vodka'],
+            ['code' => self::SEED_PREFIX.'-A15', 'name' => 'Gin single', 'price' => 400, 'group' => 'drinks', 'uom' => 'shot', 'hotel' => false, 'bar' => true, 'photo' => 'gin'],
+            ['code' => self::SEED_PREFIX.'-A16', 'name' => 'Brandy single', 'price' => 400, 'group' => 'drinks', 'uom' => 'shot', 'hotel' => false, 'bar' => true, 'photo' => 'brandy'],
+            ['code' => self::SEED_PREFIX.'-A17', 'name' => 'Rum single', 'price' => 400, 'group' => 'drinks', 'uom' => 'shot', 'hotel' => false, 'bar' => true, 'photo' => 'rum'],
+            ['code' => self::SEED_PREFIX.'-A18', 'name' => 'Tequila single', 'price' => 450, 'group' => 'drinks', 'uom' => 'shot', 'hotel' => false, 'bar' => true, 'photo' => 'tequila'],
+            ['code' => self::SEED_PREFIX.'-A19', 'name' => 'Amarula shot', 'price' => 350, 'group' => 'drinks', 'uom' => 'shot', 'hotel' => false, 'bar' => true, 'photo' => 'amarula'],
+            ['code' => self::SEED_PREFIX.'-A20', 'name' => 'Cocktail of the day', 'price' => 750, 'group' => 'drinks', 'uom' => 'glass', 'hotel' => false, 'bar' => true, 'photo' => 'cocktail'],
+
+            // ---- Bar softs: water + sample sodas ----
+            ['code' => self::SEED_PREFIX.'-S01', 'name' => 'Water 1 litre', 'price' => 150, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'water'],
+            ['code' => self::SEED_PREFIX.'-S02', 'name' => 'Coca-Cola 500ml', 'price' => 180, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'coca-cola'],
+            ['code' => self::SEED_PREFIX.'-S03', 'name' => 'Fanta Orange 500ml', 'price' => 180, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'fanta'],
+            ['code' => self::SEED_PREFIX.'-S04', 'name' => 'Sprite 500ml', 'price' => 180, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'sprite'],
+            ['code' => self::SEED_PREFIX.'-S05', 'name' => 'Stoney Tangawizi 500ml', 'price' => 180, 'group' => 'drinks', 'uom' => 'bottle', 'hotel' => false, 'bar' => true, 'photo' => 'stoney'],
         ];
 
         $codes = [];
@@ -257,10 +306,10 @@ class HospitalityDemoDataSeeder
                 'updated_by' => $actorId,
             ];
             if ($hasBar) {
-                $attrs['sell_on_bar'] = true;
+                $attrs['sell_on_bar'] = (bool) ($item['bar'] ?? false);
             }
             if ($hasHotel) {
-                $attrs['sell_on_hotel'] = true;
+                $attrs['sell_on_hotel'] = (bool) ($item['hotel'] ?? false);
             }
 
             $product = Product::query()->updateOrCreate(
@@ -278,10 +327,18 @@ class HospitalityDemoDataSeeder
                 $org,
                 $item['name'],
                 $item['group'] === 'drinks' ? 'drinks' : 'food',
+                force: true,
+                photoKey: $item['photo'] ?? null,
             );
 
             $codes[] = (string) $product->product_code;
         }
+
+        // Drop legacy demo drink codes replaced by hotel/bar split (H/A/S series).
+        Product::query()
+            ->where('organization_id', $org->id)
+            ->where('product_code', 'like', self::SEED_PREFIX.'-D%')
+            ->delete();
 
         return $codes;
     }

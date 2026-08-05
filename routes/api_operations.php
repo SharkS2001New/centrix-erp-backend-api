@@ -500,6 +500,10 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hotel_bar_pos.checks.view');
         Route::get('checks/collectible', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'collectible'])
             ->middleware('erp.permission:hotel_bar_pos.checks.view');
+        Route::post('check-numbers/reserve', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'reserveCheckNumbers'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.create');
+        Route::post('checks/offline-sync', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'offlineSync'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.create|hotel_bar_pos.checks.edit');
         Route::post('checks', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'openCheck'])
             ->middleware('erp.permission:hotel_bar_pos.checks.create');
         Route::get('checks/{checkId}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'showCheck'])

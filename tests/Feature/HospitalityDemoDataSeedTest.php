@@ -22,7 +22,7 @@ class HospitalityDemoDataSeedTest extends TestCase
         $this->withoutMiddleware([EnsureOrganizationLicenseActive::class]);
     }
 
-    public function test_seeder_creates_twenty_menu_products_and_tables_for_hotel_bar_org(): void
+    public function test_seeder_creates_hotel_and_bar_menu_with_images(): void
     {
         $org = Organization::query()->create([
             'company_code' => 'HTLDEMO',
@@ -40,36 +40,47 @@ class HospitalityDemoDataSeedTest extends TestCase
 
         $result = app(HospitalityDemoDataSeeder::class)->seedForOrganization($org);
 
-        $this->assertSame(20, $result['products']);
+        $this->assertSame(38, $result['products']);
         $this->assertSame(8, $result['tables']);
-        $this->assertCount(20, $result['product_codes']);
+        $this->assertCount(38, $result['product_codes']);
+
+        $products = Product::query()
+            ->where('organization_id', $org->id)
+            ->where('product_code', 'like', 'HTL-%')
+            ->get();
+        $this->assertCount(38, $products);
+
+        $byName = $products->keyBy(fn (Product $p) => (string) $p->product_name);
+        foreach (['Chips', 'Soda', 'Beef stew', 'Milk and Tea', 'Black Coffee'] as $required) {
+            $this->assertTrue($byName->has($required), "Missing hotel menu item: {$required}");
+            $this->assertTrue((bool) $byName[$required]->sell_on_hotel, "{$required} should sell on hotel");
+        }
 
         $this->assertSame(
             20,
-            Product::query()
-                ->where('organization_id', $org->id)
-                ->where('product_code', 'like', 'HTL-%')
-                ->count(),
+            $products->filter(fn (Product $p) => str_starts_with((string) $p->product_code, 'HTL-A'))->count(),
         );
+        $water = $byName->get('Water 1 litre');
+        $this->assertNotNull($water);
+        $this->assertTrue((bool) $water->sell_on_bar);
+        $this->assertFalse((bool) $water->sell_on_hotel);
 
-        $withImages = Product::query()
-            ->where('organization_id', $org->id)
-            ->where('product_code', 'like', 'HTL-%')
-            ->whereNotNull('image_path')
-            ->get();
-        $this->assertCount(20, $withImages);
-        foreach ($withImages as $product) {
+        $sodaSamples = $products->filter(fn (Product $p) => str_starts_with((string) $p->product_code, 'HTL-S'));
+        $this->assertGreaterThanOrEqual(4, $sodaSamples->count());
+
+        foreach ($products as $product) {
+            $this->assertNotEmpty($product->image_path, "Missing image_path for {$product->product_code}");
             $this->assertTrue(
                 StoredPublicFile::exists($product->image_path),
-                "Missing seeded image for {$product->product_code}",
+                "Missing seeded image file for {$product->product_code}",
             );
             $this->assertNotEmpty($product->image_url);
         }
 
         $again = app(HospitalityDemoDataSeeder::class)->seedForOrganization($org);
-        $this->assertSame(20, $again['products']);
+        $this->assertSame(38, $again['products']);
         $this->assertSame(
-            20,
+            38,
             Product::query()
                 ->where('organization_id', $org->id)
                 ->where('product_code', 'like', 'HTL-%')
@@ -95,7 +106,7 @@ class HospitalityDemoDataSeedTest extends TestCase
 
         $this->postJson("/api/v1/admin/organizations/{$org->id}/hospitality/seed-demo-data")
             ->assertOk()
-            ->assertJsonPath('products', 20)
+            ->assertJsonPath('products', 38)
             ->assertJsonPath('tables', 8);
     }
 

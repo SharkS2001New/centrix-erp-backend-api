@@ -110,6 +110,140 @@ class HospitalityCheckService
         ]);
     }
 
+    /**
+     * Replay a Hotel POS offline cash ticket: open → lines → settle (idempotent).
+     *
+     * @param  list<array{product_code: string, qty?: float|int|string}>  $lines
+     * @param  list<array{method_code: string, amount: float|int|string, reference?: ?string}>  $payments
+     * @param  array<string, mixed>  $input
+     */
+    public function ingestOfflineCashCheck(
+        Organization $org,
+        User $user,
+        array $lines,
+        array $payments,
+        array $input = [],
+    ): HospitalityCheck {
+        $idempotency = app(HospitalityOfflineCheckoutIdempotency::class);
+        $existing = $idempotency->findExisting($user, $input);
+        if ($existing) {
+            return $this->presentable($existing);
+        }
+
+        if ($lines === []) {
+            throw ValidationException::withMessages(['lines' => ['Offline check has no lines.']]);
+        }
+
+        return DB::transaction(function () use ($org, $user, $lines, $payments, $input, $idempotency) {
+            $again = $idempotency->findExisting($user, $input);
+            if ($again) {
+                return $this->presentable($again);
+            }
+
+            $preferred = trim((string) ($input['check_number'] ?? ''));
+            $checkNumber = $this->resolveOfflineCheckNumber((int) $org->id, $preferred !== '' ? $preferred : null);
+
+            $outletId = isset($input['outlet_id']) ? (int) $input['outlet_id'] : null;
+            $branchId = isset($input['branch_id'])
+                ? (int) $input['branch_id']
+                : ($user->branch_id ? (int) $user->branch_id : null);
+            $floorTableId = isset($input['floor_table_id']) ? (int) $input['floor_table_id'] : null;
+            $guestName = isset($input['guest_name']) ? trim((string) $input['guest_name']) : null;
+
+            $outlet = $outletId
+                ? HospitalityOutlet::query()
+                    ->where('organization_id', $org->id)
+                    ->where('id', $outletId)
+                    ->where('is_active', true)
+                    ->firstOrFail()
+                : app(HospitalityPosCatalogService::class)->resolveOutletForUser($org, $user, null);
+
+            $tableId = null;
+            $serviceMode = 'counter';
+            if ($floorTableId) {
+                $table = $this->resolveFloorTable($org, (int) $outlet->id, $floorTableId);
+                $tableId = $table->id;
+                $serviceMode = 'table';
+            }
+
+            $meta = $idempotency->stampMeta([], $input);
+            $attrs = [
+                'organization_id' => $org->id,
+                'branch_id' => $branchId ?? $outlet->branch_id,
+                'outlet_id' => $outlet->id,
+                'floor_table_id' => $tableId,
+                'check_number' => $checkNumber,
+                'status' => 'open',
+                'service_mode' => $serviceMode,
+                'guest_name' => $guestName !== null && $guestName !== '' ? mb_substr($guestName, 0, 160) : null,
+                'opened_by' => $user->id,
+                'subtotal' => 0,
+                'vat_total' => 0,
+                'service_charge' => 0,
+                'total' => 0,
+                'amount_paid' => 0,
+                'opened_at' => now(),
+            ];
+            if (Schema::hasColumn('hospitality_checks', 'meta')) {
+                $attrs['meta'] = $meta;
+            }
+
+            $check = HospitalityCheck::create($attrs);
+
+            foreach ($lines as $row) {
+                $code = trim((string) ($row['product_code'] ?? ''));
+                if ($code === '') {
+                    throw ValidationException::withMessages(['lines' => ['Each line needs a product_code.']]);
+                }
+                $qty = isset($row['qty']) ? (float) $row['qty'] : 1.0;
+                $check = $this->addProductLine($check, $code, $qty);
+            }
+
+            $cashPayments = $payments !== [] ? $payments : [[
+                'method_code' => 'CASH',
+                'amount' => (float) $check->total,
+            ]];
+            foreach ($cashPayments as $pay) {
+                $code = strtoupper(trim((string) ($pay['method_code'] ?? '')));
+                if ($code !== 'CASH') {
+                    throw ValidationException::withMessages([
+                        'payments' => ['Offline hospitality sync supports cash payments only.'],
+                    ]);
+                }
+            }
+
+            $check = $this->settleWithPayments($check, $user, $org, $cashPayments, null, null);
+
+            if (Schema::hasColumn('hospitality_checks', 'meta')) {
+                $stamped = $idempotency->stampMeta(
+                    is_array($check->meta) ? $check->meta : [],
+                    $input,
+                );
+                $check->update(['meta' => $stamped]);
+            }
+
+            return $this->presentable($check->fresh());
+        });
+    }
+
+    protected function resolveOfflineCheckNumber(int $organizationId, ?string $preferred): string
+    {
+        $allocator = app(HospitalityCheckNumberAllocator::class);
+        if ($preferred !== null && $preferred !== '' && ctype_digit($preferred)) {
+            $taken = HospitalityCheck::query()
+                ->where('organization_id', $organizationId)
+                ->where('check_number', $preferred)
+                ->exists();
+            if (! $taken) {
+                $allocator->claimSpecific($organizationId, (int) $preferred);
+
+                return $preferred;
+            }
+        }
+
+        return $allocator->allocateOne($organizationId);
+    }
+
     public function findOwnedCheck(int $checkId, int $organizationId): HospitalityCheck
     {
         return HospitalityCheck::query()
@@ -743,6 +877,11 @@ class HospitalityCheckService
             'opened_at' => optional($check->opened_at)?->toIso8601String(),
             'closed_at' => optional($check->closed_at)?->toIso8601String(),
             'updated_at' => optional($check->updated_at)?->toIso8601String(),
+            'meta' => is_array($check->meta) ? $check->meta : null,
+            'client_check_uuid' => is_array($check->meta)
+                ? ($check->meta['client_check_uuid'] ?? null)
+                : null,
+            'offline_pending_sync' => false,
             'lines' => $check->lines->map(fn (HospitalityCheckLine $line) => [
                 'id' => $line->id,
                 'product_id' => $line->product_id,
@@ -821,18 +960,6 @@ class HospitalityCheckService
 
     protected function nextCheckNumber(int $organizationId): string
     {
-        $numbers = HospitalityCheck::query()
-            ->where('organization_id', $organizationId)
-            ->pluck('check_number');
-
-        $maxSeq = 0;
-        foreach ($numbers as $number) {
-            if (! is_string($number) || $number === '' || ! ctype_digit($number)) {
-                continue;
-            }
-            $maxSeq = max($maxSeq, (int) $number);
-        }
-
-        return (string) ($maxSeq + 1);
+        return app(HospitalityCheckNumberAllocator::class)->allocateOne($organizationId);
     }
 }

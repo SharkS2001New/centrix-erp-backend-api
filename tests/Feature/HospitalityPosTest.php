@@ -156,6 +156,52 @@ class HospitalityPosTest extends TestCase
         $this->assertSame($total, (float) $settled['amount_paid']);
     }
 
+    public function test_offline_sync_cash_check_is_idempotent(): void
+    {
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $reserved = $this->postJson('/api/v1/hospitality/pos/check-numbers/reserve', ['count' => 3])
+            ->assertOk()
+            ->json();
+        $this->assertCount(3, $reserved['numbers'] ?? []);
+        $checkNumber = (string) $reserved['numbers'][0];
+        $uuid = 'hotel-offline-test-'.uniqid();
+
+        $payload = [
+            'client_check_uuid' => $uuid,
+            'check_number' => $checkNumber,
+            'offline_order' => true,
+            'client_completed_at' => now()->toIso8601String(),
+            'lines' => [
+                ['product_code' => $product->product_code, 'qty' => 1],
+            ],
+            'payments' => [
+                ['method_code' => 'CASH', 'amount' => round((float) $product->unit_price, 2)],
+            ],
+        ];
+
+        $first = $this->postJson('/api/v1/hospitality/pos/checks/offline-sync', $payload)
+            ->assertCreated()
+            ->json('check');
+
+        $this->assertSame('paid', $first['status']);
+        $this->assertSame($checkNumber, (string) $first['check_number']);
+        $this->assertSame($uuid, $first['client_check_uuid'] ?? null);
+
+        $second = $this->postJson('/api/v1/hospitality/pos/checks/offline-sync', $payload)
+            ->assertCreated()
+            ->json('check');
+
+        $this->assertSame((int) $first['id'], (int) $second['id']);
+        $this->assertSame(1, \App\Models\HospitalityCheck::query()
+            ->where('organization_id', $this->org->id)
+            ->where('meta->pos_sync_id', $uuid)
+            ->count());
+    }
+
     public function test_open_check_tap_add_hold_and_settle_cash(): void
     {
         $product = Product::query()

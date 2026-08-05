@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Organization;
 use App\Services\Erp\ErpContext;
 use App\Services\Hospitality\HospitalityCheckService;
+use App\Services\Hospitality\HospitalityCheckNumberAllocator;
 use App\Services\Hospitality\HospitalityPaymentWorkflow;
 use App\Services\Hospitality\HospitalityPosCatalogService;
 use App\Services\Hospitality\HospitalityPosSettings;
@@ -261,6 +262,65 @@ class HospitalityPosController extends Controller
         return response()->json([
             'checks' => array_map(fn ($c) => $this->checkService->toArray($c), $checks),
         ]);
+    }
+
+    /**
+     * Reserve digit check numbers for Hotel POS offline selling (mirrors sales order-numbers/reserve).
+     */
+    public function reserveCheckNumbers(Request $request)
+    {
+        $user = $request->user();
+        $org = $this->requireOrg($user);
+        $data = $request->validate([
+            'count' => ['nullable', 'integer', 'min:1', 'max:'.HospitalityCheckNumberAllocator::MAX_RESERVE_BLOCK],
+        ]);
+        $count = (int) ($data['count'] ?? 20);
+        $block = app(HospitalityCheckNumberAllocator::class)
+            ->reserveBlockForOrganization((int) $org->id, $count);
+
+        return response()->json([
+            'organization_id' => (int) $org->id,
+            'start' => $block['start'],
+            'end' => $block['end'],
+            'numbers' => $block['numbers'],
+            'count' => count($block['numbers']),
+        ]);
+    }
+
+    /**
+     * Idempotent offline cash check replay: create + lines + settle.
+     */
+    public function offlineSync(Request $request)
+    {
+        $user = $request->user();
+        $org = $this->requireOrg($user);
+        $data = $request->validate([
+            'client_check_uuid' => ['required', 'string', 'max:64'],
+            'check_number' => ['nullable', 'string', 'max:40'],
+            'outlet_id' => ['nullable', 'integer'],
+            'branch_id' => ['nullable', 'integer'],
+            'floor_table_id' => ['nullable', 'integer'],
+            'guest_name' => ['nullable', 'string', 'max:160'],
+            'offline_order' => ['nullable', 'boolean'],
+            'client_completed_at' => ['nullable', 'date'],
+            'lines' => ['required', 'array', 'min:1'],
+            'lines.*.product_code' => ['required', 'string', 'max:64'],
+            'lines.*.qty' => ['nullable', 'numeric', 'min:0.0001'],
+            'payments' => ['nullable', 'array'],
+            'payments.*.method_code' => ['required_with:payments', 'string', 'max:40'],
+            'payments.*.amount' => ['required_with:payments', 'numeric', 'min:0.01'],
+            'payments.*.reference' => ['nullable', 'string', 'max:120'],
+        ]);
+
+        $check = $this->checkService->ingestOfflineCashCheck(
+            $org,
+            $user,
+            $data['lines'],
+            $data['payments'] ?? [],
+            $data,
+        );
+
+        return response()->json(['check' => $this->checkService->toArray($check)], 201);
     }
 
     protected function requireOrg($user): Organization
