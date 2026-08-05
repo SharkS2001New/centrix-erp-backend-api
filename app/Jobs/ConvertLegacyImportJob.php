@@ -38,6 +38,10 @@ class ConvertLegacyImportJob implements ShouldQueue
                 throw new \RuntimeException('No uploaded SQL files found for conversion.');
             }
 
+            $targetIndustry = LightStoresCentrixImportCsvGenerator::normalizeTargetIndustry(
+                $payload['target_industry'] ?? null,
+            );
+
             $files = [];
             foreach ($storedPaths as $path) {
                 $full = Storage::disk('local')->path($path);
@@ -50,9 +54,12 @@ class ConvertLegacyImportJob implements ShouldQueue
                 );
             }
 
-            $generator = LightStoresCentrixImportCsvGenerator::fromUploadedFiles($files);
+            $generator = LightStoresCentrixImportCsvGenerator::fromUploadedFiles($files, $targetIndustry);
             $zipPath = $generator->zipToTempFile();
-            $target = 'legacy-imports/'.$task->id.'/centrix-import-csv.zip';
+            $filename = $targetIndustry === LightStoresCentrixImportCsvGenerator::TARGET_HOSPITALITY
+                ? 'centrix-hotel-menu-import-csv.zip'
+                : 'centrix-import-csv.zip';
+            $target = 'legacy-imports/'.$task->id.'/'.$filename;
             Storage::disk('local')->put($target, file_get_contents($zipPath));
             @unlink($zipPath);
 
@@ -63,8 +70,9 @@ class ConvertLegacyImportJob implements ShouldQueue
             $tasks->markCompleted($task, [
                 'disk_path' => $target,
                 'download_path' => $target,
-                'filename' => 'centrix-import-csv.zip',
+                'filename' => $filename,
                 'mime_type' => 'application/zip',
+                'target_industry' => $targetIndustry,
             ]);
         } catch (\Throwable $e) {
             Log::warning('ConvertLegacyImportJob failed', [

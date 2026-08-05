@@ -126,9 +126,9 @@ class DemoDataSeeder extends Seeder
         $cashierPerms = [
             'pos.terminal.view',
             'pos.checkout.create',
-            'pos.till_management.view',
+            // Terminal open/close only — Backoffice Till management / EOD require view rights.
             'pos.till_management.create',
-            'pos.end_of_day.view',
+            'catalogue.products.view',
         ];
         foreach ($cashierPerms as $code) {
             $pid = Permission::where('permission_code', $code)->value('id');

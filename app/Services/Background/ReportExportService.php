@@ -214,9 +214,16 @@ class ReportExportService
         $options->set('isRemoteEnabled', false);
         $options->set('defaultFont', 'DejaVu Sans');
 
+        $tableColumnCount = count(array_values(array_filter(
+            $columns,
+            fn (array $column) => ! $this->isPrintAsRowColumn($column),
+        )));
+        // Wide payroll / remittance tables need landscape; narrow reports stay portrait.
+        $orientation = $tableColumnCount >= 7 ? 'landscape' : 'portrait';
+
         $dompdf = new Dompdf($options);
         $dompdf->loadHtml($html);
-        $dompdf->setPaper('A4', 'landscape');
+        $dompdf->setPaper('A4', $orientation);
         $dompdf->render();
         file_put_contents($absolute, $dompdf->output());
 
@@ -337,6 +344,13 @@ class ReportExportService
             fn (array $column) => $this->isPrintAsRowColumn($column),
         ));
         $colSpan = max(1, count($tableColumns));
+        $wideTable = count($tableColumns) >= 7;
+        $veryWide = count($tableColumns) >= 10;
+        $compactCss = $wideTable
+            ? ($veryWide
+                ? 'table { font-size: 7px; } th, td { padding: 2px 3px; } th { white-space: nowrap; }'
+                : 'table { font-size: 8px; } th, td { padding: 3px 4px; } th { white-space: nowrap; }')
+            : '';
 
         $head = '';
         foreach ($tableColumns as $column) {
@@ -430,6 +444,7 @@ class ReportExportService
 tr.note-row td { background: #f8fafc; color: #334155; font-size: 0.92em; padding-top: 4px; padding-bottom: 6px; }
 .print-section-break { page-break-before: always; break-before: page; }
 h1.section-title { margin: 0 0 10px; font-size: 18px; font-weight: 700; color: #0f172a; }
+'.$compactCss.'
 </style></head><body>
 '.$watermarkHtml.'
 '.$orgHeaderHtml.'

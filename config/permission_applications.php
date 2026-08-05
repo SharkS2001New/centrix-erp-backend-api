@@ -65,7 +65,7 @@ return [
             // Only till ops from the pos registry — terminal/checkout stay under External POS.
             // Reports: operational only — finance → Accounting, payroll → HR, logistics → Distribution.
             'module_features' => [
-                'pos' => ['till_management', 'end_of_day'],
+                'pos' => ['till_management', 'end_of_day', 'payments_breakdown'],
                 'reports' => [
                     'hub',
                     'builder',
@@ -157,6 +157,8 @@ return [
                     'journal_register',
                     'subledger_reconciliation',
                     'kra_receipts',
+                    'kra_compliance_summary',
+                    'kra_unfiscalized_sales',
                 ],
             ],
             'module_labels' => [

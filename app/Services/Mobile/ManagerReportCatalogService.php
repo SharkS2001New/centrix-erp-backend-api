@@ -53,6 +53,8 @@ class ManagerReportCatalogService
         'stock-reservations',
         // Compliance suite stays on web ERP (KRA receipts + audit trail).
         'kra-receipts',
+        'kra-compliance-summary',
+        'kra-unfiscalized-sales',
         'audit-trail',
     ];
 

@@ -272,6 +272,15 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
             $body['sell_on_retail'] = false;
         }
 
+        foreach (['sell_on_bar', 'sell_on_hotel'] as $channelKey) {
+            $channel = strtolower(trim((string) ($row[$channelKey] ?? '')));
+            if (in_array($channel, ['true', '1', 'yes'], true)) {
+                $body[$channelKey] = true;
+            } elseif (in_array($channel, ['false', '0', 'no'], true)) {
+                $body[$channelKey] = false;
+            }
+        }
+
         return $body;
     }
 

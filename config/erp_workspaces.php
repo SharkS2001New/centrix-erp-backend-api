@@ -31,9 +31,12 @@ return [
             'sales.',
             'inventory.',
             'purchasing.',
+            // reports.* / dashboard.* are filtered in WorkspaceResolver:
+            // finance/HR reports and Business summary alone must not unlock Backoffice.
             'reports.',
             'dashboard.',
         ],
+        // Till ops view/EOD also unlock Backoffice (see WorkspaceResolver).
     ],
     'hotel_bar_pos' => [
         'label' => 'Hotel POS',

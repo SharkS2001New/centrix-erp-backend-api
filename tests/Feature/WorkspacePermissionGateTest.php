@@ -64,6 +64,69 @@ class WorkspacePermissionGateTest extends TestCase
         $this->assertContains('accounting', $ids);
     }
 
+    public function test_accountant_finance_permissions_do_not_unlock_backoffice(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['accounting'] = true;
+        $modules['sales.backend'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'accounting.dashboard.view',
+            'accounting.expenses.view',
+            'dashboard.overview.view',
+            'reports.hub.view',
+            'reports.profit_loss.view',
+            'reports.expenses.view',
+            'reports.journal_register.view',
+        ]);
+
+        $ids = $this->workspaceIdsFor($user);
+
+        $this->assertContains('accounting', $ids);
+        $this->assertNotContains('backoffice', $ids);
+    }
+
+    public function test_till_ops_view_unlocks_backoffice_but_create_does_not(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['sales.backend'] = true;
+        $modules['sales.pos'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $createOnly = $this->makeUserWithPermissions($admin, [
+            'pos.terminal.view',
+            'pos.checkout.create',
+            'pos.till_management.create',
+        ]);
+        $this->assertNotContains('backoffice', $this->workspaceIdsFor($createOnly));
+
+        $withView = $this->makeUserWithPermissions($admin, [
+            'pos.terminal.view',
+            'pos.till_management.view',
+        ]);
+        $this->assertContains('backoffice', $this->workspaceIdsFor($withView));
+    }
+
+    public function test_operational_report_permission_unlocks_backoffice(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['sales.backend'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'reports.daily_sales.view',
+        ]);
+
+        $this->assertContains('backoffice', $this->workspaceIdsFor($user));
+    }
+
     public function test_user_without_hr_permissions_does_not_see_hr_workspace(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

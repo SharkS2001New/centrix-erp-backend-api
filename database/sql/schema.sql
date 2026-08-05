@@ -2442,15 +2442,106 @@ WHERE s.is_credit_sale = 1
 DROP VIEW IF EXISTS v_kra_receipts;
 CREATE VIEW v_kra_receipts AS
 SELECT
+    kr.id AS kra_response_id,
+    kr.sale_id,
+    COALESCE(kr.order_no, s.order_num) AS order_no,
+    s.order_num AS sale_order_num,
+    DATE(kr.created_at) AS receipt_date,
+    kr.created_at AS receipt_at,
+    kr.invoice_number,
+    kr.serial_number,
+    kr.signature_link,
+    kr.receipt_signature,
+    kr.kra_timestamp,
+    kr.status,
+    kr.error_message,
+    s.branch_id,
+    b.branch_name,
+    s.channel,
+    s.order_total,
+    s.total_vat,
+    COALESCE(kr.organization_id, s.organization_id) AS organization_id
+FROM kra_responses kr
+INNER JOIN sales s ON s.id = kr.sale_id
+LEFT JOIN branches b ON b.id = s.branch_id;
+
+DROP VIEW IF EXISTS v_kra_compliance_summary;
+CREATE VIEW v_kra_compliance_summary AS
+SELECT
     DATE(kr.created_at) AS receipt_date,
     s.branch_id,
+    b.branch_name,
     s.channel,
-    kr.status,
     COUNT(*) AS receipt_count,
-    SUM(s.order_total) AS order_total
+    COUNT(DISTINCT s.id) AS sale_count,
+    SUM(CASE WHEN kr.status = 'success' THEN 1 ELSE 0 END) AS success_count,
+    SUM(CASE WHEN kr.status = 'failed' THEN 1 ELSE 0 END) AS failed_count,
+    SUM(CASE WHEN kr.status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+    COUNT(DISTINCT CASE
+        WHEN kr.status = 'success' AND kr.invoice_number IS NOT NULL AND kr.invoice_number != ''
+        THEN kr.invoice_number
+    END) AS cu_invoice_count,
+    ROUND(
+        100 * SUM(CASE WHEN kr.status = 'success' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0),
+        1
+    ) AS success_rate_pct,
+    SUM(CASE WHEN kr.status = 'success' THEN s.order_total ELSE 0 END) AS fiscalized_total,
+    SUM(CASE WHEN kr.status = 'failed' THEN s.order_total ELSE 0 END) AS failed_total,
+    SUM(s.order_total) AS order_total,
+    SUM(CASE WHEN kr.status = 'success' THEN COALESCE(s.total_vat, 0) ELSE 0 END) AS fiscalized_vat,
+    SUM(CASE WHEN kr.status = 'failed' THEN COALESCE(s.total_vat, 0) ELSE 0 END) AS failed_vat,
+    SUM(COALESCE(s.total_vat, 0)) AS total_vat,
+    COALESCE(kr.organization_id, s.organization_id) AS organization_id
 FROM kra_responses kr
-JOIN sales s ON kr.sale_id = s.id
-GROUP BY DATE(kr.created_at), s.branch_id, s.channel, kr.status;
+INNER JOIN sales s ON s.id = kr.sale_id
+LEFT JOIN branches b ON b.id = s.branch_id
+GROUP BY
+    DATE(kr.created_at),
+    s.branch_id,
+    b.branch_name,
+    s.channel,
+    COALESCE(kr.organization_id, s.organization_id);
+
+DROP VIEW IF EXISTS v_kra_unfiscalized_sales;
+CREATE VIEW v_kra_unfiscalized_sales AS
+SELECT
+    DATE(COALESCE(s.completed_at, s.created_at)) AS sale_date,
+    COALESCE(s.completed_at, s.created_at) AS sale_at,
+    s.id AS sale_id,
+    s.order_num AS order_no,
+    s.branch_id,
+    b.branch_name,
+    s.channel,
+    s.status AS sale_status,
+    s.payment_status,
+    s.order_total,
+    s.total_vat,
+    s.organization_id,
+    (
+        SELECT kr.status
+        FROM kra_responses kr
+        WHERE kr.sale_id = s.id
+        ORDER BY kr.id DESC
+        LIMIT 1
+    ) AS last_kra_status,
+    (
+        SELECT kr.error_message
+        FROM kra_responses kr
+        WHERE kr.sale_id = s.id
+        ORDER BY kr.id DESC
+        LIMIT 1
+    ) AS last_kra_error
+FROM sales s
+LEFT JOIN branches b ON b.id = s.branch_id
+WHERE s.archived = 0
+  AND s.deleted_at IS NULL
+  AND s.status IN ('completed', 'paid', 'delivered')
+  AND NOT EXISTS (
+      SELECT 1
+      FROM kra_responses kr
+      WHERE kr.sale_id = s.id
+        AND kr.status = 'success'
+  );
 
 DROP VIEW IF EXISTS v_stock_reservations_active;
 CREATE VIEW v_stock_reservations_active AS

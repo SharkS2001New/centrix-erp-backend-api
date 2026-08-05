@@ -25,6 +25,7 @@ class LegacyImportConverterController extends Controller
             'files' => ['required', 'array', 'min:1'],
             'files.*' => ['file', 'max:51200'],
             'sync' => ['sometimes', 'boolean'],
+            'target_industry' => ['sometimes', 'string', 'in:commerce,hospitality,hotel,hotel_bar'],
         ]);
 
         $files = $request->file('files', []);
@@ -33,6 +34,10 @@ class LegacyImportConverterController extends Controller
                 'message' => 'Upload at least one LightStores SQL dump file.',
             ], 422);
         }
+
+        $targetIndustry = LightStoresCentrixImportCsvGenerator::normalizeTargetIndustry(
+            $request->input('target_industry'),
+        );
 
         $totalBytes = array_sum(array_map(fn ($file) => (int) $file->getSize(), $files));
         // Default sync for typical dump sets. Queue only very large uploads (or sync=0).
@@ -52,6 +57,7 @@ class LegacyImportConverterController extends Controller
 
             $task = $this->tasks->create('legacy_import_convert', $request->user(), [
                 'stored_paths' => $storedPaths,
+                'target_industry' => $targetIndustry,
             ]);
             ConvertLegacyImportJob::dispatch($task->id);
 
@@ -59,11 +65,12 @@ class LegacyImportConverterController extends Controller
                 'message' => 'Legacy SQL conversion queued.',
                 'task_id' => $task->id,
                 'queued' => true,
+                'target_industry' => $targetIndustry,
             ], 202);
         }
 
         try {
-            $generator = LightStoresCentrixImportCsvGenerator::fromUploadedFiles($files);
+            $generator = LightStoresCentrixImportCsvGenerator::fromUploadedFiles($files, $targetIndustry);
             $zipPath = $generator->zipToTempFile();
         } catch (\Throwable $e) {
             return response([
@@ -71,9 +78,13 @@ class LegacyImportConverterController extends Controller
             ], 422);
         }
 
+        $filename = $targetIndustry === LightStoresCentrixImportCsvGenerator::TARGET_HOSPITALITY
+            ? 'centrix-hotel-menu-import-csv.zip'
+            : 'centrix-import-csv.zip';
+
         return response()->download(
             $zipPath,
-            'centrix-import-csv.zip',
+            $filename,
             ['Content-Type' => 'application/zip'],
         )->deleteFileAfterSend(true);
     }

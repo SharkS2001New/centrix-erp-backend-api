@@ -250,6 +250,8 @@ return [
         'accounts-payable' => 'accounting.reports',
         'subledger-reconciliation' => 'accounting.reports',
         'kra-receipts' => 'accounting.reports',
+        'kra-compliance-summary' => 'accounting.reports',
+        'kra-unfiscalized-sales' => 'accounting.reports',
 
         'purchases-by-supplier' => 'customers_suppliers.reports',
         'open-lpo' => 'customers_suppliers.reports',
@@ -299,5 +301,7 @@ return [
         'expenses',
         'invoice-payments',
         'kra-receipts',
+        'kra-compliance-summary',
+        'kra-unfiscalized-sales',
     ],
 ];

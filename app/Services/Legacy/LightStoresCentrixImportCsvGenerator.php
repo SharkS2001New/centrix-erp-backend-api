@@ -11,22 +11,44 @@ use ZipArchive;
  */
 class LightStoresCentrixImportCsvGenerator
 {
+  public const TARGET_COMMERCE = 'commerce';
+
+  public const TARGET_HOSPITALITY = 'hospitality';
+
   private const KRA_PIN_PLACEHOLDERS = [
     '', 'K.R.A PIN', 'KRA PIN', 'KRA', 'PIN', 'S', 'A', 'N/A', 'NA', 'NULL',
   ];
 
   private SqlDumpInsertParser $parser;
 
+  private string $targetIndustry;
+
   /** @param  array<string, string>  $sqlByTable */
   public function __construct(
     private array $sqlByTable = [],
     ?SqlDumpInsertParser $parser = null,
+    string $targetIndustry = self::TARGET_COMMERCE,
   ) {
     $this->parser = $parser ?? new SqlDumpInsertParser;
+    $this->targetIndustry = self::normalizeTargetIndustry($targetIndustry);
+  }
+
+  public static function normalizeTargetIndustry(?string $value): string
+  {
+    $normalized = strtolower(trim((string) $value));
+
+    return in_array($normalized, [self::TARGET_HOSPITALITY, 'hotel', 'hotel_bar'], true)
+      ? self::TARGET_HOSPITALITY
+      : self::TARGET_COMMERCE;
+  }
+
+  public function isHospitalityTarget(): bool
+  {
+    return $this->targetIndustry === self::TARGET_HOSPITALITY;
   }
 
   /** @param  array<int, \Illuminate\Http\UploadedFile>  $files */
-  public static function fromUploadedFiles(array $files): self
+  public static function fromUploadedFiles(array $files, string $targetIndustry = self::TARGET_COMMERCE): self
   {
     $sqlByTable = [];
     $parser = new SqlDumpInsertParser;
@@ -36,18 +58,20 @@ class LightStoresCentrixImportCsvGenerator
         continue;
       }
       $sql = (string) file_get_contents($file->getRealPath());
-      $table = $parser->detectTableName($sql);
-      if ($table === null) {
+      $tables = $parser->detectAllTableNames($sql);
+      if ($tables === []) {
         $base = strtolower(pathinfo($file->getClientOriginalName(), PATHINFO_FILENAME));
-        $table = preg_replace('/^superdb_/', '', $base) ?: null;
+        $fallback = preg_replace('/^superdb_/', '', $base) ?: null;
+        if ($fallback !== null) {
+          $tables = [$fallback];
+        }
       }
-      if ($table === null) {
-        continue;
+      foreach ($tables as $table) {
+        $sqlByTable[$table] = ($sqlByTable[$table] ?? '')."\n".$sql;
       }
-      $sqlByTable[$table] = ($sqlByTable[$table] ?? '')."\n".$sql;
     }
 
-    return new self($sqlByTable, $parser);
+    return new self($sqlByTable, $parser, $targetIndustry);
   }
 
   /** @return array<string, string> filename => CSV content */
@@ -55,53 +79,68 @@ class LightStoresCentrixImportCsvGenerator
   {
     $lookups = $this->loadLookupMaps();
     $routeNames = $lookups['routes'];
+    $hospitality = $this->isHospitalityTarget();
 
     [$supplierHeaders, $supplierRows, $supplierRefHeaders, $supplierRefRows] = $this->buildSuppliers();
-    [$customerHeaders, $customerRows, $customerRefHeaders, $customerRefRows] = $this->buildCustomers($routeNames);
     [$productHeaders, $productRows] = $this->buildProducts($lookups);
-    [$retailHeaders, $retailRows] = $this->buildRetailPackages();
 
-    [$routesH, $routes] = $this->buildRoutesImport();
     [$catH, $cat] = $this->buildCategoriesImport();
     [$subH, $sub] = $this->buildSubcategoriesImport($lookups);
     [$uomH, $uom] = $this->buildUomsImport();
     [$vatH, $vat] = $this->buildVatsImport();
 
-    [$refRoutesH, $refRoutes] = $this->buildReferenceRoutes();
     [$refCatH, $refCat] = $this->buildReferenceCategories();
     [$refSubH, $refSub] = $this->buildReferenceSubcategories();
     [$refUomH, $refUom] = $this->buildReferenceUoms();
     [$refVatH, $refVat] = $this->buildReferenceVats();
 
-    return [
+    $files = [
       'vats-import.csv' => $this->csvContent($vatH, $vat),
       'categories-import.csv' => $this->csvContent($catH, $cat),
       'subcategories-import.csv' => $this->csvContent($subH, $sub),
       'uoms-import.csv' => $this->csvContent($uomH, $uom),
-      'routes-import.csv' => $this->csvContent($routesH, $routes),
       'suppliers-import.csv' => $this->csvContent($supplierHeaders, $supplierRows),
       'reference-suppliers.csv' => $this->csvContent($supplierRefHeaders, $supplierRefRows),
-      'customers-import.csv' => $this->csvContent($customerHeaders, $customerRows),
-      'reference-customers.csv' => $this->csvContent($customerRefHeaders, $customerRefRows),
       'products-import.csv' => $this->csvContent($productHeaders, $productRows),
-      'retail-packages-import.csv' => $this->csvContent($retailHeaders, $retailRows),
-      'reference-routes.csv' => $this->csvContent($refRoutesH, $refRoutes),
       'reference-categories.csv' => $this->csvContent($refCatH, $refCat),
       'reference-subcategories.csv' => $this->csvContent($refSubH, $refSub),
       'reference-uoms.csv' => $this->csvContent($refUomH, $refUom),
       'reference-vats.csv' => $this->csvContent($refVatH, $refVat),
-      'README.md' => $this->buildReadme([
-        'vats' => count($vat),
-        'categories' => count($cat),
-        'subcategories' => count($sub),
-        'uoms' => count($uom),
-        'routes' => count($routes),
-        'suppliers' => count($supplierRows),
-        'customers' => count($customerRows),
-        'products' => count($productRows),
-        'retail_packages' => count($retailRows),
-      ]),
     ];
+
+    $counts = [
+      'vats' => count($vat),
+      'categories' => count($cat),
+      'subcategories' => count($sub),
+      'uoms' => count($uom),
+      'routes' => 0,
+      'suppliers' => count($supplierRows),
+      'customers' => 0,
+      'products' => count($productRows),
+      'retail_packages' => 0,
+      'target' => $hospitality ? 'hospitality' : 'commerce',
+    ];
+
+    if (! $hospitality) {
+      [$customerHeaders, $customerRows, $customerRefHeaders, $customerRefRows] = $this->buildCustomers($routeNames);
+      [$retailHeaders, $retailRows] = $this->buildRetailPackages();
+      [$routesH, $routes] = $this->buildRoutesImport();
+      [$refRoutesH, $refRoutes] = $this->buildReferenceRoutes();
+
+      $files['routes-import.csv'] = $this->csvContent($routesH, $routes);
+      $files['customers-import.csv'] = $this->csvContent($customerHeaders, $customerRows);
+      $files['reference-customers.csv'] = $this->csvContent($customerRefHeaders, $customerRefRows);
+      $files['retail-packages-import.csv'] = $this->csvContent($retailHeaders, $retailRows);
+      $files['reference-routes.csv'] = $this->csvContent($refRoutesH, $refRoutes);
+
+      $counts['routes'] = count($routes);
+      $counts['customers'] = count($customerRows);
+      $counts['retail_packages'] = count($retailRows);
+    }
+
+    $files['README.md'] = $this->buildReadme($counts);
+
+    return $files;
   }
 
   public function zipToTempFile(): string
@@ -267,6 +306,7 @@ class LightStoresCentrixImportCsvGenerator
    */
   private function buildProducts(array $lookups): array
   {
+    $hospitality = $this->isHospitalityTarget();
     // Matches Centrix advanced product import sample headers (incl. optional shelf_location).
     $headers = [
       'product_code', 'product_name', 'category_name', 'subcategory_name', 'measure_name',
@@ -274,6 +314,11 @@ class LightStoresCentrixImportCsvGenerator
       'product_weight', 'shelf_location', 'stock_in_shop', 'stock_in_store', 'reorder_point',
       'supplier_name', 'vat_code', 'sell_on_retail',
     ];
+    if ($hospitality) {
+      $headers[] = 'sell_on_bar';
+      $headers[] = 'sell_on_hotel';
+    }
+
     $rows = [];
     $seen = [];
     $subcategories = $lookups['subcategories'];
@@ -282,18 +327,18 @@ class LightStoresCentrixImportCsvGenerator
     $suppliers = $lookups['suppliers'];
 
     foreach ($this->loadRows('product') as $r) {
-      if (count($r) < 29 || $r[26] !== null) {
+      if (! $this->isActiveProductRow($r)) {
         continue;
       }
-      $productCode = $this->cleanText($r[4]);
-      $productName = $this->cleanText($r[5]);
+      $productCode = $this->cleanText($r[4] ?? null);
+      $productName = $this->cleanText($r[5] ?? null);
       if ($productCode === '' || $productName === '' || isset($seen[$productCode])) {
         continue;
       }
       $seen[$productCode] = true;
 
-      $subcategoryId = $r[7];
-      $unitId = $r[8];
+      $subcategoryId = $r[7] ?? null;
+      $unitId = $r[8] ?? null;
       if (in_array($subcategoryId, [null, 0, '0'], true) || in_array($unitId, [null, 0, '0'], true)) {
         continue;
       }
@@ -308,22 +353,20 @@ class LightStoresCentrixImportCsvGenerator
       }
 
       $supplierName = '';
-      $legacySupplierId = $r[12];
+      $legacySupplierId = $r[12] ?? null;
       if (! in_array($legacySupplierId, [null, 0, '0'], true)) {
         $supplierName = $suppliers[(int) $legacySupplierId] ?? '';
       }
 
-      $vatCode = '';
-      if (! in_array($r[24] ?? null, [null, 0, '0'], true)) {
-        $vatCode = $vats[(int) $r[24]] ?? '';
-      }
+      $vatCode = $this->productVatCode($r, $vats);
 
-      $discountType = $this->cleanText($r[16]) ?: 'percentage';
-      $discountAmount = (float) ($r[17] ?? 0);
-      $discountPercentage = $discountType === 'percentage' ? $discountAmount : '';
-      $discountValue = $discountType === 'fixed' ? $discountAmount : '';
+      [$discountType, $discountPercentage, $discountValue] = $this->productDiscountFields($r);
 
-      $rows[] = $this->csvEscapeRow([
+      $sellOnRetail = $hospitality
+        ? 'false'
+        : ($this->productSellOnRetail($r) ? 'true' : 'false');
+
+      $row = [
         $productCode,
         $productName,
         $catName,
@@ -334,18 +377,119 @@ class LightStoresCentrixImportCsvGenerator
         $discountType,
         $discountPercentage,
         $discountValue,
-        $r[15] !== null ? (float) $r[15] : '',
+        isset($r[15]) && $r[15] !== null ? (float) $r[15] : '',
         '', // shelf_location — not present in LightStores dumps
         (float) ($r[9] ?? 0),
         (float) ($r[10] ?? 0),
         0,
         $supplierName,
         $vatCode,
-        in_array($r[28] ?? null, [1, '1', true], true) ? 'true' : 'false',
-      ]);
+        $sellOnRetail,
+      ];
+
+      if ($hospitality) {
+        [$sellOnBar, $sellOnHotel] = $this->resolveHospitalityChannels($catName, $subName, $productName);
+        $row[] = $sellOnBar ? 'true' : 'false';
+        $row[] = $sellOnHotel ? 'true' : 'false';
+      }
+
+      $rows[] = $this->csvEscapeRow($row);
     }
 
     return [$headers, $rows];
+  }
+
+  /**
+   * LightStores product dumps appear as ~25-column (older) or 29+-column (newer) VALUES rows.
+   *
+   * @param  list<mixed>  $r
+   */
+  private function isActiveProductRow(array $r): bool
+  {
+    $count = count($r);
+    if ($count < 21) {
+      return false;
+    }
+    $deletedIndex = $count >= 29 ? 26 : 20;
+
+    return ($r[$deletedIndex] ?? null) === null;
+  }
+
+  /**
+   * @param  list<mixed>  $r
+   * @param  array<int, string>  $vats
+   */
+  private function productVatCode(array $r, array $vats): string
+  {
+    $count = count($r);
+    $vatIndex = $count >= 29 ? 24 : 18;
+    $vatId = $r[$vatIndex] ?? null;
+    if (in_array($vatId, [null, 0, '0'], true)) {
+      return '';
+    }
+
+    return $vats[(int) $vatId] ?? '';
+  }
+
+  /**
+   * @param  list<mixed>  $r
+   * @return array{0: string, 1: float|string, 2: float|string}
+   */
+  private function productDiscountFields(array $r): array
+  {
+    $rawType = $this->cleanText($r[16] ?? null);
+    if ($rawType === '' || is_numeric($rawType)) {
+      // Older dumps store a numeric discount amount at index 16 without a type label.
+      $amount = (float) ($r[16] ?? 0);
+
+      return ['percentage', $amount, ''];
+    }
+
+    $discountType = $rawType ?: 'percentage';
+    $discountAmount = (float) ($r[17] ?? 0);
+    $discountPercentage = $discountType === 'percentage' ? $discountAmount : '';
+    $discountValue = $discountType === 'fixed' ? $discountAmount : '';
+
+    return [$discountType, $discountPercentage, $discountValue];
+  }
+
+  /** @param  list<mixed>  $r */
+  private function productSellOnRetail(array $r): bool
+  {
+    if (count($r) >= 29) {
+      return in_array($r[28] ?? null, [1, '1', true], true);
+    }
+
+    // Older dumps have no sell_on_retail column — default to sellable on retail.
+    return true;
+  }
+
+  /**
+   * Map category / product wording to Hotel POS channels (Bar vs Restaurant menu).
+   *
+   * @return array{0: bool, 1: bool} sell_on_bar, sell_on_hotel
+   */
+  private function resolveHospitalityChannels(string $categoryName, string $subcategoryName, string $productName): array
+  {
+    $hay = strtolower(trim($categoryName.' '.$subcategoryName.' '.$productName));
+    $drink = (bool) preg_match(
+      '/\b(drink|drinks|beverage|beverages|bar|beer|wine|spirit|spirits|alcohol|cocktail|liquor|juice|soda|soft\s*drink|coffee|tea)\b/',
+      $hay,
+    );
+    $food = (bool) preg_match(
+      '/\b(food|kitchen|meal|meals|breakfast|lunch|dinner|starter|main|dessert|snack|cuisine|restaurant|buffet)\b/',
+      $hay,
+    );
+
+    if ($drink && ! $food) {
+      return [true, false];
+    }
+    if ($food && ! $drink) {
+      return [false, true];
+    }
+
+    // Ambiguous / general catalogue items — available on both Hotel POS menus.
+    return [true, true];
   }
 
   /** @return array{0: list<string>, 1: list<list<string>>, 2: list<string>, 3: list<list<string>>} */
@@ -796,10 +940,10 @@ class LightStoresCentrixImportCsvGenerator
   {
     $ids = [];
     foreach ($this->loadRows('product') as $r) {
-      if (count($r) < 29 || $r[26] !== null) {
+      if (! $this->isActiveProductRow($r)) {
         continue;
       }
-      $unitId = $r[8];
+      $unitId = $r[8] ?? null;
       if (! in_array($unitId, [null, 0, '0'], true)) {
         $ids[] = (int) $unitId;
       }
@@ -808,26 +952,39 @@ class LightStoresCentrixImportCsvGenerator
     return $ids;
   }
 
-  /** @param  array<string, int>  $counts */
+  /** @param  array<string, int|string>  $counts */
   private function buildReadme(array $counts): string
   {
-    return <<<MD
-# Centrix ERP — manual import files (from LightStores dump)
+    $hospitality = ($counts['target'] ?? '') === 'hospitality';
+    $title = $hospitality
+      ? '# Centrix ERP — Hotel Menu Catalogue import (from LightStores dump)'
+      : '# Centrix ERP — manual import files (from LightStores dump)';
 
-## File counts
+    $extra = $hospitality
+      ? <<<'MD'
 
-- VAT rates: {$counts['vats']}
-- Categories: {$counts['categories']}
-- Subcategories: {$counts['subcategories']}
-- Units of measure: {$counts['uoms']}
-- Routes: {$counts['routes']}
-- Suppliers: {$counts['suppliers']}
-- Customers: {$counts['customers']}
-- Products: {$counts['products']}
-- Retail packages: {$counts['retail_packages']}
+## Hotel / Hospitality target
 
-## Recommended import order
+Products are emitted as **Hotel Menu Catalogue** items:
 
+- `sell_on_retail` = false
+- `sell_on_bar` / `sell_on_hotel` set from category / product wording (drinks → Bar, food → Restaurant; otherwise both)
+- Routes, customers, and retail packages are omitted (not used by Hotel POS)
+
+Import into the tenant **Menu catalogue** (Hospitality Backoffice → Products) with Advanced data import enabled.
+MD
+      : '';
+
+    $order = $hospitality
+      ? <<<'MD'
+1. `vats-import.csv`
+2. `categories-import.csv`
+3. `subcategories-import.csv`
+4. `uoms-import.csv`
+5. `suppliers-import.csv`
+6. `products-import.csv` (Hotel Menu Catalogue — Bar / Restaurant channels)
+MD
+      : <<<'MD'
 1. `vats-import.csv`
 2. `categories-import.csv`
 3. `subcategories-import.csv`
@@ -837,8 +994,30 @@ class LightStoresCentrixImportCsvGenerator
 7. `customers-import.csv`
 8. `products-import.csv`
 9. `retail-packages-import.csv`
+MD;
+
+    $routesLine = $hospitality ? '' : "- Routes: {$counts['routes']}\n";
+    $customersLine = $hospitality ? '' : "- Customers: {$counts['customers']}\n";
+    $retailLine = $hospitality ? '' : "- Retail packages: {$counts['retail_packages']}\n";
+
+    return <<<MD
+{$title}
+
+## File counts
+
+- VAT rates: {$counts['vats']}
+- Categories: {$counts['categories']}
+- Subcategories: {$counts['subcategories']}
+- Units of measure: {$counts['uoms']}
+{$routesLine}- Suppliers: {$counts['suppliers']}
+{$customersLine}- Products: {$counts['products']}
+{$retailLine}
+## Recommended import order
+
+{$order}
 
 Reference `reference-*.csv` files are for audit only — do not import them directly.
+{$extra}
 MD;
   }
 

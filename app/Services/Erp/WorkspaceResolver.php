@@ -18,6 +18,25 @@ class WorkspaceResolver
     ];
 
     /**
+     * Till operations live under Backoffice (not External POS).
+     * View/EOD unlock the shell; create-only (cashiers) must not.
+     */
+    protected const BACKOFFICE_TILL_OPS_PERMISSION_CODES = [
+        'pos.till_management.view',
+        'pos.till_management.edit',
+        'pos.end_of_day.view',
+    ];
+
+    /**
+     * Shared report codes that belong to every workspace hub — must not unlock Backoffice alone
+     * (e.g. Accountants with reports.hub.view + finance reports).
+     */
+    protected const BACKOFFICE_NON_ENTRY_REPORT_FEATURES = [
+        'hub',
+        'builder',
+    ];
+
+    /**
      * @return list<array{id: string, label: string, description: string, icon: string, home_path: string}>
      */
     public function availableForUser(?User $user, CapabilityGate $gate): array
@@ -173,6 +192,10 @@ class WorkspaceResolver
             return (bool) ($permissionMap[$entryPermission] ?? false);
         }
 
+        if ($workspaceId === 'backoffice') {
+            return $this->userHasBackofficePermission($permissionMap);
+        }
+
         $prefixes = $definition['permission_prefixes'] ?? [];
         if ($prefixes === []) {
             return true;
@@ -180,12 +203,6 @@ class WorkspaceResolver
 
         foreach ($permissionMap as $code => $granted) {
             if (! $granted) {
-                continue;
-            }
-            if (
-                $workspaceId === 'backoffice'
-                && in_array((string) $code, self::BACKOFFICE_POS_SHARED_PERMISSION_CODES, true)
-            ) {
                 continue;
             }
             foreach ($prefixes as $prefix) {
@@ -196,6 +213,78 @@ class WorkspaceResolver
         }
 
         return false;
+    }
+
+    /**
+     * Backoffice entry: operational rights, till-ops view/EOD, or operational report features.
+     * Finance/HR/logistics reports, report hub, and Business summary alone must not unlock it.
+     *
+     * @param  array<string, bool>  $permissionMap
+     */
+    protected function userHasBackofficePermission(array $permissionMap): bool
+    {
+        foreach ($permissionMap as $code => $granted) {
+            if (! $granted) {
+                continue;
+            }
+            if ($this->permissionUnlocksBackoffice((string) $code)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function permissionUnlocksBackoffice(string $code): bool
+    {
+        if (in_array($code, self::BACKOFFICE_POS_SHARED_PERMISSION_CODES, true)) {
+            return false;
+        }
+
+        if (in_array($code, self::BACKOFFICE_TILL_OPS_PERMISSION_CODES, true)) {
+            return true;
+        }
+
+        // Overview is a landing page inside Backoffice, not an entry right for Accountants/HR.
+        if ($code === 'dashboard.overview.view') {
+            return false;
+        }
+
+        if (str_starts_with($code, 'dashboard.')) {
+            return true;
+        }
+
+        if (str_starts_with($code, 'reports.')) {
+            return $this->isBackofficeOperationalReportPermission($code);
+        }
+
+        foreach (['catalogue.', 'customers.', 'sales.', 'inventory.', 'purchasing.'] as $prefix) {
+            if (str_starts_with($code, $prefix)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function isBackofficeOperationalReportPermission(string $code): bool
+    {
+        $parts = explode('.', $code);
+        if (count($parts) < 3 || $parts[0] !== 'reports') {
+            return false;
+        }
+
+        $feature = $parts[1];
+        if (in_array($feature, self::BACKOFFICE_NON_ENTRY_REPORT_FEATURES, true)) {
+            return false;
+        }
+
+        $allowed = config('permission_applications.applications.backoffice.module_features.reports', []);
+        if (! is_array($allowed)) {
+            return false;
+        }
+
+        return in_array($feature, array_map('strval', $allowed), true);
     }
 
     /**

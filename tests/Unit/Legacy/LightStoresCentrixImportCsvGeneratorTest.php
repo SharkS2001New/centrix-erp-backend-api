@@ -38,8 +38,7 @@ SQL;
         $files = $generator->generateAll();
 
         $this->assertArrayHasKey('products-import.csv', $files);
-        $this->assertArrayNotHasKey('reference-categories.csv', $files);
-        $this->assertArrayNotHasKey('reference-products.csv', $files);
+        $this->assertArrayHasKey('reference-categories.csv', $files);
 
         $lines = preg_split("/\r\n|\n|\r/", trim($files['products-import.csv'])) ?: [];
         $this->assertGreaterThanOrEqual(2, count($lines));
@@ -49,6 +48,40 @@ SQL;
         $this->assertStringContainsString('Sugar', $lines[1]);
         $this->assertStringContainsString('Acme', $lines[1]);
         $this->assertStringContainsString('V', $lines[1]);
+        $this->assertStringContainsString('sell_on_retail', $lines[0]);
+        $this->assertStringNotContainsString('sell_on_bar', $lines[0]);
+    }
+
+    public function test_hospitality_products_include_menu_channels_and_skip_retail_files(): void
+    {
+        $sqlByTable = [
+            'category' => "INSERT INTO `category` VALUES ('2020-01-01',NULL,10,'Drinks');\n",
+            'sub_category' => "INSERT INTO `sub_category` VALUES ('2020-01-01',NULL,20,'Beer','',10);\n",
+            'uom' => "INSERT INTO `uom` VALUES ('2020-01-01',NULL,30,'BOTTLE','Bottle');\n",
+            'vat_status' => "INSERT INTO `vat_status` VALUES ('2020-01-01',NULL,40,'Vatable','V',16.00);\n",
+            'product' => $this->sampleProductInsert(code: 9101, name: 'Tusker Lager', deleted: false),
+        ];
+
+        $generator = new LightStoresCentrixImportCsvGenerator(
+            $sqlByTable,
+            null,
+            LightStoresCentrixImportCsvGenerator::TARGET_HOSPITALITY,
+        );
+        $files = $generator->generateAll();
+
+        $this->assertArrayHasKey('products-import.csv', $files);
+        $this->assertArrayNotHasKey('routes-import.csv', $files);
+        $this->assertArrayNotHasKey('customers-import.csv', $files);
+        $this->assertArrayNotHasKey('retail-packages-import.csv', $files);
+
+        $lines = preg_split("/\r\n|\n|\r/", trim($files['products-import.csv'])) ?: [];
+        $this->assertGreaterThanOrEqual(2, count($lines));
+        $this->assertStringContainsString('sell_on_bar', $lines[0]);
+        $this->assertStringContainsString('sell_on_hotel', $lines[0]);
+        $this->assertStringContainsString('Tusker Lager', $lines[1]);
+        // Drink category → bar only
+        $this->assertMatchesRegularExpression('/false,true,false\s*$/', $lines[1]);
+        $this->assertStringContainsString('Hotel Menu Catalogue', $files['README.md']);
     }
 
     public function test_deleted_products_are_skipped(): void

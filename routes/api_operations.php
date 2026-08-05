@@ -416,7 +416,9 @@ Route::middleware('auth:sanctum')->group(function () {
                 Route::get('templates/{templateId}/run', [ReportBuilderController::class, 'runTemplate']);
             });
 
+            Route::get('kra-compliance-summary', [ReportController::class, 'kraComplianceSummary']);
             Route::get('kra-receipts', [ReportController::class, 'kraReceipts']);
+            Route::get('kra-unfiscalized-sales', [ReportController::class, 'kraUnfiscalizedSales']);
             Route::get('audit-trail', [ReportController::class, 'auditTrail']);
 
             Route::prefix('legacy-archive')->group(function () {
@@ -449,8 +451,10 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('hospitality-profit-loss', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'profitLoss']);
             Route::get('hospitality-eod-cashier', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'eodCashier']);
             Route::get('hospitality-consumption-variance', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'consumptionVariance']);
-            Route::get('hospitality-payments-breakdown', [ReportController::class, 'hospitalityPaymentsBreakdown']);
         });
+
+        Route::get('hospitality-payments-breakdown', [ReportController::class, 'hospitalityPaymentsBreakdown'])
+            ->middleware('erp.permission:reports.view|hospitality.reports.view|hospitality.payments_breakdown.view');
 
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {
             Route::get('payroll-summary', [ReportController::class, 'payrollSummary']);
@@ -467,7 +471,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('hr-dashboard-kpi', [HrReportController::class, 'hrDashboardKpi']);
         });
 
-        Route::middleware('erp.permission:reports.view|accounting.view|payments.sale_payments.view|pos.end_of_day.view|pos.till_management.view')->group(function () {
+        Route::middleware('erp.permission:reports.view|accounting.view|payments.sale_payments.view|pos.end_of_day.view|pos.till_management.view|pos.payments_breakdown.view')->group(function () {
             Route::get('journal-register', [ReportController::class, 'journalRegister']);
             Route::get('general-ledger', [AccountingReportController::class, 'generalLedger']);
             Route::get('trial-balance', [AccountingReportController::class, 'trialBalance']);
@@ -602,9 +606,9 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hospitality.dashboard.view');
 
         Route::get('checks', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityCheckController::class, 'index'])
-            ->middleware('erp.permission:hospitality.dashboard.view|hospitality.reports.view|hotel_bar_pos.checks.view');
+            ->middleware('erp.permission:hospitality.dashboard.view|hospitality.reports.view|hospitality.orders.view|hotel_bar_pos.checks.view');
         Route::get('checks/{id}', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityCheckController::class, 'show'])
-            ->middleware('erp.permission:hospitality.dashboard.view|hospitality.reports.view|hotel_bar_pos.checks.view')
+            ->middleware('erp.permission:hospitality.dashboard.view|hospitality.reports.view|hospitality.orders.view|hotel_bar_pos.checks.view')
             ->whereNumber('id');
 
         Route::get('reservations', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReservationController::class, 'index'])

@@ -136,6 +136,13 @@ class ReportController extends Controller
                 ['key' => 'eod-cashier', 'path' => '/reports/eod-cashier', 'label' => 'End of day (cashier)'],
                 ['key' => 'eod-report', 'path' => '/reports/eod-report', 'label' => 'End of day report'],
             ],
+            'compliance' => [
+                ['key' => 'kra-compliance-summary', 'path' => '/reports/kra-compliance-summary', 'label' => 'KRA compliance summary'],
+                ['key' => 'kra-receipts', 'path' => '/reports/kra-receipts', 'label' => 'KRA receipts (per invoice)'],
+                ['key' => 'kra-unfiscalized-sales', 'path' => '/reports/kra-unfiscalized-sales', 'label' => 'Unfiscalized sales'],
+                ['key' => 'vat-collected', 'path' => '/reports/vat-collected', 'label' => 'VAT collected'],
+                ['key' => 'audit-trail', 'path' => '/reports/audit-trail', 'label' => 'Audit trail'],
+            ],
             'inventory' => $inventory,
             'finance' => [
                 ['key' => 'profit-loss', 'path' => '/reports/profit-loss', 'label' => 'Profit & loss (operational)'],
@@ -152,7 +159,9 @@ class ReportController extends Controller
                 ['key' => 'invoice-payments', 'path' => '/reports/invoice-payments', 'label' => 'Customer invoice payments'],
                 ['key' => 'expenses', 'path' => '/reports/expenses', 'label' => 'Expenses by group'],
                 ['key' => 'journal-register', 'path' => '/reports/journal-register', 'label' => 'Journal register'],
-                ['key' => 'kra-receipts', 'path' => '/reports/kra-receipts', 'label' => 'KRA fiscal receipts'],
+                ['key' => 'kra-compliance-summary', 'path' => '/reports/kra-compliance-summary', 'label' => 'KRA compliance summary'],
+                ['key' => 'kra-receipts', 'path' => '/reports/kra-receipts', 'label' => 'KRA receipts (per invoice)'],
+                ['key' => 'kra-unfiscalized-sales', 'path' => '/reports/kra-unfiscalized-sales', 'label' => 'Unfiscalized sales'],
             ],
             'operations' => [
                 ['key' => 'till-sessions', 'path' => '/reports/till-sessions', 'label' => 'Till / float sessions'],
@@ -2070,9 +2079,59 @@ class ReportController extends Controller
 
     public function kraReceipts(Request $request)
     {
-        return response()->json($this->reportFromView('v_kra_receipts', $this->filters($request), [
-            'receipt_date', 'branch_id', 'channel', 'status',
-        ]));
+        return response()->json($this->reportFromView(
+            'v_kra_receipts',
+            $this->filters($request),
+            [
+                'receipt_date',
+                'branch_id',
+                'channel',
+                'status',
+                'organization_id',
+                'order_no',
+                'invoice_number',
+            ],
+            function ($q) {
+                $q->orderByDesc('receipt_at')->orderByDesc('kra_response_id');
+            },
+        ));
+    }
+
+    public function kraComplianceSummary(Request $request)
+    {
+        return response()->json($this->reportFromView(
+            'v_kra_compliance_summary',
+            $this->filters($request),
+            [
+                'receipt_date',
+                'branch_id',
+                'channel',
+                'organization_id',
+            ],
+            function ($q) {
+                $q->orderByDesc('receipt_date')->orderBy('branch_name');
+            },
+        ));
+    }
+
+    public function kraUnfiscalizedSales(Request $request)
+    {
+        return response()->json($this->reportFromView(
+            'v_kra_unfiscalized_sales',
+            $this->filters($request),
+            [
+                'sale_date',
+                'branch_id',
+                'channel',
+                'organization_id',
+                'sale_status',
+                'payment_status',
+                'order_no',
+            ],
+            function ($q) {
+                $q->orderByDesc('sale_at')->orderByDesc('sale_id');
+            },
+        ));
     }
 
     public function journalRegister(Request $request)
@@ -2417,6 +2476,7 @@ class ReportController extends Controller
                 [
                     'product_name', 'product_code', 'customer_name', 'customer_num',
                     'supplier_name', 'cashier_name', 'invoice_number', 'reference_number',
+                    'order_no', 'serial_number',
                 ],
                 fn ($col) => $this->viewColumnExists($view, $col),
             ));
