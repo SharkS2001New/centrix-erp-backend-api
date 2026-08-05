@@ -34,6 +34,7 @@ use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
 use App\Services\Notifications\ActionRequestService;
+use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Sales\DiscountApprovalService;
 use App\Services\Sales\CentrixSalesScope;
 use App\Services\Sales\MobileCheckoutLocationService;
@@ -205,7 +206,11 @@ class CheckoutController extends Controller
 
         $salesSettings = $gate->moduleSettings('sales');
 
-        return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $salesSettings) {
+        // Reject carts whose lines no longer resolve to sellable catalogue products
+        // (soft-deleted, wrong branch, or never existed). Prevents orphan sale_items.
+        $productsByCode = $this->assertCheckoutLinesAccessible($cart, $lines, $user);
+
+        return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $salesSettings, $productsByCode) {
             $idempotency = app(PosOfflineCheckoutIdempotency::class);
             $existing = $idempotency->findExisting($user, $input);
             if ($existing) {
@@ -608,9 +613,20 @@ class CheckoutController extends Controller
             $pendingStockDeduct = $shouldDeductNow;
 
             foreach ($lines->values() as $i => $line) {
+                $code = trim((string) $line->product_code);
+                $product = $productsByCode->get(strtolower($code));
+                $snapshottedName = trim((string) ($line->product_name ?? ''));
+                if ($snapshottedName === '') {
+                    $snapshottedName = trim((string) ($product?->product_name ?? ''));
+                }
+                if ($snapshottedName === '') {
+                    $snapshottedName = $code;
+                }
+
                 SaleItem::create([
                     'sale_id' => $sale->id,
                     'product_code' => $line->product_code,
+                    'product_name' => $snapshottedName,
                     // Always renumber — cart line_no can collide under concurrent POS adds.
                     'line_no' => $i + 1,
                     'item_code' => (string) ($i + 1),
@@ -1758,5 +1774,39 @@ class CheckoutController extends Controller
         }
 
         SalePaymentColumnMapper::replaceFromMethodMap($sale, $map);
+    }
+
+    /**
+     * Ensure every cart line still maps to an active, branch-visible product.
+     *
+     * @param  \Illuminate\Support\Collection<int, CartLine>  $lines
+     * @return \Illuminate\Support\Collection<string, \App\Models\Product> keyed by lowercased product_code
+     */
+    protected function assertCheckoutLinesAccessible(TemporaryCart $cart, $lines, User $user)
+    {
+        $request = request();
+        $orgId = (int) ($this->userAccess()->organizationId($user, $request) ?? $user->organization_id ?? 0);
+        $branchId = (int) ($cart->branch_id ?? $user->branch_id ?? 0);
+        $catalog = app(ProductCatalogScopeService::class);
+        $byCode = collect();
+
+        foreach ($lines as $line) {
+            $code = trim((string) ($line->product_code ?? ''));
+            if ($code === '') {
+                throw ValidationException::withMessages([
+                    'product_code' => ['Product code is required on every cart line.'],
+                ]);
+            }
+
+            $key = strtolower($code);
+            if ($byCode->has($key)) {
+                continue;
+            }
+
+            $product = $catalog->findAccessibleProduct($code, $orgId, $branchId);
+            $byCode->put($key, $product->loadMissing(['unit', 'vat']));
+        }
+
+        return $byCode;
     }
 }

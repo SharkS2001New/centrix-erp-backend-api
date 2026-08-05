@@ -58,6 +58,13 @@ class SaleOrderPresentationService
     protected function presentSaleItem(SaleItem $item, SaleLineQuantityDisplayService $display): SaleItem
     {
         $product = $item->product ?? new Product(['product_code' => $item->product_code]);
+        $snapshotted = trim((string) ($item->product_name ?? ''));
+        if ($snapshotted === '') {
+            $item->setAttribute(
+                'product_name',
+                trim((string) ($product->product_name ?? '')) ?: (string) $item->product_code,
+            );
+        }
         $isRetail = (bool) $item->on_wholesale_retail;
         $baseQty = (float) $item->quantity;
         $amount = (float) $item->amount;

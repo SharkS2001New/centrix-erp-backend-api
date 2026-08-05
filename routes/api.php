@@ -767,6 +767,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware(['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view']);
             Route::get('products/group-counts', [ProductController::class, 'groupCounts'])
                 ->middleware(['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view']);
+            Route::get('products/generate-code', [ProductController::class, 'generateCode'])
+                ->middleware(['erp.permission:products.manage']);
             Route::post('products/import-batch', [ProductImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
             Route::post('retail-package-settings/import-batch', [RetailPackageImportController::class, 'store'])

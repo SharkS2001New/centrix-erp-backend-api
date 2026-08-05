@@ -642,4 +642,67 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertSame($replacement, $line['product_code'] ?? null);
         $this->assertEquals(3, (float) ($line['quantity'] ?? 0));
     }
+
+    public function test_checkout_rejects_soft_deleted_product_and_snapshots_name_on_success(): void
+    {
+        $product = Product::query()->where('product_code', $this->productCode)->firstOrFail();
+        $expectedName = (string) $product->product_name;
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertCreated()->json();
+
+        $this->assertDatabaseHas('sale_items', [
+            'sale_id' => $sale['id'],
+            'product_code' => $this->productCode,
+            'product_name' => $expectedName,
+        ]);
+
+        $ghostCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$ghostCartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $product->delete();
+
+        $this->postJson("/api/v1/sales/carts/{$ghostCartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertStatus(422);
+
+        // Historical sale still exposes the snapshotted / trashed catalogue name.
+        $shown = $this->getJson("/api/v1/sales/{$sale['id']}")->assertOk()->json();
+        $line = collect($shown['items'] ?? [])->firstWhere('product_code', $this->productCode);
+        $this->assertNotNull($line);
+        $this->assertSame($expectedName, $line['product_name'] ?? $line['product']['product_name'] ?? null);
+    }
+
+    public function test_cart_rejects_unknown_product_code(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => '127404-DOES-NOT-EXIST',
+            'quantity' => 1,
+        ])->assertStatus(422);
+    }
 }

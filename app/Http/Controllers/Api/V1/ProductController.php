@@ -542,6 +542,30 @@ class ProductController extends BaseResourceController
         ]);
     }
 
+    /**
+     * Suggest the next unique product SKU for the current organization.
+     * Must be registered before products/{product} so "generate-code" is not treated as a product code.
+     *
+     * GET /products/generate-code
+     */
+    public function generateCode(Request $request)
+    {
+        $user = $request->user();
+        $orgId = (int) ($this->access()->organizationId($user, $request) ?? $user?->organization_id ?? 0);
+        if ($orgId <= 0) {
+            throw ValidationException::withMessages([
+                'organization_id' => ['Organization is required to generate a product code.'],
+            ]);
+        }
+
+        $code = Product::generateNextProductCode($orgId);
+
+        return response()->json([
+            'code' => $code,
+            'data' => ['code' => $code],
+        ]);
+    }
+
     public function store(Request $request)
     {
         $rules = array_fill_keys($this->fillableFields(), 'nullable');

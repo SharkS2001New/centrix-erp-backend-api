@@ -88,9 +88,11 @@ class MobileRouteMarkupCheckoutService
         $productsByCode = $this->productsForCheckoutLines($lines, $organizationId);
 
         $repriced = $lines->map(function (CartLine $line) use ($routeId, $productsByCode) {
-            $product = $productsByCode->get((string) $line->product_code);
+            $product = $productsByCode->get(strtolower((string) $line->product_code));
             if (! $product) {
-                return $line;
+                throw new \InvalidArgumentException(
+                    "Product {$line->product_code} is not available for checkout.",
+                );
             }
 
             $isRetail = (bool) $line->on_wholesale_retail;
@@ -153,9 +155,10 @@ class MobileRouteMarkupCheckoutService
                 $organizationId,
                 fn ($q) => $q->where('organization_id', $organizationId),
             )
+            ->whereNull('deleted_at')
             ->whereIn('product_code', $codes)
             ->get()
-            ->keyBy(fn (Product $product) => (string) $product->product_code);
+            ->keyBy(fn (Product $product) => strtolower((string) $product->product_code));
     }
 
     /** @return array<string, mixed> */

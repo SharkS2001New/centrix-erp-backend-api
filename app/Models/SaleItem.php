@@ -11,13 +11,15 @@ class SaleItem extends Model
     protected $table = 'sale_items';
     public $timestamps = false;
     protected $fillable = [
-        'sale_id', 'product_code', 'line_no', 'item_code', 'quantity', 'uom',
+        'sale_id', 'product_code', 'product_name', 'line_no', 'item_code', 'quantity', 'uom',
         'selling_price', 'display_unit_price', 'discount_given', 'product_vat', 'amount', 'on_wholesale_retail',
     ];
 
     public function product()
     {
-        return $this->belongsTo(Product::class, 'product_code', 'product_code');
+        // Include soft-deleted catalogue rows so historical sales still resolve a name
+        // when product_name was not snapshotted (legacy rows).
+        return $this->belongsTo(Product::class, 'product_code', 'product_code')->withTrashed();
     }
 
     public function sale()

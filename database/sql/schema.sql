@@ -776,6 +776,7 @@ CREATE TABLE sale_items (
     id                  BIGINT        PRIMARY KEY AUTO_INCREMENT,
     sale_id             BIGINT        NOT NULL,
     product_code        VARCHAR(200)  NOT NULL,
+    product_name        VARCHAR(250)  NULL,
     line_no             INT           NOT NULL DEFAULT 1,
     item_code           VARCHAR(50)   NULL,
     quantity            FLOAT         NOT NULL,
