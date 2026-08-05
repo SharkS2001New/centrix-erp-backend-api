@@ -267,6 +267,13 @@ class LpoMstController extends BaseResourceController
     public function destroy(Request $request, string $id)
     {
         $model = $this->baseQuery($request)->where($this->routeKeyColumn(), $id)->firstOrFail();
+
+        if ((int) ($model->lpo_status_code ?? 0) >= LpoModuleService::STATUS_AWAITING_RECEIVE) {
+            throw ValidationException::withMessages([
+                'lpo' => ['Only draft or pre-receive purchase orders can be deleted. Cancel or return the order instead.'],
+            ]);
+        }
+
         $model->update([
             'deleted_at' => now(),
         ]);
