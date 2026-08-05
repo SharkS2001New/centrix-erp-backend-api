@@ -383,8 +383,13 @@ class PermissionMatrixService
             $modules = [];
             foreach ($def['registry_modules'] ?? [] as $registryModule) {
                 $group = $groupsByModule->get($registryModule);
-                if (is_array($group)) {
-                    $modules[] = $group;
+                if (! is_array($group)) {
+                    continue;
+                }
+
+                $filtered = self::filterApplicationModuleGroup($group, $def, (string) $registryModule);
+                if ($filtered !== null) {
+                    $modules[] = $filtered;
                 }
             }
 
@@ -402,6 +407,38 @@ class PermissionMatrixService
         }
 
         return $applications;
+    }
+
+    /**
+     * Optionally keep only selected features for a registry module within an application,
+     * and override the module label (e.g. pos till ops under Backoffice).
+     *
+     * @param  array<string, mixed>  $group
+     * @param  array<string, mixed>  $appDef
+     * @return array<string, mixed>|null
+     */
+    protected static function filterApplicationModuleGroup(array $group, array $appDef, string $registryModule): ?array
+    {
+        $featureAllowList = $appDef['module_features'][$registryModule] ?? null;
+        $labelOverride = $appDef['module_labels'][$registryModule] ?? null;
+
+        if (is_array($featureAllowList)) {
+            $allowed = array_flip(array_map('strval', $featureAllowList));
+            $features = array_values(array_filter(
+                $group['features'] ?? [],
+                static fn (array $feature): bool => isset($allowed[(string) ($feature['key'] ?? '')]),
+            ));
+            if ($features === []) {
+                return null;
+            }
+            $group = [...$group, 'features' => $features];
+        }
+
+        if (is_string($labelOverride) && $labelOverride !== '') {
+            $group['label'] = $labelOverride;
+        }
+
+        return $group;
     }
 
     /** Remap role assignments from retired mobile.* codes to mobile_sales.* / mobile_driver.* */

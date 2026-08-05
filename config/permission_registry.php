@@ -97,6 +97,8 @@ return [
             'features' => [
                 'terminal' => ['label' => 'POS terminal', 'actions' => ['view']],
                 'checkout' => ['label' => 'Create order', 'actions' => ['create']],
+                // Till management + EOD appear under Backoffice in the roles matrix
+                // (permission_applications) — links live in the Backoffice sidebar.
                 'till_management' => ['label' => 'Till management', 'actions' => ['view', 'create', 'edit']],
                 'end_of_day' => ['label' => 'End of day report', 'actions' => ['view']],
             ],

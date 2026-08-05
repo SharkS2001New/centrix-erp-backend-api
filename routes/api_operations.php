@@ -449,6 +449,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('hospitality-profit-loss', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'profitLoss']);
             Route::get('hospitality-eod-cashier', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'eodCashier']);
             Route::get('hospitality-consumption-variance', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityReportController::class, 'consumptionVariance']);
+            Route::get('hospitality-payments-breakdown', [ReportController::class, 'hospitalityPaymentsBreakdown']);
         });
 
         Route::middleware('erp.permission:reports.view|hr.view')->group(function () {

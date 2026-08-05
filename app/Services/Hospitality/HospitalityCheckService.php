@@ -8,6 +8,7 @@ use App\Models\HospitalityCheckPayment;
 use App\Models\HospitalityFloorTable;
 use App\Models\HospitalityOutlet;
 use App\Models\Organization;
+use App\Models\PaymentMethod;
 use App\Models\Product;
 use App\Models\User;
 use App\Models\Vat;
@@ -487,6 +488,11 @@ class HospitalityCheckService
             if (! in_array($code, ['CASH', 'MPESA', 'EQUITY', 'KCB', 'OTHER', 'CARD', 'CHEQUE', 'BANK', 'ROOM'], true)) {
                 throw ValidationException::withMessages(['payments' => ["Unsupported payment method: {$code}"]]);
             }
+            if ($code !== 'ROOM' && ! $this->orgPaymentMethodIsActive((int) $org->id, $code)) {
+                throw ValidationException::withMessages([
+                    'payments' => ["Payment method {$code} is not enabled for this organization."],
+                ]);
+            }
             if ($code === 'ROOM') {
                 $hasRoomCharge = true;
             }
@@ -818,6 +824,8 @@ class HospitalityCheckService
             'floorTable:id,code,label,outlet_id',
             'outlet:id,code,name',
             'payments' => fn ($q) => $q->orderBy('id'),
+            'folio:id,folio_number,guest_name,room_id,status',
+            'folio.room:id,room_number,status',
         ]);
     }
 
@@ -856,11 +864,22 @@ class HospitalityCheckService
             'status' => $this->normalizeStatus((string) $check->status),
             'service_mode' => $check->service_mode,
             'guest_name' => $check->guest_name ? (string) $check->guest_name : null,
+            'folio_id' => $check->folio_id ? (int) $check->folio_id : null,
+            'folio' => $check->relationLoaded('folio') && $check->folio ? [
+                'id' => (int) $check->folio->id,
+                'folio_number' => (string) $check->folio->folio_number,
+                'guest_name' => $check->folio->guest_name ? (string) $check->folio->guest_name : null,
+                'room_number' => $check->folio->room?->room_number
+                    ? (string) $check->folio->room->room_number
+                    : null,
+                'status' => (string) $check->folio->status,
+            ] : null,
             'outlet_id' => $check->outlet_id,
             'outlet' => $check->relationLoaded('outlet') && $check->outlet ? [
                 'id' => $check->outlet->id,
                 'code' => $check->outlet->code,
                 'name' => $check->outlet->name,
+                'outlet_type' => $check->outlet->outlet_type,
             ] : null,
             'floor_table_id' => $check->floor_table_id,
             'floor_table' => $check->floorTable ? [
@@ -946,6 +965,33 @@ class HospitalityCheckService
                 'floor_table_id' => ['Select a table before saving or collecting payment.'],
             ]);
         }
+    }
+
+    /**
+     * Hotel POS tenders must match Admin → Payment methods (is_active) for the org.
+     * BANK / EQUITY / KCB / OTHER / CARD share aliases so a single "Bank" row can unlock banks.
+     */
+    protected function orgPaymentMethodIsActive(int $organizationId, string $methodCode): bool
+    {
+        $wanted = strtoupper(trim($methodCode));
+        if ($wanted === '') {
+            return false;
+        }
+
+        $aliases = match ($wanted) {
+            'CASH' => ['CASH'],
+            'MPESA' => ['MPESA', 'M-PESA', 'M_PESA'],
+            'CHEQUE' => ['CHEQUE', 'CHECK'],
+            'CARD' => ['CARD'],
+            'EQUITY', 'KCB', 'OTHER', 'BANK' => ['EQUITY', 'KCB', 'OTHER', 'BANK', 'BANK_TRANSFER', 'TRANSFER'],
+            default => [$wanted],
+        };
+
+        return PaymentMethod::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->whereIn('method_code', $aliases)
+            ->exists();
     }
 
     protected function resolveFloorTable(Organization $org, int $outletId, int $floorTableId): HospitalityFloorTable

@@ -23,9 +23,13 @@ return [
 
     'applications' => [
         'pos' => [
-            'label' => 'External ERP',
-            'description' => 'External POS terminal, till sessions, and end of day.',
+            'label' => 'External POS',
+            'description' => 'External POS terminal and checkout.',
             'registry_modules' => ['pos'],
+            // Till management / EOD live in Backoffice (sidebar) — not here.
+            'module_features' => [
+                'pos' => ['terminal', 'checkout'],
+            ],
         ],
         'hotel_bar_pos' => [
             'label' => 'Hotel POS',
@@ -46,16 +50,24 @@ return [
         ],
         'backoffice' => [
             'label' => 'Backoffice',
-            'description' => 'Catalog, sales, inventory, procurement, customers, and operational reports.',
+            'description' => 'Catalog, sales, inventory, procurement, till operations, customers, and operational reports.',
             'registry_modules' => [
                 'dashboard',
                 'catalogue',
                 'customers',
                 'sales',
+                'pos',
                 'inventory',
                 'purchasing',
                 'reports',
                 'ai',
+            ],
+            // Only till ops from the pos registry — terminal/checkout stay under External POS.
+            'module_features' => [
+                'pos' => ['till_management', 'end_of_day'],
+            ],
+            'module_labels' => [
+                'pos' => 'Till operations',
             ],
         ],
         'hospitality_backoffice' => [

@@ -144,7 +144,15 @@ class Organization extends Model
             $organization->update(['module_settings' => $moduleSettings]);
         });
 
-        return $this->refresh();
+        $this->refresh();
+
+        // Settings PATCH responses re-read via CapabilityGate; drop request-scoped
+        // org/gate caches so the same request sees these updates.
+        if (app()->bound(\App\Services\Erp\ErpContext::class)) {
+            app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $this->getKey());
+        }
+
+        return $this;
     }
 
     public function toProfileArray(): array

@@ -62,14 +62,13 @@ return [
         'Cashier' => [
             'scope' => 'branch',
             'industries' => ['commerce'],
-            'description' => 'POS checkout, till sessions, and end-of-day reporting.',
+            'description' => 'External POS terminal and checkout. Grant Till management / End of day under Backoffice when they need those screens.',
             'requires_modules' => ['sales.pos'],
             'permissions' => [
                 'pos.terminal.view',
                 'pos.checkout.create',
-                'pos.till_management.view',
+                // Open/close till on the terminal — not the Backoffice Till management screen (view).
                 'pos.till_management.create',
-                'pos.end_of_day.view',
                 'catalogue.products.view',
             ],
         ],

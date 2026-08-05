@@ -24,6 +24,11 @@ class GeneralSettingsResolver
             'header_scale' => 'large', 'header_weight' => 'semibold',
             'footer_scale' => 'standard', 'footer_weight' => 'semibold',
         ],
+        'hospitality_check' => [
+            'family' => 'arial', 'scale' => 'standard', 'size_px' => 11, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
         'invoice' => [
             'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
             'header_scale' => 'large', 'header_weight' => 'semibold',
@@ -145,6 +150,7 @@ class GeneralSettingsResolver
     /** @var array<string, array{show: bool, position: string, size: string}> */
     public const DOCUMENT_LOGO_VARIANT_DEFAULTS = [
         'receipt' => ['show' => false, 'position' => 'center', 'size' => 'small'],
+        'hospitality_check' => ['show' => false, 'position' => 'center', 'size' => 'small'],
         'invoice' => ['show' => true, 'position' => 'right', 'size' => 'large'],
         'proforma' => ['show' => true, 'position' => 'right', 'size' => 'large'],
         'lpo' => ['show' => true, 'position' => 'right', 'size' => 'medium'],

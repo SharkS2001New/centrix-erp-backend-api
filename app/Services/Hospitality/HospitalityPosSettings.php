@@ -130,7 +130,44 @@ class HospitalityPosSettings
                 $settings['enable_check_guest_name'] ?? false,
                 false,
             ),
-            'check_receipt_footer' => (string) ($settings['check_receipt_footer'] ?? 'Thank you'),
+            'show_address_on_check_receipt' => self::normalizeBool(
+                $settings['show_address_on_check_receipt'] ?? true,
+                true,
+            ),
+            'show_tax_pin_on_check_receipt' => self::normalizeBool(
+                $settings['show_tax_pin_on_check_receipt'] ?? true,
+                true,
+            ),
+            'show_unit_price_on_check_receipt' => self::normalizeBool(
+                $settings['show_unit_price_on_check_receipt'] ?? true,
+                true,
+            ),
+            'show_cashier_on_check_receipt' => self::normalizeBool(
+                $settings['show_cashier_on_check_receipt'] ?? true,
+                true,
+            ),
+            'show_datetime_on_check_receipt' => self::normalizeBool(
+                $settings['show_datetime_on_check_receipt'] ?? true,
+                true,
+            ),
+            'show_check_payment_details' => self::normalizeBool(
+                $settings['show_check_payment_details'] ?? true,
+                true,
+            ),
+            'use_same_payment_details_for_check' => self::normalizeBool(
+                $settings['use_same_payment_details_for_check'] ?? true,
+                true,
+            ),
+            'check_receipt_show_all_payment_methods' => self::normalizeBool(
+                $settings['check_receipt_show_all_payment_methods'] ?? false,
+                false,
+            ),
+            'check_receipt_footer' => (string) ($settings['check_receipt_footer'] ?? self::defaultCheckReceiptFooter()),
+            'check_receipt_payment_details' => \App\Services\Sales\ReceiptPaymentDetailsResolver::normalize(
+                is_array($settings['check_receipt_payment_details'] ?? null)
+                    ? $settings['check_receipt_payment_details']
+                    : null,
+            ),
             'use_same_print_phones_for_check' => self::normalizeBool(
                 $settings['use_same_print_phones_for_check'] ?? true,
                 true,
@@ -145,6 +182,11 @@ class HospitalityPosSettings
             ],
             'pos_email_reports' => self::normalizePosEmailReports($settings['pos_email_reports'] ?? null),
         ];
+    }
+
+    public static function defaultCheckReceiptFooter(): string
+    {
+        return "You were served by: {username}\nThank you for dining with us\nPlease check your bill carefully";
     }
 
     /**
@@ -175,7 +217,16 @@ class HospitalityPosSettings
             'show_outlet_on_check_receipt' => true,
             'show_organization_on_check_receipt' => true,
             'enable_check_guest_name' => false,
-            'check_receipt_footer' => 'Thank you',
+            'show_address_on_check_receipt' => true,
+            'show_tax_pin_on_check_receipt' => true,
+            'show_unit_price_on_check_receipt' => true,
+            'show_cashier_on_check_receipt' => true,
+            'show_datetime_on_check_receipt' => true,
+            'show_check_payment_details' => true,
+            'use_same_payment_details_for_check' => true,
+            'check_receipt_show_all_payment_methods' => false,
+            'check_receipt_footer' => self::defaultCheckReceiptFooter(),
+            'check_receipt_payment_details' => null,
             'use_same_print_phones_for_check' => true,
             'check_print_phones' => ['tel1' => '', 'tel2' => ''],
             'pos_email_reports' => self::normalizePosEmailReports(null),

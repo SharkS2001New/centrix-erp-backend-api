@@ -396,6 +396,10 @@ class OrganizationPlatformConfigService
 
         $org->forceFill(['module_settings' => $moduleSettings])->save();
 
+        if (app()->bound(\App\Services\Erp\ErpContext::class)) {
+            app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $org->id);
+        }
+
         return $org->fresh();
     }
 

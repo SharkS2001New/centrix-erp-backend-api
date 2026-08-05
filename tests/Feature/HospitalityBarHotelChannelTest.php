@@ -49,33 +49,29 @@ class HospitalityBarHotelChannelTest extends TestCase
 
         $template = Product::query()
             ->where('organization_id', $this->org->id)
+            ->whereNotNull('subcategory_id')
             ->orderBy('product_code')
             ->firstOrFail();
 
-        Product::query()->create([
-            'organization_id' => $this->org->id,
-            'product_code' => 'BARONLY1',
-            'product_name' => 'Bar Only Drink',
-            'unit_price' => 100,
-            'subcategory_id' => $template->subcategory_id,
-            'unit_id' => $template->unit_id,
-            'vat_id' => $template->vat_id,
-            'sell_on_bar' => true,
-            'sell_on_hotel' => false,
-            'sell_on_retail' => false,
-        ]);
-        Product::query()->create([
-            'organization_id' => $this->org->id,
-            'product_code' => 'HOTELONLY1',
-            'product_name' => 'Hotel Only Dish',
-            'unit_price' => 200,
-            'subcategory_id' => $template->subcategory_id,
-            'unit_id' => $template->unit_id,
-            'vat_id' => $template->vat_id,
-            'sell_on_bar' => false,
-            'sell_on_hotel' => true,
-            'sell_on_retail' => false,
-        ]);
+        $barOnly = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
+        $barOnly->exists = false;
+        $barOnly->product_code = 'BARONLY1';
+        $barOnly->product_name = 'Bar Only Drink';
+        $barOnly->unit_price = 100;
+        $barOnly->sell_on_bar = true;
+        $barOnly->sell_on_hotel = false;
+        $barOnly->sell_on_retail = false;
+        $barOnly->save();
+
+        $hotelOnly = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
+        $hotelOnly->exists = false;
+        $hotelOnly->product_code = 'HOTELONLY1';
+        $hotelOnly->product_name = 'Hotel Only Dish';
+        $hotelOnly->unit_price = 200;
+        $hotelOnly->sell_on_bar = false;
+        $hotelOnly->sell_on_hotel = true;
+        $hotelOnly->sell_on_retail = false;
+        $hotelOnly->save();
 
         $this->user->forceFill(['hospitality_outlet_id' => $bar->id])->save();
         $barCatalog = $this->getJson('/api/v1/hospitality/pos/catalog')->assertOk()->json();

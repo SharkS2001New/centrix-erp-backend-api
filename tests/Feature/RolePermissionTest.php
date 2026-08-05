@@ -118,8 +118,27 @@ class RolePermissionTest extends TestCase
 
         $externalErp = $applications->firstWhere('id', 'pos');
         $this->assertNotNull($externalErp);
-        $this->assertSame('External ERP', $externalErp['label']);
+        $this->assertSame('External POS', $externalErp['label']);
         $this->assertSame(['pos'], collect($externalErp['modules'])->pluck('module')->all());
+        $externalFeatures = collect($externalErp['modules'])
+            ->flatMap(fn (array $module) => $module['features'] ?? [])
+            ->pluck('key')
+            ->all();
+        $this->assertContains('terminal', $externalFeatures);
+        $this->assertContains('checkout', $externalFeatures);
+        $this->assertNotContains('till_management', $externalFeatures);
+        $this->assertNotContains('end_of_day', $externalFeatures);
+
+        $backoffice = $applications->firstWhere('id', 'backoffice');
+        $this->assertNotNull($backoffice);
+        $tillOps = collect($backoffice['modules'])->firstWhere('module', 'pos');
+        $this->assertNotNull($tillOps);
+        $this->assertSame('Till operations', $tillOps['label']);
+        $tillFeatures = collect($tillOps['features'])->pluck('key')->all();
+        $this->assertContains('till_management', $tillFeatures);
+        $this->assertContains('end_of_day', $tillFeatures);
+        $this->assertNotContains('terminal', $tillFeatures);
+        $this->assertNotContains('checkout', $tillFeatures);
 
         $mobile = $applications->firstWhere('id', 'mobile');
         $this->assertNotNull($mobile);

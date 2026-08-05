@@ -27,6 +27,30 @@ class ErpContext
         return $org;
     }
 
+    /**
+     * Drop request-scoped org/gate caches after module_settings (or similar) mutations
+     * so subsequent reads in the same request see the updated organization.
+     */
+    public function forgetOrganizationCache(?int $organizationId): void
+    {
+        if (! $organizationId) {
+            return;
+        }
+
+        $request = $this->currentRequest();
+        if (! $request) {
+            return;
+        }
+
+        $request->attributes->remove('erp_context.org.'.$organizationId);
+        $request->attributes->remove('erp_context.gate.org.'.$organizationId);
+
+        $user = $request->user();
+        if ($user?->id) {
+            $request->attributes->remove('erp_context.gate.user.'.(int) $user->id);
+        }
+    }
+
     public function gateForUser(?User $user): CapabilityGate
     {
         if (! $user) {
@@ -58,6 +82,8 @@ class ErpContext
 
         $gate = (new CapabilityGate)->forOrganization($organization);
         $request?->attributes->set($attrKey, $gate);
+        // Keep org cache aligned with the instance used by this gate.
+        $request?->attributes->set('erp_context.org.'.(int) $organization->id, $organization);
 
         return $gate;
     }

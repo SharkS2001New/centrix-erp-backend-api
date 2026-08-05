@@ -190,6 +190,7 @@ class ErpSettingsController extends Controller
             'show_proforma_payment_terms',
             'show_proforma_totals_breakdown',
             'classic_pos_theme_template',
+            'classic_pos_theme_colors',
             'pricing_formulas',
         ];
 
@@ -1066,7 +1067,16 @@ class ErpSettingsController extends Controller
             'show_outlet_on_check_receipt' => 'sometimes|boolean',
             'show_organization_on_check_receipt' => 'sometimes|boolean',
             'enable_check_guest_name' => 'sometimes|boolean',
+            'show_address_on_check_receipt' => 'sometimes|boolean',
+            'show_tax_pin_on_check_receipt' => 'sometimes|boolean',
+            'show_unit_price_on_check_receipt' => 'sometimes|boolean',
+            'show_cashier_on_check_receipt' => 'sometimes|boolean',
+            'show_datetime_on_check_receipt' => 'sometimes|boolean',
+            'show_check_payment_details' => 'sometimes|boolean',
+            'use_same_payment_details_for_check' => 'sometimes|boolean',
+            'check_receipt_show_all_payment_methods' => 'sometimes|boolean',
             'check_receipt_footer' => 'sometimes|nullable|string|max:2000',
+            'check_receipt_payment_details' => 'sometimes|nullable|array',
             'use_same_print_phones_for_check' => 'sometimes|boolean',
             'check_print_phones' => 'sometimes|nullable|array',
             'check_print_phones.tel1' => 'sometimes|nullable|string|max:40',
@@ -1086,6 +1096,12 @@ class ErpSettingsController extends Controller
                     'tel1' => trim((string) ($raw['tel1'] ?? '')),
                     'tel2' => trim((string) ($raw['tel2'] ?? '')),
                 ];
+                continue;
+            }
+            if ($key === 'check_receipt_payment_details') {
+                $hospitality['check_receipt_payment_details'] = \App\Services\Sales\ReceiptPaymentDetailsResolver::normalize(
+                    is_array($value) ? $value : null,
+                );
                 continue;
             }
             $hospitality[$key] = $value;

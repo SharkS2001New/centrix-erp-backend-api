@@ -561,7 +561,16 @@ return [
             'show_organization_on_check_receipt' => true,
             /** Guest/customer name on Hotel POS checks & receipts (default off, like retail). */
             'enable_check_guest_name' => false,
-            'check_receipt_footer' => 'Thank you',
+            'show_address_on_check_receipt' => true,
+            'show_tax_pin_on_check_receipt' => true,
+            'show_unit_price_on_check_receipt' => true,
+            'show_cashier_on_check_receipt' => true,
+            'show_datetime_on_check_receipt' => true,
+            'show_check_payment_details' => true,
+            'use_same_payment_details_for_check' => true,
+            'check_receipt_show_all_payment_methods' => false,
+            'check_receipt_footer' => "You were served by: {username}\nThank you for dining with us\nPlease check your bill carefully",
+            'check_receipt_payment_details' => null,
             'use_same_print_phones_for_check' => true,
             'check_print_phones' => [
                 'tel1' => '',
