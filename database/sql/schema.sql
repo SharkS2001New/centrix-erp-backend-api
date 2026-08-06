@@ -1171,7 +1171,7 @@ CREATE TABLE kra_responses (
     kra_timestamp     VARCHAR(255),
     request_payload   JSON,
     response_payload  JSON,
-    status            ENUM('pending','success','failed') DEFAULT 'pending',
+    status            ENUM('pending','success','failed','skipped') NOT NULL DEFAULT 'pending',
     error_message     TEXT,
     created_at        TIMESTAMP     DEFAULT CURRENT_TIMESTAMP,
     updated_at        TIMESTAMP     DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
