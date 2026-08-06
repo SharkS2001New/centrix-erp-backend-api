@@ -772,4 +772,72 @@ class TillSessionFlowTest extends TestCase
         $this->assertSame($this->user->id, $this->till->cashier_id);
         $this->assertSame('user', $this->till->lock_mode);
     }
+
+    public function test_backoffice_checkout_soft_attaches_open_float_session(): void
+    {
+        $session = $this->openFreshSession(5000);
+
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'require_pos_till_float' => true,
+            'require_backoffice_till_float' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'backend',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        // No float_session_id in the body — server soft-attaches the open session.
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'payment_method_code' => 'CASH',
+            'sales_workspace' => 'backoffice',
+        ])->assertSuccessful()->json();
+
+        $this->assertSame($session->id, (int) ($sale['float_session_id'] ?? 0));
+
+        $xReport = $this->getJson("/api/v1/pos/sessions/{$session->id}/x-report")
+            ->assertOk()
+            ->json();
+
+        $this->assertSame('X', $xReport['type']);
+        $this->assertGreaterThan(0, (float) ($xReport['report']['sales']['cash'] ?? 0));
+    }
+
+    public function test_backoffice_checkout_without_open_session_still_succeeds(): void
+    {
+        $this->closeExistingOpenSessions();
+
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'require_pos_till_float' => true,
+            'require_backoffice_till_float' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'backend',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'payment_method_code' => 'CASH',
+            'sales_workspace' => 'backoffice',
+        ])->assertSuccessful()->json();
+
+        $this->assertNull($sale['float_session_id'] ?? null);
+    }
 }

@@ -108,7 +108,6 @@ return [
         'catalogue.uoms.view',
         'catalogue.retail_packages.view',
         'pricing_tax.vat_rates.view',
-        'pricing_tax.price_list.view',
         'pricing_tax.price_history.view',
         'pricing_tax.kra_invoices.view',
         'mobile_sales.catalog.view',
@@ -162,7 +161,7 @@ return [
         'reports.stock_transfers.view',
         'reports.branch_stock_transfers.view',
         'reports.returns.view',
-        'pricing_tax.price_list.view',
+        'reports.price_list.view',
         'reports.open_lpo.view',
         'reports.purchases_by_supplier.view',
         'reports.stock_receipts.view',
@@ -349,8 +348,9 @@ return [
         'hr.holidays.delete',
         'hr.leave_settings.edit',
     ],
-    // Admin KRA device log is intentionally separate from the KRA receipts report.
-    // Routes already OR both codes; do not expand report → admin (that unlocked Administration).
+    'admin.kra_responses.view' => [
+        'reports.kra_receipts.view',
+    ],
     // Legacy Backoffice code — maps to Administration KRA device log.
     'pricing_tax.kra_device_log.view' => [
         'admin.kra_responses.view',
@@ -358,12 +358,6 @@ return [
     'pricing_tax.kra_invoices.view' => [
         'reports.kra_receipts.view',
     ],
-    // Legacy report code — Price list is assigned under Pricing & tax.
-    'reports.price_list.view' => [
-        'pricing_tax.price_list.view',
-    ],
-    // Core Administration entry only — VAT / KRA log / notifications must not expand to
-    // admin.view or the Administration workspace opens with a single utility link.
     'admin.view' => [
         'admin.overview.view',
         'admin.company.view',
@@ -374,6 +368,9 @@ return [
         'admin.roles.view',
         'admin.audit.view',
         'admin.payment_methods.view',
+        'admin.vat_rates.view',
+        'admin.kra_responses.view',
+        'admin.notifications.view',
     ],
     'admin.manage' => [
         'admin.company.edit',

@@ -54,24 +54,29 @@ class FloatSessionValidator
     /**
      * Resolve and validate float session for checkout.
      *
+     * When float is required for the workspace, an open session id is mandatory.
+     * When float is not required (typical backoffice), still soft-attach the cashier's
+     * open session if one exists — so the sale counts on X / Z / EOD until close.
+     *
      * @param  array<string, mixed>  $input
      */
     public function resolveForCheckout(TemporaryCart $cart, User $user, array $input): ?int
     {
         $sessionId = isset($input['float_session_id']) ? (int) $input['float_session_id'] : null;
+        if ($sessionId !== null && $sessionId <= 0) {
+            $sessionId = null;
+        }
         $requiresFloat = $this->requiresFloatForCheckout($cart, $input);
 
         if (! $requiresFloat) {
-            if ($sessionId) {
-                throw new InvalidArgumentException(
-                    'Till float sessions are not used when operating float is disabled for this workspace.',
-                );
+            // Soft-attach: use provided id, else the cashier's open session for this branch.
+            if (! $sessionId) {
+                $sessionId = $this->findOpenSessionIdForUser($user, $cart);
             }
-
-            return null;
-        }
-
-        if (! $sessionId) {
+            if (! $sessionId) {
+                return null;
+            }
+        } elseif (! $sessionId) {
             throw new InvalidArgumentException(
                 'Open a till session and declare your operating float before completing POS sales.',
             );
@@ -79,16 +84,28 @@ class FloatSessionValidator
 
         $session = TillFloatSession::find($sessionId);
         if (! $session || ! in_array(strtolower((string) $session->status), ['open'], true)) {
-            throw new InvalidArgumentException('Till session is not open.');
+            if ($requiresFloat) {
+                throw new InvalidArgumentException('Till session is not open.');
+            }
+
+            return null;
         }
 
         if ((int) $session->cashier_id !== (int) $user->id) {
-            throw new InvalidArgumentException('Till session belongs to another cashier.');
+            if ($requiresFloat) {
+                throw new InvalidArgumentException('Till session belongs to another cashier.');
+            }
+
+            return null;
         }
 
         $branchId = $cart->branch_id ?? $user->branch_id;
         if ($branchId && (int) $session->branch_id !== (int) $branchId) {
-            throw new InvalidArgumentException('Till session belongs to another branch.');
+            if ($requiresFloat) {
+                throw new InvalidArgumentException('Till session belongs to another branch.');
+            }
+
+            return null;
         }
 
         if ($cart->till_id && (int) $cart->till_id !== (int) $session->till_id) {
@@ -98,6 +115,30 @@ class FloatSessionValidator
             $cart->save();
         }
 
-        return $sessionId;
+        return (int) $session->id;
+    }
+
+    /**
+     * Open till session for this cashier (and cart branch when known).
+     */
+    protected function findOpenSessionIdForUser(User $user, TemporaryCart $cart): ?int
+    {
+        if (! $this->tillFloatEnabled()) {
+            return null;
+        }
+
+        $query = TillFloatSession::query()
+            ->where('cashier_id', $user->id)
+            ->whereRaw('LOWER(status) = ?', ['open'])
+            ->orderByDesc('id');
+
+        $branchId = $cart->branch_id ?? $user->branch_id;
+        if ($branchId) {
+            $query->where('branch_id', $branchId);
+        }
+
+        $session = $query->first();
+
+        return $session ? (int) $session->id : null;
     }
 }
