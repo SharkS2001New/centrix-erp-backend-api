@@ -24,7 +24,12 @@ class SqlLikeSearchTest extends TestCase
         $this->assertContains('MID-001', $bindings);
         $this->assertContains('MID-001%', $bindings);
         $this->assertContains('%MID-001%', $bindings);
-        $this->assertSame(3, count($bindings));
+        // Exact + code prefix + code contains + name contains + shelf contains
+        $this->assertSame(5, count($bindings));
+        $this->assertSame(
+            3,
+            collect($bindings)->filter(fn ($b) => $b === '%MID-001%')->count(),
+        );
     }
 
     public function test_apply_product_search_numeric_barcode_skips_name_contains(): void
@@ -48,9 +53,15 @@ class SqlLikeSearchTest extends TestCase
         SqlLikeSearch::applyProductSearch($query, 'cooking oil');
 
         $bindings = $query->getBindings();
+        // Each token matches name OR code OR shelf (3 bindings × 2 tokens).
+        $this->assertContains('%cooking%', $bindings);
+        $this->assertContains('%oil%', $bindings);
+        $this->assertSame(6, count($bindings));
+    }
 
-        $this->assertContains('%cooking oil%', $bindings);
-        $this->assertSame(2, count($bindings));
+    public function test_tokenize_splits_multi_word_queries(): void
+    {
+        $this->assertSame(['sugar', '50'], SqlLikeSearch::tokenize(' sugar  50 '));
     }
 
     public function test_apply_sales_order_search_uses_substring_on_order_and_customer_num(): void
@@ -81,6 +92,37 @@ class SqlLikeSearchTest extends TestCase
         SqlLikeSearch::applySalesOrderSearch($query, 'S0034');
 
         $this->assertSame([34], $query->getBindings());
+    }
+
+    public function test_apply_product_search_matches_unit_price_amount(): void
+    {
+        $query = DB::table('products');
+        SqlLikeSearch::applyProductSearch($query, '6300');
+
+        $bindings = $query->getBindings();
+        $this->assertContains(6300.0, $bindings);
+        $this->assertContains('%6300%', $bindings);
+    }
+
+    public function test_apply_product_search_amount_with_thousands_separator(): void
+    {
+        $query = DB::table('products');
+        SqlLikeSearch::applyProductSearch($query, '6,300');
+
+        $bindings = $query->getBindings();
+        $this->assertContains(6300.0, $bindings);
+        // Whole money term — not split into tokens "6" and "300".
+        $this->assertFalse(collect($bindings)->contains(fn ($b) => $b === '%6%'));
+    }
+
+    public function test_apply_product_search_multi_token_allows_price_token(): void
+    {
+        $query = DB::table('products');
+        SqlLikeSearch::applyProductSearch($query, 'sugar 6300');
+
+        $bindings = $query->getBindings();
+        $this->assertContains('%sugar%', $bindings);
+        $this->assertContains(6300.0, $bindings);
     }
 
     public function test_parse_amount_search_term(): void

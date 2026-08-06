@@ -13,12 +13,31 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
  *
  * Does not query LightStores legacy archive databases — use legacy archive APIs for that data.
  * Uses substring matching (%term%) on Centrix tables; user-supplied % and _ are escaped.
+ * Multi-word product queries require every token to match (AND), tokens may appear in any order.
+ * Money-like terms also match exact unit_price (e.g. 6300, 6,300.00).
  */
 class SqlLikeSearch
 {
     public static function escape(string $term): string
     {
         return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term);
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function tokenize(string $term): array
+    {
+        $parts = preg_split('/[\s,;|\/]+/', trim($term)) ?: [];
+        $tokens = [];
+        foreach ($parts as $part) {
+            $token = trim((string) $part);
+            if ($token !== '') {
+                $tokens[] = $token;
+            }
+        }
+
+        return array_values(array_unique($tokens));
     }
 
     /**
@@ -30,38 +49,105 @@ class SqlLikeSearch
         string $term,
         string $codeColumn = 'products.product_code',
         string $nameColumn = 'products.product_name',
+        ?string $shelfColumn = 'products.shelf_location',
+        string $priceColumn = 'products.unit_price',
     ): ?string {
         $term = trim($term);
         if ($term === '') {
             return null;
         }
 
+        $tokens = self::tokenize($term);
+        if ($tokens === []) {
+            return null;
+        }
+
+        // Money-like terms (6,300 / KES 2500): keep as one token so commas are not split.
+        if (self::parseAmountSearchTerm($term) !== null) {
+            $tokens = [$term];
+        }
+
+        // Pure numeric barcodes: skip expensive name %term% scans.
+        $strongBarcode = (bool) preg_match('/^\d{6,}$/', $term);
+        if ($strongBarcode) {
+            $escaped = self::escape($term);
+            $query->where(function ($inner) use ($term, $escaped, $codeColumn) {
+                $inner->where($codeColumn, '=', $term)
+                    ->orWhere($codeColumn, 'like', $escaped.'%');
+            });
+
+            return 'code_like';
+        }
+
+        // Multi-token: every token must match code, name, shelf, or exact unit price (any order).
+        if (count($tokens) > 1) {
+            foreach ($tokens as $token) {
+                $escaped = self::escape($token);
+                $contains = '%'.$escaped.'%';
+                $amount = self::parseAmountSearchTerm($token);
+                $query->where(function ($inner) use ($contains, $codeColumn, $nameColumn, $shelfColumn, $priceColumn, $amount) {
+                    $inner->where($nameColumn, 'like', $contains)
+                        ->orWhere($codeColumn, 'like', $contains);
+                    if ($shelfColumn) {
+                        $inner->orWhere($shelfColumn, 'like', $contains);
+                    }
+                    self::orWhereProductUnitPrice($inner, $priceColumn, $amount);
+                });
+            }
+
+            return 'name';
+        }
+
         $escaped = self::escape($term);
         $prefix = $escaped.'%';
         $contains = '%'.$escaped.'%';
+        $amount = self::parseAmountSearchTerm($term);
 
         // Code-like terms: prefer exact/prefix on product_code (index-friendly).
         $looksLikeCode = (bool) preg_match('/^[A-Za-z0-9][A-Za-z0-9\\-_\\/.]*$/', $term)
             && strlen($term) <= 64;
-        // Pure numeric barcodes: skip expensive name %term% scans.
-        $strongBarcode = $looksLikeCode && (bool) preg_match('/^\d{6,}$/', $term);
 
-        $query->where(function ($inner) use ($term, $prefix, $contains, $codeColumn, $nameColumn, $looksLikeCode, $strongBarcode) {
+        $query->where(function ($inner) use ($term, $prefix, $contains, $codeColumn, $nameColumn, $shelfColumn, $priceColumn, $looksLikeCode, $amount) {
             if ($looksLikeCode) {
                 $inner->where($codeColumn, '=', $term)
-                    ->orWhere($codeColumn, 'like', $prefix);
-                if (! $strongBarcode) {
-                    $inner->orWhere($nameColumn, 'like', $contains);
+                    ->orWhere($codeColumn, 'like', $prefix)
+                    // Mid-string name/code (e.g. "unia" → "Gunia", partial SKUs).
+                    ->orWhere($codeColumn, 'like', $contains)
+                    ->orWhere($nameColumn, 'like', $contains);
+                if ($shelfColumn) {
+                    $inner->orWhere($shelfColumn, 'like', $contains);
                 }
+                self::orWhereProductUnitPrice($inner, $priceColumn, $amount);
 
                 return;
             }
 
             $inner->where($nameColumn, 'like', $contains)
                 ->orWhere($codeColumn, 'like', $contains);
+            if ($shelfColumn) {
+                $inner->orWhere($shelfColumn, 'like', $contains);
+            }
+            self::orWhereProductUnitPrice($inner, $priceColumn, $amount);
         });
 
         return $looksLikeCode ? 'code_like' : 'name';
+    }
+
+    /**
+     * Exact unit-price match for money-like search tokens (e.g. 6300, 6,300.00, KES 2500).
+     *
+     * @param  EloquentBuilder<mixed>|QueryBuilder  $inner
+     */
+    protected static function orWhereProductUnitPrice(
+        EloquentBuilder|QueryBuilder $inner,
+        string $priceColumn,
+        ?float $amount,
+    ): void {
+        if ($amount === null) {
+            return;
+        }
+
+        $inner->orWhereRaw('ROUND('.$priceColumn.', 2) = ?', [$amount]);
     }
 
     /**

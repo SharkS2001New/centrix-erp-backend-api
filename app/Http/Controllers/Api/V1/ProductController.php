@@ -293,10 +293,16 @@ class ProductController extends BaseResourceController
                         WHEN products.product_code = ? THEN 0
                         WHEN products.product_code LIKE ? THEN 1
                         WHEN products.product_name LIKE ? THEN 2
-                        ELSE 3
+                        WHEN products.product_code LIKE ? THEN 3
+                        WHEN products.product_name LIKE ? THEN 4
+                        ELSE 5
                     END',
-                    [$searchTerm, $escaped.'%', $escaped.'%'],
-                )->orderBy('products.product_name');
+                    [$searchTerm, $escaped.'%', $escaped.'%', '%'.$escaped.'%', '%'.$escaped.'%'],
+                )
+                    ->orderByRaw(
+                        '(COALESCE(products.stock_in_shop, 0) + COALESCE(products.stock_in_store, 0)) DESC',
+                    )
+                    ->orderBy('products.product_name');
             }
         } else {
             $this->applyListOrdering($request, $query, 'product_name', 'asc');
@@ -324,6 +330,7 @@ class ProductController extends BaseResourceController
                 'products.supplier_id',
                 'products.reorder_point',
                 'products.product_weight',
+                'products.shelf_location',
                 'products.stock_in_shop',
                 'products.stock_in_store',
                 'products.created_by',
