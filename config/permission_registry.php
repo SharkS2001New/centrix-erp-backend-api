@@ -32,6 +32,11 @@ return [
                 'categories' => ['label' => 'Categories & subcategories', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'uoms' => ['label' => 'Units of measure', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'retail_packages' => ['label' => 'Retail packages', 'actions' => ['view', 'edit']],
+            ],
+        ],
+        'pricing_tax' => [
+            'label' => 'Pricing & tax',
+            'features' => [
                 'vat_rates' => ['label' => 'VAT / tax rates', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'price_history' => ['label' => 'Price history', 'actions' => ['view']],
                 'kra_invoices' => ['label' => 'KRA invoices', 'actions' => ['view']],

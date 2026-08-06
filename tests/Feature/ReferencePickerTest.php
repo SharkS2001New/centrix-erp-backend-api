@@ -49,6 +49,6 @@ class ReferencePickerTest extends TestCase
         PermissionMatrixService::ensure();
         $codes = PermissionMatrixService::allRegistryCodes();
 
-        $this->assertContains('catalogue.kra_invoices.view', $codes);
+        $this->assertContains('pricing_tax.kra_invoices.view', $codes);
     }
 }

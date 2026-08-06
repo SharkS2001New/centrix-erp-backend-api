@@ -54,6 +54,7 @@ return [
             'registry_modules' => [
                 'dashboard',
                 'catalogue',
+                'pricing_tax',
                 'customers',
                 'sales',
                 'pos',
@@ -113,6 +114,7 @@ return [
             'registry_modules' => [
                 'hospitality',
                 'catalogue',
+                'pricing_tax',
                 'inventory',
                 'purchasing',
                 'dashboard',

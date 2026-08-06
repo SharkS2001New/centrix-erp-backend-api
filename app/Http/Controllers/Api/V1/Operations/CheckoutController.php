@@ -215,6 +215,16 @@ class CheckoutController extends Controller
         $productsByCode = $this->assertCheckoutLinesAccessible($cart, $lines, $user);
 
         return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $salesSettings, $productsByCode) {
+            // Hold the cart row for the whole checkout so concurrent DELETE /lines
+            // waits instead of deadlocking on cart_lines / stock_reservations.
+            $lockedCart = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
+            if (! $lockedCart) {
+                throw new InvalidArgumentException(
+                    'Cart not found. It may have already been checked out — reopen the order to continue editing.',
+                );
+            }
+            $cart = $lockedCart;
+
             $idempotency = app(PosOfflineCheckoutIdempotency::class);
             $existing = $idempotency->findExisting($user, $input);
             if ($existing) {
@@ -923,7 +933,7 @@ class CheckoutController extends Controller
                 'deduct_stock' => $pendingStockDeduct,
                 'run_side_effects' => $runSideEffects,
             ];
-        });
+        }, 5);
     }
 
     /**
@@ -1327,6 +1337,14 @@ class CheckoutController extends Controller
         array $input,
     ): array {
         return DB::transaction(function () use ($cart, $user, $gate, $input) {
+            $lockedCart = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
+            if (! $lockedCart) {
+                throw new InvalidArgumentException(
+                    'Cart not found. It may have already been checked out — reopen the order to continue editing.',
+                );
+            }
+            $cart = $lockedCart;
+
             $idempotency = app(PosOfflineCheckoutIdempotency::class);
             $existing = $idempotency->findExisting($user, $input);
             if ($existing) {
@@ -1481,7 +1499,7 @@ class CheckoutController extends Controller
                 'deduct_stock' => false,
                 'run_side_effects' => false,
             ];
-        });
+        }, 5);
     }
 
     /**

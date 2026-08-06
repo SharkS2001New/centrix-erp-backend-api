@@ -335,8 +335,31 @@ class CartOperationsController extends Controller
     public function clear(int|string $cartId)
     {
         $user = request()->user();
-        $cart = $this->findOwnedCart($cartId, $user);
-        $this->clearCart($cart, $user);
+        $resolvedId = $this->resolveCartId($cartId);
+
+        // POS fire-and-forget DELETE after checkout often races the cart already being gone.
+        $cart = TemporaryCart::query()->find($resolvedId);
+        if (! $cart) {
+            return response()->json(['ok' => true, 'already_cleared' => true]);
+        }
+        if ((int) $cart->user_id !== (int) $user->id) {
+            abort(403, 'This cart belongs to another cashier.');
+        }
+        $this->userAccess()->assertBranchAccess(
+            $user,
+            $cart->branch_id ? (int) $cart->branch_id : null,
+            'This cart belongs to another branch.',
+        );
+
+        // Serialize against checkout / line edits. Retry MySQL 1213 deadlocks (stock
+        // reservations vs cart_lines lock order under concurrent POS traffic).
+        DB::transaction(function () use ($resolvedId, $user) {
+            $locked = TemporaryCart::query()->whereKey($resolvedId)->lockForUpdate()->first();
+            if (! $locked) {
+                return;
+            }
+            $this->clearCart($locked, $user);
+        }, 5);
 
         return response()->json(['ok' => true]);
     }

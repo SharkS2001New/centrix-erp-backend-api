@@ -457,6 +457,12 @@ class PermissionMatrixService
             'mobile.routes.view' => 'mobile_sales.routes.view',
             'mobile.drivers.view' => 'mobile_driver.deliveries.view',
             'mobile.drivers.deliver' => 'mobile_driver.deliveries.deliver',
+            'catalogue.vat_rates.view' => 'pricing_tax.vat_rates.view',
+            'catalogue.vat_rates.create' => 'pricing_tax.vat_rates.create',
+            'catalogue.vat_rates.edit' => 'pricing_tax.vat_rates.edit',
+            'catalogue.vat_rates.delete' => 'pricing_tax.vat_rates.delete',
+            'catalogue.price_history.view' => 'pricing_tax.price_history.view',
+            'catalogue.kra_invoices.view' => 'pricing_tax.kra_invoices.view',
         ];
 
         $permissions = Permission::query()

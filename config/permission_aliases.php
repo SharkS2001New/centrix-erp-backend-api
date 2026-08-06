@@ -108,9 +108,9 @@ return [
         'catalogue.categories.view',
         'catalogue.uoms.view',
         'catalogue.retail_packages.view',
-        'catalogue.vat_rates.view',
-        'catalogue.price_history.view',
-        'catalogue.kra_invoices.view',
+        'pricing_tax.vat_rates.view',
+        'pricing_tax.price_history.view',
+        'pricing_tax.kra_invoices.view',
         'mobile_sales.catalog.view',
     ],
     'inventory.view' => [
@@ -352,7 +352,7 @@ return [
     'admin.kra_responses.view' => [
         'reports.kra_receipts.view',
     ],
-    'catalogue.kra_invoices.view' => [
+    'pricing_tax.kra_invoices.view' => [
         'reports.kra_receipts.view',
     ],
     'admin.view' => [
@@ -418,9 +418,9 @@ return [
         'catalogue.uoms.edit',
         'catalogue.uoms.delete',
         'catalogue.retail_packages.edit',
-        'catalogue.vat_rates.create',
-        'catalogue.vat_rates.edit',
-        'catalogue.vat_rates.delete',
+        'pricing_tax.vat_rates.create',
+        'pricing_tax.vat_rates.edit',
+        'pricing_tax.vat_rates.delete',
     ],
     'mobile.access' => [
         'mobile_sales.dashboard.view',

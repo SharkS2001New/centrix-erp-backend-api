@@ -353,7 +353,7 @@ return [
                 'reports.journal_register.view',
                 'reports.kra_compliance_summary.view',
                 'reports.kra_receipts.view',
-                'catalogue.kra_invoices.view',
+                'pricing_tax.kra_invoices.view',
                 'reports.kra_unfiscalized_sales.view',
             ],
         ],
