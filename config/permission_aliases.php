@@ -110,6 +110,7 @@ return [
         'catalogue.retail_packages.view',
         'catalogue.vat_rates.view',
         'catalogue.price_history.view',
+        'catalogue.kra_invoices.view',
         'mobile_sales.catalog.view',
     ],
     'inventory.view' => [
@@ -349,6 +350,9 @@ return [
         'hr.leave_settings.edit',
     ],
     'admin.kra_responses.view' => [
+        'reports.kra_receipts.view',
+    ],
+    'catalogue.kra_invoices.view' => [
         'reports.kra_receipts.view',
     ],
     'admin.view' => [

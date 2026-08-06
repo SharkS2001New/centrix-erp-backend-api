@@ -250,6 +250,7 @@ return [
         'accounts-payable' => 'accounting.reports',
         'subledger-reconciliation' => 'accounting.reports',
         'kra-receipts' => 'accounting.reports',
+        'kra-invoices' => 'accounting.reports',
         'kra-compliance-summary' => 'accounting.reports',
         'kra-unfiscalized-sales' => 'accounting.reports',
 

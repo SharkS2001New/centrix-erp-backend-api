@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\V1\Operations\BranchStockTransferController;
 use App\Http\Controllers\Api\V1\Operations\LpoReceiveController;
 use App\Http\Controllers\Api\V1\Operations\PaymentOperationsController;
 use App\Http\Controllers\Api\V1\Operations\TillOperationsController;
+use App\Http\Controllers\Api\V1\Operations\ReferencePickerController;
 use App\Http\Controllers\Api\V1\Operations\ReportController;
 use App\Http\Controllers\Api\V1\Operations\LegacyArchiveController;
 use App\Http\Controllers\Api\V1\Operations\HrReportController;
@@ -126,6 +127,16 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('trips/{tripId}/settle', [MobileDriverController::class, 'settleTrip']);
         Route::get('stops/{saleId}', [MobileDriverController::class, 'showStop']);
         Route::post('stops/{saleId}/deliver', [MobileDriverController::class, 'deliverStop']);
+    });
+
+    // Reference pickers for forms/reports — org-scoped, no resource-view permission required.
+    Route::prefix('reference')->group(function () {
+        Route::get('users', [ReferencePickerController::class, 'users']);
+        Route::get('vats', [ReferencePickerController::class, 'vats']);
+        Route::get('categories', [ReferencePickerController::class, 'categories']);
+        Route::get('sub-categories', [ReferencePickerController::class, 'subCategories']);
+        Route::get('uoms', [ReferencePickerController::class, 'uoms']);
+        Route::get('suppliers', [ReferencePickerController::class, 'suppliers']);
     });
 
     // ---- Sales ----
@@ -405,7 +416,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('supplier-returns', [ReportController::class, 'supplierReturns']);
         });
 
-        Route::middleware('erp.permission:reports.view|hr.view|accounting.view|inventory.view|sales.view|purchasing.view|fulfillment.view|customers.view|pos.end_of_day.view|pos.terminal.view|admin.view')->group(function () {
+        Route::middleware('erp.permission:reports.view|hr.view|accounting.view|inventory.view|sales.view|purchasing.view|fulfillment.view|customers.view|pos.end_of_day.view|pos.terminal.view|admin.view|catalogue.kra_invoices.view|catalogue.view')->group(function () {
             Route::get('/', [ReportController::class, 'catalog']);
             Route::get('dashboard', [ReportController::class, 'dashboard']);
             Route::get('filter-cashiers', [ReportController::class, 'filterCashiers']);
@@ -423,7 +434,8 @@ Route::middleware('auth:sanctum')->group(function () {
             });
 
             Route::get('kra-compliance-summary', [ReportController::class, 'kraComplianceSummary']);
-            Route::get('kra-receipts', [ReportController::class, 'kraReceipts']);
+            Route::get('kra-receipts', [ReportController::class, 'kraReceipts'])
+                ->middleware('erp.permission:reports.kra_receipts.view|catalogue.kra_invoices.view|admin.kra_responses.view');
             Route::get('kra-unfiscalized-sales', [ReportController::class, 'kraUnfiscalizedSales']);
             Route::get('audit-trail', [ReportController::class, 'auditTrail']);
 

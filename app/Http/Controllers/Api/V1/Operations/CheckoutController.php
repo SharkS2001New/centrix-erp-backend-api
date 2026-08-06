@@ -899,12 +899,18 @@ class CheckoutController extends Controller
                     $explicitSubmit,
                 );
 
+            $buyerPin = $this->resolveCheckoutBuyerPin(
+                $input['customer_kra_pin'] ?? null,
+                $customer,
+                $customerNum,
+            );
+
             $kraResponse = $this->submitKraForSale(
                 $sale,
                 $lines,
                 $gate,
                 $submitKra,
-                $input['customer_kra_pin'] ?? null,
+                $buyerPin,
             );
             if ($kraResponse) {
                 $sale->setRelation('kraResponse', $kraResponse);
@@ -1232,7 +1238,7 @@ class CheckoutController extends Controller
         return KraResponse::create([
             'sale_id' => $sale->id,
             'organization_id' => (int) $sale->organization_id,
-            'order_no' => $sale->order_num,
+            'order_no' => $this->kraDisplayOrderNo($sale),
             'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
             'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
             'signature_link' => $mapped['signature_link'] ?? null,
@@ -1821,5 +1827,43 @@ class CheckoutController extends Controller
         }
 
         return $byCode;
+    }
+
+    /** Buyer KRA PIN for eTIMS — explicit checkout input, then linked customer record. */
+    protected function resolveCheckoutBuyerPin(?string $inputPin, ?Customer $customer, ?int $customerNum): ?string
+    {
+        $pin = trim((string) ($inputPin ?? ''));
+        if ($pin !== '') {
+            return $pin;
+        }
+
+        if ($customer) {
+            $pin = trim((string) ($customer->kra_pin ?? ''));
+            if ($pin !== '') {
+                return $pin;
+            }
+        }
+
+        if ($customerNum) {
+            $resolved = Customer::query()
+                ->where('customer_num', $customerNum)
+                ->whereNull('deleted_at')
+                ->value('kra_pin');
+            $pin = trim((string) ($resolved ?? ''));
+
+            return $pin !== '' ? $pin : null;
+        }
+
+        return null;
+    }
+
+    /** Order # stored on kra_responses — POS uses daily Cash Sales ticket. */
+    protected function kraDisplayOrderNo(Sale $sale): int
+    {
+        if (strtolower((string) $sale->channel) === 'pos' && $sale->pos_order_num) {
+            return (int) $sale->pos_order_num;
+        }
+
+        return (int) $sale->order_num;
     }
 }

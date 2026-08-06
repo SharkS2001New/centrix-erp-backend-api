@@ -2444,8 +2444,18 @@ CREATE VIEW v_kra_receipts AS
 SELECT
     kr.id AS kra_response_id,
     kr.sale_id,
-    COALESCE(kr.order_no, s.order_num) AS order_no,
+    CASE
+        WHEN LOWER(COALESCE(s.channel, '')) = 'pos' AND s.pos_order_num IS NOT NULL
+        THEN s.pos_order_num
+        ELSE COALESCE(kr.order_no, s.order_num)
+    END AS order_no,
     s.order_num AS sale_order_num,
+    s.pos_order_num,
+    COALESCE(
+        NULLIF(TRIM(c.customer_name), ''),
+        NULLIF(TRIM(s.customer_name_override), ''),
+        'Walk-in'
+    ) AS customer_name,
     DATE(kr.created_at) AS receipt_date,
     kr.created_at AS receipt_at,
     kr.invoice_number,
@@ -2455,6 +2465,8 @@ SELECT
     kr.kra_timestamp,
     kr.status,
     kr.error_message,
+    kr.request_payload,
+    kr.response_payload,
     s.branch_id,
     b.branch_name,
     s.channel,
@@ -2463,7 +2475,10 @@ SELECT
     COALESCE(kr.organization_id, s.organization_id) AS organization_id
 FROM kra_responses kr
 INNER JOIN sales s ON s.id = kr.sale_id
-LEFT JOIN branches b ON b.id = s.branch_id;
+LEFT JOIN branches b ON b.id = s.branch_id
+LEFT JOIN customers c ON c.customer_num = s.customer_num
+    AND c.organization_id = s.organization_id
+    AND c.deleted_at IS NULL;
 
 DROP VIEW IF EXISTS v_kra_compliance_summary;
 CREATE VIEW v_kra_compliance_summary AS

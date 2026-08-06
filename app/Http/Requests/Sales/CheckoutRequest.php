@@ -30,6 +30,7 @@ class CheckoutRequest extends FormRequest
                 }),
             ],
             'customer_name_override' => 'nullable|string|max:500',
+            'customer_kra_pin' => 'nullable|string|max:45',
             'float_session_id' => 'nullable|integer',
             'sales_workspace' => 'nullable|in:pos,backoffice',
             'payment_method_code' => 'nullable|string|max:45',

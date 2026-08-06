@@ -208,7 +208,7 @@ class KraOperationsController extends Controller
             return response()->json(['message' => 'Receipt already succeeded.'], 422);
         }
 
-        $sale = Sale::with('items')->find($row->sale_id);
+        $sale = Sale::with(['items', 'customer'])->find($row->sale_id);
         if (! $sale) {
             return response()->json(['message' => 'Linked sale not found.'], 422);
         }
@@ -230,11 +230,14 @@ class KraOperationsController extends Controller
             'product_vat' => (float) ($line->product_vat ?? 0),
         ])->all();
 
+        $buyerPin = trim((string) ($sale->customer?->kra_pin ?? ''));
+        $buyerPin = $buyerPin !== '' ? $buyerPin : null;
+
         $result = $service->sendSale(
             $orderItems,
             (float) $sale->order_total,
             $invoiceNumber,
-            null,
+            $buyerPin,
         );
 
         if (! ($result['success'] ?? false)) {

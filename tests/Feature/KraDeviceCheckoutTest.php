@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Customer;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
@@ -258,5 +259,71 @@ class KraDeviceCheckoutTest extends TestCase
             'sale_id' => $sale['id'],
         ]);
         Http::assertNotSent(fn ($request) => str_contains($request->url(), '192.168.1.50'));
+    }
+
+    public function test_checkout_submits_buyer_kra_pin_from_linked_customer(): void
+    {
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => true,
+                'message' => 'OK',
+                'invoice_number' => 'CU-BUYER-PIN',
+                'Receipt Signature' => 'SIG-PIN',
+                'signature_link' => 'https://example.test/qr-pin',
+                'serial_number' => 'DEJA02220240050',
+                'timestamp' => '2026-06-11T12:00:00',
+            ], 200),
+        ]);
+
+        $product = Product::with('vat')->first();
+        if (! $product->vat_id) {
+            $product->update(['vat_id' => Vat::first()->id]);
+        }
+
+        $max = (int) Customer::query()->max('customer_num');
+        $customer = Customer::create([
+            'customer_num' => $max + 1,
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'customer_name' => 'PIN Customer Ltd',
+            'customer_type' => 'regular',
+            'kra_pin' => 'P051234567X',
+            'phone_number' => '0712345678',
+            'created_by' => $this->user->id,
+        ]);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+            'customer_num' => $customer->customer_num,
+            'pos_order_num' => 42,
+            'pos_order_date' => now()->toDateString(),
+            'offline_order' => true,
+        ])->assertCreated();
+
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), '/api/complete-workflow')) {
+                return false;
+            }
+            $payload = $request->data();
+            $sign = $payload['sign_structure'] ?? [];
+
+            return ($sign['pinOfBuyer'] ?? null) === 'P051234567X';
+        });
+
+        $this->assertDatabaseHas('kra_responses', [
+            'order_no' => 42,
+            'status' => 'success',
+        ]);
     }
 }

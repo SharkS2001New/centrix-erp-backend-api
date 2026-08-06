@@ -492,22 +492,48 @@ class KraDeviceService
         string $refundReasonCode,
         ?string $buyerPin,
     ): array {
-        $summary = SalesVatCalculator::summarizeForLightStoresWorkflow($orderItems);
+        $normalizedItems = array_map(function (array $item): array {
+            $amount = round(max(0.0, (float) ($item['amount'] ?? 0)), 2);
+            $productVat = (float) ($item['product_vat'] ?? 0);
+            if ($productVat > 0.0001 && $amount > 0) {
+                $productVat = round($amount - ($amount / 1.16), 2);
+            } else {
+                $productVat = 0.0;
+            }
+
+            return array_merge($item, [
+                'amount' => $amount,
+                'product_vat' => $productVat,
+            ]);
+        }, $orderItems);
+
+        $summary = SalesVatCalculator::summarizeForLightStoresWorkflow($normalizedItems);
         $vat16NetTotal = $summary['vat16_net'];
         $vat16ValueTotal = $summary['vat16_value'];
         $vatExemptNetTotal = $summary['exempt_net'];
 
         $pluData = array_map(
             fn (array $item) => self::buildWorkflowPluLine($item),
-            $orderItems,
+            $normalizedItems,
         );
+
+        $pluLineTotal = 0.0;
+        foreach ($pluData as $line) {
+            $pluLineTotal += (float) ($line['SaleAmount'] ?? 0);
+        }
+        $pluLineTotal = round($pluLineTotal, 2);
+        $cashAmt = round($totalAmount, 2);
+        // KRA validates sum(plu SaleAmount) against CashAmt — prefer line sum when they diverge.
+        if (abs($pluLineTotal - $cashAmt) > 0.009) {
+            $cashAmt = $pluLineTotal;
+        }
 
         $isCreditNote = $invoiceType === 'credit';
 
         $signStructure = [
             'SignType' => $this->isTest ? '0' : '1',
             'DiscAmt' => '0',
-            'CashAmt' => number_format($totalAmount, 2, '.', ''),
+            'CashAmt' => number_format($cashAmt, 2, '.', ''),
             'CheckAmt' => '0',
             'CardAmt' => '0',
             'InvoiceType' => $invoiceType,
