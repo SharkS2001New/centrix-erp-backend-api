@@ -367,7 +367,7 @@ class CartOperationsController extends Controller
     public function restoreHeldOrder(Request $request, int $saleId)
     {
         $user = $request->user();
-        $sale = $this->findScopedSale($saleId, $user)->load('items');
+        $sale = $this->findScopedSale($saleId, $user)->load(['items', 'customer:customer_num,customer_name,organization_id']);
 
         $this->assertSaleRestorableToCart($sale, $user);
 
@@ -394,8 +394,16 @@ class CartOperationsController extends Controller
         if (in_array((string) $sale->status, ['held', 'draft'], true)) {
             $cart = $this->restoreParkedSaleToNewCart($cart, $sale, $user, $gate);
 
-            return $this->cartResponse($cart, $user, includeNextOrderNum: true);
+            return $this->cartResponse(
+                $cart,
+                $user,
+                extra: ['restored_from_sale' => $this->restoredFromSalePayload($sale)],
+                includeNextOrderNum: true,
+            );
         }
+
+        // Fiscal void before the cart transaction so device/KRA latency does not hold DB locks.
+        app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
 
         $cart = DB::transaction(function () use ($cart, $sale, $user, $gate) {
             if ($cart->lines()->exists()) {
@@ -405,7 +413,6 @@ class CartOperationsController extends Controller
             $hadReservations = ! $sale->stock_balanced
                 && $this->saleHasActiveReservations((int) $sale->id);
 
-            app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
             if ($sale->stock_balanced) {
                 $this->reverseSaleStockDeductions($sale, $user);
             } elseif (! $hadReservations) {
@@ -456,7 +463,44 @@ class CartOperationsController extends Controller
             return $cart->fresh('lines');
         });
 
-        return $this->cartResponse($cart, $user);
+        return $this->cartResponse(
+            $cart,
+            $user,
+            extra: ['restored_from_sale' => $this->restoredFromSalePayload($sale)],
+        );
+    }
+
+    /**
+     * Lightweight sale metadata so POS can paint customer / ticket without a second GET /sales/{id}.
+     *
+     * @return array<string, mixed>
+     */
+    protected function restoredFromSalePayload(Sale $sale): array
+    {
+        $customerName = trim((string) ($sale->customer_name_override ?? ''));
+        if ($customerName === '') {
+            $customerName = trim((string) ($sale->customer?->customer_name ?? ''));
+        }
+        if ($customerName === '' && method_exists($sale, 'customerDisplayName')) {
+            $customerName = trim($sale->customerDisplayName());
+        }
+
+        return [
+            'id' => (int) $sale->id,
+            'order_num' => $sale->order_num !== null ? (int) $sale->order_num : null,
+            'pos_order_num' => $sale->pos_order_num !== null ? (int) $sale->pos_order_num : null,
+            'pos_order_date' => $sale->pos_order_date
+                ? (string) $sale->pos_order_date
+                : null,
+            'status' => (string) ($sale->status ?? ''),
+            'customer_num' => $sale->customer_num !== null ? (int) $sale->customer_num : null,
+            'customer_name_override' => $customerName !== '' ? $customerName : null,
+            'customer_display_name' => $customerName !== '' ? $customerName : null,
+            'payment_method_code' => $sale->payment_method_code
+                ? strtoupper((string) $sale->payment_method_code)
+                : null,
+            'order_total' => round((float) ($sale->order_total ?? 0), 2),
+        ];
     }
 
     /**

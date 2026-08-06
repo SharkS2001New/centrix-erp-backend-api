@@ -181,7 +181,9 @@ class PaymentsBreakdownService
         foreach ($adjustmentAggRows as $adj) {
             $code = $adj->method_code;
             $methodAgg[$code] ??= ['order_ids' => [], 'total_amount' => 0.0, 'return_amount' => 0.0, 'topup_amount' => 0.0];
-            $methodAgg[$code]['order_ids'][$adj->sale_id] = true;
+            // Do not add sale IDs here — adjustments must not create ghost rows on the
+            // return tender tab (e.g. Cash amount 0 + return). They stay on the order's
+            // original payment tab with return/top-up method labels.
             if ($adj->adjustment_type === 'return') {
                 $methodAgg[$code]['return_amount'] += (float) $adj->method_amount;
             } else {
@@ -209,15 +211,10 @@ class PaymentsBreakdownService
             $active = $methods[0];
         }
 
-        // Sale IDs that used the active method (payment and/or edit adjustment).
+        // Sale IDs that used the active tender (payment rows only — not edit adjustments).
         $tabSaleIds = $allExpanded
             ->filter(fn ($row) => $row->method_code === $methodCode)
             ->pluck('sale_id')
-            ->merge(
-                collect($adjustmentAggRows)
-                    ->filter(fn ($row) => $row->method_code === $methodCode)
-                    ->pluck('sale_id'),
-            )
             ->unique()
             ->values()
             ->all();
@@ -307,7 +304,7 @@ class PaymentsBreakdownService
         $saleIds = collect($paginator->items())->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->all();
         $tendersBySale = $this->tendersFromPaymentsBySale($saleIds);
         $referencesBySale = $this->referencesBySale($saleIds);
-        $adjustmentsBySale = $this->adjustmentsBySaleAndMethod($saleIds);
+        $adjustmentsBySale = $this->adjustmentsDetailBySale($saleIds, $catalog);
 
         // Fill tenders from columns for legacy rows missing payment tenders.
         foreach ($paginator->items() as $row) {
@@ -368,7 +365,12 @@ class PaymentsBreakdownService
                 ?? ($catalog[$methodCode]['method_name'] ?? null)
                 ?? $this->methodLabel($methodCode, '');
 
-            $adjustment = $adjustmentsBySale[$saleId][$methodCode] ?? ['return' => 0.0, 'topup' => 0.0];
+            $adjustment = $adjustmentsBySale[$saleId] ?? [
+                'return_amount' => 0.0,
+                'topup_amount' => 0.0,
+                'return_methods' => [],
+                'topup_methods' => [],
+            ];
 
             return [
                 'sale_id' => $saleId,
@@ -379,8 +381,10 @@ class PaymentsBreakdownService
                 'customer_num' => $row->customer_num !== null ? (int) $row->customer_num : null,
                 'customer_name' => $customerName,
                 'amount' => $displayAmount,
-                'return_amount' => round((float) ($adjustment['return'] ?? 0), 2),
-                'topup_amount' => round((float) ($adjustment['topup'] ?? 0), 2),
+                'return_amount' => round((float) ($adjustment['return_amount'] ?? 0), 2),
+                'topup_amount' => round((float) ($adjustment['topup_amount'] ?? 0), 2),
+                'return_methods' => $adjustment['return_methods'] ?? [],
+                'topup_methods' => $adjustment['topup_methods'] ?? [],
                 'amount_paid' => $amountPaid,
                 'order_total' => round((float) ($row->order_total ?? 0), 2),
                 'tenders' => $tenders,
@@ -644,6 +648,75 @@ class PaymentsBreakdownService
         }
 
         return $out;
+    }
+
+    /**
+     * @param  list<int>  $saleIds
+     * @param  array<string, array{method_code: string, method_name: string, requires_reference: bool}>  $catalog
+     * @return array<int, array{
+     *   return_amount: float,
+     *   topup_amount: float,
+     *   return_methods: list<array{method_code: string, method_name: string, amount: float}>,
+     *   topup_methods: list<array{method_code: string, method_name: string, amount: float}>
+     * }>
+     */
+    protected function adjustmentsDetailBySale(array $saleIds, array $catalog): array
+    {
+        if ($saleIds === [] || ! Schema::hasTable('sale_payment_adjustments')) {
+            return [];
+        }
+
+        $rows = DB::table('sale_payment_adjustments as spa')
+            ->join('payment_methods as pm', 'pm.id', '=', 'spa.payment_method_id')
+            ->whereIn('spa.sale_id', $saleIds)
+            ->select([
+                'spa.sale_id',
+                'spa.adjustment_type',
+                DB::raw($this->normalizedMethodCodeSql('pm.method_code').' as method_code'),
+                DB::raw('COALESCE(SUM(spa.amount), 0) as total'),
+            ])
+            ->groupBy('spa.sale_id', 'spa.adjustment_type', DB::raw($this->normalizedMethodCodeSql('pm.method_code')))
+            ->get();
+
+        $bySale = [];
+        foreach ($rows as $row) {
+            $saleId = (int) $row->sale_id;
+            $code = $this->normalizeMethodCode((string) ($row->method_code ?? ''));
+            if ($code === '' || in_array($code, self::HIDDEN_METHODS, true)) {
+                continue;
+            }
+            $amount = round((float) ($row->total ?? 0), 2);
+            if ($amount <= TillReportMetrics::MIN_COLLECTED) {
+                continue;
+            }
+            $bySale[$saleId] ??= [
+                'return_amount' => 0.0,
+                'topup_amount' => 0.0,
+                'return_methods' => [],
+                'topup_methods' => [],
+            ];
+            $entry = [
+                'method_code' => $code,
+                'method_name' => $catalog[$code]['method_name']
+                    ?? $this->displayMethodName($code, ''),
+                'amount' => $amount,
+            ];
+            if ($row->adjustment_type === 'return') {
+                $bySale[$saleId]['return_amount'] = round(
+                    $bySale[$saleId]['return_amount'] + $amount,
+                    2,
+                );
+                $bySale[$saleId]['return_methods'][] = $entry;
+            } else {
+                $bySale[$saleId]['topup_amount'] = round(
+                    $bySale[$saleId]['topup_amount'] + $amount,
+                    2,
+                );
+                $bySale[$saleId]['topup_methods'][] = $entry;
+            }
+        }
+
+        return $bySale;
     }
 
     /**
