@@ -111,7 +111,6 @@ return [
         'pricing_tax.vat_rates.view',
         'pricing_tax.price_history.view',
         'pricing_tax.kra_invoices.view',
-        'pricing_tax.kra_device_log.view',
         'mobile_sales.catalog.view',
     ],
     'inventory.view' => [
@@ -353,8 +352,9 @@ return [
     'admin.kra_responses.view' => [
         'reports.kra_receipts.view',
     ],
+    // Legacy Backoffice code — maps to Administration KRA device log.
     'pricing_tax.kra_device_log.view' => [
-        'reports.kra_receipts.view',
+        'admin.kra_responses.view',
     ],
     'pricing_tax.kra_invoices.view' => [
         'reports.kra_receipts.view',

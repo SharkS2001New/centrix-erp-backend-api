@@ -374,6 +374,11 @@ class OrganizationPlatformConfigService
         if (array_key_exists('orders_list_default_days', $nextSales)) {
             $nextSales['orders_list_default_days'] = $this->normalizeOrdersListDefaultDays($nextSales['orders_list_default_days']);
         }
+        if (array_key_exists('reports_default_date_range_days', $nextSales)) {
+            $nextSales['reports_default_date_range_days'] = $this->normalizeReportsDefaultDateRangeDays(
+                $nextSales['reports_default_date_range_days'],
+            );
+        }
         if (array_key_exists('orders_list_search_days', $nextSales)) {
             $nextSales['orders_list_search_days'] = $this->normalizeOrdersListSearchDays(
                 $nextSales['orders_list_search_days'],
@@ -450,6 +455,7 @@ class OrganizationPlatformConfigService
             'cart_reservation_ttl_minutes' => 15,
             // Wholesale/retail: 2 weeks list / 1 month search. Distribution: wider operational window.
             'orders_list_default_days' => $isDistribution ? 30 : 14,
+            'reports_default_date_range_days' => 30,
             'orders_list_search_days' => $isDistribution ? 60 : 30,
             'orders_list_sort' => '-created_at',
             'orders_list_visible_columns' => $this->normalizeOrdersListVisibleColumns(
@@ -568,6 +574,9 @@ class OrganizationPlatformConfigService
             'order_expiry_before_status' => (string) ($sales['order_expiry_before_status'] ?? 'processed'),
             'order_cancellation_enabled' => ($sales['order_cancellation_enabled'] ?? true) !== false,
             'orders_list_default_days' => $this->normalizeOrdersListDefaultDays($sales['orders_list_default_days'] ?? null),
+            'reports_default_date_range_days' => $this->normalizeReportsDefaultDateRangeDays(
+                $sales['reports_default_date_range_days'] ?? null,
+            ),
             'orders_list_search_days' => $this->normalizeOrdersListSearchDays(
                 $sales['orders_list_search_days'] ?? null,
                 $this->normalizeOrdersListDefaultDays($sales['orders_list_default_days'] ?? null),
@@ -823,6 +832,17 @@ class OrganizationPlatformConfigService
 
         if ($days < 1) {
             return 14;
+        }
+
+        return min(90, $days);
+    }
+
+    public function normalizeReportsDefaultDateRangeDays(mixed $value): int
+    {
+        $days = (int) $value;
+
+        if ($days < 1) {
+            return 30;
         }
 
         return min(90, $days);

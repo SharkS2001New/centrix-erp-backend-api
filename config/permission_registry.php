@@ -40,7 +40,6 @@ return [
                 'vat_rates' => ['label' => 'VAT / tax rates', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'price_history' => ['label' => 'Price history', 'actions' => ['view']],
                 'kra_invoices' => ['label' => 'KRA invoices', 'actions' => ['view', 'credit']],
-                'kra_device_log' => ['label' => 'KRA device log', 'actions' => ['view']],
             ],
         ],
         'customers' => [

@@ -763,6 +763,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.customer_return_statuses' => 'sometimes|array|min:1',
             'sales_platform.customer_return_statuses.*' => ['required', 'string', $actionStageRule],
             'sales_platform.orders_list_default_days' => 'sometimes|integer|min:1|max:90',
+            'sales_platform.reports_default_date_range_days' => 'sometimes|integer|min:1|max:90',
             'sales_platform.orders_list_search_days' => 'sometimes|integer|min:1|max:90',
             'sales_platform.orders_list_sort' => 'sometimes|in:-created_at,created_at,-order_num,order_num',
             'sales_platform.orders_list_visible_columns' => 'sometimes|array|min:1',

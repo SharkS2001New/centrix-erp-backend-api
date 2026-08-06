@@ -222,6 +222,7 @@ return [
             'order_expiry_before_status',
             'order_cancellation_enabled',
             'orders_list_default_days',
+            'reports_default_date_range_days',
             'orders_list_search_days',
             'orders_list_sort',
             'orders_list_visible_columns',
@@ -524,6 +525,7 @@ return [
                 'backend' => 'order_completed',
             ],
             'orders_list_default_days' => 14,
+            'reports_default_date_range_days' => 30,
             'orders_list_search_days' => 30,
             'orders_list_sort' => '-created_at',
             'orders_list_visible_columns' => [
