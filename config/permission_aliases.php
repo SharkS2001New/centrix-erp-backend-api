@@ -85,7 +85,6 @@ return [
             'sales.field_attendance.view',
             'sales.legacy_orders.view',
             'fulfillment.routes.view',
-            'dashboard.sales.view',
         ],
     ),
     'payments.manage' => [
@@ -349,9 +348,8 @@ return [
         'hr.holidays.delete',
         'hr.leave_settings.edit',
     ],
-    'admin.kra_responses.view' => [
-        'reports.kra_receipts.view',
-    ],
+    // Admin KRA device log is intentionally separate from the KRA receipts report.
+    // Routes already OR both codes; do not expand report → admin (that unlocked Administration).
     // Legacy Backoffice code — maps to Administration KRA device log.
     'pricing_tax.kra_device_log.view' => [
         'admin.kra_responses.view',
@@ -359,6 +357,8 @@ return [
     'pricing_tax.kra_invoices.view' => [
         'reports.kra_receipts.view',
     ],
+    // Core Administration entry only — VAT / KRA log / notifications must not expand to
+    // admin.view or the Administration workspace opens with a single utility link.
     'admin.view' => [
         'admin.overview.view',
         'admin.company.view',
@@ -369,9 +369,6 @@ return [
         'admin.roles.view',
         'admin.audit.view',
         'admin.payment_methods.view',
-        'admin.vat_rates.view',
-        'admin.kra_responses.view',
-        'admin.notifications.view',
     ],
     'admin.manage' => [
         'admin.company.edit',

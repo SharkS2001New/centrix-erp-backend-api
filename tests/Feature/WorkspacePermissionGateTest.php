@@ -164,6 +164,49 @@ class WorkspacePermissionGateTest extends TestCase
         $this->assertContains('hr', $ids);
     }
 
+    public function test_kra_receipts_report_permission_does_not_unlock_administration_workspace(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['admin'] = true;
+        $modules['reports'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'reports.kra_receipts.view',
+            'dashboard.overview.view',
+            'inventory.stock.view',
+        ]);
+
+        $ids = $this->workspaceIdsFor($user);
+        $map = app(\App\Services\Auth\UserPermissionService::class)
+            ->permissionMapForUser($user, app(ErpContext::class)->gateForUser($user));
+
+        $this->assertNotContains('admin', $ids);
+        $this->assertFalse((bool) ($map['admin.view'] ?? false));
+        $this->assertFalse((bool) ($map['admin.kra_responses.view'] ?? false));
+    }
+
+    public function test_admin_kra_responses_alone_does_not_unlock_administration_workspace(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['admin'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'admin.kra_responses.view',
+            'inventory.stock.view',
+        ]);
+
+        $ids = $this->workspaceIdsFor($user);
+
+        $this->assertNotContains('admin', $ids);
+        $this->assertContains('backoffice', $ids);
+    }
+
     /**
      * @param  list<string>  $permissionCodes
      */

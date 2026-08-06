@@ -399,7 +399,8 @@ class UserPermissionService
     {
         $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
         $map = $this->expandNavigationDashboardPermissions($map);
-        $map = $this->expandLegacySalesOrderQueueView($map);
+        // Do NOT expand sales.orders.view → every sales.order_queue_*.view here.
+        // Sidebar queue links require the explicit queue grant from the Roles matrix.
 
         if ($user->is_super_admin && $gate !== null) {
             $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
