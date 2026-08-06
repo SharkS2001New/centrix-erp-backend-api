@@ -138,9 +138,11 @@ class CreditNoteService
         try {
             $service = KraDeviceService::fromSettings($financeSettings);
             $orderItems = $return->lines
-                ->filter(fn ($line) => (float) $line->return_qty > 0)
+                ->filter(fn ($line) => (float) $line->amount > 0)
                 ->map(function ($line) {
-                    $qty = max(0.001, (float) $line->return_qty);
+                    $qty = (float) $line->return_qty > 0
+                        ? (float) $line->return_qty
+                        : 1.0;
                     $amount = (float) $line->amount;
                     $vatRate = \App\Services\Kra\SalesVatCalculator::vatRateFromProduct($line->product);
                     $productVat = $vatRate > 0
@@ -148,15 +150,27 @@ class CreditNoteService
                         : 0.0;
 
                     return [
-                        'product_name' => $line->product_name ?? $line->product_code,
-                        'product_code' => $line->product_code,
-                        'quantity' => $qty,
+                        'product_name' => $line->product_name ?? $line->product_code ?? 'Credit adjustment',
+                        'product_code' => $line->product_code ?: 'CREDIT-ADJ',
+                        'quantity' => max(0.001, $qty),
                         'amount' => $amount,
                         'product_vat' => $productVat,
                     ];
                 })
                 ->values()
                 ->all();
+
+            // Amount-only credit notes (no product lines) — single adjustment PLU for the device.
+            if ($orderItems === [] && (float) $return->total_amount > 0) {
+                $amount = round((float) $return->total_amount, 2);
+                $orderItems = [[
+                    'product_name' => $return->reason ?: 'Credit adjustment',
+                    'product_code' => 'CREDIT-ADJ',
+                    'quantity' => 1.0,
+                    'amount' => $amount,
+                    'product_vat' => 0.0,
+                ]];
+            }
 
             $invoiceNumber = $service->traderInvoiceForCreditNote($creditNote, $financeSettings);
             $buyerPin = $return->customer?->kra_pin ?? $return->sale?->customer?->kra_pin ?? null;

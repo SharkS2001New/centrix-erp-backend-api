@@ -473,4 +473,56 @@ class CreditNoteReturnTest extends TestCase
             'customer_return_id' => $returnId,
         ]);
     }
+
+    public function test_create_amount_only_credit_note_without_products(): void
+    {
+        \App\Models\PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $this->user->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        $sale = Sale::query()->firstOrFail();
+        $sale->update([
+            'status' => 'completed',
+            'order_total' => 1000,
+            'amount_paid' => 850,
+            'payment_status' => 'partial',
+        ]);
+
+        $created = $this->postJson('/api/v1/credit-notes', [
+            'sale_id' => $sale->id,
+            'reason' => 'Price adjustment',
+            'refund_method' => 'ACCOUNT',
+            'notes' => 'Customer underpaid due to agreed price difference',
+            'total_amount' => 150,
+            'lines' => [],
+        ])->assertCreated();
+
+        $this->assertSame(150.0, (float) $created->json('total_amount'));
+        $this->assertSame('credit_note', $created->json('return_kind'));
+        $this->assertSame('pending', $created->json('status'));
+
+        $returnId = (int) $created->json('id');
+        $this->assertDatabaseHas('customer_returns', [
+            'id' => $returnId,
+            'return_kind' => 'credit_note',
+            'total_amount' => 150,
+        ]);
+        $this->assertDatabaseMissing('customer_return_lines', [
+            'customer_return_id' => $returnId,
+        ]);
+
+        $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
+            ->assertOk()
+            ->assertJsonPath('credit_note.total_amount', 150);
+
+        $this->assertSame(850.0, (float) $sale->fresh()->order_total);
+    }
 }

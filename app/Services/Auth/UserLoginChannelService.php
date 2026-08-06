@@ -248,8 +248,10 @@ class UserLoginChannelService
             'loyalty-cards',
             'inventory/availability',
             'current-stock',
+            // Legacy CRUD paths + permission-light pickers used by POS / inventory forms.
             'uoms',
             'vats',
+            'reference/',
             'retail-package-settings',
             'payments/',
             'notifications',
@@ -287,6 +289,7 @@ class UserLoginChannelService
             'routes',
             'uoms',
             'vats',
+            'reference/',
             'retail-package-settings',
             'payments/',
             'notifications',

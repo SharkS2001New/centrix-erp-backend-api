@@ -131,9 +131,27 @@ class CustomerReturnService
         return DB::transaction(function () use ($user, $data) {
             $saleId = (int) $data['sale_id'];
             $this->assertSaleEligibleForCustomerReturn($saleId, $user);
-            $lines = $this->normalizeLines($data['lines'] ?? [], $saleId, null, 'credit_note');
-            $total = round(array_sum(array_column($lines, 'amount')), 2);
+            $rawLines = $data['lines'] ?? [];
+            $lines = $this->normalizeLines(is_array($rawLines) ? $rawLines : [], $saleId, null, 'credit_note');
+            $lineTotal = round(array_sum(array_column($lines, 'amount')), 2);
+            $headerTotal = isset($data['total_amount']) ? round((float) $data['total_amount'], 2) : 0.0;
+            $total = $lineTotal > 0 ? $lineTotal : $headerTotal;
             $sale = Sale::query()->find($saleId);
+
+            if ($total <= 0) {
+                throw ValidationException::withMessages([
+                    'total_amount' => 'Enter a credit amount, or add at least one product line.',
+                ]);
+            }
+
+            if ($lines === [] && $sale) {
+                $maxCredit = $this->maxAmountOnlyCreditForSale($sale);
+                if ($total > $maxCredit + 0.02) {
+                    throw ValidationException::withMessages([
+                        'total_amount' => "Credit amount exceeds the remaining invoice balance ({$maxCredit}).",
+                    ]);
+                }
+            }
 
             $document = $this->allocateReturnDocument((int) $user->organization_id);
 
@@ -649,6 +667,22 @@ class CustomerReturnService
             return;
         }
 
+        // Amount-only credit (price difference / underpayment) — reduce invoice total only.
+        if ($return->lines->isEmpty()) {
+            $totalCredit = round((float) ($return->total_amount ?? 0), 2);
+            if ($totalCredit <= 0) {
+                return;
+            }
+
+            $sale->update([
+                'order_total' => max(0, round((float) $sale->order_total - $totalCredit, 2)),
+            ]);
+
+            $this->syncSalePaymentAfterReturn($sale->fresh(), $totalCredit);
+
+            return;
+        }
+
         $totalCredit = 0.0;
         $totalVatReduction = 0.0;
         $totalDiscountReduction = 0.0;
@@ -691,6 +725,13 @@ class CustomerReturnService
         ]);
 
         $this->syncSalePaymentAfterReturn($sale->fresh(), $totalCredit);
+    }
+
+    /** Remaining invoice balance available for an amount-only credit note. */
+    protected function maxAmountOnlyCreditForSale(Sale $sale): float
+    {
+        // order_total is already reduced when prior credit notes are approved.
+        return max(0, round((float) ($sale->order_total ?? 0), 2));
     }
 
     protected function reverseReturnFromSale(CustomerReturn $return): void
@@ -1439,10 +1480,13 @@ class CustomerReturnService
         }
 
         if ($normalized === []) {
+            // Amount-only customer credit notes (price difference) intentionally have no lines.
+            if ($creditNote) {
+                return [];
+            }
+
             throw ValidationException::withMessages([
-                'lines' => $creditNote
-                    ? 'Add at least one product with a credit amount.'
-                    : 'Add at least one product with a return quantity.',
+                'lines' => 'Add at least one product with a return quantity.',
             ]);
         }
 

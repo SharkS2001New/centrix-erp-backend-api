@@ -50,6 +50,7 @@ class BackofficeFinanceReportsTest extends TestCase
 
         $this->assertSame(['sales.reports', 'accounting.reports'], $modules);
         $this->assertSame(['sales.reports', 'accounting.reports'], ModuleRegistry::reportAccessModulesForSlug('kra-receipts'));
+        $this->assertSame(['sales.reports', 'accounting.reports'], ModuleRegistry::reportAccessModulesForSlug('kra-invoices'));
         $this->assertSame(['sales.reports'], ModuleRegistry::reportAccessModulesForSlug('daily-sales'));
     }
 

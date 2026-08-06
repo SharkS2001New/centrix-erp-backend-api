@@ -384,5 +384,9 @@ class StockClerkAccessTest extends TestCase
         $this->getJson('/api/v1/products?per_page=20')->assertOk();
         $this->getJson('/api/v1/vats?per_page=50')->assertOk();
         $this->getJson('/api/v1/categories?per_page=50')->assertOk();
+
+        // Inventory forms use permission-light reference pickers.
+        $this->getJson('/api/v1/reference/uoms?per_page=500')->assertOk();
+        $this->getJson('/api/v1/reference/vats?per_page=50')->assertOk();
     }
 }

@@ -302,6 +302,7 @@ return [
         'expenses',
         'invoice-payments',
         'kra-receipts',
+        'kra-invoices',
         'kra-compliance-summary',
         'kra-unfiscalized-sales',
     ],

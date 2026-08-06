@@ -112,14 +112,28 @@ class CreditNoteController extends Controller
             'reason' => 'required|string|min:3|max:200',
             'notes' => 'nullable|string',
             'auto_approve' => 'sometimes|boolean',
-            'lines' => 'required|array|min:1',
-            'lines.*.product_code' => 'required|string',
-            'lines.*.amount' => 'required|numeric|min:0.01',
+            // Amount-only credits (price difference / underpayment) need no product lines.
+            'total_amount' => 'nullable|numeric|min:0.01',
+            'lines' => 'nullable|array',
+            'lines.*.product_code' => 'required_with:lines|string',
+            'lines.*.amount' => 'required_with:lines|numeric|min:0.01',
             'lines.*.sale_item_id' => 'nullable|integer',
             'lines.*.product_name' => 'nullable|string|max:200',
             'lines.*.uom' => 'nullable|string|max:45',
             'lines.*.line_no' => 'nullable|integer',
         ]);
+
+        $lines = $data['lines'] ?? [];
+        $hasLines = is_array($lines) && collect($lines)->contains(
+            fn ($line) => round((float) ($line['amount'] ?? 0), 2) > 0,
+        );
+        $hasTotal = isset($data['total_amount']) && round((float) $data['total_amount'], 2) > 0;
+
+        if (! $hasLines && ! $hasTotal) {
+            throw \Illuminate\Validation\ValidationException::withMessages([
+                'total_amount' => 'Enter a credit amount, or add at least one product line.',
+            ]);
+        }
 
         $data['return_date'] = $data['credit_date'] ?? $data['return_date'] ?? now()->toDateString();
         $return = $this->service->createCreditNote($request->user(), $data);
