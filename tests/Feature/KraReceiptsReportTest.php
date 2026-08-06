@@ -59,6 +59,17 @@ class KraReceiptsReportTest extends TestCase
             'receipt_signature' => 'sig-test',
             'kra_timestamp' => now()->toIso8601String(),
             'status' => 'success',
+            'request_payload' => json_encode([
+                'sn' => 'SCU-TEST-1',
+                'plu_data' => [
+                    ['item_Name' => 'Test item', 'SaleQty' => '1', 'SalePrice' => '1500.00'],
+                ],
+            ]),
+            'response_payload' => json_encode([
+                'scu_id' => 'KRACU0300000001',
+                'cu_inv_no' => '0000001',
+                'invoice_number' => 'CU-TEST-90001',
+            ]),
             'created_at' => now(),
             'updated_at' => now(),
         ]);
@@ -74,6 +85,8 @@ class KraReceiptsReportTest extends TestCase
         $this->assertSame('SCU-TEST-1', $hit['serial_number'] ?? null);
         $this->assertArrayHasKey('receipt_date', $hit);
         $this->assertArrayHasKey('signature_link', $hit);
+        $this->assertArrayHasKey('request_payload', $hit);
+        $this->assertArrayHasKey('response_payload', $hit);
     }
 
     public function test_kra_compliance_summary_and_unfiscalized_sales(): void

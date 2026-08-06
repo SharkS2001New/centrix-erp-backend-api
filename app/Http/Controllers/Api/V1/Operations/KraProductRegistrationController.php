@@ -98,7 +98,7 @@ class KraProductRegistrationController extends Controller
             $query->whereIn('product_code', $request->input('product_codes', []));
         }
 
-        $products = $query->orderBy('product_name')->get();
+        $products = $query->with(['vat', 'unit'])->orderBy('product_name')->get();
         $path = trim((string) ($finance['kra_plu_register_path'] ?? '/api/register-plu'));
         $service = KraDeviceService::fromSettings($finance);
         $result = $service->registerProducts($products->all(), $path, $finance);

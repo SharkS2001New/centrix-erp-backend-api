@@ -315,15 +315,14 @@ class KraDeviceService
     /** @return array<string, string> */
     public static function buildWorkflowPluLine(array $item): array
     {
-        $amount = (float) ($item['amount'] ?? 0);
+        $amount = round(max(0.0, (float) ($item['amount'] ?? 0)), 2);
         $quantity = max(0.001, (float) ($item['quantity'] ?? 1));
-        $unitPrice = $quantity > 0 ? $amount / $quantity : $amount;
         $itemName = trim((string) ($item['product_name'] ?? 'Product'));
 
         return [
             'item_Name' => $itemName !== '' ? $itemName : 'Product',
             'Barcode' => '',
-            'SalePrice' => number_format($unitPrice, 2, '.', ''),
+            'SalePrice' => self::formatWorkflowSalePrice($amount, $quantity),
             'SaleQty' => self::formatWorkflowSaleQty($quantity),
             'SaleAmount' => number_format($amount, 2, '.', ''),
             'ItemDisCount(%)' => '0',
@@ -340,6 +339,29 @@ class KraDeviceService
         }
 
         return rtrim(rtrim(number_format($quantity, 2, '.', ''), '0'), '.');
+    }
+
+    /**
+     * Unit price for KRA complete-workflow PLU lines.
+     *
+     * The fiscal device validates SalePrice × SaleQty = SaleAmount. With fractional
+     * quantities (e.g. 12.5 kg), a 2-decimal price derived from a rounded line total
+     * often fails (33.33 × 12.5 = 416.625 ≠ 416.63).
+     */
+    protected static function formatWorkflowSalePrice(float $amount, float $quantity): string
+    {
+        if ($amount <= 0 || $quantity <= 0) {
+            return '0.00';
+        }
+
+        foreach ([2, 4] as $decimals) {
+            $unitPrice = round($amount / $quantity, $decimals);
+            if (abs(($unitPrice * $quantity) - $amount) < 0.0001) {
+                return number_format($unitPrice, $decimals, '.', '');
+            }
+        }
+
+        return number_format($amount / $quantity, 4, '.', '');
     }
 
     /** @return array<string, string> */

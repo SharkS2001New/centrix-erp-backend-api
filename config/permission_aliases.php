@@ -348,6 +348,9 @@ return [
         'hr.holidays.delete',
         'hr.leave_settings.edit',
     ],
+    'admin.kra_responses.view' => [
+        'reports.kra_receipts.view',
+    ],
     'admin.view' => [
         'admin.overview.view',
         'admin.company.view',

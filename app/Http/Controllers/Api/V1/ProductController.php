@@ -569,6 +569,7 @@ class ProductController extends BaseResourceController
     public function store(Request $request)
     {
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
+        $rules['vat_id'] = 'required|integer|exists:vats,id';
         $rules['catalog_scope'] = 'nullable|in:organization,branch';
         $rules['branch_id'] = 'nullable|integer|exists:branches,id';
         $rules['opening_stock'] = 'nullable|array';
@@ -651,6 +652,7 @@ class ProductController extends BaseResourceController
         $prevDisc = (float) ($model->discount_percentage ?? 0);
 
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
+        $rules['vat_id'] = 'required|integer|exists:vats,id';
         $rules['catalog_scope'] = 'nullable|in:organization,branch';
         $rules['branch_id'] = 'nullable|integer|exists:branches,id';
         $rules['shelf_location'] = 'nullable|string|max:50';

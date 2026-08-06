@@ -694,7 +694,7 @@ Route::prefix('v1')->group(function () {
                 ->only(['store', 'update', 'destroy'])
                 ->middleware(['erp.permission:admin.manage|admin.payment_methods.create|admin.payment_methods.edit|admin.payment_methods.delete']);
             Route::apiResource('kra-responses', KraResponseController::class)
-                ->middleware('erp.permission:admin.view');
+                ->middleware('erp.permission:admin.kra_responses.view|admin.view|reports.kra_receipts.view');
         });
 
         // List/show for checkout, collect-payment, drivers — not admin-module-only.

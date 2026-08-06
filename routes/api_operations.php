@@ -34,6 +34,7 @@ use App\Http\Controllers\Api\V1\Operations\MpesaReconciliationController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 use App\Http\Controllers\Api\V1\Operations\KraProductRegistrationController;
 use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
+use App\Http\Controllers\Api\V1\KraResponseController;
 use App\Http\Controllers\Api\V1\Operations\MobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\MobileDriverController;
 use App\Http\Controllers\Api\V1\Operations\MobileDriverAttendanceController;
@@ -326,16 +327,21 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ---- KRA device ----
-    Route::middleware('erp.permission:products.manage')->prefix('kra')->group(function () {
+    Route::middleware('erp.permission:products.manage|sales.create|pos.checkout.create|pos.terminal.view|pos.till_management.create')->prefix('kra')->group(function () {
         Route::post('register-products', [KraProductRegistrationController::class, 'register']);
     });
 
-    Route::middleware('erp.permission:admin.manage')->group(function () {
+    Route::middleware('erp.permission:reports.kra_receipts.view|admin.kra_responses.view')->group(function () {
+        Route::get('kra-responses', [KraResponseController::class, 'index']);
+        Route::get('kra-responses/{kraResponse}', [KraResponseController::class, 'show']);
         Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);
+        Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
+    });
+
+    Route::middleware('erp.permission:admin.manage')->group(function () {
         Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
         Route::post('kra/device-init', [KraOperationsController::class, 'deviceInit']);
         Route::post('kra/device-restart', [KraOperationsController::class, 'deviceRestart']);
-        Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
     });
 
     // ---- Reports ----

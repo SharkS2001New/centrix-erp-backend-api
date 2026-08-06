@@ -71,7 +71,30 @@ class KraResponseController extends BaseResourceController
         $perPage = min((int) $request->input('per_page', 25), 200);
 
         return response()->json(
-            $query->orderByDesc('created_at')->orderByDesc('id')->paginate($perPage)
+            $query
+                ->with(['sale:id,channel'])
+                ->orderByDesc('created_at')
+                ->orderByDesc('id')
+                ->paginate($perPage)
+                ->through(fn (KraResponse $row) => $this->formatKraResponse($row))
         );
+    }
+
+    public function show(Request $request, string $id)
+    {
+        $model = $this->baseQuery($request)
+            ->with(['sale:id,channel'])
+            ->where('id', $id)
+            ->firstOrFail();
+
+        return response()->json($this->formatKraResponse($model));
+    }
+
+    /** @return array<string, mixed> */
+    protected function formatKraResponse(KraResponse $row): array
+    {
+        return array_merge($row->toArray(), [
+            'channel' => $row->sale?->channel,
+        ]);
     }
 }
