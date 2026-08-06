@@ -1092,12 +1092,6 @@ class MobileSalesService
             ]);
         }
 
-        if (! $sale->created_at?->isSameDay(now())) {
-            throw ValidationException::withMessages([
-                'sale_id' => 'Returns are only allowed for orders placed today.',
-            ]);
-        }
-
         $gate = $this->erp->gateForUser($user);
         if (! OrderWorkflowService::forGate($gate)->isCustomerReturnStatus((string) $sale->status, $sale->channel)) {
             throw ValidationException::withMessages([

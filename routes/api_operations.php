@@ -375,9 +375,6 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::get('stock-transfers', [ReportController::class, 'stockTransfers']);
             Route::get('branch-stock-transfers', [ReportController::class, 'branchStockTransfers']);
             Route::get('damages', [ReportController::class, 'damages']);
-        });
-
-        Route::middleware('erp.permission:reports.view|inventory.view|pricing_tax.price_list.view|reports.price_list.view')->group(function () {
             Route::get('price-list', [ReportController::class, 'priceList']);
             Route::get('product-price-sheet', [ReportController::class, 'productPriceSheet']);
         });

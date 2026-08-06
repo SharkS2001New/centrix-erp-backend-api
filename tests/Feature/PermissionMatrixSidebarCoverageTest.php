@@ -80,6 +80,7 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
         $this->assertTrue($codes->contains('reports.low_stock.view'));
         $this->assertTrue($codes->contains('reports.payroll_summary.view'));
         $this->assertTrue($codes->contains('reports.profit_loss.view'));
+        $this->assertTrue($codes->contains('pricing_tax.price_list.view'));
         $this->assertTrue($codes->contains('admin.notifications.view'));
 
         $apps = collect($res->json('applications'));
@@ -97,6 +98,14 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
         $this->assertNotContains('payroll_summary', $featureKeysByApp->get('backoffice', []));
         $this->assertContains('profit_loss', $featureKeysByApp->get('accounting', []));
         $this->assertNotContains('profit_loss', $featureKeysByApp->get('backoffice', []));
+
+        $backofficePricingFeatures = collect($apps->firstWhere('id', 'backoffice')['modules'] ?? [])
+            ->firstWhere('module', 'pricing_tax');
+        $this->assertNotNull($backofficePricingFeatures);
+        $this->assertContains(
+            'price_list',
+            collect($backofficePricingFeatures['features'] ?? [])->pluck('key')->all(),
+        );
     }
 
     public function test_every_registry_report_feature_appears_in_exactly_one_application(): void

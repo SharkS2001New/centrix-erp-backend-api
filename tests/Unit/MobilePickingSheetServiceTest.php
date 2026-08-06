@@ -95,6 +95,18 @@ class MobilePickingSheetServiceTest extends TestCase
         $this->assertSame(139.0, $price);
     }
 
+    public function test_format_route_names_phrase(): void
+    {
+        $service = $this->makeService(Mockery::mock(StockUomDisplayService::class));
+
+        $this->assertSame('Route A', $service->formatRouteNamesPhrase(['Route A']));
+        $this->assertSame('Route A and Route B', $service->formatRouteNamesPhrase(['Route A', 'Route B']));
+        $this->assertSame(
+            'Route 1, 2 and C',
+            $service->formatRouteNamesPhrase(['Route 1', '2', 'C']),
+        );
+    }
+
     protected function makeService(StockUomDisplayService $stockUom): MobilePickingSheetService
     {
         return new MobilePickingSheetService(

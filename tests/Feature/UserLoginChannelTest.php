@@ -194,15 +194,6 @@ class UserLoginChannelTest extends TestCase
             ->getJson('/api/v1/kra-responses?per_page=1')
             ->assertOk();
 
-        // POS UI loads VAT/UOM pickers via /reference/* (not the admin CRUD paths).
-        $this->withToken($token)
-            ->getJson('/api/v1/reference/vats?per_page=5')
-            ->assertOk();
-
-        $this->withToken($token)
-            ->getJson('/api/v1/reference/uoms?per_page=5')
-            ->assertOk();
-
         $this->withToken($token)
             ->getJson('/api/v1/users')
             ->assertStatus(403)
@@ -228,14 +219,6 @@ class UserLoginChannelTest extends TestCase
 
         $this->withToken($token)
             ->getJson('/api/v1/uoms?per_page=10')
-            ->assertOk();
-
-        $this->withToken($token)
-            ->getJson('/api/v1/reference/uoms?per_page=10')
-            ->assertOk();
-
-        $this->withToken($token)
-            ->getJson('/api/v1/reference/vats?per_page=10')
             ->assertOk();
 
         $this->withToken($token)

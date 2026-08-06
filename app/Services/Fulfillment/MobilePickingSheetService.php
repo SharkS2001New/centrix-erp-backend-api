@@ -68,6 +68,9 @@ class MobilePickingSheetService
                 'list_date' => $listDate,
                 'route_id' => $routeId,
                 'route' => $loadingList['route'] ?? null,
+                'route_names' => array_values(array_filter([
+                    (string) ($loadingList['route']['route_name'] ?? ''),
+                ])),
                 'status' => 'open',
                 'layout' => 'sales',
                 'order_count' => (int) ($loadingList['order_count'] ?? count($saleIds)),
@@ -77,6 +80,112 @@ class MobilePickingSheetService
             ],
             'orders' => $orders,
         ];
+    }
+
+    /**
+     * Combine product totals across multiple routes for the same delivery date.
+     *
+     * @param  list<int>  $routeIds
+     * @return array<string, mixed>
+     */
+    public function combinedSheetDetail(User $user, array $routeIds, string $listDate): array
+    {
+        $routeIds = array_values(array_unique(array_filter(
+            array_map('intval', $routeIds),
+            fn (int $id) => $id > 0,
+        )));
+
+        if (count($routeIds) < 2) {
+            throw new InvalidArgumentException('Select at least two routes to combine.');
+        }
+
+        if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $listDate)) {
+            throw new InvalidArgumentException('Invalid picking date.');
+        }
+
+        $allSaleIds = [];
+        $allOrders = [];
+        $routeNames = [];
+        $orderCount = 0;
+
+        foreach ($routeIds as $routeId) {
+            $loadingDetail = $this->loadingSheets->sheetDetail($user, $routeId, $listDate);
+            $loadingList = $loadingDetail['loading_list'] ?? [];
+            $orders = $loadingDetail['orders'] ?? [];
+
+            $routeName = trim((string) ($loadingList['route']['route_name'] ?? ''));
+            if ($routeName === '') {
+                $routeName = 'Route #'.$routeId;
+            }
+            $routeNames[] = $routeName;
+
+            foreach ($orders as $order) {
+                $saleId = (int) ($order['id'] ?? 0);
+                if ($saleId > 0) {
+                    $allSaleIds[] = $saleId;
+                }
+                $allOrders[] = $order;
+            }
+            $orderCount += (int) ($loadingList['order_count'] ?? count($orders));
+        }
+
+        $allSaleIds = array_values(array_unique($allSaleIds));
+        $lines = $this->aggregateSalesPickingLines($allSaleIds);
+        $orderTotalValue = round(
+            collect($allOrders)->sum(fn ($order) => (float) ($order['order_total'] ?? 0)),
+            2,
+        );
+        $dateToken = str_replace('-', '', $listDate);
+        $routePhrase = $this->formatRouteNamesPhrase($routeNames);
+
+        return [
+            'picking_list' => [
+                'list_number' => sprintf('PK-%s-COMB', $dateToken),
+                'list_date' => $listDate,
+                'route_id' => null,
+                'route_ids' => $routeIds,
+                'route' => null,
+                'route_names' => $routeNames,
+                'route_names_phrase' => $routePhrase,
+                'combined' => true,
+                'status' => 'open',
+                'layout' => 'sales',
+                'order_count' => $orderCount,
+                'line_count' => count($lines),
+                'order_total_value' => $orderTotalValue,
+                'lines' => $lines,
+            ],
+            'orders' => $allOrders,
+        ];
+    }
+
+    /**
+     * @param  list<string>  $names
+     */
+    public function formatRouteNamesPhrase(array $names): string
+    {
+        $cleaned = [];
+        foreach ($names as $name) {
+            $text = trim((string) $name);
+            if ($text !== '') {
+                $cleaned[] = $text;
+            }
+        }
+        $cleaned = array_values(array_unique($cleaned));
+        $count = count($cleaned);
+        if ($count === 0) {
+            return '';
+        }
+        if ($count === 1) {
+            return $cleaned[0];
+        }
+        if ($count === 2) {
+            return $cleaned[0].' and '.$cleaned[1];
+        }
+
+        $last = array_pop($cleaned);
+
+        return implode(', ', $cleaned).' and '.$last;
     }
 
     /**
