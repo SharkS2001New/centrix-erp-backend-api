@@ -37,7 +37,7 @@ class KraResponseController extends BaseResourceController
         $request->validate([
             'from_date' => 'nullable|date',
             'to_date' => 'nullable|date',
-            'status' => 'nullable|in:pending,success,failed',
+            'status' => 'nullable|in:pending,success,failed,skipped',
         ]);
 
         $query = $this->baseQuery($request);
@@ -72,7 +72,7 @@ class KraResponseController extends BaseResourceController
 
         return response()->json(
             $query
-                ->with(['sale:id,channel'])
+                ->with(['sale:id,channel,cashier_id', 'sale.cashier:id,full_name,username'])
                 ->orderByDesc('created_at')
                 ->orderByDesc('id')
                 ->paginate($perPage)
@@ -83,7 +83,7 @@ class KraResponseController extends BaseResourceController
     public function show(Request $request, string $id)
     {
         $model = $this->baseQuery($request)
-            ->with(['sale:id,channel'])
+            ->with(['sale:id,channel,cashier_id', 'sale.cashier:id,full_name,username'])
             ->where('id', $id)
             ->firstOrFail();
 
@@ -93,8 +93,18 @@ class KraResponseController extends BaseResourceController
     /** @return array<string, mixed> */
     protected function formatKraResponse(KraResponse $row): array
     {
+        $cashier = $row->sale?->cashier;
+        $cashierName = null;
+        if ($cashier) {
+            $fullName = trim((string) ($cashier->full_name ?? ''));
+            $username = trim((string) ($cashier->username ?? ''));
+            $cashierName = $fullName !== '' ? $fullName : ($username !== '' ? $username : null);
+        }
+
         return array_merge($row->toArray(), [
             'channel' => $row->sale?->channel,
+            'cashier_id' => $row->sale?->cashier_id,
+            'cashier_name' => $cashierName,
         ]);
     }
 }

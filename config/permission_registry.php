@@ -40,6 +40,7 @@ return [
                 'vat_rates' => ['label' => 'VAT / tax rates', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'price_history' => ['label' => 'Price history', 'actions' => ['view']],
                 'kra_invoices' => ['label' => 'KRA invoices', 'actions' => ['view', 'credit']],
+                'kra_device_log' => ['label' => 'KRA device log', 'actions' => ['view']],
             ],
         ],
         'customers' => [
@@ -301,7 +302,8 @@ return [
                 'roles' => ['label' => 'Roles & permissions', 'actions' => ['view', 'edit']],
                 'audit' => ['label' => 'Audit logs', 'actions' => ['view']],
                 'payment_methods' => ['label' => 'Payment methods', 'actions' => ['view', 'create', 'edit', 'delete']],
-                'kra_responses' => ['label' => 'KRA fiscal responses', 'actions' => ['view']],
+                'vat_rates' => ['label' => 'VAT / tax rates (Administration)', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'kra_responses' => ['label' => 'KRA device log', 'actions' => ['view']],
                 'till_printing' => ['label' => 'Local printing setup', 'actions' => ['view', 'edit']],
                 'discount_approvals' => ['label' => 'Discount approvals', 'actions' => ['approve']],
                 'notifications' => ['label' => 'Notifications', 'actions' => ['view']],

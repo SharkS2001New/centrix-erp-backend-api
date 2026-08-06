@@ -37,6 +37,19 @@ class WorkspaceResolver
     ];
 
     /**
+     * Admin finance/tax utilities that must not unlock the Administration workspace alone.
+     * Granting these without core admin rights (users, roles, company, …) keeps the user
+     * in Backoffice — use pricing_tax.* counterparts there instead.
+     */
+    protected const ADMIN_NON_ENTRY_FEATURES = [
+        'kra_responses',
+        'vat_rates',
+        'till_printing',
+        'discount_approvals',
+        'notifications',
+    ];
+
+    /**
      * @return list<array{id: string, label: string, description: string, icon: string, home_path: string}>
      */
     public function availableForUser(?User $user, CapabilityGate $gate): array
@@ -196,6 +209,10 @@ class WorkspaceResolver
             return $this->userHasBackofficePermission($permissionMap);
         }
 
+        if ($workspaceId === 'admin') {
+            return $this->userHasAdminPermission($permissionMap);
+        }
+
         $prefixes = $definition['permission_prefixes'] ?? [];
         if ($prefixes === []) {
             return true;
@@ -213,6 +230,41 @@ class WorkspaceResolver
         }
 
         return false;
+    }
+
+    /**
+     * Administration entry: core org-admin rights only.
+     * VAT rates / KRA device log / till printing / notifications alone must not unlock it.
+     *
+     * @param  array<string, bool>  $permissionMap
+     */
+    protected function userHasAdminPermission(array $permissionMap): bool
+    {
+        foreach ($permissionMap as $code => $granted) {
+            if (! $granted) {
+                continue;
+            }
+            if ($this->permissionUnlocksAdmin((string) $code)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    protected function permissionUnlocksAdmin(string $code): bool
+    {
+        if (! str_starts_with($code, 'admin.')) {
+            return false;
+        }
+
+        $parts = explode('.', $code);
+        $feature = $parts[1] ?? '';
+        if ($feature === '' || in_array($feature, self::ADMIN_NON_ENTRY_FEATURES, true)) {
+            return false;
+        }
+
+        return true;
     }
 
     /**
@@ -258,7 +310,7 @@ class WorkspaceResolver
             return $this->isBackofficeOperationalReportPermission($code);
         }
 
-        foreach (['catalogue.', 'customers.', 'sales.', 'inventory.', 'purchasing.'] as $prefix) {
+        foreach (['catalogue.', 'customers.', 'sales.', 'inventory.', 'purchasing.', 'pricing_tax.'] as $prefix) {
             if (str_starts_with($code, $prefix)) {
                 return true;
             }

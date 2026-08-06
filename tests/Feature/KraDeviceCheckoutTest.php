@@ -171,14 +171,23 @@ class KraDeviceCheckoutTest extends TestCase
         ])->assertCreated()->json();
 
         $this->assertGreaterThanOrEqual(100, (float) $sale['order_total']);
-        $this->assertDatabaseMissing('kra_responses', [
+        $this->assertTrue((bool) ($sale['kra_skipped'] ?? false));
+        $this->assertStringContainsString(
+            'amount bypass',
+            strtolower((string) ($sale['kra_warning'] ?? '')),
+        );
+        $this->assertDatabaseHas('kra_responses', [
             'sale_id' => $sale['id'],
+            'status' => 'skipped',
         ]);
+        $row = \App\Models\KraResponse::query()->where('sale_id', $sale['id'])->first();
+        $this->assertNotNull($row);
+        $this->assertStringContainsString('amount bypass', strtolower((string) $row->error_message));
 
         Http::assertNothingSent();
     }
 
-    public function test_checkout_rolls_back_sale_when_kra_device_fails(): void
+    public function test_checkout_saves_sale_when_kra_device_fails(): void
     {
         Http::fake([
             '192.168.1.50:8010/*' => Http::response([
@@ -203,17 +212,25 @@ class KraDeviceCheckoutTest extends TestCase
         ])->assertCreated();
 
         $beforeSales = \App\Models\Sale::query()->count();
-        $beforeKra = \App\Models\KraResponse::query()->count();
 
-        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
             'status' => 'completed',
             'submit_kra' => true,
-        ])->assertStatus(422)
-            ->assertJsonValidationErrors(['kra']);
+        ])
+            ->assertCreated()
+            ->assertJsonPath('kra_skipped', true)
+            ->assertJsonPath(
+                'kra_warning',
+                'Sale created without KRA due to an error with KRA device.',
+            )
+            ->json();
 
-        $this->assertSame($beforeSales, \App\Models\Sale::query()->count());
-        $this->assertSame($beforeKra, \App\Models\KraResponse::query()->count());
-        $this->assertDatabaseHas('temporary_carts', ['id' => $cartId]);
+        $this->assertSame($beforeSales + 1, \App\Models\Sale::query()->count());
+        $this->assertDatabaseHas('kra_responses', [
+            'sale_id' => $sale['id'],
+            'status' => 'failed',
+        ]);
+        $this->assertDatabaseMissing('temporary_carts', ['id' => $cartId]);
     }
 
     public function test_held_checkout_does_not_submit_to_kra_device(): void

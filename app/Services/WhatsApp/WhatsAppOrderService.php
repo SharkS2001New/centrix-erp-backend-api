@@ -323,6 +323,8 @@ class WhatsAppOrderService
             'sale_id' => isset($sale['id']) ? (int) $sale['id'] : null,
             'status' => $sale['status'] ?? null,
             'order_total' => isset($sale['order_total']) ? (float) $sale['order_total'] : null,
+            'kra_skipped' => ! empty($sale['kra_skipped']),
+            'kra_warning' => isset($sale['kra_warning']) ? (string) $sale['kra_warning'] : null,
         ];
     }
 

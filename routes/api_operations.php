@@ -342,7 +342,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('register-products', [KraProductRegistrationController::class, 'register']);
     });
 
-    Route::middleware('erp.permission:reports.kra_receipts.view|admin.kra_responses.view')->group(function () {
+    Route::middleware('erp.permission:reports.kra_receipts.view|admin.kra_responses.view|pricing_tax.kra_device_log.view|pricing_tax.kra_invoices.view')->group(function () {
         Route::get('kra-responses', [KraResponseController::class, 'index']);
         Route::get('kra-responses/{kraResponse}', [KraResponseController::class, 'show']);
         Route::get('kra/device-status', [KraOperationsController::class, 'deviceStatus']);

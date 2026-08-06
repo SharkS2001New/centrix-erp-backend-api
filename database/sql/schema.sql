@@ -2482,6 +2482,11 @@ SELECT
         NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.response_payload, '$.relevant_invoice_number')), ''),
         NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.request_payload, '$.sign_structure.relevantInvoiceNumber')), '')
     ) AS relevant_invoice_number,
+    s.cashier_id,
+    COALESCE(
+        NULLIF(TRIM(u.full_name), ''),
+        NULLIF(TRIM(u.username), '')
+    ) AS cashier_name,
     s.branch_id,
     b.branch_name,
     s.channel,
@@ -2491,6 +2496,7 @@ SELECT
     COALESCE(kr.organization_id, s.organization_id) AS organization_id
 FROM kra_responses kr
 INNER JOIN sales s ON s.id = kr.sale_id
+LEFT JOIN users u ON u.id = s.cashier_id
 LEFT JOIN branches b ON b.id = s.branch_id
 LEFT JOIN customers c ON c.customer_num = s.customer_num
     AND c.organization_id = s.organization_id

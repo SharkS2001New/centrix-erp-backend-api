@@ -677,11 +677,16 @@ class WhatsAppBotHandler
                 ? "\n⚠️ Stock notes at confirm time:\n• ".implode("\n• ", $preview['stock_warnings'])."\n"
                 : '';
 
+            $kraNote = ! empty($result['kra_warning'])
+                ? "\n⚠️ ".$result['kra_warning']."\n"
+                : '';
+
             return $livePrefix
                 ."Order #*{$result['order_num']}*\n"
                 .'Total: *'.$this->orders->formatMoney((float) ($result['order_total'] ?? 0))."*\n"
                 .'Status: '.ucfirst(str_replace('_', ' ', (string) ($result['status'] ?? 'received')))
-                .$stockNote."\n\n"
+                .$stockNote
+                .$kraNote."\n\n"
                 .$this->mainMenuMessage($customer);
         } catch (InvalidArgumentException $e) {
             $this->recordPlaceOrderFailure($config, $conversation, $e);
@@ -763,9 +768,14 @@ class WhatsAppBotHandler
                 ? "✅ *Live test order placed*\n\n"
                 : "✅ *Order placed successfully*\n\n";
 
+            $kraNote = ! empty($result['kra_warning'])
+                ? "\n⚠️ ".$result['kra_warning']."\n"
+                : '';
+
             return $livePrefix
                 ."Order #*{$result['order_num']}*\n"
-                .'Total: *'.$this->orders->formatMoney((float) ($result['order_total'] ?? 0))."*\n\n"
+                .'Total: *'.$this->orders->formatMoney((float) ($result['order_total'] ?? 0))."*\n"
+                .$kraNote."\n"
                 .$this->mainMenuMessage($customer);
         } catch (InvalidArgumentException $e) {
             $this->recordPlaceOrderFailure($config, $conversation, $e);

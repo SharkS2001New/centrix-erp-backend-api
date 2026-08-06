@@ -111,6 +111,7 @@ return [
         'pricing_tax.vat_rates.view',
         'pricing_tax.price_history.view',
         'pricing_tax.kra_invoices.view',
+        'pricing_tax.kra_device_log.view',
         'mobile_sales.catalog.view',
     ],
     'inventory.view' => [
@@ -352,6 +353,9 @@ return [
     'admin.kra_responses.view' => [
         'reports.kra_receipts.view',
     ],
+    'pricing_tax.kra_device_log.view' => [
+        'reports.kra_receipts.view',
+    ],
     'pricing_tax.kra_invoices.view' => [
         'reports.kra_receipts.view',
     ],
@@ -365,6 +369,7 @@ return [
         'admin.roles.view',
         'admin.audit.view',
         'admin.payment_methods.view',
+        'admin.vat_rates.view',
         'admin.kra_responses.view',
         'admin.notifications.view',
     ],
@@ -381,6 +386,9 @@ return [
         'admin.payment_methods.create',
         'admin.payment_methods.edit',
         'admin.payment_methods.delete',
+        'admin.vat_rates.create',
+        'admin.vat_rates.edit',
+        'admin.vat_rates.delete',
         'admin.till_printing.edit',
         'admin.discount_approvals.approve',
         'mobile_manager.app.access',

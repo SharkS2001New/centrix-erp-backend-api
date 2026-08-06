@@ -697,7 +697,7 @@ Route::prefix('v1')->group(function () {
                 ->only(['store', 'update', 'destroy'])
                 ->middleware(['erp.permission:admin.manage|admin.payment_methods.create|admin.payment_methods.edit|admin.payment_methods.delete']);
             Route::apiResource('kra-responses', KraResponseController::class)
-                ->middleware('erp.permission:admin.kra_responses.view|admin.view|reports.kra_receipts.view');
+                ->middleware('erp.permission:admin.kra_responses.view|admin.view|reports.kra_receipts.view|pricing_tax.kra_device_log.view|pricing_tax.kra_invoices.view');
         });
 
         // List/show for checkout, collect-payment, drivers — not admin-module-only.
@@ -749,8 +749,8 @@ Route::prefix('v1')->group(function () {
 
         Route::middleware(['erp.module:inventory'])->group(function () {
             Route::apiResource('vats', VatController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view|pricing_tax.vat_rates.view|admin.vat_rates.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage|pricing_tax.vat_rates.create|pricing_tax.vat_rates.edit|pricing_tax.vat_rates.delete|admin.vat_rates.create|admin.vat_rates.edit|admin.vat_rates.delete']);
             Route::apiResource('uoms', UomController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
