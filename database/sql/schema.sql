@@ -2546,6 +2546,7 @@ SELECT
     COALESCE(s.completed_at, s.created_at) AS sale_at,
     s.id AS sale_id,
     s.order_num AS order_no,
+    s.pos_order_num,
     s.branch_id,
     b.branch_name,
     s.channel,
@@ -2554,6 +2555,13 @@ SELECT
     s.order_total,
     s.total_vat,
     s.organization_id,
+    (
+        SELECT kr.id
+        FROM kra_responses kr
+        WHERE kr.sale_id = s.id
+        ORDER BY kr.id DESC
+        LIMIT 1
+    ) AS last_kra_response_id,
     (
         SELECT kr.status
         FROM kra_responses kr

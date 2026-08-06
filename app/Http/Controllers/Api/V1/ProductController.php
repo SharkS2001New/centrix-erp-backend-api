@@ -659,7 +659,8 @@ class ProductController extends BaseResourceController
         $prevDisc = (float) ($model->discount_percentage ?? 0);
 
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
-        $rules['vat_id'] = 'required|integer|exists:vats,id';
+        // Partial updates (e.g. catalogue inline price) omit vat_id — keep existing value.
+        $rules['vat_id'] = 'sometimes|required|integer|exists:vats,id';
         $rules['catalog_scope'] = 'nullable|in:organization,branch';
         $rules['branch_id'] = 'nullable|integer|exists:branches,id';
         $rules['shelf_location'] = 'nullable|string|max:50';

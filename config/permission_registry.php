@@ -38,6 +38,7 @@ return [
             'label' => 'Pricing & tax',
             'features' => [
                 'vat_rates' => ['label' => 'VAT / tax rates', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'price_list' => ['label' => 'Price list', 'actions' => ['view']],
                 'price_history' => ['label' => 'Price history', 'actions' => ['view']],
                 'kra_invoices' => ['label' => 'KRA invoices', 'actions' => ['view', 'credit']],
             ],
@@ -236,7 +237,6 @@ return [
                 'stock_transfers' => ['label' => 'Stock transfers', 'actions' => ['view']],
                 'branch_stock_transfers' => ['label' => 'Branch stock transfers', 'actions' => ['view']],
                 'returns' => ['label' => 'Customer returns', 'actions' => ['view']],
-                'price_list' => ['label' => 'Price list', 'actions' => ['view']],
                 // Purchasing
                 'open_lpo' => ['label' => 'Open LPO', 'actions' => ['view']],
                 'purchases_by_supplier' => ['label' => 'Purchases summary', 'actions' => ['view']],

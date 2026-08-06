@@ -108,6 +108,7 @@ return [
         'catalogue.uoms.view',
         'catalogue.retail_packages.view',
         'pricing_tax.vat_rates.view',
+        'pricing_tax.price_list.view',
         'pricing_tax.price_history.view',
         'pricing_tax.kra_invoices.view',
         'mobile_sales.catalog.view',
@@ -161,7 +162,7 @@ return [
         'reports.stock_transfers.view',
         'reports.branch_stock_transfers.view',
         'reports.returns.view',
-        'reports.price_list.view',
+        'pricing_tax.price_list.view',
         'reports.open_lpo.view',
         'reports.purchases_by_supplier.view',
         'reports.stock_receipts.view',
@@ -356,6 +357,10 @@ return [
     ],
     'pricing_tax.kra_invoices.view' => [
         'reports.kra_receipts.view',
+    ],
+    // Legacy report code — Price list is assigned under Pricing & tax.
+    'reports.price_list.view' => [
+        'pricing_tax.price_list.view',
     ],
     // Core Administration entry only — VAT / KRA log / notifications must not expand to
     // admin.view or the Administration workspace opens with a single utility link.
