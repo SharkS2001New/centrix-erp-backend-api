@@ -39,6 +39,12 @@ class KraTraderInvoiceAllocator
         return $this->generateUniqueForOrganization((int) $creditNote->organization_id);
     }
 
+    /** Fresh trader invoice # for fiscal-only KRA credits (no Centrix credit_notes row). */
+    public function forOrganization(int $organizationId): string
+    {
+        return $this->generateUniqueForOrganization($organizationId);
+    }
+
     public function extractFromKraResponse(KraResponse $row): ?string
     {
         return $this->extractFromPayload($row->request_payload);

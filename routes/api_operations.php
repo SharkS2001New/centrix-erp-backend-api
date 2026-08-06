@@ -349,6 +349,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
     });
 
+    Route::middleware('erp.permission:pricing_tax.kra_invoices.credit|admin.manage')->group(function () {
+        Route::post('kra-responses/{kraResponse}/credit', [KraOperationsController::class, 'credit']);
+    });
+
     Route::middleware('erp.permission:admin.manage')->group(function () {
         Route::post('kra/device-health', [KraOperationsController::class, 'deviceHealth']);
         Route::post('kra/device-init', [KraOperationsController::class, 'deviceInit']);

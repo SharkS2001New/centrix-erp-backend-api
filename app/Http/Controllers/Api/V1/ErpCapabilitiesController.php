@@ -28,6 +28,24 @@ class ErpCapabilitiesController extends Controller
         return response()->json($this->resolveForRequest($request));
     }
 
+    /**
+     * GET /api/v1/erp/capabilities/version — cheap poll so role/permission demotions
+     * refresh the client without waiting on the full capabilities TTL.
+     */
+    public function version(Request $request)
+    {
+        $user = $request->user();
+        $orgId = (int) ($user?->organization_id ?? 0);
+
+        return response()->json([
+            'capabilities_version' => $orgId > 0
+                ? OrganizationCache::capabilitiesVersion($orgId)
+                : 1,
+            'role_id' => $user?->role_id ? (int) $user->role_id : null,
+            'is_admin' => (bool) ($user?->is_admin),
+        ]);
+    }
+
     /** @return array<string, mixed> */
     public function resolveForRequest(Request $request): array
     {

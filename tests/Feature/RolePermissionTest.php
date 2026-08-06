@@ -163,6 +163,11 @@ class RolePermissionTest extends TestCase
         $this->assertNotContains('terminal', $tillFeatures);
         $this->assertNotContains('checkout', $tillFeatures);
 
+        $backofficeExpenses = collect($backoffice['modules'])->firstWhere('module', 'accounting');
+        $this->assertNotNull($backofficeExpenses);
+        $this->assertSame('Expenses', $backofficeExpenses['label']);
+        $this->assertSame(['expenses'], collect($backofficeExpenses['features'])->pluck('key')->all());
+
         $backofficeReports = collect($backoffice['modules'])->firstWhere('module', 'reports');
         $this->assertNotNull($backofficeReports);
         $this->assertSame('Operational reports', $backofficeReports['label']);
@@ -178,6 +183,23 @@ class RolePermissionTest extends TestCase
         $this->assertSame('Mobile application', $mobile['label']);
         $this->assertTrue($mobile['standalone']);
         $this->assertSame(['mobile_sales', 'mobile_driver'], collect($mobile['modules'])->pluck('module')->all());
+    }
+
+    public function test_distribution_application_hidden_when_distribution_module_disabled(): void
+    {
+        $admin = $this->actingAsLicensedAdmin();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['distribution'] = false;
+        $modules['distribution.dashboard'] = false;
+        $modules['distribution.reports'] = false;
+        $org->update(['enabled_modules' => $modules]);
+
+        $res = $this->getJson('/api/v1/roles/permissions/matrix')->assertOk();
+        $applications = collect($res->json('applications'));
+
+        $this->assertFalse($applications->contains(fn (array $app) => ($app['id'] ?? '') === 'distribution'));
+        $this->assertTrue($applications->contains(fn (array $app) => ($app['id'] ?? '') === 'backoffice'));
     }
 
     public function test_clearing_role_permissions_persists_empty_set(): void

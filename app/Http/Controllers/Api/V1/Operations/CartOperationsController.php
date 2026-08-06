@@ -559,7 +559,8 @@ class CartOperationsController extends Controller
                     $builder
                         ->where('customer_name', 'like', $like)
                         ->orWhere('phone_number', 'like', $like)
-                        ->orWhere('additional_phone', 'like', $like);
+                        ->orWhere('additional_phone', 'like', $like)
+                        ->orWhere('kra_pin', 'like', $like);
                     if (ctype_digit($term)) {
                         $builder->orWhere('customer_num', 'like', $like);
                     }
@@ -575,6 +576,8 @@ class CartOperationsController extends Controller
                 'customer_num',
                 'customer_name',
                 'phone_number',
+                'additional_phone',
+                'kra_pin',
                 'credit_limit',
                 'current_balance',
                 'customer_status',

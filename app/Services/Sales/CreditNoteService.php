@@ -5,10 +5,12 @@ namespace App\Services\Sales;
 use App\Models\CreditNote;
 use App\Models\CustomerReturn;
 use App\Models\KraResponse;
+use App\Models\Sale;
 use App\Models\User;
 use App\Services\Kra\KraDeviceFailure;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraRefundReasonMapper;
+use App\Services\Kra\KraTraderInvoiceAllocator;
 use Illuminate\Support\Facades\Log;
 use InvalidArgumentException;
 
@@ -93,6 +95,15 @@ class CreditNoteService
             return $creditNote;
         }
 
+        // Sale already credited on KRA (e.g. "Credit This Sale") — Centrix return only.
+        $return->loadMissing('sale');
+        if ($return->sale) {
+            $existingCredit = $this->findSuccessfulFiscalCredit($return->sale, $relevantInvoice);
+            if ($existingCredit) {
+                return $this->attachExistingFiscalCredit($creditNote, $existingCredit, $relevantInvoice, $return);
+            }
+        }
+
         $creditNote = $this->submitToKra($creditNote, $return, $financeSettings);
 
         if ($creditNote->kra_status === 'failed') {
@@ -114,6 +125,14 @@ class CreditNoteService
             }
 
             return $creditNote->fresh() ?? $creditNote;
+        }
+
+        $sale = $return->sale ?? ($return->sale_id ? Sale::query()->find($return->sale_id) : null);
+        if ($sale) {
+            $existingCredit = $this->findSuccessfulFiscalCredit($sale, $relevantInvoice);
+            if ($existingCredit) {
+                return $this->attachExistingFiscalCredit($creditNote, $existingCredit, $relevantInvoice, $return);
+            }
         }
 
         try {
@@ -197,6 +216,7 @@ class CreditNoteService
                 'request_payload' => $result['payload'] ?? null,
                 'response_payload' => array_merge($mapped, [
                     'document_type' => 'credit_note',
+                    'relevant_invoice_number' => $relevantInvoice,
                     'customer_return_id' => $return->id,
                     'credit_note_id' => $creditNote->id,
                 ]),
@@ -224,6 +244,250 @@ class CreditNoteService
     public function relevantInvoiceFromKraResponse(KraResponse $kra): string
     {
         return $this->relevantInvoiceNumberFromKraResponse($kra);
+    }
+
+    public function isCreditNoteDocument(KraResponse $kra): bool
+    {
+        return $this->kraResponseIsCreditNoteDocument($kra);
+    }
+
+    /**
+     * Submit a KRA credit for an already-fiscalized sale without creating a Centrix
+     * customer return / credit note. The Centrix sale stays as-is; only the device is credited.
+     */
+    public function fiscalCreditSaleOnly(
+        Sale $sale,
+        User $user,
+        array $financeSettings,
+        ?string $refundReasonCode = null,
+        ?KraResponse $sourceResponse = null,
+    ): KraResponse {
+        if (empty($financeSettings['enable_kra_device'])) {
+            throw new InvalidArgumentException('Enable KRA device in Finance settings first.');
+        }
+
+        $sale->loadMissing(['items', 'customer']);
+        if ($sale->items->isEmpty()) {
+            throw new InvalidArgumentException('Sale has no line items to credit on KRA.');
+        }
+
+        $source = $sourceResponse;
+        if ($source && (int) $source->sale_id !== (int) $sale->id) {
+            throw new InvalidArgumentException('KRA response does not belong to this sale.');
+        }
+        if ($source && $this->kraResponseIsCreditNoteDocument($source)) {
+            throw new InvalidArgumentException('This KRA row is already a credit note.');
+        }
+        if ($source && $source->status !== 'success') {
+            throw new InvalidArgumentException('Only successful KRA invoices can be credited.');
+        }
+
+        $relevantInvoice = $source
+            ? $this->relevantInvoiceNumberFromKraResponse($source)
+            : $this->resolveOriginalInvoiceNumberForSale($sale);
+
+        if ($relevantInvoice === '') {
+            throw new InvalidArgumentException('Original sale has no KRA invoice number to credit.');
+        }
+
+        if ($this->saleAlreadyHasSuccessfulFiscalCredit($sale, $relevantInvoice)) {
+            throw new InvalidArgumentException(
+                'This sale already has a successful KRA credit note for that invoice.',
+            );
+        }
+
+        $reasonCode = KraRefundReasonMapper::normalizeCode($refundReasonCode)
+            ?? KraRefundReasonMapper::fromReturnReason(null);
+
+        $service = KraDeviceService::fromSettings($financeSettings);
+        $invoiceNumber = app(KraTraderInvoiceAllocator::class)
+            ->forOrganization((int) $sale->organization_id);
+
+        $orderItems = $sale->items->map(fn ($line) => [
+            'product_name' => $line->product_name ?? $line->product_code,
+            'product_code' => $line->product_code,
+            'quantity' => (float) $line->quantity,
+            'amount' => (float) $line->amount,
+            'product_vat' => (float) ($line->product_vat ?? 0),
+        ])->all();
+
+        $buyerPin = trim((string) ($sale->customer?->kra_pin ?? ''));
+        $buyerPin = $buyerPin !== '' ? $buyerPin : null;
+
+        $result = $service->sendCreditNote(
+            $orderItems,
+            (float) $sale->order_total,
+            $invoiceNumber,
+            $relevantInvoice,
+            $reasonCode,
+            'CASH',
+            $buyerPin,
+        );
+
+        if (! ($result['success'] ?? false)) {
+            $failed = KraResponse::create([
+                'sale_id' => $sale->id,
+                'organization_id' => (int) $sale->organization_id,
+                'order_no' => $this->displayOrderNoForSale($sale),
+                'invoice_number' => $invoiceNumber,
+                'request_payload' => $result['payload'] ?? null,
+                'response_payload' => array_merge(
+                    is_array($result['response'] ?? null) ? $result['response'] : [],
+                    [
+                        'document_type' => 'credit_note',
+                        'source' => 'kra_invoice_credit',
+                        'relevant_invoice_number' => $relevantInvoice,
+                        'source_kra_response_id' => $source?->id,
+                    ],
+                ),
+                'status' => 'failed',
+                'error_message' => $result['message'] ?? 'KRA device rejected the credit note.',
+            ]);
+
+            KraDeviceFailure::abort((string) ($failed->error_message ?: 'KRA device rejected the credit note.'));
+        }
+
+        $mapped = $result['response'] ?? [];
+
+        return KraResponse::create([
+            'sale_id' => $sale->id,
+            'organization_id' => (int) $sale->organization_id,
+            'order_no' => $this->displayOrderNoForSale($sale),
+            'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
+            'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
+            'signature_link' => $mapped['signature_link'] ?? null,
+            'serial_number' => $mapped['serial_number'] ?? null,
+            'kra_timestamp' => $mapped['timestamp'] ?? null,
+            'request_payload' => $result['payload'] ?? null,
+            'response_payload' => array_merge(is_array($mapped) ? $mapped : [], [
+                'document_type' => 'credit_note',
+                'source' => 'kra_invoice_credit',
+                'relevant_invoice_number' => $relevantInvoice,
+                'source_kra_response_id' => $source?->id,
+                'refund_reason_code' => $reasonCode,
+            ]),
+            'status' => 'success',
+        ]);
+    }
+
+    protected function resolveOriginalInvoiceNumberForSale(Sale $sale): string
+    {
+        $stored = trim((string) (($sale->fulfillment_meta ?? [])['legacy_kra_invoice_number'] ?? ''));
+        if ($stored !== '') {
+            return $stored;
+        }
+
+        $candidates = KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->where('status', 'success')
+            ->orderBy('id')
+            ->get();
+
+        foreach ($candidates as $kra) {
+            if ($this->kraResponseIsCreditNoteDocument($kra)) {
+                continue;
+            }
+            $invoice = $this->relevantInvoiceNumberFromKraResponse($kra);
+            if ($invoice !== '') {
+                return $invoice;
+            }
+        }
+
+        return '';
+    }
+
+    protected function saleAlreadyHasSuccessfulFiscalCredit(Sale $sale, string $relevantInvoice): bool
+    {
+        return $this->findSuccessfulFiscalCredit($sale, $relevantInvoice) !== null;
+    }
+
+    protected function findSuccessfulFiscalCredit(?Sale $sale, string $relevantInvoice): ?KraResponse
+    {
+        if (! $sale?->id || $relevantInvoice === '') {
+            return null;
+        }
+
+        $rows = KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->where('status', 'success')
+            ->orderByDesc('id')
+            ->limit(50)
+            ->get();
+
+        foreach ($rows as $row) {
+            if (! $this->kraResponseIsCreditNoteDocument($row)) {
+                continue;
+            }
+            $payload = is_array($row->response_payload) ? $row->response_payload : [];
+            $source = strtolower(trim((string) ($payload['source'] ?? '')));
+            $linked = trim((string) ($payload['relevant_invoice_number'] ?? ''));
+            $request = is_array($row->request_payload) ? $row->request_payload : [];
+            $sign = is_array($request['sign_structure'] ?? null) ? $request['sign_structure'] : [];
+            $fromSign = trim((string) ($sign['relevantInvoiceNumber'] ?? ''));
+
+            if ($linked === $relevantInvoice || $fromSign === $relevantInvoice) {
+                return $row;
+            }
+
+            // Fiscal-only "Credit This Sale" rows may omit relevant invoice on older payloads.
+            if ($source === 'kra_invoice_credit') {
+                return $row;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Reuse an existing KRA credit (e.g. from "Credit This Sale") on a Centrix return
+     * without calling the device again.
+     */
+    protected function attachExistingFiscalCredit(
+        CreditNote $creditNote,
+        KraResponse $existingCredit,
+        string $relevantInvoice,
+        CustomerReturn $return,
+    ): CreditNote {
+        $payload = is_array($existingCredit->response_payload) ? $existingCredit->response_payload : [];
+
+        $creditNote->update([
+            'kra_status' => 'success',
+            'kra_relevant_invoice_number' => $relevantInvoice,
+            'kra_invoice_number' => $existingCredit->invoice_number,
+            'kra_cu_inv_no' => $payload['cu_inv_no'] ?? $payload['cu-inv-no'] ?? null,
+            'kra_receipt_signature' => $existingCredit->receipt_signature,
+            'kra_signature_link' => $existingCredit->signature_link,
+            'kra_serial_number' => $existingCredit->serial_number,
+            'kra_timestamp' => $existingCredit->kra_timestamp,
+            'kra_request_payload' => $existingCredit->request_payload,
+            'kra_response_payload' => array_merge($payload, [
+                'document_type' => 'credit_note',
+                'reused_kra_response_id' => $existingCredit->id,
+                'skip_reason' => 'already_credited_on_kra',
+                'customer_return_id' => $return->id,
+                'credit_note_id' => $creditNote->id,
+            ]),
+            'kra_error_message' => null,
+        ]);
+
+        Log::info('Skipped KRA credit note send — sale already credited on device', [
+            'credit_note_id' => $creditNote->id,
+            'customer_return_id' => $return->id,
+            'sale_id' => $return->sale_id,
+            'reused_kra_response_id' => $existingCredit->id,
+            'relevant_invoice' => $relevantInvoice,
+        ]);
+
+        return $creditNote->fresh() ?? $creditNote;
+    }
+
+    protected function displayOrderNoForSale(Sale $sale): int
+    {
+        if (strtolower((string) $sale->channel) === 'pos' && $sale->pos_order_num) {
+            return (int) $sale->pos_order_num;
+        }
+
+        return (int) $sale->order_num;
     }
 
     protected function resolveRelevantInvoiceNumber(CustomerReturn $return): string
@@ -270,9 +534,17 @@ class CreditNoteService
 
     protected function kraResponseIsCreditNoteDocument(KraResponse $kra): bool
     {
-        $docType = strtolower(trim((string) (($kra->response_payload ?? [])['document_type'] ?? '')));
+        $payload = is_array($kra->response_payload) ? $kra->response_payload : [];
+        $docType = strtolower(trim((string) ($payload['document_type'] ?? '')));
+        if (in_array($docType, ['credit_note', 'credit', 'creditnote'], true)) {
+            return true;
+        }
 
-        return $docType === 'credit_note';
+        $request = is_array($kra->request_payload) ? $kra->request_payload : [];
+        $sign = is_array($request['sign_structure'] ?? null) ? $request['sign_structure'] : [];
+        $invoiceType = strtolower(trim((string) ($sign['InvoiceType'] ?? '')));
+
+        return in_array($invoiceType, ['credit', 'credit_note', 'creditnote'], true);
     }
 
     protected function relevantInvoiceNumberFromKraResponse(KraResponse $kra): string

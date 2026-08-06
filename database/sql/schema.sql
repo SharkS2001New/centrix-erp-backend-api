@@ -2467,10 +2467,26 @@ SELECT
     kr.error_message,
     kr.request_payload,
     kr.response_payload,
+    CASE
+        WHEN LOWER(COALESCE(
+            NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.response_payload, '$.document_type')), ''),
+            ''
+        )) IN ('credit_note', 'credit', 'creditnote') THEN 'credit_note'
+        WHEN LOWER(COALESCE(
+            NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.request_payload, '$.sign_structure.InvoiceType')), ''),
+            ''
+        )) IN ('credit', 'credit_note', 'creditnote') THEN 'credit_note'
+        ELSE 'sale'
+    END AS document_type,
+    COALESCE(
+        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.response_payload, '$.relevant_invoice_number')), ''),
+        NULLIF(JSON_UNQUOTE(JSON_EXTRACT(kr.request_payload, '$.sign_structure.relevantInvoiceNumber')), '')
+    ) AS relevant_invoice_number,
     s.branch_id,
     b.branch_name,
     s.channel,
     s.order_total,
+    s.amount_paid,
     s.total_vat,
     COALESCE(kr.organization_id, s.organization_id) AS organization_id
 FROM kra_responses kr

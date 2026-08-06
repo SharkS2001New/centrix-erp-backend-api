@@ -36,6 +36,17 @@ class KraRefundReasonMapper
         };
     }
 
+    public static function normalizeCode(?string $code): ?string
+    {
+        $trimmed = trim((string) $code);
+        if ($trimmed === '') {
+            return null;
+        }
+        $padded = str_pad($trimmed, 2, '0', STR_PAD_LEFT);
+
+        return array_key_exists($padded, self::codes()) ? $padded : null;
+    }
+
     public static function label(?string $code): string
     {
         return self::codes()[$code ?? ''] ?? $code ?? 'Refund';

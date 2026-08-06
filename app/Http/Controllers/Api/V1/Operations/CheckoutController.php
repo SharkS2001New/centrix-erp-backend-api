@@ -1255,7 +1255,9 @@ class CheckoutController extends Controller
             'serial_number' => $mapped['serial_number'] ?? null,
             'kra_timestamp' => $mapped['timestamp'] ?? null,
             'request_payload' => $result['payload'] ?? null,
-            'response_payload' => $mapped,
+            'response_payload' => array_merge(is_array($mapped) ? $mapped : [], [
+                'document_type' => 'sale',
+            ]),
             'status' => 'success',
         ]);
     }

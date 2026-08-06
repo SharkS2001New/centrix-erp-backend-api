@@ -527,6 +527,8 @@ class OrganizationPlatformConfigService
             'hotel_pos_theme_template' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_theme_template'],
             'hospitality_services' => \App\Services\Hospitality\HospitalityServices::forOrganization($org),
             'hospitality_payment_workflow' => \App\Services\Hospitality\HospitalityPaymentWorkflow::forOrganization($org),
+            'enable_mpesa_code' => (bool) ($sales['enable_mpesa_code'] ?? false),
+            'enable_cheque_number' => (bool) ($sales['enable_cheque_number'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
             'append_same_day_customer_orders' => (bool) ($sales['append_same_day_customer_orders'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),

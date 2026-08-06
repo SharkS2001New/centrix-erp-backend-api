@@ -60,13 +60,16 @@ return [
                 'pos',
                 'inventory',
                 'purchasing',
+                'accounting',
                 'reports',
                 'ai',
             ],
             // Only till ops from the pos registry — terminal/checkout stay under External POS.
+            // Expenses live in Backoffice nav; full GL stays under Accounting.
             // Reports: operational only — finance → Accounting, payroll → HR, logistics → Distribution.
             'module_features' => [
                 'pos' => ['till_management', 'end_of_day', 'payments_breakdown'],
+                'accounting' => ['expenses'],
                 'reports' => [
                     'hub',
                     'builder',
@@ -105,6 +108,7 @@ return [
             ],
             'module_labels' => [
                 'pos' => 'Till operations',
+                'accounting' => 'Expenses',
                 'reports' => 'Operational reports',
             ],
         ],

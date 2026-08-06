@@ -26,7 +26,7 @@ class RbacRegistryTest extends TestCase
         $this->assertContains('sales.orders.view', PermissionMatrixService::allRegistryCodes());
     }
 
-    public function test_org_admin_capability_map_includes_enabled_module_permissions(): void
+    public function test_org_admin_without_role_permissions_only_gets_administration(): void
     {
         PermissionMatrixService::ensure();
 
@@ -34,6 +34,7 @@ class RbacRegistryTest extends TestCase
         $org = Organization::query()->findOrFail((int) $admin->organization_id);
         $org->update([
             'enabled_modules' => [
+                'admin' => true,
                 'sales' => true,
                 'sales.backend' => true,
                 'inventory' => true,
@@ -62,8 +63,11 @@ class RbacRegistryTest extends TestCase
         $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($shell);
         $map = app(UserPermissionService::class)->permissionMapForUser($shell, $gate);
 
-        $this->assertTrue($map['sales.orders.view'] ?? false);
-        $this->assertTrue($map['inventory.stock.view'] ?? false);
+        // Empty role: org admin keeps Administration only — not operational Backoffice.
+        $this->assertTrue($map['admin.users.view'] ?? false);
+        $this->assertTrue($map['admin.roles.view'] ?? false);
+        $this->assertFalse($map['sales.orders.view'] ?? false);
+        $this->assertFalse($map['inventory.stock.view'] ?? false);
         $this->assertFalse($map['accounting.chart_of_accounts.view'] ?? false);
     }
 

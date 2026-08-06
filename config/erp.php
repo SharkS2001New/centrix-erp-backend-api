@@ -230,9 +230,11 @@ return [
             'print_invoice_statuses',
             'collect_payment_statuses',
             'cancel_order_statuses',
-            'convert_to_paid_statuses',
+            'customer_to_paid_statuses',
             'convert_to_unpaid_statuses',
             'customer_return_statuses',
+            'enable_mpesa_code',
+            'enable_cheque_number',
         ],
         'distribution' => [
             'enable_fulfillment_guidance',

@@ -71,7 +71,9 @@ class UserPermissionService
     /** @return list<int> */
     public function effectivePermissionIds(User $user): array
     {
-        if ($user->is_super_admin || $user->is_admin) {
+        // Platform super-admins bypass RBAC. Org admins (`is_admin`) do not — their
+        // feature access comes from the role matrix (plus Administration auto-grants).
+        if ($user->is_super_admin) {
             return Permission::query()->pluck('id')->map(fn ($id) => (int) $id)->all();
         }
 
@@ -94,31 +96,10 @@ class UserPermissionService
             return true;
         }
 
-        if ($user->is_admin) {
-            if ($gate === null) {
-                return true;
-            }
-
-            if (
-                in_array($permissionCode, ['admin.view', 'admin.manage'], true)
-                && $gate->enabled('admin')
-            ) {
-                return true;
-            }
-
-            $permission = Permission::query()
-                ->where('permission_code', $permissionCode)
-                ->first();
-
-            if (! $permission) {
-                return true;
-            }
-
-            return PermissionMatrixService::permissionModuleEnabled(
-                $permissionCode,
-                (string) $permission->module,
-                $gate,
-            );
+        // Org admins always retain Administration access so they can fix roles/users.
+        // Operational Backoffice / POS / etc. require an explicit role grant.
+        if ($user->is_admin && $this->orgAdminAutoGrantsPermission($permissionCode, $gate)) {
+            return true;
         }
 
         if ($this->hasDirectPermission($user, $permissionCode)) {
@@ -145,6 +126,41 @@ class UserPermissionService
         }
 
         return false;
+    }
+
+    /**
+     * Org-admin shortcut: Administration shell permissions only.
+     * Does not unlock catalogue/sales/inventory/etc. (those follow the role matrix).
+     * Explicit approve rights (e.g. discount approvals) still require a role grant.
+     */
+    protected function orgAdminAutoGrantsPermission(string $permissionCode, ?CapabilityGate $gate): bool
+    {
+        if (in_array($permissionCode, ['admin.view', 'admin.manage'], true)) {
+            return $gate === null || $gate->enabled('admin');
+        }
+
+        // Approvals stay role-assigned even for org admins.
+        if (str_ends_with($permissionCode, '.approve')) {
+            return false;
+        }
+
+        $permission = Permission::query()
+            ->where('permission_code', $permissionCode)
+            ->first();
+
+        if (! $permission || (string) $permission->module !== 'admin') {
+            return false;
+        }
+
+        if ($gate === null) {
+            return true;
+        }
+
+        return PermissionMatrixService::permissionModuleEnabled(
+            $permissionCode,
+            'admin',
+            $gate,
+        );
     }
 
     /**
@@ -382,8 +398,16 @@ class UserPermissionService
     public function navigationPermissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
         $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
+        $map = $this->expandNavigationDashboardPermissions($map);
+        $map = $this->expandLegacySalesOrderQueueView($map);
 
-        return $this->expandNavigationDashboardPermissions($map);
+        if ($user->is_super_admin && $gate !== null) {
+            $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
+        } elseif ($user->is_admin && $gate !== null) {
+            $map = $this->grantOrgAdminAdministrationPermissions($map, $gate);
+        }
+
+        return $map;
     }
 
     /** @return array<string, bool> */
@@ -395,9 +419,12 @@ class UserPermissionService
         // Mirror hasPermission('sales.create'|'driver.mobile') for mobile app UI codes.
         $map = $this->expandMobileBundlePermissions($map);
 
-        if (($user->is_admin || $user->is_super_admin) && $gate !== null) {
+        if ($user->is_super_admin && $gate !== null) {
             $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
             $map = $this->grantOrgAdminMobileAppPermissions($map, $gate);
+        } elseif ($user->is_admin && $gate !== null) {
+            // Org admins keep Administration; operational modules follow the role matrix.
+            $map = $this->grantOrgAdminAdministrationPermissions($map, $gate);
         }
 
         if ($gate !== null) {
@@ -441,8 +468,7 @@ class UserPermissionService
     }
 
     /**
-     * Org administrators receive every feature permission for enabled registry modules.
-     * Mirrors middleware hasPermission() module gating for the capabilities payload.
+     * Platform super-admins receive every feature permission for enabled registry modules.
      *
      * @param  array<string, bool>  $map
      * @return array<string, bool>
@@ -464,6 +490,38 @@ class UserPermissionService
         $map = $this->expandCapabilityAliases($map);
 
         return $this->expandLegacySalesOrderQueueView($map);
+    }
+
+    /**
+     * Org administrators retain Administration (users, roles, company, settings).
+     * Operational modules are not auto-granted — assign them on the role matrix.
+     * Approve rights stay role-assigned.
+     *
+     * @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function grantOrgAdminAdministrationPermissions(array $map, CapabilityGate $gate): array
+    {
+        if (! $gate->enabled('admin')) {
+            return $map;
+        }
+
+        foreach (Permission::query()->where('module', 'admin')->get() as $permission) {
+            $code = (string) $permission->permission_code;
+            if (str_ends_with($code, '.approve')) {
+                continue;
+            }
+            if (! PermissionMatrixService::permissionModuleEnabled($code, 'admin', $gate)) {
+                continue;
+            }
+
+            $map[$code] = true;
+        }
+
+        $map['admin.view'] = true;
+        $map['admin.manage'] = true;
+
+        return $this->expandCapabilityAliases($map);
     }
 
     /** @param  array<string, bool>  $map

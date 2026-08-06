@@ -2088,6 +2088,7 @@ class ReportController extends Controller
                 'branch_id',
                 'channel',
                 'status',
+                'document_type',
                 'organization_id',
                 'order_no',
                 'invoice_number',
@@ -2343,7 +2344,7 @@ class ReportController extends Controller
             'branch_id', 'product_code', 'channel', 'cashier_id', 'customer_num',
             'supplier_id', 'route_name', 'sale_date', 'sale_day', 'period',
             'from_date', 'to_date', 'date_column', 'per_page', 'aging_bucket',
-            'status', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
+            'status', 'document_type', 'payment_status', 'lpo_no', 'organization_id', 'expense_group_id',
             'order_date', 'loading_date', 'receipt_date', 'return_date', 'damage_date',
             'scheduled_date', 'capture_date', 'delivery_date',
             'transfer_date', 'payment_date', 'entry_date', 'session_date', 'method_code',
@@ -2477,15 +2478,27 @@ class ReportController extends Controller
                 [
                     'product_name', 'product_code', 'customer_name', 'customer_num',
                     'supplier_name', 'cashier_name', 'invoice_number', 'reference_number',
-                    'order_no', 'serial_number',
+                    'order_no', 'sale_order_num', 'pos_order_num', 'serial_number',
+                    'order_total', 'amount_paid',
                 ],
                 fn ($col) => $this->viewColumnExists($view, $col),
             ));
             if ($searchable !== []) {
-                $q->where(function ($inner) use ($search, $searchable) {
+                $amountNeedle = $this->normalizeReportAmountSearch($search);
+                $q->where(function ($inner) use ($search, $searchable, $amountNeedle) {
                     foreach ($searchable as $i => $col) {
                         $method = $i === 0 ? 'where' : 'orWhere';
-                        $inner->{$method}($col, 'like', "%{$search}%");
+                        if (in_array($col, ['order_total', 'amount_paid'], true)) {
+                            $escaped = str_replace('`', '``', $col);
+                            if ($amountNeedle !== null) {
+                                $inner->{$method}($col, $amountNeedle);
+                                $inner->orWhereRaw("CAST(`{$escaped}` AS CHAR) LIKE ?", ['%'.$search.'%']);
+                            } else {
+                                $inner->{$method.'Raw'}("CAST(`{$escaped}` AS CHAR) LIKE ?", ['%'.$search.'%']);
+                            }
+                        } else {
+                            $inner->{$method}($col, 'like', "%{$search}%");
+                        }
                     }
                 });
             }
@@ -2494,6 +2507,18 @@ class ReportController extends Controller
         $this->applyProductSubcategoryFilter($q, $request, $view);
 
         return $q;
+    }
+
+    /** Parse a typed report search into a money amount when it looks numeric. */
+    protected function normalizeReportAmountSearch(string $search): ?float
+    {
+        $normalized = str_replace([',', ' ', 'KES', 'kes', 'Ksh', 'ksh'], '', $search);
+        $normalized = trim($normalized);
+        if ($normalized === '' || ! is_numeric($normalized)) {
+            return null;
+        }
+
+        return round((float) $normalized, 2);
     }
 
     protected function reportFromView(string $view, array $filters, array $allowedCols, ?callable $orderBy = null): array

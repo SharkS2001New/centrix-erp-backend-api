@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\Role;
 use App\Models\User;
 use App\Models\UserMembership;
 use App\Models\Organization;
@@ -217,6 +218,25 @@ class UserController extends BaseResourceController
         if (array_key_exists('is_active', $data) && $data['is_active']) {
             app(UserLoginService::class)->assertCanEnableLogin($model);
         }
+
+        $roleChanging = array_key_exists('role_id', $data)
+            && (int) $data['role_id'] !== (int) $model->role_id;
+        $adminFlagChanging = array_key_exists('is_admin', $data)
+            && (bool) $data['is_admin'] !== (bool) $model->is_admin;
+
+        // Demoting off Administrator/Admin role clears org-admin unless explicitly kept.
+        if ($roleChanging && ! array_key_exists('is_admin', $data) && $model->is_admin) {
+            $previousRoleName = Role::query()->whereKey($model->role_id)->value('role_name');
+            $nextRoleName = Role::query()->whereKey((int) $data['role_id'])->value('role_name');
+            $wasAdminRole = in_array((string) $previousRoleName, ['Administrator', 'Admin'], true);
+            $staysAdminRole = in_array((string) $nextRoleName, ['Administrator', 'Admin'], true);
+            if ($wasAdminRole && ! $staysAdminRole) {
+                $data['is_admin'] = false;
+                $adminFlagChanging = true;
+            }
+        }
+
+        $accessChanging = $roleChanging || $adminFlagChanging;
         $deactivate = array_key_exists('is_active', $data) && ! $data['is_active'];
         try {
             $model->update($data);
@@ -236,9 +256,16 @@ class UserController extends BaseResourceController
             app(UserTillAssignmentService::class)->sync($model->fresh(), $request->input('till_id'));
         }
 
-        CapabilitiesCacheInvalidator::forUser($model->fresh());
+        $fresh = $model->fresh();
+        CapabilitiesCacheInvalidator::forUser($fresh);
 
-        return response()->json($this->presentUser($model->fresh()));
+        // Role / org-admin changes must take effect on the next request — drop sessions
+        // so clients cannot keep serving a stale permission map.
+        if ($accessChanging && $fresh) {
+            $fresh->tokens()->delete();
+        }
+
+        return response()->json($this->presentUser($fresh));
     }
 
     public function destroy(Request $request, string $id, ?string $nestedId = null)

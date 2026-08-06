@@ -199,4 +199,52 @@ class UserAccountGuardTest extends TestCase
         $this->assertSoftDeleted('users', ['id' => $staff->id]);
         $this->assertDatabaseHas('in_app_notifications', ['user_id' => $staff->id]);
     }
+
+    public function test_demoting_administrator_role_to_cashier_clears_org_admin_and_revokes_tokens(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        \App\Models\PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        Sanctum::actingAs($admin);
+
+        $adminRole = Role::where('role_name', 'Administrator')->firstOrFail();
+        $cashierRole = Role::where('role_name', 'Cashier')->firstOrFail();
+
+        $target = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $adminRole->id,
+            'username' => 'demote_me_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Demote Me',
+            'access_scope' => 'org',
+            'login_channels' => ['backoffice'],
+            'is_admin' => true,
+            'is_active' => true,
+        ]);
+
+        $target->createToken('test');
+        $this->assertSame(1, $target->tokens()->count());
+
+        $this->putJson("/api/v1/users/{$target->id}", [
+            'role_id' => $cashierRole->id,
+        ])
+            ->assertOk()
+            ->assertJsonPath('role_id', $cashierRole->id)
+            ->assertJsonPath('is_admin', false);
+
+        $this->assertFalse((bool) $target->fresh()->is_admin);
+        $this->assertSame(0, $target->fresh()->tokens()->count());
+    }
 }

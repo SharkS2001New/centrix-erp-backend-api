@@ -8,7 +8,9 @@ use App\Models\Sale;
 use App\Services\Erp\ErpContext;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
+use App\Services\Sales\CreditNoteService;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
 class KraOperationsController extends Controller
@@ -262,7 +264,9 @@ class KraOperationsController extends Controller
             'serial_number' => $mapped['serial_number'] ?? null,
             'kra_timestamp' => $mapped['timestamp'] ?? null,
             'request_payload' => $result['payload'] ?? null,
-            'response_payload' => $mapped,
+            'response_payload' => array_merge(is_array($mapped) ? $mapped : [], [
+                'document_type' => 'sale',
+            ]),
             'status' => 'success',
             'error_message' => null,
         ]);
@@ -271,5 +275,54 @@ class KraOperationsController extends Controller
             'message' => 'KRA receipt submitted successfully.',
             'kra_response' => $row->fresh(),
         ]);
+    }
+
+    /**
+     * Fiscal-only credit on the KRA device for a successful original invoice.
+     * Does not create a Centrix customer return or change the sale.
+     */
+    public function credit(Request $request, int $kraResponse)
+    {
+        $orgId = (int) $this->erp->gateForRequest($request)->organization()?->id;
+
+        $row = KraResponse::query()
+            ->whereHas('sale', fn ($saleQuery) => $saleQuery->where('organization_id', $orgId))
+            ->findOrFail($kraResponse);
+
+        $data = $request->validate([
+            'refund_reason_code' => 'nullable|string|max:2',
+        ]);
+
+        $sale = Sale::with(['items', 'customer'])->find($row->sale_id);
+        if (! $sale) {
+            return response()->json(['message' => 'Linked sale not found.'], 422);
+        }
+
+        $finance = $this->erp->gateForRequest($request)->moduleSettings('finance');
+
+        try {
+            $credited = app(CreditNoteService::class)->fiscalCreditSaleOnly(
+                $sale,
+                $request->user(),
+                $finance,
+                $data['refund_reason_code'] ?? null,
+                $row,
+            );
+        } catch (InvalidArgumentException $e) {
+            throw ValidationException::withMessages([
+                'credit' => $e->getMessage(),
+            ]);
+        } catch (\Throwable $e) {
+            if ($e instanceof ValidationException) {
+                throw $e;
+            }
+            // KraDeviceFailure aborts with HTTP exceptions — rethrow those.
+            throw $e;
+        }
+
+        return response()->json([
+            'message' => 'KRA credit note submitted successfully. Centrix sale was not changed.',
+            'kra_response' => $credited,
+        ], 201);
     }
 }

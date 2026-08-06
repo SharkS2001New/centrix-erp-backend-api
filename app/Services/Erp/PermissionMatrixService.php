@@ -380,6 +380,12 @@ class PermissionMatrixService
                 continue;
             }
 
+            // Distribution shares the reports registry with other apps; only show it when
+            // the fulfillment (Distribution) module is enabled for the organization.
+            if ($appId === 'distribution' && ! $groupsByModule->has('fulfillment')) {
+                continue;
+            }
+
             $modules = [];
             foreach ($def['registry_modules'] ?? [] as $registryModule) {
                 $group = $groupsByModule->get($registryModule);

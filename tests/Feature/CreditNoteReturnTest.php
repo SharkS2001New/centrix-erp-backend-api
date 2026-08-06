@@ -295,6 +295,109 @@ class CreditNoteReturnTest extends TestCase
         });
     }
 
+    public function test_approve_return_reuses_existing_kra_credit_without_resending(): void
+    {
+        $org = Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['finance'] = array_merge($settings['finance'] ?? [], [
+            'enable_kra_device' => true,
+            'kra_device_ip' => 'http://192.168.1.50:8010',
+            'kra_serial_number' => 'DEJA02220240050',
+            'kra_pin_number' => 'P052177271G',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => false,
+                'message' => 'Device should not be called when sale already credited',
+            ], 200),
+        ]);
+
+        $product = Product::firstOrFail();
+        $sale = Sale::query()->firstOrFail();
+        $sale->update(['status' => 'completed', 'order_total' => 200, 'amount_paid' => 200, 'payment_status' => 'paid']);
+
+        SaleItem::query()->updateOrInsert(
+            ['sale_id' => $sale->id, 'product_code' => $product->product_code],
+            [
+                'line_no' => 1,
+                'quantity' => 2,
+                'selling_price' => 100,
+                'amount' => 200,
+                'product_vat' => 0,
+                'discount_given' => 0,
+            ],
+        );
+
+        KraResponse::create([
+            'sale_id' => $sale->id,
+            'organization_id' => (int) $sale->organization_id,
+            'order_no' => $sale->order_num ?? 90001,
+            'invoice_number' => 'CU-ORIG-2',
+            'receipt_signature' => 'SIG-ORIG-2',
+            'status' => 'success',
+            'response_payload' => [
+                'cu_inv_no' => '00005679',
+                'invoice_number' => 'CU-ORIG-2',
+                'document_type' => 'sale',
+            ],
+        ]);
+
+        $existingCredit = KraResponse::create([
+            'sale_id' => $sale->id,
+            'organization_id' => (int) $sale->organization_id,
+            'order_no' => $sale->order_num ?? 90001,
+            'invoice_number' => 'CU-CREDIT-2',
+            'receipt_signature' => 'SIG-CREDIT-2',
+            'signature_link' => 'https://example.test/already-credited',
+            'serial_number' => 'DEJA02220240050',
+            'kra_timestamp' => '2026-06-11T15:00:00',
+            'status' => 'success',
+            'response_payload' => [
+                'cu_inv_no' => '00009999',
+                'invoice_number' => 'CU-CREDIT-2',
+                'document_type' => 'credit_note',
+                'source' => 'kra_invoice_credit',
+                'relevant_invoice_number' => '5679',
+            ],
+        ]);
+
+        $created = $this->postJson('/api/v1/customer-returns', [
+            'sale_id' => $sale->id,
+            'reason' => 'Damaged Product',
+            'refund_method' => 'CASH',
+            'lines' => [
+                [
+                    'product_code' => $product->product_code,
+                    'quantity_sold' => 2,
+                    'return_qty' => 1,
+                    'unit_price' => 100,
+                    'amount' => 100,
+                ],
+            ],
+        ])->assertCreated();
+
+        $returnId = $created->json('id');
+
+        $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
+            ->assertOk()
+            ->assertJsonPath('credit_note.kra_status', 'success')
+            ->assertJsonPath('credit_note.kra_invoice_number', 'CU-CREDIT-2');
+
+        $creditNote = CreditNote::query()->where('customer_return_id', $returnId)->firstOrFail();
+        $this->assertSame('5679', $creditNote->kra_relevant_invoice_number);
+        $this->assertSame($existingCredit->id, $creditNote->kra_response_payload['reused_kra_response_id'] ?? null);
+        $this->assertSame('already_credited_on_kra', $creditNote->kra_response_payload['skip_reason'] ?? null);
+
+        $this->assertDatabaseHas('customer_returns', [
+            'id' => $returnId,
+            'status' => 'approved',
+        ]);
+
+        Http::assertNothingSent();
+    }
+
     public function test_approve_return_rolls_back_when_kra_device_fails(): void
     {
         $org = Organization::findOrFail($this->user->organization_id);

@@ -240,6 +240,7 @@ Route::prefix('v1')->group(function () {
         Route::post('action-requests/{id}/remind', [InAppNotificationController::class, 'remindActionRequest']);
 
         Route::get('erp/capabilities', [ErpCapabilitiesController::class, 'show']);
+        Route::get('erp/capabilities/version', [ErpCapabilitiesController::class, 'version']);
         Route::get('erp/organization/profile', [OrganizationController::class, 'currentProfile'])
             ->middleware(['erp.module:admin', 'erp.permission:admin.company.view|admin.view']);
         Route::patch('erp/organization/profile', [OrganizationController::class, 'updateCurrentProfile'])
@@ -659,6 +660,8 @@ Route::prefix('v1')->group(function () {
                 Route::post('kra/device-init', [KraOperationsController::class, 'deviceInit']);
                 Route::post('kra/device-restart', [KraOperationsController::class, 'deviceRestart']);
                 Route::post('kra-responses/{kraResponse}/retry', [KraOperationsController::class, 'retry']);
+                Route::post('kra-responses/{kraResponse}/credit', [KraOperationsController::class, 'credit'])
+                    ->middleware(['erp.permission:pricing_tax.kra_invoices.credit|admin.manage']);
             });
 
         Route::middleware(['erp.module:admin'])->group(function () {

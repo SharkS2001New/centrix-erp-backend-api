@@ -29,10 +29,10 @@ class OrganizationReferenceDataService
 
         $templates = [
             ['method_name' => 'Cash', 'method_code' => 'CASH', 'requires_reference' => false],
-            ['method_name' => 'M-Pesa', 'method_code' => 'MPESA', 'requires_reference' => true],
-            ['method_name' => 'Bank Transfer', 'method_code' => 'BANK', 'requires_reference' => true],
-            ['method_name' => 'Cheque', 'method_code' => 'CHEQUE', 'requires_reference' => true],
-            ['method_name' => 'Card', 'method_code' => 'CARD', 'requires_reference' => true],
+            ['method_name' => 'M-Pesa', 'method_code' => 'MPESA', 'requires_reference' => false],
+            ['method_name' => 'Bank Transfer', 'method_code' => 'BANK', 'requires_reference' => false],
+            ['method_name' => 'Cheque', 'method_code' => 'CHEQUE', 'requires_reference' => false],
+            ['method_name' => 'Card', 'method_code' => 'CARD', 'requires_reference' => false],
             ['method_name' => 'Voucher', 'method_code' => 'VOUCHER', 'requires_reference' => false],
             ['method_name' => 'Loyalty Points', 'method_code' => 'POINTS', 'requires_reference' => false],
         ];
