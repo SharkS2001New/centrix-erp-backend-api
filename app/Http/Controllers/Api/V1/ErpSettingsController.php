@@ -192,6 +192,12 @@ class ErpSettingsController extends Controller
             'show_proforma_totals_breakdown',
             'classic_pos_theme_template',
             'classic_pos_theme_colors',
+            'external_pos_layout',
+            'backoffice_order_edit_layout',
+            'enable_pos_cash_rounding',
+            'receipt_show_all_payment_methods',
+            'enable_pos_order_edit',
+            'enable_backoffice_order_edit',
             'pricing_formulas',
         ];
 
@@ -215,6 +221,8 @@ class ErpSettingsController extends Controller
             'classic_pos_theme_colors.footer' => 'sometimes|nullable|string|max:9',
             'classic_pos_theme_colors.button' => 'sometimes|nullable|string|max:9',
             'classic_pos_theme_colors.select' => 'sometimes|nullable|string|max:9',
+            'external_pos_layout' => 'sometimes|in:modern,classic',
+            'backoffice_order_edit_layout' => 'sometimes|in:modern,classic',
             'invoice_valid_days' => 'sometimes|integer|min:0|max:365',
             'order_workflow' => 'sometimes|array',
             'order_workflow.steps' => 'sometimes|array',
@@ -334,6 +342,20 @@ class ErpSettingsController extends Controller
             $nextSales['classic_pos_theme_colors'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeColors(
                 $data['classic_pos_theme_colors'] ?? $request->input('classic_pos_theme_colors'),
             );
+        }
+
+        if (array_key_exists('external_pos_layout', $data) || $request->exists('external_pos_layout')) {
+            $layout = strtolower(trim((string) ($data['external_pos_layout'] ?? $request->input('external_pos_layout'))));
+            $nextSales['external_pos_layout'] = in_array($layout, ['modern', 'classic'], true)
+                ? $layout
+                : 'modern';
+        }
+
+        if (array_key_exists('backoffice_order_edit_layout', $data) || $request->exists('backoffice_order_edit_layout')) {
+            $layout = strtolower(trim((string) ($data['backoffice_order_edit_layout'] ?? $request->input('backoffice_order_edit_layout'))));
+            $nextSales['backoffice_order_edit_layout'] = in_array($layout, ['modern', 'classic'], true)
+                ? $layout
+                : 'modern';
         }
 
         if (array_key_exists('order_workflow', $data) && is_array($data['order_workflow']) && $user->is_super_admin) {

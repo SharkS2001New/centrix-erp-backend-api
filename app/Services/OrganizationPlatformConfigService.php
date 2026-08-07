@@ -131,10 +131,15 @@ class OrganizationPlatformConfigService
         }
 
         if (array_key_exists('external_pos_layout', $salesPlatform)) {
-            $layout = strtolower(trim((string) $salesPlatform['external_pos_layout']));
-            $nextSales['external_pos_layout'] = in_array($layout, ['modern', 'classic'], true)
-                ? $layout
-                : 'modern';
+            $nextSales['external_pos_layout'] = $this->normalizePosUiLayout(
+                $salesPlatform['external_pos_layout'],
+            );
+        }
+
+        if (array_key_exists('backoffice_order_edit_layout', $salesPlatform)) {
+            $nextSales['backoffice_order_edit_layout'] = $this->normalizePosUiLayout(
+                $salesPlatform['backoffice_order_edit_layout'],
+            );
         }
 
         if (array_key_exists('classic_pos_theme_template', $salesPlatform)) {
@@ -514,6 +519,7 @@ class OrganizationPlatformConfigService
             'enable_pos_order_edit' => false,
             'append_same_day_customer_orders' => false,
             'enable_backoffice_order_edit' => true,
+            'backoffice_order_edit_layout' => 'modern',
             'reserve_stock_on_cart' => true,
             'cart_reservation_ttl_minutes' => 15,
             // Wholesale/retail: 2 weeks list / 1 month search. Distribution: wider operational window.
@@ -584,6 +590,9 @@ class OrganizationPlatformConfigService
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)
                 ? (string) $sales['external_pos_layout']
                 : 'modern',
+            'backoffice_order_edit_layout' => $this->normalizePosUiLayout(
+                $sales['backoffice_order_edit_layout'] ?? 'modern',
+            ),
             'classic_pos_theme_template' => ClassicPosThemeSettings::normalizeThemeTemplate(
                 $sales['classic_pos_theme_template'] ?? ClassicPosThemeSettings::THEME_TEMPLATE_DEFAULT,
             ),
@@ -1078,5 +1087,12 @@ class OrganizationPlatformConfigService
         }
 
         return true;
+    }
+
+    protected function normalizePosUiLayout(mixed $layout): string
+    {
+        $value = strtolower(trim((string) $layout));
+
+        return in_array($value, ['modern', 'classic'], true) ? $value : 'modern';
     }
 }

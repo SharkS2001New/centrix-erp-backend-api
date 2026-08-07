@@ -108,4 +108,25 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertNull($service->normalizeOptionalActionStatuses([]));
         $this->assertSame(['paid'], $service->normalizeOptionalActionStatuses(['paid', 'unknown']));
     }
+
+    public function test_sales_platform_config_exposes_pos_ui_layouts(): void
+    {
+        $org = new Organization([
+            'enabled_modules' => ['sales.pos' => true],
+            'module_settings' => [
+                'sales' => array_merge(
+                    config('erp.module_settings_defaults.sales'),
+                    [
+                        'external_pos_layout' => 'classic',
+                        'backoffice_order_edit_layout' => 'classic',
+                    ],
+                ),
+            ],
+        ]);
+
+        $config = app(OrganizationPlatformConfigService::class)->salesPlatformConfigForOrganization($org);
+
+        $this->assertSame('classic', $config['external_pos_layout']);
+        $this->assertSame('classic', $config['backoffice_order_edit_layout']);
+    }
 }
