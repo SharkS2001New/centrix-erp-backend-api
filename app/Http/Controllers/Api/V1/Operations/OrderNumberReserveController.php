@@ -30,11 +30,18 @@ class OrderNumberReserveController extends Controller
         $data = $request->validate([
             // count=0 → peek Cash Sales # only (no org S00xx reserve). Used on POS reload.
             'count' => 'nullable|integer|min:0|max:'.OrderNumberAllocator::MAX_RESERVE_BLOCK,
+            'float_session_id' => 'nullable|integer|min:1',
         ]);
         $count = (int) ($data['count'] ?? 20);
+        $floatSessionId = isset($data['float_session_id']) ? (int) $data['float_session_id'] : null;
 
         try {
-            $posPeek = $posAllocator->peekNextForCashier($orgId, (int) $user->id);
+            $posPeek = $posAllocator->peekNextForCashier(
+                $orgId,
+                (int) $user->id,
+                null,
+                $floatSessionId,
+            );
             if ($count <= 0) {
                 return response()->json([
                     'organization_id' => $orgId,

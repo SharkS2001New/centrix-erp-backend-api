@@ -98,6 +98,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('orders/{saleId}', [MobileSalesController::class, 'show']);
         Route::patch('orders/{saleId}/editable-lines', [MobileSalesController::class, 'updateEditableLines']);
         Route::post('orders/{saleId}/returns', [MobileSalesController::class, 'storeReturn']);
+        Route::post('orders/{saleId}/payments', [MobileSalesController::class, 'storePayment']);
         Route::get('customers', [MobileSalesController::class, 'indexCustomers']);
         Route::get('customers/{customerNum}', [MobileSalesController::class, 'showCustomer']);
         Route::post('customers', [MobileSalesController::class, 'storeCustomer']);

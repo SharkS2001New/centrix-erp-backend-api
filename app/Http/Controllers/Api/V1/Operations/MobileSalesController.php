@@ -123,7 +123,7 @@ class MobileSalesController extends Controller
         );
     }
 
-    /** POST /mobile/orders/{saleId}/returns — line or full-order return with stock restore. */
+    /** POST /mobile/orders/{saleId}/returns — line or full-order return pending manager approval. */
     public function storeReturn(Request $request, int $saleId)
     {
         $data = $request->validate([
@@ -149,6 +149,30 @@ class MobileSalesController extends Controller
                 $allChannels,
             ),
             201,
+        );
+    }
+
+    /** POST /mobile/orders/{saleId}/payments — collect full or partial payment on an order. */
+    public function storePayment(Request $request, int $saleId)
+    {
+        $data = $request->validate([
+            'payment_method_id' => 'required|integer',
+            'amount' => 'required|numeric|min:0.01',
+            'reference_number' => 'nullable|string|max:120',
+            'all_channels' => 'nullable|boolean',
+        ]);
+
+        $allChannels = filter_var($data['all_channels'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+        $sale = $this->mobileSales->collectOrderPayment(
+            $request->user(),
+            $saleId,
+            $data,
+            $allChannels,
+        );
+
+        return response()->json(
+            $this->mobileSales->showOrder($request->user(), (int) $sale->id, $allChannels),
         );
     }
 

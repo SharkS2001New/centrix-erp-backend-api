@@ -221,6 +221,7 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/passkeys/unlock/options', [AuthController::class, 'passkeyUnlockOptions']);
         Route::post('auth/passkeys/unlock', [AuthController::class, 'passkeyUnlock']);
         Route::post('auth/change-password', [AuthController::class, 'changePassword']);
+        Route::get('auth/platform-admin-current-password', [AuthController::class, 'platformAdminCurrentPassword']);
         Route::post('auth/skip-password-expiry', [AuthController::class, 'skipPasswordExpiry']);
         Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);
         Route::post('auth/verify-password', [AuthController::class, 'verifyPassword']);

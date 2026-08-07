@@ -569,7 +569,7 @@ class MobileSalesService
                     $status,
                     $channel,
                     (string) ($sale->payment_status ?? ''),
-                ),
+                ) && round((float) $sale->order_total - (float) ($sale->amount_paid ?? 0), 2) > 0.01,
                 'can_convert_to_paid' => $workflow->canConvertToPaidForOrder(
                     $status,
                     $channel,
@@ -868,6 +868,8 @@ class MobileSalesService
             'orderTotals' => round((float) $sale->order_total, 2),
             'order_discount' => round((float) ($sale->order_discount ?? 0), 2),
             'total_discount' => $presentation->totalDiscount($sale),
+            'amount_paid' => round((float) ($sale->amount_paid ?? 0), 2),
+            'balance_due' => max(0, round((float) $sale->order_total - (float) ($sale->amount_paid ?? 0), 2)),
             'status' => $sale->status,
             'status_name' => $labels[$sale->status] ?? ucfirst(str_replace('_', ' ', (string) $sale->status)),
             'payment_status' => $sale->payment_status,
@@ -1119,14 +1121,59 @@ class MobileSalesService
             ]);
         }
 
+        // Keep pending so managers approve via customer-returns workflow.
         return app(CustomerReturnService::class)->create($user, [
             'sale_id' => $sale->id,
             'customer_num' => $sale->customer_num,
             'branch_id' => $sale->branch_id,
             'reason' => $data['reason'] ?? null,
             'stock_location' => $data['stock_location'] ?? null,
-            'auto_approve' => true,
+            'auto_approve' => false,
             'lines' => $lines,
         ]);
+    }
+
+    /**
+     * Record a (possibly partial) payment against a mobile-visible order.
+     *
+     * @param  array{payment_method_id: int, amount: float|int|string, reference_number?: ?string}  $data
+     */
+    public function collectOrderPayment(User $user, int $saleId, array $data, bool $allChannels = false): Sale
+    {
+        $sale = $this->mobileSalesQuery($user, $allChannels)->findOrFail($saleId);
+
+        $gate = $this->erp->gateForUser($user);
+        $workflow = OrderWorkflowService::forGate($gate);
+        if (! $workflow->canCollectPaymentForOrder(
+            (string) $sale->status,
+            $sale->channel,
+            (string) ($sale->payment_status ?? ''),
+        )) {
+            throw ValidationException::withMessages([
+                'sale_id' => 'Collect payment is not allowed for this order.',
+            ]);
+        }
+
+        $amount = round((float) ($data['amount'] ?? 0), 2);
+        $salesSettings = $gate->moduleSettings('sales');
+        $allowPartial = ! empty($salesSettings['allow_credit_pay_now']);
+        $balanceDue = max(0, round((float) $sale->order_total - (float) $sale->amount_paid, 2));
+
+        if (! $allowPartial && $amount + 0.01 < $balanceDue) {
+            throw ValidationException::withMessages([
+                'amount' => ['Enter the full amount due, or enable partial payments in sales settings.'],
+            ]);
+        }
+
+        return app(SalePaymentAllocationService::class)->allocate(
+            $sale,
+            [
+                'payment_method_id' => (int) $data['payment_method_id'],
+                'amount' => $amount,
+                'reference_number' => $data['reference_number'] ?? null,
+                'received_by' => $user->id,
+            ],
+            $user,
+        );
     }
 }

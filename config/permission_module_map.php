@@ -27,7 +27,7 @@ return [
     'sales' => ['sales.backend', 'sales.dashboard', 'sales.pos'],
     'mobile_sales' => ['sales.mobile'],
     'mobile_driver' => ['distribution', 'sales.mobile'],
-    'mobile_manager' => ['sales.backend'],
+    'mobile_manager' => ['sales.backend', 'sales.pos', 'distribution', 'inventory', 'accounting', 'hr_payroll', 'admin', 'customers_suppliers', 'hospitality.backend', 'hospitality.bar_pos'],
     'pos' => ['sales.pos'],
     'hotel_bar_pos' => ['hospitality.bar_pos'],
     'hospitality' => ['hospitality.backend', 'hospitality.dashboard', 'hospitality.reports'],

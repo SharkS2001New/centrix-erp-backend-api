@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations\Concerns;
 use App\Models\Product;
 use App\Models\TemporaryCart;
 use App\Models\User;
+use App\Services\Erp\FloatSessionValidator;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\SaleLineQuantityDisplayService;
@@ -84,9 +85,34 @@ trait HandlesCartAccess
             $channel = strtolower(trim((string) ($cart->channel ?? '')));
             $source = strtolower(trim((string) ($cart->order_source ?? '')));
             if ($channel === 'pos' || $source === 'pos') {
+                // Prefer the cashier's currently open float session so Cash Sales #
+                // resets after Z/close even when the reused cart still points at
+                // yesterday's (or the just-closed) session id.
+                $floatSessionId = null;
+                try {
+                    $floatSessionId = FloatSessionValidator::forUser($user)
+                        ->findOpenSessionIdForUser($user, $cart);
+                } catch (\Throwable) {
+                    $floatSessionId = null;
+                }
+                if ($floatSessionId === null && $cart->float_session_id) {
+                    $floatSessionId = (int) $cart->float_session_id;
+                }
+                if (
+                    $floatSessionId
+                    && (int) ($cart->float_session_id ?? 0) !== $floatSessionId
+                ) {
+                    $cart->float_session_id = $floatSessionId;
+                    $cart->save();
+                }
+                if ($floatSessionId) {
+                    $payload['float_session_id'] = $floatSessionId;
+                }
                 $posPeek = app(PosDailyOrderNumberAllocator::class)->peekNextForCashier(
                     (int) $user->organization_id,
                     (int) $user->id,
+                    null,
+                    $floatSessionId,
                 );
                 if ($posPeek !== null) {
                     $payload['next_pos_order_num'] = $posPeek['pos_order_num'];

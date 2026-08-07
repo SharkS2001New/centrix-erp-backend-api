@@ -48,6 +48,9 @@ class ManagerReportCatalogTest extends TestCase
         $this->assertNotContains('hospitality-eod-cashier', $keys);
         $this->assertNotContains('hospitality-profit-loss', $keys);
 
+        // Retail/wholesale DEMO still keeps sales-domain reports.
+        $this->assertContains('daily-sales', $keys);
+
         $categoryIds = collect($response->json('categories') ?? [])
             ->pluck('id')
             ->all();

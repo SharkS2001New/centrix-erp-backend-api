@@ -481,6 +481,7 @@ class CheckoutController extends Controller
             $isMobileChannel = (string) $cart->channel === 'mobile';
             $mobileCheckout = app(MobileCheckoutSettings::class);
             $mobileCheckout->applyCheckoutPolicy($salesSettings, $input, (string) $cart->channel);
+            $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
             $adjustmentRows = $this->normalizeCheckoutPaymentAdjustments($input['payment_adjustments'] ?? null);
             // Previous-order edit (not same-day append): rebuild net tenders from the
@@ -512,7 +513,8 @@ class CheckoutController extends Controller
                 $payNow = 0;
                 // Preserve prior payment — do not invent a full settlement for unpaid/partial
                 // mobile (or WhatsApp) restores. Fully-paid POS re-edits still settle at the
-                // revised total so tenders/X-Z stay correct.
+                // revised total so tenders/X-Z stay correct. Top-up / return adjustments from
+                // the edit are included so collecting the balance does not stay "partial".
                 $priorForSettlement = Sale::query()->find((int) $cart->superseded_sale_id);
                 $priorPaid = $priorForSettlement
                     ? round((float) ($priorForSettlement->amount_paid ?? 0), 2)
@@ -521,7 +523,6 @@ class CheckoutController extends Controller
                     ? round((float) ($priorForSettlement->order_total ?? 0), 2)
                     : 0.0;
                 $priorFullyPaid = $priorPaid > 0.01 && $priorPaid + 0.01 >= $priorTotal;
-                $amountPaid = $priorFullyPaid ? $total : min($priorPaid, $total);
                 // Top-up / return must equal |revised total − prior total| (value of items
                 // added or returned). Never persist a full new bill as a "top-up".
                 $adjustmentRows = $this->reconcilePreviousOrderEditAdjustments(
@@ -530,6 +531,34 @@ class CheckoutController extends Controller
                     $total,
                     (string) ($input['payment_method_code'] ?? $priorForSettlement?->payment_method_code ?? 'CASH'),
                 );
+                $adjustmentNet = 0.0;
+                foreach ($adjustmentRows as $row) {
+                    $amt = round((float) ($row['amount'] ?? 0), 2);
+                    if ($amt <= 0) {
+                        continue;
+                    }
+                    if (($row['adjustment_type'] ?? '') === 'return') {
+                        $adjustmentNet -= $amt;
+                    } else {
+                        $adjustmentNet += $amt;
+                    }
+                }
+                if ($priorFullyPaid) {
+                    $amountPaid = $total;
+                } else {
+                    $amountPaid = round(min(max(0, $priorPaid + $adjustmentNet), $total), 2);
+                }
+            } elseif (
+                $offlineOrder
+                && ! $isCredit
+                && empty($input['save_only'])
+                && in_array((string) $cart->channel, ['pos', 'backend'], true)
+            ) {
+                // Offline / local-first POS: credit ("I") is blocked client-side. Always settle
+                // the full cash due so cash-rounding or server line reprice cannot leave
+                // payment_status=partial when the cashier completed a paid sale.
+                $payNow = $cashDue;
+                $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             } else {
                 $payNow = min($payNow, $cashDue);
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
@@ -1038,7 +1067,9 @@ class CheckoutController extends Controller
     }
 
     /**
-     * Daily per-cashier POS ticket # for thermal Cash Sales # (independent of S00xx).
+     * Per till-float-session POS ticket # for thermal Cash Sales # (independent of S00xx).
+     * Resets to 1 when a new float session opens after Z/close, even on the same day.
+     * Without a float session, falls back to per-cashier calendar-day sequencing.
      *
      * @return array{pos_order_num?: int, pos_order_date?: string}
      */
@@ -1049,6 +1080,12 @@ class CheckoutController extends Controller
         }
 
         $allocator = app(PosDailyOrderNumberAllocator::class);
+        $floatSessionId = isset($input['float_session_id'])
+            ? (int) $input['float_session_id']
+            : ($cart->float_session_id ? (int) $cart->float_session_id : null);
+        if ($floatSessionId !== null && $floatSessionId <= 0) {
+            $floatSessionId = null;
+        }
 
         if ($cart->superseded_sale_id) {
             $superseded = Sale::query()->find((int) $cart->superseded_sale_id);
@@ -1066,7 +1103,7 @@ class CheckoutController extends Controller
             ? (app(PosDailyOrderNumberAllocator::class)->normalizeBusinessDate($clientDateRaw) ?? '')
             : '';
         $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
-        // Cash Sales # is per cashier 1,2,3… from completed sales only.
+        // Cash Sales # is sequential within the float session (or cashier/day without float).
         // Offline/local-first: keep the printed ticket when it is still free.
         // Online: only accept a client ticket when it is exactly the next sequential #.
         if ($clientPos > 0 && $clientDate !== '') {
@@ -1076,6 +1113,7 @@ class CheckoutController extends Controller
                     (int) $user->id,
                     $clientPos,
                     $clientDate,
+                    $floatSessionId,
                 );
                 if ($claimed) {
                     return [
@@ -1092,6 +1130,7 @@ class CheckoutController extends Controller
                     (int) $user->organization_id,
                     (int) $user->id,
                     $clientDate,
+                    $floatSessionId,
                 );
                 $expectedNext = (int) ($peek['pos_order_num'] ?? 0);
                 if ($clientPos === $expectedNext) {
@@ -1100,6 +1139,7 @@ class CheckoutController extends Controller
                         (int) $user->id,
                         $clientPos,
                         $clientDate,
+                        $floatSessionId,
                     );
                     if ($claimed) {
                         return [
@@ -1118,6 +1158,7 @@ class CheckoutController extends Controller
             (int) $user->organization_id,
             (int) $user->id,
             $clientDate !== '' ? $clientDate : null,
+            $floatSessionId,
         );
 
         return $allocated ?? [];
@@ -1247,7 +1288,10 @@ class CheckoutController extends Controller
                     continue;
                 }
                 if (
-                    str_contains($message, 'uq_pos_daily_order_num')
+                    (
+                        str_contains($message, 'uq_pos_daily_order_num')
+                        || str_contains($message, 'uq_pos_ticket_scope_num')
+                    )
                     && ! empty($attributes['cashier_id'])
                     && ! empty($attributes['organization_id'])
                 ) {
@@ -1257,6 +1301,7 @@ class CheckoutController extends Controller
                         (int) $attributes['organization_id'],
                         (int) $attributes['cashier_id'],
                         isset($attributes['pos_order_date']) ? (string) $attributes['pos_order_date'] : null,
+                        isset($attributes['float_session_id']) ? (int) $attributes['float_session_id'] : null,
                     );
                     if ($pos === null) {
                         throw new InvalidArgumentException(

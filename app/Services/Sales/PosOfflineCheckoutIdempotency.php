@@ -17,13 +17,15 @@ class PosOfflineCheckoutIdempotency
             return null;
         }
 
-        // Previous-order edits bump content_revision per draft; each revision is a new sale.
-        // New offline sales keep a stable uuid so timeout retries dedupe.
-        if (
-            array_key_exists('content_revision', $input)
-            && str_starts_with($uuid, 'prev-edit-')
-        ) {
-            return $uuid.':'.(int) $input['content_revision'];
+        // Offline / local-first sales and previous-order edits bump content_revision
+        // when the cashier edits before sync. Include the revision so the latest
+        // payload uploads as a fresh checkout key (not a frozen first attempt).
+        // Same revision retries still dedupe on uuid:revision.
+        if (array_key_exists('content_revision', $input)) {
+            $offline = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            if ($offline || str_starts_with($uuid, 'prev-edit-')) {
+                return $uuid.':'.(int) $input['content_revision'];
+            }
         }
 
         return $uuid;
@@ -58,10 +60,7 @@ class PosOfflineCheckoutIdempotency
         $fulfillmentMeta['pos_sync_id'] = $syncId;
         $fulfillmentMeta['client_sale_uuid'] = trim((string) ($input['client_sale_uuid'] ?? ''));
 
-        if (
-            array_key_exists('content_revision', $input)
-            && str_starts_with(trim((string) ($input['client_sale_uuid'] ?? '')), 'prev-edit-')
-        ) {
+        if (array_key_exists('content_revision', $input)) {
             $fulfillmentMeta['pos_content_revision'] = (int) $input['content_revision'];
         }
 

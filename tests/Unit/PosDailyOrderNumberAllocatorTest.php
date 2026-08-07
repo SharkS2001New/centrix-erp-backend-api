@@ -3,6 +3,8 @@
 namespace Tests\Unit;
 
 use App\Models\Sale;
+use App\Models\Till;
+use App\Models\TillFloatSession;
 use App\Models\User;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -310,5 +312,65 @@ class PosDailyOrderNumberAllocatorTest extends TestCase
             2,
             $day,
         ));
+    }
+
+    public function test_new_float_session_same_day_starts_cash_sales_at_one(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $till = Till::query()->firstOrFail();
+        $allocator = app(PosDailyOrderNumberAllocator::class);
+        $day = now()->toDateString();
+        $orgId = (int) $admin->organization_id;
+        $cashierId = (int) $admin->id;
+
+        $sessionA = TillFloatSession::create([
+            'organization_id' => $orgId,
+            'till_id' => $till->id,
+            'branch_id' => $admin->branch_id,
+            'cashier_id' => $cashierId,
+            'session_date' => $day,
+            'working_amount' => 1000,
+            'float_breakdown' => [],
+            'status' => 'closed',
+            'opened_at' => now()->subHours(2),
+            'closed_at' => now()->subHour(),
+        ]);
+
+        Sale::query()->create([
+            'order_num' => 880060,
+            'pos_order_num' => 5,
+            'pos_order_date' => $day,
+            'float_session_id' => $sessionA->id,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $orgId,
+            'channel' => 'pos',
+            'cashier_id' => $cashierId,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 10,
+            'amount_paid' => 10,
+        ]);
+
+        $peekA = $allocator->peekNextForCashier($orgId, $cashierId, $day, (int) $sessionA->id);
+        $this->assertSame(6, $peekA['pos_order_num']);
+
+        // Z closed session A; same calendar day, new float session B must restart at #1.
+        $sessionB = TillFloatSession::create([
+            'organization_id' => $orgId,
+            'till_id' => $till->id,
+            'branch_id' => $admin->branch_id,
+            'cashier_id' => $cashierId,
+            'session_date' => $day,
+            'working_amount' => 1000,
+            'float_breakdown' => [],
+            'status' => 'open',
+            'opened_at' => now(),
+        ]);
+
+        $peekB = $allocator->peekNextForCashier($orgId, $cashierId, $day, (int) $sessionB->id);
+        $this->assertSame(1, $peekB['pos_order_num'], 'New float session same day must peek Cash Sales #1');
+
+        $allocated = $allocator->allocateForCheckout($orgId, $cashierId, $day, (int) $sessionB->id);
+        $this->assertSame(1, $allocated['pos_order_num'], 'New float session same day must allocate Cash Sales #1');
     }
 }

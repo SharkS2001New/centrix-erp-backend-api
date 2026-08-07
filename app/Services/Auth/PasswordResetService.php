@@ -113,16 +113,53 @@ class PasswordResetService
             ->delete();
     }
 
-    public function changePassword(User $user, string $currentPassword, string $newPassword): void
+    public function changePassword(User $user, ?string $currentPassword, string $newPassword): void
     {
-        if (! Hash::check($currentPassword, $user->password)) {
-            throw ValidationException::withMessages([
-                'current_password' => ['Current password is incorrect.'],
-            ]);
+        // Platform super admins have no org admin / forgot-password path. Allow
+        // setting a new password without proving the current one.
+        if (! $user->is_super_admin) {
+            if ($currentPassword === null || $currentPassword === '' || ! Hash::check($currentPassword, $user->password)) {
+                throw ValidationException::withMessages([
+                    'current_password' => ['Current password is incorrect.'],
+                ]);
+            }
         }
 
         $user->forceFill(['password' => Hash::make($newPassword)])->save();
         app(PasswordExpiryService::class)->markPasswordChanged($user);
+    }
+
+    /**
+     * Reveal the configured PLATFORM_SUPER_ADMIN_PASSWORD when it still matches
+     * the logged-in platform admin hash. Never available for tenant users.
+     *
+     * @return array{password: ?string, matches_bootstrap: bool}
+     */
+    public function platformAdminBootstrapPassword(User $user): array
+    {
+        if (! $user->is_super_admin) {
+            abort(403, 'Only a platform super admin can view this password.');
+        }
+
+        $configured = config('erp.platform_super_admin_password');
+        if (! is_string($configured) || $configured === '') {
+            return [
+                'password' => null,
+                'matches_bootstrap' => false,
+            ];
+        }
+
+        if (! Hash::check($configured, (string) $user->password)) {
+            return [
+                'password' => null,
+                'matches_bootstrap' => false,
+            ];
+        }
+
+        return [
+            'password' => $configured,
+            'matches_bootstrap' => true,
+        ];
     }
 
     public function setRequiredPassword(User $user, string $newPassword): void

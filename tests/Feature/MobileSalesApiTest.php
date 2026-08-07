@@ -1316,6 +1316,112 @@ class MobileSalesApiTest extends TestCase
         );
     }
 
+    public function test_mobile_order_return_creates_pending_for_manager_approval(): void
+    {
+        $rep = $this->makeMobileUser(['username' => 'mobile_ret_'.uniqid()]);
+        $product = \App\Models\Product::firstOrFail();
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+
+        $sale = Sale::create([
+            'order_num' => 97001,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 0,
+            'order_total' => 200,
+            'payment_status' => 'paid',
+            'amount_paid' => 200,
+            'stock_balanced' => 1,
+        ]);
+
+        \App\Models\SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => 2,
+            'uom' => $product->uom,
+            'selling_price' => 100,
+            'discount_given' => 0,
+            'product_vat' => 0,
+            'amount' => 200,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $token = $this->loginMobile($rep);
+
+        $this->withToken($token)
+            ->postJson("/api/v1/mobile/orders/{$sale->id}/returns", [
+                'reason' => 'Customer Rejected',
+                'full_order' => true,
+            ])
+            ->assertCreated()
+            ->assertJsonPath('status', 'pending')
+            ->assertJsonPath('sale_id', $sale->id);
+
+        $this->assertDatabaseHas('customer_returns', [
+            'sale_id' => $sale->id,
+            'status' => 'pending',
+            'returned_by' => $rep->id,
+        ]);
+    }
+
+    public function test_mobile_order_partial_payment_reduces_balance_due(): void
+    {
+        $rep = $this->makeMobileUser(['username' => 'mobile_pay_'.uniqid()]);
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+        $method = \App\Models\PaymentMethod::query()
+            ->where('organization_id', $rep->organization_id)
+            ->where('is_active', 1)
+            ->firstOrFail();
+
+        $org = $rep->organization()->firstOrFail();
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'allow_credit_pay_now' => true,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $sale = Sale::create([
+            'order_num' => 97002,
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'unpaid',
+            'total_vat' => 0,
+            'order_total' => 1000,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'is_credit_sale' => 1,
+            'stock_balanced' => 1,
+        ]);
+
+        $token = $this->loginMobile($rep);
+
+        $this->withToken($token)
+            ->getJson("/api/v1/mobile/orders/{$sale->id}")
+            ->assertOk()
+            ->assertJsonPath('can_collect_payment', true)
+            ->assertJsonPath('balance_due', 1000);
+
+        $this->withToken($token)
+            ->postJson("/api/v1/mobile/orders/{$sale->id}/payments", [
+                'payment_method_id' => $method->id,
+                'amount' => 400,
+            ])
+            ->assertOk()
+            ->assertJsonPath('amount_paid', 400)
+            ->assertJsonPath('balance_due', 600)
+            ->assertJsonPath('payment_status', 'partial');
+    }
+
     protected function loginMobile(User $user): string
     {
         return $this->postJson('/api/v1/auth/login', [

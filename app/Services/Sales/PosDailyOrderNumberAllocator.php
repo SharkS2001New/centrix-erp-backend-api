@@ -8,9 +8,13 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * POS thermal ticket numbers (Cash Sales #): start at 1 each calendar day per cashier.
- * Sequence is driven only by completed sales — never by offline org-order reserves.
- * Independent of the org-wide {@see OrderNumberAllocator} (S00xx), which may jump.
+ * POS thermal ticket numbers (Cash Sales #).
+ *
+ * - With an open till float session: sequence is per float session (starts at 1
+ *   after Z/close even on the same calendar day).
+ * - Without a float session: sequence is per cashier per calendar day (legacy).
+ *
+ * Independent of the org-wide {@see OrderNumberAllocator} (S00xx).
  */
 class PosDailyOrderNumberAllocator
 {
@@ -18,7 +22,7 @@ class PosDailyOrderNumberAllocator
     public const MAX_RESERVE_BLOCK = 50;
 
     /**
-     * Next daily POS ticket preview for cart/UI — no locks / no watermark write.
+     * Next POS ticket preview for cart/UI — no locks / no watermark write.
      *
      * @return array{pos_order_num: int, pos_order_date: string}|null
      */
@@ -26,13 +30,15 @@ class PosDailyOrderNumberAllocator
         int $organizationId,
         int $cashierId,
         ?string $businessDate = null,
+        ?int $floatSessionId = null,
     ): ?array {
         if (! Schema::hasColumn('sales', 'pos_order_num')) {
             return null;
         }
 
         $date = $this->normalizeDate($businessDate) ?? now()->toDateString();
-        $next = $this->saleMaxForCashierDay($organizationId, $cashierId, $date, locked: false) + 1;
+        $sessionId = $this->normalizeFloatSessionId($floatSessionId);
+        $next = $this->saleMaxForScope($organizationId, $cashierId, $date, $sessionId, locked: false) + 1;
 
         return [
             'pos_order_num' => $next,
@@ -47,23 +53,28 @@ class PosDailyOrderNumberAllocator
         int $organizationId,
         int $cashierId,
         ?string $businessDate = null,
+        ?int $floatSessionId = null,
     ): ?array {
         if (! Schema::hasColumn('sales', 'pos_order_num')) {
             return null;
         }
 
         $date = $this->normalizeDate($businessDate) ?? now()->toDateString();
+        $sessionId = $this->normalizeFloatSessionId($floatSessionId);
 
-        return $this->withCashierDayLock($organizationId, $cashierId, $date, function () use (
+        return $this->withScopeLock($organizationId, $cashierId, $date, $sessionId, function () use (
             $organizationId,
             $cashierId,
             $date,
+            $sessionId,
         ): array {
             // Include cancelled sales in the max — cancelled Cash Sales #s are consumed
-            // (274 cancelled → next is 275), never reused.
-            $next = $this->saleMaxForCashierDay($organizationId, $cashierId, $date, locked: true) + 1;
-            $next = $this->nextFreeTicketForCashierDay($organizationId, $cashierId, $date, $next);
-            $this->writeWatermark($organizationId, $cashierId, $date, $next);
+            // (274 cancelled → next is 275), never reused within the same scope.
+            $next = $this->saleMaxForScope($organizationId, $cashierId, $date, $sessionId, locked: true) + 1;
+            $next = $this->nextFreeTicketForScope($organizationId, $cashierId, $date, $sessionId, $next);
+            if ($sessionId === null) {
+                $this->writeWatermark($organizationId, $cashierId, $date, $next);
+            }
 
             return [
                 'pos_order_num' => $next,
@@ -74,8 +85,6 @@ class PosDailyOrderNumberAllocator
 
     /**
      * Preview-only helpers for offline UI. Does NOT reserve or advance Cash Sales #.
-     * Org S00xx numbers are reserved separately; POS tickets are assigned at sale time
-     * as saleMax+1 so each cashier stays on 1, 2, 3… with no reserve-block gaps.
      *
      * @return array{pos_order_date: string, start: int, end: int, tickets: list<array{pos_order_num: int, pos_order_date: string}>}
      */
@@ -84,6 +93,7 @@ class PosDailyOrderNumberAllocator
         int $cashierId,
         int $count,
         ?string $businessDate = null,
+        ?int $floatSessionId = null,
     ): array {
         $date = $this->normalizeDate($businessDate) ?? now()->toDateString();
         if (! Schema::hasColumn('sales', 'pos_order_num')) {
@@ -95,10 +105,9 @@ class PosDailyOrderNumberAllocator
             ];
         }
 
-        $peek = $this->peekNextForCashier($organizationId, $cashierId, $date);
+        $peek = $this->peekNextForCashier($organizationId, $cashierId, $date, $floatSessionId);
         $next = (int) ($peek['pos_order_num'] ?? 1);
 
-        // Return empty tickets — callers must not pre-bind Cash Sales # to org slots.
         return [
             'pos_order_date' => $date,
             'start' => $next,
@@ -117,23 +126,26 @@ class PosDailyOrderNumberAllocator
         int $cashierId,
         int $posOrderNum,
         string $businessDate,
+        ?int $floatSessionId = null,
     ): bool {
         return $this->claimPrintedTicketForCheckout(
             $organizationId,
             $cashierId,
             $posOrderNum,
             $businessDate,
+            $floatSessionId,
         );
     }
 
     /**
-     * Claim a free printed Cash Sales # for this cashier/day.
+     * Claim a free printed Cash Sales # for this cashier/day (or float session).
      */
     public function claimPrintedTicketForCheckout(
         int $organizationId,
         int $cashierId,
         int $posOrderNum,
         string $businessDate,
+        ?int $floatSessionId = null,
     ): bool {
         if (! Schema::hasColumn('sales', 'pos_order_num') || $posOrderNum <= 0) {
             return false;
@@ -143,21 +155,28 @@ class PosDailyOrderNumberAllocator
         if ($date === null) {
             return false;
         }
+        $sessionId = $this->normalizeFloatSessionId($floatSessionId);
 
-        return $this->withCashierDayLock($organizationId, $cashierId, $date, function () use (
+        return $this->withScopeLock($organizationId, $cashierId, $date, $sessionId, function () use (
             $organizationId,
             $cashierId,
             $date,
+            $sessionId,
             $posOrderNum,
         ): bool {
-            // Held/draft parks must not block the unique key; cancelled tickets stay
-            // consumed and are never reclaimed (274 cancelled → skip to 275).
-            $this->releaseParkedTicketHolders($organizationId, $cashierId, $date, $posOrderNum);
+            $this->releaseParkedTicketHolders(
+                $organizationId,
+                $cashierId,
+                $date,
+                $posOrderNum,
+                $sessionId,
+            );
 
             $taken = $this->ticketIsConsumed(
                 $organizationId,
                 $cashierId,
                 $date,
+                $sessionId,
                 $posOrderNum,
                 locked: true,
             );
@@ -166,7 +185,9 @@ class PosDailyOrderNumberAllocator
                 return false;
             }
 
-            $this->writeWatermark($organizationId, $cashierId, $date, $posOrderNum);
+            if ($sessionId === null) {
+                $this->writeWatermark($organizationId, $cashierId, $date, $posOrderNum);
+            }
 
             return true;
         });
@@ -208,13 +229,14 @@ class PosDailyOrderNumberAllocator
 
     /**
      * Clear Cash Sales # from held/draft parks only. Cancelled tickets stay assigned
-     * so the number is never reused (sequence skips to the next free #).
+     * so the number is never reused within the same scope.
      */
     public function releaseParkedTicketHolders(
         int $organizationId,
         int $cashierId,
         string $businessDate,
         int $posOrderNum,
+        ?int $floatSessionId = null,
     ): int {
         if (! Schema::hasColumn('sales', 'pos_order_num') || $posOrderNum <= 0) {
             return 0;
@@ -224,17 +246,19 @@ class PosDailyOrderNumberAllocator
         if ($date === null) {
             return 0;
         }
+        $sessionId = $this->normalizeFloatSessionId($floatSessionId);
 
-        return Sale::query()
+        $query = Sale::query()
             ->where('organization_id', $organizationId)
-            ->where('cashier_id', $cashierId)
-            ->whereDate('pos_order_date', $date)
             ->where('pos_order_num', $posOrderNum)
-            ->whereIn('status', ['held', 'draft'])
-            ->update([
-                'pos_order_num' => null,
-                'pos_order_date' => null,
-            ]);
+            ->whereIn('status', ['held', 'draft']);
+
+        $this->applyScopeFilters($query, $cashierId, $date, $sessionId);
+
+        return $query->update([
+            'pos_order_num' => null,
+            'pos_order_date' => null,
+        ]);
     }
 
     /** @deprecated use releaseParkedTicketHolders */
@@ -243,27 +267,34 @@ class PosDailyOrderNumberAllocator
         int $cashierId,
         string $businessDate,
         int $posOrderNum,
+        ?int $floatSessionId = null,
     ): int {
-        return $this->releaseParkedTicketHolders($organizationId, $cashierId, $businessDate, $posOrderNum);
+        return $this->releaseParkedTicketHolders(
+            $organizationId,
+            $cashierId,
+            $businessDate,
+            $posOrderNum,
+            $floatSessionId,
+        );
     }
 
     /**
-     * True when a live or cancelled sale already owns this Cash Sales #.
-     * Held/draft are ignored (and should be cleared via {@see releaseParkedTicketHolders}).
+     * True when a live or cancelled sale already owns this Cash Sales # in scope.
      */
     protected function ticketIsConsumed(
         int $organizationId,
         int $cashierId,
         string $date,
+        ?int $floatSessionId,
         int $posOrderNum,
         bool $locked = false,
     ): bool {
         $query = Sale::query()
             ->where('organization_id', $organizationId)
-            ->where('cashier_id', $cashierId)
-            ->whereDate('pos_order_date', $date)
             ->where('pos_order_num', $posOrderNum)
             ->whereNotIn('status', ['held', 'draft']);
+
+        $this->applyScopeFilters($query, $cashierId, $date, $floatSessionId);
 
         if ($locked) {
             $query->lockForUpdate();
@@ -273,18 +304,32 @@ class PosDailyOrderNumberAllocator
     }
 
     /**
-     * Next ticket free of live + cancelled holders (cancelled numbers are skipped).
+     * Next ticket free of live + cancelled holders within the same scope.
      */
-    protected function nextFreeTicketForCashierDay(
+    protected function nextFreeTicketForScope(
         int $organizationId,
         int $cashierId,
         string $date,
+        ?int $floatSessionId,
         int $start,
     ): int {
         $candidate = max(1, $start);
         for ($i = 0; $i < 50; $i++) {
-            $this->releaseParkedTicketHolders($organizationId, $cashierId, $date, $candidate);
-            if (! $this->ticketIsConsumed($organizationId, $cashierId, $date, $candidate, locked: true)) {
+            $this->releaseParkedTicketHolders(
+                $organizationId,
+                $cashierId,
+                $date,
+                $candidate,
+                $floatSessionId,
+            );
+            if (! $this->ticketIsConsumed(
+                $organizationId,
+                $cashierId,
+                $date,
+                $floatSessionId,
+                $candidate,
+                locked: true,
+            )) {
                 return $candidate;
             }
             $candidate++;
@@ -298,13 +343,16 @@ class PosDailyOrderNumberAllocator
      * @param  callable(): T  $callback
      * @return T
      */
-    protected function withCashierDayLock(
+    protected function withScopeLock(
         int $organizationId,
         int $cashierId,
         string $date,
+        ?int $floatSessionId,
         callable $callback,
     ): mixed {
-        $lockKey = sprintf('pos_daily_order_num:%d:%d:%s', $organizationId, $cashierId, $date);
+        $lockKey = $floatSessionId !== null
+            ? sprintf('pos_session_order_num:%d:%d', $organizationId, $floatSessionId)
+            : sprintf('pos_daily_order_num:%d:%d:%s', $organizationId, $cashierId, $date);
 
         $run = function () use ($lockKey, $callback) {
             $lock = DB::selectOne('SELECT GET_LOCK(?, 15) AS acquired', [$lockKey]);
@@ -321,13 +369,21 @@ class PosDailyOrderNumberAllocator
             }
         };
 
-        // Checkout already opens a transaction — nesting another one around GET_LOCK
-        // can time out / deadlock under concurrent POS sync. Reuse the outer txn.
         if (DB::transactionLevel() > 0) {
             return $run();
         }
 
         return DB::transaction($run);
+    }
+
+    /** @deprecated use withScopeLock */
+    protected function withCashierDayLock(
+        int $organizationId,
+        int $cashierId,
+        string $date,
+        callable $callback,
+    ): mixed {
+        return $this->withScopeLock($organizationId, $cashierId, $date, null, $callback);
     }
 
     /**
@@ -352,26 +408,63 @@ class PosDailyOrderNumberAllocator
         }
     }
 
-    protected function saleMaxForCashierDay(
+    protected function normalizeFloatSessionId(?int $floatSessionId): ?int
+    {
+        $id = (int) ($floatSessionId ?? 0);
+
+        return $id > 0 ? $id : null;
+    }
+
+    /**
+     * @param  \Illuminate\Database\Eloquent\Builder<\App\Models\Sale>  $query
+     */
+    protected function applyScopeFilters($query, int $cashierId, string $date, ?int $floatSessionId): void
+    {
+        if ($floatSessionId !== null) {
+            $query->where('float_session_id', $floatSessionId);
+
+            return;
+        }
+
+        $query->where('cashier_id', $cashierId)
+            ->whereDate('pos_order_date', $date)
+            ->where(function ($inner) {
+                $inner->whereNull('float_session_id')
+                    ->orWhere('float_session_id', 0);
+            });
+    }
+
+    protected function saleMaxForScope(
         int $organizationId,
         int $cashierId,
         string $date,
+        ?int $floatSessionId,
         bool $locked = false,
     ): int {
         $query = Sale::query()
             ->where('organization_id', $organizationId)
-            ->where('cashier_id', $cashierId)
-            ->whereDate('pos_order_date', $date)
             ->whereNotNull('pos_order_num')
             // Parks must not advance Cash Sales #. Cancelled sales DO — the number
-            // was issued and must be skipped (274 cancelled → next is 275).
+            // was issued and must be skipped within this session/day scope.
             ->whereNotIn('status', ['held', 'draft']);
+
+        $this->applyScopeFilters($query, $cashierId, $date, $floatSessionId);
 
         if ($locked) {
             $query->lockForUpdate();
         }
 
         return (int) ($query->max('pos_order_num') ?? 0);
+    }
+
+    /** @deprecated use saleMaxForScope */
+    protected function saleMaxForCashierDay(
+        int $organizationId,
+        int $cashierId,
+        string $date,
+        bool $locked = false,
+    ): int {
+        return $this->saleMaxForScope($organizationId, $cashierId, $date, null, $locked);
     }
 
     protected function readWatermark(int $organizationId, int $cashierId, string $date): int

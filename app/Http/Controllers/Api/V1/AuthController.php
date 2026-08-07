@@ -636,20 +636,41 @@ class AuthController extends Controller
 
     public function changePassword(Request $request)
     {
-        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $user = $request->user();
+        $orgId = (int) ($user?->organization_id ?? 0);
+        $isPlatformAdmin = (bool) ($user?->is_super_admin);
         $data = $request->validate([
-            'current_password' => 'required|string',
+            // Platform super admin has no other reset path — current password optional.
+            'current_password' => $isPlatformAdmin ? 'nullable|string' : 'required|string',
             'password' => PasswordPolicy::validationRules($orgId ?: null),
         ]);
         PasswordPolicy::assertValid($orgId ?: null, $data['password']);
 
         $this->passwordResets->changePassword(
-            $request->user(),
-            PasswordPolicy::normalizeInput($data['current_password']),
+            $user,
+            isset($data['current_password'])
+                ? PasswordPolicy::normalizeInput((string) $data['current_password'])
+                : null,
             PasswordPolicy::normalizeInput($data['password']),
         );
 
-        return $this->respondAfterPasswordChange($request->user()->fresh());
+        return $this->respondAfterPasswordChange($user->fresh());
+    }
+
+    /**
+     * Platform super admin only: show the configured bootstrap password when it
+     * still matches the account hash (so they can see it before changing it).
+     */
+    public function platformAdminCurrentPassword(Request $request)
+    {
+        $user = $request->user();
+        if (! $user?->is_super_admin) {
+            abort(403, 'Only a platform super admin can view this password.');
+        }
+
+        return response()->json(
+            $this->passwordResets->platformAdminBootstrapPassword($user),
+        );
     }
 
     public function skipPasswordExpiry(Request $request)

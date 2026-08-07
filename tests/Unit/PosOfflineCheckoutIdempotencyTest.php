@@ -2,7 +2,6 @@
 
 namespace Tests\Unit;
 
-use App\Models\User;
 use App\Services\Sales\PosOfflineCheckoutIdempotency;
 use Tests\TestCase;
 
@@ -21,7 +20,21 @@ class PosOfflineCheckoutIdempotencyTest extends TestCase
         );
     }
 
-    public function test_sync_id_uses_uuid_only_for_new_sales(): void
+    public function test_sync_id_includes_content_revision_for_offline_sales(): void
+    {
+        $service = app(PosOfflineCheckoutIdempotency::class);
+
+        $this->assertSame(
+            '550e8400-e29b-41d4-a716-446655440000:2',
+            $service->syncId([
+                'client_sale_uuid' => '550e8400-e29b-41d4-a716-446655440000',
+                'content_revision' => 2,
+                'offline_order' => true,
+            ]),
+        );
+    }
+
+    public function test_sync_id_uses_uuid_only_for_online_sales_without_offline_flag(): void
     {
         $service = app(PosOfflineCheckoutIdempotency::class);
 
@@ -31,7 +44,7 @@ class PosOfflineCheckoutIdempotencyTest extends TestCase
                 'client_sale_uuid' => '550e8400-e29b-41d4-a716-446655440000',
             ]),
         );
-        // Content revision must not split new-sale retries into duplicates.
+        // Without offline_order, content_revision must not split retries into duplicates.
         $this->assertSame(
             '550e8400-e29b-41d4-a716-446655440000',
             $service->syncId([

@@ -121,7 +121,7 @@ class FloatSessionValidator
     /**
      * Open till session for this cashier (and cart branch when known).
      */
-    protected function findOpenSessionIdForUser(User $user, TemporaryCart $cart): ?int
+    public function findOpenSessionIdForUser(User $user, TemporaryCart $cart): ?int
     {
         if (! $this->tillFloatEnabled()) {
             return null;
