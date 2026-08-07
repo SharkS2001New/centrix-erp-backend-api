@@ -2,7 +2,6 @@
 
 namespace Tests\Feature;
 
-use App\Models\Organization;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -64,24 +63,15 @@ class PlatformManagerAppAccessTest extends TestCase
     public function test_tenant_manager_token_still_denied_admin_paths(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
-        $admin->forceFill([
-            'password' => Hash::make('password'),
-            'must_change_password' => false,
-            'login_channels' => ['backoffice', 'manager'],
+        $newToken = $admin->createToken('TENANT_MANAGER_ADMIN_DENY', ['*']);
+        /** @var \App\Models\PersonalAccessToken $accessToken */
+        $accessToken = $newToken->accessToken;
+        $accessToken->forceFill([
+            'organization_id' => $admin->organization_id,
+            'login_channel' => 'manager',
         ])->save();
 
-        $org = Organization::findOrFail($admin->organization_id);
-
-        $login = $this->postJson('/api/v1/auth/login', [
-            'company_code' => $org->company_code,
-            'username' => $admin->username,
-            'password' => 'password',
-            'client_id' => 'TENANT_MANAGER_ADMIN_DENY',
-            'login_channel' => 'manager',
-            'force_logout' => true,
-        ])->assertOk();
-
-        $this->withToken($login->json('token'))
+        $this->withToken($newToken->plainTextToken)
             ->getJson('/api/v1/admin/organizations')
             ->assertStatus(403)
             ->assertJsonPath('code', 'login_channel_forbidden');
