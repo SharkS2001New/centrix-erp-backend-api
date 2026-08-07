@@ -248,6 +248,13 @@ class PaymentsBreakdownService
                             ->whereColumn('sp.sale_id', 's.id')
                             ->where('sp.reference_number', 'like', "%{$search}%");
                     });
+                if (Schema::hasColumn('sales', 'pos_order_num')) {
+                    if (ctype_digit($search)) {
+                        $inner->orWhere('s.pos_order_num', (int) $search);
+                    } else {
+                        $inner->orWhereRaw('CAST(s.pos_order_num AS CHAR) LIKE ?', ["%{$search}%"]);
+                    }
+                }
             });
         }
 
@@ -270,33 +277,38 @@ class PaymentsBreakdownService
             2,
         );
 
+        $listSelect = [
+            's.id as sale_id',
+            's.order_num',
+            's.branch_id',
+            's.channel',
+            's.cashier_id',
+            's.float_session_id',
+            's.customer_num',
+            's.customer_name_override',
+            'c.customer_name',
+            's.order_total',
+            's.amount_paid',
+            's.cash',
+            's.mpesa_amount',
+            's.equity_amount',
+            's.kcb_amount',
+            's.voucher_payment_amount',
+            's.points_payment_amount',
+            's.completed_at',
+            's.created_at',
+            DB::raw('COALESCE(NULLIF(TRIM(u.full_name), ""), u.username) as cashier_name'),
+            'tfs.status as session_status',
+            'tfs.session_date',
+            't.till_number',
+            't.till_name',
+        ];
+        if (Schema::hasColumn('sales', 'pos_order_num')) {
+            $listSelect[] = 's.pos_order_num';
+        }
+
         $paginator = $listQuery
-            ->select([
-                's.id as sale_id',
-                's.order_num',
-                's.branch_id',
-                's.channel',
-                's.cashier_id',
-                's.float_session_id',
-                's.customer_num',
-                's.customer_name_override',
-                'c.customer_name',
-                's.order_total',
-                's.amount_paid',
-                's.cash',
-                's.mpesa_amount',
-                's.equity_amount',
-                's.kcb_amount',
-                's.voucher_payment_amount',
-                's.points_payment_amount',
-                's.completed_at',
-                's.created_at',
-                DB::raw('COALESCE(NULLIF(TRIM(u.full_name), ""), u.username) as cashier_name'),
-                'tfs.status as session_status',
-                'tfs.session_date',
-                't.till_number',
-                't.till_name',
-            ])
+            ->select($listSelect)
             ->orderByDesc(DB::raw('COALESCE(s.completed_at, s.created_at)'))
             ->orderByDesc('s.id')
             ->paginate($perPage);
@@ -372,10 +384,16 @@ class PaymentsBreakdownService
                 'topup_methods' => [],
             ];
 
+            $posOrderNum = null;
+            if (isset($row->pos_order_num) && $row->pos_order_num !== null && (int) $row->pos_order_num > 0) {
+                $posOrderNum = (int) $row->pos_order_num;
+            }
+
             return [
                 'sale_id' => $saleId,
                 'payment_id' => $saleId,
                 'order_num' => $row->order_num !== null ? (int) $row->order_num : null,
+                'pos_order_num' => $posOrderNum,
                 'branch_id' => $row->branch_id !== null ? (int) $row->branch_id : null,
                 'channel' => $row->channel,
                 'customer_num' => $row->customer_num !== null ? (int) $row->customer_num : null,
