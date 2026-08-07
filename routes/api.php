@@ -139,7 +139,7 @@ use App\Http\Controllers\Api\V1\PlatformFcmPushController;
 use App\Http\Controllers\Api\V1\WorkShiftController;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Broadcast;
-use Illuminate\Support\Facades\Route;
+use Illuminate\Support\Facades\Route; 
 
 Broadcast::routes([
     'middleware' => [
