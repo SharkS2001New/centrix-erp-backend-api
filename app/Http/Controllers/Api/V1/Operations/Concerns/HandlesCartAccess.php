@@ -9,6 +9,7 @@ use App\Services\Erp\FloatSessionValidator;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\SaleLineQuantityDisplayService;
+use Illuminate\Support\Facades\Schema;
 
 trait HandlesCartAccess
 {
@@ -95,11 +96,13 @@ trait HandlesCartAccess
                 } catch (\Throwable) {
                     $floatSessionId = null;
                 }
-                if ($floatSessionId === null && $cart->float_session_id) {
+                $cartHasFloatColumn = Schema::hasColumn('temporary_carts', 'float_session_id');
+                if ($floatSessionId === null && $cartHasFloatColumn && $cart->float_session_id) {
                     $floatSessionId = (int) $cart->float_session_id;
                 }
                 if (
-                    $floatSessionId
+                    $cartHasFloatColumn
+                    && $floatSessionId
                     && (int) ($cart->float_session_id ?? 0) !== $floatSessionId
                 ) {
                     $cart->float_session_id = $floatSessionId;

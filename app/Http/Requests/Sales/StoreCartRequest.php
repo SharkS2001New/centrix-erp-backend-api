@@ -22,6 +22,7 @@ class StoreCartRequest extends FormRequest
             'order_source' => 'nullable|in:pos,mobile,backoffice,backend,whatsapp',
             'branch_id' => 'nullable|integer|exists:branches,id',
             'till_id' => 'nullable|integer|exists:tills,id',
+            'float_session_id' => 'nullable|integer|min:1',
             'route_id' => TenantRouteRules::nullable($orgId),
         ];
     }

@@ -51,6 +51,7 @@ use App\Services\Sales\SaleRouteResolver;
 use App\Support\CustomerCreditLimit;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\ValidationException;
 use InvalidArgumentException;
 
@@ -613,11 +614,23 @@ class CheckoutController extends Controller
             }
 
             // Held/draft parks use their own hold sequence — never consume Cash Sales #.
+            // Resolve float first so offline sync (closed→open remapping) scopes Cash Sales #
+            // to the session that will actually be stamped on the sale.
+            $floatSessionId = FloatSessionValidator::forUser($user)->resolveForCheckout($cart, $user, $input);
+            if ($floatSessionId) {
+                $input['float_session_id'] = $floatSessionId;
+                if (
+                    Schema::hasColumn('temporary_carts', 'float_session_id')
+                    && (int) ($cart->float_session_id ?? 0) !== (int) $floatSessionId
+                ) {
+                    $cart->float_session_id = $floatSessionId;
+                    $cart->save();
+                }
+            }
+
             $posOrderFields = in_array($orderStatus, ['held', 'draft'], true)
                 ? []
                 : $this->resolvePosDailyOrderFields($cart, $user, $input);
-
-            $floatSessionId = FloatSessionValidator::forUser($user)->resolveForCheckout($cart, $user, $input);
 
             $creditBalance = $isCredit ? max(0, $total - $amountPaid) : 0;
             CustomerCreditLimit::assertCreditSaleAllowed(

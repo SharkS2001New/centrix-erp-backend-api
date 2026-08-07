@@ -1190,6 +1190,19 @@ class CartOperationsController extends Controller
             }
         }
 
+        if (
+            array_key_exists('float_session_id', $input)
+            && Schema::hasColumn('temporary_carts', 'float_session_id')
+        ) {
+            $nextFloatId = $input['float_session_id'] !== null && $input['float_session_id'] !== ''
+                ? (int) $input['float_session_id']
+                : null;
+            $currentFloatId = $cart->float_session_id !== null ? (int) $cart->float_session_id : null;
+            if ($currentFloatId !== $nextFloatId) {
+                $cart->update(['float_session_id' => $nextFloatId]);
+            }
+        }
+
         // Never wipe an existing cart route with null (multi-route bootstrap / reuse).
         if ($channel === 'mobile' && $routeId !== null && (int) $cart->route_id !== (int) $routeId) {
             $cart->update(['route_id' => $routeId]);

@@ -217,6 +217,8 @@ return [
                 // Distribution
                 'mobile_route_sales' => ['label' => 'Mobile route sales', 'actions' => ['view']],
                 'dispatch_trips' => ['label' => 'Dispatch trips', 'actions' => ['view']],
+                'vehicle_trip_loads' => ['label' => 'Vehicle trip loads', 'actions' => ['view']],
+                'driver_trip_loads' => ['label' => 'Driver trip loads', 'actions' => ['view']],
                 'trip_cash_settlement' => ['label' => 'Trip cash settlement', 'actions' => ['view']],
                 'pod_compliance' => ['label' => 'POD compliance', 'actions' => ['view']],
                 'driver_deliveries' => ['label' => 'Driver deliveries', 'actions' => ['view']],
@@ -252,6 +254,7 @@ return [
                 'vat_collected' => ['label' => 'VAT collected', 'actions' => ['view']],
                 // Finance
                 'profit_loss' => ['label' => 'Profit & loss', 'actions' => ['view']],
+                'profit_loss_by_product' => ['label' => 'Profit & loss by product', 'actions' => ['view']],
                 'expenses' => ['label' => 'Expenses report', 'actions' => ['view']],
                 'journal_register' => ['label' => 'Journal register', 'actions' => ['view']],
                 'subledger_reconciliation' => ['label' => 'Subledger reconciliation', 'actions' => ['view']],

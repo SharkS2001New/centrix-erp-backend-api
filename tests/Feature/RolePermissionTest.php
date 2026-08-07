@@ -183,6 +183,16 @@ class RolePermissionTest extends TestCase
         $this->assertSame('Mobile application', $mobile['label']);
         $this->assertTrue($mobile['standalone']);
         $this->assertSame(['mobile_sales', 'mobile_driver'], collect($mobile['modules'])->pluck('module')->all());
+
+        $manager = $applications->firstWhere('id', 'manager');
+        $this->assertNotNull($manager);
+        $this->assertSame('Manager application', $manager['label']);
+        $this->assertContains('mobile_manager', collect($manager['modules'])->pluck('module')->all());
+        $managerReports = collect($manager['modules'])->firstWhere('module', 'reports');
+        $this->assertNotNull($managerReports, 'Manager application must expose a Reports module');
+        $this->assertSame('Reports', $managerReports['label']);
+        $this->assertContains('daily_sales', collect($managerReports['features'])->pluck('key')->all());
+        $this->assertContains('profit_loss', collect($managerReports['features'])->pluck('key')->all());
     }
 
     public function test_distribution_application_hidden_when_distribution_module_disabled(): void

@@ -138,10 +138,19 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
 
         foreach ($registryReportFeatures as $feature) {
             $appsForFeature = $placements[$feature] ?? [];
+            // Manager application may mirror a curated subset for Field Manager roles.
+            $nonManagerApps = array_values(array_filter(
+                $appsForFeature,
+                static fn (string $id): bool => $id !== 'manager',
+            ));
+            $this->assertNotEmpty(
+                $nonManagerApps,
+                "Report feature [{$feature}] should appear in a primary application (got: ".implode(',', $appsForFeature).')',
+            );
             $this->assertCount(
                 1,
-                $appsForFeature,
-                "Report feature [{$feature}] should appear in exactly one application, got: ".implode(',', $appsForFeature),
+                $nonManagerApps,
+                "Report feature [{$feature}] should appear in exactly one primary application, got: ".implode(',', $nonManagerApps),
             );
         }
     }

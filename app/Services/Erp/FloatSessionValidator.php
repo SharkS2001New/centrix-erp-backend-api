@@ -84,6 +84,15 @@ class FloatSessionValidator
 
         $session = TillFloatSession::find($sessionId);
         if (! $session || ! in_array(strtolower((string) $session->status), ['open'], true)) {
+            // Offline POS sync after Z/reopen still carries the closed session id.
+            // Soft-attach the cashier's currently open session instead of failing upload.
+            $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            if ($offlineOrder) {
+                $openId = $this->findOpenSessionIdForUser($user, $cart);
+                if ($openId) {
+                    return $openId;
+                }
+            }
             if ($requiresFloat) {
                 throw new InvalidArgumentException('Till session is not open.');
             }
