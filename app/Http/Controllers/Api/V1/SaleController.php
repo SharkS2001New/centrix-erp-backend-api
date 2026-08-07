@@ -249,6 +249,14 @@ class SaleController extends BaseResourceController
             RouteOrderScope::applyRouteFilter($query, (int) $request->input('route_id'));
         }
 
+        if ($request->filled('float_session_id')) {
+            $query->where('sales.float_session_id', (int) $request->input('float_session_id'));
+        }
+
+        if ($request->filled('cashier_id') && ! $forPosOrderEdit) {
+            $query->where('sales.cashier_id', (int) $request->input('cashier_id'));
+        }
+
         if ($dispatchOrders) {
             $processedOnly = ($distributionSettings ?? [])['dispatch_board_processed_only'] ?? true;
             if ($processedOnly) {
