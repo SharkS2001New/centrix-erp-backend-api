@@ -46,6 +46,28 @@ class PlatformManagerAppAccessTest extends TestCase
             ->assertJsonPath('manager_app.accessible', true);
     }
 
+    public function test_platform_super_admin_can_login_via_backoffice_channel(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        $superAdmin->forceFill([
+            'password' => Hash::make('Password123!'),
+            'must_change_password' => false,
+            'login_channels' => ['backoffice', 'manager'],
+            'is_super_admin' => true,
+            'is_active' => true,
+        ])->save();
+
+        $this->postJson('/api/v1/auth/login', [
+            'company_code' => 'PLATFORM',
+            'username' => 'superadmin',
+            'password' => 'Password123!',
+            'client_id' => 'PLATFORM_BACKOFFICE_TEST',
+            'login_channel' => 'backoffice',
+        ])
+            ->assertOk()
+            ->assertJsonPath('user.is_super_admin', true);
+    }
+
     public function test_platform_manager_token_can_access_admin_platform_apis(): void
     {
         $token = $this->platformManagerToken('PLATFORM_MANAGER_ADMIN_TEST');

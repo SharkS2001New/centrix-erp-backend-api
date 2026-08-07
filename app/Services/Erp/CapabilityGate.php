@@ -221,6 +221,10 @@ class CapabilityGate
     public function allowedLoginChannels(): array
     {
         $channels = [];
+        // Platform ops console has no tenant sales.backend modules but must allow web login.
+        if ($this->isPlatformOrganization()) {
+            $channels[] = \App\Services\Auth\UserLoginChannelService::BACKOFFICE;
+        }
         // Retail backoffice sales OR hospitality shells use the web/backoffice login channel.
         if (
             $this->enabled('sales.backend')
@@ -291,13 +295,23 @@ class CapabilityGate
             return true;
         }
 
-        if (! $this->enabled('sales.backend')) {
-            return false;
+        // Sales tenants: Manager follows the sales platform toggle.
+        if ($this->enabled('sales.backend')) {
+            $sales = $this->moduleSettings('sales');
+
+            return (bool) ($sales['enable_manager_app'] ?? true);
         }
 
-        $sales = $this->moduleSettings('sales');
-
-        return (bool) ($sales['enable_manager_app'] ?? true);
+        // Non-sales tenants (HR-only, accounting-only, etc.): allow Manager when
+        // any operational module is enabled — the app then shows only those modules.
+        return $this->enabled('hr_payroll')
+            || $this->enabled('accounting')
+            || $this->enabled('inventory')
+            || $this->enabled('admin')
+            || $this->enabled('customers_suppliers')
+            || $this->enabled('distribution')
+            || $this->enabled('hospitality.backend')
+            || $this->enabled('hospitality.bar_pos');
     }
 
     public function isPlatformOrganization(): bool

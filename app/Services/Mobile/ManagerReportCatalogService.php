@@ -34,6 +34,21 @@ class ManagerReportCatalogService
     ];
 
     /** @var list<string> */
+    private const FINANCE_REPORT_KEYS = [
+        'profit-loss', 'profit-loss-by-product', 'profit-loss-gl', 'trial-balance', 'balance-sheet',
+        'cash-flow', 'general-ledger', 'accounts-payable', 'expenses',
+        'journal-register', 'subledger-reconciliation', 'accounts-receivable',
+        'invoice-payments', 'credit-outstanding',
+    ];
+
+    /** @var list<string> */
+    private const HR_REPORT_KEYS = [
+        'leave-balance', 'attendance-register', 'lateness-list', 'payroll-summary', 'statutory-deductions', 'bank-transfer',
+        'nssf-remittance', 'other-deductions',
+        'staff-turnover', 'headcount', 'contract-expiry', 'hr-dashboard-kpi',
+    ];
+
+    /** @var list<string> */
     private const MOBILE_EXCLUDED_REPORT_KEYS = [
         'stock-reservations',
         // Compliance suite stays on web ERP (KRA receipts + audit trail).
@@ -44,8 +59,47 @@ class ManagerReportCatalogService
     ];
 
     /** @var list<string> */
+    private const INVENTORY_REPORT_KEYS = [
+        'items-currently-in-stock', 'low-stock', 'stock-movement', 'stock-chain',
+        'stock-valuation', 'stock-transfers',
+        'branch-stock-transfers', 'returns', 'price-list', 'stock-on-hand',
+        'damages',
+    ];
+
+    /** @var list<string> */
+    private const SALES_REPORT_KEYS = [
+        'sales-by-product', 'sales-by-supplier', 'sales-by-user', 'sales-by-customer',
+        'sales-by-channel', 'daily-sales', 'sales-pipeline', 'category-sales',
+    ];
+
+    /** @var list<string> */
     private const MULTI_BRANCH_REPORT_KEYS = [
         'branch-stock-transfers',
+    ];
+
+    /** @var list<string> */
+    private const CUSTOMER_REPORT_KEYS = [
+        'customer-statement', 'ar-aging', 'credit-outstanding', 'top-debtors',
+        'accounts-receivable', 'invoice-payments',
+    ];
+
+    /** @var list<string> */
+    private const HOSPITALITY_REPORT_KEYS = [
+        'hospitality-kpi-occupancy',
+        'hospitality-occupancy',
+        'hospitality-arrivals-departures',
+        'hospitality-folio-balances',
+        'hospitality-room-revenue',
+        'hospitality-manager-flash',
+        'hospitality-fnb-checks',
+        'hospitality-fnb-by-outlet',
+        'hospitality-fnb-by-hour',
+        'hospitality-fnb-by-category',
+        'hospitality-open-checks',
+        'hospitality-voids',
+        'hospitality-eod-cashier',
+        'hospitality-profit-loss',
+        'hospitality-consumption-variance',
     ];
 
     /** @var list<string> */
@@ -159,6 +213,18 @@ class ManagerReportCatalogService
                 'leave-balance', 'payroll-summary', 'statutory-deductions', 'bank-transfer',
                 'nssf-remittance', 'other-deductions',
                 'staff-turnover', 'headcount', 'contract-expiry', 'hr-dashboard-kpi',
+            ],
+        ],
+        [
+            'id' => 'hospitality',
+            'title' => 'Hospitality',
+            'description' => 'Rooms, folios, arrivals, and Hotel POS F&B',
+            'keys' => [
+                'hospitality-kpi-occupancy', 'hospitality-occupancy', 'hospitality-arrivals-departures',
+                'hospitality-folio-balances', 'hospitality-room-revenue', 'hospitality-manager-flash',
+                'hospitality-fnb-checks', 'hospitality-fnb-by-outlet', 'hospitality-fnb-by-hour',
+                'hospitality-fnb-by-category', 'hospitality-open-checks', 'hospitality-voids',
+                'hospitality-eod-cashier', 'hospitality-profit-loss', 'hospitality-consumption-variance',
             ],
         ],
     ];
@@ -282,10 +348,7 @@ class ManagerReportCatalogService
         bool $multiBranch,
         bool $legacyEnabled,
     ): bool {
-        // Align with web `isReportNavEnabled`: only gate channel/module-specific
-        // families. Domain modules (sales/inventory/finance/HR/customers) must not
-        // hide the managers-app catalog — managers with app access should see all
-        // wired mobile reports except intentional exclusions.
+        // Show only report families for modules enabled on this organization.
         if ($key === 'legacy-archive' && ! $legacyEnabled) {
             return false;
         }
@@ -306,7 +369,54 @@ class ManagerReportCatalogService
             return false;
         }
 
+        if (in_array($key, self::FINANCE_REPORT_KEYS, true) && ! $gate->enabled('accounting')) {
+            return false;
+        }
+
+        if (in_array($key, self::HR_REPORT_KEYS, true) && ! $gate->enabled('hr_payroll')) {
+            return false;
+        }
+
+        if (in_array($key, self::INVENTORY_REPORT_KEYS, true) && ! $gate->enabled('inventory')) {
+            return false;
+        }
+
+        if (in_array($key, ['open-lpo', 'purchases-by-supplier', 'supplier-returns'], true)
+            && ! $gate->enabled('customers_suppliers')) {
+            return false;
+        }
+
+        if (in_array($key, self::CUSTOMER_REPORT_KEYS, true) && ! $gate->enabled('customers_suppliers')) {
+            return false;
+        }
+
+        if (in_array($key, self::SALES_REPORT_KEYS, true) && ! $gate->enabled('sales.backend')) {
+            return false;
+        }
+
+        if ($key === 'kra-receipts' && ! $gate->enabled('accounting')) {
+            return false;
+        }
+
+        if ($key === 'audit-trail' && ! $gate->enabled('admin')) {
+            return false;
+        }
+
+        if (
+            (str_starts_with($key, 'hospitality-') || in_array($key, self::HOSPITALITY_REPORT_KEYS, true))
+            && ! $this->hospitalityReportsEnabled($gate)
+        ) {
+            return false;
+        }
+
         return true;
+    }
+
+    protected function hospitalityReportsEnabled(CapabilityGate $gate): bool
+    {
+        return $gate->enabled('hospitality.reports')
+            || $gate->enabled('hospitality.backend')
+            || $gate->enabled('hospitality.bar_pos');
     }
 
     /** @param  array<string, mixed>  $item */

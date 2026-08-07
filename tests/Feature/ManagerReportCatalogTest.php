@@ -35,6 +35,25 @@ class ManagerReportCatalogTest extends TestCase
         $this->assertNotContains('stock-reservations', $keys);
     }
 
+    public function test_mobile_catalog_excludes_hospitality_for_retail_org(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $response = $this->getJson('/api/v1/manager/reports/catalog');
+        $response->assertOk();
+
+        $keys = $this->collectCatalogReportKeys($response->json());
+        $this->assertNotContains('hospitality-occupancy', $keys);
+        $this->assertNotContains('hospitality-eod-cashier', $keys);
+        $this->assertNotContains('hospitality-profit-loss', $keys);
+
+        $categoryIds = collect($response->json('categories') ?? [])
+            ->pluck('id')
+            ->all();
+        $this->assertNotContains('hospitality', $categoryIds);
+    }
+
     public function test_manager_customer_search_returns_matches(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

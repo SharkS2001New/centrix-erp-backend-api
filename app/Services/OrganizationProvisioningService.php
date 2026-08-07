@@ -270,7 +270,15 @@ class OrganizationProvisioningService
         $mobileOrdersEnabled = ($salesPlatform['enable_mobile_orders'] ?? true) !== false;
         $channels = [];
 
-        if ($modules['sales.backend'] ?? false) {
+        // Web ERP channel — any enabled web shell (not sales.backend-only).
+        if (
+            ($modules['sales.backend'] ?? false)
+            || ($modules['hospitality.backend'] ?? false)
+            || ($modules['hospitality.bar_pos'] ?? false)
+            || ($modules['admin'] ?? false)
+            || ($modules['accounting'] ?? false)
+            || ($modules['hr_payroll'] ?? false)
+        ) {
             $channels[] = 'backoffice';
         }
         if ($modules['sales.pos'] ?? false) {
@@ -279,7 +287,21 @@ class OrganizationProvisioningService
         if (($modules['sales.mobile'] ?? false) && $mobileOrdersEnabled) {
             $channels[] = 'mobile';
         }
-        if (($modules['sales.backend'] ?? false) && ($salesPlatform['enable_manager_app'] ?? true) !== false) {
+
+        $salesManager =
+            ($modules['sales.backend'] ?? false)
+            && ($salesPlatform['enable_manager_app'] ?? true) !== false;
+        $nonSalesManager = ! ($modules['sales.backend'] ?? false) && (
+            ($modules['hr_payroll'] ?? false)
+            || ($modules['accounting'] ?? false)
+            || ($modules['inventory'] ?? false)
+            || ($modules['admin'] ?? false)
+            || ($modules['customers_suppliers'] ?? false)
+            || ($modules['distribution'] ?? false)
+            || ($modules['hospitality.backend'] ?? false)
+            || ($modules['hospitality.bar_pos'] ?? false)
+        );
+        if ($salesManager || $nonSalesManager) {
             $channels[] = 'manager';
         }
 

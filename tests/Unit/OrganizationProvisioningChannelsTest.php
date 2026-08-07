@@ -65,4 +65,35 @@ class OrganizationProvisioningChannelsTest extends TestCase
             $this->service->mapConfigChannelsToLoginChannels(['mobile', 'backend']),
         );
     }
+
+    public function test_hr_only_org_gets_backoffice_and_manager_without_sales(): void
+    {
+        $modules = [
+            'sales.backend' => false,
+            'sales.pos' => false,
+            'sales.mobile' => false,
+            'hr_payroll' => true,
+            'accounting' => false,
+            'inventory' => false,
+        ];
+
+        $this->assertEqualsCanonicalizing(
+            ['backoffice', 'manager'],
+            $this->service->loginChannelsFromEnabledModules($modules),
+        );
+    }
+
+    public function test_manager_disabled_for_sales_org_when_toggle_off(): void
+    {
+        $modules = [
+            'sales.backend' => true,
+            'sales.pos' => false,
+            'sales.mobile' => false,
+        ];
+
+        $this->assertSame(
+            ['backoffice'],
+            $this->service->loginChannelsFromEnabledModules($modules, ['enable_manager_app' => false]),
+        );
+    }
 }
