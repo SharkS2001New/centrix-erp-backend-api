@@ -61,8 +61,31 @@ class PosOrderEditTest extends TestCase
 
         $this->assertCount(1, $cart['lines'] ?? []);
         $this->assertEquals(2.0, (float) ($cart['lines'][0]['quantity'] ?? 0));
-        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
+        $this->assertEquals((int) $sale['id'], (int) ($cart['superseded_sale_id'] ?? 0));
         $this->assertEquals((int) $sale['order_num'], $cart['held_order_num'] ?? null);
+        $this->assertEquals((int) $sale['id'], (int) ($cart['restored_from_sale']['id'] ?? 0));
+    }
+
+    public function test_restore_same_sale_again_resumes_without_replacing_lines(): void
+    {
+        $this->setPosOrderEditEnabled(true);
+
+        $sale = $this->completePosSale($this->productCodeA, 2);
+
+        $first = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+
+        $lineId = $first['lines'][0]['id'] ?? null;
+        $this->assertNotNull($lineId);
+
+        $second = $this->postJson("/api/v1/sales/orders/{$sale['id']}/restore-to-cart", [
+            'replace' => false,
+        ])->assertOk()->json();
+
+        $this->assertCount(1, $second['lines'] ?? []);
+        $this->assertEquals($lineId, $second['lines'][0]['id'] ?? null);
+        $this->assertEquals((int) $sale['id'], (int) ($second['superseded_sale_id'] ?? 0));
     }
 
     public function test_pos_edit_swaps_product_and_restores_stock_correctly(): void
@@ -195,7 +218,7 @@ class PosOrderEditTest extends TestCase
         ])->assertOk()->json();
 
         $this->assertCount(1, $cart['lines'] ?? []);
-        $this->assertEquals('cancelled', Sale::find($sale['id'])->status);
+        $this->assertEquals((int) $sale['id'], (int) ($cart['superseded_sale_id'] ?? 0));
     }
 
     public function test_capabilities_expose_pos_order_edit_flag(): void
@@ -231,6 +254,32 @@ class PosOrderEditTest extends TestCase
         $this->getJson('/api/v1/erp/capabilities')
             ->assertOk()
             ->assertJsonPath('pos_order_edit_enabled', true);
+    }
+
+    public function test_platform_sales_config_persists_append_same_day_customer_orders(): void
+    {
+        config(['erp.allow_org_provisioning' => true]);
+
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $orgId = (int) Organization::query()->where('company_code', 'DEMO')->value('id');
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}", [
+            'sales_platform' => [
+                'append_same_day_customer_orders' => true,
+                'enable_pos_order_edit' => true,
+            ],
+        ])->assertOk()
+            ->assertJsonPath('sales_platform.append_same_day_customer_orders', true);
+
+        $org = Organization::findOrFail($orgId);
+        $this->assertTrue((bool) ($org->module_settings['sales']['append_same_day_customer_orders'] ?? false));
+
+        // Reloading the org payload (same path as the platform UI after save) must keep the flag.
+        $this->getJson("/api/v1/admin/organizations/{$orgId}")
+            ->assertOk()
+            ->assertJsonPath('sales_platform.append_same_day_customer_orders', true);
     }
 
     /** @param array<string, mixed> $checkoutExtra */

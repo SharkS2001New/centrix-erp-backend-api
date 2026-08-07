@@ -144,6 +144,15 @@ class PosOrderEditService
             return;
         }
 
+        // Already voided for a prior restore attempt — skip KRA/device round-trip.
+        if (\App\Models\CustomerReturn::query()
+            ->where('sale_id', $sale->id)
+            ->where('return_kind', 'pos_edit')
+            ->where('status', 'approved')
+            ->exists()) {
+            return;
+        }
+
         if (! $this->saleHasSuccessfulKraResponse($sale)) {
             return;
         }
@@ -153,14 +162,18 @@ class PosOrderEditService
 
     public function saleHasSuccessfulKraResponse(Sale $sale): bool
     {
-        return KraResponse::query()
+        // Recent successes only — avoid loading every historical kra_responses row.
+        $rows = KraResponse::query()
             ->where('sale_id', $sale->id)
             ->where('status', 'success')
-            ->get()
-            ->contains(function (KraResponse $kra): bool {
-                $docType = strtolower(trim((string) (($kra->response_payload ?? [])['document_type'] ?? '')));
+            ->orderByDesc('id')
+            ->limit(8)
+            ->get(['id', 'response_payload']);
 
-                return $docType !== 'credit_note';
-            });
+        return $rows->contains(function (KraResponse $kra): bool {
+            $docType = strtolower(trim((string) (($kra->response_payload ?? [])['document_type'] ?? '')));
+
+            return $docType !== 'credit_note';
+        });
     }
 }

@@ -129,4 +129,31 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertSame('classic', $config['external_pos_layout']);
         $this->assertSame('classic', $config['backoffice_order_edit_layout']);
     }
+
+    public function test_sales_platform_config_reads_pos_combine_identical_lines_false(): void
+    {
+        $service = app(OrganizationPlatformConfigService::class);
+
+        $this->assertTrue($service->defaultSalesPlatformConfig()['pos_combine_identical_lines']);
+        $this->assertContains('pos_combine_identical_lines', $service->platformControlledSalesKeys());
+        $this->assertContains('receipt_show_all_payment_methods', $service->platformControlledSalesKeys());
+
+        $org = new Organization([
+            'enabled_modules' => ['sales.pos' => true],
+            'module_settings' => [
+                'sales' => array_merge(
+                    config('erp.module_settings_defaults.sales'),
+                    [
+                        'pos_combine_identical_lines' => false,
+                        'receipt_show_all_payment_methods' => false,
+                    ],
+                ),
+            ],
+        ]);
+
+        $config = $service->salesPlatformConfigForOrganization($org);
+
+        $this->assertFalse($config['pos_combine_identical_lines']);
+        $this->assertFalse($config['receipt_show_all_payment_methods']);
+    }
 }

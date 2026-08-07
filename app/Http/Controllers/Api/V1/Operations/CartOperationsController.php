@@ -367,7 +367,10 @@ class CartOperationsController extends Controller
     public function restoreHeldOrder(Request $request, int $saleId)
     {
         $user = $request->user();
-        $sale = $this->findScopedSale($saleId, $user)->load(['items', 'customer:customer_num,customer_name,organization_id']);
+        $sale = $this->findScopedSale($saleId, $user)->load([
+            'items',
+            'customer:customer_num,customer_name,organization_id',
+        ]);
 
         $this->assertSaleRestorableToCart($sale, $user);
 
@@ -382,6 +385,19 @@ class CartOperationsController extends Controller
             'branch_id' => $sale->branch_id ?? $user->branch_id,
             'route_id' => $sale->route_id,
         ]);
+
+        // Resume an in-progress edit of the same sale — skip KRA void + stock reverse.
+        if (
+            (int) ($cart->superseded_sale_id ?? 0) === (int) $sale->id
+            && (int) ($cart->held_order_num ?? 0) === (int) $sale->order_num
+            && $cart->lines()->exists()
+        ) {
+            return $this->cartResponse(
+                $cart->loadMissing('lines'),
+                $user,
+                extra: ['restored_from_sale' => $this->restoredFromSalePayload($sale)],
+            );
+        }
 
         if ($cart->lines()->exists() && ! $request->boolean('replace')) {
             throw new InvalidArgumentException(
@@ -427,10 +443,9 @@ class CartOperationsController extends Controller
                 'held_order_num' => $heldOrderNum,
                 'superseded_sale_id' => (int) $sale->id,
             ]);
-            $cart->refresh();
 
             $this->addRestoredSaleItemsToCart(
-                $cart,
+                $cart->fresh(),
                 $sale,
                 $user,
                 $gate,
@@ -500,6 +515,11 @@ class CartOperationsController extends Controller
                 ? strtoupper((string) $sale->payment_method_code)
                 : null,
             'order_total' => round((float) ($sale->order_total ?? 0), 2),
+            'amount_paid' => round((float) ($sale->amount_paid ?? 0), 2),
+            'cash' => round((float) ($sale->cash ?? 0), 2),
+            'mpesa_amount' => round((float) ($sale->mpesa_amount ?? 0), 2),
+            'equity_amount' => round((float) ($sale->equity_amount ?? 0), 2),
+            'kcb_amount' => round((float) ($sale->kcb_amount ?? 0), 2),
         ];
     }
 
@@ -1182,15 +1202,7 @@ class CartOperationsController extends Controller
             ->with('unit')
             ->where('organization_id', $orgId)
             ->whereNull('deleted_at')
-            ->where(function ($query) use ($codes) {
-                foreach (array_values($codes) as $index => $code) {
-                    if ($index === 0) {
-                        $query->whereRaw('LOWER(product_code) = ?', [strtolower($code)]);
-                    } else {
-                        $query->orWhereRaw('LOWER(product_code) = ?', [strtolower($code)]);
-                    }
-                }
-            })
+            ->whereIn('product_code', $codes)
             ->get()
             ->keyBy(fn (Product $product) => strtolower((string) $product->product_code));
 
@@ -1320,15 +1332,7 @@ class CartOperationsController extends Controller
             ->with(['unit', 'vat'])
             ->where('organization_id', $orgId)
             ->whereNull('deleted_at')
-            ->where(function ($query) use ($codes) {
-                foreach (array_values($codes) as $index => $code) {
-                    if ($index === 0) {
-                        $query->whereRaw('LOWER(product_code) = ?', [strtolower($code)]);
-                    } else {
-                        $query->orWhereRaw('LOWER(product_code) = ?', [strtolower($code)]);
-                    }
-                }
-            })
+            ->whereIn('product_code', $codes)
             ->get()
             ->keyBy(fn (Product $product) => strtolower((string) $product->product_code));
 

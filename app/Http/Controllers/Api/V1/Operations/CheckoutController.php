@@ -30,9 +30,8 @@ use App\Jobs\FinalizeSaleAfterCheckoutJob;
 use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\SalePaymentColumnMapper;
-use App\Services\Kra\KraDeviceErrorTranslator;
-use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
+use App\Services\Sales\CheckoutKraSubmissionService;
 use App\Services\Notifications\ActionRequestService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Sales\DiscountApprovalService;
@@ -83,9 +82,22 @@ class CheckoutController extends Controller
         $sale = $result['sale'];
         $deductStock = (bool) ($result['deduct_stock'] ?? false);
         $runSideEffects = (bool) ($result['run_side_effects'] ?? false);
+        $pendingKra = (bool) ($result['pending_kra'] ?? false);
+        $buyerPin = isset($result['buyer_pin']) ? (string) $result['buyer_pin'] : null;
+        $buyerPin = $buyerPin !== '' ? $buyerPin : null;
+
+        // Fiscalize after the sale commits (not inside the DB transaction) but still
+        // before the HTTP response so the first thermal receipt includes the eTIMS QR.
+        if ($pendingKra) {
+            $kraResponse = app(CheckoutKraSubmissionService::class)
+                ->submitForSale($sale, $gate, $buyerPin);
+            if ($kraResponse) {
+                $sale->setRelation('kraResponse', $kraResponse);
+            }
+        }
 
         // Stock ledger, journals, SMS/email, trip assignment, and cache invalidation
-        // run after the HTTP response so POS can print immediately.
+        // run after the HTTP response so POS can print immediately once KRA returns.
         if ($deductStock || $runSideEffects) {
             FinalizeSaleAfterCheckoutJob::dispatch(
                 (int) $sale->id,
@@ -960,21 +972,19 @@ class CheckoutController extends Controller
                     $explicitSubmit,
                 );
 
+            $kraResponse = null;
+            $pendingKra = false;
             $buyerPin = $this->resolveCheckoutBuyerPin(
                 $input['customer_kra_pin'] ?? null,
                 $customer,
                 $customerNum,
             );
 
-            $kraResponse = null;
             if ($submitKra) {
-                $kraResponse = $this->submitKraForSale(
-                    $sale,
-                    $lines,
-                    $gate,
-                    true,
-                    $buyerPin,
-                );
+                // Device call runs after this transaction commits (still before HTTP
+                // response) so a slow Comstore wait does not hold sale row locks —
+                // the first receipt still includes the eTIMS QR.
+                $pendingKra = true;
             } elseif (
                 $eligibleForKra
                 && KraFiscalPolicy::isDeviceConfigured($finance)
@@ -982,7 +992,8 @@ class CheckoutController extends Controller
                 && KraFiscalPolicy::isBypassed($finance, (float) $sale->order_total)
             ) {
                 // Intentional policy skip — still visible under Unfiscalized sales with reason.
-                $kraResponse = $this->recordKraAmountBypass($sale, $finance);
+                $kraResponse = app(CheckoutKraSubmissionService::class)
+                    ->recordAmountBypass($sale, $finance);
             }
             if ($kraResponse) {
                 $sale->setRelation('kraResponse', $kraResponse);
@@ -994,6 +1005,8 @@ class CheckoutController extends Controller
                 'sale' => $sale,
                 'deduct_stock' => $pendingStockDeduct,
                 'run_side_effects' => $runSideEffects,
+                'pending_kra' => $pendingKra,
+                'buyer_pin' => $buyerPin,
             ];
         }, 5);
     }
@@ -1275,46 +1288,7 @@ class CheckoutController extends Controller
      */
     protected function recordKraAmountBypass(Sale $sale, array $finance): KraResponse
     {
-        $threshold = KraFiscalPolicy::bypassAboveAmount($finance);
-        $thresholdLabel = $threshold !== null
-            ? number_format($threshold, 2, '.', ',')
-            : '0.00';
-        $totalLabel = number_format((float) $sale->order_total, 2, '.', ',');
-        $message = sprintf(
-            'Sale created without KRA: order total (KES %s) meets the KRA amount bypass limit (KES %s or above).',
-            $totalLabel,
-            $thresholdLabel,
-        );
-
-        Log::info('KRA amount bypass on checkout — sale saved without fiscalization', [
-            'sale_id' => $sale->id,
-            'order_total' => (float) $sale->order_total,
-            'bypass_above' => $threshold,
-        ]);
-
-        return KraResponse::create([
-            'sale_id' => $sale->id,
-            'organization_id' => (int) $sale->organization_id,
-            'order_no' => $this->kraDisplayOrderNo($sale),
-            'invoice_number' => 'BYPASS-'.$sale->order_num,
-            'receipt_signature' => null,
-            'signature_link' => null,
-            'serial_number' => null,
-            'kra_timestamp' => null,
-            'request_payload' => [
-                'document_type' => 'sale',
-                'skip_reason' => 'amount_bypass',
-                'order_total' => (float) $sale->order_total,
-                'kra_bypass_above_amount' => $threshold,
-            ],
-            'response_payload' => [
-                'document_type' => 'sale',
-                'skipped' => true,
-                'skip_reason' => 'amount_bypass',
-            ],
-            'status' => 'skipped',
-            'error_message' => $message,
-        ]);
+        return app(CheckoutKraSubmissionService::class)->recordAmountBypass($sale, $finance);
     }
 
     protected function submitKraForSale(
@@ -1328,94 +1302,7 @@ class CheckoutController extends Controller
             return null;
         }
 
-        $finance = $gate->moduleSettings('finance');
-        if (empty($finance['enable_kra_device'])) {
-            return null;
-        }
-
-        $orderItems = $lines->map(fn ($line) => [
-            'product_name' => $line->product_name ?? $line->product_code,
-            'product_code' => $line->product_code,
-            'quantity' => (float) $line->quantity,
-            'amount' => (float) $line->amount,
-            'product_vat' => (float) ($line->product_vat ?? 0),
-        ])->all();
-
-        $invoiceNumber = 'POS-'.$sale->order_num;
-        try {
-            $service = KraDeviceService::fromSettings($finance);
-            $invoiceNumber = $service->traderInvoiceForSale($sale, $finance);
-            $result = $service->sendSale(
-                $orderItems,
-                (float) $sale->order_total,
-                $invoiceNumber,
-                $buyerPin,
-            );
-        } catch (\Throwable $e) {
-            Log::warning('KRA device call threw during checkout — sale kept without fiscalization', [
-                'sale_id' => $sale->id,
-                'message' => $e->getMessage(),
-            ]);
-            $result = [
-                'success' => false,
-                'message' => KraDeviceErrorTranslator::userMessage(
-                    'Could not reach KRA device: '.$e->getMessage(),
-                ),
-                'payload' => null,
-                'response' => null,
-            ];
-        }
-
-        if (! ($result['success'] ?? false)) {
-            $message = trim((string) ($result['message'] ?? 'KRA device submission failed.'));
-            if ($message === '') {
-                $message = 'KRA device submission failed.';
-            }
-
-            Log::warning('KRA soft-fail on checkout — sale saved without fiscal QR', [
-                'sale_id' => $sale->id,
-                'message' => $message,
-            ]);
-
-            return KraResponse::create([
-                'sale_id' => $sale->id,
-                'organization_id' => (int) $sale->organization_id,
-                'order_no' => $this->kraDisplayOrderNo($sale),
-                'invoice_number' => $invoiceNumber,
-                'receipt_signature' => null,
-                'signature_link' => null,
-                'serial_number' => null,
-                'kra_timestamp' => null,
-                'request_payload' => $result['payload'] ?? null,
-                'response_payload' => array_merge(
-                    is_array($result['response'] ?? null) ? $result['response'] : [],
-                    [
-                        'document_type' => 'sale',
-                        'soft_failed' => true,
-                    ],
-                ),
-                'status' => 'failed',
-                'error_message' => $message,
-            ]);
-        }
-
-        $mapped = $result['response'] ?? [];
-
-        return KraResponse::create([
-            'sale_id' => $sale->id,
-            'organization_id' => (int) $sale->organization_id,
-            'order_no' => $this->kraDisplayOrderNo($sale),
-            'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
-            'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
-            'signature_link' => $mapped['signature_link'] ?? null,
-            'serial_number' => $mapped['serial_number'] ?? null,
-            'kra_timestamp' => $mapped['timestamp'] ?? null,
-            'request_payload' => $result['payload'] ?? null,
-            'response_payload' => array_merge(is_array($mapped) ? $mapped : [], [
-                'document_type' => 'sale',
-            ]),
-            'status' => 'success',
-        ]);
+        return app(CheckoutKraSubmissionService::class)->submitForSale($sale, $gate, $buyerPin);
     }
 
     /** @deprecated Use submitKraForSale when KRA device is enabled. */
@@ -2122,10 +2009,6 @@ class CheckoutController extends Controller
     /** Order # stored on kra_responses — POS uses daily Cash Sales ticket. */
     protected function kraDisplayOrderNo(Sale $sale): int
     {
-        if (strtolower((string) $sale->channel) === 'pos' && $sale->pos_order_num) {
-            return (int) $sale->pos_order_num;
-        }
-
-        return (int) $sale->order_num;
+        return app(CheckoutKraSubmissionService::class)->displayOrderNo($sale);
     }
 }
