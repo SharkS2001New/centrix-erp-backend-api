@@ -4,6 +4,8 @@ namespace App\Support;
 
 use Illuminate\Database\Eloquent\Builder as EloquentBuilder;
 use Illuminate\Database\Query\Builder as QueryBuilder;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 /**
  * Centrix operational list search (products, sales, customers).
@@ -18,9 +20,65 @@ use Illuminate\Database\Query\Builder as QueryBuilder;
  */
 class SqlLikeSearch
 {
+    /** @var bool|null Cached for the request: ngram FULLTEXT index present + enabled. */
+    protected static ?bool $productNameFulltext = null;
+
     public static function escape(string $term): string
     {
         return str_replace(['\\', '%', '_'], ['\\\\', '\\%', '\\_'], $term);
+    }
+
+    /**
+     * Strip MySQL FULLTEXT boolean operators from a user token.
+     */
+    public static function escapeFulltextBooleanToken(string $token): string
+    {
+        $clean = preg_replace('/[+\-><()~*"@]+/', ' ', $token) ?? $token;
+        $clean = trim(preg_replace('/\s+/', ' ', $clean) ?? '');
+
+        return $clean;
+    }
+
+    /**
+     * Whether product name search may use MySQL ngram FULLTEXT (pg_trgm equivalent).
+     * Disabled in unit tests via PRODUCT_SEARCH_FULLTEXT=false unless overridden.
+     */
+    public static function canUseProductNameFulltext(): bool
+    {
+        if (self::$productNameFulltext !== null) {
+            return self::$productNameFulltext;
+        }
+
+        if (! filter_var(env('PRODUCT_SEARCH_FULLTEXT', true), FILTER_VALIDATE_BOOLEAN)) {
+            return self::$productNameFulltext = false;
+        }
+
+        try {
+            $connection = DB::connection();
+            if ($connection->getDriverName() !== 'mysql') {
+                return self::$productNameFulltext = false;
+            }
+            if (! Schema::hasTable('products')) {
+                return self::$productNameFulltext = false;
+            }
+            $indexes = collect(Schema::getIndexes('products'))->pluck('name')->all();
+
+            return self::$productNameFulltext = in_array('products_product_name_ngram', $indexes, true);
+        } catch (\Throwable) {
+            return self::$productNameFulltext = false;
+        }
+    }
+
+    /** @internal tests */
+    public static function resetProductNameFulltextCache(): void
+    {
+        self::$productNameFulltext = null;
+    }
+
+    /** @internal tests */
+    public static function forceProductNameFulltext(?bool $enabled): void
+    {
+        self::$productNameFulltext = $enabled;
     }
 
     /**
@@ -38,6 +96,31 @@ class SqlLikeSearch
         }
 
         return array_values(array_unique($tokens));
+    }
+
+    /**
+     * Match product_name via ngram FULLTEXT when available, else LIKE contains.
+     *
+     * @param  EloquentBuilder<mixed>|QueryBuilder  $inner
+     */
+    protected static function orWhereProductName(
+        EloquentBuilder|QueryBuilder $inner,
+        string $nameColumn,
+        string $token,
+        string $containsLike,
+    ): void {
+        $ftToken = self::escapeFulltextBooleanToken($token);
+        if (self::canUseProductNameFulltext() && mb_strlen($ftToken) >= 2) {
+            // BOOLEAN MODE + ngram: substring-friendly; keep LIKE as OR for safety on odd tokens.
+            $inner->orWhere(function ($name) use ($nameColumn, $ftToken, $containsLike) {
+                $name->whereRaw('MATCH('.$nameColumn.') AGAINST(? IN BOOLEAN MODE)', [$ftToken])
+                    ->orWhere($nameColumn, 'like', $containsLike);
+            });
+
+            return;
+        }
+
+        $inner->orWhere($nameColumn, 'like', $containsLike);
     }
 
     /**
@@ -85,9 +168,9 @@ class SqlLikeSearch
                 $escaped = self::escape($token);
                 $contains = '%'.$escaped.'%';
                 $amount = self::parseAmountSearchTerm($token);
-                $query->where(function ($inner) use ($contains, $codeColumn, $nameColumn, $shelfColumn, $priceColumn, $amount) {
-                    $inner->where($nameColumn, 'like', $contains)
-                        ->orWhere($codeColumn, 'like', $contains);
+                $query->where(function ($inner) use ($contains, $codeColumn, $nameColumn, $shelfColumn, $priceColumn, $amount, $token) {
+                    $inner->where($codeColumn, 'like', $contains);
+                    self::orWhereProductName($inner, $nameColumn, $token, $contains);
                     if ($shelfColumn) {
                         $inner->orWhere($shelfColumn, 'like', $contains);
                     }
@@ -112,8 +195,8 @@ class SqlLikeSearch
                 $inner->where($codeColumn, '=', $term)
                     ->orWhere($codeColumn, 'like', $prefix)
                     // Mid-string name/code (e.g. "unia" → "Gunia", partial SKUs).
-                    ->orWhere($codeColumn, 'like', $contains)
-                    ->orWhere($nameColumn, 'like', $contains);
+                    ->orWhere($codeColumn, 'like', $contains);
+                self::orWhereProductName($inner, $nameColumn, $term, $contains);
                 if ($shelfColumn) {
                     $inner->orWhere($shelfColumn, 'like', $contains);
                 }
@@ -122,8 +205,8 @@ class SqlLikeSearch
                 return;
             }
 
-            $inner->where($nameColumn, 'like', $contains)
-                ->orWhere($codeColumn, 'like', $contains);
+            $inner->where($codeColumn, 'like', $contains);
+            self::orWhereProductName($inner, $nameColumn, $term, $contains);
             if ($shelfColumn) {
                 $inner->orWhere($shelfColumn, 'like', $contains);
             }

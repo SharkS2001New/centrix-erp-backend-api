@@ -133,6 +133,23 @@ class SqlLikeSearchTest extends TestCase
         $this->assertNull(SqlLikeSearch::parseAmountSearchTerm('cooking oil'));
     }
 
+    public function test_apply_product_search_uses_ngram_fulltext_when_forced(): void
+    {
+        SqlLikeSearch::forceProductNameFulltext(true);
+        try {
+            $query = DB::table('products');
+            SqlLikeSearch::applyProductSearch($query, 'sugar');
+            $sql = strtolower($query->toSql());
+            $this->assertStringContainsString('match(', $sql);
+            $this->assertStringContainsString('against(', $sql);
+            $this->assertContains('sugar', $query->getBindings());
+            $this->assertContains('%sugar%', $query->getBindings());
+        } finally {
+            SqlLikeSearch::forceProductNameFulltext(null);
+            SqlLikeSearch::resetProductNameFulltextCache();
+        }
+    }
+
     public function test_apply_customer_search_uses_substring_on_all_fields(): void
     {
         $query = DB::table('customers');
