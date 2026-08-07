@@ -82,6 +82,11 @@ class UserLoginChannelService
             }
         }
 
+        // Platform super-admins may use Centrix Manager even if login_channels was seeded as backoffice-only.
+        if ($channel === self::MANAGER && $this->isPlatformSuperAdmin($user)) {
+            return;
+        }
+
         throw ValidationException::withMessages([
             'login_channel' => [
                 sprintf('This account is not allowed to sign in via %s.', $this->label($channel)),
@@ -178,6 +183,11 @@ class UserLoginChannelService
             return true;
         }
 
+        // Platform operators manage tenants via admin/*; web already gates with erp.super_admin.
+        if (str_starts_with($path, 'admin/') && $this->isPlatformSuperAdmin($user)) {
+            return true;
+        }
+
         if ($this->isManagerDeniedPath($path)) {
             return false;
         }
@@ -191,6 +201,20 @@ class UserLoginChannelService
         $module = app(ManagerAppModuleAccessService::class)->capabilitiesForUser($user, $gate);
 
         return (bool) ($module['accessible'] ?? false);
+    }
+
+    public function isPlatformSuperAdmin(User $user): bool
+    {
+        if (! $user->is_super_admin) {
+            return false;
+        }
+
+        $organization = $user->organization ?? Organization::query()->find($user->organization_id);
+        if (! $organization) {
+            return false;
+        }
+
+        return app(CapabilityGate::class)->forOrganization($organization)->isPlatformOrganization();
     }
 
     /** @param  list<string>  $channels */

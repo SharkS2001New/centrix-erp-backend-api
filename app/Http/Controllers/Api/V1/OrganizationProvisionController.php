@@ -724,6 +724,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.hospitality_payment_workflow.partially_paid' => 'sometimes|boolean',
             'sales_platform.hospitality_payment_workflow.paid' => 'sometimes|boolean',
             'sales_platform.enable_pos_order_edit' => 'sometimes|boolean',
+            'sales_platform.enable_held_order_amount_paid' => 'sometimes|boolean',
             'sales_platform.pos_combine_identical_lines' => 'sometimes|boolean',
             'sales_platform.append_same_day_customer_orders' => 'sometimes|boolean',
             'sales_platform.enable_backoffice_order_edit' => 'sometimes|boolean',

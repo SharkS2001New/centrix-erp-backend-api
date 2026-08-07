@@ -15,9 +15,21 @@ class ManagerAppModuleAccessService
     /** @return array<string, mixed> */
     public function capabilitiesForUser(User $user, CapabilityGate $gate): array
     {
+        // Platform operators use Centrix Manager for org/ops screens without tenant module flags.
+        if ($user->is_super_admin && $gate->isPlatformOrganization()) {
+            return $this->modulePayload(
+                orgEnabled: true,
+                userAllowed: true,
+                orgDisabledMessage: 'The Centrix Manager app is not enabled for your organization.',
+                userDisabledMessage: 'Your account is not authorized for the Centrix Manager app.',
+            );
+        }
+
         $isAdmin = (bool) $user->is_admin;
         $orgEnabled = $gate->managerAppEnabled();
-        $userAllowed = $isAdmin || $this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate);
+        $userAllowed = $isAdmin
+            || (bool) $user->is_super_admin
+            || $this->permissions->hasPermission($user, 'mobile_manager.app.access', $gate);
 
         return $this->modulePayload(
             orgEnabled: $orgEnabled,

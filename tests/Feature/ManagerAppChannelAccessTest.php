@@ -7,6 +7,7 @@ use App\Models\Permission;
 use App\Models\Role;
 use App\Models\User;
 use App\Services\Erp\PermissionMatrixService;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -29,7 +30,10 @@ class ManagerAppChannelAccessTest extends TestCase
         ]);
 
         $permissionId = (int) Permission::where('permission_code', 'mobile_manager.app.access')->value('id');
-        $role->permissions()->sync([$permissionId]);
+        DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $permissionId,
+        ]);
 
         $user = User::create([
             'organization_id' => $org->id,

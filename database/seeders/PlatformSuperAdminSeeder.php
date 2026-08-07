@@ -74,7 +74,7 @@ class PlatformSuperAdminSeeder extends Seeder
                 'is_admin' => 0,
                 'is_super_admin' => 1,
                 'access_scope' => 'org',
-                'login_channels' => ['backoffice'],
+                'login_channels' => ['backoffice', 'manager'],
                 'is_active' => true,
             ],
         );

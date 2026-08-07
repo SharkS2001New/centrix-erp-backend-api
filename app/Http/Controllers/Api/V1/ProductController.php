@@ -8,6 +8,7 @@ use App\Models\RetailPackageSetting;
 use App\Models\Uom;
 use App\Models\Vat;
 use App\Services\Catalog\ProductCatalogScopeService;
+use App\Services\Catalog\CatalogPricingBroadcastService;
 use App\Services\Inventory\BranchStockService;
 use App\Services\Inventory\OpeningStockService;
 use App\Services\Inventory\SaleStockLocationResolver;
@@ -687,6 +688,15 @@ class ProductController extends BaseResourceController
             $prevDisc,
             $request->user()
         );
+
+        if ((float) $model->unit_price !== $prevUnit) {
+            $orgId = (int) ($model->organization_id ?? $request->user()?->organization_id ?? 0);
+            app(CatalogPricingBroadcastService::class)->notifyProductPriceChanged(
+                $orgId,
+                (string) $model->product_code,
+                $model->product_name,
+            );
+        }
 
         return response()->json($this->presentProduct($model->load('branch:id,branch_code,branch_name'), $request));
     }

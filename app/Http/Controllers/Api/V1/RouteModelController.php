@@ -9,6 +9,7 @@ use App\Models\RouteModel;
 use App\Models\Sale;
 use App\Models\TemporaryCart;
 use App\Services\Erp\ErpContext;
+use App\Services\Catalog\CatalogPricingBroadcastService;
 use App\Services\Fulfillment\RouteDashboardStatsService;
 use App\Services\Sales\ReceiptPaymentDetailsResolver;
 use Illuminate\Http\Request;
@@ -113,6 +114,7 @@ class RouteModelController extends BaseResourceController
         $data = $this->validateRoutePayload($request, existing: $model);
         unset($data['organization_id']);
         $oldValues = $model->getAttributes();
+        $prevMarkup = (int) ($model->route_markup_price ?? 0);
         $model->update($data);
         $model->refresh();
 
@@ -124,6 +126,18 @@ class RouteModelController extends BaseResourceController
                 $oldValues,
                 $model->getAttributes(),
                 $request,
+            );
+        }
+
+        $nextMarkup = (int) ($model->route_markup_price ?? 0);
+        if ($nextMarkup !== $prevMarkup) {
+            $orgId = (int) ($model->organization_id
+                ?? $this->access()->organizationId($request->user(), $request)
+                ?? 0);
+            app(CatalogPricingBroadcastService::class)->notifyRouteMarkupChanged(
+                $orgId,
+                (int) $model->id,
+                $model->route_name,
             );
         }
 

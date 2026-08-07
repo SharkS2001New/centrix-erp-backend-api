@@ -286,6 +286,11 @@ class CapabilityGate
     /** Centrix Manager app for approvals, reports, and mobile administration. */
     public function managerAppEnabled(): bool
     {
+        // Platform org has no tenant sales.backend modules but must allow manager-channel ops.
+        if ($this->isPlatformOrganization()) {
+            return true;
+        }
+
         if (! $this->enabled('sales.backend')) {
             return false;
         }
@@ -293,6 +298,18 @@ class CapabilityGate
         $sales = $this->moduleSettings('sales');
 
         return (bool) ($sales['enable_manager_app'] ?? true);
+    }
+
+    public function isPlatformOrganization(): bool
+    {
+        if (! $this->organization) {
+            return false;
+        }
+
+        $platformCode = strtoupper((string) config('erp.platform_company_code', 'PLATFORM'));
+
+        return strtoupper((string) $this->organization->company_code) === $platformCode
+            || (bool) ($this->organization->module_settings['platform'] ?? false);
     }
 
     /** Driver delivery module on the mobile app (requires mobile sales + distribution). */

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1;
 use App\Http\Controllers\Concerns\ScopesViaParentOrganization;
 use App\Models\RetailPackageSetting;
 use App\Models\SubCategory;
+use App\Services\Catalog\CatalogPricingBroadcastService;
 use Illuminate\Http\Request;
 
 class RetailPackageSettingController extends BaseResourceController
@@ -119,6 +120,8 @@ class RetailPackageSettingController extends BaseResourceController
             return $response;
         }
 
+        $this->broadcastMarkupChanged($model);
+
         return response()->json($this->presentSetting($model), 201);
     }
 
@@ -133,6 +136,25 @@ class RetailPackageSettingController extends BaseResourceController
             return $response;
         }
 
+        $this->broadcastMarkupChanged($model);
+
         return response()->json($this->presentSetting($model));
+    }
+
+    protected function broadcastMarkupChanged(RetailPackageSetting $model): void
+    {
+        $product = $model->relationLoaded('product')
+            ? $model->product
+            : $model->product()->first();
+        $orgId = (int) ($product?->organization_id ?? 0);
+        if ($orgId <= 0) {
+            return;
+        }
+
+        app(CatalogPricingBroadcastService::class)->notifyMarkupChanged(
+            $orgId,
+            (string) $model->product_code,
+            $product?->product_name,
+        );
     }
 }

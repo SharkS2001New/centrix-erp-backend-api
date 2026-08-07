@@ -118,6 +118,10 @@ class OrganizationPlatformConfigService
             $nextSales['enable_pos_order_edit'] = (bool) $salesPlatform['enable_pos_order_edit'];
         }
 
+        if (array_key_exists('enable_held_order_amount_paid', $salesPlatform)) {
+            $nextSales['enable_held_order_amount_paid'] = (bool) $salesPlatform['enable_held_order_amount_paid'];
+        }
+
         if (array_key_exists('pos_combine_identical_lines', $salesPlatform)) {
             $nextSales['pos_combine_identical_lines'] = (bool) $salesPlatform['pos_combine_identical_lines'];
         }
@@ -521,6 +525,7 @@ class OrganizationPlatformConfigService
             'order_workflow' => $workflowDefaults,
             'order_cancellation_enabled' => true,
             'enable_pos_order_edit' => false,
+            'enable_held_order_amount_paid' => false,
             'pos_combine_identical_lines' => true,
             'append_same_day_customer_orders' => false,
             'enable_backoffice_order_edit' => true,
@@ -613,6 +618,7 @@ class OrganizationPlatformConfigService
             'enable_mpesa_code' => (bool) ($sales['enable_mpesa_code'] ?? false),
             'enable_cheque_number' => (bool) ($sales['enable_cheque_number'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
+            'enable_held_order_amount_paid' => (bool) ($sales['enable_held_order_amount_paid'] ?? false),
             'pos_combine_identical_lines' => ($sales['pos_combine_identical_lines'] ?? true) !== false,
             'append_same_day_customer_orders' => (bool) ($sales['append_same_day_customer_orders'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
