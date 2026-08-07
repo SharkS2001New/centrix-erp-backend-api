@@ -9,6 +9,9 @@ use Illuminate\Support\Facades\Schema;
  * Cash Sales # (pos_order_num) resets per till float session after Z/close,
  * not only once per calendar day. Scope uniqueness by float session when set,
  * otherwise keep the previous per-cashier-per-day scope.
+ *
+ * Existing rows can collide under the new scope (e.g. same ticket # reused in
+ * one float session across cashiers / offline sync). Dedupe before unique.
  */
 return new class extends Migration
 {
@@ -43,6 +46,8 @@ return new class extends Migration
                 ) STORED NULL
             ");
         }
+
+        $this->resolveDuplicatePosTickets();
 
         if (! $this->indexExists('sales', 'uq_pos_ticket_scope_num')) {
             Schema::table('sales', function (Blueprint $table) {
@@ -82,6 +87,78 @@ return new class extends Migration
                     'uq_pos_daily_order_num',
                 );
             });
+        }
+    }
+
+    /**
+     * Keep the lowest-id sale for each (org, scope, ticket #); renumber the rest
+     * to the next free ticket within that scope so the unique index can apply.
+     */
+    protected function resolveDuplicatePosTickets(): void
+    {
+        if (! Schema::hasColumn('sales', 'pos_ticket_scope')) {
+            return;
+        }
+
+        $scopes = DB::select("
+            SELECT organization_id, pos_ticket_scope
+            FROM sales
+            WHERE pos_order_num IS NOT NULL
+              AND pos_ticket_scope IS NOT NULL
+            GROUP BY organization_id, pos_ticket_scope, pos_order_num
+            HAVING COUNT(*) > 1
+        ");
+
+        $seen = [];
+        foreach ($scopes as $scope) {
+            $key = ((int) $scope->organization_id).'|'.$scope->pos_ticket_scope;
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $this->dedupeTicketScope((int) $scope->organization_id, (string) $scope->pos_ticket_scope);
+        }
+    }
+
+    protected function dedupeTicketScope(int $organizationId, string $ticketScope): void
+    {
+        $rows = DB::table('sales')
+            ->where('organization_id', $organizationId)
+            ->where('pos_ticket_scope', $ticketScope)
+            ->whereNotNull('pos_order_num')
+            ->orderBy('id')
+            ->get(['id', 'pos_order_num']);
+
+        if ($rows->count() < 2) {
+            return;
+        }
+
+        $claimed = [];
+        $max = 0;
+        foreach ($rows as $row) {
+            $n = (int) $row->pos_order_num;
+            if ($n > $max) {
+                $max = $n;
+            }
+        }
+
+        foreach ($rows as $row) {
+            $n = (int) $row->pos_order_num;
+            if (! isset($claimed[$n])) {
+                $claimed[$n] = true;
+
+                continue;
+            }
+
+            $max++;
+            while (isset($claimed[$max])) {
+                $max++;
+            }
+            $claimed[$max] = true;
+
+            DB::table('sales')->where('id', $row->id)->update([
+                'pos_order_num' => $max,
+            ]);
         }
     }
 
