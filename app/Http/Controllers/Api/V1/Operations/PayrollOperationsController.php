@@ -136,7 +136,7 @@ class PayrollOperationsController extends Controller
             ),
         ];
 
-        return DB::transaction(function () use ($request, $run, $payload, $autoCalculate, $closeCycle, $settlementOptions) {
+        return DB::transaction(function () use ($request, $run, $payload, $autoCalculate, $closeCycle, $settlementOptions, $orgId) {
             PayrollLine::where('payroll_run_id', $run->id)->delete();
             $grossTotal = 0;
             $netTotal = 0;
@@ -238,7 +238,7 @@ class PayrollOperationsController extends Controller
 
         app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($period);
 
-        $orgId = $request->user()?->organization_id;
+        $orgId = (int) ($run->organization_id ?? $request->user()?->organization_id ?? 0);
 
         $options = $request->validate([
             'department_id' => 'nullable|integer|exists:departments,id',
