@@ -27,6 +27,8 @@ use App\Services\Erp\ErpContext;
 use App\Services\Erp\FloatSessionValidator;
 use App\Services\Erp\OrderWorkflowService;
 use App\Jobs\FinalizeSaleAfterCheckoutJob;
+use App\Services\Sales\SaleInventoryRestorer;
+use App\Services\Sales\PosOrderEditService;
 use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Accounting\ReferenceJournalReversalService;
 use App\Services\Erp\SalePaymentColumnMapper;
@@ -44,7 +46,6 @@ use App\Services\Sales\PosCashRoundingSettings;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\PosOfflineCheckoutIdempotency;
-use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\SameDayCustomerOrderService;
 use App\Services\Sales\SaleRouteResolver;
 use App\Support\CustomerCreditLimit;
@@ -85,6 +86,31 @@ class CheckoutController extends Controller
         $pendingKra = (bool) ($result['pending_kra'] ?? false);
         $buyerPin = isset($result['buyer_pin']) ? (string) $result['buyer_pin'] : null;
         $buyerPin = $buyerPin !== '' ? $buyerPin : null;
+
+        // Previous-order edit: finish deferred restore side-effects before re-fiscalizing
+        // or deducting stock for the revision (background job may still be in flight).
+        $priorSaleId = (int) (($sale->fulfillment_meta['supersedes_sale_id'] ?? 0));
+        if ($priorSaleId > 0) {
+            $priorSale = Sale::query()->find($priorSaleId);
+            if ($priorSale) {
+                $priorMeta = is_array($priorSale->fulfillment_meta) ? $priorSale->fulfillment_meta : [];
+                if ($priorSale->stock_balanced || ! empty($priorMeta['stock_reverse_pending'])) {
+                    try {
+                        app(SaleInventoryRestorer::class)->reverseForPosEdit($priorSale, $request->user());
+                        unset($priorMeta['stock_reverse_pending']);
+                        $priorSale->update([
+                            'stock_balanced' => 0,
+                            'fulfillment_meta' => $priorMeta,
+                        ]);
+                    } catch (\Throwable $e) {
+                        // Stock reverse is best-effort here; deduct on the new sale still runs.
+                    }
+                }
+                if ($pendingKra) {
+                    app(PosOrderEditService::class)->fiscalVoidBeforeEdit($priorSale->fresh() ?? $priorSale, $request->user(), $gate);
+                }
+            }
+        }
 
         // Fiscalize after the sale commits (not inside the DB transaction) but still
         // before the HTTP response so the first thermal receipt includes the eTIMS QR.

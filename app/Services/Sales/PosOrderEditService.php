@@ -129,19 +129,31 @@ class PosOrderEditService
      */
     public function fiscalVoidBeforeEdit(Sale $sale, User $user, CapabilityGate $gate): void
     {
+        if (! $this->saleNeedsFiscalVoidBeforeEdit($sale, $gate)) {
+            return;
+        }
+
+        $this->customerReturnService->approvePosEditVoid($sale, $user, $gate);
+    }
+
+    /**
+     * Whether restore/checkout should (still) issue a KRA credit note for this sale.
+     */
+    public function saleNeedsFiscalVoidBeforeEdit(Sale $sale, CapabilityGate $gate): bool
+    {
         $sales = $gate->moduleSettings('sales');
         $allowed = (bool) ($sales['enable_pos_order_edit'] ?? false)
             || (bool) ($sales['append_same_day_customer_orders'] ?? false);
         if (! $allowed) {
-            return;
+            return false;
         }
 
         if (OrderWorkflowService::forGate($gate)->normalizeSalesChannel($sale->channel ?: 'pos') !== 'pos') {
-            return;
+            return false;
         }
 
         if (in_array((string) $sale->status, ['held', 'draft', 'cancelled'], true)) {
-            return;
+            return false;
         }
 
         // Already voided for a prior restore attempt — skip KRA/device round-trip.
@@ -150,14 +162,10 @@ class PosOrderEditService
             ->where('return_kind', 'pos_edit')
             ->where('status', 'approved')
             ->exists()) {
-            return;
+            return false;
         }
 
-        if (! $this->saleHasSuccessfulKraResponse($sale)) {
-            return;
-        }
-
-        $this->customerReturnService->approvePosEditVoid($sale, $user, $gate);
+        return $this->saleHasSuccessfulKraResponse($sale);
     }
 
     public function saleHasSuccessfulKraResponse(Sale $sale): bool

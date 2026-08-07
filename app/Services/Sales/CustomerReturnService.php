@@ -399,6 +399,17 @@ class CustomerReturnService
         $total = round(array_sum(array_column($linePayloads, 'amount')), 2);
 
         DB::transaction(function () use ($user, $sale, $linePayloads, $total, $finance) {
+            // Serialize concurrent background void + checkout safety-net void.
+            Sale::query()->whereKey($sale->id)->lockForUpdate()->first();
+
+            if (CustomerReturn::query()
+                ->where('sale_id', $sale->id)
+                ->where('return_kind', 'pos_edit')
+                ->where('status', 'approved')
+                ->exists()) {
+                return;
+            }
+
             $document = $this->allocateReturnDocument((int) $user->organization_id);
 
             $return = CustomerReturn::create([

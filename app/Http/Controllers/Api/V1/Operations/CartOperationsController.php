@@ -30,6 +30,7 @@ use App\Services\Sales\SaleCancellationService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosLinePricingService;
 use App\Support\SalesCheckoutSettings;
+use App\Jobs\FinalizePosOrderEditRestoreJob;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Auth\UserLoginChannelService;
 use App\Support\TenantRouteRules;
@@ -418,10 +419,12 @@ class CartOperationsController extends Controller
             );
         }
 
-        // Fiscal void before the cart transaction so device/KRA latency does not hold DB locks.
-        app(PosOrderEditService::class)->fiscalVoidBeforeEdit($sale, $user, $gate);
+        // Cart lines return immediately. Stock reverse + KRA credit note run after the
+        // HTTP response so the till unlocks as soon as lines are painted.
+        $needsKraVoid = app(PosOrderEditService::class)->saleNeedsFiscalVoidBeforeEdit($sale, $gate);
+        $needsStockReverse = false;
 
-        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate) {
+        $cart = DB::transaction(function () use ($cart, $sale, $user, $gate, &$needsStockReverse) {
             if ($cart->lines()->exists()) {
                 $this->clearCart($cart, $user);
             }
@@ -429,9 +432,9 @@ class CartOperationsController extends Controller
             $hadReservations = ! $sale->stock_balanced
                 && $this->saleHasActiveReservations((int) $sale->id);
 
-            if ($sale->stock_balanced) {
-                $this->reverseSaleStockDeductions($sale, $user);
-            } elseif (! $hadReservations) {
+            // Defer ledger reverse to afterResponse — keep stock_balanced until then.
+            $needsStockReverse = (bool) $sale->stock_balanced && ! $hadReservations;
+            if (! $sale->stock_balanced && ! $hadReservations) {
                 $this->releaseSaleReservations((int) $sale->id);
             }
 
@@ -444,12 +447,13 @@ class CartOperationsController extends Controller
                 'superseded_sale_id' => (int) $sale->id,
             ]);
 
+            // Skip reserve while original sale stock is still deducted (pending reverse).
             $this->addRestoredSaleItemsToCart(
                 $cart->fresh(),
                 $sale,
                 $user,
                 $gate,
-                skipStockReserve: $hadReservations,
+                skipStockReserve: $hadReservations || $needsStockReverse,
             );
 
             if ($hadReservations) {
@@ -463,25 +467,41 @@ class CartOperationsController extends Controller
                 'pos_editing_by' => (int) $user->id,
                 'original_order_num' => $heldOrderNum,
                 'original_status' => (string) $sale->status,
-                'original_stock_balanced' => (bool) $sale->stock_balanced,
+                'original_stock_balanced' => (bool) $sale->stock_balanced || $needsStockReverse,
             ]);
+            if ($needsStockReverse) {
+                $meta['stock_reverse_pending'] = true;
+            }
 
             // Keep the sale visible in Sales & Orders / X/Z until checkout commits the
             // revision. Cancelling here made the order vanish for the whole edit and
             // wrecked till maths (ORDTTL dropped then jumped). Checkout frees the
             // order_num via resolveCheckoutOrderNum when superseded_sale_id matches.
+            // stock_balanced stays 1 until FinalizePosOrderEditRestoreJob reverses ledger.
             $sale->update([
-                'stock_balanced' => 0,
                 'fulfillment_meta' => $meta,
             ]);
 
             return $cart->fresh('lines');
         });
 
+        if ($needsStockReverse || $needsKraVoid) {
+            FinalizePosOrderEditRestoreJob::dispatch(
+                (int) $sale->id,
+                (int) $user->id,
+                $needsStockReverse,
+                $needsKraVoid,
+            )->afterResponse();
+        }
+
         return $this->cartResponse(
             $cart,
             $user,
-            extra: ['restored_from_sale' => $this->restoredFromSalePayload($sale)],
+            extra: [
+                'restored_from_sale' => $this->restoredFromSalePayload($sale),
+                'kra_void_pending' => $needsKraVoid,
+                'stock_reverse_pending' => $needsStockReverse,
+            ],
         );
     }
 

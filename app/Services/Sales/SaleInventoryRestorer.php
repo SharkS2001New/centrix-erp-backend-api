@@ -15,4 +15,10 @@ class SaleInventoryRestorer
     {
         $this->restoreCancelledSaleStock($sale, $user);
     }
+
+    /** Reverse POS sale deductions when the receipt is opened for previous-order edit. */
+    public function reverseForPosEdit(Sale $sale, User $user): void
+    {
+        $this->reverseSaleStockDeductions($sale, $user);
+    }
 }
