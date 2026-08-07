@@ -389,6 +389,11 @@ class PermissionMatrixService
             $modules = [];
             foreach ($def['registry_modules'] ?? [] as $registryModule) {
                 $group = $groupsByModule->get($registryModule);
+                // Manager roles must be able to grant report permissions even when the org
+                // has no *.reports ERP children enabled yet (shared reports registry off).
+                if (! is_array($group) && $appId === 'manager' && $registryModule === 'reports') {
+                    $group = self::buildRegistryModuleGroup('reports');
+                }
                 if (! is_array($group)) {
                     continue;
                 }
@@ -413,6 +418,62 @@ class PermissionMatrixService
         }
 
         return $applications;
+    }
+
+    /**
+     * Build one registry module group for the Roles UI without org-module gating.
+     * Used when Manager must expose report permissions independently of *.reports flags.
+     *
+     * @return array<string, mixed>|null
+     */
+    public static function buildRegistryModuleGroup(string $moduleKey): ?array
+    {
+        self::ensure();
+
+        $groupDef = config("permission_registry.groups.{$moduleKey}");
+        if (! is_array($groupDef)) {
+            return null;
+        }
+
+        $byCode = Permission::query()->get()->keyBy('permission_code');
+        $features = [];
+        foreach ($groupDef['features'] ?? [] as $featureKey => $featureDef) {
+            if (! is_array($featureDef)) {
+                continue;
+            }
+            $permissions = [];
+            foreach ($featureDef['actions'] ?? [] as $action) {
+                $code = "{$moduleKey}.{$featureKey}.{$action}";
+                $perm = $byCode->get($code);
+                if (! $perm) {
+                    continue;
+                }
+                $permissions[] = [
+                    'id' => (int) $perm->id,
+                    'permission_code' => $code,
+                    'permission_name' => $perm->permission_name,
+                    'action' => $action,
+                ];
+            }
+            if ($permissions === []) {
+                continue;
+            }
+            $features[] = [
+                'key' => $featureKey,
+                'label' => $featureDef['label'] ?? $featureKey,
+                'permissions' => $permissions,
+            ];
+        }
+
+        if ($features === []) {
+            return null;
+        }
+
+        return [
+            'module' => $moduleKey,
+            'label' => $groupDef['label'] ?? $moduleKey,
+            'features' => $features,
+        ];
     }
 
     /**

@@ -195,6 +195,32 @@ class RolePermissionTest extends TestCase
         $this->assertContains('profit_loss', collect($managerReports['features'])->pluck('key')->all());
     }
 
+    public function test_manager_application_keeps_reports_when_org_report_modules_disabled(): void
+    {
+        $admin = $this->actingAsLicensedAdmin();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        foreach (array_keys($modules) as $key) {
+            if (str_ends_with((string) $key, '.reports')) {
+                $modules[$key] = false;
+            }
+        }
+        // Keep Manager available via sales.backend / inventory.
+        $modules['sales.backend'] = true;
+        $modules['inventory'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $res = $this->getJson('/api/v1/roles/permissions/matrix')->assertOk();
+        $manager = collect($res->json('applications'))->firstWhere('id', 'manager');
+        $this->assertNotNull($manager);
+        $managerReports = collect($manager['modules'])->firstWhere('module', 'reports');
+        $this->assertNotNull(
+            $managerReports,
+            'Manager application must still expose Reports when org *.reports flags are off',
+        );
+        $this->assertContains('daily_sales', collect($managerReports['features'])->pluck('key')->all());
+    }
+
     public function test_distribution_application_hidden_when_distribution_module_disabled(): void
     {
         $admin = $this->actingAsLicensedAdmin();
@@ -315,15 +341,19 @@ class RolePermissionTest extends TestCase
         $appIds = collect($matrix->json('applications'))->pluck('id');
         $this->assertTrue($appIds->contains('hotel_bar_pos'));
         $this->assertTrue($appIds->contains('hospitality_backoffice'));
+        $this->assertTrue($appIds->contains('manager'));
         $this->assertFalse($appIds->contains('pos'));
         $this->assertFalse($appIds->contains('backoffice'));
         $this->assertFalse($appIds->contains('distribution'));
         $this->assertFalse($appIds->contains('mobile'));
-        $this->assertFalse($appIds->contains('manager'));
+
+        $manager = collect($matrix->json('applications'))->firstWhere('id', 'manager');
+        $this->assertNotNull(collect($manager['modules'] ?? [])->firstWhere('module', 'reports'));
 
         $groupModules = collect($matrix->json('groups'))->pluck('module');
         $this->assertTrue($groupModules->contains('hospitality'));
         $this->assertTrue($groupModules->contains('hotel_bar_pos'));
+        $this->assertTrue($groupModules->contains('mobile_manager'));
         $this->assertFalse($groupModules->contains('pos'));
         $this->assertFalse($groupModules->contains('sales'));
         $this->assertFalse($groupModules->contains('mobile_sales'));
