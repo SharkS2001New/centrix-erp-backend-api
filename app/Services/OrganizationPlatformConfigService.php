@@ -118,10 +118,6 @@ class OrganizationPlatformConfigService
             $nextSales['enable_pos_order_edit'] = (bool) $salesPlatform['enable_pos_order_edit'];
         }
 
-        if (array_key_exists('pos_combine_identical_lines', $salesPlatform)) {
-            $nextSales['pos_combine_identical_lines'] = (bool) $salesPlatform['pos_combine_identical_lines'];
-        }
-
         if (array_key_exists('append_same_day_customer_orders', $salesPlatform)) {
             $nextSales['append_same_day_customer_orders'] = (bool) $salesPlatform['append_same_day_customer_orders'];
         }
@@ -521,7 +517,6 @@ class OrganizationPlatformConfigService
             'order_workflow' => $workflowDefaults,
             'order_cancellation_enabled' => true,
             'enable_pos_order_edit' => false,
-            'pos_combine_identical_lines' => true,
             'append_same_day_customer_orders' => false,
             'enable_backoffice_order_edit' => true,
             'backoffice_order_edit_layout' => 'modern',
@@ -613,7 +608,6 @@ class OrganizationPlatformConfigService
             'enable_mpesa_code' => (bool) ($sales['enable_mpesa_code'] ?? false),
             'enable_cheque_number' => (bool) ($sales['enable_cheque_number'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),
-            'pos_combine_identical_lines' => ($sales['pos_combine_identical_lines'] ?? true) !== false,
             'append_same_day_customer_orders' => (bool) ($sales['append_same_day_customer_orders'] ?? false),
             'enable_backoffice_order_edit' => (bool) ($sales['enable_backoffice_order_edit'] ?? true),
             'edit_order_statuses' => $this->normalizeRequiredActionStatuses(

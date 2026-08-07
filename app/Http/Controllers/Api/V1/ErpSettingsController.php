@@ -197,7 +197,6 @@ class ErpSettingsController extends Controller
             'enable_pos_cash_rounding',
             'receipt_show_all_payment_methods',
             'enable_pos_order_edit',
-            'pos_combine_identical_lines',
             'enable_backoffice_order_edit',
             'pricing_formulas',
         ];

@@ -160,9 +160,7 @@ class CustomerReturnService
                 'organization_id' => $user->organization_id,
                 'branch_id' => (int) ($data['branch_id'] ?? $user->branch_id ?? $sale?->branch_id),
                 'sale_id' => $saleId,
-                'customer_num' => array_key_exists('customer_num', $data)
-                    ? $data['customer_num']
-                    : $sale?->customer_num,
+                'customer_num' => $data['customer_num'] ?? $sale?->customer_num,
                 'return_date' => $data['return_date'] ?? now()->toDateString(),
                 'refund_method' => $data['refund_method'] ?? 'CASH',
                 'reason' => $data['reason'],

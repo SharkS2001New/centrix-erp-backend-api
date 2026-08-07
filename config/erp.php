@@ -217,7 +217,6 @@ return [
             'external_pos_layout',
             'backoffice_order_edit_layout',
             'enable_pos_order_edit',
-            'pos_combine_identical_lines',
             'append_same_day_customer_orders',
             'order_expiry_enabled',
             'order_expiry_days',
@@ -498,8 +497,6 @@ return [
             'blind_till_close' => false,
             'enable_backoffice_order_edit' => true,
             'enable_pos_order_edit' => false,
-            /** When true (default), POS merges same SKU into one cart line and re-prices. When false, each add stays separate; receipts still combine qty + summed amounts. */
-            'pos_combine_identical_lines' => true,
             'append_same_day_customer_orders' => false,
             'default_submit_kra' => true,
             'order_document_type' => 'receipt',
