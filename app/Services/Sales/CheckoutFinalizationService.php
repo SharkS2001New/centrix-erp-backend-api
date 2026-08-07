@@ -122,7 +122,9 @@ class CheckoutFinalizationService
         $salesSettings = $gate->moduleSettings('sales');
         $txnType = $this->saleTransactionType((string) ($sale->channel ?: 'pos'));
         $allowBelowStock = $this->organizationAllowsBelowStock($user->organization_id);
-        $items = $sale->items ?? SaleItem::query()->where('sale_id', $sale->id)->get();
+        $items = ($sale->items ?? SaleItem::query()->where('sale_id', $sale->id)->get())
+            ->sortBy(fn (SaleItem $item) => (string) $item->product_code)
+            ->values();
 
         DB::transaction(function () use (
             $sale,
@@ -173,7 +175,7 @@ class CheckoutFinalizationService
             $locked->update(['stock_balanced' => 1]);
             $this->releaseSaleReservations((int) $locked->id);
             $this->clearPendingStockDeductFlag($locked);
-        });
+        }, 5);
     }
 
     protected function clearPendingStockDeductFlag(Sale $sale): void

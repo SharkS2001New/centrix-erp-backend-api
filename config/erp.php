@@ -272,6 +272,10 @@ return [
         'general' => [
             'enable_tab_workspace',
         ],
+        'hr_payroll' => [
+            'payroll_month_days_basis',
+            'shif_minimum_monthly',
+        ],
     ],
 
     /*
@@ -1026,6 +1030,10 @@ return [
             'lunch_break_is_paid' => true,
             'enable_cash_advance_deductions' => true,
             'deduct_cash_advances_on_payroll' => true,
+            /** calendar = actual days in pay period; fixed_30 = always 30 days (platform-controlled per org). */
+            'payroll_month_days_basis' => 'calendar',
+            /** null = use platform Kenya payroll SHIF minimum. */
+            'shif_minimum_monthly' => null,
             'attendance_capture_mode' => 'clock_device',
             'company_premises_latitude' => null,
             'company_premises_longitude' => null,

@@ -84,6 +84,8 @@ class PayrollOperationsController extends Controller
             $this->calculator->calculateMonthly(
                 (float) $data['gross_pay'],
                 (float) ($data['other_deductions'] ?? 0),
+                0,
+                (int) ($request->user()?->organization_id ?? 0),
             )
         );
     }
@@ -98,7 +100,7 @@ class PayrollOperationsController extends Controller
         if ($run->payPeriod) {
             app(PayrollRunScheduleService::class)->assertCanRunPayrollForPeriod($run->payPeriod);
         }
-        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $orgId = (int) ($run->organization_id ?? $request->user()?->organization_id ?? 0);
         $this->assertPayrollRunProcessable($run, $orgId);
         $payload = $request->validate([
             'auto_calculate' => 'nullable|boolean',
@@ -120,7 +122,7 @@ class PayrollOperationsController extends Controller
             'lines.*.deductions' => 'nullable|numeric|min:0',
         ]);
 
-        $orgId = (int) ($request->user()?->organization_id ?? 0);
+        $orgId = (int) ($run->organization_id ?? $request->user()?->organization_id ?? 0);
         $hr = HrPayrollSettingsResolver::forOrganizationId($orgId);
 
         $autoCalculate = (bool) ($payload['auto_calculate'] ?? $hr['auto_calculate_statutory']);
@@ -158,7 +160,7 @@ class PayrollOperationsController extends Controller
                 }
 
                 if ($autoCalculate || ! isset($lineInput['paye'])) {
-                    $calc = $this->calculator->calculateMonthly($statutoryGross, $other);
+                    $calc = $this->calculator->calculateMonthly($statutoryGross, $other, 0, $orgId);
                     $calc = $this->applyStatutoryToPeriodGross($calc, $periodGross, $other);
                 } else {
                     $calc = $this->manualLine($lineInput, $periodGross, $other);

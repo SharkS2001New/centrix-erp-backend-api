@@ -85,16 +85,20 @@ trait HandlesInventory
             throw new InvalidArgumentException('quantity_change cannot be zero.');
         }
 
-        $before = $this->stockOnHand($productCode, $branchId, $location);
-        $after = $before + $change;
+        $run = function () use ($data, $branchId, $productCode, $location, $change, $allowBelowStock) {
+            // Match reserveStock lock order so concurrent checkout/reserve paths
+            // do not deadlock on current_stock vs inventory_transactions (MySQL 1213).
+            $this->lockCurrentStockForUpdate($productCode, $branchId);
 
-        // Only block stock-out deductions. Restocks / returns (positive changes) must always
-        // be allowed — even when on-hand is already negative from prior below-stock sales.
-        if (! $allowBelowStock && $change < 0 && $after < -0.0001) {
-            throw new InvalidArgumentException("Insufficient stock at {$location} for {$productCode}.");
-        }
+            $before = $this->stockOnHand($productCode, $branchId, $location);
+            $after = $before + $change;
 
-        $run = function () use ($data, $branchId, $productCode, $location, $change, $before, $after) {
+            // Only block stock-out deductions. Restocks / returns (positive changes) must always
+            // be allowed — even when on-hand is already negative from prior below-stock sales.
+            if (! $allowBelowStock && $change < 0 && $after < -0.0001) {
+                throw new InvalidArgumentException("Insufficient stock at {$location} for {$productCode}.");
+            }
+
             $organizationId = (int) ($data['organization_id']
                 ?? OrganizationIdResolver::requireForBranch($branchId));
 
@@ -124,7 +128,7 @@ trait HandlesInventory
             return $run();
         }
 
-        return DB::transaction($run);
+        return DB::transaction($run, 5);
     }
 
     protected function syncProductStockTotals(string $productCode, int $branchId): void

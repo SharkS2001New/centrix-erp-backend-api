@@ -60,6 +60,12 @@ class OrganizationPlatformConfigService
         return config('erp.platform_controlled.general', []);
     }
 
+    /** @return list<string> */
+    public function platformControlledHrPayrollKeys(): array
+    {
+        return config('erp.platform_controlled.hr_payroll', []);
+    }
+
     /**
      * @param  array<string, mixed>  $data
      * @return array<string, mixed>
@@ -404,6 +410,63 @@ class OrganizationPlatformConfigService
         app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $org->id);
 
         return $org->fresh();
+    }
+
+    /**
+     * @param  array<string, mixed>  $payrollPlatform
+     */
+    public function applyPayrollPlatformConfig(Organization $org, array $payrollPlatform): Organization
+    {
+        if ($payrollPlatform === []) {
+            return $org;
+        }
+
+        $moduleSettings = $org->module_settings ?? [];
+        $currentHr = is_array($moduleSettings['hr_payroll'] ?? null) ? $moduleSettings['hr_payroll'] : [];
+
+        foreach ($this->platformControlledHrPayrollKeys() as $key) {
+            if (! array_key_exists($key, $payrollPlatform)) {
+                continue;
+            }
+            $value = $payrollPlatform[$key];
+            if ($key === 'shif_minimum_monthly' && ($value === '' || $value === false)) {
+                $value = null;
+            }
+            $currentHr[$key] = $value;
+        }
+
+        $moduleSettings['hr_payroll'] = \App\Services\Hr\HrPayrollSettingsResolver::normalize($currentHr);
+        $org->forceFill(['module_settings' => $moduleSettings])->save();
+
+        app(\App\Services\Erp\ErpContext::class)->forgetOrganizationCache((int) $org->id);
+
+        return $org->fresh();
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public function payrollPlatformConfigForOrganization(Organization $org): array
+    {
+        $hr = \App\Services\Hr\HrPayrollSettingsResolver::forOrganization($org);
+
+        return [
+            'payroll_month_days_basis' => $hr['payroll_month_days_basis'] ?? 'calendar',
+            'shif_minimum_monthly' => $hr['shif_minimum_monthly'],
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    public function filterOrgManagerHrPayrollPayload(array $data): array
+    {
+        foreach ($this->platformControlledHrPayrollKeys() as $key) {
+            unset($data[$key]);
+        }
+
+        return $data;
     }
 
     /**

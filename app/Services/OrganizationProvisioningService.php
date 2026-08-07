@@ -155,6 +155,10 @@ class OrganizationProvisioningService
                 );
             }
 
+            if (! empty($data['payroll_platform']) && is_array($data['payroll_platform'])) {
+                $org = app(OrganizationPlatformConfigService::class)->applyPayrollPlatformConfig($org, $data['payroll_platform']);
+            }
+
             return [
                 'organization' => $org,
                 'manager' => $manager,

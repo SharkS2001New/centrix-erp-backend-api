@@ -8,6 +8,7 @@ use App\Services\Notifications\AdminNotificationService;
 use App\Services\Notifications\InAppNotificationEvents;
 use App\Services\SystemIssues\SystemIssueDigestService;
 use App\Services\SystemIssues\SystemIssueFingerprint;
+use App\Support\ClientNetworkIssueDetector;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 
@@ -39,6 +40,19 @@ class SystemIssueReportController extends Controller
         ) {
             return response()->json([
                 'message' => 'Server errors are logged automatically with technical details.',
+                'skipped' => true,
+            ], 202);
+        }
+
+        if (
+            ($data['kind'] ?? '') === 'error'
+            && ClientNetworkIssueDetector::isClientNetworkIssue(
+                (string) ($data['message'] ?? ''),
+                $data['context'] ?? null,
+            )
+        ) {
+            return response()->json([
+                'message' => 'Client connectivity issues are not logged as server errors.',
                 'skipped' => true,
             ], 202);
         }

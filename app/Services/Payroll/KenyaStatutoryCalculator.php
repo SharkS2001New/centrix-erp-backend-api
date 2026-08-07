@@ -32,10 +32,13 @@ class KenyaStatutoryCalculator
         float $grossPay,
         float $otherDeductions = 0,
         float $privateInsurancePremiums = 0,
+        ?int $organizationId = null,
     ): array {
         $gross = round(max(0, $grossPay), 2);
         $other = round(max(0, $otherDeductions), 2);
-        $cfg = KenyaPayrollSettingsResolver::resolve();
+        $cfg = $organizationId !== null && $organizationId > 0
+            ? KenyaPayrollSettingsResolver::resolveForOrganizationId($organizationId)
+            : KenyaPayrollSettingsResolver::resolve();
 
         $nssfParts = $this->nssf($gross, $cfg['nssf']);
         $nssf = $nssfParts['total'];

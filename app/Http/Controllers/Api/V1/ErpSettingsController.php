@@ -1352,11 +1352,11 @@ class ErpSettingsController extends Controller
         $data = $request->validate($rules);
         $next = HrPayrollSettingsResolver::normalize(array_merge(
             $gate->moduleSettings('hr_payroll'),
-            array_filter(
+            $this->platformConfig->filterOrgManagerHrPayrollPayload(array_filter(
                 $data,
                 fn ($key) => in_array($key, $hrKeys, true),
                 ARRAY_FILTER_USE_KEY,
-            ),
+            )),
         ));
 
         $moduleSettings = $org->module_settings ?? [];

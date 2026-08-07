@@ -226,6 +226,7 @@ class OrganizationProvisionController extends Controller
 
         $data = $request->validate(array_merge(
             $this->salesPlatformRules(),
+            $this->payrollPlatformRules(),
             $this->tenantProfileRules(),
             $this->applicationRules(),
             [
@@ -283,6 +284,10 @@ class OrganizationProvisionController extends Controller
                 $org->save();
                 $this->provisioning->syncModuleSettingsFromEnabledModules($org);
             }
+        }
+
+        if (array_key_exists('payroll_platform', $data) && is_array($data['payroll_platform'])) {
+            $this->platformConfig->applyPayrollPlatformConfig($org, $data['payroll_platform']);
         }
 
         return response()->json($this->organizationPayload($org->fresh()));
@@ -562,6 +567,7 @@ class OrganizationProvisionController extends Controller
                 'industry_label' => $industry['label'],
             ]),
             'sales_platform' => $this->platformConfig->salesPlatformConfigForOrganization($org),
+            'payroll_platform' => $this->platformConfig->payrollPlatformConfigForOrganization($org),
         ];
     }
 
@@ -602,6 +608,7 @@ class OrganizationProvisionController extends Controller
                 'license' => 'nullable|array',
             ],
             $this->salesPlatformRules(),
+            $this->payrollPlatformRules(),
             $this->applicationRules(),
         ));
 
@@ -771,6 +778,16 @@ class OrganizationProvisionController extends Controller
             'sales_platform.orders_list_visible_columns_by_queue' => 'sometimes|array',
             'sales_platform.orders_list_visible_columns_by_queue.*' => 'sometimes|array|min:1',
             'sales_platform.orders_list_visible_columns_by_queue.*.*' => 'required|string|in:order,customer,branch,route,delivery_date,connectivity,amount,amount_paid,balance,discount,vat,status,method,source,placed_by',
+        ];
+    }
+
+    /** @return array<string, mixed> */
+    protected function payrollPlatformRules(): array
+    {
+        return [
+            'payroll_platform' => 'sometimes|array',
+            'payroll_platform.payroll_month_days_basis' => 'sometimes|in:calendar,fixed_30',
+            'payroll_platform.shif_minimum_monthly' => 'sometimes|nullable|numeric|min:0|max:100000',
         ];
     }
 

@@ -75,6 +75,18 @@ class HrPayrollSettingsResolver
             ? $out['pay_frequency']
             : 'monthly';
 
+        $out['payroll_month_days_basis'] = in_array($out['payroll_month_days_basis'] ?? '', ['calendar', 'fixed_30'], true)
+            ? $out['payroll_month_days_basis']
+            : ($defaults['payroll_month_days_basis'] ?? 'calendar');
+
+        $shifMin = $out['shif_minimum_monthly'] ?? null;
+        if ($shifMin === '' || $shifMin === false) {
+            $shifMin = null;
+        } elseif ($shifMin !== null) {
+            $shifMin = round(max(0, (float) $shifMin), 2);
+        }
+        $out['shif_minimum_monthly'] = $shifMin;
+
         return \App\Services\Attendance\HrAttendanceSettingsResolver::normalize($out);
     }
 }

@@ -140,4 +140,24 @@ class SystemIssueReportTest extends TestCase
             ->assertStatus(202)
             ->assertJsonPath('skipped', true);
     }
+
+    public function test_client_network_timeout_is_not_logged_as_error(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/system-issue-reports', [
+            'kind' => 'error',
+            'message' => 'Request timed out. Check your connection and try again.',
+            'api_path' => '/api/v1/carts/1/checkout',
+            'http_method' => 'POST',
+            'http_status' => 0,
+            'context' => [
+                'source' => 'mobile',
+                'user_message' => 'Request timed out. Check your connection and try again.',
+            ],
+        ])
+            ->assertStatus(202)
+            ->assertJsonPath('skipped', true);
+    }
 }

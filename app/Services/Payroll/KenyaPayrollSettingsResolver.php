@@ -3,6 +3,7 @@
 namespace App\Services\Payroll;
 
 use App\Models\Organization;
+use App\Services\Hr\HrPayrollSettingsResolver;
 
 /**
  * Platform-wide Kenya statutory payroll rates (PAYE bands, reliefs, NSSF, SHIF, AHL).
@@ -47,6 +48,20 @@ class KenyaPayrollSettingsResolver
     public static function resolve(): array
     {
         return self::forPlatform();
+    }
+
+    /** Platform rates with optional per-organization SHIF minimum override. */
+    /** @return array<string, mixed> */
+    public static function resolveForOrganizationId(int $organizationId): array
+    {
+        $cfg = self::forPlatform();
+        $hr = HrPayrollSettingsResolver::forOrganizationId($organizationId);
+        $orgMin = $hr['shif_minimum_monthly'] ?? null;
+        if ($orgMin !== null && $orgMin !== '') {
+            $cfg['shif']['minimum_monthly'] = round(max(0, (float) $orgMin), 2);
+        }
+
+        return $cfg;
     }
 
     /** @return array<string, mixed> */
