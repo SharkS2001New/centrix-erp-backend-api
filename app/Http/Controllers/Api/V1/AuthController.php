@@ -497,7 +497,15 @@ class AuthController extends Controller
         }
 
         if ($user instanceof User) {
-            app(UserCartCleanupService::class)->clearAllForUser($user);
+            // Revoke access first so logout returns quickly; cart cleanup can be slow
+            // (reservations / M-Pesa) and must not delay the login screen.
+            $userId = (int) $user->id;
+            dispatch(function () use ($userId) {
+                $account = User::query()->find($userId);
+                if ($account instanceof User) {
+                    app(UserCartCleanupService::class)->clearAllForUser($account);
+                }
+            })->afterResponse();
         }
 
         if (is_string($plainTextToken) && $plainTextToken !== '') {

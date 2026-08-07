@@ -89,7 +89,7 @@ return [
             'required' => ['product_name'],
             'optional' => ['product_code', 'unit_price', 'unit_id', 'subcategory_id', 'last_cost_price', 'reorder_point', 'vat_id'],
             'action' => 'create_product',
-            'notes' => 'product_code is auto-generated (PRD#0001) when omitted. unit_id from uoms, subcategory_id from subcategories, vat_id from vats.',
+            'notes' => 'product_code is auto-generated as a unique 6-digit SKU when omitted. unit_id from uoms, subcategory_id from subcategories, vat_id from vats.',
         ],
         'create_sales_order' => [
             'summary' => 'Create a normal sales order (checkout with payment)',

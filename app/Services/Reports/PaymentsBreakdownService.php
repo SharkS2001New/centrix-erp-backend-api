@@ -353,7 +353,8 @@ class PaymentsBreakdownService
             $refs = $methodRefs !== [] ? $methodRefs : ($refsPayload['all'] ?? []);
             $primaryRef = $refs[0] ?? null;
 
-            $displayAmount = round(
+            $displayAmount = round((float) ($row->order_total ?? 0), 2);
+            $methodShare = round(
                 (float) ($tabAmountBySale[$saleId] ?? $tenders[$methodCode] ?? 0),
                 2,
             );
@@ -399,6 +400,7 @@ class PaymentsBreakdownService
                 'customer_num' => $row->customer_num !== null ? (int) $row->customer_num : null,
                 'customer_name' => $customerName,
                 'amount' => $displayAmount,
+                'method_amount' => $methodShare,
                 'return_amount' => round((float) ($adjustment['return_amount'] ?? 0), 2),
                 'topup_amount' => round((float) ($adjustment['topup_amount'] ?? 0), 2),
                 'return_methods' => $adjustment['return_methods'] ?? [],

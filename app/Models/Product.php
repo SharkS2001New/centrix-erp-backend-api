@@ -79,19 +79,49 @@ class Product extends Model
         'deleted_at' => 'datetime',
     ];
 
+    /**
+     * Suggest a unique 6-digit SKU for the organization (scan-code style).
+     * Prefers the next number after existing 6-digit codes, then random free codes.
+     */
     public static function generateNextProductCode(int $organizationId): string
     {
-        $codes = static::query()
+        $existing = static::query()
             ->where('organization_id', $organizationId)
-            ->pluck('product_code');
+            ->pluck('product_code')
+            ->map(static fn ($code) => (string) $code)
+            ->all();
 
-        $max = 0;
-        foreach ($codes as $code) {
-            if (preg_match('/^PRD#?(\d+)$/i', (string) $code, $m)) {
-                $max = max($max, (int) $m[1]);
+        $used = array_fill_keys($existing, true);
+
+        $maxSix = 99999;
+        foreach ($existing as $code) {
+            if (preg_match('/^\d{6}$/', $code) === 1) {
+                $maxSix = max($maxSix, (int) $code);
             }
         }
 
-        return 'PRD#'.str_pad((string) ($max + 1), 4, '0', STR_PAD_LEFT);
+        if ($maxSix < 999999) {
+            $candidate = (string) ($maxSix + 1);
+            if (! isset($used[$candidate])) {
+                return $candidate;
+            }
+        }
+
+        for ($attempt = 0; $attempt < 50; $attempt++) {
+            $candidate = (string) random_int(100000, 999999);
+            if (! isset($used[$candidate])) {
+                return $candidate;
+            }
+        }
+
+        $start = random_int(100000, 999999);
+        for ($offset = 0; $offset < 900000; $offset++) {
+            $candidate = (string) (100000 + (($start - 100000 + $offset) % 900000));
+            if (! isset($used[$candidate])) {
+                return $candidate;
+            }
+        }
+
+        throw new \RuntimeException('Could not allocate a unique 6-digit product code.');
     }
 }

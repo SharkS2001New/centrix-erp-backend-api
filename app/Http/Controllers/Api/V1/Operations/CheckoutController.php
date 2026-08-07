@@ -484,6 +484,14 @@ class CheckoutController extends Controller
                     : 0.0;
                 $priorFullyPaid = $priorPaid > 0.01 && $priorPaid + 0.01 >= $priorTotal;
                 $amountPaid = $priorFullyPaid ? $total : min($priorPaid, $total);
+                // Top-up / return must equal |revised total − prior total| (value of items
+                // added or returned). Never persist a full new bill as a "top-up".
+                $adjustmentRows = $this->reconcilePreviousOrderEditAdjustments(
+                    $adjustmentRows,
+                    $priorTotal,
+                    $total,
+                    (string) ($input['payment_method_code'] ?? $priorForSettlement?->payment_method_code ?? 'CASH'),
+                );
             } else {
                 $payNow = min($payNow, $cashDue);
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
@@ -1681,6 +1689,92 @@ class CheckoutController extends Controller
         }
 
         return $normalized;
+    }
+
+    /**
+     * Force previous-order edit return/top-up rows to equal |revised − prior| order total.
+     * Clients sometimes send the full new bill (or F10 pay_now) as a top-up; that must not
+     * land in sale_payment_adjustments or inflate Payments Breakdown.
+     *
+     * @param  list<array{method_code: string, amount: float, adjustment_type: string, reference_number: ?string}>  $adjustmentRows
+     * @return list<array{method_code: string, amount: float, adjustment_type: string, reference_number: ?string}>
+     */
+    protected function reconcilePreviousOrderEditAdjustments(
+        array $adjustmentRows,
+        float $priorTotal,
+        float $newTotal,
+        string $fallbackMethodCode = 'CASH',
+    ): array {
+        $expectedSigned = round($newTotal - $priorTotal, 2);
+        if (abs($expectedSigned) < 0.01) {
+            return [];
+        }
+
+        $type = $expectedSigned < 0 ? 'return' : 'topup';
+        $expectedAbs = round(abs($expectedSigned), 2);
+
+        $rows = array_values(array_filter(
+            $adjustmentRows,
+            static fn (array $row): bool => ($row['adjustment_type'] ?? '') === $type,
+        ));
+
+        $fallback = strtoupper(trim($fallbackMethodCode)) ?: 'CASH';
+        if ($rows === []) {
+            return [[
+                'method_code' => $fallback,
+                'amount' => $expectedAbs,
+                'adjustment_type' => $type,
+                'reference_number' => null,
+            ]];
+        }
+
+        $sum = round(array_sum(array_map(
+            static fn (array $row): float => (float) ($row['amount'] ?? 0),
+            $rows,
+        )), 2);
+
+        if (abs($sum - $expectedAbs) < 0.02) {
+            return $rows;
+        }
+
+        if ($sum <= 0.009) {
+            $first = $rows[0];
+
+            return [[
+                'method_code' => strtoupper((string) ($first['method_code'] ?? $fallback)) ?: $fallback,
+                'amount' => $expectedAbs,
+                'adjustment_type' => $type,
+                'reference_number' => $first['reference_number'] ?? null,
+            ]];
+        }
+
+        $factor = $expectedAbs / $sum;
+        $scaled = [];
+        foreach ($rows as $row) {
+            $scaled[] = [
+                'method_code' => strtoupper((string) ($row['method_code'] ?? $fallback)) ?: $fallback,
+                'amount' => round((float) ($row['amount'] ?? 0) * $factor, 2),
+                'adjustment_type' => $type,
+                'reference_number' => $row['reference_number'] ?? null,
+            ];
+        }
+
+        $scaledSum = round(array_sum(array_column($scaled, 'amount')), 2);
+        $drift = round($expectedAbs - $scaledSum, 2);
+        if (abs($drift) >= 0.01 && $scaled !== []) {
+            $largest = 0;
+            foreach ($scaled as $i => $row) {
+                if ((float) $row['amount'] >= (float) $scaled[$largest]['amount']) {
+                    $largest = $i;
+                }
+            }
+            $scaled[$largest]['amount'] = round((float) $scaled[$largest]['amount'] + $drift, 2);
+        }
+
+        return array_values(array_filter(
+            $scaled,
+            static fn (array $row): bool => (float) ($row['amount'] ?? 0) > 0.009,
+        ));
     }
 
     /**

@@ -213,6 +213,78 @@ class SalePaymentAdjustmentCheckoutTest extends TestCase
         ])->assertStatus(422);
     }
 
+    public function test_previous_order_edit_clamps_inflated_topup_to_order_delta(): void
+    {
+        $this->setPosOrderEditEnabled(true);
+
+        $firstCart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$firstCart}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $original = $this->postJson("/api/v1/sales/carts/{$firstCart}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertCreated()->json();
+
+        $originalTotal = round((float) $original['order_total'], 2);
+        $this->assertGreaterThan(0, $originalTotal);
+
+        $editCart = $this->postJson("/api/v1/sales/orders/{$original['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+        $editCartId = $editCart['id'];
+
+        // Raise the bill by adding another unit of the same product.
+        $this->putJson("/api/v1/sales/carts/{$editCartId}/lines", [
+            'lines' => [
+                [
+                    'product_code' => $this->productCode,
+                    'quantity' => 2,
+                ],
+            ],
+            'order_discount' => 0,
+        ])->assertOk();
+
+        $revised = $this->postJson("/api/v1/sales/carts/{$editCartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => 0,
+            'order_num' => $original['order_num'],
+            // Client wrongly sent the full new bill as a top-up.
+            'payment_adjustments' => [
+                [
+                    'method_code' => 'CASH',
+                    'amount' => 999999,
+                    'adjustment_type' => 'topup',
+                    'reference_number' => null,
+                ],
+            ],
+        ])->assertCreated()->json();
+
+        $newTotal = round((float) $revised['order_total'], 2);
+        $expectedTopup = round($newTotal - $originalTotal, 2);
+        $this->assertGreaterThan($originalTotal + 0.01, $newTotal);
+        $this->assertGreaterThan(0.01, $expectedTopup);
+        $this->assertLessThan($newTotal - 0.01, $expectedTopup);
+
+        $this->assertDatabaseHas('sale_payment_adjustments', [
+            'sale_id' => $revised['id'],
+            'adjustment_type' => 'topup',
+            'amount' => $expectedTopup,
+        ]);
+        $this->assertDatabaseMissing('sale_payment_adjustments', [
+            'sale_id' => $revised['id'],
+            'adjustment_type' => 'topup',
+            'amount' => 999999,
+        ]);
+    }
+
     protected function setPosOrderEditEnabled(bool $enabled): void
     {
         $org = Organization::findOrFail($this->user->organization_id);

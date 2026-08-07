@@ -195,7 +195,7 @@ class AiAssistantTest extends TestCase
         ]);
 
         $this->assertTrue($outcome['success']);
-        $this->assertMatchesRegularExpression('/^PRD#\d+$/', (string) ($outcome['result']['product_code'] ?? ''));
+        $this->assertMatchesRegularExpression('/^\d{6}$/', (string) ($outcome['result']['product_code'] ?? ''));
     }
 
     public function test_schemas_endpoint_returns_product_entity(): void
