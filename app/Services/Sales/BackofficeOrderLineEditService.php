@@ -240,10 +240,16 @@ class BackofficeOrderLineEditService
                     $newDiscount = (float) ($saleItem->discount_given ?? 0);
                 }
 
+                $requestedRetail = array_key_exists('on_wholesale_retail', $row)
+                    ? (bool) $row['on_wholesale_retail']
+                    : (bool) $saleItem->on_wholesale_retail;
+                $pricingChanged = array_key_exists('on_wholesale_retail', $row)
+                    && (bool) $saleItem->on_wholesale_retail !== $requestedRetail;
+
                 $itemQtyChanged = abs($newQty - $oldQty) >= 0.0001;
                 $discountChanged = abs($newDiscount - (float) ($saleItem->discount_given ?? 0)) >= 0.01;
 
-                if (! $itemQtyChanged && ! $discountChanged) {
+                if (! $itemQtyChanged && ! $discountChanged && ! $pricingChanged) {
                     continue;
                 }
 
@@ -258,7 +264,7 @@ class BackofficeOrderLineEditService
                     throw new InvalidArgumentException("Product [{$saleItem->product_code}] was not found.");
                 }
 
-                $isRetail = (bool) $saleItem->on_wholesale_retail;
+                $isRetail = $requestedRetail;
                 [$unitPrice, $amount] = $this->pricing->resolveLineAmounts(
                     $product,
                     $newQty,
@@ -290,6 +296,7 @@ class BackofficeOrderLineEditService
                     'amount' => $amount,
                     'product_vat' => $productVat,
                     'discount_given' => $newDiscount,
+                    'on_wholesale_retail' => $isRetail ? 1 : 0,
                 ]);
 
                 if ($sale->stock_balanced && $itemQtyChanged) {

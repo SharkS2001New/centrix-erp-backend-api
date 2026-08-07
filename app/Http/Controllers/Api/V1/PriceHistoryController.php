@@ -41,7 +41,19 @@ class PriceHistoryController extends BaseResourceController
         $query = $this->baseQuery($request)
             ->with(['product:product_code,product_name,subcategory_id,unit_id', 'changedByUser:id,username,full_name']);
 
-        if ($days = (int) $request->input('days', 0)) {
+        if ($request->filled('date_from')) {
+            $query->whereDate('changed_at', '>=', $request->input('date_from'));
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereDate('changed_at', '<=', $request->input('date_to'));
+        }
+
+        if (
+            ! $request->filled('date_from')
+            && ! $request->filled('date_to')
+            && ($days = (int) $request->input('days', 0))
+        ) {
             $query->where('changed_at', '>=', now()->subDays(max(1, $days))->startOfDay());
         }
 

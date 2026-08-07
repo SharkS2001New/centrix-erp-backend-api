@@ -60,6 +60,13 @@ class KenyaStatutoryCalculatorTest extends TestCase
     {
         $r = $this->calculator->calculateMonthly(0);
         $this->assertEquals(0, $r['net_pay']);
+        $this->assertEquals(0, $r['shif']);
+    }
+
+    public function test_shif_minimum_applies_when_gross_below_threshold(): void
+    {
+        // 2.75% of 8,000 = 220 — statutory minimum is 300.
+        $r = $this->calculator->calculateMonthly(8000);
         $this->assertEquals(300, $r['shif']);
     }
 }

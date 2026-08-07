@@ -100,6 +100,10 @@ class KenyaStatutoryCalculator
     /** @param array<string, mixed> $shifCfg */
     protected function shif(float $gross, array $shifCfg): float
     {
+        if ($gross <= 0) {
+            return 0.0;
+        }
+
         $amount = round($gross * (float) $shifCfg['rate'], 2);
 
         return max($amount, (float) $shifCfg['minimum_monthly']);

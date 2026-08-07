@@ -3,10 +3,12 @@
 namespace App\Services\Sales;
 
 use App\Models\CurrentStock;
+use App\Models\Product;
 use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\StockReservation;
 use App\Models\SystemSetting;
+use App\Services\Inventory\SaleStockLocationResolver;
 use Illuminate\Support\Collection;
 
 /**
@@ -18,6 +20,9 @@ class SaleInvoicePrintStockGate
 {
     /** @var array<int, bool> */
     protected array $allowBelowCache = [];
+
+    /** @var array<int, array{inventory: array<string, mixed>, sales: array<string, mixed>}> */
+    protected array $moduleSettingsCache = [];
 
     public function allows(Sale $sale): bool
     {
@@ -108,10 +113,6 @@ class SaleInvoicePrintStockGate
                     $ok = false;
                     break;
                 }
-                // Print gate uses shop stock for POS/backend consumer sales; store
-                // wholesale lines still deduct/reserve via location resolver at checkout.
-                // For eligibility we require physical coverage at the branch using the
-                // same location key reservations were written with when present.
                 $location = $this->resolveItemLocationHint($sale, $item, $reservedBySale[$saleId] ?? []);
                 $key = $this->stockKey($branchId, $code, $location);
                 $neededByKey[$key] = ($neededByKey[$key] ?? 0) + max(0, (float) $item->quantity);
@@ -254,7 +255,8 @@ class SaleInvoicePrintStockGate
     }
 
     /**
-     * Prefer the location this sale already reserved; otherwise shop.
+     * Prefer the location this sale already reserved; otherwise infer shop vs store
+     * from line pricing mode and org stock settings (same as checkout reservations).
      *
      * @param  array<string, float>  $saleReserved
      */
@@ -267,8 +269,54 @@ class SaleInvoicePrintStockGate
         if (($saleReserved[$storeKey] ?? 0) > ($saleReserved[$shopKey] ?? 0)) {
             return 'store';
         }
+        if (($saleReserved[$shopKey] ?? 0) > 0) {
+            return 'shop';
+        }
 
-        return 'shop';
+        $orgId = (int) ($sale->organization_id ?? 0);
+        if ($orgId <= 0) {
+            return 'shop';
+        }
+
+        $settings = $this->moduleSettingsForOrganization($orgId);
+        $product = Product::query()
+            ->where('organization_id', $orgId)
+            ->where('product_code', $code)
+            ->first();
+
+        if (! $product) {
+            return SaleStockLocationResolver::defaultChannelLocation(
+                (string) ($sale->channel ?: 'backend'),
+                $settings['inventory'],
+            );
+        }
+
+        return SaleStockLocationResolver::forLine(
+            (string) ($sale->channel ?: 'backend'),
+            $settings['inventory'],
+            $settings['sales'],
+            $product,
+            (bool) $item->on_wholesale_retail,
+        );
+    }
+
+    /** @return array{inventory: array<string, mixed>, sales: array<string, mixed>} */
+    protected function moduleSettingsForOrganization(int $organizationId): array
+    {
+        if (isset($this->moduleSettingsCache[$organizationId])) {
+            return $this->moduleSettingsCache[$organizationId];
+        }
+
+        $system = SystemSetting::query()
+            ->where('organization_id', $organizationId)
+            ->orderBy('id')
+            ->first();
+        $merged = is_array($system?->module_settings) ? $system->module_settings : [];
+
+        return $this->moduleSettingsCache[$organizationId] = [
+            'inventory' => is_array($merged['inventory'] ?? null) ? $merged['inventory'] : [],
+            'sales' => is_array($merged['sales'] ?? null) ? $merged['sales'] : [],
+        ];
     }
 
     protected function stockKey(int $branchId, string $productCode, string $location): string

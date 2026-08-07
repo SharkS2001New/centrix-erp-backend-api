@@ -21,7 +21,7 @@ class PayrollLineController extends BaseResourceController
 
     protected function baseQuery(Request $request)
     {
-        return parent::baseQuery($request)->with('employee');
+        return parent::baseQuery($request)->with(['employee.bankAccounts']);
     }
 
     public function show(Request $request, string $id)
