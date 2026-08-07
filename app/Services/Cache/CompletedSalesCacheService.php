@@ -369,8 +369,8 @@ class CompletedSalesCacheService
         return array_merge($cached, [
             'can_edit' => $editService->canRestoreSaleToCart($sale, $user, $gate),
             'can_edit_lines' => $lineEditService->canEditLineQuantities($sale, $user, $gate),
-            'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel)
-                && app(\App\Services\Sales\SaleInvoicePrintStockGate::class)->allows($sale),
+            // Explicit reprint is always allowed (unpaid / cancelled / any stage).
+            'can_print_invoice' => true,
             'can_collect_payment' => $workflow->canCollectPaymentForOrder(
                 $status,
                 $channel,

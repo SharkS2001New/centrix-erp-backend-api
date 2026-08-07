@@ -543,9 +543,9 @@ class SalesCartCheckoutStockTest extends TestCase
             ->update(['shop_quantity' => 0]);
 
         $detail = $this->getJson("/api/v1/sales/{$saleId}")->assertOk()->json();
-        $this->assertFalse(
-            (bool) ($detail['can_print_invoice'] ?? true),
-            'Tax invoice print must be blocked when physical stock no longer covers the order',
+        $this->assertTrue(
+            (bool) ($detail['can_print_invoice'] ?? false),
+            'Explicit reprint must remain allowed even when physical stock no longer covers the order',
         );
     }
 

@@ -465,7 +465,7 @@ class OrderWorkflowServiceTest extends TestCase
 
         $this->assertArrayHasKey('can_print_invoice', $flags);
         $this->assertArrayHasKey('can_collect_payment', $flags);
-        $this->assertFalse($flags['can_print_invoice']);
+        $this->assertTrue($flags['can_print_invoice']);
         $this->assertTrue($flags['can_collect_payment']);
 
         $sale->status = 'paid';

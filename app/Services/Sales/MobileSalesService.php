@@ -175,33 +175,18 @@ class MobileSalesService
             // Print / collect still follow configured workflow stages (non-mutating).
             $gate = $this->erp->gateForUser($user);
             $workflow = OrderWorkflowService::forGate($gate);
-            $saleIds = collect($cachedList['data'] ?? [])
-                ->pluck('id')
-                ->map(fn ($id) => (int) $id)
-                ->filter(fn ($id) => $id > 0)
-                ->unique()
-                ->values()
-                ->all();
-            $printStockById = $saleIds === []
-                ? []
-                : app(SaleInvoicePrintStockGate::class)->allowsMany(
-                    Sale::query()
-                        ->whereIn('id', $saleIds)
-                        ->get(['id', 'organization_id', 'branch_id', 'stock_balanced']),
-                );
             $cachedList['data'] = collect($cachedList['data'] ?? [])
-                ->map(function (array $row) use ($workflow, $printStockById) {
+                ->map(function (array $row) use ($workflow) {
                     $status = (string) ($row['status'] ?? '');
                     $channel = (string) ($row['channel'] ?? 'mobile');
-                    $saleId = (int) ($row['id'] ?? 0);
 
                     return array_merge($row, [
                         'can_edit' => false,
                         'can_cancel' => false,
                         'can_direct_cancel' => false,
                         'can_request_cancellation' => false,
-                        'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel)
-                            && ($printStockById[$saleId] ?? false),
+                        // Explicit reprint is always allowed (unpaid / cancelled / any stage).
+                        'can_print_invoice' => true,
                         'can_collect_payment' => $workflow->canCollectPaymentForOrder(
                             $status,
                             $channel,
@@ -563,8 +548,8 @@ class MobileSalesService
                 'can_edit' => $this->posOrderEdit->blocksPreviousDayMobileMutation($sale)
                     ? false
                     : $this->posOrderEdit->canRestoreSaleToCart($sale, $user, $gate),
-                'can_print_invoice' => $workflow->isPrintInvoiceStatus($status, $channel)
-                    && app(SaleInvoicePrintStockGate::class)->allows($sale),
+                // Explicit reprint is always allowed (unpaid / cancelled / any stage).
+                'can_print_invoice' => true,
                 'can_collect_payment' => $workflow->canCollectPaymentForOrder(
                     $status,
                     $channel,
