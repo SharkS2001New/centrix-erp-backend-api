@@ -554,9 +554,18 @@ class CheckoutController extends Controller
                 && empty($input['save_only'])
                 && in_array((string) $cart->channel, ['pos', 'backend'], true)
             ) {
-                // Non-credit POS/backend (online or offline): always settle in full so
-                // rounding / reprice cannot leave a fake payment_status=partial on
-                // Cash/M-Pesa/bank sales. Only credit may stay unpaid or partially paid.
+                // Cash / M-Pesa / bank / cheque (anything except credit input): must cover
+                // the bill. Reject intentional underpay — do not invent a "paid" sale.
+                // Only settle-up tiny rounding / reprice gaps after that check.
+                $clientPaid = round(
+                    $appendPriorPaid + min($payNow, $cashDue) + $voucherPayment + $pointsPayment + $mpesaOnCart,
+                    2,
+                );
+                if ($total > 0.01 && $clientPaid + 0.01 < $total) {
+                    throw new InvalidArgumentException(
+                        'Full payment required for Cash, M-Pesa, bank, and cheque sales. Select a credit customer to leave a balance unpaid or partially paid.',
+                    );
+                }
                 $payNow = $cashDue;
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             } else {
@@ -571,6 +580,25 @@ class CheckoutController extends Controller
             $channelWorkflow = $workflow->forChannel($cart->channel);
             $allowPartialPayment = false;
             $paymentMethodCode = (string) ($input['payment_method_code'] ?? 'CASH');
+            if (
+                ! $isCredit
+                && strtoupper($paymentMethodCode) === 'CREDIT'
+                && empty($input['save_only'])
+            ) {
+                throw new InvalidArgumentException(
+                    'Credit payment method requires a credit customer sale.',
+                );
+            }
+
+            // Non-credit POS sales are always fully paid (never partial / unpaid).
+            if (
+                ! $isCredit
+                && empty($input['save_only'])
+                && in_array((string) $cart->channel, ['pos', 'backend'], true)
+                && ! $isPreviousOrderEditSettlement
+            ) {
+                $amountPaid = $total;
+            }
 
             $isSaveOnly = $payNow <= 0 && $amountPaid <= 0.01 && ! $isCredit && ! empty($input['save_only']);
             if ($isSaveOnly) {
@@ -732,7 +760,14 @@ class CheckoutController extends Controller
                 'loyalty_card_id' => $loyaltyCardId,
                 'payment_method_code' => $input['payment_method_code'] ?? 'CASH',
                 'is_credit_sale' => $isCredit ? 1 : 0,
-                'payment_status' => $this->derivePaymentStatus($total, $amountPaid),
+                // Non-credit External POS / backoffice till sales are always fully paid.
+                'payment_status' => (
+                    ! $isCredit
+                    && empty($input['save_only'])
+                    && in_array((string) $cart->channel, ['pos', 'backend'], true)
+                )
+                    ? 'paid'
+                    : $this->derivePaymentStatus($total, $amountPaid),
                 'amount_paid' => $amountPaid,
                 'completed_at' => null,
                 'fulfillment_meta' => $fulfillmentMeta !== [] ? $fulfillmentMeta : null,
