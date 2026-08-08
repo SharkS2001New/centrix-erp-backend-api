@@ -364,6 +364,7 @@ class AuthSessionService
             'organization' => $account->organization,
             'memberships' => $memberships,
             'must_change_password' => (bool) $effective->must_change_password,
+            'login_channel' => $loginChannel,
         ], $effective);
     }
 

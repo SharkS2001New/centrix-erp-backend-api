@@ -16,12 +16,14 @@ trait RespondsWithAuthSession
      */
     protected function respondWithAuthSession(array $result, Request $request): JsonResponse
     {
+        $authChannel = $this->resolveAuthLoginChannel($request, $result);
+
         if (($result['user'] ?? null) instanceof User) {
             /** @var User $user */
             $user = $result['user'];
             $result['capabilities'] = app(ErpCapabilitiesController::class)->resolveForUser(
                 $user,
-                $this->resolveAuthLoginChannel($request, $result),
+                $authChannel,
             );
 
             if (! $user->is_super_admin) {
@@ -62,13 +64,17 @@ trait RespondsWithAuthSession
             );
         }
 
+        // Prefer the channel on the issued session (MFA verify has no login_channel body
+        // field). Mobile/manager must keep the bearer token in JSON — cookie-only strip
+        // caused "Authentication did not return a token" in Centrix Manager.
+        $useCookieAuth = ApiTokenCookie::usesCookieAuth($request, $authChannel);
         $response = response()->json(
-            ApiTokenCookie::usesCookieAuth($request)
+            $useCookieAuth
                 ? ApiTokenCookie::sanitizeSessionPayload($result)
                 : $result,
         );
 
-        if (! ApiTokenCookie::usesCookieAuth($request) || ! isset($result['token']) || ! is_string($result['token'])) {
+        if (! $useCookieAuth || ! isset($result['token']) || ! is_string($result['token'])) {
             return $response;
         }
 
@@ -97,6 +103,16 @@ trait RespondsWithAuthSession
         $fromBody = strtolower(trim((string) $request->input('login_channel', '')));
         if (in_array($fromBody, ['backoffice', 'pos', 'mobile', 'manager'], true)) {
             return $fromBody;
+        }
+
+        $fromHeader = strtolower(trim((string) $request->header('X-Login-Channel', '')));
+        if (in_array($fromHeader, ['backoffice', 'pos', 'mobile', 'manager'], true)) {
+            return $fromHeader;
+        }
+
+        $fromResult = strtolower(trim((string) ($result['login_channel'] ?? '')));
+        if (in_array($fromResult, ['backoffice', 'pos', 'mobile', 'manager'], true)) {
+            return $fromResult;
         }
 
         $token = $result['token'] ?? null;

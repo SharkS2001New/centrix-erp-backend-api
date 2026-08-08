@@ -158,6 +158,7 @@ class AuthController extends Controller
         $data = $request->validate([
             'challenge_token' => 'required|string|max:128',
             'code' => 'required|string|max:12',
+            'login_channel' => 'sometimes|in:backoffice,pos,mobile,manager',
         ]);
 
         try {

@@ -12,13 +12,21 @@ class ApiTokenCookie
         return (bool) config('security.api_token_cookie.enabled', false);
     }
 
-    public static function usesCookieAuth(Request $request): bool
+    public static function usesCookieAuth(Request $request, ?string $resolvedChannel = null): bool
     {
         if (! self::enabled()) {
             return false;
         }
 
-        $channel = (string) ($request->input('login_channel') ?? $request->header('X-Login-Channel', 'backoffice'));
+        $channel = strtolower(trim((string) (
+            $resolvedChannel
+            ?? $request->input('login_channel')
+            ?? $request->header('X-Login-Channel', 'backoffice')
+        )));
+
+        if ($channel === '') {
+            $channel = 'backoffice';
+        }
 
         return ! self::channelUsesBearerTokenInBody($channel);
     }

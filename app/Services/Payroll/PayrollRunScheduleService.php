@@ -233,6 +233,47 @@ class PayrollRunScheduleService
             'runnable_period_codes' => array_column($runnable, 'period_code'),
             'runnable_periods' => $runnable,
             'can_run_any_period_today' => $enforce ? count($runnable) > 0 : true,
+            'next_window' => $this->nextWindowHint($today, $organizationId, $enforce, $graceDays),
+        ];
+    }
+
+    /**
+     * Human hint for when the next payroll window opens (UI period picker).
+     *
+     * @return array{message: string, period_code: string|null, opens_on: string|null}|null
+     */
+    protected function nextWindowHint(
+        Carbon $today,
+        ?int $organizationId,
+        bool $enforce,
+        int $graceDays,
+    ): ?array {
+        if (! $enforce) {
+            return [
+                'message' => 'Select any current or past pay period below.',
+                'period_code' => $this->monthPeriodSpec($today)['period_code'],
+                'opens_on' => $today->toDateString(),
+            ];
+        }
+
+        if ($this->isLastDayOfMonth($today) || $this->isInPreviousMonthGraceWindow($today, $organizationId)) {
+            return null;
+        }
+
+        // After the grace window: next chance is the last day of the current month.
+        $monthEnd = $today->copy()->endOfMonth()->startOfDay();
+        $currentSpec = $this->monthPeriodSpec($today);
+
+        return [
+            'message' => sprintf(
+                'No period can run today (%s). Next: run %s on %s (last day of this month). After month end, the prior month stays open for the first %d day(s).',
+                $today->toFormattedDateString(),
+                $monthEnd->format('F Y'),
+                $monthEnd->toFormattedDateString(),
+                $graceDays,
+            ),
+            'period_code' => $currentSpec['period_code'],
+            'opens_on' => $monthEnd->toDateString(),
         ];
     }
 

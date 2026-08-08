@@ -39,4 +39,20 @@ class ApiTokenCookieTest extends TestCase
 
         $this->assertTrue(ApiTokenCookie::usesCookieAuth($request));
     }
+
+    public function test_resolved_manager_channel_keeps_bearer_even_without_body_channel(): void
+    {
+        config(['security.api_token_cookie.enabled' => true]);
+
+        // MFA verify historically omitted login_channel — cookie auth must still
+        // honour the channel from the issued session / challenge.
+        $request = Request::create('/api/v1/auth/2fa/verify', 'POST', [
+            'challenge_token' => 'abc',
+            'code' => '123456',
+        ]);
+
+        $this->assertTrue(ApiTokenCookie::usesCookieAuth($request));
+        $this->assertFalse(ApiTokenCookie::usesCookieAuth($request, 'manager'));
+        $this->assertFalse(ApiTokenCookie::usesCookieAuth($request, 'mobile'));
+    }
 }
