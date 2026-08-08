@@ -447,9 +447,16 @@ class CartOperationsController extends Controller
                 'superseded_sale_id' => (int) $sale->id,
             ]);
 
+            $freshCart = $cart->fresh();
+            if (! $freshCart) {
+                throw new InvalidArgumentException(
+                    'Cart was removed before this order could be restored. Try again.',
+                );
+            }
+
             // Skip reserve while original sale stock is still deducted (pending reverse).
             $this->addRestoredSaleItemsToCart(
-                $cart->fresh(),
+                $freshCart,
                 $sale,
                 $user,
                 $gate,
@@ -457,8 +464,8 @@ class CartOperationsController extends Controller
             );
 
             if ($hadReservations) {
-                $this->transferSaleReservationsToCart((int) $sale->id, (int) $cart->id);
-                $this->bindCartReservationsToLines($cart->fresh('lines'), $user, $gate);
+                $this->transferSaleReservationsToCart((int) $sale->id, (int) $freshCart->id);
+                $this->bindCartReservationsToLines($freshCart->fresh('lines'), $user, $gate);
             }
 
             $meta = array_merge($sale->fulfillment_meta ?? [], [
@@ -1192,7 +1199,7 @@ class CartOperationsController extends Controller
 
         if (
             array_key_exists('float_session_id', $input)
-            && Schema::hasColumn('temporary_carts', 'float_session_id')
+            && TemporaryCart::temporaryCartsHaveFloatSessionColumn()
         ) {
             $nextFloatId = $input['float_session_id'] !== null && $input['float_session_id'] !== ''
                 ? (int) $input['float_session_id']
@@ -1299,6 +1306,11 @@ class CartOperationsController extends Controller
         }
 
         if ($rows !== []) {
+            if (! TemporaryCart::query()->whereKey($cart->id)->exists()) {
+                throw new InvalidArgumentException(
+                    'Cart was removed before lines could be restored. Try again.',
+                );
+            }
             CartLine::insert($rows);
             $cart->increment('update_no');
         }

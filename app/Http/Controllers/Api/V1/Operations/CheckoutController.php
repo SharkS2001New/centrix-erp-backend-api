@@ -647,7 +647,7 @@ class CheckoutController extends Controller
             if ($floatSessionId) {
                 $input['float_session_id'] = $floatSessionId;
                 if (
-                    Schema::hasColumn('temporary_carts', 'float_session_id')
+                    \App\Models\TemporaryCart::temporaryCartsHaveFloatSessionColumn()
                     && (int) ($cart->float_session_id ?? 0) !== (int) $floatSessionId
                 ) {
                     $cart->float_session_id = $floatSessionId;
@@ -1576,6 +1576,30 @@ class CheckoutController extends Controller
                 (float) ($sale->order_total ?? 0),
                 (float) ($sale->amount_paid ?? 0),
             ), 2);
+            $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            // Offline empty-cancel sync often queues before the cashier finishes the
+            // return dialog — fill a full return on the prior tender so the cancel lands.
+            if (
+                $offlineOrder
+                && $expectedReturn > 0.009
+                && $returnTotal <= 0.009
+            ) {
+                $method = strtoupper(trim((string) (
+                    $input['payment_method_code']
+                    ?? $sale->payment_method_code
+                    ?? 'CASH'
+                )));
+                if ($method === '') {
+                    $method = 'CASH';
+                }
+                $adjustmentRows = [[
+                    'adjustment_type' => 'return',
+                    'method_code' => $method,
+                    'amount' => $expectedReturn,
+                    'reference_number' => null,
+                ]];
+                $returnTotal = $expectedReturn;
+            }
             if ($expectedReturn > 0.009 && abs($returnTotal - $expectedReturn) > 0.02) {
                 throw new InvalidArgumentException(
                     'Record the full return of '.number_format($expectedReturn, 2, '.', '')

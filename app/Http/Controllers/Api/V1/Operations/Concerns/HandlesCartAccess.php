@@ -100,6 +100,7 @@ trait HandlesCartAccess
                 }
                 if (
                     $floatSessionId
+                    && \App\Models\TemporaryCart::temporaryCartsHaveFloatSessionColumn()
                     && (int) ($cart->float_session_id ?? 0) !== $floatSessionId
                 ) {
                     $cart->float_session_id = $floatSessionId;

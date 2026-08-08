@@ -3,6 +3,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Facades\Schema;
 
 class TemporaryCart extends Model
 {
@@ -16,6 +17,33 @@ class TemporaryCart extends Model
         'points_redeemed', 'points_payment_amount', 'mpesa_phone',
         'mpesa_payment_amount', 'mpesa_transaction_code', 'update_no',
     ];
+
+    protected static ?bool $hasFloatSessionColumn = null;
+
+    protected static function booted(): void
+    {
+        static::saving(function (TemporaryCart $cart) {
+            // Migration may not be deployed yet — never write float_session_id without the column.
+            if (! static::temporaryCartsHaveFloatSessionColumn()) {
+                unset($cart->float_session_id);
+            }
+        });
+    }
+
+    public static function temporaryCartsHaveFloatSessionColumn(): bool
+    {
+        if (static::$hasFloatSessionColumn !== null) {
+            return static::$hasFloatSessionColumn;
+        }
+
+        try {
+            static::$hasFloatSessionColumn = Schema::hasColumn('temporary_carts', 'float_session_id');
+        } catch (\Throwable) {
+            static::$hasFloatSessionColumn = false;
+        }
+
+        return static::$hasFloatSessionColumn;
+    }
 
     public function lines()
     {
