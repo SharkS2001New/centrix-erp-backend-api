@@ -12,19 +12,19 @@ use Illuminate\Database\Query\Builder;
  *   totalsales = ORDTTL + DBTTL + FLOATTTL
  *
  * Centrix mapping:
- *   ORDTTL  = SUM(order_total) on fully paid POS sales
- *           + SUM(amount_paid) on genuine credit partials for the session
- *             (never full order_total of the unpaid balance)
+ *   ORDTTL  = SUM(order_total) on **fully paid** POS sales for the till session
+ *             (order_total already reflects edit top-ups / returns — do not
+ *             add adjustment amounts or subtract returns again)
  *   DBTTL   = debtor / invoice collections taken on the session (debtor_payments)
  *   FLOATTTL = session working float
  *   EXPTTL  = session expenses
  *
- * Genuine credit partial tenders:
- *   - Count amount_paid / sale_payments in Cash/M-Pesa lines and ORDTTL.
- *   - Do NOT add the unpaid balance (order_total − amount_paid) into ORDTTL.
- *   - Fake non-credit shortfalls must not exist (checkout forces full settle);
- *     tender filters still require fully paid OR is_credit_sale.
- *   - Amount maths only — never the denormalized payment_status label.
+ * Genuine partial / credit-input tenders:
+ *   - Do NOT add full order_total into ORDTTL (that would inflate Z).
+ *   - DO count cash/M-Pesa/etc. actually taken on this cashier session
+ *     (sale_payments / amount_paid for that float_session_id).
+ *   - Outstanding balance stays on credit outstanding / All Orders partial —
+ *     scoped by cashier / session filters, never via a stale payment_status label.
  *
  * New credit invoices (legacy INVOICETOTALS) are reported separately and are not
  * added into netsales / totalsales — same as the stored procedures.
@@ -36,7 +36,8 @@ class TillReportMetrics
 
     /**
      * Restrict a sales query to fully paid / collected POS orders (legacy order_masters).
-     * Use for the fully-paid portion of ORDTTL / gross. Pure unpaid credit stays out.
+     * Use for ORDTTL / gross sales only. Pure unpaid credit and partial tenders stay out —
+     * they must not inflate X / Z / EOD totalsales with the full order_total.
      * Amount maths only — never the denormalized payment_status label.
      *
      * @param  Builder|\Illuminate\Database\Eloquent\Builder  $query
@@ -54,8 +55,8 @@ class TillReportMetrics
     }
 
     /**
-     * Sales that took any tender on this session — fully paid, or genuine credit partial.
-     * Use for cash drawer / payment-method mix. Fake non-credit underpayments are excluded.
+     * Sales that took any tender on this session — including genuine partial / credit input.
+     * Use for cash drawer / payment-method mix. Not for ORDTTL.
      *
      * @param  Builder|\Illuminate\Database\Eloquent\Builder  $query
      */
@@ -64,36 +65,8 @@ class TillReportMetrics
         $prefix = $alias === '' ? '' : rtrim($alias, '.').'.';
         $statusCol = "{$prefix}status";
         $paid = "{$prefix}amount_paid";
-        $total = "{$prefix}order_total";
-        $credit = "{$prefix}is_credit_sale";
         $query->whereNotIn($statusCol, ['cancelled', 'expired', 'held', 'draft']);
         $query->whereRaw("COALESCE({$paid}, 0) > ?", [self::MIN_COLLECTED]);
-        $query->where(function ($inner) use ($paid, $total, $credit) {
-            $inner->whereRaw(
-                "COALESCE({$paid}, 0) + ? >= COALESCE({$total}, 0)",
-                [self::MIN_COLLECTED],
-            )->orWhere($credit, 1);
-        });
-    }
-
-    /**
-     * Credit sales with a partial tender (amount paid, balance still outstanding).
-     * Used to add SUM(amount_paid) into ORDTTL without the unpaid balance.
-     *
-     * @param  Builder|\Illuminate\Database\Eloquent\Builder  $query
-     */
-    public function applyCreditPartialSalesFilter($query, string $alias = ''): void
-    {
-        $prefix = $alias === '' ? '' : rtrim($alias, '.').'.';
-        $paid = "{$prefix}amount_paid";
-        $total = "{$prefix}order_total";
-        $credit = "{$prefix}is_credit_sale";
-        $query->where($credit, 1);
-        $query->whereRaw("COALESCE({$paid}, 0) > ?", [self::MIN_COLLECTED]);
-        $query->whereRaw(
-            "COALESCE({$paid}, 0) + ? < COALESCE({$total}, 0)",
-            [self::MIN_COLLECTED],
-        );
     }
 
     /** Raw SQL predicate for fully collected sales (alias optional, e.g. "s."). */

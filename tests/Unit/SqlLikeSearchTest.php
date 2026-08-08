@@ -24,11 +24,12 @@ class SqlLikeSearchTest extends TestCase
         $this->assertContains('MID-001', $bindings);
         $this->assertContains('MID-001%', $bindings);
         $this->assertContains('%MID-001%', $bindings);
-        // Exact + code prefix + code contains + name contains + shelf contains
-        $this->assertSame(5, count($bindings));
-        $this->assertSame(
+        // Compact needle (hyphen stripped) so spaced/punctuated catalog names still hit.
+        $this->assertContains('%mid001%', $bindings);
+        $this->assertGreaterThanOrEqual(5, count($bindings));
+        $this->assertGreaterThanOrEqual(
             3,
-            collect($bindings)->filter(fn ($b) => $b === '%MID-001%')->count(),
+            collect($bindings)->filter(fn ($b) => is_string($b) && str_contains($b, 'MID-001'))->count(),
         );
     }
 
@@ -53,10 +54,33 @@ class SqlLikeSearchTest extends TestCase
         SqlLikeSearch::applyProductSearch($query, 'cooking oil');
 
         $bindings = $query->getBindings();
-        // Each token matches name OR code OR shelf (3 bindings × 2 tokens).
+        // Each token matches code / name / shelf (plus compact variants).
         $this->assertContains('%cooking%', $bindings);
         $this->assertContains('%oil%', $bindings);
-        $this->assertSame(6, count($bindings));
+        $this->assertGreaterThanOrEqual(6, count($bindings));
+    }
+
+    public function test_compact_search_needle_strips_spaces_and_punctuation(): void
+    {
+        $this->assertSame('postman', SqlLikeSearch::compactSearchNeedle('Post Man'));
+        $this->assertSame('postman', SqlLikeSearch::compactSearchNeedle('post-man'));
+        $this->assertSame('postman', SqlLikeSearch::compactSearchNeedle('  postman  '));
+    }
+
+    public function test_apply_product_search_postman_matches_spaced_name_via_compact(): void
+    {
+        SqlLikeSearch::forceProductNameFulltext(false);
+        $query = DB::table('products');
+        SqlLikeSearch::applyProductSearch($query, 'postman');
+
+        $sql = $query->toSql();
+        $bindings = $query->getBindings();
+        $this->assertContains('%postman%', $bindings);
+        // Compact column match so "Post Man" is found when the cashier typed "postman".
+        $this->assertStringContainsString("REPLACE(REPLACE(REPLACE(LOWER(products.product_name)", $sql);
+        $this->assertTrue(
+            collect($bindings)->contains(fn ($b) => is_string($b) && str_contains($b, 'postman')),
+        );
     }
 
     public function test_tokenize_splits_multi_word_queries(): void

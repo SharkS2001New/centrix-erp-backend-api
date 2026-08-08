@@ -99,7 +99,26 @@ class SqlLikeSearch
     }
 
     /**
+     * Collapse spaces / punctuation the way POS client search does ("post man" ↔ "postman").
+     */
+    public static function compactSearchNeedle(string $term): string
+    {
+        $compact = preg_replace('/[\s\-_\/.]+/u', '', mb_strtolower(trim($term))) ?? '';
+
+        return $compact;
+    }
+
+    /**
+     * SQL expression that strips spaces / hyphens / underscores from a column (MySQL / SQLite).
+     */
+    protected static function compactColumnSql(string $column): string
+    {
+        return "REPLACE(REPLACE(REPLACE(LOWER({$column}), ' ', ''), '-', ''), '_', '')";
+    }
+
+    /**
      * Match product_name via ngram FULLTEXT when available, else LIKE contains.
+     * Also matches spacing-insensitive compact form so "postman" finds "Post Man".
      *
      * @param  EloquentBuilder<mixed>|QueryBuilder  $inner
      */
@@ -110,17 +129,50 @@ class SqlLikeSearch
         string $containsLike,
     ): void {
         $ftToken = self::escapeFulltextBooleanToken($token);
+        $compact = self::compactSearchNeedle($token);
+        $compactLike = $compact !== '' && mb_strlen($compact) >= 3
+            ? '%'.self::escape($compact).'%'
+            : null;
+
         if (self::canUseProductNameFulltext() && mb_strlen($ftToken) >= 2) {
             // BOOLEAN MODE + ngram: substring-friendly; keep LIKE as OR for safety on odd tokens.
-            $inner->orWhere(function ($name) use ($nameColumn, $ftToken, $containsLike) {
+            $inner->orWhere(function ($name) use ($nameColumn, $ftToken, $containsLike, $compactLike) {
                 $name->whereRaw('MATCH('.$nameColumn.') AGAINST(? IN BOOLEAN MODE)', [$ftToken])
                     ->orWhere($nameColumn, 'like', $containsLike);
+                if ($compactLike !== null) {
+                    $name->orWhereRaw(self::compactColumnSql($nameColumn).' LIKE ?', [$compactLike]);
+                }
             });
 
             return;
         }
 
-        $inner->orWhere($nameColumn, 'like', $containsLike);
+        $inner->orWhere(function ($name) use ($nameColumn, $containsLike, $compactLike) {
+            $name->where($nameColumn, 'like', $containsLike);
+            if ($compactLike !== null) {
+                $name->orWhereRaw(self::compactColumnSql($nameColumn).' LIKE ?', [$compactLike]);
+            }
+        });
+    }
+
+    /**
+     * Spacing-insensitive match on product_code / shelf (postman ↔ post-man).
+     *
+     * @param  EloquentBuilder<mixed>|QueryBuilder  $inner
+     */
+    protected static function orWhereCompactColumn(
+        EloquentBuilder|QueryBuilder $inner,
+        string $column,
+        string $token,
+    ): void {
+        $compact = self::compactSearchNeedle($token);
+        if ($compact === '' || mb_strlen($compact) < 3) {
+            return;
+        }
+        $inner->orWhereRaw(
+            self::compactColumnSql($column).' LIKE ?',
+            ['%'.self::escape($compact).'%'],
+        );
     }
 
     /**
@@ -170,9 +222,11 @@ class SqlLikeSearch
                 $amount = self::parseAmountSearchTerm($token);
                 $query->where(function ($inner) use ($contains, $codeColumn, $nameColumn, $shelfColumn, $priceColumn, $amount, $token) {
                     $inner->where($codeColumn, 'like', $contains);
+                    self::orWhereCompactColumn($inner, $codeColumn, $token);
                     self::orWhereProductName($inner, $nameColumn, $token, $contains);
                     if ($shelfColumn) {
                         $inner->orWhere($shelfColumn, 'like', $contains);
+                        self::orWhereCompactColumn($inner, $shelfColumn, $token);
                     }
                     self::orWhereProductUnitPrice($inner, $priceColumn, $amount);
                 });
@@ -196,9 +250,11 @@ class SqlLikeSearch
                     ->orWhere($codeColumn, 'like', $prefix)
                     // Mid-string name/code (e.g. "unia" → "Gunia", partial SKUs).
                     ->orWhere($codeColumn, 'like', $contains);
+                self::orWhereCompactColumn($inner, $codeColumn, $term);
                 self::orWhereProductName($inner, $nameColumn, $term, $contains);
                 if ($shelfColumn) {
                     $inner->orWhere($shelfColumn, 'like', $contains);
+                    self::orWhereCompactColumn($inner, $shelfColumn, $term);
                 }
                 self::orWhereProductUnitPrice($inner, $priceColumn, $amount);
 
@@ -206,9 +262,11 @@ class SqlLikeSearch
             }
 
             $inner->where($codeColumn, 'like', $contains);
+            self::orWhereCompactColumn($inner, $codeColumn, $term);
             self::orWhereProductName($inner, $nameColumn, $term, $contains);
             if ($shelfColumn) {
                 $inner->orWhere($shelfColumn, 'like', $contains);
+                self::orWhereCompactColumn($inner, $shelfColumn, $term);
             }
             self::orWhereProductUnitPrice($inner, $priceColumn, $amount);
         });

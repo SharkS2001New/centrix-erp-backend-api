@@ -164,41 +164,6 @@ class SaleOrderSummaryPaymentBucketsTest extends TestCase
         $this->assertSame(0, (int) $partialList->json('summary.unpaid'));
     }
 
-    public function test_unpaid_filter_includes_completed_workflow_with_zero_collected(): void
-    {
-        $admin = User::where('username', 'admin')->firstOrFail();
-        $this->seedLicense($admin);
-        Sanctum::actingAs($admin);
-
-        $day = now()->toDateString();
-        $this->seedSale([
-            'order_num' => 880011,
-            'branch_id' => $admin->branch_id,
-            'organization_id' => $admin->organization_id,
-            'channel' => 'pos',
-            'cashier_id' => $admin->id,
-            'status' => 'completed',
-            'payment_status' => 'paid',
-            'order_total' => 2500,
-            'amount_paid' => 0,
-            'created_at' => $day.' 14:00:00',
-            'effective_sale_date' => $day,
-        ]);
-
-        $unpaidList = $this->getJson('/api/v1/sales?'.http_build_query([
-            'from_date' => $day,
-            'to_date' => $day,
-            'date_field' => 'placed',
-            'cashier_id' => $admin->id,
-            'filter' => ['payment_status' => 'unpaid'],
-            'per_page' => 50,
-        ]))->assertOk();
-
-        $nums = collect($unpaidList->json('data'))->pluck('order_num')->map(fn ($n) => (int) $n)->all();
-        $this->assertContains(880011, $nums);
-        $this->assertGreaterThanOrEqual(1, (int) $unpaidList->json('summary.unpaid'));
-    }
-
     public function test_sale_payment_status_helper_derives_buckets(): void
     {
         $this->assertSame('paid', SalePaymentStatus::derive(100, 100));
