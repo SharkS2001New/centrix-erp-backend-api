@@ -65,6 +65,7 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction \
     && composer show predis/predis >/dev/null
 
 COPY opcache.ini /usr/local/etc/php/conf.d/opcache.ini
+COPY uploads.ini /usr/local/etc/php/conf.d/uploads.ini
 COPY docker-bootstrap.sh /usr/local/bin/docker-bootstrap.sh
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-bootstrap.sh /usr/local/bin/docker-entrypoint.sh
