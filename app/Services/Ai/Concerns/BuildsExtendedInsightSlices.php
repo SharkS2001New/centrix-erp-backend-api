@@ -1105,7 +1105,7 @@ trait BuildsExtendedInsightSlices
         $rows = DB::table('sales')
             ->where('organization_id', $organizationId)
             ->whereNotIn('status', ['cancelled', 'draft', 'held', 'expired'])
-            ->whereIn('payment_status', ['unpaid', 'partial', 'partially_paid'])
+            ->whereRaw('(COALESCE(order_total, 0) - COALESCE(amount_paid, 0)) > 0.01')
             ->whereRaw('DATE(COALESCE(completed_at, created_at)) BETWEEN ? AND ?', [$from, $to])
             ->selectRaw('COUNT(*) as order_count, COALESCE(SUM(GREATEST(order_total - amount_paid, 0)), 0) as balance_due')
             ->first();

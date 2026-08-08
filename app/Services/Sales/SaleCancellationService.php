@@ -52,8 +52,10 @@ class SaleCancellationService
 
             // Keep pos_order_num on cancelled sales so Cash Sales # stays consumed
             // (never reallocated — sequence continues at N+1 locally and online).
+            // Reset payment_status so cancelled ghosts cannot look "partial" in stale indexes.
             $sale->update([
                 'status' => 'cancelled',
+                'payment_status' => 'unpaid',
                 'cancelled_at' => now(),
                 'cancelled_by' => $user->id,
                 'stock_balanced' => 0,

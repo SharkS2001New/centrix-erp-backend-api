@@ -308,7 +308,7 @@ class ReportController extends Controller
 
         $creditOutstanding = (float) DB::table('sales as s')
             ->where('s.is_credit_sale', 1)
-            ->whereIn('s.payment_status', ['unpaid', 'partial'])
+            ->whereRaw('(COALESCE(s.order_total, 0) - COALESCE(s.amount_paid, 0)) > 0.01')
             ->whereIn('s.status', $metricStatuses)
             ->whereNotNull('s.customer_num')
             ->when($orgId, fn ($q) => $q->where('s.organization_id', $orgId))

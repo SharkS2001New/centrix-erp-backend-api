@@ -792,7 +792,8 @@ class TillOperationsController extends Controller
     {
         $tillMetrics = app(TillReportMetrics::class);
 
-        // Cash tender on THIS session's paid sales only (not debtor collections on other sales).
+        // Cash tender on THIS session — fully paid and genuine partial/credit input.
+        // ORDTTL stays fully-paid-only; drawer cash must include partial tenders taken here.
         $fromPaymentsQ = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
@@ -800,7 +801,7 @@ class TillOperationsController extends Controller
             ->where('s.float_session_id', $floatSessionId)
             ->whereIn('s.status', $metricStatuses)
             ->where('pm.method_code', 'CASH');
-        $tillMetrics->applyCollectedSalesFilter($fromPaymentsQ, 's');
+        $tillMetrics->applySessionTenderSalesFilter($fromPaymentsQ, 's');
         $fromPayments = (float) $fromPaymentsQ->sum('sp.amount');
 
         $legacyCashQ = DB::table('sales as s')
@@ -812,7 +813,7 @@ class TillOperationsController extends Controller
                     ->whereColumn('sp.sale_id', 's.id')
                     ->whereNotNull('sp.float_session_id');
             });
-        $tillMetrics->applyCollectedSalesFilter($legacyCashQ, 's');
+        $tillMetrics->applySessionTenderSalesFilter($legacyCashQ, 's');
         $legacyCash = (float) $legacyCashQ->sum('s.cash');
 
         $cash = $fromPayments + $legacyCash;
@@ -840,7 +841,7 @@ class TillOperationsController extends Controller
         $columnAggQ = DB::table('sales as s')
             ->where('s.float_session_id', $floatSessionId)
             ->whereIn('s.status', $metricStatuses);
-        $tillMetrics->applyCollectedSalesFilter($columnAggQ, 's');
+        $tillMetrics->applySessionTenderSalesFilter($columnAggQ, 's');
         $columnAgg = $columnAggQ
             ->selectRaw('
                 COALESCE(SUM(s.cash), 0) as cash,
@@ -863,14 +864,15 @@ class TillOperationsController extends Controller
 
         $byMethod = [];
 
-        // Tender mix for THIS session's paid sales only — debtor collections stay out of payment summary.
+        // Tender mix for THIS session (paid + genuine partial/credit input). Debtor
+        // collections on other sales stay out of this payment summary.
         $paymentRowsQ = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
             ->where('sp.float_session_id', $floatSessionId)
             ->where('s.float_session_id', $floatSessionId)
             ->whereIn('s.status', $metricStatuses);
-        $tillMetrics->applyCollectedSalesFilter($paymentRowsQ, 's');
+        $tillMetrics->applySessionTenderSalesFilter($paymentRowsQ, 's');
         $paymentRows = $paymentRowsQ
             ->selectRaw('pm.method_code, pm.method_name, COALESCE(SUM(sp.amount), 0) as total')
             ->groupBy('pm.method_code', 'pm.method_name')

@@ -76,10 +76,7 @@ class DebtReminderService
             ->where('organization_id', $organization->id)
             ->whereNotNull('customer_num')
             ->whereNotIn('status', ['cancelled', 'expired', 'draft', 'held'])
-            ->where(function ($q) {
-                $q->whereIn('payment_status', ['unpaid', 'partial'])
-                    ->orWhereRaw('(COALESCE(order_total, 0) - COALESCE(amount_paid, 0)) > 0.01');
-            })
+            ->whereRaw('(COALESCE(order_total, 0) - COALESCE(amount_paid, 0)) > 0.01')
             ->where(function ($q) use ($cutoff) {
                 $q->where(function ($inner) use ($cutoff) {
                     $inner->whereNotNull('completed_at')->where('completed_at', '<=', $cutoff);

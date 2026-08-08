@@ -555,9 +555,10 @@ class CheckoutController extends Controller
                 && empty($input['save_only'])
                 && in_array((string) $cart->channel, ['pos', 'backend'], true)
             ) {
-                // Offline / local-first POS: credit ("I") is blocked client-side. Always settle
-                // the full cash due so cash-rounding or server line reprice cannot leave
-                // payment_status=partial when the cashier completed a paid sale.
+                // Offline / local-first POS: non-credit sales always settle in full so
+                // cash-rounding or server line reprice cannot leave payment_status=partial
+                // when the cashier completed a paid Cash/M-Pesa/bank sale. Credit may stay
+                // unpaid or partially paid from pay_now + payment_splits.
                 $payNow = $cashDue;
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             } else {

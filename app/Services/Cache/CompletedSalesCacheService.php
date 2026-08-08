@@ -344,6 +344,21 @@ class CompletedSalesCacheService
     {
         $mobileService = app(MobileSalesService::class);
 
+        // Prefer live eTIMS payload over a stale cached kra_response (failed/empty row).
+        $sale->loadMissing('kraResponse');
+        $liveKra = $sale->kraResponse;
+        $cachedKra = is_array($cached['kra_response'] ?? null) ? $cached['kra_response'] : null;
+        $liveLink = is_string($liveKra?->signature_link ?? null)
+            ? trim((string) $liveKra->signature_link)
+            : '';
+        $cachedLink = is_string($cachedKra['signature_link'] ?? null)
+            ? trim((string) $cachedKra['signature_link'])
+            : '';
+
+        if ($liveKra && ($liveLink !== '' || $cachedKra === null || $cachedLink === '')) {
+            $cached['kra_response'] = $liveKra->toArray();
+        }
+
         return array_merge($cached, $mobileService->orderCapabilityFlags($sale, $user));
     }
 
@@ -360,10 +375,19 @@ class CompletedSalesCacheService
         $status = (string) $sale->status;
         $channel = $sale->channel ?: 'backend';
 
-        // Reattach kra_response for thermal receipt QR when older cache entries omit it.
+        // Prefer live eTIMS payload over a stale cached kra_response (failed/empty row).
         $sale->loadMissing('kraResponse');
-        if ($sale->kraResponse && empty($cached['kra_response'])) {
-            $cached['kra_response'] = $sale->kraResponse->toArray();
+        $liveKra = $sale->kraResponse;
+        $cachedKra = is_array($cached['kra_response'] ?? null) ? $cached['kra_response'] : null;
+        $liveLink = is_string($liveKra?->signature_link ?? null)
+            ? trim((string) $liveKra->signature_link)
+            : '';
+        $cachedLink = is_string($cachedKra['signature_link'] ?? null)
+            ? trim((string) $cachedKra['signature_link'])
+            : '';
+
+        if ($liveKra && ($liveLink !== '' || $cachedKra === null || $cachedLink === '')) {
+            $cached['kra_response'] = $liveKra->toArray();
         }
 
         return array_merge($cached, [

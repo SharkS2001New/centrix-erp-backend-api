@@ -401,6 +401,6 @@ class SaleMergeService
             return 'paid';
         }
 
-        return 'partially_paid';
+        return 'partial';
     }
 }

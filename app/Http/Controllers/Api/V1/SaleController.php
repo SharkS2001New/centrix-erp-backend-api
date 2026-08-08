@@ -6,6 +6,7 @@ use App\Models\Sale;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\ErpContext;
 use App\Services\Erp\OrderWorkflowService;
+use App\Support\SalePaymentStatus;
 use App\Support\SalesOrderQueuePermissions;
 use App\Support\SqlLikeSearch;
 use App\Services\Sales\BackofficeOrderLineEditService;
@@ -59,7 +60,9 @@ class SaleController extends BaseResourceController
         $query->with(['cashier:id,username,full_name', 'customer:customer_num,customer_name,route_id,organization_id']);
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
-            if ($col === 'status') {
+            // status + payment_status use dedicated amount/workflow filters below —
+            // never equality on the denormalized payment_status column.
+            if ($col === 'status' || $col === 'payment_status') {
                 continue;
             }
             if (in_array($col, $this->filterableColumns(), true)) {
@@ -284,9 +287,8 @@ class SaleController extends BaseResourceController
         }
 
         $paymentStatusFilter = data_get($request->input('filter', []), 'payment_status');
-        if (in_array($paymentStatusFilter, ['unpaid', 'partial'], true)) {
-            $query->whereNotIn('sales.status', ['completed', 'cancelled', 'expired']);
-            $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
+        if (is_string($paymentStatusFilter) && trim($paymentStatusFilter) !== '') {
+            SalePaymentStatus::applyListFilter($query, $paymentStatusFilter);
         }
 
         if ($q = $request->input('q')) {
@@ -364,14 +366,19 @@ class SaleController extends BaseResourceController
     {
         // Joined list queries may carry select('sales.*'). selectRaw() appends columns and breaks
         // ONLY_FULL_GROUP_BY; drop any prior select/order before aggregating.
+        // Buckets use amount_paid vs order_total — never the denormalized payment_status label.
+        $active = SalePaymentStatus::activeStatusSql('sales.');
+        $paid = SalePaymentStatus::isPaidSql('sales.');
+        $partial = SalePaymentStatus::isPartialSql('sales.');
+        $unpaid = SalePaymentStatus::isUnpaidSql('sales.');
         $row = (clone $query)
             ->cloneWithout(['columns', 'orders'])
             ->selectRaw("
-                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN 1 ELSE 0 END) as total,
-                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') THEN COALESCE(sales.order_total, 0) ELSE 0 END) as revenue,
-                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) = 'paid' THEN 1 ELSE 0 END) as paid,
-                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) IN ('partial', 'partially_paid') THEN 1 ELSE 0 END) as partial,
-                SUM(CASE WHEN sales.status NOT IN ('cancelled', 'expired') AND LOWER(COALESCE(sales.payment_status, '')) NOT IN ('paid', 'partial', 'partially_paid') THEN 1 ELSE 0 END) as unpaid,
+                SUM(CASE WHEN {$active} THEN 1 ELSE 0 END) as total,
+                SUM(CASE WHEN {$active} THEN COALESCE(sales.order_total, 0) ELSE 0 END) as revenue,
+                SUM(CASE WHEN {$active} AND {$paid} THEN 1 ELSE 0 END) as paid,
+                SUM(CASE WHEN {$active} AND {$partial} THEN 1 ELSE 0 END) as partial,
+                SUM(CASE WHEN {$active} AND {$unpaid} THEN 1 ELSE 0 END) as unpaid,
                 SUM(CASE WHEN sales.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
                 SUM(CASE WHEN sales.status = 'expired' THEN 1 ELSE 0 END) as expired
             ")

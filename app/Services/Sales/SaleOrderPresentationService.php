@@ -10,6 +10,7 @@ use App\Models\User;
 use App\Services\Auth\UserPermissionService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Notifications\ActionRequestService;
+use App\Support\SalePaymentStatus;
 use Illuminate\Support\Collection;
 
 class SaleOrderPresentationService
@@ -173,6 +174,15 @@ class SaleOrderPresentationService
 
     protected function applyPresentationAttributes(Sale $sale, User $user, ?ActionRequest $pendingRequest): Sale
     {
+        // API clients always see amount-derived payment_status, even if the column lagged.
+        $sale->setAttribute(
+            'payment_status',
+            SalePaymentStatus::resolve(
+                (string) ($sale->status ?? ''),
+                (float) ($sale->order_total ?? 0),
+                (float) ($sale->amount_paid ?? 0),
+            ),
+        );
         $sale->setAttribute('total_discount', $this->totalDiscount($sale));
         $sale->setAttribute('action_request', $this->presentActionRequest($pendingRequest, $user));
         $sale->setAttribute('discount_approval_reason', $this->discountApprovalReason($sale, $pendingRequest));

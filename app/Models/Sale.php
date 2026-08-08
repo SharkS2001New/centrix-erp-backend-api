@@ -26,7 +26,23 @@ class Sale extends Model
 
     public function kraResponse(): HasOne
     {
-        return $this->hasOne(KraResponse::class, 'sale_id');
+        // Multiple kra_responses rows can exist per sale (soft-fail then success,
+        // credit notes, retries). Always prefer the newest successful row that
+        // still has an eTIMS verification link so thermal/A4 print gets the QR.
+        return $this->hasOne(KraResponse::class, 'sale_id')->ofMany(
+            ['id' => 'max'],
+            function ($query) {
+                $query->whereRaw("LOWER(COALESCE(status, '')) = 'success'")
+                    ->whereNotNull('signature_link')
+                    ->where('signature_link', '!=', '');
+            },
+        );
+    }
+
+    /** All fiscal rows for a sale (admin / retry UI). */
+    public function kraResponses()
+    {
+        return $this->hasMany(KraResponse::class, 'sale_id');
     }
 
     public function cashier()

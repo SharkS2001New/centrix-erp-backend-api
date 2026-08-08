@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\KraResponse;
 use App\Models\Sale;
+use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\Erp\ErpContext;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
@@ -270,6 +271,9 @@ class KraOperationsController extends Controller
             'status' => 'success',
             'error_message' => null,
         ]);
+
+        // Drop completed-sale detail cache so reprint picks up the new signature_link.
+        app(CompletedSalesCacheService::class)->invalidateForSale($sale);
 
         return response()->json([
             'message' => 'KRA receipt submitted successfully.',

@@ -10,11 +10,16 @@ use App\Services\Erp\ErpContext;
 use App\Services\Sales\SaleRouteResolver;
 
 use App\Support\EffectiveSaleDate;
+use App\Support\SalePaymentStatus;
 
 class SaleObserver
 {
     public function saving(Sale $sale): void
     {
+        // payment_status is a denormalized cache — always rewrite from amounts so
+        // badges, reminders, and any leftover label readers stay truthful.
+        SalePaymentStatus::syncModel($sale);
+
         if (EffectiveSaleDate::columnExists()) {
             $sale->effective_sale_date = EffectiveSaleDate::resolve(
                 $sale->completed_at ? \Carbon\Carbon::parse($sale->completed_at) : null,
