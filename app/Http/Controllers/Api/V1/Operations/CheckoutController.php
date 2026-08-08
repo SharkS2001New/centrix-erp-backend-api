@@ -550,15 +550,13 @@ class CheckoutController extends Controller
                     $amountPaid = round(min(max(0, $priorPaid + $adjustmentNet), $total), 2);
                 }
             } elseif (
-                $offlineOrder
-                && ! $isCredit
+                ! $isCredit
                 && empty($input['save_only'])
                 && in_array((string) $cart->channel, ['pos', 'backend'], true)
             ) {
-                // Offline / local-first POS: non-credit sales always settle in full so
-                // cash-rounding or server line reprice cannot leave payment_status=partial
-                // when the cashier completed a paid Cash/M-Pesa/bank sale. Credit may stay
-                // unpaid or partially paid from pay_now + payment_splits.
+                // Non-credit POS/backend (online or offline): always settle in full so
+                // rounding / reprice cannot leave a fake payment_status=partial on
+                // Cash/M-Pesa/bank sales. Only credit may stay unpaid or partially paid.
                 $payNow = $cashDue;
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
             } else {

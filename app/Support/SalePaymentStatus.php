@@ -135,9 +135,11 @@ class SalePaymentStatus
     {
         $bucket = self::normalizeLabel($paymentStatus);
         $query->whereRaw(self::activeStatusSql('sales.'));
-        // Cancelled/completed terminal rows never belong on unpaid/partial queues.
+        // Cancelled / expired never belong on unpaid/partial collection queues.
+        // Do not exclude workflow "completed"/"paid" — POS can leave those labels
+        // while amount_paid is still short (that is exactly what these queues must surface).
         if ($bucket === self::UNPAID || $bucket === self::PARTIAL) {
-            $query->whereNotIn('sales.status', ['completed', 'cancelled', 'expired']);
+            $query->whereNotIn('sales.status', ['cancelled', 'expired']);
         }
 
         match ($bucket) {

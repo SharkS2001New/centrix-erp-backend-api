@@ -674,7 +674,8 @@ class TillOperationsController extends Controller
         $metricStatuses = app(OrderWorkflowService::class)->metricSaleStatuses();
         $tillMetrics = app(TillReportMetrics::class);
 
-        // Paid/collected session sales only — unpaid credit must not inflate Total Sales.
+        // Paid/collected session sales — unpaid credit must not inflate Total Sales
+        // with the full bill. Genuine credit partials add amount_paid below.
         $salesBase = DB::table('sales')
             ->where('float_session_id', $floatSessionId)
             ->whereIn('status', $metricStatuses);
@@ -693,16 +694,34 @@ class TillOperationsController extends Controller
             ')
             ->first();
 
-        $saleIds = (clone $salesBase)->pluck('id');
+        $creditPartialBase = DB::table('sales')
+            ->where('float_session_id', $floatSessionId)
+            ->whereIn('status', $metricStatuses);
+        $tillMetrics->applyCreditPartialSalesFilter($creditPartialBase);
+        $creditPartialAgg = (clone $creditPartialBase)
+            ->selectRaw('
+                COUNT(*) as transactions,
+                COALESCE(SUM(amount_paid), 0) as paid,
+                COALESCE(SUM(order_discount), 0) as discounts
+            ')
+            ->first();
+
+        $saleIds = (clone $salesBase)->pluck('id')
+            ->merge((clone $creditPartialBase)->pluck('id'))
+            ->unique()
+            ->values();
 
         $refunds = $saleIds->isEmpty()
             ? 0
             : (float) DB::table('returns')->whereIn('sale_id', $saleIds)->sum('amount');
 
-        // Gross / ORDTTL = SUM(order_total) only. Edit top-ups and returns already
-        // revise order_total — do not subtract returns again (double-count).
-        $ordTtl = round((float) ($salesAgg->gross ?? 0), 2);
-        $discounts = (float) ($salesAgg->discounts ?? 0);
+        // Gross / ORDTTL = fully-paid order_totals + credit partial amount_paid only.
+        $ordTtl = round(
+            (float) ($salesAgg->gross ?? 0) + (float) ($creditPartialAgg->paid ?? 0),
+            2,
+        );
+        $discounts = (float) ($salesAgg->discounts ?? 0) + (float) ($creditPartialAgg->discounts ?? 0);
+        $transactions = (int) ($salesAgg->transactions ?? 0) + (int) ($creditPartialAgg->transactions ?? 0);
         $cashBreakdown = $this->sessionCashCollected($floatSessionId, $metricStatuses);
         $cash = (float) ($cashBreakdown['cash'] ?? 0);
         // Legacy DBTTL = debtor_payments.amount_paid collected by this cashier/session.
@@ -753,7 +772,7 @@ class TillOperationsController extends Controller
             'session' => $session,
             'float_entries' => $floatEntries,
             'sales' => [
-                'transactions' => (int) ($salesAgg->transactions ?? 0),
+                'transactions' => $transactions,
                 'gross_sales' => $ordTtl,
                 'net_sales' => $netSales,
                 'net' => $netSales,
@@ -792,8 +811,8 @@ class TillOperationsController extends Controller
     {
         $tillMetrics = app(TillReportMetrics::class);
 
-        // Cash tender on THIS session — fully paid and genuine partial/credit input.
-        // ORDTTL stays fully-paid-only; drawer cash must include partial tenders taken here.
+        // Cash on fully paid + genuine credit partials (amount actually taken).
+        // Fake non-credit shortfalls are excluded by the tender filter.
         $fromPaymentsQ = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
@@ -838,6 +857,8 @@ class TillOperationsController extends Controller
     {
         $tillMetrics = app(TillReportMetrics::class);
 
+        // Fully paid + genuine credit partial tenders (amount taken). Matches ORDTTL
+        // basis: unpaid balance stays out; fake non-credit shortfalls stay out.
         $columnAggQ = DB::table('sales as s')
             ->where('s.float_session_id', $floatSessionId)
             ->whereIn('s.status', $metricStatuses);
@@ -864,8 +885,6 @@ class TillOperationsController extends Controller
 
         $byMethod = [];
 
-        // Tender mix for THIS session (paid + genuine partial/credit input). Debtor
-        // collections on other sales stay out of this payment summary.
         $paymentRowsQ = DB::table('sale_payments as sp')
             ->join('payment_methods as pm', 'pm.id', '=', 'sp.payment_method_id')
             ->join('sales as s', 's.id', '=', 'sp.sale_id')
