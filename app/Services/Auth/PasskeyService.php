@@ -383,7 +383,7 @@ class PasskeyService
      */
     public function beginTwoFactorAssertion(string $mfaChallengeToken): array
     {
-        $payload = Cache::get($this->mfaChallengeKey($mfaChallengeToken));
+        $payload = AuthChallengeCache::get($this->mfaChallengeKey($mfaChallengeToken));
         if (! is_array($payload)) {
             throw ValidationException::withMessages([
                 'challenge_token' => ['This verification challenge has expired. Sign in again.'],
@@ -442,7 +442,7 @@ class PasskeyService
         }
 
         $mfaKey = $this->mfaChallengeKey((string) $cached['mfa_challenge_token']);
-        $mfaPayload = Cache::get($mfaKey);
+        $mfaPayload = AuthChallengeCache::get($mfaKey);
         if (! is_array($mfaPayload)) {
             throw ValidationException::withMessages([
                 'credential' => ['This verification challenge has expired. Sign in again.'],
@@ -455,7 +455,7 @@ class PasskeyService
             (int) $cached['user_id'],
         );
 
-        Cache::forget($mfaKey);
+        AuthChallengeCache::forget($mfaKey);
 
         return [
             'user_id' => (int) ($mfaPayload['canonical_user_id'] ?? $mfaPayload['user_id']),

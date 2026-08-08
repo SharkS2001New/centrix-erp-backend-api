@@ -5,7 +5,6 @@ namespace App\Services\Auth;
 use App\Models\User;
 use App\Models\WebAuthnCredential;
 use App\Services\Platform\PlatformMailSettingsResolver;
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Crypt;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
@@ -86,7 +85,9 @@ class TwoFactorService
                 $this->sendEmailCode($user, $code, 'login');
             }
 
-        Cache::put($this->challengeKey($token), $payload, now()->addMinutes(10));
+        // Keep challenges in the database cache store (not Redis/array) so verify
+        // always finds what login wrote — Manager app was seeing false "expired".
+        AuthChallengeCache::put($this->challengeKey($token), $payload, now()->addMinutes(15));
 
         return [
             'mfa_required' => true,
@@ -94,7 +95,7 @@ class TwoFactorService
             'challenge_token' => $token,
             'method' => $user->two_factor_method,
             'email_hint' => $this->emailHint($user->email),
-            'expires_in' => 600,
+            'expires_in' => 900,
             'passkey_available' => app(PasskeyService::class)->userHasPasskeys($user),
         ];
     }
@@ -105,7 +106,7 @@ class TwoFactorService
     public function verifyLoginChallenge(string $challengeToken, string $code): array
     {
         $key = $this->challengeKey($challengeToken);
-        $payload = Cache::get($key);
+        $payload = AuthChallengeCache::get($key);
         if (! is_array($payload)) {
             throw ValidationException::withMessages([
                 'code' => ['This verification challenge has expired. Sign in again.'],
@@ -114,7 +115,7 @@ class TwoFactorService
 
         $user = User::query()->find($payload['user_id'] ?? 0);
         if (! $user || ! $this->isEnabled($user)) {
-            Cache::forget($key);
+            AuthChallengeCache::forget($key);
             throw ValidationException::withMessages([
                 'code' => ['Two-factor authentication is no longer available for this account.'],
             ]);
@@ -126,7 +127,7 @@ class TwoFactorService
             ]);
         }
 
-        Cache::forget($key);
+        AuthChallengeCache::forget($key);
 
         return [
             'user_id' => (int) ($payload['canonical_user_id'] ?? $payload['user_id']),
@@ -140,7 +141,7 @@ class TwoFactorService
     public function resendLoginEmailCode(string $challengeToken): array
     {
         $key = $this->challengeKey($challengeToken);
-        $payload = Cache::get($key);
+        $payload = AuthChallengeCache::get($key);
         if (! is_array($payload) || ($payload['method'] ?? '') !== self::METHOD_EMAIL) {
             throw ValidationException::withMessages([
                 'challenge_token' => ['This verification challenge has expired. Sign in again.'],
@@ -156,7 +157,7 @@ class TwoFactorService
 
         $code = (string) random_int(100000, 999999);
         $payload['email_code_hash'] = Hash::make($code);
-        Cache::put($key, $payload, now()->addMinutes(10));
+        AuthChallengeCache::put($key, $payload, now()->addMinutes(15));
         if (! PlatformMailSettingsResolver::canDeliverAuthMail()) {
             throw ValidationException::withMessages([
                 'email' => [
@@ -169,7 +170,7 @@ class TwoFactorService
         return [
             'ok' => true,
             'email_hint' => $this->emailHint($user->email),
-            'expires_in' => 600,
+            'expires_in' => 900,
         ];
     }
 
@@ -195,9 +196,9 @@ class TwoFactorService
         }
 
         $code = (string) random_int(100000, 999999);
-        Cache::put($this->setupKey($user->id, self::METHOD_EMAIL), [
+        AuthChallengeCache::put($this->setupKey($user->id, self::METHOD_EMAIL), [
             'code_hash' => Hash::make($code),
-        ], now()->addMinutes(10));
+        ], now()->addMinutes(15));
 
         $this->sendEmailCode($user, $code, 'setup');
 
@@ -205,13 +206,13 @@ class TwoFactorService
             'ok' => true,
             'method' => self::METHOD_EMAIL,
             'email_hint' => $this->emailHint($user->email),
-            'expires_in' => 600,
+            'expires_in' => 900,
         ];
     }
 
     public function confirmEmailSetup(User $user, string $code): User
     {
-        $cached = Cache::get($this->setupKey($user->id, self::METHOD_EMAIL));
+        $cached = AuthChallengeCache::get($this->setupKey($user->id, self::METHOD_EMAIL));
         if (! is_array($cached) || empty($cached['code_hash'])) {
             throw ValidationException::withMessages([
                 'code' => ['Setup code expired. Request a new one.'],
@@ -230,7 +231,7 @@ class TwoFactorService
             'two_factor_confirmed_at' => now(),
         ])->save();
 
-        Cache::forget($this->setupKey($user->id, self::METHOD_EMAIL));
+        AuthChallengeCache::forget($this->setupKey($user->id, self::METHOD_EMAIL));
 
         return $user->fresh();
     }
@@ -239,7 +240,7 @@ class TwoFactorService
     {
         $this->assertMethodAllowed(self::METHOD_TOTP);
         $secret = $this->totp->generateSecret();
-        Cache::put($this->setupKey($user->id, self::METHOD_TOTP), [
+        AuthChallengeCache::put($this->setupKey($user->id, self::METHOD_TOTP), [
             'secret' => $secret,
         ], now()->addMinutes(15));
 
@@ -256,7 +257,7 @@ class TwoFactorService
 
     public function confirmTotpSetup(User $user, string $code): User
     {
-        $cached = Cache::get($this->setupKey($user->id, self::METHOD_TOTP));
+        $cached = AuthChallengeCache::get($this->setupKey($user->id, self::METHOD_TOTP));
         $secret = is_array($cached) ? (string) ($cached['secret'] ?? '') : '';
         if ($secret === '') {
             throw ValidationException::withMessages([
@@ -276,7 +277,7 @@ class TwoFactorService
             'two_factor_confirmed_at' => now(),
         ])->save();
 
-        Cache::forget($this->setupKey($user->id, self::METHOD_TOTP));
+        AuthChallengeCache::forget($this->setupKey($user->id, self::METHOD_TOTP));
 
         return $user->fresh();
     }
@@ -348,7 +349,7 @@ class TwoFactorService
             : 'Centrix ERP — your sign-in verification code';
         $body = "Hello {$user->full_name},\n\n"
             ."Your Centrix verification code is: {$code}\n\n"
-            ."This code expires in 10 minutes. If you did not request it, ignore this email.\n\n"
+            ."This code expires in 15 minutes. If you did not request it, ignore this email.\n\n"
             ."This is an automated message — please do not reply.\n";
 
         try {

@@ -105,6 +105,7 @@ class ManagerReportCatalogService
     /** @var list<string> */
     public const FEATURED_KEYS = [
         'daily-sales',
+        'eod-report',
         'items-currently-in-stock',
         'profit-loss',
         'top-debtors',

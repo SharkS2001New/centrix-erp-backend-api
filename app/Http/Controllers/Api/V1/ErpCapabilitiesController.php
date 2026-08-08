@@ -227,6 +227,7 @@ class ErpCapabilitiesController extends Controller
             return $payload;
         }
 
+        // Shared strip for both mobile apps — omit heavy backoffice-only blobs.
         unset(
             $payload['workspaces'],
             $payload['allow_org_provisioning'],
@@ -234,49 +235,66 @@ class ErpCapabilitiesController extends Controller
             $payload['whatsapp_orders'],
             $payload['platform_tab_workspace_enabled'],
             $payload['workflows'],
-            $payload['modules'],
             $payload['assigned_permissions'],
             $payload['channels'],
             $payload['allowed_login_channels'],
             $payload['platform_whatsapp_enabled'],
             $payload['industry'],
             $payload['industry_label'],
-            $payload['deployment_profile'],
-            $payload['profile_label'],
         );
 
         if ($channel === 'mobile') {
-            unset($payload['manager_app']);
+            // Field sales app: drop manager + org module maps (not used for gating there).
+            unset(
+                $payload['manager_app'],
+                $payload['modules'],
+                $payload['deployment_profile'],
+                $payload['profile_label'],
+            );
         }
+        // Manager channel keeps `modules`, `deployment_profile`, and `profile_label` so
+        // Centrix Manager can show POS / distribution / finance (e.g. End of Day report).
 
         if (isset($payload['module_settings']) && is_array($payload['module_settings'])) {
-            // Sales + distribution power mobile sales/driver; inventory/security for stock & session.
-            $keep = ['sales', 'distribution', 'inventory', 'general', 'security', 'notifications'];
-            $payload['module_settings'] = array_intersect_key(
-                $payload['module_settings'],
-                array_flip($keep),
-            );
+            if ($channel === 'mobile') {
+                // Sales + distribution power mobile sales/driver; inventory/security for stock & session.
+                $keep = ['sales', 'distribution', 'inventory', 'general', 'security', 'notifications'];
+                $payload['module_settings'] = array_intersect_key(
+                    $payload['module_settings'],
+                    array_flip($keep),
+                );
+            }
+            // Manager keeps full module_settings for org-aware dashboards and reports.
         }
 
         if (isset($payload['permissions']) && is_array($payload['permissions'])) {
-            $filtered = array_filter(
-                $payload['permissions'],
-                static function ($granted, $code) {
-                    if (! $granted) {
-                        return false;
-                    }
-                    $code = (string) $code;
+            if ($channel === 'mobile') {
+                $filtered = array_filter(
+                    $payload['permissions'],
+                    static function ($granted, $code) {
+                        if (! $granted) {
+                            return false;
+                        }
+                        $code = (string) $code;
 
-                    // Mobile app gates on mobile_* codes (+ sales.discounts.give for auto-approve).
-                    return str_starts_with($code, 'mobile')
-                        || $code === 'sales.discounts.give'
-                        || str_starts_with($code, 'approvals.')
-                        || str_starts_with($code, 'discount');
-                },
-                ARRAY_FILTER_USE_BOTH,
-            );
-            // Keep JSON object `{}` (not `[]`) so mobile clients parse permissions as a map.
-            $payload['permissions'] = $filtered === [] ? new \stdClass : $filtered;
+                        // Mobile app gates on mobile_* codes (+ sales.discounts.give for auto-approve).
+                        return str_starts_with($code, 'mobile')
+                            || $code === 'sales.discounts.give'
+                            || str_starts_with($code, 'approvals.')
+                            || str_starts_with($code, 'discount');
+                    },
+                    ARRAY_FILTER_USE_BOTH,
+                );
+                // Keep JSON object `{}` (not `[]`) so mobile clients parse permissions as a map.
+                $payload['permissions'] = $filtered === [] ? new \stdClass : $filtered;
+            } else {
+                // Manager: keep granted permissions only (reports / POS / admin codes).
+                $filtered = array_filter(
+                    $payload['permissions'],
+                    static fn ($granted) => (bool) $granted,
+                );
+                $payload['permissions'] = $filtered === [] ? new \stdClass : $filtered;
+            }
         }
 
         if (isset($payload['approval_permissions']) && is_array($payload['approval_permissions'])) {
