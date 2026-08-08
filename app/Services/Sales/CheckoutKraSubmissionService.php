@@ -4,7 +4,6 @@ namespace App\Services\Sales;
 
 use App\Models\KraResponse;
 use App\Models\Sale;
-use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\Erp\CapabilityGate;
 use App\Services\Kra\KraDeviceErrorTranslator;
 use App\Services\Kra\KraDeviceService;
@@ -26,13 +25,8 @@ class CheckoutKraSubmissionService
             return null;
         }
 
-        if ($sale->kraResponses()->whereRaw("LOWER(COALESCE(status, '')) = 'success'")->whereNotNull('signature_link')->where('signature_link', '!=', '')->exists()) {
-            return $sale->kraResponses()
-                ->whereRaw("LOWER(COALESCE(status, '')) = 'success'")
-                ->whereNotNull('signature_link')
-                ->where('signature_link', '!=', '')
-                ->latest('id')
-                ->first();
+        if ($sale->kraResponse()->where('status', 'success')->exists()) {
+            return $sale->kraResponse()->where('status', 'success')->latest('id')->first();
         }
 
         $sale->loadMissing('items');
@@ -109,7 +103,7 @@ class CheckoutKraSubmissionService
 
         $mapped = $result['response'] ?? [];
 
-        $row = KraResponse::create([
+        return KraResponse::create([
             'sale_id' => $sale->id,
             'organization_id' => (int) $sale->organization_id,
             'order_no' => $this->displayOrderNo($sale),
@@ -124,10 +118,6 @@ class CheckoutKraSubmissionService
             ]),
             'status' => 'success',
         ]);
-
-        app(CompletedSalesCacheService::class)->invalidateForSale($sale);
-
-        return $row;
     }
 
     /**
