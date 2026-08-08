@@ -1066,7 +1066,13 @@ class CheckoutController extends Controller
                 ? (bool) $input['submit_kra']
                 : null;
 
-            $eligibleForKra = ! $isParkedOrder && $orderStatus !== 'pending_approval';
+            // Offline / local-first outbox uploads: never fiscalize on sync — receipt
+            // already printed without QR. Online KRA-on sales do not use offline_order.
+            $offlineOrderUpload = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
+
+            $eligibleForKra = ! $isParkedOrder
+                && $orderStatus !== 'pending_approval'
+                && ! $offlineOrderUpload;
             $submitKra = $eligibleForKra
                 && KraFiscalPolicy::shouldFiscalizeSale(
                     $finance,

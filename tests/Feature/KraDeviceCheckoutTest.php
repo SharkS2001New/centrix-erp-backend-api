@@ -325,7 +325,6 @@ class KraDeviceCheckoutTest extends TestCase
             'customer_num' => $customer->customer_num,
             'pos_order_num' => 42,
             'pos_order_date' => now()->toDateString(),
-            'offline_order' => true,
         ])->assertCreated();
 
         Http::assertSent(function ($request) {
@@ -341,6 +340,50 @@ class KraDeviceCheckoutTest extends TestCase
         $this->assertDatabaseHas('kra_responses', [
             'order_no' => 42,
             'status' => 'success',
+        ]);
+    }
+
+    public function test_offline_order_checkout_does_not_fiscalize(): void
+    {
+        Http::fake([
+            '192.168.1.50:8010/*' => Http::response([
+                'success' => true,
+                'message' => 'OK',
+                'invoice_number' => 'CU-OFFLINE',
+                'Receipt Signature' => 'SIG-OFF',
+                'signature_link' => 'https://example.test/qr-off',
+                'serial_number' => 'DEJA02220240050',
+                'timestamp' => '2026-06-11T12:00:00',
+            ], 200),
+        ]);
+
+        $product = Product::with('vat')->first();
+        if (! $product->vat_id) {
+            $product->update(['vat_id' => Vat::first()->id]);
+        }
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $product->product_code,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'submit_kra' => true,
+            'pos_order_num' => 99,
+            'pos_order_date' => now()->toDateString(),
+            'offline_order' => true,
+            'client_sale_uuid' => 'offline-no-kra-'.uniqid(),
+        ])->assertCreated();
+
+        Http::assertNotSent(fn ($request) => str_contains($request->url(), '/api/complete-workflow'));
+        $this->assertDatabaseMissing('kra_responses', [
+            'order_no' => 99,
         ]);
     }
 }

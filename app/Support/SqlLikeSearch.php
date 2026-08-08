@@ -301,6 +301,24 @@ class SqlLikeSearch
             return;
         }
 
+        // Offline POS sync recovery: find the prior upload by client uuid / pos_sync_id
+        // so an edit-before-sync supersedes instead of posting a second live sale.
+        $isClientSaleUuid = (bool) preg_match(
+            '/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i',
+            $term,
+        );
+        $isPrevEditUuid = str_starts_with(strtolower($term), 'prev-edit-');
+        if ($isClientSaleUuid || $isPrevEditUuid) {
+            $query->where(function ($sub) use ($term) {
+                $sub->where('sales.fulfillment_meta->client_sale_uuid', $term)
+                    ->orWhere('sales.fulfillment_meta->offline_client_sale_uuid', $term)
+                    ->orWhere('sales.fulfillment_meta->pos_sync_id', $term)
+                    ->orWhere('sales.fulfillment_meta->pos_sync_id', 'like', $term.':%');
+            });
+
+            return;
+        }
+
         $escaped = self::escape($term);
         $like = '%'.$escaped.'%';
         $prefix = $escaped.'%';

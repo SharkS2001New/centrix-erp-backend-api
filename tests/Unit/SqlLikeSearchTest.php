@@ -94,6 +94,29 @@ class SqlLikeSearchTest extends TestCase
         $this->assertSame([34], $query->getBindings());
     }
 
+    public function test_apply_sales_order_search_client_sale_uuid_targets_fulfillment_meta(): void
+    {
+        $uuid = '550e8400-e29b-41d4-a716-446655440000';
+        $query = DB::table('sales');
+        SqlLikeSearch::applySalesOrderSearch($query, $uuid);
+
+        $bindings = $query->getBindings();
+        $this->assertContains($uuid, $bindings);
+        $this->assertContains($uuid.':%', $bindings);
+        $sql = $query->toSql();
+        $this->assertStringContainsString('fulfillment_meta', $sql);
+    }
+
+    public function test_apply_sales_order_search_prev_edit_uuid_targets_fulfillment_meta(): void
+    {
+        $query = DB::table('sales');
+        SqlLikeSearch::applySalesOrderSearch($query, 'prev-edit-42');
+
+        $bindings = $query->getBindings();
+        $this->assertContains('prev-edit-42', $bindings);
+        $this->assertContains('prev-edit-42:%', $bindings);
+    }
+
     public function test_apply_product_search_matches_unit_price_amount(): void
     {
         $query = DB::table('products');
