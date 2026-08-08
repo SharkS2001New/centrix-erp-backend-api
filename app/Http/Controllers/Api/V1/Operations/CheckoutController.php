@@ -491,6 +491,28 @@ class CheckoutController extends Controller
             $isPreviousOrderEditSettlement = (int) ($cart->superseded_sale_id ?? 0) > 0
                 && $appendPriorSale === null;
 
+            // Till cashiers may open Invoice (I) then change mind and pay Cash/M-Pesa/bank
+            // in full. Client pay_now covering the bill means this is not a credit sale —
+            // never book A/R from a stale is_credit_sale flag.
+            if (
+                $isCredit
+                && empty($input['save_only'])
+                && in_array((string) $cart->channel, ['pos', 'backend'], true)
+                && ! $isPreviousOrderEditSettlement
+            ) {
+                $clientTenderTowardBill = round(
+                    $appendPriorPaid
+                        + max(0, (float) ($input['pay_now'] ?? 0))
+                        + $voucherPayment
+                        + $pointsPayment
+                        + $mpesaOnCart,
+                    2,
+                );
+                if ($total > 0.01 && $clientTenderTowardBill + 0.01 >= $total) {
+                    $isCredit = false;
+                }
+            }
+
             if (! $isCredit && $payNow <= 0 && $cashDue > 0 && empty($input['save_only']) && ! $isPreviousOrderEditSettlement) {
                 if ($isMobileChannel) {
                     if ($mobileCheckout->shouldDefaultMobileSaveOnly(
@@ -549,6 +571,14 @@ class CheckoutController extends Controller
                 } else {
                     $amountPaid = round(min(max(0, $priorPaid + $adjustmentNet), $total), 2);
                 }
+                // External POS / backoffice till: non-credit edits must always be fully paid.
+                // Only an explicit credit sale may remain unpaid or partially paid after revise.
+                if (
+                    ! $isCredit
+                    && in_array((string) $cart->channel, ['pos', 'backend'], true)
+                ) {
+                    $amountPaid = $total;
+                }
             } elseif (
                 ! $isCredit
                 && empty($input['save_only'])
@@ -576,6 +606,19 @@ class CheckoutController extends Controller
                 $customerNum = LoyaltyCard::find($loyaltyCardId)?->customer_num;
             }
 
+            // Final till guard: any fully settled POS/backend sale is never credit A/R.
+            // Covers I→C/M/E/K where the client still sent is_credit_sale=true.
+            if (
+                $isCredit
+                && empty($input['save_only'])
+                && in_array((string) $cart->channel, ['pos', 'backend'], true)
+                && ! $isPreviousOrderEditSettlement
+                && $total > 0.01
+                && $amountPaid + 0.01 >= $total
+            ) {
+                $isCredit = false;
+            }
+
             $workflow = OrderWorkflowService::forGate($gate);
             $channelWorkflow = $workflow->forChannel($cart->channel);
             $allowPartialPayment = false;
@@ -585,9 +628,19 @@ class CheckoutController extends Controller
                 && strtoupper($paymentMethodCode) === 'CREDIT'
                 && empty($input['save_only'])
             ) {
-                throw new InvalidArgumentException(
-                    'Credit payment method requires a credit customer sale.',
-                );
+                // Fully paid till sale with a stale CREDIT method (I then C/M/E/K) —
+                // settle as cash, do not reject the checkout.
+                if (
+                    in_array((string) $cart->channel, ['pos', 'backend'], true)
+                    && $amountPaid + 0.01 >= $total
+                    && $total > 0.01
+                ) {
+                    $paymentMethodCode = 'CASH';
+                } else {
+                    throw new InvalidArgumentException(
+                        'Credit payment method requires a credit customer sale.',
+                    );
+                }
             }
 
             // Non-credit POS sales are always fully paid (never partial / unpaid).
@@ -827,6 +880,8 @@ class CheckoutController extends Controller
             if ($isPreviousOrderEditSettlement) {
                 $priorSale = Sale::query()->find((int) $cart->superseded_sale_id);
                 if ($priorSale) {
+                    $forceFullyPaid = ! $isCredit
+                        && in_array((string) $cart->channel, ['pos', 'backend'], true);
                     $this->applyPreviousOrderEditTenders(
                         $priorSale,
                         $sale,
@@ -835,6 +890,7 @@ class CheckoutController extends Controller
                         $total,
                         (float) $amountPaid,
                         $input['payment_date'] ?? now(),
+                        $forceFullyPaid,
                     );
                 }
             } elseif ($appendPriorSale) {
@@ -1828,6 +1884,7 @@ class CheckoutController extends Controller
         float $newTotal,
         float $targetPaid,
         mixed $paidAt,
+        bool $forceFullyPaid = false,
     ): void {
         $map = $this->priorSaleTenderMap($prior);
 
@@ -1850,20 +1907,39 @@ class CheckoutController extends Controller
             static fn (float $amount) => $amount > 0.009,
         );
 
-        $targetPaid = max(0, round($targetPaid, 2));
+        // Non-credit External POS / backoffice till edits must settle the full revised bill.
+        if ($forceFullyPaid) {
+            $targetPaid = max(0, round($newTotal, 2));
+        } else {
+            $targetPaid = max(0, round($targetPaid, 2));
+        }
         // Unpaid prior (and no adjustments): keep empty tenders — never invent CASH.
-        $map = $targetPaid <= 0.009
-            ? []
-            : $this->normalizeTenderMapToTotal($map, $targetPaid);
+        // Forced full-pay still needs a tender map so amount_paid matches the bill.
+        if ($targetPaid <= 0.009) {
+            $map = [];
+        } elseif ($map === [] && $forceFullyPaid) {
+            $fallback = strtoupper(trim((string) ($prior->payment_method_code ?? 'CASH'))) ?: 'CASH';
+            if ($fallback === 'CREDIT') {
+                $fallback = 'CASH';
+            }
+            $map = [$fallback => $targetPaid];
+        } else {
+            $map = $this->normalizeTenderMapToTotal($map, $targetPaid);
+        }
 
         SalePayment::query()->where('sale_id', $sale->id)->delete();
         SalePaymentColumnMapper::replaceFromMethodMap($sale, $map);
 
         $paidFromTenders = round(array_sum($map), 2);
+        if ($forceFullyPaid) {
+            $paidFromTenders = max(0, round($newTotal, 2));
+        }
         $sale->update([
             'payment_method_code' => $this->primaryPaymentMethodCode($map, $prior),
             'amount_paid' => $paidFromTenders,
-            'payment_status' => $this->derivePaymentStatus($newTotal, $paidFromTenders),
+            'payment_status' => $forceFullyPaid
+                ? 'paid'
+                : $this->derivePaymentStatus($newTotal, $paidFromTenders),
         ]);
 
         foreach ($map as $methodCode => $amount) {

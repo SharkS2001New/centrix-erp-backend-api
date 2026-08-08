@@ -285,6 +285,97 @@ class SalePaymentAdjustmentCheckoutTest extends TestCase
         ]);
     }
 
+    public function test_non_credit_pos_previous_order_edit_always_fully_paid(): void
+    {
+        $this->setPosOrderEditEnabled(true);
+
+        $firstCart = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$firstCart}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $original = $this->postJson("/api/v1/sales/carts/{$firstCart}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertCreated()->json();
+
+        $originalTotal = round((float) $original['order_total'], 2);
+        $this->assertGreaterThan(0, $originalTotal);
+
+        // Simulate a stuck partial non-credit sale (should never happen on POS).
+        Sale::query()->whereKey($original['id'])->update([
+            'amount_paid' => round($originalTotal / 2, 2),
+            'payment_status' => 'partial',
+            'is_credit_sale' => 0,
+        ]);
+
+        $editCart = $this->postJson("/api/v1/sales/orders/{$original['id']}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+        $editCartId = $editCart['id'];
+
+        $revised = $this->postJson("/api/v1/sales/carts/{$editCartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => 0,
+            'is_credit_sale' => false,
+            'order_num' => $original['order_num'],
+        ])->assertCreated()->json();
+
+        $this->assertSame(0, (int) ($revised['is_credit_sale'] ?? 0));
+        $this->assertSame('paid', (string) ($revised['payment_status'] ?? ''));
+        $this->assertEqualsWithDelta(
+            (float) $revised['order_total'],
+            (float) $revised['amount_paid'],
+            0.02,
+        );
+    }
+
+    public function test_fully_paid_pos_checkout_clears_stale_credit_flag(): void
+    {
+        $customer = \App\Models\Customer::query()->first();
+        if (! $customer) {
+            $this->markTestSkipped('No customer available for credit flag test.');
+        }
+        $customer->update([
+            'credit_limit' => 50000,
+            'current_balance' => 0,
+        ]);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $lineCart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+            'unit_price' => 1000,
+            'amount' => 1000,
+        ])->assertCreated()->json();
+
+        $total = round((float) ($lineCart['order_total'] ?? $lineCart['lines'][0]['amount'] ?? 1000), 2);
+
+        // Mimic I then C: client still sends is_credit_sale but pays in full.
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'is_credit_sale' => true,
+            'pay_now' => $total,
+            'payment_method_code' => 'CASH',
+            'customer_num' => $customer->customer_num,
+        ])->assertCreated()->json();
+
+        $this->assertSame(0, (int) ($sale['is_credit_sale'] ?? 1));
+        $this->assertSame((int) $customer->customer_num, (int) ($sale['customer_num'] ?? 0));
+        $this->assertEqualsWithDelta($total, (float) ($sale['amount_paid'] ?? 0), 0.02);
+        $this->assertSame('paid', $sale['payment_status'] ?? null);
+    }
+
     protected function setPosOrderEditEnabled(bool $enabled): void
     {
         $org = Organization::findOrFail($this->user->organization_id);
