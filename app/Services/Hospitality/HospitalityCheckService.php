@@ -610,6 +610,8 @@ class HospitalityCheckService
             if ($isFull) {
                 app(HospitalityCheckStockService::class)->deductForSettledCheck($fresh, $user);
                 app(HospitalityPosEmailReportService::class)->notifySettleIfEnabled($org, $fresh);
+                // Prepaid Hotel POS room nights — occupy until expected checkout (separate from PMS folio stays).
+                app(HospitalityPosRoomSaleService::class)->occupyRoomsFromSettledCheck($fresh, $user);
             }
 
             return $this->presentable($fresh->fresh());

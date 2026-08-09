@@ -31,10 +31,20 @@ class HospitalityHousekeepingController extends Controller
         $this->assertEnabled($org);
         $data = $request->validate([
             'status' => ['required', 'in:vacant,occupied,dirty,clean,ooo'],
+            'housekeeping_assigned_to' => ['nullable', 'integer'],
+            'housekeeping_notes' => ['nullable', 'string', 'max:500'],
         ]);
 
+        $extra = [];
+        if ($request->exists('housekeeping_assigned_to')) {
+            $extra['housekeeping_assigned_to'] = $data['housekeeping_assigned_to'] ?? null;
+        }
+        if ($request->exists('housekeeping_notes')) {
+            $extra['housekeeping_notes'] = $data['housekeeping_notes'] ?? null;
+        }
+
         return response()->json([
-            'room' => $this->housekeeping->setStatus($org, $roomId, $data['status']),
+            'room' => $this->housekeeping->setStatus($org, $roomId, $data['status'], $extra),
         ]);
     }
 

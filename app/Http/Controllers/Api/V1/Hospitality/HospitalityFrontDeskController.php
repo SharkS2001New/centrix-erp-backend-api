@@ -56,6 +56,10 @@ class HospitalityFrontDeskController extends Controller
             'guest_name' => ['nullable', 'string', 'max:160'],
             'guest_phone' => ['nullable', 'string', 'max:40'],
             'room_id' => ['nullable', 'integer'],
+            'departure_date' => ['nullable', 'date'],
+            'deposit_amount' => ['nullable', 'numeric', 'min:0'],
+            'adults' => ['nullable', 'integer', 'min:1', 'max:20'],
+            'notes' => ['nullable', 'string', 'max:500'],
         ]);
 
         return response()->json($this->frontDesk->checkIn($org, $request->user(), $data), 201);

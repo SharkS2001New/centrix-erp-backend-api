@@ -23,11 +23,20 @@ class HospitalityReservationService
         if (! empty($filters['status'])) {
             $query->where('status', $filters['status']);
         }
-        if (! empty($filters['from'])) {
-            $query->whereDate('arrival_date', '>=', $filters['from']);
-        }
-        if (! empty($filters['to'])) {
-            $query->whereDate('arrival_date', '<=', $filters['to']);
+        // Room rack / calendar: stays that overlap [overlap_from, overlap_to).
+        if (! empty($filters['overlap_from']) && ! empty($filters['overlap_to'])) {
+            $from = Carbon::parse((string) $filters['overlap_from'])->toDateString();
+            $to = Carbon::parse((string) $filters['overlap_to'])->toDateString();
+            $query->where('arrival_date', '<', $to)
+                ->where('departure_date', '>', $from)
+                ->whereNotIn('status', ['cancelled', 'no_show']);
+        } else {
+            if (! empty($filters['from'])) {
+                $query->whereDate('arrival_date', '>=', $filters['from']);
+            }
+            if (! empty($filters['to'])) {
+                $query->whereDate('arrival_date', '<=', $filters['to']);
+            }
         }
         if (! empty($filters['q'])) {
             $q = trim((string) $filters['q']);

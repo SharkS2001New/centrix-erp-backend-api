@@ -244,7 +244,7 @@ class HospitalityOpsMvpTest extends TestCase
         $released = app(\App\Services\Hospitality\HospitalityPosRoomSaleService::class)
             ->releaseExpiredStays(now()->addDays(3));
         $this->assertGreaterThanOrEqual(1, $released['released']);
-        $this->assertSame('vacant', $room->fresh()->status);
+        $this->assertSame('dirty', $room->fresh()->status);
         $this->assertNull($room->fresh()->guest_name);
     }
 }

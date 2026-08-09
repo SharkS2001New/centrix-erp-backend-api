@@ -44,7 +44,7 @@ class HospitalityFrontDeskService
 
         if ($this->usesFolios($org)) {
             $rows = HospitalityFolio::query()
-                ->with(['room:id,room_number'])
+                ->with(['room:id,room_number,expected_checkout_at'])
                 ->where('organization_id', $org->id)
                 ->where('status', 'open')
                 ->whereHas('room')
@@ -55,14 +55,22 @@ class HospitalityFrontDeskService
                         ->where('organization_id', $org->id)
                         ->where('folio_id', $f->id)
                         ->first();
+                    if ($res && $res->departure_date?->toDateString() === $day) {
+                        return true;
+                    }
+                    // Walk-ins / POS stays: due when room expected checkout falls on this day.
+                    $checkout = $f->room?->expected_checkout_at;
+                    if ($checkout && Carbon::parse($checkout)->toDateString() === $day) {
+                        return true;
+                    }
 
-                    return $res && $res->departure_date?->toDateString() === $day;
+                    return false;
                 });
 
             return $rows->map(fn (HospitalityFolio $f) => $this->folios->toArray($f))->values()->all();
         }
 
-        $rows = HospitalityReservation::query()
+        $byReservation = HospitalityReservation::query()
             ->with(['room'])
             ->where('organization_id', $org->id)
             ->where('status', 'checked_in')
@@ -70,16 +78,41 @@ class HospitalityFrontDeskService
             ->orderBy('guest_name')
             ->get();
 
-        return $rows->map(function (HospitalityReservation $r) {
+        $seenRoomIds = [];
+        $out = [];
+        foreach ($byReservation as $r) {
             $room = $r->room;
-
-            return $this->occupancyArray(
+            if ($room?->id) {
+                $seenRoomIds[(int) $room->id] = true;
+            }
+            $out[] = $this->occupancyArray(
                 $room,
                 $r->guest_name,
                 $r->guest_phone,
                 $room?->checked_in_at,
             );
-        })->all();
+        }
+
+        // Walk-in occupancy (no reservation) due today via expected_checkout_at.
+        $walkIns = HospitalityRoom::query()
+            ->where('organization_id', $org->id)
+            ->where('status', 'occupied')
+            ->whereDate('expected_checkout_at', $day)
+            ->orderBy('room_number')
+            ->get();
+        foreach ($walkIns as $room) {
+            if (isset($seenRoomIds[(int) $room->id])) {
+                continue;
+            }
+            $out[] = $this->occupancyArray(
+                $room,
+                $room->guest_name,
+                $room->guest_phone,
+                $room->checked_in_at,
+            );
+        }
+
+        return $out;
     }
 
     public function inHouse(Organization $org): array
@@ -154,15 +187,18 @@ class HospitalityFrontDeskService
                     $guestPhone ?: null,
                     $roomId,
                     $reservation,
+                    $data,
                 );
             }
 
             return $this->checkInOccupancyOnly(
                 $org,
+                $user,
                 $guestName,
                 $guestPhone ?: null,
                 $roomId,
                 $reservation,
+                $data,
             );
         });
     }
@@ -375,6 +411,7 @@ class HospitalityFrontDeskService
     }
 
     /**
+     * @param  array<string, mixed>  $data
      * @return array{folio: array<string, mixed>, reservation: ?array<string, mixed>}
      */
     protected function checkInWithFolio(
@@ -384,6 +421,7 @@ class HospitalityFrontDeskService
         ?string $guestPhone,
         int $roomId,
         ?HospitalityReservation $reservation,
+        array $data = [],
     ): array {
         $folio = $this->folios->open(
             $org,
@@ -394,10 +432,15 @@ class HospitalityFrontDeskService
             $user->branch_id ? (int) $user->branch_id : null,
         );
 
+        $expectedCheckout = $this->resolveExpectedCheckoutAt($reservation, $data);
+
         HospitalityRoom::query()->where('id', $roomId)->update([
             'guest_name' => $guestName,
             'guest_phone' => $guestPhone,
             'checked_in_at' => $folio->checked_in_at ?? now(),
+            'expected_checkout_at' => $expectedCheckout,
+            // PMS folio stay — not a prepaid Hotel POS room sale.
+            'sold_check_id' => null,
         ]);
 
         if ($reservation) {
@@ -420,10 +463,37 @@ class HospitalityFrontDeskService
                     'payments',
                 ]);
             }
+        } else {
+            // Walk-in: create a thin checked-in reservation so Departures / night audit stay aligned.
+            $reservation = $this->createWalkInReservation(
+                $org,
+                $user,
+                $guestName,
+                $guestPhone,
+                $roomId,
+                $folio->id,
+                $expectedCheckout,
+                $data,
+            );
+            $deposit = (float) ($data['deposit_amount'] ?? 0);
+            if ($deposit > 0) {
+                $this->folios->addPayment(
+                    $folio,
+                    $user,
+                    'DEPOSIT',
+                    $deposit,
+                    'Walk-in deposit '.$reservation->confirmation_code,
+                );
+                $folio = $folio->fresh([
+                    'room.roomType',
+                    'charges',
+                    'payments',
+                ]);
+            }
         }
 
         return [
-            'folio' => $this->folios->toArray($folio, true),
+            'folio' => $this->folios->toArray($folio->fresh(['room.roomType', 'charges', 'payments']), true),
             'occupancy' => null,
             'reservation' => $reservation
                 ? $this->reservations->toArray($reservation->fresh(['room', 'roomType', 'ratePlan']))
@@ -432,22 +502,28 @@ class HospitalityFrontDeskService
     }
 
     /**
+     * @param  array<string, mixed>  $data
      * @return array{folio: null, occupancy: array<string, mixed>, reservation: ?array<string, mixed>}
      */
     protected function checkInOccupancyOnly(
         Organization $org,
+        User $user,
         string $guestName,
         ?string $guestPhone,
         int $roomId,
         ?HospitalityReservation $reservation,
+        array $data = [],
     ): array {
         $room = $this->claimRoom($org, $roomId, null);
         $checkedInAt = now();
+        $expectedCheckout = $this->resolveExpectedCheckoutAt($reservation, $data);
         $room->update([
             'status' => 'occupied',
             'guest_name' => $guestName,
             'guest_phone' => $guestPhone,
             'checked_in_at' => $checkedInAt,
+            'expected_checkout_at' => $expectedCheckout,
+            'sold_check_id' => null,
         ]);
 
         if ($reservation) {
@@ -456,6 +532,17 @@ class HospitalityFrontDeskService
                 'folio_id' => null,
                 'room_id' => $roomId,
             ]);
+        } else {
+            $reservation = $this->createWalkInReservation(
+                $org,
+                $user,
+                $guestName,
+                $guestPhone,
+                $roomId,
+                null,
+                $expectedCheckout,
+                $data,
+            );
         }
 
         return [
@@ -465,6 +552,65 @@ class HospitalityFrontDeskService
                 ? $this->reservations->toArray($reservation->fresh(['room', 'roomType', 'ratePlan']))
                 : null,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function resolveExpectedCheckoutAt(?HospitalityReservation $reservation, array $data): Carbon
+    {
+        if ($reservation?->departure_date) {
+            return Carbon::parse($reservation->departure_date->toDateString())->setTime(10, 0);
+        }
+        if (! empty($data['departure_date'])) {
+            return Carbon::parse((string) $data['departure_date'])->setTime(10, 0);
+        }
+
+        return now()->addDay()->setTime(10, 0);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function createWalkInReservation(
+        Organization $org,
+        ?User $user,
+        string $guestName,
+        ?string $guestPhone,
+        int $roomId,
+        ?int $folioId,
+        Carbon $expectedCheckout,
+        array $data = [],
+    ): HospitalityReservation {
+        $room = HospitalityRoom::query()
+            ->with('roomType')
+            ->where('organization_id', $org->id)
+            ->where('id', $roomId)
+            ->firstOrFail();
+
+        $arrival = now()->toDateString();
+        $departure = $expectedCheckout->toDateString();
+        if ($departure <= $arrival) {
+            $departure = now()->addDay()->toDateString();
+        }
+
+        return HospitalityReservation::create([
+            'organization_id' => $org->id,
+            'branch_id' => $user?->branch_id ? (int) $user->branch_id : $room->branch_id,
+            'room_type_id' => $room->room_type_id,
+            'room_id' => $roomId,
+            'rate_plan_id' => null,
+            'folio_id' => $folioId,
+            'confirmation_code' => 'W'.strtoupper(substr(bin2hex(random_bytes(3)), 0, 6)),
+            'guest_name' => $guestName,
+            'guest_phone' => $guestPhone,
+            'arrival_date' => $arrival,
+            'departure_date' => $departure,
+            'status' => 'checked_in',
+            'deposit_amount' => (float) ($data['deposit_amount'] ?? 0),
+            'adults' => max(1, (int) ($data['adults'] ?? 1)),
+            'notes' => trim((string) ($data['notes'] ?? 'Walk-in')),
+        ])->fresh(['room', 'roomType', 'ratePlan']);
     }
 
     protected function claimRoom(Organization $org, int $roomId, ?int $allowRoomId): HospitalityRoom

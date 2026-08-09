@@ -60,11 +60,15 @@ Run on a fresh or staging Hotel & Bar tenant before production cutover.
 
 - [ ] Rooms / rate plans
 - [ ] Reservation create → Front desk arrival check-in
-- [ ] Front desk **Departures** tab lists due check-outs
-- [ ] Folio charges / payments
+- [ ] Reservations **Room rack** shows overlapping stays
+- [ ] Front desk **Departures** lists reservation + walk-in check-outs due today
+- [ ] Folio charges / payments (Full / Keypad from Admin → Payment methods)
+- [ ] Folio **Print statement**
+- [ ] Deposit refund on folio when a reservation deposit was applied
 - [ ] Check-out clears folio
-- [ ] Night audit preview/run (if enabled)
-- [ ] Housekeeping board (if enabled)
+- [ ] Night audit preview/run (if enabled); scheduled auto-run at 00:30
+- [ ] Housekeeping board + assignee (if enabled)
+- [ ] Hotel POS prepaid room sale occupies room; does not conflict with open folio stays
 
 ## Sign-off
 

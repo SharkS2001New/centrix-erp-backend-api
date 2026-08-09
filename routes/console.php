@@ -45,6 +45,12 @@ Schedule::command('erp:release-expired-hotel-room-stays')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/release-expired-hotel-room-stays.log'));
 
+Schedule::command('erp:run-hospitality-night-audit')
+    ->dailyAt('00:30')
+    ->timezone(config('app.timezone', 'Africa/Nairobi'))
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/hospitality-night-audit.log'));
+
 Schedule::command('erp:prune-system-issue-reports')
     ->dailyAt(config('system_issues.prune_time', '03:15'))
     ->withoutOverlapping()

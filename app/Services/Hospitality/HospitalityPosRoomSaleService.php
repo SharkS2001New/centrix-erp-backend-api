@@ -4,6 +4,7 @@ namespace App\Services\Hospitality;
 
 use App\Models\HospitalityCheck;
 use App\Models\HospitalityCheckLine;
+use App\Models\HospitalityFolio;
 use App\Models\HospitalityRatePlan;
 use App\Models\HospitalityRoom;
 use App\Models\Organization;
@@ -213,6 +214,16 @@ class HospitalityPosRoomSaleService
                     'room_id' => ["Room {$room->room_number} was taken before payment completed."],
                 ]);
             }
+            $openFolio = HospitalityFolio::query()
+                ->where('organization_id', $check->organization_id)
+                ->where('room_id', $roomId)
+                ->where('status', 'open')
+                ->exists();
+            if ($openFolio) {
+                throw ValidationException::withMessages([
+                    'room_id' => ["Room {$room->room_number} has an open guest folio — use Front desk / folio stay, not POS room sale."],
+                ]);
+            }
 
             $room->update([
                 'status' => 'occupied',
@@ -237,14 +248,29 @@ class HospitalityPosRoomSaleService
 
         HospitalityRoom::query()
             ->where('status', 'occupied')
+            ->whereNotNull('sold_check_id') // Hotel POS prepaid stays only — never auto-vacate PMS folio guests.
             ->whereNotNull('expected_checkout_at')
             ->where('expected_checkout_at', '<=', $asOf)
             ->orderBy('id')
             ->chunkById(100, function ($rooms) use (&$released) {
                 foreach ($rooms as $room) {
                     /** @var HospitalityRoom $room */
+                    $openFolio = HospitalityFolio::query()
+                        ->where('organization_id', $room->organization_id)
+                        ->where('room_id', $room->id)
+                        ->where('status', 'open')
+                        ->exists();
+                    if ($openFolio) {
+                        // PMS folio still owns the room — clear POS stamp only.
+                        $room->update([
+                            'sold_check_id' => null,
+                            'expected_checkout_at' => null,
+                        ]);
+                        continue;
+                    }
+                    // Send to housekeeping (dirty), not vacant — same as front-desk check-out.
                     $room->update([
-                        'status' => 'vacant',
+                        'status' => 'dirty',
                         'guest_name' => null,
                         'guest_phone' => null,
                         'checked_in_at' => null,

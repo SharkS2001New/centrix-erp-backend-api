@@ -7,6 +7,7 @@ use App\Models\HospitalityFolioCharge;
 use App\Models\HospitalityFolioPayment;
 use App\Models\HospitalityRoom;
 use App\Models\Organization;
+use App\Models\PaymentMethod;
 use App\Models\User;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -138,21 +139,87 @@ class HospitalityFolioService
         ?string $reference = null,
     ): HospitalityFolio {
         $this->assertOpen($folio);
+        $code = strtoupper(trim($methodCode));
+        if ($code === '' || $code === 'ROOM') {
+            throw ValidationException::withMessages([
+                'method_code' => ['Choose an active payment method (Cash, M-Pesa, bank, cheque, …).'],
+            ]);
+        }
+
+        $isRefund = $code === 'REFUND';
+        $isInternalDeposit = $code === 'DEPOSIT';
         $amount = round($amount, 2);
-        if ($amount <= 0) {
-            throw ValidationException::withMessages(['amount' => ['Payment amount must be greater than zero.']]);
+        if ($isRefund) {
+            $amount = -abs($amount);
+            if ($amount >= 0) {
+                throw ValidationException::withMessages(['amount' => ['Refund amount must be greater than zero.']]);
+            }
+            // Do not refund more than payments already on the folio (deposits + tenders).
+            $paid = (float) HospitalityFolioPayment::query()->where('folio_id', $folio->id)->sum('amount');
+            if (abs($amount) > $paid + 0.009) {
+                throw ValidationException::withMessages([
+                    'amount' => ['Refund cannot exceed payments already recorded on this folio.'],
+                ]);
+            }
+        } else {
+            if ($amount <= 0) {
+                throw ValidationException::withMessages(['amount' => ['Payment amount must be greater than zero.']]);
+            }
+        }
+
+        if (! $isInternalDeposit && ! $isRefund && ! $this->orgPaymentMethodIsActive((int) $folio->organization_id, $code)) {
+            throw ValidationException::withMessages([
+                'method_code' => ["Payment method {$code} is not active for this organization. Enable it under Admin → Payment methods."],
+            ]);
+        }
+
+        $paymentMethodId = null;
+        if (! $isInternalDeposit && ! $isRefund) {
+            $paymentMethodId = PaymentMethod::query()
+                ->where('organization_id', $folio->organization_id)
+                ->where('is_active', true)
+                ->whereIn('method_code', $this->methodCodeAliases($code))
+                ->value('id');
         }
 
         HospitalityFolioPayment::create([
             'organization_id' => $folio->organization_id,
             'folio_id' => $folio->id,
-            'method_code' => strtoupper(trim($methodCode)),
+            'payment_method_id' => $paymentMethodId ? (int) $paymentMethodId : null,
+            'method_code' => $code,
             'amount' => $amount,
             'reference' => $reference,
             'received_by' => $user->id,
         ]);
 
         return $this->recomputeBalance($folio->fresh());
+    }
+
+    /**
+     * Folio tenders must match Admin → Payment methods (is_active) for the org.
+     */
+    protected function orgPaymentMethodIsActive(int $organizationId, string $methodCode): bool
+    {
+        return PaymentMethod::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->whereIn('method_code', $this->methodCodeAliases($methodCode))
+            ->exists();
+    }
+
+    /** @return list<string> */
+    protected function methodCodeAliases(string $methodCode): array
+    {
+        $wanted = strtoupper(trim($methodCode));
+
+        return match ($wanted) {
+            'CASH' => ['CASH'],
+            'MPESA' => ['MPESA', 'M-PESA', 'M_PESA'],
+            'CHEQUE' => ['CHEQUE', 'CHECK'],
+            'CARD' => ['CARD'],
+            'EQUITY', 'KCB', 'OTHER', 'BANK' => ['EQUITY', 'KCB', 'OTHER', 'BANK', 'BANK_TRANSFER', 'TRANSFER'],
+            default => [$wanted],
+        };
     }
 
     public function void(HospitalityFolio $folio): HospitalityFolio

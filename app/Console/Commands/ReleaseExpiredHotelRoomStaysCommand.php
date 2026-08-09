@@ -9,7 +9,7 @@ class ReleaseExpiredHotelRoomStaysCommand extends Command
 {
     protected $signature = 'erp:release-expired-hotel-room-stays';
 
-    protected $description = 'Mark Hotel POS room stays as vacant when expected checkout time has passed';
+    protected $description = 'Mark Hotel POS prepaid room stays dirty when expected checkout time has passed (skips PMS folio stays)';
 
     public function handle(HospitalityPosRoomSaleService $service): int
     {

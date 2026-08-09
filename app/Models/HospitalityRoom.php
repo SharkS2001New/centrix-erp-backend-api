@@ -22,6 +22,8 @@ class HospitalityRoom extends Model
         'checked_in_at',
         'expected_checkout_at',
         'sold_check_id',
+        'housekeeping_assigned_to',
+        'housekeeping_notes',
         'is_active',
     ];
 

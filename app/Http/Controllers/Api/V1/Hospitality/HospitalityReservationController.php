@@ -26,6 +26,8 @@ class HospitalityReservationController extends Controller
             'status' => $request->input('status'),
             'from' => $request->input('from'),
             'to' => $request->input('to'),
+            'overlap_from' => $request->input('overlap_from'),
+            'overlap_to' => $request->input('overlap_to'),
             'q' => $request->input('q'),
             'per_page' => $request->input('per_page', 50),
         ]));
