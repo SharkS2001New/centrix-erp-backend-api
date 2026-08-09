@@ -579,7 +579,7 @@ class CheckoutController extends Controller
                 ) {
                     $amountPaid = $total;
                 }
-            } elseif (
+            } else            if (
                 ! $isCredit
                 && empty($input['save_only'])
                 && in_array((string) $cart->channel, ['pos', 'backend'], true)
@@ -592,9 +592,17 @@ class CheckoutController extends Controller
                     2,
                 );
                 if ($total > 0.01 && $clientPaid + 0.01 < $total) {
-                    throw new InvalidArgumentException(
-                        'Full payment required for Cash, M-Pesa, bank, and cheque sales. Select a credit customer to leave a balance unpaid or partially paid.',
-                    );
+                    // Offline / local-first uploads already printed a paid till receipt.
+                    // Cart reprice or a pending-sync edit can leave pay_now below the new
+                    // total — settle in full instead of rejecting a sale the cashier already took.
+                    if ($offlineOrder) {
+                        $payNow = $cashDue;
+                        unset($input['payment_splits']);
+                    } else {
+                        throw new InvalidArgumentException(
+                            'Full payment required for Cash, M-Pesa, bank, and cheque sales. Select a credit customer to leave a balance unpaid or partially paid.',
+                        );
+                    }
                 }
                 $payNow = $cashDue;
                 $amountPaid = $appendPriorPaid + $payNow + $voucherPayment + $pointsPayment + $mpesaOnCart;
