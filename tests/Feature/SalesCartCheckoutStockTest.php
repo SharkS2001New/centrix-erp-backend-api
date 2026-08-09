@@ -705,4 +705,66 @@ class SalesCartCheckoutStockTest extends TestCase
             'quantity' => 1,
         ])->assertStatus(422);
     }
+
+    public function test_adding_line_to_missing_cart_returns_clean_error_not_fk_500(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        // Cart already gone (checked out / cleared) before the request starts.
+        \App\Models\TemporaryCart::query()->whereKey($cartId)->delete();
+
+        $response = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ]);
+
+        $response->assertStatus(404);
+        $this->assertStringContainsString(
+            'Cart not found',
+            (string) ($response->json('message') ?? $response->getContent()),
+        );
+        $this->assertDatabaseMissing('cart_lines', ['cart_id' => $cartId]);
+    }
+
+    public function test_cart_line_create_race_after_cart_deleted_is_friendly_not_query_exception(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        // Simulate the race: cart was loaded, then deleted before line insert.
+        \App\Models\TemporaryCart::query()->whereKey($cartId)->delete();
+
+        $controller = app(\App\Http\Controllers\Api\V1\Operations\CartOperationsController::class);
+        $method = new \ReflectionMethod($controller, 'createCartLineOrFailIfCartGone');
+        $method->setAccessible(true);
+
+        try {
+            $method->invoke($controller, (int) $cartId, [
+                'cart_id' => (int) $cartId,
+                'product_code' => $this->productCode,
+                'product_name' => 'Race line',
+                'unit_price' => 10,
+                'display_unit_price' => null,
+                'quantity' => 1,
+                'uom' => 'pcs',
+                'product_vat' => 0,
+                'amount' => 10,
+                'discount_given' => 0,
+                'on_wholesale_retail' => 0,
+                'line_no' => 1,
+                'update_code' => 'CLU-RACETEST01',
+            ]);
+            $this->fail('Expected InvalidArgumentException when parent cart is missing.');
+        } catch (\InvalidArgumentException $e) {
+            $this->assertStringContainsString('Cart not found', $e->getMessage());
+            $this->assertNotInstanceOf(\Illuminate\Database\QueryException::class, $e);
+        }
+
+        $this->assertDatabaseMissing('cart_lines', ['cart_id' => $cartId]);
+    }
 }

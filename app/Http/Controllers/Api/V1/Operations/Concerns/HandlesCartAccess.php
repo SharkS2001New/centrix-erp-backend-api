@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api\V1\Operations\Concerns;
 
+use App\Models\CartLine;
 use App\Models\Product;
 use App\Models\TemporaryCart;
 use App\Models\User;
@@ -9,6 +10,7 @@ use App\Services\Erp\FloatSessionValidator;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosDailyOrderNumberAllocator;
 use App\Services\Sales\SaleLineQuantityDisplayService;
+use Illuminate\Database\QueryException;
 
 trait HandlesCartAccess
 {
@@ -204,5 +206,71 @@ trait HandlesCartAccess
                 $payload['advised_discount_lines'] = $discounts->saleAdvisedDiscountLines($superseded);
             }
         }
+    }
+
+    protected function temporaryCartGoneMessage(): string
+    {
+        return 'Cart not found. It may have already been checked out — reopen the order to continue editing.';
+    }
+
+    protected function assertTemporaryCartStillExists(int $cartId): void
+    {
+        if (! TemporaryCart::query()->whereKey($cartId)->exists()) {
+            throw new \InvalidArgumentException($this->temporaryCartGoneMessage());
+        }
+    }
+
+    /**
+     * Insert cart lines after checkout deleted the parent cart is a common POS race
+     * (stale client still posting lines). Convert the MySQL FK into a clear 422.
+     *
+     * @param  list<array<string, mixed>>  $rows
+     */
+    protected function insertCartLinesOrFailIfCartGone(int $cartId, array $rows): void
+    {
+        $this->assertTemporaryCartStillExists($cartId);
+
+        try {
+            CartLine::insert($rows);
+        } catch (QueryException $e) {
+            if ($this->isMissingTemporaryCartForeignKey($e)) {
+                throw new \InvalidArgumentException($this->temporaryCartGoneMessage(), previous: $e);
+            }
+
+            throw $e;
+        }
+    }
+
+    /** @param  array<string, mixed>  $attributes */
+    protected function createCartLineOrFailIfCartGone(int $cartId, array $attributes): CartLine
+    {
+        $this->assertTemporaryCartStillExists($cartId);
+
+        try {
+            return CartLine::create($attributes);
+        } catch (QueryException $e) {
+            if ($this->isMissingTemporaryCartForeignKey($e)) {
+                throw new \InvalidArgumentException($this->temporaryCartGoneMessage(), previous: $e);
+            }
+
+            throw $e;
+        }
+    }
+
+    protected function isMissingTemporaryCartForeignKey(QueryException $e): bool
+    {
+        $sqlState = $e->errorInfo[0] ?? null;
+        $driverCode = (int) ($e->errorInfo[1] ?? 0);
+        if ($sqlState !== '23000' || $driverCode !== 1452) {
+            return false;
+        }
+
+        $message = $e->getMessage();
+
+        return str_contains($message, 'cart_lines')
+            && (
+                str_contains($message, 'temporary_carts')
+                || str_contains($message, 'cart_lines_ibfk_1')
+            );
     }
 }

@@ -1306,12 +1306,7 @@ class CartOperationsController extends Controller
         }
 
         if ($rows !== []) {
-            if (! TemporaryCart::query()->whereKey($cart->id)->exists()) {
-                throw new InvalidArgumentException(
-                    'Cart was removed before lines could be restored. Try again.',
-                );
-            }
-            CartLine::insert($rows);
+            $this->insertCartLinesOrFailIfCartGone((int) $cart->id, $rows);
             $cart->increment('update_no');
         }
 
@@ -1491,7 +1486,7 @@ class CartOperationsController extends Controller
         }
 
         if ($rows !== []) {
-            CartLine::insert($rows);
+            $this->insertCartLinesOrFailIfCartGone((int) $cart->id, $rows);
             $cart->increment('update_no');
         }
 
@@ -1593,7 +1588,7 @@ class CartOperationsController extends Controller
 
         $lineNo = (int) CartLine::where('cart_id', $cart->id)->max('line_no') + 1;
 
-        $row = CartLine::create([
+        $row = $this->createCartLineOrFailIfCartGone((int) $cart->id, [
             'cart_id' => $cart->id,
             'product_code' => $product->product_code,
             'product_name' => $product->product_name,

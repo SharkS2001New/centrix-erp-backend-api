@@ -350,4 +350,58 @@ class RbacRegistryTest extends TestCase
         $this->assertNotNull($distribution);
         $this->assertSame('/fulfillment', $distribution['home_path'] ?? null);
     }
+
+    public function test_ensure_restores_hospitality_workspace_entry_on_administrator_role(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $adminRole = Role::query()->where('role_name', 'Administrator')->where('scope', 'org')->firstOrFail();
+        $hospitalityIds = PermissionMatrixService::permissionIdsForIndustry('hospitality');
+        $this->assertNotEmpty($hospitalityIds);
+
+        // Simulate a hotel tenant whose shared Administrator never received hospitality grants.
+        DB::table('role_permissions')
+            ->where('role_id', $adminRole->id)
+            ->whereIn('permission_id', $hospitalityIds)
+            ->delete();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $admin->forceFill(['role_id' => $adminRole->id, 'is_admin' => true])->save();
+
+        $org = Organization::findOrFail($admin->organization_id);
+        $org->update([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => array_merge(
+                is_array($org->enabled_modules) ? $org->enabled_modules : [],
+                [
+                    'admin' => true,
+                    'hospitality' => true,
+                    'hospitality.backend' => true,
+                    'hospitality.bar_pos' => true,
+                    'hospitality.dashboard' => true,
+                    'inventory' => true,
+                    'customers_suppliers' => true,
+                    'sales.pos' => false,
+                    'sales.backend' => false,
+                ],
+            ),
+        ]);
+
+        $gateBefore = app(\App\Services\Erp\ErpContext::class)->gateForUser($admin->fresh());
+        $before = app(\App\Services\Erp\WorkspaceResolver::class)->availableForUser($admin->fresh(), $gateBefore);
+        $this->assertNotContains('hospitality_backoffice', array_column($before, 'id'));
+
+        PermissionMatrixService::ensureAdministratorIndustryCatalogPermissions();
+
+        $gateAfter = app(\App\Services\Erp\ErpContext::class)->gateForUser($admin->fresh());
+        $map = app(UserPermissionService::class)->permissionMapForUser($admin->fresh(), $gateAfter);
+        $this->assertTrue($map['hospitality.dashboard.view'] ?? false);
+        $this->assertTrue($map['hotel_bar_pos.terminal.view'] ?? false);
+
+        $after = app(\App\Services\Erp\WorkspaceResolver::class)->availableForUser($admin->fresh(), $gateAfter);
+        $ids = array_column($after, 'id');
+        $this->assertContains('hospitality_backoffice', $ids);
+        $this->assertContains('hotel_bar_pos', $ids);
+        $this->assertContains('admin', $ids);
+    }
 }

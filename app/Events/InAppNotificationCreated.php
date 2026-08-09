@@ -38,6 +38,9 @@ class InAppNotificationCreated implements ShouldBroadcastNow
             'notification_id' => (int) $this->notification->id,
             'type' => (string) $this->notification->type,
             'severity' => (string) $this->notification->severity,
+            'title' => (string) $this->notification->title,
+            'message' => (string) $this->notification->message,
+            'action_url' => $this->notification->action_url,
             'unread_count' => $this->unreadCount,
         ];
     }

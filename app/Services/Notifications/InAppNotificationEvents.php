@@ -26,6 +26,9 @@ class InAppNotificationEvents
 
     public const SYSTEM_ISSUE = 'system_issue';
 
+    /** Catalogue unit price / retail markup / route markup changes for POS + mobile. */
+    public const CATALOG_PRICING = 'catalog_pricing';
+
     /** @return list<string> */
     public static function organizationEvents(): array
     {
@@ -40,6 +43,7 @@ class InAppNotificationEvents
             self::YEAR_END_CLOSE,
             self::APPROVAL_REQUEST,
             self::APPROVAL_OUTCOME,
+            self::CATALOG_PRICING,
         ];
     }
 

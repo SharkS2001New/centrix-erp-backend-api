@@ -3,10 +3,8 @@
 namespace App\Console\Commands;
 
 use App\Models\Permission;
-use App\Models\Role;
 use App\Services\Erp\PermissionMatrixService;
 use Illuminate\Console\Command;
-use Illuminate\Support\Facades\DB;
 
 class SyncPermissionsCommand extends Command
 {
@@ -26,25 +24,9 @@ class SyncPermissionsCommand extends Command
         $this->info("Synced {$total} permissions ({$registryCount} feature + {$capabilityCount} route capabilities).");
 
         if ($this->option('grant-admin')) {
-            $adminRoles = Role::query()
-                ->whereIn('role_name', ['Administrator', 'Admin'])
-                ->pluck('id');
-
-            // Union of commerce + hospitality application shells (not orphan/legacy codes).
-            $permissionIds = PermissionMatrixService::allIndustryPermissionIds();
-            $granted = 0;
-
-            foreach ($adminRoles as $roleId) {
-                foreach ($permissionIds as $permissionId) {
-                    $inserted = DB::table('role_permissions')->insertOrIgnore([
-                        'role_id' => $roleId,
-                        'permission_id' => $permissionId,
-                    ]);
-                    $granted += $inserted;
-                }
-            }
-
-            $this->info("Granted {$granted} new role-permission links to administrator roles (all industries).");
+            // ensure() already attaches industry catalogs; option keeps the explicit CLI path.
+            PermissionMatrixService::ensureAdministratorIndustryCatalogPermissions();
+            $this->info('Granted industry-catalog permissions to administrator roles (all industries).');
         }
 
         $this->line('Open Admin → Roles & permissions to review the updated matrix and re-save custom roles if needed.');

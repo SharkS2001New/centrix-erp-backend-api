@@ -48,6 +48,39 @@ class PermissionMatrixService
         self::ensureDiscountApprovalsForAdminRoles();
         self::ensureLpoApproveForAdminRoles();
         self::ensureNotificationsForBackofficeRoles();
+        // Shared Administrator must keep every industry shell (commerce + hospitality).
+        // Without this, hotel tenants only see Administration after the is_admin
+        // least-privilege change (operational access comes from the role matrix).
+        self::ensureAdministratorIndustryCatalogPermissions();
+    }
+
+    /**
+     * Grant every industry-catalog permission to Administrator / Admin roles.
+     * Safe to call repeatedly (insertOrIgnore).
+     */
+    public static function ensureAdministratorIndustryCatalogPermissions(): void
+    {
+        $permissionIds = self::allIndustryPermissionIds();
+        if ($permissionIds === []) {
+            return;
+        }
+
+        $roleIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Administrator', 'Admin'])
+            ->pluck('id');
+
+        if ($roleIds->isEmpty()) {
+            return;
+        }
+
+        foreach ($roleIds as $roleId) {
+            foreach ($permissionIds as $permissionId) {
+                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                    'role_id' => $roleId,
+                    'permission_id' => $permissionId,
+                ]);
+            }
+        }
     }
 
     public static function ensureRegistryPermissions(): void

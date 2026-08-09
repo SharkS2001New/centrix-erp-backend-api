@@ -155,6 +155,7 @@ class RetailPackageSettingController extends BaseResourceController
             $orgId,
             (string) $model->product_code,
             $product?->product_name,
+            auth()->id(),
         );
     }
 }

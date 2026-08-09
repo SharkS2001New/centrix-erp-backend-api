@@ -695,6 +695,7 @@ class ProductController extends BaseResourceController
                 $orgId,
                 (string) $model->product_code,
                 $model->product_name,
+                $request->user()?->id,
             );
         }
 

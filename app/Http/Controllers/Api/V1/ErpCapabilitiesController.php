@@ -98,6 +98,9 @@ class ErpCapabilitiesController extends Controller
     /** @return array<string, mixed> */
     protected function buildCapabilitiesPayload(Request $request): array
     {
+        // Keep Administrator industry shells current before computing workspaces.
+        \App\Services\Erp\PermissionMatrixService::ensure();
+
         $gate = $this->erp->gateForUser($request->user());
         $user = $request->user();
 
