@@ -224,6 +224,42 @@ class UserController extends BaseResourceController
         $adminFlagChanging = array_key_exists('is_admin', $data)
             && (bool) $data['is_admin'] !== (bool) $model->is_admin;
 
+        if ($adminFlagChanging) {
+            $makingAdmin = (bool) $data['is_admin'];
+            app(UserAccountGuard::class)->assertCanChangeOrgAdminFlag(
+                $model,
+                $request->user(),
+                $makingAdmin,
+            );
+
+            if ($makingAdmin) {
+                $data['access_scope'] = 'org';
+                if (! array_key_exists('role_id', $data)) {
+                    $adminRoleId = Role::query()
+                        ->where('role_name', 'Administrator')
+                        ->where('scope', 'org')
+                        ->value('id');
+                    if ($adminRoleId) {
+                        $data['role_id'] = (int) $adminRoleId;
+                        $roleChanging = (int) $adminRoleId !== (int) $model->role_id;
+                    }
+                }
+            } elseif (! array_key_exists('role_id', $data)) {
+                $currentRoleName = (string) Role::query()->whereKey($model->role_id)->value('role_name');
+                if (in_array($currentRoleName, ['Administrator', 'Admin'], true)) {
+                    $staffRoleId = Role::query()
+                        ->where('role_name', 'Branch Manager')
+                        ->where('scope', 'org')
+                        ->value('id')
+                        ?? Role::query()->where('role_name', 'Cashier')->value('id');
+                    if ($staffRoleId) {
+                        $data['role_id'] = (int) $staffRoleId;
+                        $roleChanging = (int) $staffRoleId !== (int) $model->role_id;
+                    }
+                }
+            }
+        }
+
         // Demoting off Administrator/Admin role clears org-admin unless explicitly kept.
         // Also heal stray is_admin flags on non-admin roles (those still blocked delete).
         if (! array_key_exists('is_admin', $data) && $model->is_admin) {
@@ -231,6 +267,7 @@ class UserController extends BaseResourceController
             $roleNameForAdminCheck = Role::query()->whereKey($roleIdForAdminCheck)->value('role_name');
             $keepsAdminRole = in_array((string) $roleNameForAdminCheck, ['Administrator', 'Admin'], true);
             if (! $keepsAdminRole) {
+                app(UserAccountGuard::class)->assertCanClearOrgAdminFlag($model, $request->user());
                 $data['is_admin'] = false;
                 $adminFlagChanging = true;
             }

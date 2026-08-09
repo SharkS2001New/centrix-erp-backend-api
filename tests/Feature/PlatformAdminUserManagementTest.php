@@ -94,4 +94,113 @@ class PlatformAdminUserManagementTest extends TestCase
         $this->assertFalse((bool) $tenantUser->must_change_password);
         $this->assertNotNull($tenantUser->password_changed_at);
     }
+
+    public function test_super_admin_can_promote_and_demote_org_admin_when_more_than_one(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $tenantAdmin = User::where('username', 'admin')->firstOrFail();
+        $orgId = (int) $tenantAdmin->organization_id;
+        $cashierRole = \App\Models\Role::where('role_name', 'Cashier')->firstOrFail();
+        $adminRole = \App\Models\Role::where('role_name', 'Administrator')->where('scope', 'org')->firstOrFail();
+
+        $staff = User::create([
+            'organization_id' => $orgId,
+            'branch_id' => $tenantAdmin->branch_id,
+            'role_id' => $cashierRole->id,
+            'username' => 'promote_me_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Promote Me',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_admin' => false,
+            'is_active' => true,
+        ]);
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}/users/{$staff->id}", [
+            'is_admin' => true,
+        ])
+            ->assertOk()
+            ->assertJsonPath('is_admin', true)
+            ->assertJsonPath('role_id', $adminRole->id)
+            ->assertJsonPath('access_scope', 'org');
+
+        $this->assertTrue((bool) $staff->fresh()->is_admin);
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}/users/{$staff->id}", [
+            'is_admin' => false,
+        ])
+            ->assertOk()
+            ->assertJsonPath('is_admin', false);
+
+        $this->assertFalse((bool) $staff->fresh()->is_admin);
+    }
+
+    public function test_super_admin_cannot_demote_or_delete_sole_org_admin(): void
+    {
+        $superAdmin = User::where('username', 'superadmin')->firstOrFail();
+        Sanctum::actingAs($superAdmin);
+
+        $tenantAdmin = User::where('username', 'admin')->firstOrFail();
+        $orgId = (int) $tenantAdmin->organization_id;
+
+        User::query()
+            ->where('organization_id', $orgId)
+            ->where('id', '!=', $tenantAdmin->id)
+            ->where('is_admin', true)
+            ->update(['is_admin' => false]);
+
+        $tenantAdmin->forceFill(['is_admin' => true])->save();
+
+        $this->patchJson("/api/v1/admin/organizations/{$orgId}/users/{$tenantAdmin->id}", [
+            'is_admin' => false,
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['is_admin']);
+
+        $this->deleteJson("/api/v1/admin/organizations/{$orgId}/users/{$tenantAdmin->id}")
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['user']);
+
+        $this->assertTrue((bool) $tenantAdmin->fresh()->is_admin);
+    }
+
+    public function test_tenant_admin_cannot_change_org_admin_flag_directly(): void
+    {
+        $tenantAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($tenantAdmin);
+
+        \App\Models\PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $tenantAdmin->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        $cashierRole = \App\Models\Role::where('role_name', 'Cashier')->firstOrFail();
+        $staff = User::create([
+            'organization_id' => $tenantAdmin->organization_id,
+            'branch_id' => $tenantAdmin->branch_id,
+            'role_id' => $cashierRole->id,
+            'username' => 'no_promote_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'No Promote',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_admin' => false,
+            'is_active' => true,
+        ]);
+
+        $this->putJson("/api/v1/users/{$staff->id}", [
+            'is_admin' => true,
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['is_admin']);
+    }
 }
