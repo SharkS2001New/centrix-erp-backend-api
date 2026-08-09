@@ -131,6 +131,49 @@ class HospitalityCheckService
             return $this->presentable($existing);
         }
 
+        $sourceCheckId = isset($input['source_check_id']) ? (int) $input['source_check_id'] : 0;
+
+        // Online local-first: settle the open check that was already built on the server.
+        if ($sourceCheckId > 0) {
+            return DB::transaction(function () use ($org, $user, $payments, $input, $idempotency, $sourceCheckId) {
+                $again = $idempotency->findExisting($user, $input);
+                if ($again) {
+                    return $this->presentable($again);
+                }
+
+                $check = $this->findOwnedCheck($sourceCheckId, (int) $org->id);
+                if (in_array($check->status, ['paid', 'settled', 'posted_to_folio'], true)) {
+                    if (Schema::hasColumn('hospitality_checks', 'meta')) {
+                        $stamped = $idempotency->stampMeta(
+                            is_array($check->meta) ? $check->meta : [],
+                            $input,
+                        );
+                        $check->update(['meta' => $stamped]);
+                    }
+
+                    return $this->presentable($check->fresh());
+                }
+
+                $settlePayments = $payments !== [] ? $payments : [[
+                    'method_code' => 'CASH',
+                    'amount' => (float) $check->total,
+                ]];
+                $this->assertOfflineSyncPayments($settlePayments);
+
+                $check = $this->settleWithPayments($check, $user, $org, $settlePayments, null, null);
+
+                if (Schema::hasColumn('hospitality_checks', 'meta')) {
+                    $stamped = $idempotency->stampMeta(
+                        is_array($check->meta) ? $check->meta : [],
+                        $input,
+                    );
+                    $check->update(['meta' => $stamped]);
+                }
+
+                return $this->presentable($check->fresh());
+            });
+        }
+
         if ($lines === []) {
             throw ValidationException::withMessages(['lines' => ['Offline check has no lines.']]);
         }
@@ -204,14 +247,7 @@ class HospitalityCheckService
                 'method_code' => 'CASH',
                 'amount' => (float) $check->total,
             ]];
-            foreach ($cashPayments as $pay) {
-                $code = strtoupper(trim((string) ($pay['method_code'] ?? '')));
-                if ($code !== 'CASH') {
-                    throw ValidationException::withMessages([
-                        'payments' => ['Offline hospitality sync supports cash payments only.'],
-                    ]);
-                }
-            }
+            $this->assertOfflineSyncPayments($cashPayments);
 
             $check = $this->settleWithPayments($check, $user, $org, $cashPayments, null, null);
 
@@ -225,6 +261,28 @@ class HospitalityCheckService
 
             return $this->presentable($check->fresh());
         });
+    }
+
+    /**
+     * Local-first / offline sync: same tenders as settle, except room charge (needs folio).
+     *
+     * @param  list<array{method_code?: string, amount?: float|int|string}>  $payments
+     */
+    protected function assertOfflineSyncPayments(array $payments): void
+    {
+        foreach ($payments as $pay) {
+            $code = strtoupper(trim((string) ($pay['method_code'] ?? '')));
+            if ($code === 'ROOM') {
+                throw ValidationException::withMessages([
+                    'payments' => ['Room charge cannot sync via offline hospitality settle. Use online settle.'],
+                ]);
+            }
+            if ($code === '') {
+                throw ValidationException::withMessages([
+                    'payments' => ['Each payment needs a method_code.'],
+                ]);
+            }
+        }
     }
 
     protected function resolveOfflineCheckNumber(int $organizationId, ?string $preferred): string
@@ -680,7 +738,12 @@ class HospitalityCheckService
             ->with([
                 'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
                 'floorTable:id,code,label',
-                'outlet:id,code,name',
+                'outlet:id,code,name,outlet_type',
+                'payments' => fn ($q) => $q->orderBy('id'),
+                'openedBy:id,full_name,username',
+                'closedBy:id,full_name,username',
+                'folio:id,folio_number,guest_name,room_id,status',
+                'folio.room:id,room_number,status',
             ])
             ->where('organization_id', $organizationId)
             ->orderByDesc('updated_at')
@@ -824,8 +887,10 @@ class HospitalityCheckService
         return $check->load([
             'lines' => fn ($q) => $q->orderBy('sort_order')->orderBy('id'),
             'floorTable:id,code,label,outlet_id',
-            'outlet:id,code,name',
+            'outlet:id,code,name,outlet_type',
             'payments' => fn ($q) => $q->orderBy('id'),
+            'openedBy:id,full_name,username',
+            'closedBy:id,full_name,username',
             'folio:id,folio_number,guest_name,room_id,status',
             'folio.room:id,room_number,status',
         ]);
@@ -860,12 +925,35 @@ class HospitalityCheckService
             }
         }
 
+        $payments = $check->relationLoaded('payments')
+            ? $check->payments
+            : collect();
+        $methodCodes = $payments
+            ->pluck('method_code')
+            ->filter()
+            ->map(fn ($c) => strtoupper(trim((string) $c)))
+            ->unique()
+            ->values()
+            ->all();
+        $primaryMethod = $methodCodes[0] ?? null;
+        $methodLabel = $this->paymentMethodLabel($methodCodes);
+
+        $meta = is_array($check->meta) ? $check->meta : null;
+        $offline = (bool) ($meta['offline_order'] ?? false);
+        $source = $offline ? 'hotel_pos_offline' : 'hotel_pos';
+
+        $openedBy = $check->relationLoaded('openedBy') ? $check->openedBy : null;
+        $closedBy = $check->relationLoaded('closedBy') ? $check->closedBy : null;
+
         return [
             'id' => $check->id,
             'check_number' => $check->check_number,
+            // Aliases so backoffice-style UIs can reuse Order / Placed by patterns.
+            'order_num' => $check->check_number,
             'status' => $this->normalizeStatus((string) $check->status),
             'service_mode' => $check->service_mode,
             'guest_name' => $check->guest_name ? (string) $check->guest_name : null,
+            'customer_name' => $check->guest_name ? (string) $check->guest_name : null,
             'folio_id' => $check->folio_id ? (int) $check->folio_id : null,
             'folio' => $check->relationLoaded('folio') && $check->folio ? [
                 'id' => (int) $check->folio->id,
@@ -893,14 +981,29 @@ class HospitalityCheckService
             'vat_total' => (float) $check->vat_total,
             'service_charge' => (float) $check->service_charge,
             'total' => $total,
+            'order_total' => $total,
             'amount_paid' => $paid,
             'balance_due' => $balance,
+            'payment_method_code' => $primaryMethod,
+            'payment_method_label' => $methodLabel,
+            'payment_methods' => $methodCodes,
+            'channel' => 'hotel_pos',
+            'order_source' => $source,
+            'opened_by' => $check->opened_by ? (int) $check->opened_by : null,
+            'opened_by_name' => $openedBy
+                ? trim((string) ($openedBy->full_name ?: $openedBy->username ?: ''))
+                : null,
+            'closed_by' => $check->closed_by ? (int) $check->closed_by : null,
+            'closed_by_name' => $closedBy
+                ? trim((string) ($closedBy->full_name ?: $closedBy->username ?: ''))
+                : null,
             'opened_at' => optional($check->opened_at)?->toIso8601String(),
             'closed_at' => optional($check->closed_at)?->toIso8601String(),
+            'created_at' => optional($check->opened_at ?? $check->created_at)?->toIso8601String(),
             'updated_at' => optional($check->updated_at)?->toIso8601String(),
-            'meta' => is_array($check->meta) ? $check->meta : null,
-            'client_check_uuid' => is_array($check->meta)
-                ? ($check->meta['client_check_uuid'] ?? null)
+            'meta' => $meta,
+            'client_check_uuid' => is_array($meta)
+                ? ($meta['client_check_uuid'] ?? null)
                 : null,
             'offline_pending_sync' => false,
             'lines' => $check->lines->map(fn (HospitalityCheckLine $line) => [
@@ -915,16 +1018,40 @@ class HospitalityCheckService
                 'sort_order' => (int) $line->sort_order,
                 'image_url' => $imageByCode[(string) $line->product_code] ?? null,
             ])->values()->all(),
-            'payments' => $check->relationLoaded('payments')
-                ? $check->payments->map(fn (HospitalityCheckPayment $p) => [
-                    'id' => $p->id,
-                    'method_code' => $p->method_code,
-                    'amount' => (float) $p->amount,
-                    'reference' => $p->reference,
-                    'created_at' => optional($p->created_at)?->toIso8601String(),
-                ])->values()->all()
-                : [],
+            'payments' => $payments->map(fn (HospitalityCheckPayment $p) => [
+                'id' => $p->id,
+                'method_code' => $p->method_code,
+                'amount' => (float) $p->amount,
+                'reference' => $p->reference,
+                'created_at' => optional($p->created_at)?->toIso8601String(),
+            ])->values()->all(),
         ];
+    }
+
+    /**
+     * @param  list<string>  $codes
+     */
+    protected function paymentMethodLabel(array $codes): string
+    {
+        if ($codes === []) {
+            return '—';
+        }
+        if (count($codes) > 1) {
+            return 'Mixed';
+        }
+        $code = $codes[0];
+
+        return match ($code) {
+            'CASH' => 'Cash',
+            'MPESA', 'M-PESA', 'M_PESA' => 'M-Pesa',
+            'EQUITY' => 'Equity',
+            'KCB' => 'KCB',
+            'CARD' => 'Card',
+            'CHEQUE', 'CHECK' => 'Cheque',
+            'BANK', 'OTHER' => 'Bank',
+            'ROOM' => 'Room charge',
+            default => $code,
+        };
     }
 
     public function balanceDue(HospitalityCheck $check): float

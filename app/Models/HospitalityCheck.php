@@ -72,4 +72,14 @@ class HospitalityCheck extends Model
     {
         return $this->belongsTo(HospitalityFloorTable::class, 'floor_table_id');
     }
+
+    public function openedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'opened_by');
+    }
+
+    public function closedBy(): BelongsTo
+    {
+        return $this->belongsTo(User::class, 'closed_by');
+    }
 }

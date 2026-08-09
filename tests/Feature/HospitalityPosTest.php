@@ -54,6 +54,7 @@ class HospitalityPosTest extends TestCase
             'order_num',
             'mpesa_transaction_code',
             'payment_reference',
+            'pos_ticket_scope', // generated column — must not be written
         ]);
         $sale->order_num = 991001 + random_int(1, 9000);
         $sale->status = 'completed';
@@ -200,6 +201,51 @@ class HospitalityPosTest extends TestCase
             ->where('organization_id', $this->org->id)
             ->where('meta->pos_sync_id', $uuid)
             ->count());
+    }
+
+    public function test_offline_sync_settles_existing_source_check(): void
+    {
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+            ->assertCreated()
+            ->json('check');
+        $checkId = (int) $opened['id'];
+
+        $withLine = $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/lines", [
+            'product_code' => $product->product_code,
+            'qty' => 1,
+        ])
+            ->assertOk()
+            ->json('check');
+
+        $uuid = 'hotel-local-first-'.uniqid();
+        $payload = [
+            'client_check_uuid' => $uuid,
+            'source_check_id' => $checkId,
+            'check_number' => (string) $withLine['check_number'],
+            'offline_order' => true,
+            'client_completed_at' => now()->toIso8601String(),
+            'payments' => [
+                ['method_code' => 'CASH', 'amount' => round((float) $withLine['total'], 2)],
+            ],
+        ];
+
+        $settled = $this->postJson('/api/v1/hospitality/pos/checks/offline-sync', $payload)
+            ->assertCreated()
+            ->json('check');
+
+        $this->assertSame($checkId, (int) $settled['id']);
+        $this->assertSame('paid', $settled['status']);
+        $this->assertSame($uuid, $settled['client_check_uuid'] ?? null);
+
+        $again = $this->postJson('/api/v1/hospitality/pos/checks/offline-sync', $payload)
+            ->assertCreated()
+            ->json('check');
+        $this->assertSame($checkId, (int) $again['id']);
     }
 
     public function test_open_check_tap_add_hold_and_settle_cash(): void

@@ -22,25 +22,28 @@ Run on a fresh or staging Hotel & Bar tenant before production cutover.
 
 - [ ] New product with photo uploads in backoffice
 - [ ] Photo appears on Hotel POS while online
-- [ ] After opening POS online, go offline/slow: product still sellable; photo still shows if warmed
-- [ ] Food / Drinks chips filter correctly online **and** offline
+- [ ] After opening POS online, go offline: till **locks** with “Please check your internet connection” (no selling)
+- [ ] Food / Drinks chips filter correctly while online
+- [ ] Catalog / check-number warm while online (footer Pending sync / Sync)
 
-## 4. Online POS sell
+## 4. Online POS sell (local-first)
 
 - [ ] Open check, add lines, change qty, clear, void
-- [ ] Hold / save unpaid + resume from unpaid queue
-- [ ] Pay cash (full)
-- [ ] Pay M-Pesa / split tender (if enabled)
-- [ ] Room charge to open folio (if `room_charge` on)
+- [ ] Hold / save unpaid + resume from Held (top chips: Hold + Held)
+- [ ] Pay cash / M-Pesa / split (full): receipt prints **immediately** via Centrix Print Agent, then check syncs in background
+- [ ] Room charge to open folio still settles online first (then prints)
+- [ ] Partial payment (if enabled) settles online first (then prints)
 - [ ] Table required when `table_pos` on
-- [ ] Check receipt prints (Print Agent or browser)
+- [ ] With Print Agent stopped: pay still saves locally / queues sync, but print error asks to start Agent + Reprint
+- [ ] Reprint last receipt works via Print Agent
 
-## 5. Offline cash bridge
+## 5. Offline lock (no offline sell)
 
 - [ ] While online: catalog + check numbers warm (footer Sync / Pending sync)
-- [ ] Offline: cash-only settle works; print works
-- [ ] Offline: M-Pesa / room charge / hold blocked with clear message
-- [ ] After reconnect: outbox syncs; check appears in Hospitality → Orders
+- [ ] Offline: full-screen lock — **Please check your internet connection**; cannot open checks, add lines, or pay
+- [ ] Offline: room charge / unpaid queue unavailable
+- [ ] After reconnect: lock clears; any pending outbox syncs; checks appear in Hospitality → Orders
+- [ ] Failed sync: footer shows failed count + Reprint for last failed receipt
 
 ## 6. Stock (if deduct on settle)
 

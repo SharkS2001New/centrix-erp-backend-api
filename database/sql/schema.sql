@@ -1936,7 +1936,7 @@ SELECT
     c.phone_number,
     r.route_name,
     COUNT(DISTINCT s.id) AS total_orders,
-    SUM(s.order_total) AS total_purchased,
+    COALESCE(SUM(s.order_total),0) AS total_purchased,
     COALESCE(SUM(ci.invoice_total),0) AS total_invoiced,
     COALESCE(SUM(ci.amount_paid),0) AS total_paid,
     COALESCE(SUM(ci.balance_due),0) AS total_outstanding,
@@ -1946,7 +1946,23 @@ LEFT JOIN sales s ON s.customer_num = c.customer_num AND s.organization_id = c.o
 LEFT JOIN routes r ON c.route_id = r.id
 LEFT JOIN customer_invoices ci ON ci.customer_num = c.customer_num AND ci.organization_id = c.organization_id AND ci.deleted_at IS NULL
 WHERE c.deleted_at IS NULL
-GROUP BY c.organization_id, c.customer_num, c.customer_name, c.phone_number, r.route_name, c.current_balance;
+GROUP BY c.organization_id, c.customer_num, c.customer_name, c.phone_number, r.route_name, c.current_balance
+UNION ALL
+SELECT
+    s.organization_id,
+    NULL AS customer_num,
+    'Walk-in' AS customer_name,
+    NULL AS phone_number,
+    NULL AS route_name,
+    COUNT(DISTINCT s.id) AS total_orders,
+    COALESCE(SUM(s.order_total),0) AS total_purchased,
+    0 AS total_invoiced,
+    0 AS total_paid,
+    0 AS total_outstanding,
+    0 AS ar_balance
+FROM sales s
+WHERE s.customer_num IS NULL AND s.status='completed' AND s.archived = 0
+GROUP BY s.organization_id;
 
 DROP VIEW IF EXISTS v_ar_aging;
 CREATE VIEW v_ar_aging AS

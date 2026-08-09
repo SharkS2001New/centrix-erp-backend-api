@@ -614,13 +614,21 @@ class ReportController extends Controller
             $q->whereExists(function ($sub) use ($filters, $orgId, $legacy, $statuses) {
                 $sub->select(DB::raw('1'))
                     ->from('sales as s')
-                    ->whereColumn('s.customer_num', 'v_sales_by_customer.customer_num')
                     ->where('s.organization_id', $orgId)
                     ->whereIn('s.status', $statuses)
                     ->where('s.archived', 0)
                     ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) >= ?', [$filters['from_date']])
                     ->whereRaw('DATE(COALESCE(s.completed_at, s.created_at)) <= ?', [$filters['to_date']])
-                    ->whereRaw($legacy);
+                    ->whereRaw($legacy)
+                    ->where(function ($match) {
+                        // Registered customers: match by customer_num.
+                        // Walk-in bucket (NULL customer_num): match anonymous cash sales.
+                        $match->whereColumn('s.customer_num', 'v_sales_by_customer.customer_num')
+                            ->orWhere(function ($walkIn) {
+                                $walkIn->whereNull('s.customer_num')
+                                    ->whereNull('v_sales_by_customer.customer_num');
+                            });
+                    });
             });
         }
 

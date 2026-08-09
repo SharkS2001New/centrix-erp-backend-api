@@ -358,6 +358,40 @@ class SalesReportsTest extends TestCase
         $this->assertIsArray($response->json('data'));
     }
 
+    public function test_sales_by_customer_includes_walk_in_cash_sales_in_totals(): void
+    {
+        $today = now()->toDateString();
+
+        Sale::query()->create([
+            'order_num' => 995201,
+            'branch_id' => $this->admin->branch_id,
+            'organization_id' => $this->admin->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $this->admin->id,
+            'customer_num' => null,
+            'customer_name_override' => 'Walk-in',
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'order_total' => 3210,
+            'total_vat' => 0,
+            'amount_paid' => 3210,
+            'archived' => 0,
+            'completed_at' => now(),
+            'created_at' => now(),
+        ]);
+
+        $response = $this->getJson("/api/v1/reports/sales-by-customer?from_date={$today}&to_date={$today}&per_page=100")
+            ->assertOk();
+
+        $rows = collect($response->json('data') ?? []);
+        $walkIn = $rows->first(fn ($row) => ($row['customer_name'] ?? null) === 'Walk-in'
+            && ($row['customer_num'] ?? null) === null);
+
+        $this->assertNotNull($walkIn, 'Walk-in sales should appear as a Walk-in customer row');
+        $this->assertGreaterThanOrEqual(3210, (float) ($walkIn['total_purchased'] ?? 0));
+        $this->assertGreaterThanOrEqual(3210, (float) ($response->json('summary.total_purchased') ?? 0));
+    }
+
     public function test_invoice_payments_report_returns_tenant_scoped_rows(): void
     {
         $today = now()->toDateString();

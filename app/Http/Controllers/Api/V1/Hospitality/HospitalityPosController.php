@@ -333,14 +333,16 @@ class HospitalityPosController extends Controller
         $data = $request->validate([
             'client_check_uuid' => ['required', 'string', 'max:64'],
             'check_number' => ['nullable', 'string', 'max:40'],
+            'source_check_id' => ['nullable', 'integer', 'min:1'],
             'outlet_id' => ['nullable', 'integer'],
             'branch_id' => ['nullable', 'integer'],
             'floor_table_id' => ['nullable', 'integer'],
             'guest_name' => ['nullable', 'string', 'max:160'],
             'offline_order' => ['nullable', 'boolean'],
             'client_completed_at' => ['nullable', 'date'],
-            'lines' => ['required', 'array', 'min:1'],
-            'lines.*.product_code' => ['required', 'string', 'max:64'],
+            // Lines required when creating a new check; optional when settling source_check_id.
+            'lines' => ['nullable', 'array'],
+            'lines.*.product_code' => ['required_with:lines', 'string', 'max:64'],
             'lines.*.qty' => ['nullable', 'numeric', 'min:0.0001'],
             'payments' => ['nullable', 'array'],
             'payments.*.method_code' => ['required_with:payments', 'string', 'max:40'],
@@ -348,10 +350,16 @@ class HospitalityPosController extends Controller
             'payments.*.reference' => ['nullable', 'string', 'max:120'],
         ]);
 
+        if (empty($data['source_check_id']) && empty($data['lines'])) {
+            throw ValidationException::withMessages([
+                'lines' => ['Offline check has no lines.'],
+            ]);
+        }
+
         $check = $this->checkService->ingestOfflineCashCheck(
             $org,
             $user,
-            $data['lines'],
+            $data['lines'] ?? [],
             $data['payments'] ?? [],
             $data,
         );
