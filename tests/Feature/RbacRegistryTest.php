@@ -365,8 +365,9 @@ class RbacRegistryTest extends TestCase
             ->whereIn('permission_id', $hospitalityIds)
             ->delete();
 
+        // Non-admin user: only the role matrix unlocks hotel shells (no is_admin entry grants).
         $admin = User::where('username', 'admin')->firstOrFail();
-        $admin->forceFill(['role_id' => $adminRole->id, 'is_admin' => true])->save();
+        $admin->forceFill(['role_id' => $adminRole->id, 'is_admin' => false])->save();
 
         $org = Organization::findOrFail($admin->organization_id);
         $org->update([
@@ -402,7 +403,6 @@ class RbacRegistryTest extends TestCase
         $ids = array_column($after, 'id');
         $this->assertContains('hospitality_backoffice', $ids);
         $this->assertContains('hotel_bar_pos', $ids);
-        $this->assertContains('admin', $ids);
     }
 
     public function test_org_admin_entry_grants_unlock_hotel_workspaces_without_role_catalog(): void

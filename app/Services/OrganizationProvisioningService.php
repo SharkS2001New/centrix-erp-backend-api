@@ -77,6 +77,7 @@ class OrganizationProvisioningService
 
             // Shared global Administrator accumulates industry shells as tenants are provisioned.
             // Never wipe opposite-industry grants; never attach orphan codes outside industry apps.
+            PermissionMatrixService::ensure();
             $industry = IndustryRegistry::industryForProfile((string) $data['deployment_profile']);
             $permissionIds = PermissionMatrixService::permissionIdsForIndustry($industry);
             foreach ($permissionIds as $permissionId) {
