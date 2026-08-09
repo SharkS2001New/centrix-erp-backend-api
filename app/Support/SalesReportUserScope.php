@@ -7,7 +7,8 @@ use App\Models\User;
 use Illuminate\Database\Eloquent\Builder;
 
 /**
- * Users eligible for sales report cashier / salesperson filters.
+ * Users eligible for sales report / sales-data cashier & salesperson filters:
+ * backoffice order create, POS checkout, or mobile field sales create.
  */
 class SalesReportUserScope
 {
@@ -17,6 +18,7 @@ class SalesReportUserScope
         return [
             'sales.orders.create',
             'pos.checkout.create',
+            'pos.terminal.view',
             'mobile_sales.orders.create',
         ];
     }
@@ -38,27 +40,33 @@ class SalesReportUserScope
             return;
         }
 
+        // Eligible when at least one create/POS permission is effectively granted
+        // (role or grant override), and that same permission is not denied.
         $query->where(function ($outer) use ($permissionIds) {
-            $outer->whereExists(function ($sub) use ($permissionIds) {
-                $sub->selectRaw('1')
-                    ->from('role_permissions as rp')
-                    ->whereColumn('rp.role_id', 'users.role_id')
-                    ->whereIn('rp.permission_id', $permissionIds);
-            })->orWhereExists(function ($sub) use ($permissionIds) {
-                $sub->selectRaw('1')
-                    ->from('user_permission_overrides as upo')
-                    ->whereColumn('upo.user_id', 'users.id')
-                    ->where('upo.effect', 'grant')
-                    ->whereIn('upo.permission_id', $permissionIds);
-            });
-        });
-
-        $query->whereNotExists(function ($sub) use ($permissionIds) {
-            $sub->selectRaw('1')
-                ->from('user_permission_overrides as upo')
-                ->whereColumn('upo.user_id', 'users.id')
-                ->where('upo.effect', 'deny')
-                ->whereIn('upo.permission_id', $permissionIds);
+            foreach ($permissionIds as $permissionId) {
+                $outer->orWhere(function ($one) use ($permissionId) {
+                    $one->where(function ($has) use ($permissionId) {
+                        $has->whereExists(function ($sub) use ($permissionId) {
+                            $sub->selectRaw('1')
+                                ->from('role_permissions as rp')
+                                ->whereColumn('rp.role_id', 'users.role_id')
+                                ->where('rp.permission_id', $permissionId);
+                        })->orWhereExists(function ($sub) use ($permissionId) {
+                            $sub->selectRaw('1')
+                                ->from('user_permission_overrides as upo')
+                                ->whereColumn('upo.user_id', 'users.id')
+                                ->where('upo.effect', 'grant')
+                                ->where('upo.permission_id', $permissionId);
+                        });
+                    })->whereNotExists(function ($sub) use ($permissionId) {
+                        $sub->selectRaw('1')
+                            ->from('user_permission_overrides as upo')
+                            ->whereColumn('upo.user_id', 'users.id')
+                            ->where('upo.effect', 'deny')
+                            ->where('upo.permission_id', $permissionId);
+                    });
+                });
+            }
         });
     }
 }

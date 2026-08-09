@@ -706,7 +706,7 @@ Route::prefix('v1')->group(function () {
             ->only(['index', 'show'])
             ->middleware([
                 'erp.module:admin,sales,payments,customers_suppliers,distribution',
-                'erp.permission:admin.view|admin.payment_methods.view|purchasing.view|payments.view|payments.manage|payments.sale_payments.view|payments.sale_payments.create|sales.orders.view|sales.orders.edit|pos.checkout.create|driver.mobile',
+                'erp.permission:admin.view|admin.payment_methods.view|purchasing.view|payments.view|payments.manage|payments.sale_payments.view|payments.sale_payments.create|sales.orders.view|sales.orders.edit|pos.checkout.create|driver.mobile|reports.view',
             ]);
         // Branch pickers (HR employee form, sales, etc.) — not admin-module-only.
         Route::apiResource('branches', BranchController::class)
@@ -759,7 +759,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::apiResource('sub-categories', SubCategoryController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:catalogue.view|inventory.view|purchasing.view|reports.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:products.manage']);
             Route::post('vats/import-batch', [VatImportController::class, 'store'])
                 ->middleware(['erp.permission:products.manage']);
@@ -915,7 +915,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:customers.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:customers.manage']);
             Route::apiResource('routes', RouteModelController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|admin.view|sales.view|mobile_sales.routes.view|fulfillment.routes.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|admin.view|sales.view|mobile_sales.routes.view|fulfillment.routes.view|reports.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.routes.create|fulfillment.routes.edit|fulfillment.routes.delete|fulfillment.manage|sales.manage']);
             Route::post('routes/import-batch', [RouteImportController::class, 'store'])
                 ->middleware(['erp.permission:fulfillment.routes.create|fulfillment.manage|sales.manage']);

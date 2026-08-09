@@ -30,9 +30,11 @@ class UserAccountGuard
             ]);
         }
 
-        if ($target->is_admin) {
+        // Org-admin flag blocks delete for tenant admins. Platform super-admins may
+        // remove org admins (e.g. test accounts); the seeded org admin is not special-cased.
+        if ($target->is_admin && ! $actor->is_super_admin) {
             throw ValidationException::withMessages([
-                'user' => ['Organization administrator accounts cannot be deleted.'],
+                'user' => ['Organization administrator accounts cannot be deleted. Change their role away from Administrator first, or ask a platform admin.'],
             ]);
         }
     }

@@ -77,4 +77,35 @@ class LpoMstStoreFullTest extends TestCase
             $this->assertLessThan($gross * (1 + $rate / 100) - 0.5, $totals['total']);
         }
     }
+
+    public function test_admin_can_delete_sent_or_received_lpo_status(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $service = app(\App\Services\LpoModuleService::class);
+
+        $this->assertTrue($service->canDeleteLpo($admin, 0));
+        $this->assertTrue($service->canDeleteLpo($admin, 3));
+        $this->assertTrue($service->canDeleteLpo($admin, 5));
+        $this->assertTrue($service->canDeleteLpo($admin, 6));
+    }
+
+    public function test_non_admin_cannot_delete_sent_or_received_lpo_status(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $staff = User::query()
+            ->where('organization_id', $admin->organization_id)
+            ->where('is_admin', 0)
+            ->where('is_super_admin', 0)
+            ->where('id', '!=', $admin->id)
+            ->first();
+        if (! $staff) {
+            $this->markTestSkipped('No non-admin user in seed data.');
+        }
+
+        $service = app(\App\Services\LpoModuleService::class);
+        $this->assertTrue($service->canDeleteLpo($staff, 0));
+        $this->assertTrue($service->canDeleteLpo($staff, 2));
+        $this->assertFalse($service->canDeleteLpo($staff, 3));
+        $this->assertFalse($service->canDeleteLpo($staff, 5));
+    }
 }

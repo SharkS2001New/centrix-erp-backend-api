@@ -25,6 +25,7 @@ use App\Services\Sales\CentrixSalesScope;
 use App\Support\AppTimezone;
 use App\Support\EffectiveSaleDate;
 use App\Support\SalesChannelLabels;
+use App\Support\SalesReportUserScope;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -66,20 +67,23 @@ class ReportController extends Controller
             return response()->json($row);
         }
 
-        $q = trim((string) $request->input('q', ''));
-        if ($q === '') {
-            return response()->json(['data' => []]);
-        }
+        // Cashiers / sellers only — not warehouse, HR, admin-only accounts, etc.
+        SalesReportUserScope::applyEligibleSalesReportUsers($query);
 
-        $query->where(function ($inner) use ($q) {
-            $inner->where('full_name', 'like', "%{$q}%")
-                ->orWhere('email', 'like', "%{$q}%")
-                ->orWhere('username', 'like', "%{$q}%");
-        });
+        $q = trim((string) $request->input('q', ''));
+        if ($q !== '') {
+            $query->where(function ($inner) use ($q) {
+                $inner->where('full_name', 'like', "%{$q}%")
+                    ->orWhere('email', 'like', "%{$q}%")
+                    ->orWhere('username', 'like', "%{$q}%");
+            });
+        }
 
         $perPage = min((int) $request->input('per_page', 50), 50);
         $rows = $query
+            ->orderByRaw('CASE WHEN full_name IS NULL OR full_name = ? THEN 1 ELSE 0 END', [''])
             ->orderBy('full_name')
+            ->orderBy('username')
             ->limit($perPage)
             ->get(['id', 'full_name', 'username']);
 

@@ -26,6 +26,12 @@ class RouteModelController extends BaseResourceController
         return RouteModel::class;
     }
 
+    /** @return list<string> */
+    protected function searchColumns(): array
+    {
+        return ['route_name', 'direction'];
+    }
+
     public function index(Request $request)
     {
         $query = $this->baseQuery($request);
@@ -34,14 +40,20 @@ class RouteModelController extends BaseResourceController
                 $query->where($col, $val);
             }
         }
-        if ($q = $request->input('q')) {
-            $searchCol = $this->routeKeyColumn() !== 'id'
-                ? $this->routeKeyColumn()
-                : ($this->fillableFields()[0] ?? 'id');
-            $query->where($searchCol, 'like', "%{$q}%");
+        if ($q = trim((string) $request->input('q', ''))) {
+            $columns = $this->searchColumns();
+            $query->where(function ($inner) use ($columns, $q) {
+                foreach ($columns as $index => $col) {
+                    if ($index === 0) {
+                        $inner->where($col, 'like', "%{$q}%");
+                    } else {
+                        $inner->orWhere($col, 'like', "%{$q}%");
+                    }
+                }
+            });
         }
         $perPage = min((int) $request->input('per_page', 25), 200);
-        $this->applyListOrdering($request, $query, 'id', 'desc');
+        $this->applyListOrdering($request, $query, 'route_name', 'asc');
 
         $paginator = $query->paginate($perPage);
 

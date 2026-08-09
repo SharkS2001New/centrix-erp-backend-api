@@ -487,11 +487,68 @@ class SalesReportsTest extends TestCase
         $this->assertTrue($ids->contains((int) $this->admin->id));
     }
 
+    public function test_report_filter_cashiers_lists_users_without_query(): void
+    {
+        $response = $this->getJson('/api/v1/reports/filter-cashiers?per_page=50')
+            ->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+        $this->assertNotEmpty($ids);
+        $this->assertTrue($ids->contains((int) $this->admin->id));
+
+        $labels = collect($response->json('data'))
+            ->map(fn (array $row) => (string) ($row['full_name'] ?: $row['username'] ?: ''))
+            ->all();
+        $sorted = $labels;
+        sort($sorted, SORT_STRING | SORT_FLAG_CASE);
+        $this->assertSame($sorted, $labels, 'Cashiers should be sorted by name');
+    }
+
     public function test_report_filter_cashiers_resolves_by_id(): void
     {
         $this->getJson('/api/v1/reports/filter-cashiers?id='.$this->admin->id)
             ->assertOk()
             ->assertJsonPath('id', $this->admin->id);
+    }
+
+    public function test_report_filter_cashiers_excludes_users_without_sales_permissions(): void
+    {
+        $stockRole = \App\Models\Role::query()->firstOrCreate(
+            ['role_name' => 'Stock Only '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+        $stockPermId = \App\Models\Permission::query()
+            ->where('permission_code', 'inventory.stock.view')
+            ->value('id');
+        $this->assertNotNull($stockPermId);
+        \Illuminate\Support\Facades\DB::table('role_permissions')->where('role_id', $stockRole->id)->delete();
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $stockRole->id,
+            'permission_id' => $stockPermId,
+        ]);
+
+        $stockUser = User::create([
+            'organization_id' => $this->admin->organization_id,
+            'branch_id' => $this->admin->branch_id,
+            'role_id' => $stockRole->id,
+            'username' => 'stock_only_'.uniqid(),
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'full_name' => 'Stock Only User',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_active' => true,
+        ]);
+
+        $cashier = User::where('username', 'cashier')->first();
+        $this->assertNotNull($cashier);
+
+        $response = $this->getJson('/api/v1/reports/filter-cashiers?per_page=50')
+            ->assertOk();
+
+        $ids = collect($response->json('data'))->pluck('id')->map(fn ($id) => (int) $id);
+        $this->assertTrue($ids->contains((int) $this->admin->id));
+        $this->assertTrue($ids->contains((int) $cashier->id), 'POS cashier should appear');
+        $this->assertFalse($ids->contains((int) $stockUser->id), 'Inventory-only users must not appear');
     }
 
     public function test_daily_sales_and_sales_by_product_tally_with_order_discount(): void

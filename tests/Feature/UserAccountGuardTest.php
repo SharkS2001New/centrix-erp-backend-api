@@ -33,16 +33,17 @@ class UserAccountGuardTest extends TestCase
             ->assertJsonValidationErrors(['is_active']);
     }
 
-    public function test_organization_administrator_cannot_be_deleted(): void
+    public function test_organization_administrator_cannot_be_deleted_by_tenant_admin(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
-        Sanctum::actingAs($admin);
+        $admin->forceFill(['is_admin' => true, 'is_super_admin' => false])->save();
+        $admin = $admin->fresh();
 
         $otherAdmin = User::create([
             'organization_id' => $admin->organization_id,
             'branch_id' => $admin->branch_id,
             'role_id' => $admin->role_id,
-            'username' => 'second_admin',
+            'username' => 'second_admin_'.uniqid(),
             'password' => Hash::make('password'),
             'full_name' => 'Second Admin',
             'access_scope' => 'org',
@@ -50,9 +51,81 @@ class UserAccountGuardTest extends TestCase
             'is_active' => true,
         ]);
 
-        $this->deleteJson("/api/v1/users/{$otherAdmin->id}")
-            ->assertStatus(422)
-            ->assertJsonValidationErrors(['user']);
+        try {
+            app(\App\Services\Auth\UserAccountGuard::class)->assertCanDelete($otherAdmin, $admin);
+            $this->fail('Expected ValidationException when a tenant admin deletes another org admin.');
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            $this->assertArrayHasKey('user', $e->errors());
+        }
+    }
+
+    public function test_platform_super_admin_can_delete_organization_administrator(): void
+    {
+        $super = User::query()->where('is_super_admin', true)->first()
+            ?? User::where('username', 'superadmin')->first();
+        if (! $super) {
+            $this->markTestSkipped('No platform super admin in seed data.');
+        }
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($super);
+
+        $otherAdmin = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $admin->role_id,
+            'username' => 'temp_org_admin_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Temp Org Admin',
+            'access_scope' => 'org',
+            'is_admin' => true,
+            'is_active' => true,
+        ]);
+
+        // Platform delete path uses the same guard via UserDeletionService.
+        $result = app(\App\Services\Auth\UserDeletionService::class)->delete($otherAdmin, $super);
+        $this->assertContains($result['mode'], ['deleted', 'archived']);
+    }
+
+    public function test_saving_user_with_non_admin_role_clears_stray_is_admin_flag(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+
+        \App\Models\PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $admin->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        Sanctum::actingAs($admin);
+
+        $cashierRole = Role::where('role_name', 'Cashier')->firstOrFail();
+        $target = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $cashierRole->id,
+            'username' => 'stray_admin_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Stray Admin Flag',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice'],
+            'is_admin' => true,
+            'is_active' => true,
+        ]);
+
+        $this->putJson("/api/v1/users/{$target->id}", [
+            'full_name' => 'Stray Admin Flag Fixed',
+        ])
+            ->assertOk()
+            ->assertJsonPath('is_admin', false);
+
+        $this->assertFalse((bool) $target->fresh()->is_admin);
     }
 
     public function test_organization_administrator_login_cannot_be_disabled(): void

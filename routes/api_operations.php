@@ -138,6 +138,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('sub-categories', [ReferencePickerController::class, 'subCategories']);
         Route::get('uoms', [ReferencePickerController::class, 'uoms']);
         Route::get('suppliers', [ReferencePickerController::class, 'suppliers']);
+        Route::get('routes', [ReferencePickerController::class, 'routes']);
+        Route::get('payment-methods', [ReferencePickerController::class, 'paymentMethods']);
     });
 
     // ---- Sales ----

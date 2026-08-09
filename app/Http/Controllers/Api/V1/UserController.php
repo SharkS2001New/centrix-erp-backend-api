@@ -225,12 +225,12 @@ class UserController extends BaseResourceController
             && (bool) $data['is_admin'] !== (bool) $model->is_admin;
 
         // Demoting off Administrator/Admin role clears org-admin unless explicitly kept.
-        if ($roleChanging && ! array_key_exists('is_admin', $data) && $model->is_admin) {
-            $previousRoleName = Role::query()->whereKey($model->role_id)->value('role_name');
-            $nextRoleName = Role::query()->whereKey((int) $data['role_id'])->value('role_name');
-            $wasAdminRole = in_array((string) $previousRoleName, ['Administrator', 'Admin'], true);
-            $staysAdminRole = in_array((string) $nextRoleName, ['Administrator', 'Admin'], true);
-            if ($wasAdminRole && ! $staysAdminRole) {
+        // Also heal stray is_admin flags on non-admin roles (those still blocked delete).
+        if (! array_key_exists('is_admin', $data) && $model->is_admin) {
+            $roleIdForAdminCheck = (int) ($data['role_id'] ?? $model->role_id);
+            $roleNameForAdminCheck = Role::query()->whereKey($roleIdForAdminCheck)->value('role_name');
+            $keepsAdminRole = in_array((string) $roleNameForAdminCheck, ['Administrator', 'Admin'], true);
+            if (! $keepsAdminRole) {
                 $data['is_admin'] = false;
                 $adminFlagChanging = true;
             }

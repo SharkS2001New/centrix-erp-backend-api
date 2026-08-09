@@ -115,6 +115,24 @@ class LpoModuleService
     }
 
     /**
+     * Draft / pre-send LPOs can be deleted by anyone with delete permission.
+     * Org / platform admins may also soft-delete sent or fully received LPOs
+     * (e.g. test data cleanup). Stock receipts and payments are not reversed.
+     */
+    public function canDeleteLpo(?User $viewer, int $statusCode): bool
+    {
+        if ($statusCode < self::STATUS_AWAITING_RECEIVE) {
+            return true;
+        }
+
+        if ($viewer === null) {
+            return false;
+        }
+
+        return (bool) ($viewer->is_super_admin || $viewer->is_admin);
+    }
+
+    /**
      * Resolve an LPO for an organization. Prefer primary key (lpo_no), then org-local
      * sequence (lpo_seq) so URLs that still use the display sequence keep working.
      */
@@ -202,6 +220,7 @@ class LpoModuleService
             $creator = $lpo->created_by ? $creators->get($lpo->created_by) : null;
             $orderDate = $lpo->created_at ?? $lpo->sent_at;
             $canEdit = $statusCode < self::STATUS_AWAITING_RECEIVE;
+            $canDelete = $this->canDeleteLpo($viewer, $statusCode);
             $lpoNo = (int) $lpo->lpo_no;
             $paymentsTotal = (float) ($paymentsByLpo[$lpoNo] ?? 0);
             $netAmount = (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0);
@@ -233,7 +252,7 @@ class LpoModuleService
                 'net_amount' => (float) ($lpo->net_amount ?? $lpo->total_amount ?? 0),
                 'created_by_name' => $creator?->full_name ?? $creator?->username,
                 'can_edit' => $canEdit,
-                'can_delete' => $canEdit,
+                'can_delete' => $canDelete,
                 'amount_paid' => round($paymentsTotal, 2),
                 'balance_due' => round(max(0, $netAmount - $paymentsTotal), 2),
                 'workflow_actions' => $workflow->workflowActions($lpo, $organizationId, $supplier),
@@ -429,7 +448,7 @@ class LpoModuleService
             'created_by_name' => $creator?->full_name ?? $creator?->username,
             'supplier_invoice_no' => $lpo->supplier_invoice_no,
             'can_edit' => (int) ($lpo->lpo_status_code ?? 0) < self::STATUS_AWAITING_RECEIVE,
-            'can_delete' => (int) ($lpo->lpo_status_code ?? 0) < self::STATUS_AWAITING_RECEIVE,
+            'can_delete' => $this->canDeleteLpo($viewer, (int) ($lpo->lpo_status_code ?? 0)),
             'can_pay' => $receivedPayable > 0,
             'can_receive' => ! $itemsFullyReturned
                 && (int) ($lpo->lpo_status_code ?? 0) >= 2
