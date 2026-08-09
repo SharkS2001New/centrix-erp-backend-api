@@ -404,4 +404,51 @@ class RbacRegistryTest extends TestCase
         $this->assertContains('hotel_bar_pos', $ids);
         $this->assertContains('admin', $ids);
     }
+
+    public function test_org_admin_entry_grants_unlock_hotel_workspaces_without_role_catalog(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $adminRole = Role::query()->where('role_name', 'Administrator')->firstOrFail();
+        $hospitalityIds = PermissionMatrixService::permissionIdsForIndustry('hospitality');
+        $this->assertNotEmpty($hospitalityIds);
+
+        DB::table('role_permissions')
+            ->where('role_id', $adminRole->id)
+            ->whereIn('permission_id', $hospitalityIds)
+            ->delete();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $admin->forceFill(['role_id' => $adminRole->id, 'is_admin' => true])->save();
+
+        $org = Organization::findOrFail($admin->organization_id);
+        $org->update([
+            'deployment_profile' => 'hotel_bar',
+            'enabled_modules' => array_merge(
+                is_array($org->enabled_modules) ? $org->enabled_modules : [],
+                [
+                    'admin' => true,
+                    'hospitality' => true,
+                    'hospitality.backend' => true,
+                    'hospitality.bar_pos' => true,
+                    'hospitality.dashboard' => true,
+                    'inventory' => true,
+                    'customers_suppliers' => true,
+                    'sales.pos' => false,
+                    'sales.backend' => false,
+                ],
+            ),
+        ]);
+
+        // is_admin entry grants alone must unlock shells even before Administrator catalog heal.
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($admin->fresh());
+        $map = app(UserPermissionService::class)->permissionMapForUser($admin->fresh(), $gate);
+        $this->assertTrue($map['hospitality.dashboard.view'] ?? false);
+        $this->assertTrue($map['hotel_bar_pos.terminal.view'] ?? false);
+
+        $workspaces = app(\App\Services\Erp\WorkspaceResolver::class)->availableForUser($admin->fresh(), $gate);
+        $ids = array_column($workspaces, 'id');
+        $this->assertContains('hospitality_backoffice', $ids);
+        $this->assertContains('hotel_bar_pos', $ids);
+    }
 }

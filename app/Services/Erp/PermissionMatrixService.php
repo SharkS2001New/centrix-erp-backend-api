@@ -38,31 +38,45 @@ class PermissionMatrixService
         return $codes;
     }
 
+    /** Prevents ensure() ↔ industry-catalog helpers from re-entering each other. */
+    protected static bool $ensuring = false;
+
     public static function ensure(): void
     {
-        self::ensureRegistryPermissions();
-        self::ensureCapabilityCodes();
-        self::remapLegacyPermissionAssignments();
-        self::ensureDiscountGiveForAdminRoles();
-        self::ensureSalesOrderApproveForAdminRoles();
-        self::ensureDiscountApprovalsForAdminRoles();
-        self::ensureLpoApproveForAdminRoles();
-        self::ensureNotificationsForBackofficeRoles();
-        // Shared Administrator must keep every industry shell (commerce + hospitality).
-        // Without this, hotel tenants only see Administration after the is_admin
-        // least-privilege change (operational access comes from the role matrix).
-        self::ensureAdministratorIndustryCatalogPermissions();
+        if (self::$ensuring) {
+            return;
+        }
+
+        self::$ensuring = true;
+        try {
+            self::ensureRegistryPermissions();
+            self::ensureCapabilityCodes();
+            self::remapLegacyPermissionAssignments();
+            self::ensureDiscountGiveForAdminRoles();
+            self::ensureSalesOrderApproveForAdminRoles();
+            self::ensureDiscountApprovalsForAdminRoles();
+            self::ensureLpoApproveForAdminRoles();
+            self::ensureNotificationsForBackofficeRoles();
+            // Shared Administrator must keep every industry shell (commerce + hospitality).
+            // Without this, hotel tenants only see Administration after the is_admin
+            // least-privilege change (operational access comes from the role matrix).
+            self::ensureAdministratorIndustryCatalogPermissions();
+        } finally {
+            self::$ensuring = false;
+        }
     }
 
     /**
      * Grant every industry-catalog permission to Administrator / Admin roles.
      * Safe to call repeatedly (insertOrIgnore).
+     *
+     * @return int Number of role_permission rows inserted (0 when already complete).
      */
-    public static function ensureAdministratorIndustryCatalogPermissions(): void
+    public static function ensureAdministratorIndustryCatalogPermissions(): int
     {
         $permissionIds = self::allIndustryPermissionIds();
         if ($permissionIds === []) {
-            return;
+            return 0;
         }
 
         $roleIds = \App\Models\Role::query()
@@ -70,17 +84,23 @@ class PermissionMatrixService
             ->pluck('id');
 
         if ($roleIds->isEmpty()) {
-            return;
+            return 0;
         }
 
+        $inserted = 0;
         foreach ($roleIds as $roleId) {
             foreach ($permissionIds as $permissionId) {
-                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                $ok = \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
                     'role_id' => $roleId,
                     'permission_id' => $permissionId,
                 ]);
+                if ($ok) {
+                    $inserted++;
+                }
             }
         }
+
+        return $inserted;
     }
 
     public static function ensureRegistryPermissions(): void
@@ -286,8 +306,8 @@ class PermissionMatrixService
      */
     public static function allIndustryPermissionIds(): array
     {
-        self::ensure();
-
+        // Do not call ensure() here — this helper is invoked from ensure().
+        // Callers outside ensure() should run PermissionMatrixService::ensure() first.
         $codes = array_flip(IndustryRegistry::permissionCodesForAllIndustries());
 
         return Permission::query()
@@ -306,8 +326,7 @@ class PermissionMatrixService
      */
     public static function permissionIdsForIndustry(string $industry): array
     {
-        self::ensure();
-
+        // Do not call ensure() here — may be invoked while ensure() is already running.
         $codes = array_flip(IndustryRegistry::permissionCodesForIndustry($industry));
 
         return Permission::query()

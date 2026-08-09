@@ -406,6 +406,10 @@ class UserPermissionService
             $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
         } elseif ($user->is_admin && $gate !== null) {
             $map = $this->grantOrgAdminAdministrationPermissions($map, $gate);
+            // Org admins must always unlock enabled application shells (Hotel POS /
+            // Hotel Backoffice / retail POS / …) even when the shared Administrator
+            // role was provisioned before hospitality existed.
+            $map = $this->grantOrgAdminEnabledApplicationEntryPermissions($map, $gate);
         }
 
         return $map;
@@ -424,8 +428,10 @@ class UserPermissionService
             $map = $this->grantOrgAdminEnabledModulePermissions($map, $gate);
             $map = $this->grantOrgAdminMobileAppPermissions($map, $gate);
         } elseif ($user->is_admin && $gate !== null) {
-            // Org admins keep Administration; operational modules follow the role matrix.
+            // Org admins keep Administration; finer feature rights follow the role matrix.
+            // Enabled application shells are unlocked via entry permissions below.
             $map = $this->grantOrgAdminAdministrationPermissions($map, $gate);
+            $map = $this->grantOrgAdminEnabledApplicationEntryPermissions($map, $gate);
         }
 
         if ($gate !== null) {
@@ -523,6 +529,56 @@ class UserPermissionService
         $map['admin.manage'] = true;
 
         return $this->expandCapabilityAliases($map);
+    }
+
+    /**
+     * Unlock each enabled product workspace shell for org admins (entry permission only).
+     * Does not grant the full operational catalog — that still comes from the role matrix.
+     *
+     * @param  array<string, bool>  $map
+     * @return array<string, bool>
+     */
+    protected function grantOrgAdminEnabledApplicationEntryPermissions(array $map, CapabilityGate $gate): array
+    {
+        foreach (config('erp_workspaces', []) as $definition) {
+            if (! is_array($definition)) {
+                continue;
+            }
+
+            $moduleKeys = $definition['module_keys'] ?? [];
+            $domainModules = $definition['domain_modules'] ?? [];
+            $enabled = false;
+
+            if ($moduleKeys !== []) {
+                foreach ($moduleKeys as $key) {
+                    if ($gate->enabled((string) $key)) {
+                        $enabled = true;
+                        break;
+                    }
+                }
+            } else {
+                foreach ($domainModules as $module) {
+                    if ($gate->enabled((string) $module)) {
+                        $enabled = true;
+                        break;
+                    }
+                }
+                if ($domainModules === []) {
+                    $enabled = true;
+                }
+            }
+
+            if (! $enabled) {
+                continue;
+            }
+
+            $entry = $definition['entry_permission'] ?? null;
+            if (is_string($entry) && $entry !== '') {
+                $map[$entry] = true;
+            }
+        }
+
+        return $map;
     }
 
     /** @param  array<string, bool>  $map

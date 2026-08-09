@@ -149,8 +149,9 @@ class WorkspaceResolver
             return false;
         }
 
-        // Org admins still go through permission checks. Their permission map already
-        // includes every feature for org-enabled modules (UserPermissionService).
+        // Org admins still go through permission checks. Their map includes Administration
+        // auto-grants plus entry permissions for each enabled application shell; finer
+        // operational rights come from the role matrix (UserPermissionService).
         return $this->userHasWorkspacePermission($workspaceId, $definition, $permissionMap);
     }
 

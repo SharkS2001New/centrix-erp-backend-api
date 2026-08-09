@@ -59,6 +59,14 @@ class ErpCapabilitiesController extends Controller
             );
         }
 
+        // Heal Administrator industry grants before serving a possibly-cached map.
+        // If rows were inserted, bump the capabilities version so stale "admin-only"
+        // workspace lists (common for hotel tenants) are rebuilt immediately.
+        $industryGrants = \App\Services\Erp\PermissionMatrixService::ensureAdministratorIndustryCatalogPermissions();
+        if ($industryGrants > 0) {
+            OrganizationCache::invalidateCapabilities($orgId);
+        }
+
         $payload = OrganizationCache::remember(
             $orgId,
             OrganizationCache::capabilitiesUserKey($orgId, (int) $user->id),
