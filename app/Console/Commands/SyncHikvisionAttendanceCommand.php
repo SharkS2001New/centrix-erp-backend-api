@@ -14,7 +14,7 @@ class SyncHikvisionAttendanceCommand extends Command
         {--from= : ISO start time override}
         {--to= : ISO end time override}';
 
-    protected $description = 'Pull punches from Hikvision ISAPI fingerprint terminals into Centrix attendance';
+    protected $description = 'Pull punches from Hikvision ISAPI terminals (on-prem/VPN only — cloud Centrix cannot reach LAN IPs; use attendance-agent instead)';
 
     public function handle(HikvisionAttendanceSyncService $sync): int
     {

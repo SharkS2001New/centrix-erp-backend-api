@@ -81,10 +81,9 @@ Schedule::command('erp:mark-attendance-absents')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/mark-attendance-absents.log'));
 
-Schedule::command('erp:sync-hikvision-attendance')
-    ->everyFiveMinutes()
-    ->withoutOverlapping()
-    ->appendOutputTo(storage_path('logs/sync-hikvision-attendance.log'));
+// Hikvision ISAPI poll is for on-prem / VPN only. Cloud Centrix cannot reach LAN
+// device IPs — run attendance-agent on the office network instead.
+// Schedule::command('erp:sync-hikvision-attendance')->everyFiveMinutes()...
 
 Schedule::command('erp:warm-completed-sales-cache')
     ->dailyAt(config('completed_sales_cache.schedule_daily_at', '01:30'))
