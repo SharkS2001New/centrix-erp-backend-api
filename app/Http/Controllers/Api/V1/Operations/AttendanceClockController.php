@@ -3,103 +3,106 @@
 namespace App\Http\Controllers\Api\V1\Operations;
 
 use App\Http\Controllers\Controller;
-use App\Models\Employee;
 use App\Models\EmployeeClockSession;
-use App\Services\Attendance\AttendanceDayPolicy;
-use App\Services\Attendance\AttendanceDayReconciler;
+use App\Services\Attendance\AttendanceClockPunchService;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 
 class AttendanceClockController extends Controller
 {
+    public function __construct(
+        protected AttendanceClockPunchService $punchService,
+    ) {
+    }
+
+    /**
+     * POST /attendance/clock-punch
+     * Unified ingest for fingerprint terminals (Hikvision bridge, middleware, etc.).
+     */
+    public function punch(Request $request)
+    {
+        $data = $request->validate([
+            'employee_id' => 'nullable|integer|exists:employees,id',
+            'employee_code' => 'nullable|string|max:50',
+            'device_no' => 'nullable|string|max:100',
+            'device_identifier' => 'nullable|string|max:100',
+            'punched_at' => 'nullable|date',
+            'direction' => 'nullable|in:auto,in,out',
+            'branch_id' => 'nullable|integer|exists:branches,id',
+        ]);
+
+        if (empty($data['employee_id']) && empty($data['employee_code'])) {
+            throw ValidationException::withMessages([
+                'employee_code' => 'Provide employee_code (terminal person ID) or employee_id.',
+            ]);
+        }
+
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        $result = $this->punchService->punch([
+            'organization_id' => (int) $orgId,
+            ...$data,
+        ]);
+
+        $status = $result['action'] === 'in' ? 201 : 200;
+
+        return response()->json($result, $status);
+    }
+
     /** POST /attendance/clock-in */
     public function clockIn(Request $request)
     {
         $data = $request->validate([
-            'employee_id' => 'required|integer|exists:employees,id',
+            'employee_id' => 'nullable|integer|exists:employees,id',
+            'employee_code' => 'nullable|string|max:50',
             'device_identifier' => 'nullable|string|max:100',
+            'device_no' => 'nullable|string|max:100',
+            'punched_at' => 'nullable|date',
             'branch_id' => 'nullable|integer|exists:branches,id',
         ]);
 
-        $employee = Employee::with('shift')->findOrFail($data['employee_id']);
         $orgId = $request->user()?->organization_id;
-        if ($orgId && (int) $employee->organization_id !== (int) $orgId) {
-            return response()->json(['message' => 'Employee not in your organization.'], 403);
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
         }
 
-        try {
-            app(AttendanceDayPolicy::class)->assertCanClockIn($employee);
-        } catch (\InvalidArgumentException $e) {
-            return response()->json(['message' => $e->getMessage()], 422);
-        }
-
-        $open = EmployeeClockSession::query()
-            ->where('employee_id', $employee->id)
-            ->whereNull('clock_out_at')
-            ->first();
-
-        if ($open) {
-            return response()->json(['message' => 'Employee already has an open clock-in session.'], 422);
-        }
-
-        $now = now();
-        $session = EmployeeClockSession::create([
-            'employee_id' => $employee->id,
-            'organization_id' => $employee->organization_id,
-            'branch_id' => $data['branch_id'] ?? $employee->branch_id,
-            'source' => 'clock_device',
-            'clock_in_at' => $now,
-            'device_identifier' => $data['device_identifier'] ?? null,
+        $result = $this->punchService->punch([
+            'organization_id' => (int) $orgId,
+            'direction' => 'in',
+            ...$data,
         ]);
 
-        return response()->json($session->load('employee'), 201);
+        return response()->json($result['session'], 201);
     }
 
     /** POST /attendance/clock-out */
     public function clockOut(Request $request)
     {
         $data = $request->validate([
-            'employee_id' => 'required|integer|exists:employees,id',
+            'employee_id' => 'nullable|integer|exists:employees,id',
+            'employee_code' => 'nullable|string|max:50',
             'device_identifier' => 'nullable|string|max:100',
+            'device_no' => 'nullable|string|max:100',
+            'punched_at' => 'nullable|date',
         ]);
 
-        $employee = Employee::with('shift')->findOrFail($data['employee_id']);
         $orgId = $request->user()?->organization_id;
-        if ($orgId && (int) $employee->organization_id !== (int) $orgId) {
-            return response()->json(['message' => 'Employee not in your organization.'], 403);
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
         }
 
-        $session = EmployeeClockSession::query()
-            ->where('employee_id', $employee->id)
-            ->whereNull('clock_out_at')
-            ->orderByDesc('clock_in_at')
-            ->first();
-
-        if (! $session) {
-            return response()->json(['message' => 'No open clock-in session for this employee.'], 422);
-        }
-
-        $out = now();
-        $session->clock_out_at = $out;
-        if (! empty($data['device_identifier'])) {
-            $session->device_identifier = $data['device_identifier'];
-        }
-        $session->save();
-
-        $attendanceDate = \Carbon\Carbon::parse($session->clock_in_at)->toDateString();
-        $attendance = app(AttendanceDayReconciler::class)->reconcileFromSessions(
-            $employee,
-            $attendanceDate,
-            'clock_device',
-            $session->device_identifier,
-            $session->branch_id ? (int) $session->branch_id : null,
-        );
-
-        $session->attendance_id = $attendance->id;
-        $session->save();
+        $result = $this->punchService->punch([
+            'organization_id' => (int) $orgId,
+            'direction' => 'out',
+            ...$data,
+        ]);
 
         return response()->json([
-            'session' => $session->load(['employee', 'attendance']),
-            'attendance' => $attendance,
+            'session' => $result['session'],
+            'attendance' => $result['attendance'] ?? null,
         ]);
     }
 

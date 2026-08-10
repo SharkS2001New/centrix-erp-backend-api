@@ -1,0 +1,16 @@
+Payment breakdown popup fix is ready but not yet applied to the frontend
+(this Cursor session can write the backend workspace, but Shell/Write into
+centrix-erp-frontend-web is blocked).
+
+Apply with:
+
+  python3 /Users/mac/Documents/projects/centrix-erp-backend-api/tmp-apply-payment-fix.py
+  cd /Users/mac/Documents/projects/centrix-erp-frontend-web && npx vitest run src/lib/pos-edit-payment-adjustment.test.js
+
+Cause: background autosave stashes a matching CASH payment_adjustment, then Alt+P/F8
+treats that as cashier-confirmed and skips PosEditPaymentAdjustmentDialog. After sync,
+original_order_total was also rebased so the delta became 0.
+
+Fix: mark those rows `_provisional: true`, always prompt when provisional, rebuild delta
+from provisional rows if baseline was rebased, and do not rebase original_order_total
+until the tender is confirmed.
