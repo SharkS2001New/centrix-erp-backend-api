@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\CurrentStock;
 use App\Models\LpoMst;
 use App\Models\LpoTxn;
@@ -16,6 +17,12 @@ use Tests\TestCase;
 class SupplierReturnDocumentTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->withoutMiddleware([EnsureOrganizationLicenseActive::class]);
+    }
 
     public function test_user_can_create_and_list_supplier_return_document(): void
     {
@@ -109,7 +116,15 @@ class SupplierReturnDocumentTest extends TestCase
         Sanctum::actingAs($admin);
 
         $supplier = Supplier::where('supplier_code', 'SUP-001')->firstOrFail();
+        $orgId = (int) $admin->organization_id;
+        $nextSeq = (int) LpoMst::query()->where('organization_id', $orgId)->max('lpo_seq') + 1;
+        DB::table('lpo_statuses')->updateOrInsert(
+            ['status_code' => 4],
+            ['status_name' => 'Received'],
+        );
         $lpo = LpoMst::create([
+            'organization_id' => $orgId,
+            'lpo_seq' => $nextSeq,
             'supplier_id' => $supplier->id,
             'reference_number' => 'PO-RET-TEST',
             'total_amount' => 1000,

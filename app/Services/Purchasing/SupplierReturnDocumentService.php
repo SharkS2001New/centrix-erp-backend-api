@@ -106,8 +106,11 @@ class SupplierReturnDocumentService
 
         return DB::transaction(function () use ($user, $data, $lines, $proof) {
             $lpoNo = ! empty($data['lpo_no']) ? (int) $data['lpo_no'] : null;
+            $document = $this->allocateDocumentNumber((int) $user->organization_id);
             $doc = SupplierReturnDocument::create([
                 'organization_id' => $user->organization_id,
+                'document_seq' => $document['document_seq'],
+                'document_no' => $document['document_no'],
                 'supplier_id' => (int) $data['supplier_id'],
                 'branch_id' => (int) $data['branch_id'],
                 'source_type' => $lpoNo ? 'lpo' : 'manual',
@@ -246,6 +249,7 @@ class SupplierReturnDocumentService
                 $line->update(['stock_deduct_qty' => $deductQty]);
 
                 SupplierReturn::create([
+                    'organization_id' => $doc->organization_id,
                     'supplier_id' => $doc->supplier_id,
                     'branch_id' => $doc->branch_id,
                     'product_code' => $line->product_code,
@@ -275,8 +279,8 @@ class SupplierReturnDocumentService
                 $gate,
                 InventoryMovementJournalService::MOVEMENT_SUPPLIER_RETURN,
                 $journalTotal,
-                'SR-'.$doc->id,
-                'Supplier return #'.$doc->id,
+                $this->documentLabel($doc),
+                'Supplier return '.$this->documentLabel($doc),
                 (int) $doc->branch_id,
                 'supplier_return_document',
                 (int) $doc->id,
@@ -367,6 +371,8 @@ class SupplierReturnDocumentService
         return [
             'id' => (int) $doc->id,
             'organization_id' => (int) $doc->organization_id,
+            'document_seq' => $doc->document_seq !== null ? (int) $doc->document_seq : null,
+            'document_no' => $doc->document_no,
             'supplier_id' => (int) $doc->supplier_id,
             'supplier_name' => $doc->supplier?->supplier_name,
             'branch_id' => (int) $doc->branch_id,
@@ -609,7 +615,7 @@ class SupplierReturnDocumentService
                 'reference_id' => $doc->id,
                 'quantity_change' => abs($deductQty),
                 'unit_cost' => $unitCost > 0 ? $unitCost : null,
-                'notes' => 'Reversal of supplier return #'.$doc->id,
+                'notes' => 'Reversal of supplier return '.$this->documentLabel($doc),
                 'created_by' => $user->id,
             ], allowBelowStock: true);
 
@@ -630,8 +636,8 @@ class SupplierReturnDocumentService
                 $gate,
                 InventoryMovementJournalService::MOVEMENT_SUPPLIER_RETURN_REVERSAL,
                 $journalTotal,
-                'SR-REV-'.$doc->id.'-'.now()->timestamp,
-                'Supplier return reversal #'.$doc->id,
+                'SR-REV-'.$this->documentLabel($doc).'-'.now()->timestamp,
+                'Supplier return reversal '.$this->documentLabel($doc),
                 (int) $doc->branch_id,
                 'supplier_return_document_reversal',
                 (int) $doc->id,
@@ -698,7 +704,7 @@ class SupplierReturnDocumentService
     {
         $requesterName = $user->full_name ?: $user->username;
         $supplierName = $doc->supplier?->supplier_name ?? 'Supplier';
-        $returnLabel = 'SR-'.str_pad((string) $doc->id, 4, '0', STR_PAD_LEFT);
+        $returnLabel = $this->documentLabel($doc);
         $actionUrl = \App\Services\Notifications\NotificationActionUrlBuilder::for('supplier_return', (int) $doc->id);
         $returnReason = trim((string) ($doc->return_reason ?? ''));
         $proof = $this->proofService->meta($doc, '/supplier-return-documents/'.$doc->id.'/proof/file');
@@ -749,6 +755,31 @@ class SupplierReturnDocumentService
             'rejected' => 'Rejected',
             default => 'Pending approval',
         };
+    }
+
+    /** @return array{document_seq: int, document_no: string} */
+    protected function allocateDocumentNumber(int $organizationId): array
+    {
+        $lastSeq = SupplierReturnDocument::query()
+            ->where('organization_id', $organizationId)
+            ->lockForUpdate()
+            ->max('document_seq');
+
+        $seq = ((int) $lastSeq) + 1;
+
+        return [
+            'document_seq' => $seq,
+            'document_no' => 'SR-'.str_pad((string) $seq, 4, '0', STR_PAD_LEFT),
+        ];
+    }
+
+    protected function documentLabel(SupplierReturnDocument $doc): string
+    {
+        if (is_string($doc->document_no) && $doc->document_no !== '') {
+            return $doc->document_no;
+        }
+
+        return 'SR-'.str_pad((string) $doc->id, 4, '0', STR_PAD_LEFT);
     }
 
     protected function packageTypeLabel(string $packageType, ?string $uom = null): string
