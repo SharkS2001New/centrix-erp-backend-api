@@ -38,10 +38,8 @@ class ReferencePickerTest extends TestCase
         $this->seedLicense($cashier);
         Sanctum::actingAs($cashier);
 
-        // Admin user directory still requires admin module permission.
         $this->getJson('/api/v1/users')->assertForbidden();
-        // POS cashiers may read /vats via checkout permissions; routes CRUD does not.
-        $this->getJson('/api/v1/routes')->assertForbidden();
+        $this->getJson('/api/v1/vats')->assertForbidden();
 
         $this->getJson('/api/v1/reference/users?per_page=5')->assertOk();
         $this->getJson('/api/v1/reference/vats?per_page=5')->assertOk();

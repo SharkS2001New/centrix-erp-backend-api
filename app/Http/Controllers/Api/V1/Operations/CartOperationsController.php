@@ -1813,6 +1813,9 @@ class CartOperationsController extends Controller
      * Undo restoreHeldOrder when the edit cart is cleared without checkout.
      * New flow keeps the sale live (pos_editing_in_progress); older clients may
      * still have cancelled+archived tombstones that need full reinstate.
+     *
+     * After a successful edit checkout the replacement already owns the Cash Sale # —
+     * never reclaim it onto the tombstone (that caused uq_org_order_num 1062).
      */
     protected function reinstateSupersededSale(int $saleId, User $user): void
     {
@@ -1822,6 +1825,8 @@ class CartOperationsController extends Controller
         }
 
         $meta = is_array($sale->fulfillment_meta) ? $sale->fulfillment_meta : [];
+        $allocator = app(OrderNumberAllocator::class);
+        $orgId = (int) $sale->organization_id;
 
         // Live sale still visible while editing — put stock/journal back and clear edit flags.
         if (! empty($meta['pos_editing_in_progress'])
@@ -1858,9 +1863,47 @@ class CartOperationsController extends Controller
             return;
         }
 
-        // Only reinstate sales we cancelled for edit.
+        // Only reinstate sales we cancelled for edit — and not after a completed revision.
         if (($sale->status !== 'cancelled' && (int) ($sale->archived ?? 0) !== 1)
-            || empty($meta['superseded_by_edit'])) {
+            || empty($meta['superseded_by_edit'])
+            || ! empty($meta['edit_checkout_completed'])) {
+            return;
+        }
+
+        $shouldScrubOnly = $allocator->withOrganizationLock($orgId, function () use (
+            $allocator,
+            $orgId,
+            $originalOrderNum,
+            $sale,
+        ): bool {
+            if ($allocator->isLiveOrderNumTaken($orgId, $originalOrderNum, (int) $sale->id)) {
+                return true;
+            }
+
+            return Sale::query()
+                ->where('organization_id', $orgId)
+                ->where('id', '!=', (int) $sale->id)
+                ->where('fulfillment_meta->supersedes_sale_id', (int) $sale->id)
+                ->exists();
+        });
+
+        if ($shouldScrubOnly) {
+            unset(
+                $meta['superseded_by_edit'],
+                $meta['superseded_at'],
+                $meta['original_order_num'],
+                $meta['original_status'],
+                $meta['original_stock_balanced'],
+                $meta['pos_editing_in_progress'],
+                $meta['pos_editing_at'],
+                $meta['pos_editing_by'],
+                $meta['stock_reverse_pending'],
+            );
+            $meta['edit_checkout_completed'] = true;
+            $sale->update([
+                'fulfillment_meta' => $meta === [] ? null : $meta,
+            ]);
+
             return;
         }
 
@@ -1881,14 +1924,24 @@ class CartOperationsController extends Controller
             $meta['pos_editing_by'],
         );
 
-        $sale->update([
-            'order_num' => $originalOrderNum,
-            'status' => $originalStatus,
-            'cancelled_at' => null,
-            'cancelled_by' => null,
-            'archived' => 0,
-            'fulfillment_meta' => $meta === [] ? null : $meta,
-        ]);
+        try {
+            $sale->update([
+                'order_num' => $originalOrderNum,
+                'status' => $originalStatus,
+                'cancelled_at' => null,
+                'cancelled_by' => null,
+                'archived' => 0,
+                'fulfillment_meta' => $meta === [] ? null : $meta,
+            ]);
+        } catch (\Illuminate\Database\UniqueConstraintViolationException) {
+            // Race: another sale claimed the number between check and update — leave tombstone.
+            $meta['edit_checkout_completed'] = true;
+            $sale->update([
+                'fulfillment_meta' => $meta === [] ? null : $meta,
+            ]);
+
+            return;
+        }
 
         $sale = $sale->fresh(['items']);
         if ($shouldBalanceStock && $sale && ! $sale->stock_balanced) {

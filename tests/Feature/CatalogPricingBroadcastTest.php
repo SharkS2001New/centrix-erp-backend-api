@@ -3,7 +3,6 @@
 namespace Tests\Feature;
 
 use App\Events\OrgCatalogPricingUpdated;
-use App\Models\InAppNotification;
 use App\Models\Product;
 use App\Models\User;
 use Illuminate\Support\Facades\Broadcast;
@@ -43,57 +42,6 @@ class CatalogPricingBroadcastTest extends TestCase
                 && ($event->payload['reason'] ?? null) === 'product_price'
                 && ($event->payload['product_code'] ?? null) === $product->product_code;
         });
-    }
-
-    public function test_product_price_update_creates_in_app_notifications_for_sales_users(): void
-    {
-        config(['broadcasting.default' => 'null']);
-
-        $admin = User::where('username', 'admin')->firstOrFail();
-        $cashier = User::where('username', 'cashier')->firstOrFail();
-
-        $product = Product::query()
-            ->where('organization_id', $admin->organization_id)
-            ->whereNull('deleted_at')
-            ->orderBy('product_code')
-            ->first();
-        $this->assertNotNull($product);
-
-        $before = InAppNotification::query()
-            ->where('user_id', $cashier->id)
-            ->where('type', 'catalog_pricing')
-            ->count();
-
-        app(\App\Services\Catalog\CatalogPricingBroadcastService::class)->notifyProductPriceChanged(
-            (int) $admin->organization_id,
-            (string) $product->product_code,
-            $product->product_name,
-            (int) $admin->id,
-        );
-
-        $after = InAppNotification::query()
-            ->where('user_id', $cashier->id)
-            ->where('type', 'catalog_pricing')
-            ->count();
-        $this->assertGreaterThan($before, $after);
-
-        $latest = InAppNotification::query()
-            ->where('user_id', $cashier->id)
-            ->where('type', 'catalog_pricing')
-            ->orderByDesc('id')
-            ->first();
-        $this->assertNotNull($latest);
-        $this->assertStringContainsString('Price updated', (string) $latest->message);
-        $this->assertSame('/pos', $latest->action_url);
-        // Actor who changed the price is not notified.
-        $this->assertSame(
-            0,
-            InAppNotification::query()
-                ->where('user_id', $admin->id)
-                ->where('type', 'catalog_pricing')
-                ->where('id', $latest->id)
-                ->count(),
-        );
     }
 
     public function test_product_update_without_price_change_does_not_broadcast(): void

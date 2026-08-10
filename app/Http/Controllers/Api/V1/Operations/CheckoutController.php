@@ -1311,8 +1311,9 @@ class CheckoutController extends Controller
     }
 
     /**
-     * Pick an order number for checkout, freeing stale held/cancelled rows that still
-     * occupy a number the cart intends to reuse (POS edit / double-submit races).
+     * Pick an order number for checkout, freeing only the sale this cart is editing.
+     * Create path always gets a fresh number; previous-order edit reuses Cash Sale #
+     * without ever leaving two live owners of the same number.
      *
      * @param  array<string, mixed>  $input
      */
@@ -1328,41 +1329,69 @@ class CheckoutController extends Controller
             return $allocator->nextForOrganization($orgId);
         }
 
-        $existing = Sale::query()
-            ->where('organization_id', $orgId)
-            ->where('order_num', $requested)
-            ->first();
-
-        if (! $existing) {
-            // Claim the watermark so concurrent allocators skip this number.
-            $allocator->reserveSpecificForOrganization($orgId, $requested);
-
-            return $requested;
-        }
-
         $supersededId = $cart->superseded_sale_id ? (int) $cart->superseded_sale_id : null;
-        $canFree = (int) $existing->id === $supersededId
-            || in_array((string) $existing->status, ['held', 'draft', 'cancelled'], true);
 
-        if ($canFree) {
+        return $allocator->withOrganizationLock($orgId, function () use (
+            $allocator,
+            $orgId,
+            $requested,
+            $supersededId,
+            $user,
+        ): int {
+            $existing = Sale::query()
+                ->where('organization_id', $orgId)
+                ->where('order_num', $requested)
+                ->lockForUpdate()
+                ->first();
+
+            if (! $existing) {
+                $allocator->reserveSpecificForOrganization($orgId, $requested);
+
+                return $requested;
+            }
+
+            // Only free the exact sale this cart is superseding — never steal another
+            // cancelled/held row's number (that caused cross-order collisions).
+            $canFree = $supersededId !== null && (int) $existing->id === $supersededId;
+
+            // Parked held/draft on the same till may still occupy a reserved offline number.
+            if (
+                ! $canFree
+                && $supersededId === null
+                && in_array((string) $existing->status, ['held', 'draft'], true)
+                && (int) ($existing->cashier_id ?? 0) === (int) $user->id
+            ) {
+                $canFree = true;
+            }
+
+            if (! $canFree) {
+                // Live (or foreign) sale already owns this number — allocate fresh.
+                return $allocator->nextForOrganization($orgId);
+            }
+
+            $meta = is_array($existing->fulfillment_meta) ? $existing->fulfillment_meta : [];
+            unset(
+                $meta['pos_editing_in_progress'],
+                $meta['pos_editing_at'],
+                $meta['pos_editing_by'],
+                $meta['stock_reverse_pending'],
+            );
+            $meta['superseded_by_edit'] = true;
+            $meta['superseded_at'] = now()->toIso8601String();
+            $meta['original_order_num'] = $requested;
+            $meta['edit_checkout_completed'] = true;
+
             $existing->update([
                 'order_num' => $allocator->tombstoneForSupersededSale((int) $existing->id),
                 'status' => 'cancelled',
                 'cancelled_at' => $existing->cancelled_at ?? now(),
                 'cancelled_by' => $existing->cancelled_by ?? $user->id,
                 'archived' => 1,
-                // Ticket already moved via takeFromSale for POS edits; ensure unique key is free for the replacement.
                 'pos_order_num' => null,
                 'pos_order_date' => null,
-                'fulfillment_meta' => array_merge(
-                    is_array($existing->fulfillment_meta) ? $existing->fulfillment_meta : [],
-                    [
-                        'superseded_by_edit' => true,
-                        'superseded_at' => now()->toIso8601String(),
-                        'original_order_num' => $requested,
-                    ],
-                ),
+                'fulfillment_meta' => $meta,
             ]);
+
             app(\App\Services\Accounting\ReferenceJournalReversalService::class)->reverseIfEnabled(
                 'sale',
                 (int) $existing->id,
@@ -1378,10 +1407,7 @@ class CheckoutController extends Controller
             $allocator->reserveSpecificForOrganization($orgId, $requested);
 
             return $requested;
-        }
-
-        // Live sale already owns this number — allocate a fresh one instead of 500ing.
-        return $allocator->nextForOrganization($orgId);
+        });
     }
 
     /**
@@ -1698,8 +1724,18 @@ class CheckoutController extends Controller
             $meta = $idempotency->stampFulfillmentMeta($meta, $input);
 
             $orderNum = (int) ($cart->held_order_num ?? $sale->order_num);
-            if ($orderNum > 0 && (int) $sale->order_num !== $orderNum && (int) $sale->order_num >= 9_000_000) {
-                // Older restore flows tombstoned the order_num — reclaim the live number.
+            $allocator = app(OrderNumberAllocator::class);
+            if (
+                $orderNum > 0
+                && (int) $sale->order_num !== $orderNum
+                && (int) $sale->order_num >= 9_000_000
+                && ! $allocator->isLiveOrderNumTaken(
+                    (int) $sale->organization_id,
+                    $orderNum,
+                    (int) $sale->id,
+                )
+            ) {
+                // Older restore flows tombstoned the order_num — reclaim only if still free.
                 $sale->order_num = $orderNum;
             }
 

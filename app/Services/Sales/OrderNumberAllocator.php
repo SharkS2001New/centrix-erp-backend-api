@@ -19,6 +19,9 @@ class OrderNumberAllocator
     /** Max numbers a single POS till may reserve in one request (short offline window). */
     public const MAX_RESERVE_BLOCK = 50;
 
+    /** @var array<string, int> Re-entrant GET_LOCK depth per lock key (this instance / connection). */
+    protected array $organizationLockDepth = [];
+
     public function tombstoneForSupersededSale(int $saleId): int
     {
         return self::SUPERSEDED_ORDER_NUM_BASE + $saleId;
@@ -89,7 +92,45 @@ class OrderNumberAllocator
     }
 
     /**
+     * Serialize order-number work across app servers (checkout claim / reinstate guards).
+     *
+     * @template T
+     * @param  callable(): T  $callback
+     * @return T
+     */
+    public function withOrganizationLock(int $organizationId, callable $callback): mixed
+    {
+        return $this->withOrganizationOrderLock($organizationId, $callback);
+    }
+
+    /** Sale id that currently owns this live order number, if any. */
+    public function liveOwnerSaleId(int $organizationId, int $orderNum): ?int
+    {
+        if ($orderNum <= 0 || $orderNum >= self::LEGACY_IMPORTED_ORDER_NUM_MIN) {
+            return null;
+        }
+
+        $id = Sale::query()
+            ->where('organization_id', $organizationId)
+            ->where('order_num', $orderNum)
+            ->value('id');
+
+        return $id !== null ? (int) $id : null;
+    }
+
+    public function isLiveOrderNumTaken(int $organizationId, int $orderNum, ?int $exceptSaleId = null): bool
+    {
+        $ownerId = $this->liveOwnerSaleId($organizationId, $orderNum);
+        if ($ownerId === null) {
+            return false;
+        }
+
+        return $exceptSaleId === null || $ownerId !== (int) $exceptSaleId;
+    }
+
+    /**
      * Serialize order-number allocation across nested transactions / app servers.
+     * Nested calls on the same instance are re-entrant (do not RELEASE_LOCK early).
      *
      * @template T
      * @param  callable(): T  $callback
@@ -98,6 +139,16 @@ class OrderNumberAllocator
     protected function withOrganizationOrderLock(int $organizationId, callable $callback): mixed
     {
         $lockKey = 'sales_order_num:'.$organizationId;
+        $depth = $this->organizationLockDepth[$lockKey] ?? 0;
+
+        if ($depth > 0) {
+            $this->organizationLockDepth[$lockKey] = $depth + 1;
+            try {
+                return $callback();
+            } finally {
+                $this->organizationLockDepth[$lockKey] = max(0, ($this->organizationLockDepth[$lockKey] ?? 1) - 1);
+            }
+        }
 
         return DB::transaction(function () use ($organizationId, $lockKey, $callback) {
             $lock = DB::selectOne('SELECT GET_LOCK(?, 15) AS acquired', [$lockKey]);
@@ -107,9 +158,11 @@ class OrderNumberAllocator
                 );
             }
 
+            $this->organizationLockDepth[$lockKey] = 1;
             try {
                 return $callback();
             } finally {
+                $this->organizationLockDepth[$lockKey] = 0;
                 DB::select('SELECT RELEASE_LOCK(?)', [$lockKey]);
             }
         });

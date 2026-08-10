@@ -282,6 +282,143 @@ class PosOrderEditTest extends TestCase
             ->assertJsonPath('sales_platform.append_same_day_customer_orders', true);
     }
 
+    public function test_clearing_cart_after_completed_edit_does_not_reclaim_taken_order_num(): void
+    {
+        \App\Models\PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $this->user->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        $this->setPosOrderEditEnabled(true);
+
+        $sale = $this->completePosSale($this->productCodeA, 1);
+        $saleId = (int) $sale['id'];
+        $orderNum = (int) $sale['order_num'];
+
+        // Simulate successful edit checkout: original tombstoned, replacement owns the number.
+        Sale::query()->whereKey($saleId)->update([
+            'order_num' => 9_000_000 + $saleId,
+            'status' => 'cancelled',
+            'archived' => 1,
+            'cancelled_at' => now(),
+            'fulfillment_meta' => [
+                'superseded_by_edit' => true,
+                'original_order_num' => $orderNum,
+                'original_status' => 'paid',
+                'original_stock_balanced' => true,
+                'pos_editing_in_progress' => true,
+            ],
+        ]);
+
+        $replacement = Sale::query()->create([
+            'order_num' => $orderNum,
+            'branch_id' => $this->user->branch_id,
+            'organization_id' => $this->user->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $this->user->id,
+            'status' => 'paid',
+            'payment_status' => 'paid',
+            'total_vat' => 0,
+            'order_total' => 100,
+            'amount_paid' => 100,
+            'stock_balanced' => 0,
+            'archived' => 0,
+            'fulfillment_meta' => [
+                'supersedes_sale_id' => $saleId,
+                'pos_edit' => true,
+            ],
+        ]);
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        DB::table('temporary_carts')->where('id', $cartId)->update([
+            'held_order_num' => $orderNum,
+            'superseded_sale_id' => $saleId,
+        ]);
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCodeA,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        // Must not 500 / 1062 — replacement keeps #, tombstone stays tombstoned.
+        $this->deleteJson("/api/v1/sales/carts/{$cartId}/lines")->assertOk();
+
+        $this->assertSame(9_000_000 + $saleId, (int) Sale::query()->findOrFail($saleId)->order_num);
+        $this->assertSame($orderNum, (int) Sale::query()->findOrFail($replacement->id)->order_num);
+        $this->assertSame('cancelled', (string) Sale::query()->findOrFail($saleId)->status);
+        $this->assertSame('paid', (string) Sale::query()->findOrFail($replacement->id)->status);
+    }
+
+    public function test_previous_order_edit_checkout_keeps_same_order_num_without_collision(): void
+    {
+        \App\Models\PlatformSubscription::query()->firstOrCreate(
+            ['organization_id' => $this->user->organization_id],
+            [
+                'status' => 'active',
+                'current_period_start' => now()->subMonth()->toDateString(),
+                'current_period_end' => now()->addYear()->toDateString(),
+                'renewal_price' => 0,
+                'amount' => 0,
+                'currency' => 'KES',
+            ],
+        );
+
+        $this->setPosOrderEditEnabled(true);
+
+        $original = $this->completePosSale($this->productCodeA, 2);
+        $originalId = (int) $original['id'];
+        $orderNum = (int) $original['order_num'];
+
+        $cart = $this->postJson("/api/v1/sales/orders/{$originalId}/restore-to-cart", [
+            'replace' => true,
+        ])->assertOk()->json();
+
+        $this->assertSame($orderNum, (int) ($cart['held_order_num'] ?? 0));
+        $this->assertSame($originalId, (int) ($cart['superseded_sale_id'] ?? 0));
+
+        $revised = $this->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+        ])->assertCreated()->json();
+
+        $this->assertNotSame($originalId, (int) $revised['id']);
+        $this->assertSame($orderNum, (int) $revised['order_num']);
+
+        $tombstone = Sale::query()->findOrFail($originalId);
+        $this->assertSame(9_000_000 + $originalId, (int) $tombstone->order_num);
+        $this->assertSame('cancelled', (string) $tombstone->status);
+        $this->assertTrue((bool) (($tombstone->fulfillment_meta ?? [])['edit_checkout_completed'] ?? false));
+
+        // Stale clear of a cart still pointing at the tombstone must be a no-op success.
+        $staleCartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+        DB::table('temporary_carts')->where('id', $staleCartId)->update([
+            'held_order_num' => $orderNum,
+            'superseded_sale_id' => $originalId,
+        ]);
+        $this->deleteJson("/api/v1/sales/carts/{$staleCartId}/lines")->assertOk();
+
+        $this->assertSame($orderNum, (int) Sale::query()->findOrFail((int) $revised['id'])->order_num);
+        $this->assertSame(9_000_000 + $originalId, (int) Sale::query()->findOrFail($originalId)->order_num);
+        $this->assertSame(
+            1,
+            Sale::query()->where('organization_id', $this->user->organization_id)->where('order_num', $orderNum)->count(),
+        );
+    }
+
     /** @param array<string, mixed> $checkoutExtra */
     protected function completePosSale(string $productCode, float $quantity, array $checkoutExtra = []): array
     {
