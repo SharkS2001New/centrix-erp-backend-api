@@ -1224,7 +1224,9 @@ class OrderWorkflowService
                 return $status;
             }
 
-            foreach (['completed', 'delivered', 'paid', 'processed', 'pending_payment', 'unpaid'] as $fallback) {
+            // Prefer unpaid before pending_payment so disabled "Unpaid" does not
+            // silently remap Save order into "Partially paid".
+            foreach (['completed', 'delivered', 'paid', 'processed', 'unpaid', 'pending_payment', 'pending', 'booked'] as $fallback) {
                 if (in_array($fallback, $enabled, true)) {
                     return $fallback;
                 }

@@ -37,11 +37,14 @@ class SalePaymentAllocationService
         }
 
         // Validate before opening the write transaction so 422s are not wrapped.
-        $this->assertAmountWithinBalanceDue($sale->fresh() ?? $sale, $amount);
+        $sale = $sale->fresh() ?? $sale;
+        $this->assertAmountWithinBalanceDue($sale, $amount);
+        $this->assertPartialPaymentAllowed($sale, $amount, $user);
 
         return DB::transaction(function () use ($sale, $payment, $amount, $user) {
             $sale = Sale::query()->lockForUpdate()->findOrFail($sale->id);
             $this->assertAmountWithinBalanceDue($sale, $amount);
+            $this->assertPartialPaymentAllowed($sale, $amount, $user);
 
             $priorPaid = (float) $sale->amount_paid;
             $collectsReceivable = (bool) $sale->is_credit_sale
@@ -72,8 +75,8 @@ class SalePaymentAllocationService
                 (float) $sale->order_total,
                 (bool) $sale->is_credit_sale,
                 $paymentMethodCode,
-                ! empty($salesSettings['allow_credit_pay_now'])
-                    || ! empty($salesSettings['enable_credit_payment']),
+                // Backoffice collect installments only — not External POS checkout.
+                ! empty($salesSettings['allow_credit_pay_now']),
             );
 
             $updates = [
@@ -164,6 +167,30 @@ class SalePaymentAllocationService
                 )],
             ]);
         }
+    }
+
+    /**
+     * Backoffice Collect payment installments — gated by allow_credit_pay_now only.
+     * Does not affect External POS / Create order checkout (those never call this service).
+     */
+    public function assertPartialPaymentAllowed(Sale $sale, float $amount, User $user): void
+    {
+        $orderTotal = round((float) $sale->order_total, 2);
+        $alreadyPaid = round((float) $sale->amount_paid, 2);
+        $balanceDue = round(max(0, $orderTotal - $alreadyPaid), 2);
+
+        if ($amount + 0.01 >= $balanceDue) {
+            return;
+        }
+
+        $salesSettings = $this->erp->gateForUser($user)->moduleSettings('sales');
+        if (! empty($salesSettings['allow_credit_pay_now'])) {
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'amount' => ['Enter the full amount due, or enable “Allow collecting small payments” in sales settings (backoffice Collect payment).'],
+        ]);
     }
 
     protected function derivePaymentStatus(float $total, float $paid): string

@@ -1398,7 +1398,9 @@ class ReportController extends Controller
 
         $cash = (float) ($agg->cash_collected ?? 0);
         $mpesa = (float) ($agg->mpesa_collected ?? 0);
-        $bank = (float) ($agg->equity_collected ?? 0) + (float) ($agg->kcb_collected ?? 0);
+        $equity = (float) ($agg->equity_collected ?? 0);
+        $kcb = (float) ($agg->kcb_collected ?? 0);
+        $bank = $equity + $kcb;
 
         $sessionQ = DB::table('till_float_sessions as tfs');
         $this->applyBranchTenantScope($sessionQ, $orgId, $branchId, 'tfs.branch_id');
@@ -1512,6 +1514,9 @@ class ReportController extends Controller
                 'tfs.closed_at',
                 'tfs.cash_movements',
                 'tfs.float_breakdown',
+                'tfs.working_amount as opening_float',
+                'tfs.closing_amount',
+                'tfs.expected_amount',
                 't.till_number',
                 't.till_name',
                 'tfs.cashier_id',
@@ -1529,7 +1534,6 @@ class ReportController extends Controller
                 DB::raw('COALESCE(s.equity_txn_count, 0) as equity_txn_count'),
                 DB::raw('COALESCE(s.kcb_txn_count, 0) as kcb_txn_count'),
                 DB::raw('COALESCE(pd.paid_debtors, 0) as paid_debtors'),
-                'tfs.working_amount as opening_float',
                 DB::raw('COALESCE(ex.expenses_total, 0) as session_expenses'),
             )
             ->get()
@@ -1557,6 +1561,16 @@ class ReportController extends Controller
                     $cashOut,
                     $cashIn,
                 );
+                $storedExpected = $row->expected_amount !== null
+                    ? round((float) $row->expected_amount, 2)
+                    : null;
+                $closingAmount = $row->closing_amount !== null
+                    ? round((float) $row->closing_amount, 2)
+                    : null;
+                $varianceBase = $storedExpected ?? $expected;
+                $variance = $closingAmount !== null
+                    ? round($closingAmount - $varianceBase, 2)
+                    : null;
 
                 $rawFloat = $row->float_breakdown ?? null;
                 $decodedFloat = is_string($rawFloat) ? json_decode($rawFloat, true) : $rawFloat;
@@ -1621,6 +1635,8 @@ class ReportController extends Controller
                     'cash_movements_in' => $cashIn,
                     'cash_movements_out' => $cashOut,
                     'expected_net_sales' => $expected,
+                    'closing_amount' => $closingAmount,
+                    'variance' => $variance,
                     'float_entries' => array_values(array_map(function (array $entry) {
                         return [
                             'payment_type' => (string) ($entry['payment_type'] ?? 'CASH'),
@@ -1663,6 +1679,8 @@ class ReportController extends Controller
                 DB::raw('COALESCE(SUM(s.total_vat), 0) as total_vat'),
                 DB::raw('COALESCE(SUM(s.cash), 0) as cash_collected'),
                 DB::raw('COALESCE(SUM(s.mpesa_amount), 0) as mpesa_collected'),
+                DB::raw('COALESCE(SUM(s.equity_amount), 0) as equity_collected'),
+                DB::raw('COALESCE(SUM(s.kcb_amount), 0) as kcb_collected'),
                 DB::raw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected'),
             )
             ->get()
@@ -1888,7 +1906,10 @@ class ReportController extends Controller
             'payments' => [
                 'cash' => $cash,
                 'mpesa' => $mpesa,
-                'bank' => $bank,
+                'equity' => round($equity, 2),
+                'kcb' => round($kcb, 2),
+                // Kept for older clients; prefer equity + kcb in UI.
+                'bank' => round($bank, 2),
                 'card' => 0,
             ],
             'tills' => $tillRows,

@@ -432,6 +432,55 @@ class MobileSalesApiTest extends TestCase
         $this->assertEquals(0, (float) ($sale['amount_paid'] ?? -1));
     }
 
+    public function test_mobile_save_only_ignores_stale_cart_mpesa_and_stays_unpaid(): void
+    {
+        $user = $this->makeMobileUser();
+        $this->setMobileCheckoutMode($user, 'save_only');
+        $product = \App\Models\Product::firstOrFail();
+        $customer = \App\Models\Customer::firstOrFail();
+        $token = $this->loginMobile($user);
+
+        $cart = $this->withToken($token)
+            ->postJson('/api/v1/sales/carts', [
+                'channel' => 'mobile',
+                'branch_id' => $user->branch_id,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/lines", [
+                'product_code' => $product->product_code,
+                'quantity' => 1,
+                'unit_price' => 100,
+                'on_wholesale_retail' => 0,
+            ])
+            ->assertCreated();
+
+        // Stale STK tender left on the TemporaryCart must not make Save → Partially paid.
+        \App\Models\TemporaryCart::query()->whereKey($cart['id'])->update([
+            'mpesa_payment_amount' => 40,
+            'mpesa_transaction_code' => 'STALE123',
+        ]);
+
+        $sale = $this->withToken($token)
+            ->postJson("/api/v1/sales/carts/{$cart['id']}/checkout", [
+                'customer_num' => $customer->customer_num,
+                'save_only' => true,
+                // Even if the client wrongly sends a partial pay_now under save_only mode,
+                // MobileCheckoutSettings zeros it and Save must stay unpaid.
+                'pay_now' => 40,
+                'payment_method_code' => 'CASH',
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->assertEquals('unpaid', $sale['status'] ?? null);
+        $this->assertEquals('unpaid', $sale['payment_status'] ?? null);
+        $this->assertEquals(0, (float) ($sale['amount_paid'] ?? -1));
+        $this->assertNull($sale['payment_method_code'] ?? 'sentinel');
+    }
+
     public function test_mobile_booked_order_from_previous_day_exposes_can_edit(): void
     {
         $template = Sale::query()->where('channel', 'mobile')->firstOrFail();

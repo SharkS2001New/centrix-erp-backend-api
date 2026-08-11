@@ -487,6 +487,9 @@ class CheckoutController extends Controller
             $isMobileChannel = (string) $cart->channel === 'mobile';
             $mobileCheckout = app(MobileCheckoutSettings::class);
             $mobileCheckout->applyCheckoutPolicy($salesSettings, $input, (string) $cart->channel);
+            // Policy may force save_only / zero pay_now on the input array — refresh locals.
+            $payNow = (float) ($input['pay_now'] ?? 0);
+            $isCredit = (bool) ($input['is_credit_sale'] ?? false);
             $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
 
             $adjustmentRows = $this->normalizeCheckoutPaymentAdjustments($input['payment_adjustments'] ?? null);
@@ -577,14 +580,43 @@ class CheckoutController extends Controller
                     $amountPaid = round(min(max(0, $priorPaid + $adjustmentNet), $total), 2);
                 }
                 // External POS / backoffice till: non-credit edits must always be fully paid.
-                // Only an explicit credit sale may remain unpaid or partially paid after revise.
+                // Save-only (no payment collected) must keep the prior unpaid/partial amounts.
+                // Credit (via credit customer input only) stays unpaid after revise.
                 if (
                     ! $isCredit
+                    && empty($input['save_only'])
                     && in_array((string) $cart->channel, ['pos', 'backend'], true)
                 ) {
                     $amountPaid = $total;
                 }
-            } else            if (
+            } elseif (
+                ! empty($input['save_only'])
+            ) {
+                // Save order: never invent new tenders. Keep same-day append prior paid only.
+                $payNow = 0;
+                $voucherPayment = 0.0;
+                $pointsPayment = 0.0;
+                $pointsRedeemed = 0.0;
+                $mpesaOnCart = 0.0;
+                $amountPaid = $appendPriorPaid;
+            } elseif (
+                $isCredit
+                && empty($input['save_only'])
+                && in_array((string) $cart->channel, ['pos', 'backend'], true)
+                && ! $isPreviousOrderEditSettlement
+            ) {
+                // External POS / Create order: credit is only via the credit customer
+                // field (I). Always fully unpaid — tenders are ignored. Partial collect
+                // is backoffice Collect payment only (allow_credit_pay_now).
+                if (! $customerNum) {
+                    throw new InvalidArgumentException(
+                        'Credit sales require selecting a credit customer.',
+                    );
+                }
+                $payNow = 0;
+                unset($input['payment_splits']);
+                $amountPaid = $appendPriorPaid;
+            } elseif (
                 ! $isCredit
                 && empty($input['save_only'])
                 && in_array((string) $cart->channel, ['pos', 'backend'], true)
@@ -605,7 +637,7 @@ class CheckoutController extends Controller
                         unset($input['payment_splits']);
                     } else {
                         throw new InvalidArgumentException(
-                            'Full payment required for Cash, M-Pesa, bank, and cheque sales. Select a credit customer to leave a balance unpaid or partially paid.',
+                            'Full payment required for Cash, M-Pesa, bank, and cheque sales. Select a credit customer (I) to save as fully unpaid.',
                         );
                     }
                 }
@@ -666,8 +698,19 @@ class CheckoutController extends Controller
                 $amountPaid = $total;
             }
 
-            $isSaveOnly = $payNow <= 0 && $amountPaid <= 0.01 && ! $isCredit && ! empty($input['save_only']);
+            // Save-only always uses the configured save status — never "partially paid"
+            // just because a same-day append retained prior tenders or the cart had stale STK.
+            $isSaveOnly = ! empty($input['save_only']) && ! $isPreviousOrderEditSettlement;
             if ($isSaveOnly) {
+                $requested = isset($input['status']) && is_string($input['status']) ? $input['status'] : null;
+                if ($requested === 'held') {
+                    $orderStatus = 'held';
+                } else {
+                    $orderStatus = $workflow->resolveSaveStatus($cart->channel);
+                }
+            } elseif (! empty($input['save_only']) && $isPreviousOrderEditSettlement) {
+                // Previous-order edit saved without collecting payment — use save status
+                // (do not jump to checkout.partial from retained prior tenders alone).
                 $requested = isset($input['status']) && is_string($input['status']) ? $input['status'] : null;
                 if ($requested === 'held') {
                     $orderStatus = 'held';

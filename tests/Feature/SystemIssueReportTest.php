@@ -160,4 +160,71 @@ class SystemIssueReportTest extends TestCase
             ->assertStatus(202)
             ->assertJsonPath('skipped', true);
     }
+
+    public function test_network_dominated_slow_report_is_skipped(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/system-issue-reports', [
+            'kind' => 'slow',
+            'message' => 'Likely user network (15s RTT; server 40ms, network ~14960ms)',
+            'api_path' => '/api/v1/sales',
+            'http_method' => 'GET',
+            'duration_ms' => 15000,
+            'context' => [
+                'source' => 'mobile',
+                'likely' => 'network',
+                'server_ms' => 40,
+                'connectivity' => 'slow_request',
+            ],
+        ])
+            ->assertStatus(202)
+            ->assertJsonPath('skipped', true);
+
+        $this->assertSame(0, SystemIssueReport::query()->where('kind', 'slow')->count());
+    }
+
+    public function test_notification_unread_slow_report_is_skipped(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/system-issue-reports', [
+            'kind' => 'slow',
+            'message' => 'Mobile request took 15000ms (GET /notifications/unread-count).',
+            'api_path' => '/notifications/unread-count',
+            'http_method' => 'GET',
+            'duration_ms' => 15000,
+            'context' => [
+                'source' => 'mobile',
+                'server_ms' => 12,
+                'connectivity' => 'slow_request',
+            ],
+        ])
+            ->assertStatus(202)
+            ->assertJsonPath('skipped', true);
+    }
+
+    public function test_api_slow_report_with_server_evidence_is_accepted(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->postJson('/api/v1/system-issue-reports', [
+            'kind' => 'slow',
+            'message' => 'Likely API slow (15s RTT; server 12000ms)',
+            'api_path' => '/api/v1/sales',
+            'http_method' => 'GET',
+            'duration_ms' => 15000,
+            'context' => [
+                'source' => 'mobile',
+                'likely' => 'api',
+                'server_ms' => 12000,
+                'connectivity' => 'slow_request',
+            ],
+        ])
+            ->assertCreated()
+            ->assertJsonPath('kind', 'slow');
+    }
 }

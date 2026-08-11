@@ -57,6 +57,21 @@ class SystemIssueReportController extends Controller
             ], 202);
         }
 
+        if (
+            ($data['kind'] ?? '') === 'slow'
+            && ClientNetworkIssueDetector::shouldSkipSlowReport(
+                $data['api_path'] ?? null,
+                (string) ($data['message'] ?? ''),
+                $data['context'] ?? null,
+                isset($data['duration_ms']) ? (int) $data['duration_ms'] : null,
+            )
+        ) {
+            return response()->json([
+                'message' => 'User/network latency is not logged as system slowness.',
+                'skipped' => true,
+            ], 202);
+        }
+
         if (! empty($data['report_id'])) {
             $existing = SystemIssueReport::query()->find($data['report_id']);
             if ($existing && (int) $existing->user_id === (int) $user->id) {
