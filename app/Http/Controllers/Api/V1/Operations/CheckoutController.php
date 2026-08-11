@@ -1938,12 +1938,17 @@ class CheckoutController extends Controller
             if ($code === '' || $amount <= 0) {
                 continue;
             }
-            $current = (float) ($map[$code] ?? 0);
+            // Returns stay on payment_adjustments / Change Given — do not drain an
+            // unrelated tender (Cash refund must not reduce prior M-Pesa on the receipt).
             if (($row['adjustment_type'] ?? '') === 'return') {
-                $map[$code] = max(0, round($current - $amount, 2));
-            } else {
-                $map[$code] = round($current + $amount, 2);
+                continue;
             }
+            // Alias Eco / Ecobank onto Equity so receipt + X/Z columns stay consistent.
+            if ($code === 'ECO' || str_contains($code, 'ECOBANK')) {
+                $code = 'EQUITY';
+            }
+            $current = (float) ($map[$code] ?? 0);
+            $map[$code] = round($current + $amount, 2);
         }
 
         $map = array_filter(
@@ -1959,6 +1964,13 @@ class CheckoutController extends Controller
         }
         // Unpaid prior (and no adjustments): keep empty tenders — never invent CASH.
         // Forced full-pay still needs a tender map so amount_paid matches the bill.
+        $hasReturnAdjustment = false;
+        foreach ($adjustmentRows as $row) {
+            if (($row['adjustment_type'] ?? '') === 'return' && (float) ($row['amount'] ?? 0) > 0.009) {
+                $hasReturnAdjustment = true;
+                break;
+            }
+        }
         if ($targetPaid <= 0.009) {
             $map = [];
         } elseif ($map === [] && $forceFullyPaid) {
@@ -1967,6 +1979,13 @@ class CheckoutController extends Controller
                 $fallback = 'CASH';
             }
             $map = [$fallback => $targetPaid];
+        } elseif ($hasReturnAdjustment) {
+            // Full cancel / empty revise: clear tender columns — the return lives on adjustments.
+            // Partial return: keep prior (+ top-up) method amounts for the receipt. amount_paid
+            // below still settles to the revised bill; Change Given comes from adjustments.
+            if ($newTotal <= 0.009) {
+                $map = [];
+            }
         } else {
             $map = $this->normalizeTenderMapToTotal($map, $targetPaid);
         }
@@ -1975,7 +1994,7 @@ class CheckoutController extends Controller
         SalePaymentColumnMapper::replaceFromMethodMap($sale, $map);
 
         $paidFromTenders = round(array_sum($map), 2);
-        if ($forceFullyPaid) {
+        if ($forceFullyPaid || $hasReturnAdjustment) {
             $paidFromTenders = max(0, round($newTotal, 2));
         }
         $sale->update([
