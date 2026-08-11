@@ -129,6 +129,7 @@ class OrganizationController extends BaseResourceController
             $rules['org_name'] = 'sometimes|string|max:200';
             $rules['primary_tel'] = 'sometimes|string|max:45';
             $rules['org_address'] = 'sometimes|string|max:400';
+            $rules['primary_color'] = ['nullable', 'string', 'max:9', 'regex:/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/'];
         } else {
             $rules = [
                 'org_name' => 'sometimes|string|max:200',
@@ -139,10 +140,15 @@ class OrganizationController extends BaseResourceController
                 'org_address' => 'sometimes|string|max:400',
                 'org_pin' => 'nullable|string|max:45',
                 'vat_regno' => 'nullable|string|max:50',
+                'primary_color' => ['nullable', 'string', 'max:9', 'regex:/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/'],
             ];
         }
 
         $data = $request->validate($rules);
+
+        if (array_key_exists('primary_color', $data)) {
+            $data['primary_color'] = Organization::normalizePrimaryColor($data['primary_color']);
+        }
 
         foreach (array_merge(
             Organization::immutableAttributes(),

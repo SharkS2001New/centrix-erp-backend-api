@@ -12,7 +12,7 @@ class Organization extends Model
 
     protected $table = 'organizations';
     protected $fillable = [
-        'company_code', 'company_code_aliases', 'logo', 'org_name', 'org_email', 'primary_tel',
+        'company_code', 'company_code_aliases', 'logo', 'primary_color', 'org_name', 'org_email', 'primary_tel',
         'secondary_tel', 'addn_tel1', 'addn_tel2', 'org_address', 'org_pin', 'vat_regno',
         'deployment_profile', 'enabled_modules', 'module_settings', 'is_active',
     ];
@@ -112,7 +112,28 @@ class Organization extends Model
             'org_address',
             'org_pin',
             'vat_regno',
+            'primary_color',
         ];
+    }
+
+    /** Normalize #RGB / #RRGGBB (case-insensitive). Returns null when empty/invalid. */
+    public static function normalizePrimaryColor(mixed $value): ?string
+    {
+        if ($value === null) {
+            return null;
+        }
+        $raw = trim((string) $value);
+        if ($raw === '') {
+            return null;
+        }
+        if (! preg_match('/^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/', $raw)) {
+            return null;
+        }
+        if (strlen($raw) === 4) {
+            $raw = sprintf('#%s%s%s%s%s%s', $raw[1], $raw[1], $raw[2], $raw[2], $raw[3], $raw[3]);
+        }
+
+        return strtoupper($raw);
     }
 
     public static function logoIsStoredFile(?string $logo): bool
@@ -168,6 +189,7 @@ class Organization extends Model
             'org_address',
             'org_pin',
             'vat_regno',
+            'primary_color',
             'deployment_profile',
             'enabled_modules',
             'module_settings',
@@ -175,6 +197,7 @@ class Organization extends Model
             'created_at',
             'updated_at',
         ]);
+        $data['primary_color'] = self::normalizePrimaryColor($data['primary_color'] ?? null);
         $data['has_logo'] = self::logoIsStoredFile($this->logo);
         $data['logo_file_path'] = $data['has_logo'] ? "/organizations/{$this->id}/logo/file" : null;
 
