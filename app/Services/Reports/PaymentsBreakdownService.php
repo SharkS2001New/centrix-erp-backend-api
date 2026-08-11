@@ -889,9 +889,45 @@ class PaymentsBreakdownService
         ?string $toDate,
         ?int $cashierId,
     ): array {
+        $salesBySession = DB::table('sales as s')
+            ->where('s.organization_id', $organizationId)
+            ->whereIn('s.status', CentrixSalesScope::reportPipelineStatuses())
+            ->whereNotNull('s.float_session_id');
+
+        CentrixSalesScope::excludeLegacyMaterialized($salesBySession, 's');
+        app(TillReportMetrics::class)->applyCollectedSalesFilter($salesBySession, 's');
+
+        if (Schema::hasColumn('sales', 'archived')) {
+            $salesBySession->where('s.archived', 0);
+        }
+        if (Schema::hasColumn('sales', 'deleted_at')) {
+            $salesBySession->whereNull('s.deleted_at');
+        }
+        if ($branchId) {
+            $salesBySession->where('s.branch_id', $branchId);
+        } else {
+            $salesBySession->whereIn('s.branch_id', function ($sub) use ($organizationId) {
+                $sub->select('id')->from('branches')->where('organization_id', $organizationId);
+            });
+        }
+
+        $salesBySession = $salesBySession
+            ->select('s.float_session_id')
+            ->selectRaw('COUNT(*) as txn_count')
+            ->selectRaw('COALESCE(SUM(s.order_total), 0) as gross_sales')
+            // Prefer amount_paid — matches Payment Module collections (cash columns alone can be 0).
+            ->selectRaw('COALESCE(SUM(s.amount_paid), 0) as amount_collected')
+            ->selectRaw('COALESCE(SUM(s.cash), 0) as cash_collected')
+            ->selectRaw('COALESCE(SUM(s.mpesa_amount), 0) as mpesa_collected')
+            ->selectRaw('COALESCE(SUM(s.equity_amount), 0) as equity_collected')
+            ->selectRaw('COALESCE(SUM(s.kcb_amount), 0) as kcb_collected')
+            ->selectRaw('COALESCE(SUM(s.equity_amount), 0) + COALESCE(SUM(s.kcb_amount), 0) as bank_collected')
+            ->groupBy('s.float_session_id');
+
         $q = DB::table('till_float_sessions as tfs')
             ->join('tills as t', 't.id', '=', 'tfs.till_id')
             ->join('users as u', 'u.id', '=', 'tfs.cashier_id')
+            ->leftJoinSub($salesBySession, 's', 's.float_session_id', '=', 'tfs.id')
             ->where('tfs.organization_id', $organizationId);
 
         if ($branchId) {
@@ -926,19 +962,42 @@ class PaymentsBreakdownService
                 't.till_number',
                 't.till_name',
                 DB::raw('COALESCE(NULLIF(TRIM(u.full_name), ""), u.username) as cashier_name'),
+                DB::raw('COALESCE(s.txn_count, 0) as txn_count'),
+                DB::raw('COALESCE(s.gross_sales, 0) as gross_sales'),
+                DB::raw('COALESCE(s.amount_collected, 0) as amount_collected'),
+                DB::raw('COALESCE(s.cash_collected, 0) as cash_collected'),
+                DB::raw('COALESCE(s.mpesa_collected, 0) as mpesa_collected'),
+                DB::raw('COALESCE(s.equity_collected, 0) as equity_collected'),
+                DB::raw('COALESCE(s.kcb_collected, 0) as kcb_collected'),
+                DB::raw('COALESCE(s.bank_collected, 0) as bank_collected'),
             ])
-            ->map(fn ($row) => [
-                'id' => (int) $row->id,
-                'status' => (string) ($row->status ?? ''),
-                'session_date' => $row->session_date,
-                'opened_at' => $row->opened_at,
-                'closed_at' => $row->closed_at,
-                'cashier_id' => (int) ($row->cashier_id ?? 0),
-                'cashier_name' => trim((string) ($row->cashier_name ?? '')),
-                'working_amount' => round((float) ($row->working_amount ?? 0), 2),
-                'till_number' => $row->till_number,
-                'till_name' => $row->till_name,
-            ])
+            ->map(function ($row) {
+                $collected = round((float) ($row->amount_collected ?? 0), 2);
+
+                return [
+                    'id' => (int) $row->id,
+                    'float_session_id' => (int) $row->id,
+                    'status' => (string) ($row->status ?? ''),
+                    'session_date' => $row->session_date,
+                    'opened_at' => $row->opened_at,
+                    'closed_at' => $row->closed_at,
+                    'cashier_id' => (int) ($row->cashier_id ?? 0),
+                    'cashier_name' => trim((string) ($row->cashier_name ?? '')),
+                    'working_amount' => round((float) ($row->working_amount ?? 0), 2),
+                    'till_number' => $row->till_number,
+                    'till_name' => $row->till_name,
+                    'transactions' => (int) ($row->txn_count ?? 0),
+                    'gross_sales' => round((float) ($row->gross_sales ?? 0), 2),
+                    'amount_collected' => $collected,
+                    'total_collected' => $collected,
+                    'collected' => $collected,
+                    'cash_collected' => round((float) ($row->cash_collected ?? 0), 2),
+                    'mpesa_collected' => round((float) ($row->mpesa_collected ?? 0), 2),
+                    'equity_collected' => round((float) ($row->equity_collected ?? 0), 2),
+                    'kcb_collected' => round((float) ($row->kcb_collected ?? 0), 2),
+                    'bank_collected' => round((float) ($row->bank_collected ?? 0), 2),
+                ];
+            })
             ->values()
             ->all();
     }
