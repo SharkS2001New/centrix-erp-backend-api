@@ -104,7 +104,12 @@ class CheckoutController extends Controller
                             'fulfillment_meta' => $priorMeta,
                         ]);
                     } catch (\Throwable $e) {
-                        // Stock reverse is best-effort here; deduct on the new sale still runs.
+                        report($e);
+                        throw new \InvalidArgumentException(
+                            'Could not reverse stock for the previous order before applying this edit. Retry once the prior sale stock is restored.',
+                            0,
+                            $e,
+                        );
                     }
                 }
                 if ($pendingKra) {

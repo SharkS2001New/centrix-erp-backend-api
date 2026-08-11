@@ -12,6 +12,11 @@ Schedule::command('erp:release-expired-stock-reservations')
     ->everyMinute()
     ->withoutOverlapping();
 
+Schedule::command('inventory:finalize-pending-sale-stock --limit=50')
+    ->everyFiveMinutes()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/finalize-pending-sale-stock.log'));
+
 Schedule::command('erp:expire-stale-orders')
     ->hourly()
     ->withoutOverlapping()

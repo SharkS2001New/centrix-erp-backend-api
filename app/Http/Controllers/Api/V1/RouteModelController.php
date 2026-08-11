@@ -138,6 +138,7 @@ class RouteModelController extends BaseResourceController
                 $orgId,
                 (int) $model->id,
                 $model->route_name,
+                $request->user()?->id,
             );
         }
 

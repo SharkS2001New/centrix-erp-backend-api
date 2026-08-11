@@ -138,4 +138,48 @@ class AttendanceClockPunchTest extends TestCase
             ->assertJsonPath('has_password', true)
             ->assertJsonMissingPath('password_encrypted');
     }
+
+    public function test_issue_agent_package_returns_prefilled_config_and_token(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::query()->create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'TERMINAL-AGENT',
+            'location' => 'Gate',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '10.0.0.20',
+            'port' => 80,
+            'username' => 'admin',
+            'use_https' => false,
+        ]);
+        $device->setPlainPassword('DevicePass!');
+        $device->save();
+
+        $res = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/agent-package", [
+            'centrix_api_url' => 'https://example.test/api/v1',
+        ]);
+
+        $res->assertOk()
+            ->assertJsonPath('config.deviceNo', 'TERMINAL-AGENT')
+            ->assertJsonPath('config.centrixApiUrl', 'https://example.test/api/v1')
+            ->assertJsonPath('config.hikvision.host', '10.0.0.20')
+            ->assertJsonPath('config.hikvision.password', 'DevicePass!')
+            ->assertJsonPath('needs_device_ip', false)
+            ->assertJsonPath('needs_device_password', false);
+
+        $token = $res->json('config.centrixToken');
+        $this->assertNotEmpty($token);
+
+        $this->withHeader('Authorization', 'Bearer '.$token)
+            ->postJson('/api/v1/attendance/clock-punch', [
+                'employee_code' => 'EMP#HIK001',
+                'device_no' => 'TERMINAL-AGENT',
+                'punched_at' => '2026-08-11T09:00:00+03:00',
+                'direction' => 'in',
+            ])
+            ->assertCreated()
+            ->assertJsonPath('action', 'in');
+    }
 }

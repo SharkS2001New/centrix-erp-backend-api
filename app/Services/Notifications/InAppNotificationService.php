@@ -31,7 +31,7 @@ class InAppNotificationService
 
         app(InAppNotificationMailDelivery::class)->deliver($notification, $recipient);
 
-        if (in_array($data['type'] ?? '', ['approval', 'approval_outcome'], true)) {
+        if (in_array($data['type'] ?? '', ['approval', 'approval_outcome', 'catalog_pricing'], true)) {
             app(FcmPushNotificationService::class)->notifyInAppNotification($notification, $recipient);
         }
 

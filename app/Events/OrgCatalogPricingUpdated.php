@@ -9,8 +9,9 @@ use Illuminate\Foundation\Events\Dispatchable;
 use Illuminate\Queue\SerializesModels;
 
 /**
- * Pushes a lightweight pricing/markup change signal to External POS terminals
- * for the organization (snackbar only — not an in-app bell notification).
+ * Pushes a pricing/markup change signal to External POS terminals for the
+ * organization (catalog refresh + snackbar). In-app / mobile alerts are created
+ * separately by CatalogPricingBroadcastService.
  */
 class OrgCatalogPricingUpdated implements ShouldBroadcastNow
 {

@@ -650,6 +650,10 @@ Route::prefix('v1')->group(function () {
                 Route::post('categories/import-batch', [CategoryImportController::class, 'store']);
                 Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store']);
                 Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class);
+                Route::post(
+                    'attendance-clock-devices/{id}/agent-package',
+                    [AttendanceClockDeviceController::class, 'issueAgentPackage']
+                );
                 Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class);
                 Route::prefix('attendance')->group(function () {
                     Route::get('company-premises', [CompanyPremisesController::class, 'show']);
@@ -1152,6 +1156,8 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('employee-leave-days', EmployeeLeaveDayController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
+            Route::post('attendance-clock-devices/{id}/agent-package', [AttendanceClockDeviceController::class, 'issueAgentPackage'])
+                ->middleware('erp.permission:hr.manage|admin.manage');
             Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view|admin.manage'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage|admin.manage']);
