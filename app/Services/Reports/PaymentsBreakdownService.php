@@ -4,6 +4,7 @@ namespace App\Services\Reports;
 
 use App\Services\Pos\TillReportMetrics;
 use App\Services\Sales\CentrixSalesScope;
+use App\Support\SqlLikeSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -237,7 +238,8 @@ class PaymentsBreakdownService
         }
 
         if ($search !== '') {
-            $listQuery->where(function ($inner) use ($search) {
+            $amount = SqlLikeSearch::parseAmountSearchTerm($search);
+            $listQuery->where(function ($inner) use ($search, $amount) {
                 $inner->where('s.order_num', 'like', "%{$search}%")
                     ->orWhere('s.customer_name_override', 'like', "%{$search}%")
                     ->orWhere('c.customer_name', 'like', "%{$search}%")
@@ -254,6 +256,16 @@ class PaymentsBreakdownService
                     } else {
                         $inner->orWhereRaw('CAST(s.pos_order_num AS CHAR) LIKE ?', ["%{$search}%"]);
                     }
+                }
+                if ($amount !== null) {
+                    $inner->orWhereRaw('ROUND(s.order_total, 2) = ?', [$amount])
+                        ->orWhereRaw('ROUND(COALESCE(s.amount_paid, 0), 2) = ?', [$amount])
+                        ->orWhereExists(function ($sub) use ($amount) {
+                            $sub->select(DB::raw(1))
+                                ->from('sale_payments as sp')
+                                ->whereColumn('sp.sale_id', 's.id')
+                                ->whereRaw('ROUND(sp.amount, 2) = ?', [$amount]);
+                        });
                 }
             });
         }

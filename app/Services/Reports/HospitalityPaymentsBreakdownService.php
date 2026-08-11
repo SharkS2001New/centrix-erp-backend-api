@@ -2,6 +2,7 @@
 
 namespace App\Services\Reports;
 
+use App\Support\SqlLikeSearch;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -111,11 +112,17 @@ class HospitalityPaymentsBreakdownService
 
         if ($search !== '') {
             $like = '%'.$search.'%';
-            $listQuery->where(function ($inner) use ($like) {
+            $amount = SqlLikeSearch::parseAmountSearchTerm($search);
+            $listQuery->where(function ($inner) use ($like, $amount) {
                 $inner->where('c.check_number', 'like', $like)
                     ->orWhere('c.guest_name', 'like', $like)
                     ->orWhere('p.reference', 'like', $like)
                     ->orWhere('o.name', 'like', $like);
+                if ($amount !== null) {
+                    $inner->orWhereRaw('ROUND(p.amount, 2) = ?', [$amount])
+                        ->orWhereRaw('ROUND(COALESCE(c.total, 0), 2) = ?', [$amount])
+                        ->orWhereRaw('ROUND(COALESCE(c.amount_paid, 0), 2) = ?', [$amount]);
+                }
             });
         }
 
