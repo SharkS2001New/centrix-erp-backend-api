@@ -60,6 +60,7 @@
         "optimize-autoloader": true,
         "preferred-install": "dist",
         "sort-packages": true,
+        "use-github-api": false,
         "allow-plugins": {
             "php-http/discovery": true
         }

@@ -23,9 +23,23 @@ jobs:
         with:
           php-version: "8.4"
           coverage: none
+          tools: composer:v2
+
+      - name: Refresh CA certificates
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ca-certificates
+          sudo update-ca-certificates
 
       - name: Install dependencies
-        run: composer install --no-interaction --prefer-dist
+        env:
+          SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+          CURL_CA_BUNDLE: /etc/ssl/certs/ca-certificates.crt
+          COMPOSER_CAFILE: /etc/ssl/certs/ca-certificates.crt
+        run: |
+          composer config --no-plugins --no-interaction use-github-api false
+          composer config --no-plugins --no-interaction github-oauth.github.com "${{ secrets.GITHUB_TOKEN }}"
+          composer install --no-interaction --prefer-dist
 
       - name: Composer security audit
         run: composer audit

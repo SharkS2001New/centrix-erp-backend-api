@@ -6,6 +6,7 @@
 .env.*
 !.env.example
 !.env.production.example
+auth.json
 storage/logs/*
 !storage/logs/.gitkeep
 storage/framework/cache/*
