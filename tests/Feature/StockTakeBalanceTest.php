@@ -2,6 +2,8 @@
 
 namespace Tests\Feature;
 
+use App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController;
+use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
@@ -23,6 +25,7 @@ class StockTakeBalanceTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutMiddleware([EnsureOrganizationLicenseActive::class]);
         $this->user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($this->user);
         $this->product = Product::query()->firstOrFail();
@@ -45,13 +48,14 @@ class StockTakeBalanceTest extends TestCase
             'started_by' => $this->user->id,
         ]);
 
-        // Snapshot was 10, but live is 25 after later movements — complete must leave counted qty.
+        // Snapshot was 10, but live is 25 after later movements — counted line must leave counted qty.
         StockTakeLine::create([
             'session_id' => $session->id,
             'product_code' => $this->product->product_code,
             'stock_location' => 'shop',
             'system_quantity' => 10,
             'counted_quantity' => 18,
+            'is_counted' => true,
         ]);
 
         $this->postJson("/api/v1/inventory/stock-take/{$session->id}/complete")->assertOk();
@@ -74,5 +78,117 @@ class StockTakeBalanceTest extends TestCase
 
         $this->assertSame(-7.0, (float) $txn->quantity_change);
         $this->assertSame(40.0, (float) $txn->unit_cost);
+    }
+
+    public function test_uncounted_lines_do_not_rewrite_live_stock_after_sales(): void
+    {
+        CurrentStock::query()->updateOrCreate(
+            ['product_code' => $this->product->product_code, 'branch_id' => $this->user->branch_id],
+            ['shop_quantity' => 80, 'store_quantity' => 0],
+        );
+
+        $session = StockTakeSession::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'session_code' => 'ST-SKIP-'.uniqid(),
+            'status' => 'in_progress',
+            'stock_location' => 'shop',
+            'started_by' => $this->user->id,
+        ]);
+
+        // Prefill equals opening snapshot; never saved as counted. Live moved to 80 via sales.
+        StockTakeLine::create([
+            'session_id' => $session->id,
+            'product_code' => $this->product->product_code,
+            'stock_location' => 'shop',
+            'system_quantity' => 100,
+            'counted_quantity' => 100,
+            'is_counted' => false,
+        ]);
+
+        $this->postJson("/api/v1/inventory/stock-take/{$session->id}/complete")->assertOk();
+
+        $stock = CurrentStock::query()
+            ->where('product_code', $this->product->product_code)
+            ->where('branch_id', $this->user->branch_id)
+            ->firstOrFail();
+
+        $this->assertSame(80.0, (float) $stock->shop_quantity);
+
+        $this->assertSame(
+            0,
+            InventoryTransaction::query()
+                ->where('reference_type', 'stock_take_session')
+                ->where('reference_id', $session->id)
+                ->count(),
+        );
+    }
+
+    public function test_save_counts_marks_line_as_counted(): void
+    {
+        $session = StockTakeSession::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'session_code' => 'ST-SAVE-'.uniqid(),
+            'status' => 'in_progress',
+            'stock_location' => 'shop',
+            'started_by' => $this->user->id,
+        ]);
+
+        $line = StockTakeLine::create([
+            'session_id' => $session->id,
+            'product_code' => $this->product->product_code,
+            'stock_location' => 'shop',
+            'system_quantity' => 10,
+            'counted_quantity' => 10,
+            'is_counted' => false,
+        ]);
+
+        $this->postJson("/api/v1/inventory/stock-take/{$session->id}/save-counts", [
+            'lines' => [
+                ['id' => $line->id, 'counted_quantity' => 12],
+            ],
+        ])->assertOk();
+
+        $line->refresh();
+        $this->assertTrue((bool) $line->is_counted);
+        $this->assertSame(12.0, (float) $line->counted_quantity);
+    }
+
+    public function test_complete_stock_take_session_helper_skips_uncounted_lines(): void
+    {
+        CurrentStock::query()->updateOrCreate(
+            ['product_code' => $this->product->product_code, 'branch_id' => $this->user->branch_id],
+            ['shop_quantity' => 55, 'store_quantity' => 0],
+        );
+
+        $session = StockTakeSession::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'session_code' => 'ST-HELPER-'.uniqid(),
+            'status' => 'in_progress',
+            'stock_location' => 'shop',
+            'started_by' => $this->user->id,
+        ]);
+
+        StockTakeLine::create([
+            'session_id' => $session->id,
+            'product_code' => $this->product->product_code,
+            'stock_location' => 'shop',
+            'system_quantity' => 100,
+            'counted_quantity' => 100,
+            'is_counted' => false,
+        ]);
+
+        app(StockTakeOperationsController::class)
+            ->completeStockTakeSession($session, $this->user);
+
+        $stock = CurrentStock::query()
+            ->where('product_code', $this->product->product_code)
+            ->where('branch_id', $this->user->branch_id)
+            ->firstOrFail();
+
+        $this->assertSame(55.0, (float) $stock->shop_quantity);
+        $this->assertSame('completed', $session->fresh()->status);
     }
 }

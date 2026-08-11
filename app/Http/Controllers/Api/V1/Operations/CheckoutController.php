@@ -819,7 +819,9 @@ class CheckoutController extends Controller
                 'voucher_payment_amount' => $voucherPayment,
                 'points_payment_amount' => $pointsPayment,
                 'loyalty_card_id' => $loyaltyCardId,
-                'payment_method_code' => $input['payment_method_code'] ?? 'CASH',
+                'payment_method_code' => $isSaveOnly
+                    ? null
+                    : ($input['payment_method_code'] ?? 'CASH'),
                 'is_credit_sale' => $isCredit ? 1 : 0,
                 // Non-credit External POS / backoffice till sales are always fully paid.
                 'payment_status' => (

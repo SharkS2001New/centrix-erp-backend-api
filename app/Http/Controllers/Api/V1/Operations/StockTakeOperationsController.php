@@ -116,6 +116,7 @@ class StockTakeOperationsController extends Controller
                 ->where('id', $lineId)
                 ->update([
                     'counted_quantity' => (float) ($line['counted_quantity'] ?? 0),
+                    'is_counted' => true,
                 ]);
             $updated++;
         }
@@ -174,6 +175,7 @@ class StockTakeOperationsController extends Controller
                     'stock_location' => 'shop',
                     'system_quantity' => $shopQty,
                     'counted_quantity' => $shopQty,
+                    'is_counted' => false,
                 ];
             }
             if ($loc === 'both' || $loc === 'store') {
@@ -183,6 +185,7 @@ class StockTakeOperationsController extends Controller
                     'stock_location' => 'store',
                     'system_quantity' => $storeQty,
                     'counted_quantity' => $storeQty,
+                    'is_counted' => false,
                 ];
             }
         }
@@ -235,20 +238,36 @@ class StockTakeOperationsController extends Controller
 
     public function completeStockTakeSession(StockTakeSession $session, User $user): StockTakeSession
     {
-        if ($session->status === 'completed') {
-            throw new InvalidArgumentException('Session already completed.');
-        }
-
         return DB::transaction(function () use ($session, $user) {
-            $lines = StockTakeLine::where('session_id', $session->id)->lockForUpdate()->get();
+            $lockedSession = StockTakeSession::query()
+                ->where('id', $session->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($lockedSession->status === 'completed') {
+                throw new InvalidArgumentException('Session already completed.');
+            }
+
+            $lines = StockTakeLine::where('session_id', $lockedSession->id)->lockForUpdate()->get();
             $orgId = (int) ($user->organization_id
-                ?? DB::table('branches')->where('id', $session->branch_id)->value('organization_id'));
+                ?? DB::table('branches')->where('id', $lockedSession->branch_id)->value('organization_id'));
+
+            $adjustedLines = collect();
 
             foreach ($lines as $line) {
-                // Apply against live on-hand so completion leaves counted qty, even if stock moved after snapshot.
+                // Untouched defaults must not rewrite live stock (would undo POS sales/receipts).
+                if (! (bool) ($line->is_counted ?? false)) {
+                    continue;
+                }
+
+                // Lock on-hand before reading so counted becomes the ERP balance for this SKU/location.
+                $this->lockCurrentStockForUpdate(
+                    (string) $line->product_code,
+                    (int) $lockedSession->branch_id,
+                );
                 $liveQty = $this->stockOnHand(
                     (string) $line->product_code,
-                    (int) $session->branch_id,
+                    (int) $lockedSession->branch_id,
                     (string) $line->stock_location,
                 );
                 $variance = (float) $line->counted_quantity - $liveQty;
@@ -266,29 +285,36 @@ class StockTakeOperationsController extends Controller
                     ->value('last_cost_price') ?? 0));
 
                 $this->postStockLedger([
-                    'branch_id' => $session->branch_id,
+                    'branch_id' => $lockedSession->branch_id,
                     'product_code' => $line->product_code,
                     'stock_location' => $line->stock_location,
                     'transaction_type' => 'STOCK_TAKE',
                     'reference_type' => 'stock_take_session',
-                    'reference_id' => $session->id,
+                    'reference_id' => $lockedSession->id,
                     'quantity_change' => $variance,
                     'unit_cost' => $unitCost > 0 ? $unitCost : null,
                     'created_by' => $user->id,
                     'notes' => 'Stock take variance',
                 ], true);
+
+                $adjustedLines->push($line);
             }
 
-            $session->update([
+            $lockedSession->update([
                 'status' => 'completed',
                 'completed_by' => $user->id,
                 'completed_at' => now(),
             ]);
 
             $gate = $this->erp->gateForUser($user);
-            app(StockTakeJournalService::class)->postIfEnabled($session->fresh(), $lines, $user, $gate);
+            app(StockTakeJournalService::class)->postIfEnabled(
+                $lockedSession->fresh(),
+                $adjustedLines,
+                $user,
+                $gate,
+            );
 
-            return $session->fresh();
+            return $lockedSession->fresh();
         });
     }
 }

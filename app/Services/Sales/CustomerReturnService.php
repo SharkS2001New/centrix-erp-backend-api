@@ -169,7 +169,10 @@ class CustomerReturnService
                 'notes' => $data['notes'] ?? null,
                 'status' => 'pending',
                 'total_amount' => $total,
-                'stock_location' => null,
+                // Column is NOT NULL; credit notes do not restock, so keep the default location.
+                'stock_location' => in_array(($data['stock_location'] ?? null), ['shop', 'store'], true)
+                    ? $data['stock_location']
+                    : 'shop',
                 'return_kind' => 'credit_note',
                 'returned_by' => $user->id,
             ]);

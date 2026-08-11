@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\CurrentStock;
 use App\Models\Organization;
 use App\Models\Permission;
@@ -20,6 +21,12 @@ use Tests\TestCase;
 class InventoryApprovalWorkflowTest extends TestCase
 {
     use RefreshesErpDatabase;
+
+    protected function setUp(): void
+    {
+        parent::setUp();
+        $this->withoutMiddleware([EnsureOrganizationLicenseActive::class]);
+    }
 
     protected function userWithPermissions(array $codes): User
     {
@@ -101,6 +108,7 @@ class InventoryApprovalWorkflowTest extends TestCase
             'stock_location' => 'shop',
             'system_quantity' => 10,
             'counted_quantity' => 9,
+            'is_counted' => true,
         ]);
 
         $actionRequest = app(StockTakeApprovalService::class)->requestCompletion($clerk, $session);

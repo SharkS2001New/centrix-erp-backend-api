@@ -1443,6 +1443,7 @@ CREATE TABLE stock_take_lines (
     stock_location  ENUM('shop','store') NOT NULL,
     system_quantity FLOAT         NOT NULL DEFAULT 0,
     counted_quantity FLOAT        NOT NULL DEFAULT 0,
+    is_counted      BOOLEAN       NOT NULL DEFAULT FALSE,
     variance        FLOAT         GENERATED ALWAYS AS (counted_quantity - system_quantity) STORED,
     FOREIGN KEY (session_id) REFERENCES stock_take_sessions(id) ON DELETE CASCADE,
     INDEX idx_session (session_id)

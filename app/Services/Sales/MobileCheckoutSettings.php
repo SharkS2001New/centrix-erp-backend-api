@@ -48,6 +48,9 @@ class MobileCheckoutSettings
             $input['save_only'] = true;
             $input['pay_now'] = 0;
             $input['is_credit_sale'] = false;
+            // Unpaid save-only orders are not cash tenders — avoid defaulting method to CASH
+            // so thermal receipts do not invent a full Cash settlement from the method code.
+            unset($input['payment_method_code']);
 
             return;
         }

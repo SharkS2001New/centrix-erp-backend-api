@@ -1033,6 +1033,68 @@ class MobileSalesApiTest extends TestCase
             ->assertJsonPath('route_id', $route->id);
     }
 
+    public function test_route_locked_rep_sees_assigned_route_customers_even_when_branch_differs(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $route = \App\Models\RouteModel::query()
+            ->where('organization_id', $admin->organization_id)
+            ->where('is_active', true)
+            ->firstOrFail();
+
+        $otherBranch = \App\Models\Branch::query()
+            ->where('organization_id', $admin->organization_id)
+            ->where('id', '!=', $admin->branch_id)
+            ->first();
+
+        if (! $otherBranch) {
+            $otherBranch = \App\Models\Branch::create([
+                'organization_id' => $admin->organization_id,
+                'branch_name' => 'Mobile Branch '.uniqid(),
+                'branch_code' => 'MB'.substr(uniqid(), -4),
+                'is_active' => true,
+            ]);
+        }
+
+        $suffix = uniqid();
+        $nextNum = (int) \App\Models\Customer::query()->max('customer_num') + 1;
+
+        $otherBranchCustomer = \App\Models\Customer::create([
+            'customer_num' => $nextNum,
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $otherBranch->id,
+            'customer_name' => 'Other Branch '.$suffix,
+            'customer_type' => 'route',
+            'route_id' => $route->id,
+            'phone_number' => '0712'.random_int(100000, 999999),
+            'customer_status' => 0,
+            'created_by' => $admin->id,
+        ]);
+
+        $user = $this->makeMobileUser([
+            'assigned_route_id' => $route->id,
+            'access_scope' => 'branch',
+            'branch_id' => $admin->branch_id,
+        ]);
+        if (\Illuminate\Support\Facades\Schema::hasTable('user_assigned_routes')) {
+            $user->assignedRoutes()->sync([$route->id]);
+        }
+
+        $token = $this->loginMobile($user);
+        $names = collect(
+            $this->withToken($token)
+                ->getJson('/api/v1/mobile/customers')
+                ->assertOk()
+                ->json('data')
+        )->pluck('customer_name')->all();
+
+        $this->assertContains($otherBranchCustomer->customer_name, $names);
+
+        $this->withToken($token)
+            ->getJson('/api/v1/mobile/customers/'.$otherBranchCustomer->customer_num)
+            ->assertOk()
+            ->assertJsonPath('customer_num', $otherBranchCustomer->customer_num);
+    }
+
     public function test_mobile_routes_list_is_scoped_to_user_organization(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

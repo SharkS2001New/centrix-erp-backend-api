@@ -66,6 +66,7 @@ class SaveStockTakeCountsJob implements ShouldQueue
                     ->where('id', $lineId)
                     ->update([
                         'counted_quantity' => (float) ($line['counted_quantity'] ?? 0),
+                        'is_counted' => true,
                     ]);
                 $updated++;
 

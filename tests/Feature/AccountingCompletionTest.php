@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\ChartOfAccount;
 use App\Models\CurrentStock;
 use App\Models\JournalEntry;
@@ -25,6 +26,7 @@ class AccountingCompletionTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $this->withoutMiddleware([EnsureOrganizationLicenseActive::class]);
         $this->user = User::where('username', 'admin')->firstOrFail();
         Sanctum::actingAs($this->user);
 
@@ -139,6 +141,7 @@ class AccountingCompletionTest extends TestCase
             'stock_location' => 'shop',
             'system_quantity' => 10,
             'counted_quantity' => 8,
+            'is_counted' => true,
         ]);
 
         $this->postJson("/api/v1/inventory/stock-take/{$session->id}/complete")->assertOk();

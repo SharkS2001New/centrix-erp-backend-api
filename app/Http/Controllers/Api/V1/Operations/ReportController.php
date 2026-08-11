@@ -1458,7 +1458,13 @@ class ReportController extends Controller
             ->selectRaw('COALESCE(SUM(total_vat), 0) as total_vat')
             ->selectRaw('COALESCE(SUM(cash), 0) as cash_collected')
             ->selectRaw('COALESCE(SUM(mpesa_amount), 0) as mpesa_collected')
+            ->selectRaw('COALESCE(SUM(equity_amount), 0) as equity_collected')
+            ->selectRaw('COALESCE(SUM(kcb_amount), 0) as kcb_collected')
             ->selectRaw('COALESCE(SUM(equity_amount), 0) + COALESCE(SUM(kcb_amount), 0) as bank_collected')
+            ->selectRaw('SUM(CASE WHEN COALESCE(cash, 0) > 0 THEN 1 ELSE 0 END) as cash_txn_count')
+            ->selectRaw('SUM(CASE WHEN COALESCE(mpesa_amount, 0) > 0 THEN 1 ELSE 0 END) as mpesa_txn_count')
+            ->selectRaw('SUM(CASE WHEN COALESCE(equity_amount, 0) > 0 THEN 1 ELSE 0 END) as equity_txn_count')
+            ->selectRaw('SUM(CASE WHEN COALESCE(kcb_amount, 0) > 0 THEN 1 ELSE 0 END) as kcb_txn_count')
             ->groupBy('float_session_id');
 
         $sessionExpenseBySessionSub = DB::table('expenses')
@@ -1505,6 +1511,7 @@ class ReportController extends Controller
                 'tfs.opened_at',
                 'tfs.closed_at',
                 'tfs.cash_movements',
+                'tfs.float_breakdown',
                 't.till_number',
                 't.till_name',
                 'tfs.cashier_id',
@@ -1514,7 +1521,13 @@ class ReportController extends Controller
                 DB::raw('COALESCE(s.txn_count, 0) as transactions'),
                 DB::raw('COALESCE(s.cash_collected, 0) as cash_collected'),
                 DB::raw('COALESCE(s.mpesa_collected, 0) as mpesa_collected'),
+                DB::raw('COALESCE(s.equity_collected, 0) as equity_collected'),
+                DB::raw('COALESCE(s.kcb_collected, 0) as kcb_collected'),
                 DB::raw('COALESCE(s.bank_collected, 0) as bank_collected'),
+                DB::raw('COALESCE(s.cash_txn_count, 0) as cash_txn_count'),
+                DB::raw('COALESCE(s.mpesa_txn_count, 0) as mpesa_txn_count'),
+                DB::raw('COALESCE(s.equity_txn_count, 0) as equity_txn_count'),
+                DB::raw('COALESCE(s.kcb_txn_count, 0) as kcb_txn_count'),
                 DB::raw('COALESCE(pd.paid_debtors, 0) as paid_debtors'),
                 'tfs.working_amount as opening_float',
                 DB::raw('COALESCE(ex.expenses_total, 0) as session_expenses'),
@@ -1530,6 +1543,11 @@ class ReportController extends Controller
                 $sessionExpenses = round((float) ($row->session_expenses ?? 0), 2);
                 $cashIn = round((float) ($movements['in'] ?? 0), 2);
                 $cashOut = round((float) ($movements['out'] ?? 0), 2);
+                $cashCollected = round((float) ($row->cash_collected ?? 0), 2);
+                $mpesaCollected = round((float) ($row->mpesa_collected ?? 0), 2);
+                $equityCollected = round((float) ($row->equity_collected ?? 0), 2);
+                $kcbCollected = round((float) ($row->kcb_collected ?? 0), 2);
+                $bankCollected = round((float) ($row->bank_collected ?? 0), 2);
                 // Legacy netsales = ORDTTL + DBTTL + FLOATTTL − EXPTTL
                 $expected = $tillMetrics->expectedClosing(
                     $grossSales,
@@ -1539,6 +1557,45 @@ class ReportController extends Controller
                     $cashOut,
                     $cashIn,
                 );
+
+                $rawFloat = $row->float_breakdown ?? null;
+                $decodedFloat = is_string($rawFloat) ? json_decode($rawFloat, true) : $rawFloat;
+                $floatEntries = $this->normalizeFloatBreakdownEntries(
+                    is_array($decodedFloat) ? $decodedFloat : [],
+                );
+                if ($floatEntries === [] && $openingFloat > 0) {
+                    $floatEntries = [[
+                        'payment_type' => 'CASH',
+                        'new_float' => $openingFloat,
+                    ]];
+                }
+
+                $payments = [
+                    [
+                        'method_code' => 'CASH',
+                        'method_name' => 'Cash payment',
+                        'total' => $cashCollected,
+                        'order_count' => (int) ($row->cash_txn_count ?? 0),
+                    ],
+                    [
+                        'method_code' => 'MPESA',
+                        'method_name' => 'M-Pesa payments',
+                        'total' => $mpesaCollected,
+                        'order_count' => (int) ($row->mpesa_txn_count ?? 0),
+                    ],
+                    [
+                        'method_code' => 'EQUITY',
+                        'method_name' => 'Equity payment',
+                        'total' => $equityCollected,
+                        'order_count' => (int) ($row->equity_txn_count ?? 0),
+                    ],
+                    [
+                        'method_code' => 'KCB',
+                        'method_name' => 'K.C.B payment',
+                        'total' => $kcbCollected,
+                        'order_count' => (int) ($row->kcb_txn_count ?? 0),
+                    ],
+                ];
 
                 return (object) [
                     'float_session_id' => (int) $row->float_session_id,
@@ -1554,14 +1611,25 @@ class ReportController extends Controller
                     'paid_debtors' => $paidDebtors,
                     'total_vat' => round((float) ($row->total_vat ?? 0), 2),
                     'transactions' => (int) ($row->transactions ?? 0),
-                    'cash_collected' => round((float) ($row->cash_collected ?? 0), 2),
-                    'mpesa_collected' => round((float) ($row->mpesa_collected ?? 0), 2),
-                    'bank_collected' => round((float) ($row->bank_collected ?? 0), 2),
+                    'cash_collected' => $cashCollected,
+                    'mpesa_collected' => $mpesaCollected,
+                    'equity_collected' => $equityCollected,
+                    'kcb_collected' => $kcbCollected,
+                    'bank_collected' => $bankCollected,
                     'opening_float' => $openingFloat,
                     'session_expenses' => $sessionExpenses,
                     'cash_movements_in' => $cashIn,
                     'cash_movements_out' => $cashOut,
                     'expected_net_sales' => $expected,
+                    'float_entries' => array_values(array_map(function (array $entry) {
+                        return [
+                            'payment_type' => (string) ($entry['payment_type'] ?? 'CASH'),
+                            'new_float' => round((float) ($entry['new_float'] ?? 0), 2),
+                            'amount' => round((float) ($entry['new_float'] ?? 0), 2),
+                        ];
+                    }, $floatEntries)),
+                    'payments' => $payments,
+                    'expense_lines' => [],
                 ];
             });
 
@@ -1662,6 +1730,30 @@ class ReportController extends Controller
                 ];
             })
             ->values();
+
+        $expensesBySession = [];
+        foreach ($expenseRows as $expense) {
+            $sid = (int) ($expense->float_session_id ?? 0);
+            if ($sid <= 0) {
+                continue;
+            }
+            $expensesBySession[$sid][] = [
+                'id' => $expense->id,
+                'description' => $expense->description,
+                'group_name' => $expense->group_name,
+                'amount' => $expense->amount,
+            ];
+        }
+
+        $attachExpenseLines = function ($row) use ($expensesBySession) {
+            $asArray = (array) $row;
+            $sid = (int) ($asArray['float_session_id'] ?? 0);
+            $asArray['expense_lines'] = $expensesBySession[$sid] ?? [];
+
+            return (object) $asArray;
+        };
+        $sessions = array_map($attachExpenseLines, $sessions);
+        $tillRows = $tillRows->map($attachExpenseLines)->values();
 
         $creditPaymentsQuery = DB::table('customer_invoice_payments as cip')
             ->join('customer_invoices as ci', 'ci.id', '=', 'cip.customer_invoice_id');

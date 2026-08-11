@@ -48,4 +48,47 @@ class PlatformMailboxBodyHelpersTest extends TestCase
             ['Can not authenticate to IMAP server'],
         ));
     }
+
+    public function test_decode_part_charset_accepts_stdclass_parameters(): void
+    {
+        $service = app(PlatformMailboxService::class);
+        $method = new \ReflectionMethod(PlatformMailboxService::class, 'decodePartCharset');
+        $method->setAccessible(true);
+
+        $part = (object) [
+            // PHP IMAP often returns a single parameter object instead of a list.
+            'parameters' => (object) [
+                'attribute' => 'charset',
+                'value' => 'UTF-8',
+            ],
+            'dparameters' => null,
+        ];
+
+        $this->assertSame(
+            'Price adjustment',
+            $method->invoke($service, 'Price adjustment', $part),
+        );
+    }
+
+    public function test_imap_part_parameter_list_merges_array_and_object_params(): void
+    {
+        $service = app(PlatformMailboxService::class);
+        $method = new \ReflectionMethod(PlatformMailboxService::class, 'imapPartParameterList');
+        $method->setAccessible(true);
+
+        $part = (object) [
+            'parameters' => [
+                (object) ['attribute' => 'NAME', 'value' => 'a.txt'],
+            ],
+            'dparameters' => (object) [
+                'attribute' => 'CHARSET',
+                'value' => 'ISO-8859-1',
+            ],
+        ];
+
+        $rows = $method->invoke($service, $part);
+        $this->assertCount(2, $rows);
+        $this->assertSame('NAME', $rows[0]->attribute);
+        $this->assertSame('CHARSET', $rows[1]->attribute);
+    }
 }

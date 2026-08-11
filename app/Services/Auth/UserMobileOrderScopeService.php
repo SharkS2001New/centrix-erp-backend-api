@@ -227,8 +227,9 @@ class UserMobileOrderScopeService
         if ($assigned !== []) {
             $query->where('customers.customer_type', 'route');
             $this->access->scopeOrganization($query, $user, 'customers.organization_id');
-            $this->access->scopeBranchIfLimited($query, $user, 'customers.branch_id');
-
+            // Route assignment is the territory. Do not also require customers.branch_id =
+            // the rep's branch — HQ-created / blank-branch route customers were invisible
+            // and checkout failed with "not available on your route and branch".
             if ($routeId !== null && $routeId > 0 && in_array($routeId, $assigned, true)) {
                 $query->where('customers.route_id', $routeId);
             } else {
@@ -244,7 +245,8 @@ class UserMobileOrderScopeService
 
         $query->where('customers.customer_type', 'route');
         $this->access->scopeOrganization($query, $user, 'customers.organization_id');
-        $this->access->scopeBranchIfLimited($query, $user, 'customers.branch_id');
+        // Include org-shared customers (branch_id NULL) for branch-limited reps.
+        $this->access->scopeBranchIfLimitedOrShared($query, $user, 'customers.branch_id');
 
         if ($routeId !== null && $routeId > 0) {
             $query->where('customers.route_id', $routeId);

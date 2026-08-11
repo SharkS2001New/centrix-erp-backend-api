@@ -965,7 +965,7 @@ class PlatformMailboxService
     protected function decodePartCharset(string $text, $part): string
     {
         $charset = null;
-        foreach (array_merge($part->parameters ?? [], $part->dparameters ?? []) as $param) {
+        foreach ($this->imapPartParameterList($part) as $param) {
             if (strtoupper((string) ($param->attribute ?? '')) === 'CHARSET') {
                 $charset = (string) ($param->value ?? '');
                 break;
@@ -984,6 +984,52 @@ class PlatformMailboxService
         }
 
         return $this->ensureUtf8($text);
+    }
+
+    /**
+     * IMAP structure params may be an array of objects, a single stdClass, or null.
+     *
+     * @return list<object>
+     */
+    protected function imapPartParameterList($part): array
+    {
+        $params = $part->parameters ?? null;
+        $dparams = $part->dparameters ?? null;
+
+        return array_values(array_filter([
+            ...$this->normalizeImapParameterCollection($params),
+            ...$this->normalizeImapParameterCollection($dparams),
+        ]));
+    }
+
+    /**
+     * @return list<object>
+     */
+    protected function normalizeImapParameterCollection(mixed $value): array
+    {
+        if ($value === null) {
+            return [];
+        }
+        if (is_array($value)) {
+            return array_values(array_filter($value, static fn ($row) => is_object($row)));
+        }
+        if (is_object($value)) {
+            // Single parameter object (common for simple text parts).
+            if (isset($value->attribute) || isset($value->value)) {
+                return [$value];
+            }
+            // Iterable list-like object of parameters.
+            $rows = [];
+            foreach ((array) $value as $row) {
+                if (is_object($row)) {
+                    $rows[] = $row;
+                }
+            }
+
+            return $rows;
+        }
+
+        return [];
     }
 
     protected function ensureUtf8(string $text): string

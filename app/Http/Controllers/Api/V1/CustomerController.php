@@ -164,12 +164,15 @@ class CustomerController extends BaseResourceController
             $data['kra_pin'] ?? null,
         );
 
-        $customer = DB::transaction(function () use ($data, $organizationId) {
+        $customer = DB::transaction(function () use ($data, $organizationId, $user) {
             if (empty($data['customer_num'])) {
                 $data['customer_num'] = app(CustomerNumberAllocator::class)->nextForOrganization($organizationId);
             }
 
             $data['organization_id'] = $organizationId;
+            if (empty($data['branch_id']) && $user?->branch_id) {
+                $data['branch_id'] = (int) $user->branch_id;
+            }
 
             return Customer::create($data);
         });

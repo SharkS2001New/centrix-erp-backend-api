@@ -514,15 +514,16 @@ class CreditNoteReturnTest extends TestCase
             'id' => $returnId,
             'return_kind' => 'credit_note',
             'total_amount' => 150,
+            'stock_location' => 'shop',
         ]);
         $this->assertDatabaseMissing('customer_return_lines', [
             'customer_return_id' => $returnId,
         ]);
 
-        $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
-            ->assertOk()
-            ->assertJsonPath('credit_note.total_amount', 150);
+        $approved = $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
+            ->assertOk();
 
+        $this->assertSame(150.0, (float) $approved->json('credit_note.total_amount'));
         $this->assertSame(850.0, (float) $sale->fresh()->order_total);
     }
 }

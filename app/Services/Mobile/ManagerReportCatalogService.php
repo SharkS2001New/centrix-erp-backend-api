@@ -51,6 +51,8 @@ class ManagerReportCatalogService
     /** @var list<string> */
     private const MOBILE_EXCLUDED_REPORT_KEYS = [
         'stock-reservations',
+        // Duplicate of eod-report — manager app uses one End of Day screen with cashier filter.
+        'eod-cashier',
         // Compliance suite stays on web ERP (KRA receipts + audit trail).
         'kra-receipts',
         'kra-compliance-summary',

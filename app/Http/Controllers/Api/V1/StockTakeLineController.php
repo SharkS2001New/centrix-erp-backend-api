@@ -30,6 +30,10 @@ class StockTakeLineController extends BaseResourceController
                     ->whereNull('p.deleted_at');
             })
             ->leftJoin('uoms as u', 'u.id', '=', 'p.unit_id')
+            ->leftJoin('current_stock as cs', function ($join) {
+                $join->on('cs.product_code', '=', 'stock_take_lines.product_code')
+                    ->on('cs.branch_id', '=', 'sts.branch_id');
+            })
             ->select([
                 'stock_take_lines.*',
                 'p.product_name',
@@ -41,7 +45,11 @@ class StockTakeLineController extends BaseResourceController
                 'u.middle_packaging_label',
                 'u.middle_factor',
                 'u.uom_type',
-            ]);
+            ])
+            ->selectRaw(
+                'CASE WHEN stock_take_lines.stock_location = \'store\' '
+                .'THEN COALESCE(cs.store_quantity, 0) ELSE COALESCE(cs.shop_quantity, 0) END as live_quantity'
+            );
 
         foreach ((array) $request->input('filter', []) as $col => $val) {
             if ($col === 'subcategory_id' || $col === 'category_id') {
