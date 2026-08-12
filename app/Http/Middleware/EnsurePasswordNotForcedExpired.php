@@ -18,6 +18,7 @@ class EnsurePasswordNotForcedExpired
         'api/v1/auth/verify-password',
         'api/v1/auth/skip-password-expiry',
         'api/v1/erp/capabilities',
+        'api/v1/erp/capabilities/version',
     ];
 
     public function handle(Request $request, Closure $next): Response

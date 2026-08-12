@@ -362,8 +362,10 @@ class UserLoginChannelService
 
     protected function isSharedAuthPath(string $path): bool
     {
+        // Capabilities bootstrap + cheap version poll (all login channels).
         return str_starts_with($path, 'auth/')
             || $path === 'erp/capabilities'
+            || str_starts_with($path, 'erp/capabilities/')
             || $path === 'health';
     }
 

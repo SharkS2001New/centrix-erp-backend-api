@@ -194,6 +194,11 @@ class UserLoginChannelTest extends TestCase
             ->getJson('/api/v1/kra-responses?per_page=1')
             ->assertOk();
 
+        // Cheap capabilities stamp poll used by AuthProvider while on /pos.
+        $this->withToken($token)
+            ->getJson('/api/v1/erp/capabilities/version')
+            ->assertOk();
+
         $this->withToken($token)
             ->getJson('/api/v1/users')
             ->assertStatus(403)
