@@ -4,6 +4,7 @@ namespace App\Services\Sales;
 
 use App\Models\Sale;
 use App\Models\User;
+use Illuminate\Support\Facades\Cache;
 
 /**
  * Dedupe External POS offline / local-first checkout replays (timeout after success).
@@ -40,10 +41,32 @@ class PosOfflineCheckoutIdempotency
 
         return Sale::query()
             ->where('organization_id', (int) $user->organization_id)
-            ->where('cashier_id', (int) $user->id)
             ->where('fulfillment_meta->pos_sync_id', $syncId)
             ->orderByDesc('id')
             ->first();
+    }
+
+    /**
+     * Serialize checkout attempts for the same offline sync key across workers/tabs.
+     *
+     * @template T
+     * @param  callable():T  $callback
+     * @return T
+     */
+    public function runWithSyncLock(User $user, array $input, callable $callback)
+    {
+        $syncId = $this->syncId($input);
+        if ($syncId === null) {
+            return $callback();
+        }
+
+        $lockName = sprintf(
+            'pos-offline-sync:%d:%s',
+            (int) $user->organization_id,
+            sha1((string) $syncId),
+        );
+
+        return Cache::lock($lockName, 20)->block(10, $callback);
     }
 
     /**
