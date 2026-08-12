@@ -410,6 +410,31 @@ class TillOperationsController extends Controller
         return response()->json($expense, 201);
     }
 
+    public function listSessionExpenses(Request $request, int $sessionId)
+    {
+        $session = $this->findScopedTillSession($sessionId, $request->user());
+        TillSessionAuthorization::assertSessionCashier($request->user(), $session);
+
+        $rows = Expense::query()
+            ->where('float_session_id', $session->id)
+            ->whereNull('deleted_at')
+            ->with('expenseGroup:id,group_name')
+            ->orderByDesc('created_at')
+            ->get([
+                'id',
+                'expense_group_id',
+                'description',
+                'expense_amount',
+                'expense_date',
+                'created_at',
+            ]);
+
+        return response()->json([
+            'data' => $rows,
+            'total' => round((float) $rows->sum('expense_amount'), 2),
+        ]);
+    }
+
     public function closeSession(Request $request, int $sessionId)
     {
         $data = $request->validate([

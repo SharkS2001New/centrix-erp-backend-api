@@ -199,6 +199,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('sessions/{sessionId}/add-float', [TillOperationsController::class, 'addFloat']);
         Route::post('sessions/{sessionId}/cash-movement', [TillOperationsController::class, 'recordCashMovement']);
         Route::post('sessions/{sessionId}/expenses', [TillOperationsController::class, 'recordSessionExpense']);
+        Route::get('sessions/{sessionId}/expenses', [TillOperationsController::class, 'listSessionExpenses']);
         Route::get('expense-groups', [TillOperationsController::class, 'expenseGroups']);
         Route::post('sessions/{sessionId}/suspend', [TillOperationsController::class, 'suspendSession']);
         Route::post('sessions/{sessionId}/resume', [TillOperationsController::class, 'resumeSession']);
