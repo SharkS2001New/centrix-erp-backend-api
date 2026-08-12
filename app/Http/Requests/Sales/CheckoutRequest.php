@@ -48,6 +48,8 @@ class CheckoutRequest extends FormRequest
             'offline_order' => 'nullable|boolean',
             'client_sale_uuid' => 'nullable|string|max:64',
             'content_revision' => 'nullable|integer|min:1',
+            'pos_device_id' => 'nullable|string|max:120',
+            'device_identifier' => 'nullable|string|max:120',
             'pos_order_num' => 'nullable|integer|min:1',
             'pos_order_date' => 'nullable|date',
             'client_completed_at' => 'nullable|date',

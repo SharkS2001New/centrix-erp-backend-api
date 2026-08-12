@@ -76,19 +76,22 @@ class PosOfflineCheckoutIdempotency
     public function stampFulfillmentMeta(array $fulfillmentMeta, array $input): array
     {
         $syncId = $this->syncId($input);
-        if ($syncId === null) {
-            return $fulfillmentMeta;
+        if ($syncId !== null) {
+            $fulfillmentMeta['pos_sync_id'] = $syncId;
+            $fulfillmentMeta['client_sale_uuid'] = trim((string) ($input['client_sale_uuid'] ?? ''));
+
+            if (array_key_exists('content_revision', $input)) {
+                $fulfillmentMeta['pos_content_revision'] = (int) $input['content_revision'];
+            }
+
+            if (filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+                $fulfillmentMeta['pos_offline_checkout'] = true;
+            }
         }
 
-        $fulfillmentMeta['pos_sync_id'] = $syncId;
-        $fulfillmentMeta['client_sale_uuid'] = trim((string) ($input['client_sale_uuid'] ?? ''));
-
-        if (array_key_exists('content_revision', $input)) {
-            $fulfillmentMeta['pos_content_revision'] = (int) $input['content_revision'];
-        }
-
-        if (filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
-            $fulfillmentMeta['pos_offline_checkout'] = true;
+        $deviceId = trim((string) ($input['pos_device_id'] ?? $input['device_identifier'] ?? ''));
+        if ($deviceId !== '') {
+            $fulfillmentMeta['pos_device_id'] = $deviceId;
         }
 
         return $fulfillmentMeta;

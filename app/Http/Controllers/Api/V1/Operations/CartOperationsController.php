@@ -373,7 +373,11 @@ class CartOperationsController extends Controller
             'customer:customer_num,customer_name,organization_id',
         ]);
 
-        $this->assertSaleRestorableToCart($sale, $user);
+        $this->assertSaleRestorableToCart(
+            $sale,
+            $user,
+            $request->input('pos_device_id') ?? $request->input('device_identifier'),
+        );
 
         $gate = $this->erp->gateForUser($user);
         $channel = $this->resolveCartChannel($sale->channel ?: 'pos', $gate, [
@@ -1075,7 +1079,7 @@ class CartOperationsController extends Controller
         );
     }
 
-    protected function assertSaleRestorableToCart(Sale $sale, User $user): void
+    protected function assertSaleRestorableToCart(Sale $sale, User $user, ?string $requestDeviceId = null): void
     {
         if (app(PosOrderEditService::class)->blocksPreviousDayMobileMutation($sale)) {
             throw new InvalidArgumentException(
@@ -1087,6 +1091,7 @@ class CartOperationsController extends Controller
             $sale,
             $user,
             $this->erp->gateForUser($user),
+            $requestDeviceId,
         );
     }
 
