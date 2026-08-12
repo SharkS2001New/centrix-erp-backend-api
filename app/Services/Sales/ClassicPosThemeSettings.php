@@ -80,20 +80,113 @@ class ClassicPosThemeSettings
     }
 
     /**
+     * @return array<string, string>
+     */
+    public static function themeTemplateValidationRules(string $prefix): array
+    {
+        return [
+            $prefix => 'sometimes|string|in:'.implode(',', self::THEME_TEMPLATES),
+        ];
+    }
+
+    /**
+     * @return array<string, string>
+     */
+    public static function themeColorsValidationRules(string $prefix): array
+    {
+        $rules = [$prefix => 'sometimes|array'];
+        foreach (self::COLOR_KEYS as $key) {
+            $rules["{$prefix}.{$key}"] = 'sometimes|nullable|string|max:9';
+        }
+
+        return $rules;
+    }
+
+    /**
+     * Resolve ERP modules theme with legacy fallback.
+     *
+     * @param  array<string, mixed>  $settings
+     */
+    public static function resolveErpThemeTemplate(array $settings): string
+    {
+        if (array_key_exists('erp_theme_template', $settings)) {
+            return self::normalizeThemeTemplate($settings['erp_theme_template']);
+        }
+
+        return self::normalizeThemeTemplate(
+            $settings['classic_pos_theme_template'] ?? self::THEME_TEMPLATE_DEFAULT,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return array<string, string>
+     */
+    public static function resolveErpThemeColors(array $settings): array
+    {
+        if (array_key_exists('erp_theme_colors', $settings)) {
+            return self::normalizeThemeColors($settings['erp_theme_colors']);
+        }
+
+        return self::normalizeThemeColors($settings['classic_pos_theme_colors'] ?? []);
+    }
+
+    /**
+     * Resolve External POS theme with legacy fallback.
+     *
+     * @param  array<string, mixed>  $settings
+     */
+    public static function resolveExternalPosThemeTemplate(array $settings): string
+    {
+        if (array_key_exists('external_pos_theme_template', $settings)) {
+            return self::normalizeThemeTemplate($settings['external_pos_theme_template']);
+        }
+
+        return self::normalizeThemeTemplate(
+            $settings['classic_pos_theme_template'] ?? self::THEME_TEMPLATE_DEFAULT,
+        );
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return array<string, string>
+     */
+    public static function resolveExternalPosThemeColors(array $settings): array
+    {
+        if (array_key_exists('external_pos_theme_colors', $settings)) {
+            return self::normalizeThemeColors($settings['external_pos_theme_colors']);
+        }
+
+        return self::normalizeThemeColors($settings['classic_pos_theme_colors'] ?? []);
+    }
+
+    /**
      * @param  array<string, mixed>|null  $salesSettings
-     * @return array{classic_pos_theme_template: string, classic_pos_theme_colors: array<string, string>}
+     * @return array{
+     *   classic_pos_theme_template: string,
+     *   classic_pos_theme_colors: array<string, string>,
+     *   erp_theme_template: string,
+     *   erp_theme_colors: array<string, string>,
+     *   external_pos_theme_template: string,
+     *   external_pos_theme_colors: array<string, string>
+     * }
      */
     public static function normalize(?array $salesSettings = null): array
     {
         $settings = is_array($salesSettings) ? $salesSettings : [];
 
+        $legacyTemplate = self::normalizeThemeTemplate(
+            $settings['classic_pos_theme_template'] ?? self::THEME_TEMPLATE_DEFAULT,
+        );
+        $legacyColors = self::normalizeThemeColors($settings['classic_pos_theme_colors'] ?? []);
+
         return [
-            'classic_pos_theme_template' => self::normalizeThemeTemplate(
-                $settings['classic_pos_theme_template'] ?? self::THEME_TEMPLATE_DEFAULT,
-            ),
-            'classic_pos_theme_colors' => self::normalizeThemeColors(
-                $settings['classic_pos_theme_colors'] ?? [],
-            ),
+            'classic_pos_theme_template' => $legacyTemplate,
+            'classic_pos_theme_colors' => $legacyColors,
+            'erp_theme_template' => self::resolveErpThemeTemplate($settings),
+            'erp_theme_colors' => self::resolveErpThemeColors($settings),
+            'external_pos_theme_template' => self::resolveExternalPosThemeTemplate($settings),
+            'external_pos_theme_colors' => self::resolveExternalPosThemeColors($settings),
         ];
     }
 }

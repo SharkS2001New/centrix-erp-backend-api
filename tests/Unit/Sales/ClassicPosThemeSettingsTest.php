@@ -50,5 +50,22 @@ class ClassicPosThemeSettingsTest extends TestCase
         ]);
         $this->assertSame('rose', $normalized['classic_pos_theme_template']);
         $this->assertSame(['header' => '#be185d'], $normalized['classic_pos_theme_colors']);
+        $this->assertSame('rose', $normalized['erp_theme_template']);
+        $this->assertSame('rose', $normalized['external_pos_theme_template']);
+    }
+
+    public function test_split_erp_and_external_pos_themes(): void
+    {
+        $normalized = ClassicPosThemeSettings::normalize([
+            'classic_pos_theme_template' => 'centrix',
+            'erp_theme_template' => 'ocean',
+            'external_pos_theme_template' => 'midnight',
+            'erp_theme_colors' => ['header' => '#0d9488'],
+            'external_pos_theme_colors' => ['header' => '#818cf8'],
+        ]);
+        $this->assertSame('ocean', $normalized['erp_theme_template']);
+        $this->assertSame('midnight', $normalized['external_pos_theme_template']);
+        $this->assertSame(['header' => '#0d9488'], $normalized['erp_theme_colors']);
+        $this->assertSame(['header' => '#818cf8'], $normalized['external_pos_theme_colors']);
     }
 }

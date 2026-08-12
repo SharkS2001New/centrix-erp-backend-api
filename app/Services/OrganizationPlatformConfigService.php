@@ -162,6 +162,30 @@ class OrganizationPlatformConfigService
             );
         }
 
+        if (array_key_exists('erp_theme_template', $salesPlatform)) {
+            $nextSales['erp_theme_template'] = ClassicPosThemeSettings::normalizeThemeTemplate(
+                $salesPlatform['erp_theme_template'],
+            );
+        }
+
+        if (array_key_exists('erp_theme_colors', $salesPlatform)) {
+            $nextSales['erp_theme_colors'] = ClassicPosThemeSettings::normalizeThemeColors(
+                $salesPlatform['erp_theme_colors'],
+            );
+        }
+
+        if (array_key_exists('external_pos_theme_template', $salesPlatform)) {
+            $nextSales['external_pos_theme_template'] = ClassicPosThemeSettings::normalizeThemeTemplate(
+                $salesPlatform['external_pos_theme_template'],
+            );
+        }
+
+        if (array_key_exists('external_pos_theme_colors', $salesPlatform)) {
+            $nextSales['external_pos_theme_colors'] = ClassicPosThemeSettings::normalizeThemeColors(
+                $salesPlatform['external_pos_theme_colors'],
+            );
+        }
+
         if (array_key_exists('enable_backoffice_order_edit', $salesPlatform)) {
             $nextSales['enable_backoffice_order_edit'] = (bool) $salesPlatform['enable_backoffice_order_edit'];
         }
@@ -609,6 +633,10 @@ class OrganizationPlatformConfigService
             'classic_pos_theme_colors' => ClassicPosThemeSettings::normalizeThemeColors(
                 $sales['classic_pos_theme_colors'] ?? [],
             ),
+            'erp_theme_template' => ClassicPosThemeSettings::resolveErpThemeTemplate($sales),
+            'erp_theme_colors' => ClassicPosThemeSettings::resolveErpThemeColors($sales),
+            'external_pos_theme_template' => ClassicPosThemeSettings::resolveExternalPosThemeTemplate($sales),
+            'external_pos_theme_colors' => ClassicPosThemeSettings::resolveExternalPosThemeColors($sales),
             'hotel_pos_grid_columns' => \App\Services\Hospitality\HospitalityPosSettings::gridColumnsForOrganization($org),
             'hotel_pos_collect_payment' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_collect_payment'],
             'hotel_pos_catalog_limit' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_catalog_limit'],

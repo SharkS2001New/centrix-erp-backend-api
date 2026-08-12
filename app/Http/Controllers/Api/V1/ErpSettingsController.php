@@ -192,6 +192,10 @@ class ErpSettingsController extends Controller
             'show_proforma_totals_breakdown',
             'classic_pos_theme_template',
             'classic_pos_theme_colors',
+            'erp_theme_template',
+            'erp_theme_colors',
+            'external_pos_theme_template',
+            'external_pos_theme_colors',
             'external_pos_layout',
             'backoffice_order_edit_layout',
             'enable_pos_cash_rounding',
@@ -223,6 +227,10 @@ class ErpSettingsController extends Controller
             'classic_pos_theme_colors.footer' => 'sometimes|nullable|string|max:9',
             'classic_pos_theme_colors.button' => 'sometimes|nullable|string|max:9',
             'classic_pos_theme_colors.select' => 'sometimes|nullable|string|max:9',
+            ...\App\Services\Sales\ClassicPosThemeSettings::themeTemplateValidationRules('erp_theme_template'),
+            ...\App\Services\Sales\ClassicPosThemeSettings::themeColorsValidationRules('erp_theme_colors'),
+            ...\App\Services\Sales\ClassicPosThemeSettings::themeTemplateValidationRules('external_pos_theme_template'),
+            ...\App\Services\Sales\ClassicPosThemeSettings::themeColorsValidationRules('external_pos_theme_colors'),
             'external_pos_layout' => 'sometimes|in:modern,classic',
             'backoffice_order_edit_layout' => 'sometimes|in:modern,classic',
             'invoice_valid_days' => 'sometimes|integer|min:0|max:365',
@@ -305,7 +313,7 @@ class ErpSettingsController extends Controller
             if (array_key_exists($key, $rules)) {
                 continue;
             }
-            if (in_array($key, ['other_bank_name', 'pos_order_type_mode', 'backoffice_order_type_mode', 'order_document_type', 'classic_pos_theme_template'], true)) {
+            if (in_array($key, ['other_bank_name', 'pos_order_type_mode', 'backoffice_order_type_mode', 'order_document_type', 'classic_pos_theme_template', 'erp_theme_template', 'external_pos_theme_template'], true)) {
                 continue;
             }
             if (in_array($key, ['point_cash_value', 'points_earn_per_kes'], true)) {
@@ -343,6 +351,28 @@ class ErpSettingsController extends Controller
         if (array_key_exists('classic_pos_theme_colors', $data) || $request->exists('classic_pos_theme_colors')) {
             $nextSales['classic_pos_theme_colors'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeColors(
                 $data['classic_pos_theme_colors'] ?? $request->input('classic_pos_theme_colors'),
+            );
+        }
+
+        if (array_key_exists('erp_theme_template', $data) || $request->exists('erp_theme_template')) {
+            $nextSales['erp_theme_template'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeTemplate(
+                $data['erp_theme_template'] ?? $request->input('erp_theme_template'),
+            );
+        }
+        if (array_key_exists('erp_theme_colors', $data) || $request->exists('erp_theme_colors')) {
+            $nextSales['erp_theme_colors'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeColors(
+                $data['erp_theme_colors'] ?? $request->input('erp_theme_colors'),
+            );
+        }
+
+        if (array_key_exists('external_pos_theme_template', $data) || $request->exists('external_pos_theme_template')) {
+            $nextSales['external_pos_theme_template'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeTemplate(
+                $data['external_pos_theme_template'] ?? $request->input('external_pos_theme_template'),
+            );
+        }
+        if (array_key_exists('external_pos_theme_colors', $data) || $request->exists('external_pos_theme_colors')) {
+            $nextSales['external_pos_theme_colors'] = \App\Services\Sales\ClassicPosThemeSettings::normalizeThemeColors(
+                $data['external_pos_theme_colors'] ?? $request->input('external_pos_theme_colors'),
             );
         }
 
