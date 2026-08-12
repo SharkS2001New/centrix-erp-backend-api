@@ -201,4 +201,114 @@ class CustomerInvoiceFromSaleObserverTest extends TestCase
         $legacyInvoice->refresh();
         $this->assertSame('AR-44-VOID-'.$legacyInvoice->id, $legacyInvoice->invoice_number);
     }
+
+    public function test_restore_uncancelled_sale_keeps_active_invoice_when_duplicate_voided_exists(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $customer = Customer::firstOrFail();
+        $service = app(CustomerInvoiceService::class);
+
+        $sale = Sale::create([
+            'order_num' => 4429,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $customer->customer_num,
+            'status' => 'processed',
+            'total_vat' => 0,
+            'order_total' => 1000,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        $active = CustomerInvoice::query()->where('sale_id', $sale->id)->whereNull('deleted_at')->firstOrFail();
+        $this->assertSame('AR-4429', $active->invoice_number);
+
+        // Simulate a second voided row left behind (legacy cancel path / race).
+        CustomerInvoice::create([
+            'invoice_number' => 'AR-4429-VOID-legacy',
+            'sale_id' => $sale->id,
+            'customer_num' => $customer->customer_num,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'created_by' => $admin->id,
+            'invoice_date' => now()->toDateString(),
+            'total_vat' => 0,
+            'invoice_total' => 1000,
+            'amount_paid' => 0,
+            'payment_status' => 0,
+            'deleted_at' => now(),
+            'deleted_by' => $admin->id,
+        ]);
+
+        $sale->update(['status' => 'cancelled']);
+        $restored = $service->restoreForUncancelledSale($sale->fresh(), $admin);
+
+        $this->assertNotNull($restored);
+        $this->assertSame((int) $active->id, (int) $restored->id);
+        $this->assertSame('AR-4429', $restored->invoice_number);
+        $this->assertNull($restored->deleted_at);
+    }
+
+    public function test_restore_uncancelled_sale_uses_suffix_when_ar_number_taken(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $customer = Customer::firstOrFail();
+        $service = app(CustomerInvoiceService::class);
+
+        $first = Sale::create([
+            'order_num' => 5511,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'channel' => 'backend',
+            'cashier_id' => $admin->id,
+            'customer_num' => $customer->customer_num,
+            'status' => 'processed',
+            'total_vat' => 0,
+            'order_total' => 900,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+        ]);
+
+        $service->voidForCancelledSale($first, $admin);
+
+        // Another sale already holds AR-5511 (different order_num — invoice clash only).
+        $other = Sale::withoutEvents(function () use ($admin, $customer) {
+            return Sale::create([
+                'order_num' => 5512,
+                'branch_id' => $admin->branch_id,
+                'organization_id' => $admin->organization_id,
+                'channel' => 'backend',
+                'cashier_id' => $admin->id,
+                'customer_num' => $customer->customer_num,
+                'status' => 'processed',
+                'total_vat' => 0,
+                'order_total' => 1100,
+                'payment_status' => 'unpaid',
+                'amount_paid' => 0,
+            ]);
+        });
+
+        CustomerInvoice::query()->where('sale_id', $other->id)->delete();
+        CustomerInvoice::create([
+            'invoice_number' => 'AR-5511',
+            'sale_id' => $other->id,
+            'customer_num' => $customer->customer_num,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'created_by' => $admin->id,
+            'invoice_date' => now()->toDateString(),
+            'total_vat' => 0,
+            'invoice_total' => 1100,
+            'amount_paid' => 0,
+            'payment_status' => 0,
+        ]);
+
+        $restored = $service->restoreForUncancelledSale($first->fresh(), $admin);
+
+        $this->assertNotNull($restored);
+        $this->assertSame('AR-5511-S'.$first->id, $restored->invoice_number);
+        $this->assertNull($restored->deleted_at);
+    }
 }

@@ -268,6 +268,18 @@ class CustomerInvoiceService
         $paid = round((float) $sale->amount_paid, 2);
         $paymentStatus = $this->paymentStatus($total, $paid);
 
+        // If a live invoice already exists (e.g. ensureForSale ran after cancel), keep it.
+        // Restoring a voided row onto AR-{order_num} would hit uq_org_customer_invoice_number.
+        $active = CustomerInvoice::query()
+            ->where('sale_id', $sale->id)
+            ->whereNull('deleted_at')
+            ->orderByDesc('id')
+            ->first();
+
+        if ($active) {
+            return $this->ensureForSale($sale, $user, $total, $paid);
+        }
+
         $voided = CustomerInvoice::query()
             ->where('sale_id', $sale->id)
             ->whereNotNull('deleted_at')
@@ -276,7 +288,7 @@ class CustomerInvoiceService
 
         if ($voided) {
             $voided->update([
-                'invoice_number' => $this->allocateInvoiceNumber($sale),
+                'invoice_number' => $this->allocateInvoiceNumber($sale, (int) $voided->id),
                 'deleted_at' => null,
                 'deleted_by' => null,
                 'invoice_total' => $total,
@@ -424,8 +436,10 @@ class CustomerInvoiceService
     /**
      * Pick a unique AR invoice number for the sale. Reuses AR-{order_num} when possible.
      * Voided invoices keep their row but release the number (see voidedInvoiceNumber).
+     *
+     * @param  int|null  $excludeInvoiceId  Row being restored/updated — ignore it as a blocker.
      */
-    protected function allocateInvoiceNumber(Sale $sale): string
+    protected function allocateInvoiceNumber(Sale $sale, ?int $excludeInvoiceId = null): string
     {
         $number = 'AR-'.$sale->order_num;
         $orgId = (int) $sale->organization_id;
@@ -433,6 +447,10 @@ class CustomerInvoiceService
         $existing = CustomerInvoice::query()
             ->where('organization_id', $orgId)
             ->where('invoice_number', $number)
+            ->when(
+                $excludeInvoiceId !== null && $excludeInvoiceId > 0,
+                fn ($q) => $q->where('id', '!=', $excludeInvoiceId),
+            )
             ->first();
 
         if (! $existing) {
@@ -445,10 +463,8 @@ class CustomerInvoiceService
             return $number;
         }
 
-        if ((int) $existing->sale_id === (int) $sale->id) {
-            return $number;
-        }
-
+        // Another invoice (same or different sale) already owns AR-{order_num}.
+        // Never reclaim it for insert/restore — that hits uq_org_customer_invoice_number.
         return 'AR-'.$sale->order_num.'-S'.$sale->id;
     }
 
