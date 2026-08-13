@@ -19,6 +19,7 @@ class HikvisionService
 {
     public function __construct(
         protected HikvisionAttendanceSyncService $attendanceSync,
+        protected HikvisionAgentBridge $agentBridge,
     ) {
     }
 
@@ -31,7 +32,15 @@ class HikvisionService
             throw new RuntimeException('Hikvision device password is not configured.');
         }
 
-        return new HikvisionIsapiClient($device);
+        return new HikvisionIsapiClient($device, $this->agentBridge);
+    }
+
+    /**
+     * @return array{online: bool, last_seen_at: string|null, version: string|null}
+     */
+    public function agentStatus(AttendanceClockDevice $device): array
+    {
+        return $this->agentBridge->agentStatus($device->fresh() ?? $device);
     }
 
     /**
@@ -112,6 +121,8 @@ class HikvisionService
                 'device_info' => $info,
                 'capabilities' => $capabilities,
                 'resolved_port' => HikvisionIsapiClient::resolvePort($device),
+                'via_agent' => $client->lastRequestViaAgent(),
+                'agent' => $this->agentBridge->agentStatus($device->fresh() ?? $device),
             ];
         } catch (\Throwable $e) {
             $message = self::formatConnectionError($device, $e);
@@ -124,6 +135,8 @@ class HikvisionService
                 'capabilities' => $device->capabilities_json ?? [],
                 'error' => $message,
                 'resolved_port' => HikvisionIsapiClient::resolvePort($device),
+                'via_agent' => false,
+                'agent' => $this->agentBridge->agentStatus($device->fresh() ?? $device),
             ];
         }
     }
@@ -139,10 +152,16 @@ class HikvisionService
             $hints[] = 'Port 8000 is usually wrong for Hikvision — ISAPI HTTP uses port 80 (saved value will be corrected automatically on success).';
         }
         if (str_contains($raw, 'Failed to connect') || str_contains($raw, 'cURL error 28')) {
-            $hints[] = "Could not reach {$device->host}:{$port}. The Centrix API must run on the same LAN as the terminal, or use the Attendance Agent on an office PC.";
+            $hints[] = "Could not reach {$device->host}:{$port} directly from this server.";
+            if (! app(HikvisionAgentBridge::class)->isAgentOnline($device)) {
+                $hints[] = 'Install and run the Attendance Agent on a PC on the same LAN as the terminal — it proxies all Hikvision management to Centrix cloud.';
+            }
             if ($port !== 80 && ! $device->use_https) {
                 $hints[] = 'Verify the device HTTP port is 80 (not the Centrix API port 8000).';
             }
+        }
+        if (str_contains($raw, 'Attendance agent is offline') || str_contains($raw, 'did not respond in time')) {
+            $hints[] = 'Download the agent zip from Administration → Attendance clock-in, install on a Windows PC on the office LAN, and ensure it stays running.';
         }
         if (str_contains($raw, '401') || str_contains($raw, 'Unauthorized')) {
             $hints[] = 'Check the device username and password.';
@@ -510,8 +529,10 @@ class HikvisionService
      * @param  list<array<string, mixed>>  $events
      * @return array{pulled: int, stored: int, applied: int, skipped: int, errors: list<string>}
      */
-    public function ingestAgentEvents(AttendanceClockDevice $device, array $events): array
+    public function ingestAgentEvents(AttendanceClockDevice $device, array $events, ?string $agentVersion = null): array
     {
+        $this->agentBridge->touchAgent($device, $agentVersion);
+
         return $this->attendanceSync->ingestEvents($device, $events);
     }
 

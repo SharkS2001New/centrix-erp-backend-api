@@ -33,6 +33,8 @@ class AttendanceClockDevice extends Model
         'capabilities_fetched_at',
         'last_event_serial',
         'last_communication_at',
+        'agent_last_seen_at',
+        'agent_version',
     ];
 
     protected $casts = [
@@ -43,6 +45,7 @@ class AttendanceClockDevice extends Model
         'last_event_at' => 'datetime',
         'last_communication_at' => 'datetime',
         'capabilities_fetched_at' => 'datetime',
+        'agent_last_seen_at' => 'datetime',
         'device_info_json' => 'array',
         'capabilities_json' => 'array',
     ];

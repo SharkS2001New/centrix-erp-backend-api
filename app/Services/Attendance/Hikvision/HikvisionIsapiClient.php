@@ -16,8 +16,17 @@ use SimpleXMLElement;
  */
 class HikvisionIsapiClient
 {
-    public function __construct(protected AttendanceClockDevice $device)
+    protected bool $lastRequestViaAgent = false;
+
+    public function __construct(
+        protected AttendanceClockDevice $device,
+        protected ?HikvisionAgentBridge $agentBridge = null,
+    ) {
+    }
+
+    public function lastRequestViaAgent(): bool
     {
+        return $this->lastRequestViaAgent;
     }
 
     // ------------------------------------------------------------------
@@ -26,7 +35,7 @@ class HikvisionIsapiClient
 
     public function ping(): bool
     {
-        return $this->http()->get($this->url('/ISAPI/System/deviceInfo'))->successful();
+        return $this->request('GET', '/ISAPI/System/deviceInfo')->successful();
     }
 
     /**
@@ -34,7 +43,7 @@ class HikvisionIsapiClient
      */
     public function getDeviceInfo(): array
     {
-        $response = $this->http()->get($this->url('/ISAPI/System/deviceInfo'));
+        $response = $this->request('GET', '/ISAPI/System/deviceInfo');
         $this->assertSuccessful($response, 'deviceInfo');
 
         $contentType = strtolower((string) $response->header('Content-Type'));
@@ -42,7 +51,7 @@ class HikvisionIsapiClient
             return $response->json() ?? [];
         }
 
-        return $this->parseDeviceInfoXml($response->body());
+        return $this->parseDeviceInfoXml($response->body);
     }
 
     // ------------------------------------------------------------------
@@ -420,7 +429,7 @@ class HikvisionIsapiClient
      */
     protected function getJson(string $path): array
     {
-        $response = $this->http()->get($this->url($path));
+        $response = $this->request('GET', $path);
         $this->assertSuccessful($response, $path);
 
         return $response->json() ?? [];
@@ -432,7 +441,7 @@ class HikvisionIsapiClient
      */
     protected function postJson(string $path, array $body): array
     {
-        $response = $this->http()->asJson()->post($this->url($path), $body);
+        $response = $this->request('POST', $path, $body);
         $this->assertSuccessful($response, $path);
 
         return $response->json() ?? [];
@@ -444,10 +453,74 @@ class HikvisionIsapiClient
      */
     protected function putJson(string $path, array $body): array
     {
-        $response = $this->http()->asJson()->put($this->url($path), $body);
+        $response = $this->request('PUT', $path, $body);
         $this->assertSuccessful($response, $path);
 
         return $response->json() ?? [];
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $body
+     */
+    protected function request(string $method, string $path, ?array $body = null): HikvisionIsapiResponse
+    {
+        $path = '/'.ltrim($path, '/');
+        $bridge = $this->agentBridge;
+
+        if ($bridge !== null && $bridge->shouldUseAgent($this->device)) {
+            $this->lastRequestViaAgent = true;
+
+            return $bridge->executeViaAgent($this->device, $method, $path, $body);
+        }
+
+        try {
+            $response = $this->requestDirect($method, $path, $body);
+            $this->lastRequestViaAgent = false;
+
+            return $response;
+        } catch (\Throwable $e) {
+            if ($bridge !== null && $bridge->isConnectionError($e) && $bridge->isAgentOnline($this->device)) {
+                $this->lastRequestViaAgent = true;
+
+                return $bridge->executeViaAgent($this->device, $method, $path, $body);
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $body
+     */
+    protected function requestDirect(string $method, string $path, ?array $body = null): HikvisionIsapiResponse
+    {
+        $url = $this->url($path);
+        $pending = $this->http();
+        $method = strtoupper($method);
+
+        $response = match ($method) {
+            'GET' => $pending->get($url),
+            'POST' => $pending->asJson()->post($url, $body ?? []),
+            'PUT' => $pending->asJson()->put($url, $body ?? []),
+            'DELETE' => $pending->delete($url),
+            default => throw new RuntimeException("Unsupported ISAPI method: {$method}"),
+        };
+
+        return $this->toIsapiResponse($response);
+    }
+
+    protected function toIsapiResponse(Response $response): HikvisionIsapiResponse
+    {
+        $headers = [];
+        foreach ($response->headers() as $key => $values) {
+            $headers[$key] = is_array($values) ? $values : [$values];
+        }
+
+        return new HikvisionIsapiResponse(
+            $response->status(),
+            $response->body(),
+            $headers,
+        );
     }
 
     protected function http(): PendingRequest
@@ -525,13 +598,15 @@ class HikvisionIsapiClient
         return (bool) preg_match('/^[a-zA-Z0-9.\-]+$/', $host);
     }
 
-    protected function assertSuccessful(Response $response, string $context): void
+    protected function assertSuccessful(HikvisionIsapiResponse|Response $response, string $context): void
     {
         if ($response->successful()) {
             return;
         }
+        $status = $response->status();
+        $body = $response instanceof HikvisionIsapiResponse ? $response->body : $response->body();
         throw new RuntimeException(
-            "Hikvision {$context} failed HTTP {$response->status()}: ".mb_substr($response->body(), 0, 500)
+            "Hikvision {$context} failed HTTP {$status}: ".mb_substr($body, 0, 500)
         );
     }
 

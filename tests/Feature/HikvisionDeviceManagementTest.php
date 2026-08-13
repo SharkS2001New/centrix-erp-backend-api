@@ -202,6 +202,52 @@ class HikvisionDeviceManagementTest extends TestCase
         $delete->assertOk();
     }
 
+    public function test_agent_command_queue_round_trip(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-AGENT',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'agent_last_seen_at' => now(),
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $bridge = app(\App\Services\Attendance\Hikvision\HikvisionAgentBridge::class);
+
+        \App\Models\HikvisionAgentCommand::query()->create([
+            'id' => (string) \Illuminate\Support\Str::uuid(),
+            'attendance_clock_device_id' => $device->id,
+            'method' => 'GET',
+            'path' => '/ISAPI/System/deviceInfo',
+            'accept' => 'json',
+            'status' => 'pending',
+            'created_at' => now(),
+            'expires_at' => now()->addMinute(),
+        ]);
+
+        $pending = $bridge->pullPendingCommands($device);
+        $this->assertCount(1, $pending);
+
+        $bridge->submitCommandResult($device, $pending[0]['id'], [
+            'success' => true,
+            'status' => 200,
+            'body' => '<DeviceInfo><model>DS-K1T904AMF</model></DeviceInfo>',
+            'headers' => ['Content-Type' => ['application/xml']],
+            'agent_version' => '2.0.0',
+        ]);
+
+        $command = \App\Models\HikvisionAgentCommand::query()->find($pending[0]['id']);
+        $this->assertSame('completed', $command->status);
+        $this->assertSame('2.0.0', $device->fresh()->agent_version);
+    }
+
     public function test_delete_users_writes_audit_log(): void
     {
         Http::fake([

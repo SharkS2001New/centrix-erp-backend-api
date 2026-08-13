@@ -58,7 +58,61 @@ class HikvisionDeviceController extends HrOrgResourceController
     {
         $device = $this->findHikvisionDevice($id);
 
-        return response()->json($this->hikvision->overview($device));
+        $overview = $this->hikvision->overview($device);
+        $overview['agent'] = $this->hikvision->agentStatus($device);
+
+        return response()->json($overview);
+    }
+
+    public function agentStatus(string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+
+        return response()->json($this->hikvision->agentStatus($device));
+    }
+
+    /**
+     * LAN agent polls for pending ISAPI proxy commands.
+     */
+    public function pullAgentCommands(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'limit' => 'nullable|integer|min:1|max:10',
+            'agent_version' => 'nullable|string|max:40',
+        ]);
+
+        $commands = app(\App\Services\Attendance\Hikvision\HikvisionAgentBridge::class)->pullPendingCommands(
+            $device,
+            (int) ($data['limit'] ?? 5),
+            $data['agent_version'] ?? null,
+        );
+
+        return response()->json(['commands' => $commands]);
+    }
+
+    /**
+     * LAN agent submits ISAPI proxy command results.
+     */
+    public function submitAgentCommandResult(Request $request, string $id, string $commandId)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'success' => 'required|boolean',
+            'status' => 'nullable|integer|min:100|max:599',
+            'headers' => 'nullable|array',
+            'body' => 'nullable|string|max:500000',
+            'error' => 'nullable|string|max:2000',
+            'agent_version' => 'nullable|string|max:40',
+        ]);
+
+        app(\App\Services\Attendance\Hikvision\HikvisionAgentBridge::class)->submitCommandResult(
+            $device,
+            $commandId,
+            $data,
+        );
+
+        return response()->json(['ok' => true]);
     }
 
     public function capabilities(string $id)
@@ -364,9 +418,14 @@ class HikvisionDeviceController extends HrOrgResourceController
             'events.*.major' => 'nullable|integer',
             'events.*.minor' => 'nullable|integer',
             'events.*.raw' => 'nullable|array',
+            'agent_version' => 'nullable|string|max:40',
         ]);
 
-        $result = $this->hikvision->ingestAgentEvents($device, $data['events']);
+        $result = $this->hikvision->ingestAgentEvents(
+            $device,
+            $data['events'],
+            $data['agent_version'] ?? null,
+        );
         $result['pulled'] = count($data['events']);
 
         return response()->json($result);

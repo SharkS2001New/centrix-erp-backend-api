@@ -1183,6 +1183,9 @@ Route::prefix('v1')->group(function () {
                 Route::get('sync/employees-from-device', [HikvisionDeviceController::class, 'syncEmployeesFromDevice']);
                 Route::post('sync/employees/map', [HikvisionDeviceController::class, 'mapEmployee']);
                 Route::post('sync/attendance', [HikvisionDeviceController::class, 'syncAttendance']);
+                Route::get('agent/status', [HikvisionDeviceController::class, 'agentStatus']);
+                Route::get('agent/commands/pending', [HikvisionDeviceController::class, 'pullAgentCommands']);
+                Route::post('agent/commands/{commandId}/result', [HikvisionDeviceController::class, 'submitAgentCommandResult']);
                 Route::post('agent/ingest-events', [HikvisionDeviceController::class, 'ingestAgentEvents']);
             });
             Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
