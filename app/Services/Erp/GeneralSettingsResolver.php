@@ -34,6 +34,11 @@ class GeneralSettingsResolver
             'header_scale' => 'large', 'header_weight' => 'semibold',
             'footer_scale' => 'standard', 'footer_weight' => 'semibold',
         ],
+        'credit_note' => [
+            'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
+            'header_scale' => 'large', 'header_weight' => 'semibold',
+            'footer_scale' => 'standard', 'footer_weight' => 'semibold',
+        ],
         'lpo' => [
             'family' => 'times', 'scale' => 'standard', 'size_px' => 14, 'weight' => 'semibold',
             'header_scale' => 'large', 'header_weight' => 'semibold',
@@ -132,6 +137,7 @@ class GeneralSettingsResolver
         $out['document_footer_text'] = self::normalizeFooterField($out['document_footer_text'] ?? '');
         $out['print_footer_receipt'] = self::normalizeFooterField($out['print_footer_receipt'] ?? '');
         $out['print_footer_a4_invoice'] = self::normalizeFooterField($out['print_footer_a4_invoice'] ?? '');
+        $out['print_footer_credit_note'] = self::normalizeFooterField($out['print_footer_credit_note'] ?? '');
         $out['print_footer_lpo'] = self::normalizeFooterField($out['print_footer_lpo'] ?? '');
         $out['print_footer_loading_sheet'] = self::normalizeFooterField($out['print_footer_loading_sheet'] ?? '');
         $out['print_footer_picking_list'] = self::normalizeFooterField($out['print_footer_picking_list'] ?? '');
@@ -152,6 +158,7 @@ class GeneralSettingsResolver
         'receipt' => ['show' => false, 'position' => 'center', 'size' => 'small'],
         'hospitality_check' => ['show' => false, 'position' => 'center', 'size' => 'small'],
         'invoice' => ['show' => true, 'position' => 'right', 'size' => 'large'],
+        'credit_note' => ['show' => true, 'position' => 'right', 'size' => 'large'],
         'proforma' => ['show' => true, 'position' => 'right', 'size' => 'large'],
         'lpo' => ['show' => true, 'position' => 'right', 'size' => 'medium'],
         'loading_sheet' => ['show' => true, 'position' => 'center', 'size' => 'medium'],

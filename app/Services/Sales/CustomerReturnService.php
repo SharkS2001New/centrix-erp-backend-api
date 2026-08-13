@@ -200,11 +200,61 @@ class CustomerReturnService
         }
 
         return DB::transaction(function () use ($return, $data, $proof) {
+            $isCreditNote = $this->isCreditNoteReturn($return);
+            $mode = $isCreditNote ? 'credit_note' : null;
             $saleId = isset($data['sale_id']) ? (int) $data['sale_id'] : (int) ($return->sale_id ?? 0);
-            $lines = isset($data['lines'])
-                ? $this->normalizeLines($data['lines'], $saleId ?: null, $return->id)
-                : null;
-            $total = $lines !== null ? round(array_sum(array_column($lines, 'amount')), 2) : null;
+            $lines = null;
+            $total = null;
+
+            if ($isCreditNote && array_key_exists('lines', $data)) {
+                $rawLines = is_array($data['lines']) ? $data['lines'] : [];
+                $lines = $this->normalizeLines($rawLines, $saleId ?: null, $return->id, $mode);
+                $lineTotal = round(array_sum(array_column($lines, 'amount')), 2);
+                $headerTotal = isset($data['total_amount']) ? round((float) $data['total_amount'], 2) : 0.0;
+                $total = $lineTotal > 0 ? $lineTotal : $headerTotal;
+
+                if ($total <= 0) {
+                    throw ValidationException::withMessages([
+                        'total_amount' => 'Enter a credit amount, or add at least one product line.',
+                    ]);
+                }
+
+                if ($lines === [] && $saleId) {
+                    $sale = Sale::query()->find($saleId);
+                    if ($sale) {
+                        $maxCredit = $this->maxAmountOnlyCreditForSale($sale);
+                        if ($total > $maxCredit + 0.02) {
+                            throw ValidationException::withMessages([
+                                'total_amount' => "Credit amount exceeds the remaining invoice balance ({$maxCredit}).",
+                            ]);
+                        }
+                    }
+                }
+            } elseif (isset($data['lines'])) {
+                $lines = $this->normalizeLines($data['lines'], $saleId ?: null, $return->id, $mode);
+                $total = round(array_sum(array_column($lines, 'amount')), 2);
+            } elseif ($isCreditNote && isset($data['total_amount'])) {
+                $total = round((float) $data['total_amount'], 2);
+                $lines = [];
+
+                if ($total <= 0) {
+                    throw ValidationException::withMessages([
+                        'total_amount' => 'Enter a credit amount.',
+                    ]);
+                }
+
+                if ($saleId) {
+                    $sale = Sale::query()->find($saleId);
+                    if ($sale) {
+                        $maxCredit = $this->maxAmountOnlyCreditForSale($sale);
+                        if ($total > $maxCredit + 0.02) {
+                            throw ValidationException::withMessages([
+                                'total_amount' => "Credit amount exceeds the remaining invoice balance ({$maxCredit}).",
+                            ]);
+                        }
+                    }
+                }
+            }
 
             $return->update(array_filter([
                 'sale_id' => array_key_exists('sale_id', $data) ? $data['sale_id'] : $return->sale_id,
@@ -219,7 +269,9 @@ class CustomerReturnService
 
             if ($lines !== null) {
                 $return->lines()->delete();
-                $this->syncLines($return, $lines);
+                if ($lines !== []) {
+                    $this->syncLines($return, $lines);
+                }
             }
 
             if ($proof !== null) {

@@ -165,6 +165,60 @@ class CreditNoteController extends Controller
         return response()->json($this->serializeListRow($return, request()->user()));
     }
 
+    public function update(Request $request, string $id)
+    {
+        $resolved = $this->resolveCreditNoteResource($id);
+        $return = $resolved['return'];
+        abort_unless($return && $return->return_kind === 'credit_note', 404);
+
+        $data = $request->validate([
+            'sale_id' => 'sometimes|integer|exists:sales,id',
+            'customer_num' => 'nullable|integer|exists:customers,customer_num',
+            'credit_date' => 'nullable|date',
+            'return_date' => 'nullable|date',
+            'refund_method' => 'nullable|string|max:45',
+            'reason' => 'required|string|min:3|max:200',
+            'notes' => 'nullable|string',
+            'total_amount' => 'nullable|numeric|min:0.01',
+            'lines' => 'nullable|array',
+            'lines.*.product_code' => 'required_with:lines|string',
+            'lines.*.amount' => 'required_with:lines|numeric|min:0.01',
+            'lines.*.sale_item_id' => 'nullable|integer',
+            'lines.*.product_name' => 'nullable|string|max:200',
+            'lines.*.uom' => 'nullable|string|max:45',
+            'lines.*.line_no' => 'nullable|integer',
+        ]);
+
+        if (array_key_exists('lines', $data) || array_key_exists('total_amount', $data)) {
+            $lines = $data['lines'] ?? [];
+            $hasLines = is_array($lines) && collect($lines)->contains(
+                fn ($line) => round((float) ($line['amount'] ?? 0), 2) > 0,
+            );
+            $hasTotal = isset($data['total_amount']) && round((float) $data['total_amount'], 2) > 0;
+
+            if (! $hasLines && ! $hasTotal) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'total_amount' => 'Enter a credit amount, or add at least one product line.',
+                ]);
+            }
+        }
+
+        if (isset($data['credit_date'])) {
+            $data['return_date'] = $data['credit_date'];
+        } elseif (isset($data['return_date'])) {
+            $data['credit_date'] = $data['return_date'];
+        }
+
+        $updated = $this->service->update($return, $data);
+
+        return response()->json(
+            $this->serializeListRow(
+                $updated->load(['lines', 'sale', 'customer', 'returnedByUser', 'creditNote']),
+                $request->user(),
+            ),
+        );
+    }
+
     public function approve(Request $request, string $id)
     {
         $resolved = $this->resolveCreditNoteResource($id);
@@ -277,6 +331,7 @@ class CreditNoteController extends Controller
             'can_approve' => (bool) ($return->can_approve ?? false),
             'can_reject' => (bool) ($return->can_reject ?? false),
             'can_delete' => (bool) ($return->can_delete ?? false),
+            'can_edit' => (bool) ($return->can_edit ?? false),
             'can_print' => true,
             'sale' => $return->sale,
             'customer' => $return->customer,

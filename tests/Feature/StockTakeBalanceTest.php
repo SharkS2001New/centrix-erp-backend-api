@@ -191,4 +191,82 @@ class StockTakeBalanceTest extends TestCase
         $this->assertSame(55.0, (float) $stock->shop_quantity);
         $this->assertSame('completed', $session->fresh()->status);
     }
+
+    public function test_admin_can_reset_stock_take_stocks_to_zero_before_counting(): void
+    {
+        CurrentStock::query()->updateOrCreate(
+            ['product_code' => $this->product->product_code, 'branch_id' => $this->user->branch_id],
+            ['shop_quantity' => 42, 'store_quantity' => 15],
+        );
+
+        $session = StockTakeSession::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'session_code' => 'ST-RESET-'.uniqid(),
+            'status' => 'in_progress',
+            'stock_location' => 'both',
+            'started_by' => $this->user->id,
+        ]);
+
+        $shopLine = StockTakeLine::create([
+            'session_id' => $session->id,
+            'product_code' => $this->product->product_code,
+            'stock_location' => 'shop',
+            'system_quantity' => 42,
+            'counted_quantity' => 42,
+            'is_counted' => false,
+        ]);
+        $storeLine = StockTakeLine::create([
+            'session_id' => $session->id,
+            'product_code' => $this->product->product_code,
+            'stock_location' => 'store',
+            'system_quantity' => 15,
+            'counted_quantity' => 15,
+            'is_counted' => false,
+        ]);
+
+        $this->postJson("/api/v1/inventory/stock-take/{$session->id}/reset-stocks")
+            ->assertOk()
+            ->assertJsonPath('lines_updated', 2)
+            ->assertJsonPath('ledger_adjustments', 2);
+
+        $stock = CurrentStock::query()
+            ->where('product_code', $this->product->product_code)
+            ->where('branch_id', $this->user->branch_id)
+            ->firstOrFail();
+
+        $this->assertSame(0.0, (float) $stock->shop_quantity);
+        $this->assertSame(0.0, (float) $stock->store_quantity);
+
+        $shopLine->refresh();
+        $storeLine->refresh();
+        $this->assertSame(0.0, (float) $shopLine->system_quantity);
+        $this->assertSame(0.0, (float) $shopLine->counted_quantity);
+        $this->assertSame(0.0, (float) $storeLine->system_quantity);
+        $this->assertSame(0.0, (float) $storeLine->counted_quantity);
+    }
+
+    public function test_reset_stock_take_stocks_rejects_saved_counts(): void
+    {
+        $session = StockTakeSession::create([
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'session_code' => 'ST-RESET-BLOCK-'.uniqid(),
+            'status' => 'in_progress',
+            'stock_location' => 'shop',
+            'started_by' => $this->user->id,
+        ]);
+
+        StockTakeLine::create([
+            'session_id' => $session->id,
+            'product_code' => $this->product->product_code,
+            'stock_location' => 'shop',
+            'system_quantity' => 10,
+            'counted_quantity' => 8,
+            'is_counted' => true,
+        ]);
+
+        $this->postJson("/api/v1/inventory/stock-take/{$session->id}/reset-stocks")
+            ->assertStatus(422);
+    }
 }

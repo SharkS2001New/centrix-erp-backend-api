@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesBranchScope;
 use App\Http\Controllers\Controller;
 use App\Jobs\CompleteStockTakeSessionJob;
 use App\Jobs\InitializeStockTakeSessionJob;
+use App\Jobs\ResetStockTakeStocksJob;
 use App\Jobs\SaveStockTakeCountsJob;
 use App\Models\CurrentStock;
 use App\Models\Product;
@@ -32,6 +33,8 @@ class StockTakeOperationsController extends Controller
 
     /** Complete sync when line count is at or below this; larger sessions use the queue. */
     private const SYNC_COMPLETE_LINE_LIMIT = 50;
+
+    private const SYNC_RESET_LINE_LIMIT = 50;
 
     public function __construct(
         protected ErpContext $erp,
@@ -234,6 +237,120 @@ class StockTakeOperationsController extends Controller
             'message' => 'Stock take completion queued.',
             'task_id' => $task->id,
         ], 202);
+    }
+
+    public function resetStocks(Request $request, int $sessionId)
+    {
+        $session = $this->findScopedStockTakeSession($sessionId, $request->user());
+
+        if ($session->status === 'completed') {
+            throw new InvalidArgumentException('Session already completed.');
+        }
+
+        $hasCounted = StockTakeLine::query()
+            ->where('session_id', $session->id)
+            ->where('is_counted', true)
+            ->exists();
+        if ($hasCounted) {
+            throw new InvalidArgumentException(
+                'Cannot reset stocks after counts have been saved. Start a new stock take session instead.',
+            );
+        }
+
+        $lineCount = StockTakeLine::query()->where('session_id', $session->id)->count();
+        if ($lineCount === 0) {
+            throw new InvalidArgumentException('Initialize the stock take before resetting stocks.');
+        }
+
+        if ($lineCount <= self::SYNC_RESET_LINE_LIMIT) {
+            return response()->json(
+                $this->resetStockTakeStocksSync($session, $request->user())
+            );
+        }
+
+        $task = $this->tasks->create('stock_take_reset_stocks', $request->user(), [
+            'session_id' => $session->id,
+            'user_id' => $request->user()->id,
+            'line_count' => $lineCount,
+        ]);
+
+        ResetStockTakeStocksJob::dispatch($task->id);
+
+        return response()->json([
+            'message' => 'Stock reset queued.',
+            'task_id' => $task->id,
+        ], 202);
+    }
+
+    public function resetStockTakeStocksSync(StockTakeSession $session, User $user): array
+    {
+        return DB::transaction(function () use ($session, $user) {
+            $lockedSession = StockTakeSession::query()
+                ->where('id', $session->id)
+                ->lockForUpdate()
+                ->firstOrFail();
+
+            if ($lockedSession->status === 'completed') {
+                throw new InvalidArgumentException('Session already completed.');
+            }
+
+            $lines = StockTakeLine::query()
+                ->where('session_id', $lockedSession->id)
+                ->lockForUpdate()
+                ->get();
+
+            $orgId = (int) ($user->organization_id
+                ?? DB::table('branches')->where('id', $lockedSession->branch_id)->value('organization_id'));
+
+            $ledgerPosts = 0;
+            $linesUpdated = 0;
+
+            foreach ($lines as $line) {
+                $this->lockCurrentStockForUpdate(
+                    (string) $line->product_code,
+                    (int) $lockedSession->branch_id,
+                );
+                $liveQty = $this->stockOnHand(
+                    (string) $line->product_code,
+                    (int) $lockedSession->branch_id,
+                    (string) $line->stock_location,
+                );
+
+                if (abs($liveQty) >= 0.0001) {
+                    $unitCost = max(0, (float) (Product::query()
+                        ->where('organization_id', $orgId)
+                        ->where('product_code', $line->product_code)
+                        ->value('last_cost_price') ?? 0));
+
+                    $this->postStockLedger([
+                        'branch_id' => $lockedSession->branch_id,
+                        'product_code' => $line->product_code,
+                        'stock_location' => $line->stock_location,
+                        'transaction_type' => 'STOCK_TAKE',
+                        'reference_type' => 'stock_take_session',
+                        'reference_id' => $lockedSession->id,
+                        'quantity_change' => -$liveQty,
+                        'unit_cost' => $unitCost > 0 ? $unitCost : null,
+                        'created_by' => $user->id,
+                        'notes' => 'Stock take reset to zero',
+                    ], true);
+                    $ledgerPosts++;
+                }
+
+                $line->update([
+                    'system_quantity' => 0,
+                    'counted_quantity' => 0,
+                    'is_counted' => false,
+                ]);
+                $linesUpdated++;
+            }
+
+            return [
+                'session_id' => $lockedSession->id,
+                'lines_updated' => $linesUpdated,
+                'ledger_adjustments' => $ledgerPosts,
+            ];
+        });
     }
 
     public function completeStockTakeSession(StockTakeSession $session, User $user): StockTakeSession
