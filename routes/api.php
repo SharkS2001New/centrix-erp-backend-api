@@ -1165,15 +1165,22 @@ Route::prefix('v1')->group(function () {
                 Route::get('capabilities', [HikvisionDeviceController::class, 'capabilities']);
                 Route::post('users/search', [HikvisionDeviceController::class, 'searchUsers']);
                 Route::post('users', [HikvisionDeviceController::class, 'createUser']);
+                Route::put('users', [HikvisionDeviceController::class, 'updateUser']);
                 Route::delete('users', [HikvisionDeviceController::class, 'deleteUsers']);
                 Route::post('cards/search', [HikvisionDeviceController::class, 'searchCards']);
+                Route::post('cards', [HikvisionDeviceController::class, 'createCard']);
+                Route::put('cards', [HikvisionDeviceController::class, 'updateCard']);
+                Route::delete('cards', [HikvisionDeviceController::class, 'deleteCard']);
                 Route::get('fingerprints/capabilities', [HikvisionDeviceController::class, 'fingerprintCapabilities']);
+                Route::post('fingerprints/search', [HikvisionDeviceController::class, 'searchFingerprints']);
+                Route::delete('fingerprints', [HikvisionDeviceController::class, 'deleteFingerprint']);
                 Route::post('events/search', [HikvisionDeviceController::class, 'searchEvents']);
                 Route::get('events/stored', [HikvisionDeviceController::class, 'storedEvents']);
                 Route::post('sync/employees-to-device', [HikvisionDeviceController::class, 'syncEmployeesToDevice']);
                 Route::get('sync/employees-from-device', [HikvisionDeviceController::class, 'syncEmployeesFromDevice']);
                 Route::post('sync/employees/map', [HikvisionDeviceController::class, 'mapEmployee']);
                 Route::post('sync/attendance', [HikvisionDeviceController::class, 'syncAttendance']);
+                Route::post('agent/ingest-events', [HikvisionDeviceController::class, 'ingestAgentEvents']);
             });
             Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view|admin.manage'])

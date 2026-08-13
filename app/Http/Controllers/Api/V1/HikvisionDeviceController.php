@@ -4,12 +4,14 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\AttendanceClockDevice;
 use App\Services\Attendance\Hikvision\HikvisionService;
+use App\Services\Audit\AuditLogger;
 use Illuminate\Http\Request;
 
 class HikvisionDeviceController extends HrOrgResourceController
 {
     public function __construct(
         protected HikvisionService $hikvision,
+        protected AuditLogger $audit,
     ) {
     }
 
@@ -94,6 +96,19 @@ class HikvisionDeviceController extends HrOrgResourceController
         return response()->json($this->hikvision->createUser($device, $payload));
     }
 
+    public function updateUser(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'employeeNo' => 'required|string|max:64',
+            'name' => 'required|string|max:200',
+            'userType' => 'nullable|string|max:40',
+            'Valid' => 'nullable|array',
+        ]);
+
+        return response()->json($this->hikvision->updateUser($device, $data));
+    }
+
     public function deleteUsers(Request $request, string $id)
     {
         $device = $this->findHikvisionDevice($id);
@@ -116,16 +131,18 @@ class HikvisionDeviceController extends HrOrgResourceController
             )));
         }
 
-        return response()->json($this->hikvision->deleteUsers($device, $data['employee_nos']));
+        $result = $this->hikvision->deleteUsers($device, $data['employee_nos']);
+        $this->auditHikvision($request, $device, 'hikvision.delete_users', [
+            'employee_nos' => $data['employee_nos'],
+            'delete_all' => (bool) ($data['delete_all'] ?? false),
+        ]);
+
+        return response()->json($result);
     }
 
     public function searchCards(Request $request, string $id)
     {
         $device = $this->findHikvisionDevice($id);
-        $this->hikvision->client($device);
-        $caps = $device->capabilities_json ?? [];
-        abort_unless($caps['features']['cards'] ?? false, 422, 'Card management is not supported by this terminal.');
-
         $data = $request->validate([
             'searchResultPosition' => 'nullable|integer|min:0',
             'maxResults' => 'nullable|integer|min:1|max:100',
@@ -139,7 +156,47 @@ class HikvisionDeviceController extends HrOrgResourceController
             $cond['EmployeeNoList'] = [['employeeNo' => $data['employee_no']]];
         }
 
-        return response()->json($this->hikvision->client($device)->searchCards($cond));
+        return response()->json($this->hikvision->searchCards($device, $cond));
+    }
+
+    public function createCard(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'employeeNo' => 'required|string|max:64',
+            'cardNo' => 'required|string|max:64',
+            'cardType' => 'nullable|string|max:40',
+        ]);
+
+        $payload = array_merge(['cardType' => 'normalCard'], $data);
+
+        return response()->json($this->hikvision->createCard($device, $payload));
+    }
+
+    public function updateCard(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'employeeNo' => 'required|string|max:64',
+            'cardNo' => 'required|string|max:64',
+            'cardType' => 'nullable|string|max:40',
+        ]);
+
+        return response()->json($this->hikvision->updateCard($device, $data));
+    }
+
+    public function deleteCard(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'employeeNo' => 'required|string|max:64',
+            'cardNo' => 'required|string|max:64',
+        ]);
+
+        $result = $this->hikvision->deleteCard($device, $data);
+        $this->auditHikvision($request, $device, 'hikvision.delete_card', $data);
+
+        return response()->json($result);
     }
 
     public function fingerprintCapabilities(string $id)
@@ -161,6 +218,39 @@ class HikvisionDeviceController extends HrOrgResourceController
                 ? null
                 : 'Fingerprint enrollment must be completed on the terminal.',
         ]);
+    }
+
+    public function searchFingerprints(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'searchResultPosition' => 'nullable|integer|min:0',
+            'maxResults' => 'nullable|integer|min:1|max:100',
+            'employee_no' => 'nullable|string|max:64',
+        ]);
+        $cond = [
+            'searchResultPosition' => $data['searchResultPosition'] ?? 0,
+            'maxResults' => $data['maxResults'] ?? 30,
+        ];
+        if (! empty($data['employee_no'])) {
+            $cond['EmployeeNoList'] = [['employeeNo' => $data['employee_no']]];
+        }
+
+        return response()->json($this->hikvision->searchFingerprints($device, $cond));
+    }
+
+    public function deleteFingerprint(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'employeeNo' => 'required|string|max:64',
+            'fingerPrintID' => 'required|integer|min:1|max:10',
+        ]);
+
+        $result = $this->hikvision->deleteFingerprint($device, $data);
+        $this->auditHikvision($request, $device, 'hikvision.delete_fingerprint', $data);
+
+        return response()->json($result);
     }
 
     public function searchEvents(Request $request, string $id)
@@ -234,6 +324,32 @@ class HikvisionDeviceController extends HrOrgResourceController
         return response()->json($this->hikvision->syncAttendance($device, $from, $to));
     }
 
+    /**
+     * LAN attendance agent pushes events here when cloud API cannot reach the device.
+     */
+    public function ingestAgentEvents(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'events' => 'required|array|min:1|max:500',
+            'events.*.employee_no' => 'required|string|max:64',
+            'events.*.punched_at' => 'required|date',
+            'events.*.employee_name' => 'nullable|string|max:200',
+            'events.*.attendance_status' => 'nullable|string|max:40',
+            'events.*.verification_method' => 'nullable|string|max:80',
+            'events.*.card_no' => 'nullable|string|max:64',
+            'events.*.serial_no' => 'nullable|string|max:64',
+            'events.*.major' => 'nullable|integer',
+            'events.*.minor' => 'nullable|integer',
+            'events.*.raw' => 'nullable|array',
+        ]);
+
+        $result = $this->hikvision->ingestAgentEvents($device, $data['events']);
+        $result['pulled'] = count($data['events']);
+
+        return response()->json($result);
+    }
+
     protected function findHikvisionDevice(string $id): AttendanceClockDevice
     {
         /** @var AttendanceClockDevice $device */
@@ -241,5 +357,26 @@ class HikvisionDeviceController extends HrOrgResourceController
         abort_unless($device->provider === 'hikvision' && filled($device->host), 422, 'Device is not configured for Hikvision ISAPI.');
 
         return $device;
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     */
+    protected function auditHikvision(Request $request, AttendanceClockDevice $device, string $action, array $context): void
+    {
+        $user = $request->user();
+        if (! $user) {
+            return;
+        }
+
+        $this->audit->log(
+            $user,
+            $action,
+            'attendance_clock_devices',
+            $device->id,
+            null,
+            array_merge(['device_no' => $device->device_no], $context),
+            $request,
+        );
     }
 }

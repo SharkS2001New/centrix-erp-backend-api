@@ -254,9 +254,62 @@ class HikvisionIsapiClient
         ]);
     }
 
+    /**
+     * @param  array<string, mixed>  $cardInfo
+     */
+    public function deleteCard(array $cardInfo): array
+    {
+        $cardInfo['deleteCard'] = true;
+
+        return $this->setupCard($cardInfo);
+    }
+
     // ------------------------------------------------------------------
     // Fingerprints
     // ------------------------------------------------------------------
+
+    /**
+     * @param  array<string, mixed>  $cond
+     * @return array{fingerprints: list<array>, total: int}
+     */
+    public function searchFingerprints(array $cond = []): array
+    {
+        $searchId = (string) ($cond['searchID'] ?? Str::uuid());
+        $body = [
+            'FingerPrintCond' => array_filter([
+                'searchID' => $searchId,
+                'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
+                'maxResults' => (int) ($cond['maxResults'] ?? 30),
+                'EmployeeNoList' => $cond['EmployeeNoList'] ?? null,
+            ], static fn ($v) => $v !== null && $v !== ''),
+        ];
+
+        try {
+            $payload = $this->postJson('/ISAPI/AccessControl/FingerPrintUpload?format=json', $body);
+            $search = $payload['FingerPrintSearch'] ?? $payload['FingerPrintInfo'] ?? $payload;
+            $list = $search['FingerPrintInfo'] ?? $search['InfoList'] ?? [];
+            if (isset($list['employeeNo']) || isset($list['fingerPrintID'])) {
+                $list = [$list];
+            }
+
+            return [
+                'fingerprints' => is_array($list) ? array_values(array_filter($list, 'is_array')) : [],
+                'total' => (int) ($search['totalMatches'] ?? count((array) $list)),
+            ];
+        } catch (\Throwable) {
+            return ['fingerprints' => [], 'total' => 0];
+        }
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    public function deleteFingerprint(array $payload): array
+    {
+        $payload['deleteFingerPrint'] = true;
+
+        return $this->setupFingerprint(['FingerPrintCfg' => $payload]);
+    }
 
     /**
      * @param  array<string, mixed>  $payload

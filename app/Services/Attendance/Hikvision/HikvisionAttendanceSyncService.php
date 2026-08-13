@@ -50,12 +50,44 @@ class HikvisionAttendanceSyncService
         }
 
         $result['pulled'] = count($events);
+        $processResult = $this->processEvents($device, $events);
+
+        return array_merge($result, $processResult);
+    }
+
+    /**
+     * Store and apply pre-normalized events (from LAN agent or tests).
+     *
+     * @param  list<array<string, mixed>>  $events
+     * @return array{stored: int, applied: int, skipped: int, errors: list<string>}
+     */
+    public function ingestEvents(AttendanceClockDevice $device, array $events): array
+    {
+        usort($events, static fn ($a, $b) => strcmp(
+            (string) ($a['punched_at'] ?? ''),
+            (string) ($b['punched_at'] ?? ''),
+        ));
+
+        return $this->processEvents($device, $events);
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $events
+     * @return array{stored: int, applied: int, skipped: int, errors: list<string>}
+     */
+    protected function processEvents(AttendanceClockDevice $device, array $events): array
+    {
+        $result = [
+            'stored' => 0,
+            'applied' => 0,
+            'skipped' => 0,
+            'errors' => [],
+        ];
+
         $latestEvent = $device->last_event_at
             ? Carbon::parse($device->last_event_at)
             : null;
         $latestSerial = $device->last_event_serial;
-
-        usort($events, static fn ($a, $b) => strcmp($a['punched_at'], $b['punched_at']));
 
         foreach ($events as $event) {
             $eventKey = HikvisionService::buildEventKey((int) $device->id, $event);

@@ -163,6 +163,7 @@ class AttendanceClockPunchTest extends TestCase
 
         $res->assertOk()
             ->assertJsonPath('config.deviceNo', 'TERMINAL-AGENT')
+            ->assertJsonPath('config.deviceId', $device->id)
             ->assertJsonPath('config.centrixApiUrl', 'https://example.test/api/v1')
             ->assertJsonPath('config.hikvision.host', '10.0.0.20')
             ->assertJsonPath('config.hikvision.password', 'DevicePass!')

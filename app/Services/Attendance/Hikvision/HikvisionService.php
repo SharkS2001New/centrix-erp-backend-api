@@ -166,6 +166,76 @@ class HikvisionService
     }
 
     /**
+     * @param  array<string, mixed>  $userInfo
+     */
+    public function updateUser(AttendanceClockDevice $device, array $userInfo): array
+    {
+        $this->assertFeature($device, 'users');
+
+        return $this->client($device)->setupUser($userInfo);
+    }
+
+    /**
+     * @param  array<string, mixed>  $cond
+     */
+    public function searchCards(AttendanceClockDevice $device, array $cond = []): array
+    {
+        $this->assertFeature($device, 'cards');
+
+        return $this->client($device)->searchCards($cond);
+    }
+
+    /**
+     * @param  array<string, mixed>  $cardInfo
+     */
+    public function createCard(AttendanceClockDevice $device, array $cardInfo): array
+    {
+        $this->assertFeature($device, 'cards');
+
+        return $this->client($device)->createCard($cardInfo);
+    }
+
+    /**
+     * @param  array<string, mixed>  $cardInfo
+     */
+    public function updateCard(AttendanceClockDevice $device, array $cardInfo): array
+    {
+        $this->assertFeature($device, 'cards');
+
+        return $this->client($device)->setupCard($cardInfo);
+    }
+
+    /**
+     * @param  array<string, mixed>  $cardInfo
+     */
+    public function deleteCard(AttendanceClockDevice $device, array $cardInfo): array
+    {
+        $this->assertFeature($device, 'cards');
+
+        return $this->client($device)->deleteCard($cardInfo);
+    }
+
+    /**
+     * @param  array<string, mixed>  $cond
+     */
+    public function searchFingerprints(AttendanceClockDevice $device, array $cond = []): array
+    {
+        $this->assertFeature($device, 'fingerprints');
+
+        return $this->client($device)->searchFingerprints($cond);
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     */
+    public function deleteFingerprint(AttendanceClockDevice $device, array $payload): array
+    {
+        $this->assertFeature($device, 'fingerprints');
+
+        return $this->client($device)->deleteFingerprint($payload);
+    }
+
+    /**
      * @param  array<string, mixed>  $cond
      */
     public function searchEvents(AttendanceClockDevice $device, array $cond): array
@@ -350,6 +420,17 @@ class HikvisionService
     public function syncAttendance(AttendanceClockDevice $device, ?Carbon $from = null, ?Carbon $to = null): array
     {
         return $this->attendanceSync->syncDevice($device, $from, $to);
+    }
+
+    /**
+     * Ingest events pushed by the LAN attendance agent (cloud cannot reach device ISAPI).
+     *
+     * @param  list<array<string, mixed>>  $events
+     * @return array{pulled: int, stored: int, applied: int, skipped: int, errors: list<string>}
+     */
+    public function ingestAgentEvents(AttendanceClockDevice $device, array $events): array
+    {
+        return $this->attendanceSync->ingestEvents($device, $events);
     }
 
     /**

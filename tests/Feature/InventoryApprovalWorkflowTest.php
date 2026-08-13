@@ -204,9 +204,8 @@ class InventoryApprovalWorkflowTest extends TestCase
             ->assertJsonPath('lines_updated', 1);
     }
 
-    public function test_org_admin_can_reset_stock_take_stocks_without_reset_permission(): void
+    public function test_org_admin_cannot_reset_stock_take_stocks_without_reset_permission(): void
     {
-        $admin = User::where('username', 'admin')->firstOrFail();
         $orgAdmin = $this->userWithPermissions(['inventory.stock_take.create']);
         $orgAdmin->forceFill(['is_admin' => true])->save();
 
@@ -236,7 +235,6 @@ class InventoryApprovalWorkflowTest extends TestCase
 
         Sanctum::actingAs($orgAdmin);
         $this->postJson("/api/v1/inventory/stock-take/{$session->id}/reset-stocks")
-            ->assertOk()
-            ->assertJsonPath('lines_updated', 1);
+            ->assertForbidden();
     }
 }

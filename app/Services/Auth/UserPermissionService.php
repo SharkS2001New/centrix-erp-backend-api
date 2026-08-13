@@ -134,17 +134,6 @@ class UserPermissionService
             return true;
         }
 
-        if (
-            $permissionCode === 'inventory.stock_take.reset'
-            && $this->canDirectInventoryAction($user)
-        ) {
-            return $gate === null || PermissionMatrixService::permissionModuleEnabled(
-                $permissionCode,
-                'inventory',
-                $gate,
-            );
-        }
-
         return false;
     }
 

@@ -80,4 +80,111 @@ class HikvisionDeviceManagementTest extends TestCase
         $response->assertJsonPath('online', true);
         $this->assertNotEmpty($response->json('capabilities'));
     }
+
+    public function test_agent_ingest_events_is_idempotent(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-INGEST',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->capabilities_json = ['features' => ['events' => true]];
+        $device->save();
+
+        $payload = [
+            'events' => [[
+                'employee_no' => 'EMP#HIK001',
+                'punched_at' => '2026-08-13T08:00:00+03:00',
+                'serial_no' => '555001',
+                'attendance_status' => 'checkIn',
+                'verification_method' => 'fingerprint',
+            ]],
+        ];
+
+        $url = "/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/ingest-events";
+        $first = $this->postJson($url, $payload);
+        $first->assertOk();
+        $first->assertJsonPath('stored', 1);
+
+        $second = $this->postJson($url, $payload);
+        $second->assertOk();
+        $second->assertJsonPath('stored', 0);
+        $second->assertJsonPath('skipped', 1);
+    }
+
+    public function test_create_and_delete_card_endpoints(): void
+    {
+        Http::fake([
+            'http://192.168.100.215/*' => Http::sequence()
+                ->push(['status' => 'OK'], 200)
+                ->push(['status' => 'OK'], 200),
+        ]);
+
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-CARD',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'capabilities_json' => ['features' => ['cards' => true]],
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $create = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/cards", [
+            'employeeNo' => 'EMP#HIK001',
+            'cardNo' => '12345678',
+        ]);
+        $create->assertOk();
+
+        $delete = $this->deleteJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/cards", [
+            'employeeNo' => 'EMP#HIK001',
+            'cardNo' => '12345678',
+        ]);
+        $delete->assertOk();
+    }
+
+    public function test_delete_users_writes_audit_log(): void
+    {
+        Http::fake([
+            'http://192.168.100.215/*' => Http::response(['status' => 'OK'], 200),
+        ]);
+
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-AUDIT',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'capabilities_json' => ['features' => ['users' => true]],
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $this->deleteJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/users", [
+            'employee_nos' => ['EMP001'],
+        ])->assertOk();
+
+        $this->assertDatabaseHas('audit_logs', [
+            'user_id' => $this->admin->id,
+            'action' => 'hikvision.delete_users',
+            'table_name' => 'attendance_clock_devices',
+            'record_id' => (string) $device->id,
+        ]);
+    }
 }

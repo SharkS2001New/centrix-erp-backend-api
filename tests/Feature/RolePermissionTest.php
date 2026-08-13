@@ -94,6 +94,29 @@ class RolePermissionTest extends TestCase
         $this->assertFalse($dashboardIds->intersect($catalogueIds)->isNotEmpty());
     }
 
+    public function test_permission_matrix_includes_stock_take_reset(): void
+    {
+        PermissionMatrixService::ensure();
+        $this->actingAsLicensedAdmin();
+
+        $res = $this->getJson('/api/v1/roles/permissions/matrix')->assertOk();
+        $this->assertContains('reset', $res->json('actions'));
+
+        $inventory = collect($res->json('groups'))->firstWhere('module', 'inventory');
+        $this->assertNotNull($inventory);
+
+        $stockTake = collect($inventory['features'] ?? [])->firstWhere('key', 'stock_take');
+        $this->assertNotNull($stockTake);
+
+        $actions = collect($stockTake['permissions'] ?? [])->pluck('action')->all();
+        $this->assertContains('reset', $actions);
+
+        $reset = collect($stockTake['permissions'] ?? [])
+            ->firstWhere('permission_code', 'inventory.stock_take.reset');
+        $this->assertNotNull($reset);
+        $this->assertSame('reset', $reset['action']);
+    }
+
     public function test_permission_matrix_applications_group_modules_for_ui(): void
     {
         $this->actingAsLicensedAdmin();
