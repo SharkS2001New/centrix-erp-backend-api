@@ -92,11 +92,6 @@ class PosOrderEditService
         $orderSource = strtolower((string) ($sale->order_source ?? ''));
         $isPosSale = $channel === 'pos' || $orderSource === 'pos';
 
-        // External POS previous-order edit: only the till that printed the receipt.
-        if ($isPosSale && $this->posOrderEditEnabled($gate)) {
-            $this->assertSaleWrittenOnRequestDevice($sale, $requestDeviceId);
-        }
-
         // LightStores parity: when “Allow editing completed POS orders” is on, cashiers can
         // pull back any non-expired POS receipt (held / unpaid / paid / completed / …),
         // adjust lines + stock, then re-checkout under the same order number.
@@ -118,25 +113,6 @@ class PosOrderEditService
 
             throw new InvalidArgumentException(
                 "This order cannot be edited in its current status ({$status}).",
-            );
-        }
-    }
-
-    /**
-     * Block previous-order edit when the sale is stamped to a different POS computer.
-     * Unstamped legacy sales are not rejected here — the till filters browse/open by local outbox.
-     */
-    public function assertSaleWrittenOnRequestDevice(Sale $sale, ?string $requestDeviceId): void
-    {
-        $writtenOn = trim((string) (($sale->fulfillment_meta ?? [])['pos_device_id'] ?? ''));
-        if ($writtenOn === '') {
-            return;
-        }
-
-        $requestDevice = trim((string) ($requestDeviceId ?? ''));
-        if ($requestDevice === '' || $requestDevice !== $writtenOn) {
-            throw new InvalidArgumentException(
-                'This Cash Sales # was written on another device. Previous-order edit is only available on the till that printed the receipt.',
             );
         }
     }

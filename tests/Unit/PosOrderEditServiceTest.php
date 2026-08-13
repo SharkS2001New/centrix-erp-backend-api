@@ -265,7 +265,7 @@ class PosOrderEditServiceTest extends TestCase
         $this->assertTrue($service->blocksPreviousDayMobileMutation($paid));
     }
 
-    public function test_pos_sale_from_another_device_cannot_be_restored(): void
+    public function test_pos_sale_from_another_device_can_be_restored(): void
     {
         $permissions = $this->createMock(\App\Services\Auth\UserPermissionService::class);
         $permissions->method('canEditOthersSalesOrders')->willReturn(false);
@@ -287,14 +287,7 @@ class PosOrderEditServiceTest extends TestCase
             'fulfillment_meta' => ['pos_device_id' => 'pc-old'],
         ]);
 
-        try {
-            $service->assertSaleEditable($sale, $cashier, $gate, 'pc-new');
-            $this->fail('Expected InvalidArgumentException was not thrown.');
-        } catch (\InvalidArgumentException $e) {
-            $this->assertStringContainsString('another device', $e->getMessage());
-        }
-
-        $service->assertSaleEditable($sale, $cashier, $gate, 'pc-old');
-        $this->assertTrue($service->canRestoreSaleToCart($sale, $cashier, $gate, 'pc-old'));
+        $service->assertSaleEditable($sale, $cashier, $gate, 'pc-new');
+        $this->assertTrue($service->canRestoreSaleToCart($sale, $cashier, $gate, 'pc-new'));
     }
 }
