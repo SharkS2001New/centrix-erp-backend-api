@@ -54,14 +54,12 @@ class HikvisionDeviceController extends HrOrgResourceController
         ));
     }
 
-    public function overview(string $id)
+    public function overview(Request $request, string $id)
     {
         $device = $this->findHikvisionDevice($id);
+        $refreshCounts = $request->boolean('refresh_counts');
 
-        $overview = $this->hikvision->overview($device);
-        $overview['agent'] = $this->hikvision->agentStatus($device);
-
-        return response()->json($overview);
+        return response()->json($this->hikvision->overview($device, $refreshCounts));
     }
 
     public function agentStatus(string $id)

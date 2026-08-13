@@ -186,9 +186,12 @@ class HikvisionService
     }
 
     /**
+     * Fast page payload: DB + agent heartbeat only.
+     * Pass refreshCounts=true to pull live user/card/event counts via the agent (slow).
+     *
      * @return array<string, mixed>
      */
-    public function overview(AttendanceClockDevice $device): array
+    public function overview(AttendanceClockDevice $device, bool $refreshCounts = false): array
     {
         $caps = $device->capabilities_json ?? [];
         $counts = [
@@ -197,28 +200,30 @@ class HikvisionService
             'events_today' => null,
         ];
 
-        try {
-            $client = $this->client($device);
-            if ($caps['features']['users'] ?? false) {
-                $counts['users'] = $client->getUserCount();
+        if ($refreshCounts) {
+            try {
+                $client = $this->client($device);
+                if ($caps['features']['users'] ?? false) {
+                    $counts['users'] = $client->getUserCount();
+                }
+                if ($caps['features']['cards'] ?? false) {
+                    $counts['cards'] = $client->getCardCount();
+                }
+                if ($caps['features']['events'] ?? false) {
+                    $today = AppTimezone::now();
+                    $counts['events_today'] = $client->countEvents([
+                        'major' => 0,
+                        'minor' => 0,
+                        'startTime' => $today->copy()->startOfDay()->format('Y-m-d\TH:i:sP'),
+                        'endTime' => $today->copy()->endOfDay()->format('Y-m-d\TH:i:sP'),
+                        'eventAttribute' => 'attendance',
+                    ]);
+                }
+                $device->last_communication_at = AppTimezone::now();
+                $device->save();
+            } catch (\Throwable $e) {
+                Log::debug('Hikvision overview counts failed', ['device' => $device->id, 'error' => $e->getMessage()]);
             }
-            if ($caps['features']['cards'] ?? false) {
-                $counts['cards'] = $client->getCardCount();
-            }
-            if ($caps['features']['events'] ?? false) {
-                $today = AppTimezone::now();
-                $counts['events_today'] = $client->countEvents([
-                    'major' => 0,
-                    'minor' => 0,
-                    'startTime' => $today->copy()->startOfDay()->format('Y-m-d\TH:i:sP'),
-                    'endTime' => $today->copy()->endOfDay()->format('Y-m-d\TH:i:sP'),
-                    'eventAttribute' => 'attendance',
-                ]);
-            }
-            $device->last_communication_at = AppTimezone::now();
-            $device->save();
-        } catch (\Throwable $e) {
-            Log::debug('Hikvision overview counts failed', ['device' => $device->id, 'error' => $e->getMessage()]);
         }
 
         $orgId = (int) $device->organization_id;
@@ -226,12 +231,17 @@ class HikvisionService
             ->where('attendance_clock_device_id', $device->id)
             ->count();
         $centrixEmployees = Employee::query()->where('organization_id', $orgId)->where('is_active', true)->count();
+        $agent = $this->agentBridge->agentStatus($device);
 
         return [
             'device' => $device,
-            'online' => filled($device->last_communication_at)
-                && $device->last_communication_at->gt(AppTimezone::now()->subMinutes(30)),
+            'online' => $agent['online']
+                || (
+                    filled($device->last_communication_at)
+                    && $device->last_communication_at->gt(AppTimezone::now()->subMinutes(30))
+                ),
             'counts' => $counts,
+            'agent' => $agent,
             'sync' => [
                 'centrix_employees' => $centrixEmployees,
                 'device_users' => $counts['users'],
