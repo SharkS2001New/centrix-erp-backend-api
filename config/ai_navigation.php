@@ -25,6 +25,7 @@ return [
                 ['label' => 'Cashier terminal', 'path' => '/pos', 'module' => 'sales.pos', 'permission' => 'pos.terminal.view'],
                 ['label' => 'Till management', 'path' => '/sales/till-management', 'module' => 'sales.pos', 'permission' => 'pos.till_management.view'],
                 ['label' => 'Sales orders', 'path' => '/sales/orders', 'module' => 'sales.backend', 'permission' => 'sales.order_queue_all.view'],
+                ['label' => 'Shop debtors', 'path' => '/customers/shop-debtors', 'module' => 'customers_suppliers', 'permission' => 'customers.shop_debtors.view'],
                 ['label' => 'Customers', 'path' => '/customers', 'module' => 'customers_suppliers', 'permission' => 'customers.customers.view'],
                 ['label' => 'Vouchers', 'path' => '/sales/vouchers', 'module' => 'sales.backend', 'permission' => 'sales.vouchers.view'],
                 ['label' => 'Credit notes', 'path' => '/sales/returns', 'module' => 'sales.backend', 'permission' => 'sales.returns.view'],

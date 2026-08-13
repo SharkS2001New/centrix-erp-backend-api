@@ -366,4 +366,206 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertSame(0, $acsBodies[1]['major'] ?? null);
         $this->assertSame(0, $acsBodies[1]['minor'] ?? null);
     }
+
+    public function test_agent_ingest_applies_punch_via_employee_mapping(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $template = \App\Models\Employee::query()->where('organization_id', $this->org->id)->firstOrFail();
+        $shift = \App\Models\WorkShift::query()->create([
+            'organization_id' => $this->org->id,
+            'shift_code' => 'HV'.uniqid(),
+            'shift_name' => 'Hikvision map shift',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+            'works_saturday' => true,
+            'works_sunday' => true,
+            'works_public_holidays' => true,
+            'is_active' => true,
+        ]);
+        $employee = \App\Models\Employee::query()->create([
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->admin->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'employee_code' => 'EMP#MAPPED99',
+            'payroll_number' => 'EMP#MAPPED99',
+            'first_name' => 'Map',
+            'last_name' => 'Test',
+            'full_name' => 'Map Test',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => '2024-01-01',
+            'base_salary' => 50000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-MAP-IN',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        // Terminal ID does not match Centrix employee_code — mapping must resolve it.
+        \App\Models\HikvisionEmployeeMapping::query()->create([
+            'organization_id' => $this->org->id,
+            'attendance_clock_device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'hikvision_employee_no' => 'TERM-ONLY-99',
+            'sync_status' => 'mapped',
+        ]);
+
+        $url = "/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/ingest-events";
+        $res = $this->postJson($url, [
+            'events' => [[
+                'employee_no' => 'TERM-ONLY-99',
+                'punched_at' => '2026-08-13T08:05:00+03:00',
+                'serial_no' => 'map-in-1',
+                'attendance_status' => 'checkIn',
+                'verification_method' => 'fingerprint',
+            ]],
+        ]);
+
+        $res->assertOk();
+        $res->assertJsonPath('stored', 1);
+        $res->assertJsonPath('applied', 1);
+
+        $this->assertDatabaseHas('employee_clock_sessions', [
+            'employee_id' => $employee->id,
+            'device_identifier' => 'T-MAP-IN',
+            'source' => 'clock_device',
+        ]);
+        $this->assertDatabaseHas('hikvision_access_events', [
+            'attendance_clock_device_id' => $device->id,
+            'employee_no' => 'TERM-ONLY-99',
+            'serial_no' => 'map-in-1',
+        ]);
+        $this->assertNotNull(
+            \App\Models\HikvisionAccessEvent::query()
+                ->where('serial_no', 'map-in-1')
+                ->value('processed_at')
+        );
+    }
+
+    public function test_map_employee_reprocesses_pending_punches(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $template = \App\Models\Employee::query()->where('organization_id', $this->org->id)->firstOrFail();
+        $shift = \App\Models\WorkShift::query()->create([
+            'organization_id' => $this->org->id,
+            'shift_code' => 'HR'.uniqid(),
+            'shift_name' => 'Hikvision retry shift',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+            'works_saturday' => true,
+            'works_sunday' => true,
+            'works_public_holidays' => true,
+            'is_active' => true,
+        ]);
+        $employee = \App\Models\Employee::query()->create([
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->admin->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'employee_code' => 'EMP#RETRY77',
+            'payroll_number' => 'EMP#RETRY77',
+            'first_name' => 'Retry',
+            'last_name' => 'Test',
+            'full_name' => 'Retry Test',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => '2024-01-01',
+            'base_salary' => 50000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-RETRY',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $ingest = $this->postJson(
+            "/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/ingest-events",
+            [
+                'events' => [[
+                    'employee_no' => 'TERM-ONLY-77',
+                    'punched_at' => '2026-08-13T09:10:00+03:00',
+                    'serial_no' => 'retry-1',
+                    'attendance_status' => 'checkIn',
+                ]],
+            ]
+        );
+        $ingest->assertOk();
+        $ingest->assertJsonPath('stored', 1);
+        $ingest->assertJsonPath('applied', 0);
+        $this->assertNull(
+            \App\Models\HikvisionAccessEvent::query()->where('serial_no', 'retry-1')->value('processed_at')
+        );
+
+        $map = $this->postJson(
+            "/api/v1/attendance-clock-devices/{$device->id}/hikvision/sync/employees/map",
+            [
+                'employee_id' => $employee->id,
+                'hikvision_employee_no' => 'TERM-ONLY-77',
+            ]
+        );
+        $map->assertCreated();
+        $map->assertJsonPath('reprocessed.applied', 1);
+
+        $this->assertNotNull(
+            \App\Models\HikvisionAccessEvent::query()->where('serial_no', 'retry-1')->value('processed_at')
+        );
+        $this->assertDatabaseHas('employee_clock_sessions', [
+            'employee_id' => $employee->id,
+            'device_identifier' => 'T-RETRY',
+        ]);
+    }
+
+    public function test_sync_attendance_requires_online_agent(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-SYNC-OFF',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'capabilities_json' => ['features' => ['events' => true]],
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $res = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/sync/attendance");
+        $res->assertOk();
+        $res->assertJsonPath('pulled', 0);
+        $this->assertNotEmpty($res->json('errors'));
+        $this->assertStringContainsString('CentrixAttendanceAgent', (string) $res->json('errors.0'));
+    }
 }

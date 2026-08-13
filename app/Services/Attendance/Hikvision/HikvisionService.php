@@ -512,7 +512,7 @@ class HikvisionService
         AttendanceClockDevice $device,
         string $hikvisionEmployeeNo,
         int $employeeId,
-    ): HikvisionEmployeeMapping {
+    ): array {
         $employee = Employee::query()->findOrFail($employeeId);
         if ((int) $employee->organization_id !== (int) $device->organization_id) {
             throw ValidationException::withMessages([
@@ -520,28 +520,57 @@ class HikvisionService
             ]);
         }
 
-        return HikvisionEmployeeMapping::query()->updateOrCreate(
+        // One Centrix employee ↔ one device person per terminal.
+        HikvisionEmployeeMapping::query()
+            ->where('attendance_clock_device_id', $device->id)
+            ->where('employee_id', $employee->id)
+            ->where('hikvision_employee_no', '!=', $hikvisionEmployeeNo)
+            ->delete();
+
+        $mapping = HikvisionEmployeeMapping::query()->updateOrCreate(
             [
                 'attendance_clock_device_id' => $device->id,
-                'employee_id' => $employee->id,
+                'hikvision_employee_no' => $hikvisionEmployeeNo,
             ],
             [
                 'organization_id' => $device->organization_id,
-                'hikvision_employee_no' => $hikvisionEmployeeNo,
+                'employee_id' => $employee->id,
                 'sync_status' => 'mapped',
                 'last_synced_at' => AppTimezone::now(),
             ]
         );
+
+        // Apply any stored punches that failed while this terminal ID was unmapped.
+        $reprocessed = $this->attendanceSync->reprocessPendingEvents(
+            $device,
+            300,
+            $hikvisionEmployeeNo,
+        );
+
+        return [
+            'mapping' => $mapping,
+            'reprocessed' => $reprocessed,
+        ];
     }
 
     /**
-     * Pull events, store raw rows (idempotent), then apply HR attendance rules.
+     * Pull events via the LAN agent, store raw rows (idempotent), then apply HR attendance rules.
      *
-     * @return array{pulled: int, stored: int, applied: int, skipped: int, errors: list<string>}
+     * @return array{pulled: int, stored: int, applied: int, skipped: int, retried: int, errors: list<string>, via_agent?: bool}
      */
     public function syncAttendance(AttendanceClockDevice $device, ?Carbon $from = null, ?Carbon $to = null): array
     {
         return $this->attendanceSync->syncDevice($device, $from, $to);
+    }
+
+    /**
+     * Retry stored punches that never applied to Centrix attendance.
+     *
+     * @return array{stored: int, applied: int, skipped: int, retried: int, errors: list<string>}
+     */
+    public function reprocessPendingAttendance(AttendanceClockDevice $device, ?string $employeeNo = null): array
+    {
+        return $this->attendanceSync->reprocessPendingEvents($device, 300, $employeeNo);
     }
 
     /**

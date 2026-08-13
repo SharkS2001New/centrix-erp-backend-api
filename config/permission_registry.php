@@ -46,6 +46,7 @@ return [
             'label' => 'Customers',
             'features' => [
                 'customers' => ['label' => 'Customers', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'shop_debtors' => ['label' => 'Shop debtors', 'actions' => ['view']],
                 'statements' => ['label' => 'Customer statements', 'actions' => ['view']],
             ],
         ],

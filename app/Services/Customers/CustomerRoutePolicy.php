@@ -7,12 +7,27 @@ use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use Illuminate\Validation\ValidationException;
 
-/** Distribution organizations only manage customers assigned to delivery routes. */
+/** Distribution organizations only manage route customers — unless External POS /
+ *  direct-checkout credit is enabled, in which case shop debtors coexist.
+ */
 class CustomerRoutePolicy
 {
     public function routeCustomersOnly(CapabilityGate $gate): bool
     {
-        return $gate->enabled('distribution');
+        if (! $gate->enabled('distribution')) {
+            return false;
+        }
+
+        if ($gate->enabled('sales.pos')) {
+            return false;
+        }
+
+        $sales = $gate->moduleSettings('sales');
+        if (is_array($sales) && ! empty($sales['enable_credit_payment'])) {
+            return false;
+        }
+
+        return true;
     }
 
     public function routeCustomersOnlyForUser(User $user): bool

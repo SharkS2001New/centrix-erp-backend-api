@@ -135,4 +135,80 @@ class SameDayCustomerOrderService
             ];
         })->values();
     }
+
+    /**
+     * Collapse checkout lines by product_code + wholesale/retail flag so same-day
+     * mobile appends (and restored+new carts) store one sale_item per SKU.
+     * Mirrors SaleMergeService::foldSourceIntoTarget / POS combine-identical-lines.
+     *
+     * @param  Collection<int, object>  $lines
+     * @return Collection<int, object>
+     */
+    public function foldCheckoutLinesBySku(Collection $lines): Collection
+    {
+        $folded = [];
+
+        foreach ($lines as $line) {
+            $code = trim((string) ($line->product_code ?? ''));
+            if ($code === '') {
+                $folded[] = $line;
+
+                continue;
+            }
+
+            $retail = (int) ($line->on_wholesale_retail ?? 0) ? 1 : 0;
+            $key = $code.'|'.$retail;
+
+            if (! isset($folded[$key])) {
+                $folded[$key] = (object) [
+                    'product_code' => $code,
+                    'quantity' => (float) ($line->quantity ?? 0),
+                    'uom' => $line->uom ?? null,
+                    'unit_price' => (float) ($line->unit_price ?? 0),
+                    'display_unit_price' => isset($line->display_unit_price) && $line->display_unit_price !== null
+                        ? (float) $line->display_unit_price
+                        : null,
+                    'discount_given' => (float) ($line->discount_given ?? 0),
+                    'product_vat' => (float) ($line->product_vat ?? 0),
+                    'amount' => (float) ($line->amount ?? 0),
+                    'on_wholesale_retail' => $retail,
+                ];
+
+                continue;
+            }
+
+            $existing = $folded[$key];
+            $newQty = round((float) $existing->quantity + (float) ($line->quantity ?? 0), 4);
+            $newAmount = round((float) $existing->amount + (float) ($line->amount ?? 0), 2);
+            $newDiscount = round((float) $existing->discount_given + (float) ($line->discount_given ?? 0), 2);
+            $newVat = round((float) $existing->product_vat + (float) ($line->product_vat ?? 0), 2);
+            $unitPrice = $newQty > 0.0001
+                ? round($newAmount / $newQty, 4)
+                : (float) $existing->unit_price;
+
+            $display = $existing->display_unit_price !== null
+                ? (float) $existing->display_unit_price
+                : 0.0;
+            $sourceDisplay = isset($line->display_unit_price) && $line->display_unit_price !== null
+                ? (float) $line->display_unit_price
+                : 0.0;
+            if ($display <= 0 && $sourceDisplay > 0) {
+                $display = $sourceDisplay;
+            } elseif ($display <= 0) {
+                $display = $unitPrice;
+            }
+
+            $existing->quantity = $newQty;
+            $existing->amount = $newAmount;
+            $existing->discount_given = $newDiscount;
+            $existing->product_vat = $newVat;
+            $existing->unit_price = $unitPrice;
+            $existing->display_unit_price = $display > 0 ? $display : null;
+            if (empty($existing->uom) && ! empty($line->uom)) {
+                $existing->uom = $line->uom;
+            }
+        }
+
+        return collect(array_values($folded));
+    }
 }

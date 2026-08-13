@@ -125,7 +125,7 @@ class CartOperationsController extends Controller
             $cart->increment('update_no');
         }
 
-        return $this->cartResponse($cart->fresh('lines'), $request->user(), includeNextOrderNum: false);
+        return $this->cartResponse($this->freshOwnedCart($cart), $request->user(), includeNextOrderNum: false);
     }
 
     public function requestDiscount(Request $request, int|string $cartId)
@@ -173,7 +173,7 @@ class CartOperationsController extends Controller
         $gate = $this->erp->gateForUser($user);
         $this->addCartLine($cart, $request->validated(), $user, $gate);
 
-        return $this->cartResponse($cart->fresh('lines'), $user, 201, includeNextOrderNum: false);
+        return $this->cartResponse($this->freshOwnedCart($cart), $user, 201, includeNextOrderNum: false);
     }
 
     public function updateLine(UpdateCartLineRequest $request, int|string $cartId, string $lineRef)
@@ -183,7 +183,7 @@ class CartOperationsController extends Controller
         $gate = $this->erp->gateForUser($user);
         $this->updateCartLine($cart, $lineRef, $request->validated(), $user, $gate);
 
-        return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
+        return $this->cartResponse($this->freshOwnedCart($cart), $user, includeNextOrderNum: false);
     }
 
     /** POST /sales/carts/{cartId}/apply-advised-discounts — apply manager-advised per-line discounts in one request. */
@@ -253,7 +253,7 @@ class CartOperationsController extends Controller
             $cart->load('lines');
         }
 
-        return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
+        return $this->cartResponse($this->freshOwnedCart($cart), $user, includeNextOrderNum: false);
     }
 
     public function deleteLine(int|string $cartId, string $lineRef)
@@ -262,7 +262,7 @@ class CartOperationsController extends Controller
         $cart = $this->findOwnedCart($cartId, $user);
         $this->removeCartLine($cart, $lineRef);
 
-        return $this->cartResponse($cart->fresh('lines'), $user, includeNextOrderNum: false);
+        return $this->cartResponse($this->freshOwnedCart($cart), $user, includeNextOrderNum: false);
     }
 
     /**
@@ -327,7 +327,7 @@ class CartOperationsController extends Controller
                 $this->addDraftLinesToCart($cart, $lines, $user, $gate);
             }
 
-            return $cart->fresh('lines');
+            return $this->freshOwnedCart($cart);
         }, 5);
 
         return $this->cartResponse($cart, $user, includeNextOrderNum: false);
@@ -469,7 +469,7 @@ class CartOperationsController extends Controller
 
             if ($hadReservations) {
                 $this->transferSaleReservationsToCart((int) $sale->id, (int) $freshCart->id);
-                $this->bindCartReservationsToLines($freshCart->fresh('lines'), $user, $gate);
+                $this->bindCartReservationsToLines($this->freshOwnedCart($freshCart), $user, $gate);
             }
 
             $meta = array_merge($sale->fulfillment_meta ?? [], [
@@ -493,7 +493,7 @@ class CartOperationsController extends Controller
                 'fulfillment_meta' => $meta,
             ]);
 
-            return $cart->fresh('lines');
+            return $this->freshOwnedCart($cart);
         });
 
         if ($needsStockReverse || $needsKraVoid) {
@@ -597,7 +597,7 @@ class CartOperationsController extends Controller
 
             if ($hadReservations) {
                 $this->transferSaleReservationsToCart((int) $sale->id, (int) $cart->id);
-                $this->bindCartReservationsToLines($cart->fresh('lines'), $user, $gate);
+                $this->bindCartReservationsToLines($this->freshOwnedCart($cart), $user, $gate);
             }
 
             $meta = array_merge($sale->fulfillment_meta ?? [], [
@@ -626,7 +626,7 @@ class CartOperationsController extends Controller
                 'Held order restored to cart.',
             );
 
-            return $cart->fresh('lines');
+            return $this->freshOwnedCart($cart);
         });
     }
 
@@ -778,7 +778,7 @@ class CartOperationsController extends Controller
         $cart->increment('update_no');
 
         return response()->json([
-            'cart' => $this->presentCart($cart->fresh('lines'), $request->user(), includeNextOrderNum: false),
+            'cart' => $this->presentCart($this->freshOwnedCart($cart), $request->user(), includeNextOrderNum: false),
             'loyalty' => [
                 'loyalty_card_id' => $card->id,
                 'card_number' => $card->card_number,
@@ -835,7 +835,7 @@ class CartOperationsController extends Controller
                 'mpesa_transaction_code' => null,
             ]);
             $cart->increment('update_no');
-            $fresh = $cart->fresh('lines');
+            $fresh = $this->freshOwnedCart($cart);
 
             return response()->json([
                 'cart' => $this->presentCart($fresh, $request->user()),
@@ -865,7 +865,7 @@ class CartOperationsController extends Controller
             'voucher_payment_amount' => $amount,
         ]);
         $cart->increment('update_no');
-        $fresh = $cart->fresh('lines');
+        $fresh = $this->freshOwnedCart($cart);
 
         return response()->json([
             'cart' => $this->presentCart($fresh, $request->user()),
@@ -910,7 +910,7 @@ class CartOperationsController extends Controller
             'points_payment_amount' => $cashValue,
         ]);
         $cart->increment('update_no');
-        $fresh = $cart->fresh('lines');
+        $fresh = $this->freshOwnedCart($cart);
 
         return response()->json([
             'cart' => $this->presentCart($fresh, $request->user()),
@@ -938,7 +938,7 @@ class CartOperationsController extends Controller
             $cart->increment('update_no');
         }
 
-        return $this->cartResponse($cart->fresh('lines'), $request->user());
+        return $this->cartResponse($this->freshOwnedCart($cart), $request->user());
     }
 
     public function clearCartPayments(int|string $cartId)
@@ -947,7 +947,7 @@ class CartOperationsController extends Controller
         $this->clearCartPaymentOptions($cart);
         $cart->increment('update_no');
 
-        return $this->cartResponse($cart->fresh('lines'), request()->user());
+        return $this->cartResponse($this->freshOwnedCart($cart), request()->user());
     }
 
     public function cancelHeldOrder(Request $request, int $saleId)
@@ -1572,6 +1572,48 @@ class CartOperationsController extends Controller
             $unitPrice,
             $amount,
         );
+
+        // Mobile never runs the POS client merge — combine identical SKUs server-side
+        // so edit/same-day carts don't stack Sugar 10 + Sugar 5 as two lines.
+        $combineIdentical = ($salesSettings['pos_combine_identical_lines'] ?? true) !== false;
+        if ($combineIdentical && strtolower(trim((string) ($cart->channel ?? ''))) === 'mobile') {
+            $existing = CartLine::query()
+                ->where('cart_id', $cart->id)
+                ->where('product_code', $product->product_code)
+                ->where('on_wholesale_retail', $onWholesaleRetailFlag ? 1 : 0)
+                ->orderBy('line_no')
+                ->first();
+            if ($existing) {
+                $mergedQty = round((float) $existing->quantity + $qty, 4);
+                $mergedDiscount = round((float) ($existing->discount_given ?? 0) + $discountGiven, 2);
+                $mergedInput = [
+                    'quantity' => $mergedQty,
+                    'on_wholesale_retail' => $onWholesaleRetailFlag,
+                    'discount_given' => $mergedDiscount,
+                    'uom' => $line['uom'] ?? $existing->uom,
+                ];
+                if (array_key_exists('unit_price', $line)) {
+                    $mergedInput['unit_price'] = (float) $line['unit_price'];
+                }
+                if (array_key_exists('display_unit_price', $line) && $line['display_unit_price'] !== null) {
+                    $mergedInput['display_unit_price'] = (float) $line['display_unit_price'];
+                } elseif ($existing->display_unit_price !== null) {
+                    $mergedInput['display_unit_price'] = (float) $existing->display_unit_price;
+                }
+                if (array_key_exists('amount', $line) && $line['amount'] !== null) {
+                    // Client sent an authoritative amount for the *added* qty — sum with existing.
+                    $mergedInput['amount'] = round((float) $existing->amount + (float) $line['amount'], 2);
+                }
+
+                return $this->updateCartLine(
+                    $cart,
+                    (string) $existing->update_code,
+                    $mergedInput,
+                    $user,
+                    $gate,
+                );
+            }
+        }
 
         $product->loadMissing('vat');
         $grossForVat = max(0, $amount);

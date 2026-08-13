@@ -87,9 +87,16 @@ class CustomerController extends BaseResourceController
         $user = $request->user();
         $orgId = $this->access()->organizationId($user, $request);
         $ttl = max(60, min(300, (int) config('cache.hub_summary_ttl', 120)));
+        $customerTypeFilter = trim((string) data_get($request->input('filter'), 'customer_type', ''));
+        if ($customerTypeFilter !== '' && ! in_array($customerTypeFilter, ['debtor', 'route', 'regular'], true)) {
+            $customerTypeFilter = '';
+        }
 
-        $build = function () use ($request, $user) {
+        $build = function () use ($request, $user, $customerTypeFilter) {
             $query = $this->baseQuery($request)->whereNull('deleted_at');
+            if ($customerTypeFilter !== '') {
+                $query->where('customer_type', $customerTypeFilter);
+            }
             $now = now();
 
             $row = (clone $query)->selectRaw(
@@ -110,11 +117,12 @@ class CustomerController extends BaseResourceController
 
         if ($orgId) {
             $branchKey = $this->access()->branchId($user) ?? 'all';
+            $typeKey = $customerTypeFilter !== '' ? $customerTypeFilter : 'all';
 
             return response()->json(
                 OrganizationCache::remember(
                     $orgId,
-                    'customers.summary:'.$branchKey,
+                    'customers.summary:'.$branchKey.':'.$typeKey,
                     $ttl,
                     $build,
                 ),

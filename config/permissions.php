@@ -20,7 +20,7 @@ return [
     'ai.assist' => 'Use AI assistant',
     'purchasing.view' => 'View LPOs, suppliers, and supplier payments',
     'purchasing.manage' => 'LPO and supplier operations',
-    'customers.view' => 'View customers and statements',
+    'customers.view' => 'View customers, shop debtors, and statements',
     'customers.manage' => 'Manage customers',
     'fulfillment.view' => 'View drivers, vehicles, and routes',
     'fulfillment.manage' => 'Manage drivers, vehicles, and routes',

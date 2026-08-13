@@ -67,6 +67,22 @@ trait HandlesCartAccess
         return $cart;
     }
 
+    /**
+     * Re-load a cart after mutation. Checkout/clear can delete the row between
+     * findOwnedCart() and the response — fresh() then returns null and used to TypeError.
+     *
+     * @param  array<int, string>|string  $with
+     */
+    protected function freshOwnedCart(TemporaryCart $cart, array|string $with = 'lines'): TemporaryCart
+    {
+        $fresh = $cart->fresh($with);
+        if (! $fresh) {
+            abort(404, $this->temporaryCartGoneMessage());
+        }
+
+        return $fresh;
+    }
+
     /** @return array<string, mixed> */
     protected function presentCart(
         TemporaryCart $cart,

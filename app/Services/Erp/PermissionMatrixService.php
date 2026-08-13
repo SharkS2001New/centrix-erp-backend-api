@@ -58,6 +58,7 @@ class PermissionMatrixService
             self::ensureLpoApproveForAdminRoles();
             self::ensureStockTakeResetForAdminRoles();
             self::ensureNotificationsForBackofficeRoles();
+            self::ensureShopDebtorsForCustomerViewRoles();
             // Shared Administrator must keep every industry shell (commerce + hospitality).
             // Without this, hotel tenants only see Administration after the is_admin
             // least-privilege change (operational access comes from the role matrix).
@@ -711,6 +712,39 @@ class PermissionMatrixService
             \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
                 'role_id' => $roleId,
                 'permission_id' => $notificationId,
+            ]);
+        }
+    }
+
+    /**
+     * Shop Debtors is a new Customers feature — grant view to roles that already
+     * manage the main Customers list so upgrades keep parity without re-editing roles.
+     */
+    public static function ensureShopDebtorsForCustomerViewRoles(): void
+    {
+        $shopDebtorsId = Permission::query()
+            ->where('permission_code', 'customers.shop_debtors.view')
+            ->value('id');
+        $customersViewId = Permission::query()
+            ->where('permission_code', 'customers.customers.view')
+            ->value('id');
+
+        if (! $shopDebtorsId || ! $customersViewId) {
+            return;
+        }
+
+        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+            ->where('permission_id', $customersViewId)
+            ->pluck('role_id');
+
+        $adminRoleIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Administrator', 'Admin'])
+            ->pluck('id');
+
+        foreach ($roleIds->merge($adminRoleIds)->unique() as $roleId) {
+            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                'role_id' => $roleId,
+                'permission_id' => $shopDebtorsId,
             ]);
         }
     }

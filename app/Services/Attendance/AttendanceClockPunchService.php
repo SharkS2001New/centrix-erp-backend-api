@@ -147,17 +147,19 @@ class AttendanceClockPunchService
             return AppTimezone::now();
         }
 
-        try {
-            $at = $raw instanceof Carbon
-                ? $raw->copy()
-                : Carbon::parse((string) $raw, AppTimezone::name());
-        } catch (\Throwable) {
-            throw ValidationException::withMessages([
-                'punched_at' => 'Invalid punched_at timestamp.',
-            ]);
+        if ($raw instanceof Carbon) {
+            $at = $raw->copy()->timezone(AppTimezone::name());
+        } else {
+            $at = AppTimezone::normalize($raw);
+            if ($at === null) {
+                throw ValidationException::withMessages([
+                    'punched_at' => 'Invalid punched_at timestamp.',
+                ]);
+            }
         }
 
-        if ($at->isFuture() && $at->diffInMinutes(AppTimezone::now()) > 5) {
+        // Allow small clock skew between the terminal / office PC and Centrix.
+        if ($at->isFuture() && $at->diffInMinutes(AppTimezone::now()) > 15) {
             throw ValidationException::withMessages([
                 'punched_at' => 'Punch time cannot be in the future.',
             ]);

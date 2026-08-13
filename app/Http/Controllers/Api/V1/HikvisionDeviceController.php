@@ -375,13 +375,13 @@ class HikvisionDeviceController extends HrOrgResourceController
             'hikvision_employee_no' => 'required|string|max:64',
         ]);
 
-        $mapping = $this->hikvision->mapEmployee(
+        $result = $this->hikvision->mapEmployee(
             $device,
             $data['hikvision_employee_no'],
             (int) $data['employee_id'],
         );
 
-        return response()->json($mapping, 201);
+        return response()->json($result, 201);
     }
 
     public function syncAttendance(Request $request, string $id)
@@ -396,6 +396,24 @@ class HikvisionDeviceController extends HrOrgResourceController
         $to = isset($data['to']) ? \Carbon\Carbon::parse($data['to']) : null;
 
         return response()->json($this->hikvision->syncAttendance($device, $from, $to));
+    }
+
+    /**
+     * Retry stored Hikvision punches that failed to apply (e.g. before employee mapping).
+     */
+    public function reprocessPendingAttendance(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'employee_no' => 'nullable|string|max:64',
+        ]);
+
+        return response()->json(
+            $this->hikvision->reprocessPendingAttendance(
+                $device,
+                $data['employee_no'] ?? null,
+            )
+        );
     }
 
     /**

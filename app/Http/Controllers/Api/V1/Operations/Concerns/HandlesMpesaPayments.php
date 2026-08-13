@@ -193,7 +193,7 @@ trait HandlesMpesaPayments
         ]);
         $cart->increment('update_no');
 
-        return $cart->fresh('lines');
+        return $this->freshOwnedCart($cart);
     }
 
     protected function releaseCartMpesaPayments(TemporaryCart $cart): void

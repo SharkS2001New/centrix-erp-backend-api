@@ -14,7 +14,7 @@ class SyncHikvisionAttendanceCommand extends Command
         {--from= : ISO start time override}
         {--to= : ISO end time override}';
 
-    protected $description = 'Pull punches from Hikvision ISAPI terminals (on-prem/VPN only — cloud Centrix cannot reach LAN IPs; use attendance-agent instead)';
+    protected $description = 'Pull punches from Hikvision via CentrixAttendanceAgent (LAN bridge). Prefer the agent service for ongoing sync; this command also uses the agent when online.';
 
     public function handle(HikvisionAttendanceSyncService $sync): int
     {

@@ -391,6 +391,14 @@ class CheckoutController extends Controller
                     ->concat($lines)
                     ->values();
             }
+            // Mobile has no POS client-side merge. Collapse identical SKUs so
+            // same-day append / order-edit checkouts persist one line (and receipt).
+            if (
+                strtolower(trim((string) ($cart->channel ?? ''))) === 'mobile'
+                && ($salesSettings['pos_combine_identical_lines'] ?? true) !== false
+            ) {
+                $lines = $sameDayAppend->foldCheckoutLinesBySku($lines);
+            }
 
             $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
                 ? $gate->organization()->module_settings['sales']

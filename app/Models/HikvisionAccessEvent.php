@@ -26,6 +26,7 @@ class HikvisionAccessEvent extends Model
         'serial_no',
         'raw_payload',
         'processed_at',
+        'process_error',
         'clock_session_id',
     ];
 

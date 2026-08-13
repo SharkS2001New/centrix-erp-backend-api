@@ -767,4 +767,68 @@ class SalesCartCheckoutStockTest extends TestCase
 
         $this->assertDatabaseMissing('cart_lines', ['cart_id' => $cartId]);
     }
+
+    public function test_mobile_cart_combines_identical_sku_into_one_line(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 10,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->assertJsonCount(1, 'lines');
+
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 5,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->json();
+
+        $this->assertCount(1, $cart['lines'] ?? []);
+        $this->assertEqualsWithDelta(15.0, (float) ($cart['lines'][0]['quantity'] ?? 0), 0.0001);
+
+        // Retail flag is a different merge key — must stay a separate line.
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+            'on_wholesale_retail' => 1,
+        ])->assertCreated()->json();
+
+        $this->assertCount(2, $cart['lines'] ?? []);
+        $wholesale = collect($cart['lines'])->firstWhere('on_wholesale_retail', 0)
+            ?? collect($cart['lines'])->firstWhere('on_wholesale_retail', false);
+        $retail = collect($cart['lines'])->first(
+            fn ($line) => (int) ($line['on_wholesale_retail'] ?? 0) === 1,
+        );
+        $this->assertNotNull($wholesale);
+        $this->assertNotNull($retail);
+        $this->assertEqualsWithDelta(15.0, (float) $wholesale['quantity'], 0.0001);
+        $this->assertEqualsWithDelta(2.0, (float) $retail['quantity'], 0.0001);
+    }
+
+    public function test_fresh_owned_cart_after_delete_returns_friendly_404_not_type_error(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $cart = \App\Models\TemporaryCart::query()->findOrFail($cartId);
+        \App\Models\TemporaryCart::query()->whereKey($cartId)->delete();
+
+        $controller = app(\App\Http\Controllers\Api\V1\Operations\CartOperationsController::class);
+        $method = new \ReflectionMethod($controller, 'freshOwnedCart');
+        $method->setAccessible(true);
+
+        try {
+            $method->invoke($controller, $cart);
+            $this->fail('Expected HttpException when cart was deleted before fresh().');
+        } catch (\Symfony\Component\HttpKernel\Exception\HttpException $e) {
+            $this->assertSame(404, $e->getStatusCode());
+            $this->assertStringContainsString('Cart not found', $e->getMessage());
+        }
+    }
 }
