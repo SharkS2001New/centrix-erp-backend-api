@@ -30,11 +30,16 @@ class CustomerReturnApprovalService
         $return->loadMissing(['customer', 'sale']);
         $requesterName = $requester->full_name ?: $requester->username;
         $customerName = $return->customer?->customer_name ?? 'Walk-in customer';
-        $actionUrl = NotificationActionUrlBuilder::for('customer_return', (int) $return->id);
+        $isCreditNote = $return->return_kind === 'credit_note';
+        $actionUrl = $isCreditNote
+            ? '/sales/credit-notes?credit_note_id='.(int) $return->id
+            : NotificationActionUrlBuilder::for('customer_return', (int) $return->id);
         $returnReason = trim((string) ($return->reason ?? ''));
         $proof = $this->proofService->meta($return, '/customer-returns/'.$return->id.'/proof/file');
+        $docNo = $return->return_no;
+        $docLabel = $isCreditNote ? 'credit note' : 'return';
 
-        $message = "{$requesterName} submitted return {$return->return_no} for {$customerName} (KES "
+        $message = "{$requesterName} submitted {$docLabel} {$docNo} for {$customerName} (KES "
             .number_format((float) $return->total_amount, 2).').';
         if ($returnReason !== '') {
             $message .= " Reason: {$returnReason}.";
@@ -49,7 +54,7 @@ class CustomerReturnApprovalService
             'reference_type' => 'customer_return',
             'reference_id' => (int) $return->id,
             'approver_permission' => 'sales.manage',
-            'title' => 'Customer return approval required',
+            'title' => $isCreditNote ? 'Credit note approval required' : 'Customer return approval required',
             'message' => $message,
             'reason' => $returnReason !== '' ? $returnReason : null,
             'severity' => 'warning',
@@ -60,6 +65,7 @@ class CustomerReturnApprovalService
                 'customer_name' => $customerName,
                 'total_amount' => (float) $return->total_amount,
                 'return_reason' => $returnReason !== '' ? $returnReason : null,
+                'return_kind' => $return->return_kind,
                 'proof' => $proof,
             ], fn ($value) => $value !== null),
         ]);

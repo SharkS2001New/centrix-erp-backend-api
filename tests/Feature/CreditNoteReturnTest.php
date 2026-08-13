@@ -508,6 +508,7 @@ class CreditNoteReturnTest extends TestCase
         $this->assertSame(150.0, (float) $created->json('total_amount'));
         $this->assertSame('credit_note', $created->json('return_kind'));
         $this->assertSame('pending', $created->json('status'));
+        $this->assertTrue((bool) $created->json('pending_return_only'));
 
         $returnId = (int) $created->json('id');
         $this->assertDatabaseHas('customer_returns', [
@@ -520,10 +521,20 @@ class CreditNoteReturnTest extends TestCase
             'customer_return_id' => $returnId,
         ]);
 
-        $approved = $this->postJson("/api/v1/customer-returns/{$returnId}/approve")
+        // Pending credit notes (without stock return) must appear on the credit-notes list.
+        $listed = $this->getJson('/api/v1/credit-notes?status=pending&from_date='.now()->subDay()->toDateString().'&to_date='.now()->toDateString())
+            ->assertOk();
+        $this->assertTrue(
+            collect($listed->json('data'))->contains(fn ($row) => (int) ($row['id'] ?? 0) === $returnId),
+            'Pending credit note should appear under /credit-notes',
+        );
+
+        $approved = $this->postJson("/api/v1/credit-notes/{$returnId}/approve")
             ->assertOk();
 
-        $this->assertSame(150.0, (float) $approved->json('credit_note.total_amount'));
+        $this->assertSame('approved', $approved->json('status'));
+        $this->assertFalse((bool) $approved->json('pending_return_only'));
+        $this->assertNotEmpty($approved->json('credit_note_no'));
         $this->assertSame(850.0, (float) $sale->fresh()->order_total);
     }
 }
