@@ -35,6 +35,50 @@ class HikvisionService
     }
 
     /**
+     * Poll the terminal for a punch since the given time (live fingerprint test).
+     *
+     * @return array{
+     *   since: string,
+     *   events: list<array>,
+     *   latest: array|null,
+     *   fingerprint_detected: bool,
+     *   applied?: array<string, mixed>
+     * }
+     */
+    public function pollLivePunch(AttendanceClockDevice $device, Carbon $since, bool $apply = false): array
+    {
+        $this->assertFeature($device, 'events');
+        $to = AppTimezone::now();
+        $client = $this->client($device);
+        $caps = $device->capabilities_json ?? null;
+        $events = $client->fetchAccessEvents($since, $to, 50, is_array($caps) ? $caps : null);
+
+        $fingerprintEvents = array_values(array_filter(
+            $events,
+            static fn ($event) => str_contains(
+                strtolower((string) ($event['verification_method'] ?? '')),
+                'finger',
+            ),
+        ));
+
+        $latestFp = $fingerprintEvents !== [] ? $fingerprintEvents[count($fingerprintEvents) - 1] : null;
+        $latest = $latestFp ?? ($events !== [] ? $events[count($events) - 1] : null);
+
+        $result = [
+            'since' => $since->toIso8601String(),
+            'events' => $events,
+            'latest' => $latest,
+            'fingerprint_detected' => $latestFp !== null,
+        ];
+
+        if ($apply && $latest !== null) {
+            $result['applied'] = $this->ingestAgentEvents($device, [$latest]);
+        }
+
+        return $result;
+    }
+
+    /**
      * @return array{online: bool, device_info: array, capabilities: array, error?: string}
      */
     public function connect(AttendanceClockDevice $device, bool $refreshCapabilities = true): array

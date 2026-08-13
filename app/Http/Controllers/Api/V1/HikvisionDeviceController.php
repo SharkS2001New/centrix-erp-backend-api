@@ -32,6 +32,28 @@ class HikvisionDeviceController extends HrOrgResourceController
         return response()->json($this->hikvision->connect($device, refreshCapabilities: true));
     }
 
+    /**
+     * Poll recent device events for a live fingerprint / attendance test.
+     */
+    public function pollLivePunch(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'since' => 'nullable|date',
+            'apply' => 'nullable|boolean',
+        ]);
+
+        $since = isset($data['since'])
+            ? \Carbon\Carbon::parse($data['since'])
+            : \App\Support\AppTimezone::now()->subSeconds(20);
+
+        return response()->json($this->hikvision->pollLivePunch(
+            $device,
+            $since,
+            (bool) ($data['apply'] ?? false),
+        ));
+    }
+
     public function overview(string $id)
     {
         $device = $this->findHikvisionDevice($id);

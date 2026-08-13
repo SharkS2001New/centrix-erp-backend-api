@@ -1161,6 +1161,7 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.manage|admin.manage');
             Route::prefix('attendance-clock-devices/{id}/hikvision')->middleware('erp.permission:hr.manage|admin.manage')->group(function () {
                 Route::post('test-connection', [HikvisionDeviceController::class, 'testConnection']);
+                Route::post('test/live-punch', [HikvisionDeviceController::class, 'pollLivePunch']);
                 Route::get('overview', [HikvisionDeviceController::class, 'overview']);
                 Route::get('capabilities', [HikvisionDeviceController::class, 'capabilities']);
                 Route::post('users/search', [HikvisionDeviceController::class, 'searchUsers']);
