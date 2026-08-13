@@ -106,6 +106,15 @@ class UserPermissionService
             return $this->permissionAllowedByGate($permissionCode, $gate);
         }
 
+        foreach (config('permission_aliases', []) as $capability => $capabilityAliases) {
+            if (
+                in_array($permissionCode, $capabilityAliases, true)
+                && $this->hasDirectPermission($user, (string) $capability)
+            ) {
+                return $this->permissionAllowedByGate($permissionCode, $gate);
+            }
+        }
+
         if (
             preg_match('/^sales\.order_queue_.+\.view$/', $permissionCode) === 1
             && $this->hasDirectPermission($user, 'sales.orders.view')

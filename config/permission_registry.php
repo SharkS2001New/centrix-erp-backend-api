@@ -147,7 +147,7 @@ return [
             'label' => 'Inventory',
             'features' => [
                 'stock' => ['label' => 'Items currently in stock', 'actions' => ['view']],
-                'stock_take' => ['label' => 'Stock take', 'actions' => ['view', 'create', 'approve']],
+                'stock_take' => ['label' => 'Stock take', 'actions' => ['view', 'create', 'approve', 'reset']],
                 'movements' => ['label' => 'Inventory movements', 'actions' => ['view']],
                 'transfers' => ['label' => 'Stock transfers', 'actions' => ['view', 'create']],
                 'receipts' => ['label' => 'Goods received', 'actions' => ['view', 'create', 'approve']],

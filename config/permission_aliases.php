@@ -131,6 +131,7 @@ return [
         'inventory.adjustments.create',
         'inventory.stock_take.create',
         'inventory.stock_take.approve',
+        'inventory.stock_take.reset',
     ],
     'reports.view' => [
         'reports.hub.view',

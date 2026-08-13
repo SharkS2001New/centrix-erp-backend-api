@@ -164,4 +164,43 @@ class InventoryApprovalWorkflowTest extends TestCase
             'branch_id' => $clerk->branch_id,
         ]);
     }
+
+    public function test_stock_take_reset_requires_reset_permission(): void
+    {
+        $clerk = $this->userWithPermissions(['inventory.stock_take.create']);
+        $resetter = $this->userWithPermissions(['inventory.stock_take.reset']);
+        $product = Product::query()->firstOrFail();
+
+        $session = StockTakeSession::create([
+            'organization_id' => $clerk->organization_id,
+            'branch_id' => $clerk->branch_id,
+            'session_code' => 'ST-RESET-PERM-'.uniqid(),
+            'status' => 'in_progress',
+            'stock_location' => 'shop',
+            'started_by' => $clerk->id,
+        ]);
+
+        CurrentStock::query()->updateOrCreate(
+            ['product_code' => $product->product_code, 'branch_id' => $clerk->branch_id],
+            ['shop_quantity' => 12, 'store_quantity' => 0],
+        );
+
+        StockTakeLine::create([
+            'session_id' => $session->id,
+            'product_code' => $product->product_code,
+            'stock_location' => 'shop',
+            'system_quantity' => 12,
+            'counted_quantity' => 12,
+            'is_counted' => false,
+        ]);
+
+        Sanctum::actingAs($clerk);
+        $this->postJson("/api/v1/inventory/stock-take/{$session->id}/reset-stocks")
+            ->assertForbidden();
+
+        Sanctum::actingAs($resetter);
+        $this->postJson("/api/v1/inventory/stock-take/{$session->id}/reset-stocks")
+            ->assertOk()
+            ->assertJsonPath('lines_updated', 1);
+    }
 }

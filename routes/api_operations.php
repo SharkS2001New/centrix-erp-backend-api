@@ -242,7 +242,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('stock-take/{sessionId}/complete', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'complete']);
         });
 
-    Route::middleware(['erp.module:inventory', 'erp.permission:inventory.manage'])
+    Route::middleware(['erp.module:inventory', 'erp.permission:inventory.stock_take.reset'])
         ->prefix('inventory')
         ->group(function () {
             Route::post('stock-take/{sessionId}/reset-stocks', [\App\Http\Controllers\Api\V1\Operations\StockTakeOperationsController::class, 'resetStocks']);
