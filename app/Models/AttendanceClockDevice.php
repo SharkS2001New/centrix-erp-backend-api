@@ -86,7 +86,12 @@ class AttendanceClockDevice extends Model
     /** Org-scoped implicit route binding ({attendance_clock_device} legacy routes). */
     public function resolveRouteBinding($value, $field = null)
     {
-        $query = static::query()->where($field ?? $this->getRouteKeyName(), $value);
+        $key = $field ?? $this->getRouteKeyName();
+        if ($key === $this->getRouteKeyName() && (! ctype_digit((string) $value) || (int) $value < 1)) {
+            abort(404, 'Attendance clock device not found. It may have been removed or belongs to another organization.');
+        }
+
+        $query = static::query()->where($key, $value);
         $user = request()->user();
         $request = request();
 
@@ -95,6 +100,11 @@ class AttendanceClockDevice extends Model
                 ->scopeOrganization($query, $user, 'organization_id', $request);
         }
 
-        return $query->firstOrFail();
+        $device = $query->first();
+        if (! $device) {
+            abort(404, 'Attendance clock device not found. It may have been removed or belongs to another organization.');
+        }
+
+        return $device;
     }
 }

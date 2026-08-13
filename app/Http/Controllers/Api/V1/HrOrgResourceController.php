@@ -107,6 +107,9 @@ abstract class HrOrgResourceController extends Controller
     {
         $request = request();
         $resourceId = $this->resolveRouteResourceId($id);
+        if (! ctype_digit((string) $resourceId) || (int) $resourceId < 1) {
+            abort(404, $this->missingResourceMessage());
+        }
         $query = ($this->modelClass())::query()->where('id', (int) $resourceId);
         $user = $request->user();
         if ($user && $this->modelHasColumn('organization_id') && ! $this->shouldSkipOrganizationScope($user, $request)) {
@@ -142,6 +145,15 @@ abstract class HrOrgResourceController extends Controller
     protected function shouldSkipOrganizationScope($user, Request $request): bool
     {
         return (bool) ($user?->is_super_admin) && ! $request->attributes->get('acting_organization_id');
+    }
+
+    protected function missingResourceMessage(): string
+    {
+        if ($this->modelClass() === \App\Models\AttendanceClockDevice::class) {
+            return 'Attendance clock device not found. It may have been removed or belongs to another organization.';
+        }
+
+        return class_basename($this->modelClass()).' not found.';
     }
 
     /** @param  array<string, mixed>  $data */

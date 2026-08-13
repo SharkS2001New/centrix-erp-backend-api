@@ -143,6 +143,9 @@ class AttendanceClockPunchTest extends TestCase
             ->assertOk()
             ->assertJsonPath('id', $deviceId)
             ->assertJsonPath('device_no', 'TERMINAL-02');
+
+        $this->getJson('/api/v1/attendance-clock-devices/undefined')
+            ->assertNotFound();
     }
 
     public function test_super_admin_can_show_tenant_clock_device_via_platform_proxy(): void
