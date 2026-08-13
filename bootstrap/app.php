@@ -81,6 +81,13 @@ return Application::configure(basePath: dirname(__DIR__))
                 ], 404);
             }
 
+            if ($e->getModel() === \App\Models\AttendanceClockDevice::class) {
+                return response()->json([
+                    'message' => 'Attendance clock device not found. It may have been removed or belongs to another organization.',
+                    'code' => 'attendance_clock_device_not_found',
+                ], 404);
+            }
+
             return null;
         });
         $exceptions->renderable(function (AuthenticationException $e, Request $request) {

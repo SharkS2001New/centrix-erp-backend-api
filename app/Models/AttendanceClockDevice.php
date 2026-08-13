@@ -79,4 +79,19 @@ class AttendanceClockDevice extends Model
             return null;
         }
     }
+
+    /** Org-scoped implicit route binding ({attendance_clock_device} legacy routes). */
+    public function resolveRouteBinding($value, $field = null)
+    {
+        $query = static::query()->where($field ?? $this->getRouteKeyName(), $value);
+        $user = request()->user();
+        $request = request();
+
+        if ($user && ! ($user->is_super_admin && ! $request->attributes->get('acting_organization_id'))) {
+            app(\App\Services\Auth\UserAccessService::class)
+                ->scopeOrganization($query, $user, 'organization_id', $request);
+        }
+
+        return $query->firstOrFail();
+    }
 }

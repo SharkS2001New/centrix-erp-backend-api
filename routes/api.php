@@ -650,12 +650,14 @@ Route::prefix('v1')->group(function () {
                 Route::post('uoms/import-batch', [UomImportController::class, 'store']);
                 Route::post('categories/import-batch', [CategoryImportController::class, 'store']);
                 Route::post('sub-categories/import-batch', [SubCategoryImportController::class, 'store']);
-                Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class);
+                Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class)
+                    ->parameters(['attendance-mobile-devices' => 'id']);
                 Route::post(
                     'attendance-clock-devices/{id}/agent-package',
                     [AttendanceClockDeviceController::class, 'issueAgentPackage']
                 );
-                Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class);
+                Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
+                    ->parameters(['attendance-clock-devices' => 'id']);
                 Route::prefix('attendance')->group(function () {
                     Route::get('company-premises', [CompanyPremisesController::class, 'show']);
                     Route::post('company-premises', [CompanyPremisesController::class, 'update']);
@@ -1184,9 +1186,11 @@ Route::prefix('v1')->group(function () {
                 Route::post('agent/ingest-events', [HikvisionDeviceController::class, 'ingestAgentEvents']);
             });
             Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
+                ->parameters(['attendance-clock-devices' => 'id'])
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view|admin.manage'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage|admin.manage']);
             Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class)
+                ->parameters(['attendance-mobile-devices' => 'id'])
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view|admin.manage'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage|admin.manage']);
             Route::apiResource('organization-holidays', OrganizationHolidayController::class)

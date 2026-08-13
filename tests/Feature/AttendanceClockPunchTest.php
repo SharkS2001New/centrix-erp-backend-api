@@ -137,6 +137,32 @@ class AttendanceClockPunchTest extends TestCase
             ->assertJsonPath('host', '192.168.1.50')
             ->assertJsonPath('has_password', true)
             ->assertJsonMissingPath('password_encrypted');
+
+        $deviceId = (int) $res->json('id');
+        $this->getJson("/api/v1/attendance-clock-devices/{$deviceId}")
+            ->assertOk()
+            ->assertJsonPath('id', $deviceId)
+            ->assertJsonPath('device_no', 'TERMINAL-02');
+    }
+
+    public function test_super_admin_can_show_tenant_clock_device_via_platform_proxy(): void
+    {
+        $superAdmin = User::query()->where('is_super_admin', true)->where('is_active', true)->firstOrFail();
+
+        Sanctum::actingAs($superAdmin);
+
+        $device = AttendanceClockDevice::query()->create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'MOON-DEVICE',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.1.60',
+        ]);
+
+        $this->getJson("/api/v1/admin/organizations/{$this->org->id}/attendance-clock-devices/{$device->id}")
+            ->assertOk()
+            ->assertJsonPath('id', $device->id)
+            ->assertJsonPath('device_no', 'MOON-DEVICE');
     }
 
     public function test_issue_agent_package_returns_prefilled_config_and_token(): void

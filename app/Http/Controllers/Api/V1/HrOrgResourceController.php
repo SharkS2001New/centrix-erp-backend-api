@@ -37,7 +37,7 @@ abstract class HrOrgResourceController extends Controller
         $query = ($this->modelClass())::query();
         $user = $request->user();
 
-        if ($user && $this->modelHasColumn('organization_id')) {
+        if ($user && $this->modelHasColumn('organization_id') && ! $this->shouldSkipOrganizationScope($user, $request)) {
             $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
         }
 
@@ -105,16 +105,43 @@ abstract class HrOrgResourceController extends Controller
 
     protected function findScoped(string $id)
     {
-        $query = ($this->modelClass())::query()->where('id', (int) $id);
-        $user = request()->user();
-        if ($user && $this->modelHasColumn('organization_id')) {
-            $this->access()->scopeOrganization($query, $user, 'organization_id', request());
+        $request = request();
+        $resourceId = $this->resolveRouteResourceId($id);
+        $query = ($this->modelClass())::query()->where('id', (int) $resourceId);
+        $user = $request->user();
+        if ($user && $this->modelHasColumn('organization_id') && ! $this->shouldSkipOrganizationScope($user, $request)) {
+            $this->access()->scopeOrganization($query, $user, 'organization_id', $request);
         }
         if ($user && $this->modelHasColumn('branch_id')) {
             $this->access()->scopeBranchIfLimited($query, $user);
         }
 
         return $query->firstOrFail();
+    }
+
+    protected function resolveRouteResourceId(?string $fallback = null): string
+    {
+        $route = request()->route();
+        if ($route) {
+            foreach (['id', 'attendance_clock_device', 'attendance_mobile_device'] as $key) {
+                $value = $route->parameter($key);
+                if ($value === null || $value === '') {
+                    continue;
+                }
+                if (is_object($value) && method_exists($value, 'getKey')) {
+                    return (string) $value->getKey();
+                }
+
+                return (string) $value;
+            }
+        }
+
+        return (string) ($fallback ?? '');
+    }
+
+    protected function shouldSkipOrganizationScope($user, Request $request): bool
+    {
+        return (bool) ($user?->is_super_admin) && ! $request->attributes->get('acting_organization_id');
     }
 
     /** @param  array<string, mixed>  $data */
