@@ -279,4 +279,42 @@ class PermissionAliasTest extends TestCase
         $service = app(UserPermissionService::class);
         $this->assertTrue($service->hasPermission($user->fresh(), 'products.manage'));
     }
+
+    public function test_has_permission_without_gate_does_not_type_error_for_manager_app_users(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        PermissionMatrixService::ensure();
+
+        $role = Role::create([
+            'role_name' => 'Manager App Only',
+            'scope' => 'org',
+            'is_active' => true,
+        ]);
+
+        $managerAppId = (int) Permission::where('permission_code', 'mobile_manager.app.access')->value('id');
+        $this->assertNotNull($managerAppId);
+
+        DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $managerAppId,
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'manager_app_only',
+            'password' => Hash::make('password'),
+            'full_name' => 'Manager App Only',
+            'access_scope' => 'org',
+            'is_active' => true,
+        ]);
+
+        $service = app(UserPermissionService::class);
+
+        // Used by /erp/capabilities approval_permissions without a CapabilityGate.
+        $service->approvalCapabilitiesForUser($user->fresh());
+
+        $this->assertFalse($service->hasPermission($user->fresh(), 'sales.manage'));
+    }
 }
