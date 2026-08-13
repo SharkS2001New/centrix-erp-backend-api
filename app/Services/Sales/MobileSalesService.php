@@ -579,7 +579,20 @@ class MobileSalesService
     /** @return list<array<string, mixed>> */
     public function mapOrderItems(Sale $sale): array
     {
-        return $sale->items->map(function ($item) {
+        $returnMetaByItemId = [];
+        try {
+            $returnLines = app(CustomerReturnService::class)->linesFromSale($sale);
+            foreach ($returnLines as $line) {
+                $itemId = (int) ($line['sale_item_id'] ?? 0);
+                if ($itemId > 0) {
+                    $returnMetaByItemId[$itemId] = $line;
+                }
+            }
+        } catch (\Throwable) {
+            $returnMetaByItemId = [];
+        }
+
+        return $sale->items->map(function ($item) use ($returnMetaByItemId) {
             $product = $item->product;
             $isRetail = (bool) $item->on_wholesale_retail;
             $display = app(SaleLineQuantityDisplayService::class);
@@ -613,11 +626,21 @@ class MobileSalesService
                 )
                 : (float) $item->amount;
 
+            $meta = $returnMetaByItemId[(int) $item->id] ?? null;
+            $qty = (float) $item->quantity;
+            // Prefer remaining returnable qty; fall back to sold qty for older clients.
+            $maxReturnQty = $meta !== null
+                ? (float) ($meta['max_return_qty'] ?? $qty)
+                : $qty;
+            $alreadyReturned = $meta !== null
+                ? (float) ($meta['already_returned'] ?? 0)
+                : 0.0;
+
             return [
                 'sale_item_id' => (int) $item->id,
                 'product_code' => $item->product_code,
                 'product_name' => $product?->product_name ?? $item->product_code,
-                'qty' => (float) $item->quantity,
+                'qty' => $qty,
                 'qtyDisp' => $qtyDisp,
                 'uom' => $item->uom,
                 'unit_price' => $displayUnitPrice,
@@ -626,6 +649,8 @@ class MobileSalesService
                 'product_vat' => (float) $item->product_vat,
                 'amount' => $displayAmount,
                 'sell_on_retail' => (int) $item->on_wholesale_retail,
+                'max_return_qty' => round($maxReturnQty, 4),
+                'already_returned' => round($alreadyReturned, 4),
             ];
         })->values()->all();
     }
