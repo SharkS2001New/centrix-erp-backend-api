@@ -473,10 +473,42 @@ class HikvisionIsapiClient
             throw new RuntimeException('Device host is not a valid private or local address.');
         }
         $scheme = $this->device->use_https ? 'https' : 'http';
-        $port = (int) ($this->device->port ?: ($this->device->use_https ? 443 : 80));
+        $port = self::resolvePort($this->device);
         $path = '/'.ltrim($path, '/');
 
         return "{$scheme}://{$host}:{$port}{$path}";
+    }
+
+    /**
+     * Hikvision ISAPI defaults: HTTP 80, HTTPS 443.
+     * Port 8000 is a common mistake (Centrix/Laravel dev server) — treat as 80 for HTTP.
+     */
+    public static function resolvePort(AttendanceClockDevice $device): int
+    {
+        $useHttps = (bool) $device->use_https;
+        $stored = $device->port;
+        if ($stored === null || $stored === '') {
+            return $useHttps ? 443 : 80;
+        }
+
+        $port = (int) $stored;
+        if ($port === 8000 && ! $useHttps) {
+            return 80;
+        }
+
+        return $port;
+    }
+
+    public static function normalizeStoredPort(?int $port, bool $useHttps = false): ?int
+    {
+        if ($port === null) {
+            return null;
+        }
+        if ($port === 8000 && ! $useHttps) {
+            return 80;
+        }
+
+        return $port;
     }
 
     protected function isAllowedHost(string $host): bool

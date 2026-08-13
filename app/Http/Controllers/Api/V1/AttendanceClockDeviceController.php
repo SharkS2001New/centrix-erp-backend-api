@@ -2,8 +2,10 @@
 
 namespace App\Http\Controllers\Api\V1;
 
+use App\Models\AttendanceClockDevice;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Crypt;
+use App\Services\Attendance\Hikvision\HikvisionIsapiClient;
 
 class AttendanceClockDeviceController extends HrOrgResourceController
 {
@@ -51,6 +53,15 @@ class AttendanceClockDeviceController extends HrOrgResourceController
             $data['provider'] = ! empty($data['host']) ? 'hikvision' : 'generic';
         }
 
+        if (($data['provider'] ?? null) === 'hikvision' || ($updating && array_key_exists('port', $data))) {
+            $useHttps = (bool) ($data['use_https'] ?? false);
+            if (array_key_exists('port', $data) && $data['port'] !== null) {
+                $data['port'] = HikvisionIsapiClient::normalizeStoredPort((int) $data['port'], $useHttps);
+            } elseif (! $updating && ! empty($data['host']) && empty($data['port'])) {
+                $data['port'] = $useHttps ? 443 : 80;
+            }
+        }
+
         return $data;
     }
 
@@ -75,18 +86,19 @@ class AttendanceClockDeviceController extends HrOrgResourceController
         ]);
 
         $host = filled($data['host'] ?? null) ? trim((string) $data['host']) : $device->host;
+        $useHttps = array_key_exists('use_https', $data)
+            ? (bool) $data['use_https']
+            : (bool) $device->use_https;
         $port = array_key_exists('port', $data) && $data['port'] !== null
             ? (int) $data['port']
-            : ($device->port ?: 80);
+            : ($device->port ?: ($useHttps ? 443 : 80));
+        $port = HikvisionIsapiClient::normalizeStoredPort($port, $useHttps) ?? $port;
         $username = filled($data['username'] ?? null)
             ? trim((string) $data['username'])
             : ($device->username ?: 'admin');
         $password = filled($data['password'] ?? null)
             ? (string) $data['password']
             : ($device->plainPassword() ?? '');
-        $useHttps = array_key_exists('use_https', $data)
-            ? (bool) $data['use_https']
-            : (bool) $device->use_https;
 
         if (($data['persist_device'] ?? true) === true) {
             $dirty = false;

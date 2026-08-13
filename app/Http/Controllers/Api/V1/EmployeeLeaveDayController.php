@@ -41,6 +41,10 @@ class EmployeeLeaveDayController extends HrOrgResourceController
             $query->where('assignment_kind', $kind);
         }
 
+        if ($status = $request->input('approval_status')) {
+            $query->where('approval_status', $status);
+        }
+
         $perPage = min((int) $request->input('per_page', 25), 200);
         $paginator = $query->orderByDesc('start_date')->paginate($perPage);
         $viewer = $request->user();

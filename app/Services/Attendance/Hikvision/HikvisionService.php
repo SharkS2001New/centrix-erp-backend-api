@@ -90,6 +90,14 @@ class HikvisionService
             $device->last_communication_at = AppTimezone::now();
             $device->last_sync_error = null;
 
+            $normalizedPort = HikvisionIsapiClient::normalizeStoredPort(
+                $device->port !== null ? (int) $device->port : null,
+                (bool) $device->use_https,
+            );
+            if ($normalizedPort !== null && $normalizedPort !== (int) $device->port) {
+                $device->port = $normalizedPort;
+            }
+
             $capabilities = $device->capabilities_json ?? [];
             if ($refreshCapabilities) {
                 $capabilities = $client->discoverCapabilities();
@@ -103,18 +111,48 @@ class HikvisionService
                 'online' => true,
                 'device_info' => $info,
                 'capabilities' => $capabilities,
+                'resolved_port' => HikvisionIsapiClient::resolvePort($device),
             ];
         } catch (\Throwable $e) {
-            $device->last_sync_error = mb_substr($e->getMessage(), 0, 500);
+            $message = self::formatConnectionError($device, $e);
+            $device->last_sync_error = mb_substr($message, 0, 500);
             $device->save();
 
             return [
                 'online' => false,
                 'device_info' => $device->device_info_json ?? [],
                 'capabilities' => $device->capabilities_json ?? [],
-                'error' => $e->getMessage(),
+                'error' => $message,
+                'resolved_port' => HikvisionIsapiClient::resolvePort($device),
             ];
         }
+    }
+
+    protected static function formatConnectionError(AttendanceClockDevice $device, \Throwable $e): string
+    {
+        $raw = $e->getMessage();
+        $port = HikvisionIsapiClient::resolvePort($device);
+        $storedPort = $device->port;
+        $hints = [];
+
+        if ($storedPort === 8000 && ! $device->use_https) {
+            $hints[] = 'Port 8000 is usually wrong for Hikvision — ISAPI HTTP uses port 80 (saved value will be corrected automatically on success).';
+        }
+        if (str_contains($raw, 'Failed to connect') || str_contains($raw, 'cURL error 28')) {
+            $hints[] = "Could not reach {$device->host}:{$port}. The Centrix API must run on the same LAN as the terminal, or use the Attendance Agent on an office PC.";
+            if ($port !== 80 && ! $device->use_https) {
+                $hints[] = 'Verify the device HTTP port is 80 (not the Centrix API port 8000).';
+            }
+        }
+        if (str_contains($raw, '401') || str_contains($raw, 'Unauthorized')) {
+            $hints[] = 'Check the device username and password.';
+        }
+
+        if ($hints === []) {
+            return $raw;
+        }
+
+        return $raw.' '.implode(' ', $hints);
     }
 
     /**

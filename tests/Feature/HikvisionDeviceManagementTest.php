@@ -6,6 +6,7 @@ use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\AttendanceClockDevice;
 use App\Models\Organization;
 use App\Models\User;
+use App\Services\Attendance\Hikvision\HikvisionIsapiClient;
 use App\Services\Attendance\Hikvision\HikvisionService;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
@@ -79,6 +80,52 @@ class HikvisionDeviceManagementTest extends TestCase
         $response->assertOk();
         $response->assertJsonPath('online', true);
         $this->assertNotEmpty($response->json('capabilities'));
+    }
+
+    public function test_hikvision_resolves_misconfigured_port_8000_to_80(): void
+    {
+        $device = new AttendanceClockDevice([
+            'host' => '192.168.100.215',
+            'port' => 8000,
+            'use_https' => false,
+            'provider' => 'hikvision',
+        ]);
+
+        $this->assertSame(80, HikvisionIsapiClient::resolvePort($device));
+        $this->assertSame(80, HikvisionIsapiClient::normalizeStoredPort(8000, false));
+    }
+
+    public function test_test_connection_hits_port_80_when_saved_port_is_8000(): void
+    {
+        Http::fake([
+            'http://192.168.100.215/*' => Http::sequence()
+                ->push('<DeviceInfo><deviceName>Terminal</deviceName><model>DS-K1T904AMF</model></DeviceInfo>', 200)
+                ->push(['UserInfoCount' => ['userNumber' => 1]], 200)
+                ->push(['AcsEventCap' => ['eventAttribute' => ['attendance']]], 200)
+                ->push(['AcsEventTotalNumCap' => ['supported' => true]], 200)
+                ->push([], 404),
+        ]);
+
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-PORT',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 8000,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $response = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/test-connection");
+
+        $response->assertOk();
+        $response->assertJsonPath('online', true);
+        $response->assertJsonPath('resolved_port', 80);
+        $this->assertSame(80, $device->fresh()->port);
     }
 
     public function test_agent_ingest_events_is_idempotent(): void
