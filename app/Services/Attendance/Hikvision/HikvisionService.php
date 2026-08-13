@@ -64,7 +64,8 @@ class HikvisionService
      */
     public function pollLivePunch(AttendanceClockDevice $device, Carbon $since, bool $apply = false): array
     {
-        $this->assertFeature($device, 'events');
+        // Do not require cached features.events — capabilities may be empty until the agent
+        // has run a full discovery. DS-K1T terminals expose AcsEvent for attendance.
         $to = AppTimezone::now();
         $client = $this->client($device);
         $caps = $device->capabilities_json ?? null;
@@ -86,6 +87,8 @@ class HikvisionService
             'events' => $events,
             'latest' => $latest,
             'fingerprint_detected' => $latestFp !== null,
+            'via_agent' => $client->lastRequestViaAgent(),
+            'agent' => $this->agentBridge->agentStatus($device->fresh() ?? $device),
         ];
 
         if ($apply && $latest !== null) {

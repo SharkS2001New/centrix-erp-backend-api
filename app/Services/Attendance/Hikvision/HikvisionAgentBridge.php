@@ -17,7 +17,7 @@ class HikvisionAgentBridge
 
     public const AGENT_ONLINE_SECONDS = 90;
 
-    public const COMMAND_WAIT_SECONDS = 35;
+    public const COMMAND_WAIT_SECONDS = 45;
 
     public const PING_PATH = '/agent/ping';
 
