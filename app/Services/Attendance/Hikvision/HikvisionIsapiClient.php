@@ -638,7 +638,9 @@ class HikvisionIsapiClient
 
         return Http::timeout(25)
             ->connectTimeout(8)
-            ->retry(2, 500, throw: false)
+            ->retry(2, 500, function ($exception) {
+                return $exception instanceof \Illuminate\Http\Client\ConnectionException;
+            }, throw: false)
             ->withDigestAuth($username, $password)
             ->withOptions(['verify' => false])
             ->acceptJson();
