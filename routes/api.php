@@ -2,6 +2,7 @@
 
 use App\Http\Controllers\Api\V1\AiSettingsController;
 use App\Http\Controllers\Api\V1\AttendanceClockDeviceController;
+use App\Http\Controllers\Api\V1\HikvisionDeviceController;
 use App\Http\Controllers\Api\V1\AttendanceMobileDeviceController;
 use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
@@ -1158,6 +1159,22 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::post('attendance-clock-devices/{id}/agent-package', [AttendanceClockDeviceController::class, 'issueAgentPackage'])
                 ->middleware('erp.permission:hr.manage|admin.manage');
+            Route::prefix('attendance-clock-devices/{id}/hikvision')->middleware('erp.permission:hr.manage|admin.manage')->group(function () {
+                Route::post('test-connection', [HikvisionDeviceController::class, 'testConnection']);
+                Route::get('overview', [HikvisionDeviceController::class, 'overview']);
+                Route::get('capabilities', [HikvisionDeviceController::class, 'capabilities']);
+                Route::post('users/search', [HikvisionDeviceController::class, 'searchUsers']);
+                Route::post('users', [HikvisionDeviceController::class, 'createUser']);
+                Route::delete('users', [HikvisionDeviceController::class, 'deleteUsers']);
+                Route::post('cards/search', [HikvisionDeviceController::class, 'searchCards']);
+                Route::get('fingerprints/capabilities', [HikvisionDeviceController::class, 'fingerprintCapabilities']);
+                Route::post('events/search', [HikvisionDeviceController::class, 'searchEvents']);
+                Route::get('events/stored', [HikvisionDeviceController::class, 'storedEvents']);
+                Route::post('sync/employees-to-device', [HikvisionDeviceController::class, 'syncEmployeesToDevice']);
+                Route::get('sync/employees-from-device', [HikvisionDeviceController::class, 'syncEmployeesFromDevice']);
+                Route::post('sync/employees/map', [HikvisionDeviceController::class, 'mapEmployee']);
+                Route::post('sync/attendance', [HikvisionDeviceController::class, 'syncAttendance']);
+            });
             Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view|admin.manage'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage|admin.manage']);

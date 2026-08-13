@@ -28,6 +28,7 @@ class AttendanceClockDeviceController extends HrOrgResourceController
         $data = $request->validate([
             'organization_id' => ($updating ? 'sometimes|' : '') . 'integer|exists:organizations,id',
             'device_no' => $req . 'string|max:50',
+            'device_name' => 'nullable|string|max:200',
             'location' => 'nullable|string|max:200',
             'is_active' => 'nullable|boolean',
             'provider' => 'nullable|in:generic,hikvision',

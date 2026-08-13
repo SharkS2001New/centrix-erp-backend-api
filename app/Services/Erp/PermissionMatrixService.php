@@ -20,7 +20,7 @@ class PermissionMatrixService
     /** @return list<string> */
     public static function actions(): array
     {
-        return ['view', 'create', 'edit', 'delete', 'approve', 'give', 'deliver'];
+        return ['view', 'create', 'edit', 'delete', 'approve', 'reset', 'give', 'deliver'];
     }
 
     /** @return list<string> */
@@ -56,6 +56,7 @@ class PermissionMatrixService
             self::ensureSalesOrderApproveForAdminRoles();
             self::ensureDiscountApprovalsForAdminRoles();
             self::ensureLpoApproveForAdminRoles();
+            self::ensureStockTakeResetForAdminRoles();
             self::ensureNotificationsForBackofficeRoles();
             // Shared Administrator must keep every industry shell (commerce + hospitality).
             // Without this, hotel tenants only see Administration after the is_admin
@@ -638,6 +639,12 @@ class PermissionMatrixService
     public static function ensureLpoApproveForAdminRoles(): void
     {
         self::ensureCodesForAdminRoles(['purchasing.lpo.approve']);
+    }
+
+    /** Administrator roles should be able to zero stocks before a stock take count. */
+    public static function ensureStockTakeResetForAdminRoles(): void
+    {
+        self::ensureCodesForAdminRoles(['inventory.stock_take.reset']);
     }
 
     /**

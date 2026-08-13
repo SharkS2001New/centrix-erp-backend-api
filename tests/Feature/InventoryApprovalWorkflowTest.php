@@ -203,4 +203,40 @@ class InventoryApprovalWorkflowTest extends TestCase
             ->assertOk()
             ->assertJsonPath('lines_updated', 1);
     }
+
+    public function test_org_admin_can_reset_stock_take_stocks_without_reset_permission(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $orgAdmin = $this->userWithPermissions(['inventory.stock_take.create']);
+        $orgAdmin->forceFill(['is_admin' => true])->save();
+
+        $product = Product::query()->firstOrFail();
+        $session = StockTakeSession::create([
+            'organization_id' => $orgAdmin->organization_id,
+            'branch_id' => $orgAdmin->branch_id,
+            'session_code' => 'ST-RESET-ORG-'.uniqid(),
+            'status' => 'in_progress',
+            'stock_location' => 'shop',
+            'started_by' => $orgAdmin->id,
+        ]);
+
+        CurrentStock::query()->updateOrCreate(
+            ['product_code' => $product->product_code, 'branch_id' => $orgAdmin->branch_id],
+            ['shop_quantity' => 8, 'store_quantity' => 0],
+        );
+
+        StockTakeLine::create([
+            'session_id' => $session->id,
+            'product_code' => $product->product_code,
+            'stock_location' => 'shop',
+            'system_quantity' => 8,
+            'counted_quantity' => 8,
+            'is_counted' => false,
+        ]);
+
+        Sanctum::actingAs($orgAdmin);
+        $this->postJson("/api/v1/inventory/stock-take/{$session->id}/reset-stocks")
+            ->assertOk()
+            ->assertJsonPath('lines_updated', 1);
+    }
 }

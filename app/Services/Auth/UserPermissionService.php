@@ -130,8 +130,19 @@ class UserPermissionService
             }
         }
 
-        if ($gate !== null && $this->managerSessionGrantsPermission($user, $permissionCode, $gate)) {
+        if ($this->managerSessionGrantsPermission($user, $permissionCode, $gate)) {
             return true;
+        }
+
+        if (
+            $permissionCode === 'inventory.stock_take.reset'
+            && $this->canDirectInventoryAction($user)
+        ) {
+            return $gate === null || PermissionMatrixService::permissionModuleEnabled(
+                $permissionCode,
+                'inventory',
+                $gate,
+            );
         }
 
         return false;
