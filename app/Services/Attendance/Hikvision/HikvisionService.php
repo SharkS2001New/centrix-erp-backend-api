@@ -44,6 +44,14 @@ class HikvisionService
     }
 
     /**
+     * @return array{online: bool, agent: array, error?: string, message?: string}
+     */
+    public function testAgentConnection(AttendanceClockDevice $device): array
+    {
+        return $this->agentBridge->pingAgent($device);
+    }
+
+    /**
      * Poll the terminal for a punch since the given time (live fingerprint test).
      *
      * @return array{

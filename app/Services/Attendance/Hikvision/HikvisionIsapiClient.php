@@ -3,6 +3,8 @@
 namespace App\Services\Attendance\Hikvision;
 
 use App\Models\AttendanceClockDevice;
+use App\Support\AppTimezone;
+use Carbon\Carbon;
 use Illuminate\Http\Client\PendingRequest;
 use Illuminate\Http\Client\Response;
 use Illuminate\Support\Facades\Http;
@@ -345,6 +347,13 @@ class HikvisionIsapiClient
      */
     public function countEvents(array $cond): int
     {
+        $cond = array_merge(
+            [
+                'major' => 0,
+                'minor' => 0,
+            ],
+            $cond,
+        );
         $body = ['AcsEventTotalNumCond' => $cond];
         $payload = $this->postJson('/ISAPI/AccessControl/AcsEventTotalNum?format=json', $body);
 
@@ -353,6 +362,17 @@ class HikvisionIsapiClient
             ?? $payload['AcsEventTotalNum']['TotalNum']
             ?? 0
         );
+    }
+
+    /**
+     * Hikvision AcsEvent datetime: no milliseconds, never trailing Z (devices reject it).
+     */
+    public static function formatAcsEventDateTime(\DateTimeInterface $dt, bool $withOffset = true): string
+    {
+        $local = Carbon::parse($dt)->timezone(AppTimezone::name());
+        $formatted = $local->format($withOffset ? 'Y-m-d\TH:i:sP' : 'Y-m-d\TH:i:s');
+
+        return str_replace('Z', '+00:00', $formatted);
     }
 
     /**
@@ -365,31 +385,24 @@ class HikvisionIsapiClient
         ?array $capabilities = null,
     ): array {
         $maxPage = $this->resolveMaxResultsPerPage($capabilities);
-        $searchId = (string) Str::uuid();
+        $searchId = substr(str_replace('-', '', (string) Str::uuid()), 0, 16);
         $position = 0;
         $events = [];
-
-        $baseCond = [
-            'searchID' => $searchId,
-            'startTime' => $from->format('Y-m-d\TH:i:sP'),
-            'endTime' => $to->format('Y-m-d\TH:i:sP'),
-        ];
-
-        if ($capabilities !== null) {
-            // Do not hard-code minor codes — use capability hints when present.
-            $baseCond = array_merge($baseCond, $this->eventSearchDefaultsFromCapabilities($capabilities));
-        }
+        $resolvedCond = null;
 
         do {
-            $body = [
-                'AcsEventCond' => array_merge($baseCond, [
-                    'searchResultPosition' => $position,
-                    'maxResults' => min($maxPage, $maxResults - count($events)),
-                ]),
-            ];
-
-            $payload = $this->postJson('/ISAPI/AccessControl/AcsEvent?format=json', $body);
-            $acs = $payload['AcsEvent'] ?? $payload;
+            $pageMax = min($maxPage, max(1, $maxResults - count($events)));
+            $payload = $this->postAcsEventSearch(
+                $from,
+                $to,
+                $searchId,
+                $position,
+                $pageMax,
+                $capabilities,
+                $resolvedCond,
+            );
+            $resolvedCond = $payload['cond'];
+            $acs = $payload['response']['AcsEvent'] ?? $payload['response'];
             $list = $acs['InfoList'] ?? $acs['infoList'] ?? [];
             if (! is_array($list)) {
                 $list = [];
@@ -418,6 +431,101 @@ class HikvisionIsapiClient
         } while (count($events) < $maxResults);
 
         return $events;
+    }
+
+    /**
+     * DS-K1T terminals require major/minor. eventAttribute and timezone offsets vary by firmware.
+     *
+     * @param  array<string, mixed>|null  $capabilities
+     * @param  array<string, mixed>|null  $resolvedCond
+     * @return array{response: array<string, mixed>, cond: array<string, mixed>}
+     */
+    protected function postAcsEventSearch(
+        \DateTimeInterface $from,
+        \DateTimeInterface $to,
+        string $searchId,
+        int $position,
+        int $maxResults,
+        ?array $capabilities,
+        ?array $resolvedCond,
+    ): array {
+        $candidates = $resolvedCond !== null
+            ? [$resolvedCond]
+            : $this->acsEventCondCandidates($from, $to, $capabilities);
+
+        $lastError = null;
+        foreach ($candidates as $baseCond) {
+            $cond = array_merge($baseCond, [
+                'searchID' => $searchId,
+                'searchResultPosition' => $position,
+                'maxResults' => $maxResults,
+            ]);
+            try {
+                $response = $this->postJson('/ISAPI/AccessControl/AcsEvent?format=json', [
+                    'AcsEventCond' => $cond,
+                ]);
+
+                return ['response' => $response, 'cond' => $baseCond];
+            } catch (\Throwable $e) {
+                $lastError = $e;
+                if ($resolvedCond !== null || ! $this->isRetryableAcsEventError($e)) {
+                    throw $e;
+                }
+            }
+        }
+
+        throw $lastError ?? new RuntimeException('Hikvision AcsEvent search failed.');
+    }
+
+    /**
+     * @param  array<string, mixed>|null  $capabilities
+     * @return list<array<string, mixed>>
+     */
+    protected function acsEventCondCandidates(
+        \DateTimeInterface $from,
+        \DateTimeInterface $to,
+        ?array $capabilities,
+    ): array {
+        $capabilityFilters = $this->eventSearchDefaultsFromCapabilities($capabilities ?? []);
+        $offsetTimes = [
+            'startTime' => self::formatAcsEventDateTime($from, true),
+            'endTime' => self::formatAcsEventDateTime($to, true),
+        ];
+        $naiveTimes = [
+            'startTime' => self::formatAcsEventDateTime($from, false),
+            'endTime' => self::formatAcsEventDateTime($to, false),
+        ];
+
+        $withAttr = array_merge(['major' => 0, 'minor' => 0], $capabilityFilters);
+        $withoutAttr = ['major' => 0, 'minor' => 0];
+
+        $candidates = [
+            array_merge($offsetTimes, $withAttr),
+            array_merge($offsetTimes, $withoutAttr),
+            array_merge($naiveTimes, $withoutAttr),
+        ];
+
+        $unique = [];
+        $seen = [];
+        foreach ($candidates as $cond) {
+            $key = json_encode($cond);
+            if (isset($seen[$key])) {
+                continue;
+            }
+            $seen[$key] = true;
+            $unique[] = $cond;
+        }
+
+        return $unique;
+    }
+
+    protected function isRetryableAcsEventError(\Throwable $e): bool
+    {
+        $msg = strtolower($e->getMessage());
+
+        return str_contains($msg, 'badparameters')
+            || str_contains($msg, 'invalid content')
+            || str_contains($msg, '0x60000001');
     }
 
     // ------------------------------------------------------------------
@@ -666,16 +774,18 @@ class HikvisionIsapiClient
      */
     protected function eventSearchDefaultsFromCapabilities(array $capabilities): array
     {
-        $defaults = [];
+        $defaults = ['eventAttribute' => 'attendance'];
         $payload = $capabilities['events']['payload'] ?? [];
         $attrs = data_get($payload, 'AcsEventCap.eventAttribute')
             ?? data_get($payload, 'GetAcsEventCap.eventAttribute')
             ?? null;
-        if (is_array($attrs)) {
-            $flat = array_map('strval', $attrs);
-            if (in_array('attendance', $flat, true)) {
-                $defaults['eventAttribute'] = 'attendance';
-            }
+        if ($attrs === null) {
+            return $defaults;
+        }
+
+        $haystack = strtolower(is_array($attrs) ? implode(' ', array_map('strval', $attrs)) : (string) $attrs);
+        if (! str_contains($haystack, 'attendance')) {
+            unset($defaults['eventAttribute']);
         }
 
         return $defaults;

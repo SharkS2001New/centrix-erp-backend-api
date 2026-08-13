@@ -29,7 +29,7 @@ class HikvisionDeviceController extends HrOrgResourceController
     {
         $device = $this->findHikvisionDevice($id);
 
-        return response()->json($this->hikvision->connect($device, refreshCapabilities: true));
+        return response()->json($this->hikvision->testAgentConnection($device));
     }
 
     /**
