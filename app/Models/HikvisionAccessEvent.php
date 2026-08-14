@@ -10,6 +10,8 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 class HikvisionAccessEvent extends Model
 {
+    public const DUPLICATE_PUNCH = 'duplicate_punch';
+
     public $timestamps = false;
 
     protected $table = 'hikvision_access_events';

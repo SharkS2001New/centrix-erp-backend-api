@@ -62,11 +62,16 @@ class HikvisionAttendanceSyncService
             $events = $client->fetchAccessEvents($from, $to, 1000, is_array($caps) ? $caps : null);
             $result['via_agent'] = $client->lastRequestViaAgent();
         } catch (\Throwable $e) {
+            $retryResult = $this->reprocessPendingEvents($device);
             $device->last_synced_at = AppTimezone::now();
             $device->last_sync_error = mb_substr($e->getMessage(), 0, 500);
             $device->save();
 
-            return array_merge($result, ['errors' => [$e->getMessage()]]);
+            return $this->mergeProcessResults(
+                array_merge($result, ['errors' => [$e->getMessage()]]),
+                ['stored' => 0, 'applied' => 0, 'skipped' => 0, 'retried' => 0, 'errors' => []],
+                $retryResult,
+            );
         }
 
         $result['pulled'] = count($events);
@@ -75,6 +80,64 @@ class HikvisionAttendanceSyncService
         $processResult = $this->processEvents($device, $events);
 
         return $this->mergeProcessResults($result, $processResult, $retryResult);
+    }
+
+    /**
+     * Pull and apply punches for every active Hikvision clock in the organization.
+     *
+     * @return array{
+     *   devices: int,
+     *   pulled: int,
+     *   stored: int,
+     *   applied: int,
+     *   skipped: int,
+     *   retried: int,
+     *   offline: int,
+     *   errors: list<string>
+     * }
+     */
+    public function syncOrganization(int $organizationId, ?Carbon $from = null, ?Carbon $to = null): array
+    {
+        $devices = AttendanceClockDevice::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->where('provider', 'hikvision')
+            ->whereNotNull('host')
+            ->where('host', '!=', '')
+            ->orderBy('id')
+            ->get();
+
+        $summary = [
+            'devices' => $devices->count(),
+            'pulled' => 0,
+            'stored' => 0,
+            'applied' => 0,
+            'skipped' => 0,
+            'retried' => 0,
+            'offline' => 0,
+            'errors' => [],
+        ];
+
+        foreach ($devices as $device) {
+            $result = $this->syncDevice($device, $from, $to);
+            $summary['pulled'] += (int) ($result['pulled'] ?? 0);
+            $summary['stored'] += (int) ($result['stored'] ?? 0);
+            $summary['applied'] += (int) ($result['applied'] ?? 0);
+            $summary['skipped'] += (int) ($result['skipped'] ?? 0);
+            $summary['retried'] += (int) ($result['retried'] ?? 0);
+            $errors = $result['errors'] ?? [];
+            foreach ($errors as $error) {
+                $label = trim((string) ($device->device_name ?: $device->device_no));
+                $summary['errors'][] = $label !== '' ? "{$label}: {$error}" : (string) $error;
+                if (str_contains((string) $error, 'CentrixAttendanceAgent')) {
+                    $summary['offline']++;
+                }
+            }
+        }
+
+        $summary['errors'] = array_slice($summary['errors'], 0, 20);
+
+        return $summary;
     }
 
     /**
@@ -243,10 +306,9 @@ class HikvisionAttendanceSyncService
             }
 
             if ($this->sameHourAlreadyApplied($device, (string) ($event['employee_no'] ?? $stored->employee_no ?? ''), $punchedAt, (int) $stored->id)) {
-                $stored->processed_at = AppTimezone::now();
-                $stored->process_error = null;
-                $stored->save();
+                $this->markEventAsDuplicatePunch($stored);
                 $result['skipped']++;
+                $result['duplicates'] = ($result['duplicates'] ?? 0) + 1;
 
                 continue;
             }
@@ -272,10 +334,9 @@ class HikvisionAttendanceSyncService
             } catch (ValidationException $e) {
                 $msg = collect($e->errors())->flatten()->first() ?? $e->getMessage();
                 if (is_string($msg) && str_contains(strtolower($msg), 'already has an open')) {
-                    $stored->processed_at = AppTimezone::now();
-                    $stored->process_error = null;
-                    $stored->save();
+                    $this->markEventAsDuplicatePunch($stored);
                     $result['skipped']++;
+                    $result['duplicates'] = ($result['duplicates'] ?? 0) + 1;
                 } else {
                     $stored->process_error = mb_substr((string) $msg, 0, 500);
                     $stored->save();
@@ -359,9 +420,16 @@ class HikvisionAttendanceSyncService
             ->whereBetween('event_time', [$start, $end])
             ->update([
                 'processed_at' => AppTimezone::now(),
-                'process_error' => null,
+                'process_error' => HikvisionAccessEvent::DUPLICATE_PUNCH,
                 'clock_session_id' => $sessionId,
             ]);
+    }
+
+    protected function markEventAsDuplicatePunch(HikvisionAccessEvent $stored): void
+    {
+        $stored->processed_at = AppTimezone::now();
+        $stored->process_error = HikvisionAccessEvent::DUPLICATE_PUNCH;
+        $stored->save();
     }
 
     /**

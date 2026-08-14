@@ -20,8 +20,9 @@ class AttendanceMissedPunchesService
     /**
      * @return array{
      *     unapplied_terminal_punches: list<array<string, mixed>>,
+     *     duplicate_punches: list<array<string, mixed>>,
      *     missing_clock_out: list<array<string, mixed>>,
-     *     counts: array{unapplied_terminal_punches: int, missing_clock_out: int}
+     *     counts: array{unapplied_terminal_punches: int, duplicate_punches: int, missing_clock_out: int}
      * }
      */
     public function listForOrganization(int $organizationId): array
@@ -31,10 +32,11 @@ class AttendanceMissedPunchesService
             ->where('organization_id', $organizationId)
             ->whereNull('processed_at')
             ->orderByDesc('event_time')
-            ->limit(200)
+            ->limit(400)
             ->get();
 
         $unapplied = [];
+        $duplicates = [];
         $seenHour = [];
         foreach ($events as $row) {
             HikvisionEventNormalizer::present($row);
@@ -44,25 +46,36 @@ class AttendanceMissedPunchesService
                 (string) $row->employee_no,
                 $at?->timezone(AppTimezone::name())->format('Y-m-d H') ?? (string) $row->id,
             ]);
+            $payload = $this->presentEvent($row);
             if (isset($seenHour[$hourKey])) {
+                $payload['process_error'] = 'Extra scan in the same hour as another punch that still needs mapping.';
+                $duplicates[] = $payload;
+
                 continue;
             }
             $seenHour[$hourKey] = true;
-            $unapplied[] = [
-                'id' => $row->id,
-                'event_key' => $row->event_key,
-                'event_time' => $row->event_time,
-                'event_time_local' => $row->event_time_local ?? null,
-                'employee_no' => $row->employee_no,
-                'employee_name' => $row->employee_name,
-                'attendance_status' => $row->attendance_status,
-                'verification_method' => $row->verification_method,
-                'process_error' => $row->process_error,
-                'device_id' => $row->attendance_clock_device_id,
-                'device_no' => $row->device?->device_no,
-                'device_location' => $row->device?->location,
-            ];
+            $unapplied[] = $payload;
         }
+
+        $loggedDuplicates = HikvisionAccessEvent::query()
+            ->with(['device:id,device_no,location,provider'])
+            ->where('organization_id', $organizationId)
+            ->where('process_error', HikvisionAccessEvent::DUPLICATE_PUNCH)
+            ->orderByDesc('event_time')
+            ->limit(200)
+            ->get();
+
+        foreach ($loggedDuplicates as $row) {
+            HikvisionEventNormalizer::present($row);
+            $payload = $this->presentEvent($row);
+            $payload['process_error'] = 'Extra scan in the same hour. Attendance already recorded from the first punch.';
+            $duplicates[] = $payload;
+        }
+
+        usort($duplicates, function (array $a, array $b) {
+            return strcmp((string) ($b['event_time'] ?? ''), (string) ($a['event_time'] ?? ''));
+        });
+        $duplicates = array_slice($duplicates, 0, 200);
 
         $todayStart = AppTimezone::parseDateStart(AppTimezone::todayDateString());
         $staleCutoff = AppTimezone::now()->subHours(12);
@@ -100,11 +113,34 @@ class AttendanceMissedPunchesService
 
         return [
             'unapplied_terminal_punches' => $unapplied,
+            'duplicate_punches' => $duplicates,
             'missing_clock_out' => $missingOut,
             'counts' => [
                 'unapplied_terminal_punches' => count($unapplied),
+                'duplicate_punches' => count($duplicates),
                 'missing_clock_out' => count($missingOut),
             ],
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function presentEvent(HikvisionAccessEvent $row): array
+    {
+        return [
+            'id' => $row->id,
+            'event_key' => $row->event_key,
+            'event_time' => $row->event_time,
+            'event_time_local' => $row->event_time_local ?? null,
+            'employee_no' => $row->employee_no,
+            'employee_name' => $row->employee_name,
+            'attendance_status' => $row->attendance_status,
+            'verification_method' => $row->verification_method,
+            'process_error' => $row->process_error,
+            'device_id' => $row->attendance_clock_device_id,
+            'device_no' => $row->device?->device_no,
+            'device_location' => $row->device?->location,
         ];
     }
 
