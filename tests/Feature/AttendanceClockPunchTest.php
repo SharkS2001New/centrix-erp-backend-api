@@ -91,6 +91,12 @@ class AttendanceClockPunchTest extends TestCase
             'device_identifier' => 'TERMINAL-01',
         ]);
         $this->assertNull(EmployeeClockSession::query()->where('employee_id', $this->employee->id)->value('clock_out_at'));
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'source' => 'clock_device',
+            'check_in' => '08:05:00',
+        ]);
 
         $out = $this->postJson('/api/v1/attendance/clock-punch', [
             'employee_code' => 'HIK001',
@@ -102,6 +108,11 @@ class AttendanceClockPunchTest extends TestCase
         $this->assertNotNull(
             EmployeeClockSession::query()->where('employee_id', $this->employee->id)->value('clock_out_at')
         );
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'check_out' => '17:02:00',
+        ]);
     }
 
     public function test_clock_punch_rejects_unregistered_device(): void

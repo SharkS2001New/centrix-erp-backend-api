@@ -595,6 +595,97 @@ class HikvisionDeviceManagementTest extends TestCase
         ]);
     }
 
+    public function test_ingest_sanitizes_undefined_fields_and_lists_nairobi_time(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-TZ-FIELDS',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $ingest = $this->postJson(
+            "/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/ingest-events",
+            [
+                'events' => [[
+                    'employee_no' => '0003',
+                    'punched_at' => '2026-08-14T05:32:09.000000Z',
+                    'serial_no' => 'tz-1',
+                    'attendance_status' => 'undefined',
+                    'verification_method' => 'undefined',
+                    'major' => 5,
+                    'minor' => 75,
+                    'raw' => [
+                        'time' => '2026-08-14T05:32:09.000000Z',
+                        'employeeNoString' => '0003',
+                        'attendanceStatus' => 'undefined',
+                        'major' => 5,
+                        'minor' => 75,
+                    ],
+                ]],
+            ]
+        );
+        $ingest->assertOk();
+        $ingest->assertJsonPath('stored', 1);
+
+        $this->assertDatabaseHas('hikvision_access_events', [
+            'attendance_clock_device_id' => $device->id,
+            'serial_no' => 'tz-1',
+            'attendance_status' => 'checkIn',
+            'verification_method' => 'fingerprint',
+        ]);
+
+        $list = $this->getJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/events/stored");
+        $list->assertOk();
+        $this->assertSame('checkIn', $list->json('events.data.0.attendance_status'));
+        $this->assertSame('fingerprint', $list->json('events.data.0.verification_method'));
+        $this->assertStringContainsString('2026-08-14 08:32:09', (string) $list->json('events.data.0.event_time'));
+        $this->assertStringNotContainsString('Z', (string) $list->json('events.data.0.event_time'));
+    }
+
+    public function test_missed_punches_lists_unapplied_terminal_events(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-MISSED',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $this->postJson(
+            "/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/ingest-events",
+            [
+                'events' => [[
+                    'employee_no' => 'UNMAPPED-88',
+                    'punched_at' => '2026-08-14T08:10:00+03:00',
+                    'serial_no' => 'miss-1',
+                    'attendance_status' => 'checkIn',
+                    'minor' => 75,
+                ]],
+            ]
+        )->assertOk();
+
+        $res = $this->getJson('/api/v1/attendance/missed-punches');
+        $res->assertOk();
+        $res->assertJsonPath('counts.unapplied_terminal_punches', 1);
+        $this->assertSame('UNMAPPED-88', $res->json('unapplied_terminal_punches.0.employee_no'));
+        $this->assertSame('T-MISSED', $res->json('unapplied_terminal_punches.0.device_no'));
+    }
+
     public function test_sync_attendance_requires_online_agent(): void
     {
         Sanctum::actingAs($this->admin);

@@ -175,7 +175,7 @@ class AttendanceClockPunchService
     }
 
     /**
-     * @return array{action: string, session: EmployeeClockSession}
+     * @return array{action: string, session: EmployeeClockSession, attendance?: mixed}
      */
     protected function clockIn(
         Employee $employee,
@@ -200,7 +200,7 @@ class AttendanceClockPunchService
         }
 
         try {
-            $this->dayPolicy->assertCanClockIn($employee);
+            $this->dayPolicy->assertCanClockIn($employee, $punchedAt->toIso8601String());
         } catch (\InvalidArgumentException $e) {
             throw ValidationException::withMessages([
                 'employee_id' => $e->getMessage(),
@@ -216,7 +216,21 @@ class AttendanceClockPunchService
             'device_identifier' => $deviceNo,
         ]);
 
-        return ['action' => 'in', 'session' => $session->load('employee')];
+        $attendance = $this->reconciler->recordOpenClockIn(
+            $employee,
+            $punchedAt,
+            'clock_device',
+            $deviceNo,
+            $session->branch_id ? (int) $session->branch_id : null,
+        );
+        $session->attendance_id = $attendance->id;
+        $session->save();
+
+        return [
+            'action' => 'in',
+            'session' => $session->load('employee'),
+            'attendance' => $attendance,
+        ];
     }
 
     /**

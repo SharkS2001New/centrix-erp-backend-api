@@ -24,6 +24,7 @@ use App\Http\Controllers\Api\V1\Operations\YearEndCloseController;
 use App\Http\Controllers\Api\V1\Operations\AccountingReportController;
 use App\Http\Controllers\Api\V1\Operations\BankReconciliationController;
 use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
+use App\Http\Controllers\Api\V1\Operations\AttendanceMissedPunchesController;
 use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\CompanyPremisesController;
 use App\Http\Controllers\Api\V1\FieldRepHrLinkageController;
@@ -304,6 +305,10 @@ Route::middleware('auth:sanctum')->group(function () {
         });
         Route::get('clock-sessions', [AttendanceClockController::class, 'sessions'])
             ->middleware('erp.permission:hr.view');
+        Route::get('missed-punches', [AttendanceMissedPunchesController::class, 'index'])
+            ->middleware('erp.permission:hr.attendance.view|hr.view');
+        Route::post('missed-punches/retry', [AttendanceMissedPunchesController::class, 'retry'])
+            ->middleware('erp.permission:hr.manage|admin.manage');
         Route::get('company-mobile-sessions', [CompanyPremisesController::class, 'sessions'])
             ->middleware('erp.permission:hr.view');
         Route::get('field-sessions', [MobileFieldAttendanceController::class, 'index'])

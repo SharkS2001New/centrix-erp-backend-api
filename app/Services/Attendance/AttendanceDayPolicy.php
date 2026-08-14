@@ -6,6 +6,7 @@ use App\Models\Employee;
 use App\Models\EmployeeLeaveDay;
 use App\Models\OrganizationHoliday;
 use App\Models\WorkShift;
+use App\Support\AppTimezone;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
 use Illuminate\Validation\ValidationException;
@@ -213,7 +214,7 @@ class AttendanceDayPolicy
 
     public function assertCanClockIn(Employee $employee, ?string $at = null): void
     {
-        $date = ($at ? Carbon::parse($at) : now())->toDateString();
+        $date = AppTimezone::normalize($at)?->toDateString() ?? AppTimezone::todayDateString();
         $eval = $this->evaluate($employee, $date);
 
         if (! $eval['should_work']) {

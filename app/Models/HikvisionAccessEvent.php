@@ -2,6 +2,9 @@
 
 namespace App\Models;
 
+use App\Support\AppTimezone;
+use Carbon\Carbon;
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
@@ -37,6 +40,28 @@ class HikvisionAccessEvent extends Model
         'major' => 'integer',
         'minor' => 'integer',
     ];
+
+    protected $appends = [
+        'event_time_local',
+    ];
+
+    protected function serializeDate(DateTimeInterface $date): string
+    {
+        return Carbon::parse($date)
+            ->timezone(AppTimezone::name())
+            ->format('Y-m-d H:i:s');
+    }
+
+    public function getEventTimeLocalAttribute(): ?string
+    {
+        if (! $this->event_time) {
+            return null;
+        }
+
+        return Carbon::parse($this->event_time)
+            ->timezone(AppTimezone::name())
+            ->format('Y-m-d H:i:s');
+    }
 
     public function device(): BelongsTo
     {

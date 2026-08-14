@@ -10,6 +10,7 @@ use App\Models\OrganizationHoliday;
 use App\Models\WorkShift;
 use App\Services\Hr\HrPayrollSettingsResolver;
 use App\Services\Payroll\OvertimeRateCalculator;
+use App\Support\AppTimezone;
 use Carbon\Carbon;
 
 class AttendanceDayReconciler
@@ -69,6 +70,78 @@ class AttendanceDayReconciler
                 $session->save();
             }
         }
+
+        return $attendance;
+    }
+
+    /**
+     * Create / refresh today's HR attendance as soon as the employee clocks in
+     * (before clock-out). Closed days with both times are left untouched.
+     */
+    public function recordOpenClockIn(
+        Employee $employee,
+        Carbon $clockInAt,
+        string $source = 'clock_device',
+        ?string $deviceIdentifier = null,
+        ?int $branchId = null,
+    ): EmployeeAttendance {
+        $employee->loadMissing('shift');
+        $at = $clockInAt->copy()->timezone(AppTimezone::name());
+        $date = $at->toDateString();
+
+        $existing = EmployeeAttendance::query()
+            ->where('employee_id', $employee->id)
+            ->whereDate('attendance_date', $date)
+            ->first();
+
+        if ($existing && $existing->check_in && $existing->check_out) {
+            return $existing;
+        }
+
+        $eval = $this->dayPolicy->evaluate($employee, $date);
+        $shift = $employee->shift;
+        $isHoliday = (bool) ($eval['is_holiday'] ?? false);
+        $shiftHours = $shift
+            ? $shift->hoursForDate($date, $isHoliday)
+            : [
+                'start_time' => '08:00:00',
+                'end_time' => '17:00:00',
+                'crosses_midnight' => false,
+                'lunch_minutes' => 60,
+                'lunch_required' => true,
+            ];
+        $shiftStart = Carbon::parse($date.' '.$this->normalizeTime($shiftHours['start_time'] ?? '08:00:00'));
+        $lateMinutes = 0;
+        if ($at->gt($shiftStart)) {
+            $lateMinutes = (int) max(0, (int) floor(($at->getTimestamp() - $shiftStart->getTimestamp()) / 60));
+        }
+
+        $status = $lateMinutes > 0 ? 'late' : 'present';
+        $expectedHours = $this->expectedPaidHours($employee, $date);
+
+        $attendance = EmployeeAttendance::query()->updateOrCreate(
+            [
+                'employee_id' => $employee->id,
+                'attendance_date' => $date,
+            ],
+            [
+                'organization_id' => $employee->organization_id,
+                'branch_id' => $branchId ?? $employee->branch_id,
+                'check_in' => $at->format('H:i:s'),
+                'check_out' => null,
+                'status' => $status,
+                'source' => $source,
+                'device_identifier' => $deviceIdentifier,
+                'hours_worked' => 0,
+                'expected_hours' => $expectedHours,
+                'late_minutes' => $lateMinutes,
+                'lunch_status' => '-',
+                'lunch_minutes' => null,
+                'early_leave_minutes' => 0,
+                'overtime_minutes' => 0,
+                'notes' => 'On shift — awaiting clock-out',
+            ],
+        );
 
         return $attendance;
     }

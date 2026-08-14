@@ -654,7 +654,12 @@ class HikvisionService
 
         $perPage = min((int) ($filters['per_page'] ?? 50), 200);
 
-        return ['events' => $query->paginate($perPage)];
+        $events = $query->paginate($perPage);
+        $events->getCollection()->transform(
+            static fn (HikvisionAccessEvent $row) => HikvisionEventNormalizer::present($row)
+        );
+
+        return ['events' => $events];
     }
 
     public static function buildEventKey(int $deviceId, array $event): string

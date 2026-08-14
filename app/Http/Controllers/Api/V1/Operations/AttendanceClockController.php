@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeClockSession;
 use App\Services\Attendance\AttendanceClockPunchService;
+use App\Support\AppTimezone;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -116,6 +117,20 @@ class AttendanceClockController extends Controller
         }
         if ($request->boolean('open_only')) {
             $query->whereNull('clock_out_at');
+        }
+        if ($request->boolean('today')) {
+            $start = AppTimezone::parseDateStart(AppTimezone::todayDateString());
+            $end = AppTimezone::parseDateEnd(AppTimezone::todayDateString());
+            $query->where(function ($q) use ($start, $end) {
+                $q->whereBetween('clock_in_at', [$start, $end])
+                    ->orWhere(function ($inner) use ($start, $end) {
+                        $inner->whereNotNull('clock_out_at')
+                            ->whereBetween('clock_out_at', [$start, $end]);
+                    });
+            });
+        }
+        if ($request->boolean('premises') || $request->boolean('today')) {
+            $query->whereIn('source', ['clock_device', 'company_mobile']);
         }
 
         $perPage = min((int) $request->input('per_page', 50), 200);

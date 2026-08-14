@@ -918,33 +918,28 @@ class HikvisionIsapiClient
      */
     protected function normalizeEventRow(array $row): ?array
     {
-        $employeeNo = trim((string) (
-            $row['employeeNoString']
-            ?? $row['employeeNo']
-            ?? $row['cardNo']
-            ?? ''
-        ));
-        $time = (string) ($row['time'] ?? $row['dateTime'] ?? '');
-        if ($employeeNo === '' || $time === '') {
+        $employeeNo = HikvisionEventNormalizer::usableString(
+            $row['employeeNoString'] ?? null,
+            $row['employeeNo'] ?? null,
+            $row['cardNo'] ?? null,
+        );
+        $time = HikvisionEventNormalizer::usableString($row['time'] ?? null, $row['dateTime'] ?? null);
+        if ($employeeNo === null || $time === null) {
             return null;
         }
 
-        return [
+        return HikvisionEventNormalizer::normalizeIncoming([
             'employee_no' => $employeeNo,
-            'employee_name' => isset($row['name']) ? (string) $row['name'] : null,
+            'employee_name' => $row['name'] ?? null,
             'punched_at' => $time,
-            'attendance_status' => isset($row['attendanceStatus'])
-                ? (string) $row['attendanceStatus']
-                : null,
-            'verification_method' => isset($row['currentVerifyMode'])
-                ? (string) $row['currentVerifyMode']
-                : (isset($row['verifyMode']) ? (string) $row['verifyMode'] : null),
-            'card_no' => isset($row['cardNo']) ? (string) $row['cardNo'] : null,
-            'serial_no' => isset($row['serialNo']) ? (string) $row['serialNo'] : null,
-            'major' => isset($row['major']) ? (int) $row['major'] : null,
-            'minor' => isset($row['minor']) ? (int) $row['minor'] : null,
+            'attendance_status' => $row['attendanceStatus'] ?? null,
+            'verification_method' => $row['currentVerifyMode'] ?? $row['verifyMode'] ?? null,
+            'card_no' => $row['cardNo'] ?? null,
+            'serial_no' => $row['serialNo'] ?? null,
+            'major' => $row['major'] ?? null,
+            'minor' => $row['minor'] ?? null,
             'raw' => $row,
-        ];
+        ]);
     }
 
     /**

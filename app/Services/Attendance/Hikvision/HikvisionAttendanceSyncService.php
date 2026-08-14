@@ -192,6 +192,7 @@ class HikvisionAttendanceSyncService
         $mappingCache = [];
 
         foreach ($events as $event) {
+            $event = HikvisionEventNormalizer::normalizeIncoming($event);
             $eventKey = isset($event['_event_key'])
                 ? (string) $event['_event_key']
                 : HikvisionService::buildEventKey((int) $device->id, $event);
@@ -227,6 +228,7 @@ class HikvisionAttendanceSyncService
                 $result['stored']++;
             } else {
                 $result['skipped']++;
+                $this->backfillStoredEventFields($stored, $event);
             }
 
             if ($stored->processed_at !== null) {
@@ -379,6 +381,31 @@ class HikvisionAttendanceSyncService
         $base['errors'] = array_slice($base['errors'], 0, 20);
 
         return $base;
+    }
+
+    /**
+     * @param  array<string, mixed>  $event
+     */
+    protected function backfillStoredEventFields(HikvisionAccessEvent $stored, array $event): void
+    {
+        $dirty = false;
+        foreach (['attendance_status', 'verification_method', 'employee_name', 'card_no', 'serial_no'] as $field) {
+            $incoming = HikvisionEventNormalizer::usableString($event[$field] ?? null);
+            $current = HikvisionEventNormalizer::usableString($stored->{$field});
+            if ($current === null && $incoming !== null) {
+                $stored->{$field} = $incoming;
+                $dirty = true;
+            }
+        }
+        foreach (['major', 'minor'] as $field) {
+            if ($stored->{$field} === null && isset($event[$field]) && $event[$field] !== null) {
+                $stored->{$field} = $event[$field];
+                $dirty = true;
+            }
+        }
+        if ($dirty) {
+            $stored->save();
+        }
     }
 
     protected function mapAttendanceStatus(?string $status): string
