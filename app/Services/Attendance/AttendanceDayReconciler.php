@@ -84,6 +84,7 @@ class AttendanceDayReconciler
         string $source = 'clock_device',
         ?string $deviceIdentifier = null,
         ?int $branchId = null,
+        bool $force = false,
     ): EmployeeAttendance {
         $employee->loadMissing('shift');
         $at = $clockInAt->copy()->timezone(AppTimezone::name());
@@ -94,7 +95,7 @@ class AttendanceDayReconciler
             ->whereDate('attendance_date', $date)
             ->first();
 
-        if ($existing && $existing->check_in && $existing->check_out) {
+        if (! $force && $existing && $existing->check_in && $existing->check_out) {
             return $existing;
         }
 

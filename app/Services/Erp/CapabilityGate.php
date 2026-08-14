@@ -475,6 +475,13 @@ class CapabilityGate
     /** When inventory is reduced: order_created, order_completed (workflow status), trip_pick, trip_load, or trip_depart. */
     public function stockDeductTiming(?string $channel = null): string
     {
+        // Shop / wholesale-retail with Distribution off has no trip pick/load.
+        // Deduct on placement for POS, backoffice, and mobile Save — not when the
+        // order later reaches completed/paid.
+        if (! $this->distributionOpsEnabled()) {
+            return 'order_created';
+        }
+
         if ($channel === 'pos' && $this->posCheckoutOnCreateEnabled()) {
             return 'order_created';
         }

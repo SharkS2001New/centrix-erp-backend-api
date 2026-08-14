@@ -646,7 +646,7 @@ class HikvisionDeviceManagementTest extends TestCase
         $list->assertOk();
         $this->assertSame('checkIn', $list->json('events.data.0.attendance_status'));
         $this->assertSame('fingerprint', $list->json('events.data.0.verification_method'));
-        $this->assertStringContainsString('2026-08-14T08:32:09+03:00', (string) $list->json('events.data.0.event_time'));
+        $this->assertStringContainsString('2026-08-14T05:32:09+03:00', (string) $list->json('events.data.0.event_time'));
         $this->assertStringNotContainsString('Z', (string) $list->json('events.data.0.event_time'));
     }
 

@@ -197,10 +197,7 @@ class HikvisionAttendanceSyncService
                 ? (string) $event['_event_key']
                 : HikvisionService::buildEventKey((int) $device->id, $event);
 
-            $punchedAt = AppTimezone::normalize($event['punched_at'] ?? null);
-            if ($punchedAt === null) {
-                $punchedAt = AppTimezone::fromDeviceWallClock($event['punched_at'] ?? null);
-            }
+            $punchedAt = AppTimezone::fromDeviceWallClock($event['punched_at'] ?? null);
             if ($punchedAt === null) {
                 $result['errors'][] = ($event['employee_no'] ?? '?').': invalid punched_at';
 

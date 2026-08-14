@@ -768,6 +768,57 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertDatabaseMissing('cart_lines', ['cart_id' => $cartId]);
     }
 
+    public function test_mobile_save_order_deducts_ledger_when_distribution_is_off(): void
+    {
+        $org = $this->user->organization;
+        $modules = $org->enabled_modules ?? [];
+        $modules['distribution'] = false;
+        $settings = $org->module_settings ?? [];
+        $settings['sales'] = array_merge($settings['sales'] ?? [], [
+            'stock_deduct_on' => [
+                'pos' => 'order_created',
+                'mobile' => 'order_completed',
+                'backend' => 'order_completed',
+            ],
+        ]);
+        $org->forceFill([
+            'enabled_modules' => $modules,
+            'module_settings' => $settings,
+        ])->save();
+        $this->user->unsetRelation('organization');
+
+        $before = $this->onHandShop();
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'mobile',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 3,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'save_only' => true,
+            'pay_now' => 0,
+        ])->assertCreated()->json();
+
+        $this->assertNotSame('held', $sale['status'] ?? null);
+        $this->assertEquals(1, (int) Sale::query()->findOrFail($sale['id'])->stock_balanced);
+        $this->assertDatabaseHas('inventory_transactions', [
+            'product_code' => $this->productCode,
+            'transaction_type' => 'MOBILE_SALE',
+            'reference_type' => 'sale',
+            'reference_id' => $sale['id'],
+        ]);
+        $this->assertEquals($before - 3, $this->onHandShop());
+        $this->assertEquals(0, StockReservation::query()
+            ->where('sale_id', $sale['id'])
+            ->whereNull('released_at')
+            ->count());
+    }
+
     public function test_mobile_cart_combines_identical_sku_into_one_line(): void
     {
         $cartId = $this->postJson('/api/v1/sales/carts', [

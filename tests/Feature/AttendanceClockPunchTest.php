@@ -319,4 +319,94 @@ class AttendanceClockPunchTest extends TestCase
             'check_in' => '12:00:00',
         ]);
     }
+
+    public function test_hikvision_china_offset_keeps_device_wall_clock(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T10:26:00+08:00',
+            'direction' => 'in',
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'check_in' => '10:26:00',
+        ]);
+    }
+
+    public function test_hr_can_delete_a_clock_session_and_clears_the_day(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T08:05:00+03:00',
+            'direction' => 'in',
+        ])->assertCreated();
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T17:02:00+03:00',
+            'direction' => 'out',
+        ])->assertOk();
+
+        $sessionId = EmployeeClockSession::query()->where('employee_id', $this->employee->id)->value('id');
+        $this->assertNotNull($sessionId);
+
+        $this->deleteJson('/api/v1/attendance/clock-sessions/'.$sessionId)->assertNoContent();
+
+        $this->assertDatabaseMissing('employee_clock_sessions', [
+            'id' => $sessionId,
+        ]);
+        $this->assertDatabaseMissing('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+        ]);
+    }
+
+    public function test_deleting_open_session_rebuilds_closed_punches(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T08:05:00+03:00',
+            'direction' => 'in',
+        ])->assertCreated();
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T13:30:00+03:00',
+            'direction' => 'out',
+        ])->assertOk();
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T14:05:00+03:00',
+            'direction' => 'in',
+        ])->assertCreated();
+
+        $openId = EmployeeClockSession::query()
+            ->where('employee_id', $this->employee->id)
+            ->whereNull('clock_out_at')
+            ->value('id');
+        $this->assertNotNull($openId);
+
+        $this->deleteJson('/api/v1/attendance/clock-sessions/'.$openId)->assertNoContent();
+
+        $this->assertSame(1, EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count());
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'check_in' => '08:05:00',
+            'check_out' => '13:30:00',
+        ]);
+    }
 }

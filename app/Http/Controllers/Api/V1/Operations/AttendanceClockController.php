@@ -137,4 +137,17 @@ class AttendanceClockController extends Controller
 
         return response()->json($query->paginate($perPage));
     }
+
+    /** DELETE /attendance/clock-sessions/{session} */
+    public function destroySession(Request $request, int $session)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        $this->punchService->deleteSession((int) $orgId, $session);
+
+        return response()->json(null, 204);
+    }
 }

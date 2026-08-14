@@ -37,6 +37,16 @@ class AppTimezoneTest extends TestCase
     }
 
     #[Test]
+    public function device_wall_clock_ignores_china_offset(): void
+    {
+        $local = AppTimezone::fromDeviceWallClock('2026-08-14T10:26:00+08:00');
+
+        $this->assertInstanceOf(Carbon::class, $local);
+        $this->assertSame('2026-08-14 10:26:00', $local?->format('Y-m-d H:i:s'));
+        $this->assertSame('Africa/Nairobi', $local?->timezone->getName());
+    }
+
+    #[Test]
     public function report_period_defaults_to_nairobi_today(): void
     {
         Carbon::setTestNow(Carbon::parse('2026-06-20 15:45:00', 'Africa/Nairobi'));

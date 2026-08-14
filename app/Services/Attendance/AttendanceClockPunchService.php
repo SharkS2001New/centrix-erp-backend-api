@@ -4,9 +4,13 @@ namespace App\Services\Attendance;
 
 use App\Models\AttendanceClockDevice;
 use App\Models\Employee;
+use App\Models\EmployeeAttendance;
 use App\Models\EmployeeClockSession;
+use App\Models\EmployeeOvertime;
+use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Support\AppTimezone;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -104,6 +108,103 @@ class AttendanceClockPunchService
         return $this->clockOut($employee, $punchedAt, $deviceNo, $open);
     }
 
+    public function deleteSession(int $organizationId, int $sessionId): void
+    {
+        $session = EmployeeClockSession::query()
+            ->where('organization_id', $organizationId)
+            ->where('id', $sessionId)
+            ->first();
+
+        if (! $session) {
+            abort(404, 'Clock session not found.');
+        }
+
+        $employee = Employee::with('shift')->find($session->employee_id);
+        if (! $employee || (int) $employee->organization_id !== $organizationId) {
+            abort(404, 'Clock session not found.');
+        }
+
+        $clockIn = AppTimezone::normalize($session->clock_in_at) ?? Carbon::parse($session->clock_in_at);
+        $date = $clockIn->timezone(AppTimezone::name())->toDateString();
+        $attendance = $session->attendance_id
+            ? EmployeeAttendance::query()->find($session->attendance_id)
+            : EmployeeAttendance::query()
+                ->where('employee_id', $employee->id)
+                ->whereDate('attendance_date', $date)
+                ->first();
+
+        if ($attendance) {
+            PayrollCycleSettlementService::assertNotPayrollLocked(
+                $attendance->payroll_run_id,
+                'attendance punch',
+            );
+        }
+
+        DB::transaction(function () use ($session, $employee, $date, $attendance) {
+            $session->delete();
+
+            $remaining = EmployeeClockSession::query()
+                ->where('employee_id', $employee->id)
+                ->where(function ($q) use ($date) {
+                    $q->whereDate('clock_in_at', $date)
+                        ->orWhereDate('clock_out_at', $date);
+                })
+                ->orderBy('clock_in_at')
+                ->get();
+
+            if ($remaining->isEmpty()) {
+                $this->deletePendingAutoOvertime((int) $employee->id, $date);
+                if ($attendance) {
+                    $attendance->delete();
+                }
+
+                return;
+            }
+
+            $closed = $remaining->filter(fn (EmployeeClockSession $row) => $row->clock_out_at !== null);
+            $open = $remaining->first(fn (EmployeeClockSession $row) => $row->clock_out_at === null);
+            $source = (string) ($remaining->first()?->source ?: 'clock_device');
+            $deviceNo = $remaining->first()?->device_identifier;
+            $branchId = $remaining->first()?->branch_id ? (int) $remaining->first()->branch_id : null;
+
+            if ($closed->isNotEmpty()) {
+                $this->reconciler->reconcileFromSessions(
+                    $employee,
+                    $date,
+                    $source,
+                    $deviceNo,
+                    $branchId,
+                );
+
+                return;
+            }
+
+            $openAt = AppTimezone::normalize($open->clock_in_at) ?? Carbon::parse($open->clock_in_at);
+            $this->deletePendingAutoOvertime((int) $employee->id, $date);
+            $updated = $this->reconciler->recordOpenClockIn(
+                $employee,
+                $openAt,
+                $source,
+                $open->device_identifier,
+                $open->branch_id ? (int) $open->branch_id : null,
+                true,
+            );
+            $open->attendance_id = $updated->id;
+            $open->save();
+        });
+    }
+
+    protected function deletePendingAutoOvertime(int $employeeId, string $date): void
+    {
+        EmployeeOvertime::query()
+            ->where('employee_id', $employeeId)
+            ->whereDate('work_date', $date)
+            ->where('status', 'pending')
+            ->whereNull('payroll_run_id')
+            ->where('notes', 'like', AttendanceDayReconciler::AUTO_OT_NOTE_PREFIX.'%')
+            ->delete();
+    }
+
     /**
      * @param  array{employee_id?: int|null, employee_code?: string|null}  $payload
      */
@@ -196,7 +297,7 @@ class AttendanceClockPunchService
         if ($raw instanceof Carbon) {
             $at = $raw->copy()->timezone(AppTimezone::name());
         } else {
-            $at = AppTimezone::normalize($raw);
+            $at = AppTimezone::fromDeviceWallClock($raw) ?? AppTimezone::normalize($raw);
             if ($at === null) {
                 throw ValidationException::withMessages([
                     'punched_at' => 'Invalid punched_at timestamp.',
