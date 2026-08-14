@@ -319,9 +319,8 @@ class HikvisionDeviceManagementTest extends TestCase
             }
             $cond = $request->data()['AcsEventCond'] ?? [];
 
-            return ($cond['major'] ?? null) === 0
-                && ($cond['minor'] ?? null) === 0
-                && ($cond['eventAttribute'] ?? null) === 'attendance'
+            return ($cond['major'] ?? null) === 5
+                && ($cond['minor'] ?? null) === 75
                 && isset($cond['searchID'], $cond['startTime'], $cond['endTime'], $cond['searchResultPosition'], $cond['maxResults'])
                 && ! str_contains((string) $cond['startTime'], 'Z');
         });
@@ -329,23 +328,27 @@ class HikvisionDeviceManagementTest extends TestCase
 
     public function test_live_punch_retries_without_event_attribute_on_bad_parameters(): void
     {
-        Http::fake([
-            'http://192.168.100.215/*' => Http::sequence()
-                ->push([
+        $calls = 0;
+        Http::fake(function () use (&$calls) {
+            $calls++;
+            if ($calls === 1) {
+                return Http::response([
                     'statusCode' => 6,
                     'statusString' => 'Invalid Content',
                     'subStatusCode' => 'badParameters',
                     'errorCode' => 1610612737,
                     'errorMsg' => '0x60000001',
-                ], 400)
-                ->push([
-                    'AcsEvent' => [
-                        'numOfMatches' => 0,
-                        'InfoList' => [],
-                        'responseStatusStrg' => 'OK',
-                    ],
-                ], 200),
-        ]);
+                ], 400);
+            }
+
+            return Http::response([
+                'AcsEvent' => [
+                    'numOfMatches' => 0,
+                    'InfoList' => [],
+                    'responseStatusStrg' => 'OK',
+                ],
+            ], 200);
+        });
 
         Sanctum::actingAs($this->admin);
 
@@ -376,10 +379,65 @@ class HikvisionDeviceManagementTest extends TestCase
             ->values();
 
         $this->assertGreaterThanOrEqual(2, $acsBodies->count());
-        $this->assertSame('attendance', $acsBodies[0]['eventAttribute'] ?? null);
+        $this->assertSame(5, $acsBodies[0]['major'] ?? null);
+        $this->assertSame(75, $acsBodies[0]['minor'] ?? null);
         $this->assertArrayNotHasKey('eventAttribute', $acsBodies[1]);
-        $this->assertSame(0, $acsBodies[1]['major'] ?? null);
-        $this->assertSame(0, $acsBodies[1]['minor'] ?? null);
+    }
+
+    public function test_live_punch_retries_when_first_event_search_is_empty(): void
+    {
+        Http::fake(function () {
+            static $calls = 0;
+            $calls++;
+            if ($calls === 1) {
+                return Http::response([
+                    'AcsEvent' => [
+                        'numOfMatches' => 0,
+                        'InfoList' => [],
+                        'responseStatusStrg' => 'OK',
+                    ],
+                ], 200);
+            }
+
+            return Http::response([
+                'AcsEvent' => [
+                    'numOfMatches' => 1,
+                    'responseStatusStrg' => 'OK',
+                    'InfoList' => [[
+                        'employeeNoString' => '0003',
+                        'time' => '2026-08-14T17:40:00+03:00',
+                        'currentVerifyMode' => 'fingerprint',
+                        'minor' => 75,
+                        'major' => 5,
+                        'serialNo' => '101',
+                    ]],
+                ],
+            ], 200);
+        });
+
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-LIVE-EMPTY',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'capabilities_json' => ['features' => ['events' => true]],
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $res = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/test/live-punch", [
+            'since' => now()->subSeconds(20)->toIso8601String(),
+            'apply' => false,
+        ]);
+
+        $res->assertOk();
+        $res->assertJsonPath('fingerprint_detected', true);
+        $res->assertJsonPath('latest.employee_no', '0003');
     }
 
     public function test_user_search_uses_short_search_id_and_max_30(): void
@@ -390,8 +448,9 @@ class HikvisionDeviceManagementTest extends TestCase
                     'responseStatusStrg' => 'OK',
                     'numOfMatches' => 1,
                     'UserInfo' => [
-                        'employeeNo' => 'EMP001',
+                        'employeeNoString' => '0003',
                         'name' => 'Ada',
+                        'numOfFP' => 2,
                     ],
                 ],
             ], 200),
@@ -416,7 +475,8 @@ class HikvisionDeviceManagementTest extends TestCase
             'maxResults' => 50,
         ]);
         $res->assertOk();
-        $res->assertJsonPath('users.0.employeeNo', 'EMP001');
+        $res->assertJsonPath('users.0.employeeNo', '0003');
+        $res->assertJsonPath('users.0.numOfFP', 2);
 
         Http::assertSent(function ($request) {
             if (! str_contains($request->url(), '/ISAPI/AccessControl/UserInfo/Search')) {

@@ -162,6 +162,8 @@ class HikvisionIsapiClient
             $position += max(1, count($list));
         }
 
+        $users = $this->uniquePresentedUsers($users);
+
         return [
             'users' => array_slice($users, 0, $wanted),
             'total' => $total > 0 ? $total : count($users),
@@ -288,30 +290,131 @@ class HikvisionIsapiClient
      */
     public function searchFingerprints(array $cond = []): array
     {
-        $pageCond = array_merge($cond, [
-            'searchID' => $this->shortSearchId($cond['searchID'] ?? null),
-            'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
-            'maxResults' => min(self::ISAPI_SEARCH_PAGE_SIZE, max(1, (int) ($cond['maxResults'] ?? 30))),
-        ]);
-        $body = [
-            'FingerPrintCond' => $this->filterSearchCond($pageCond),
+        $wanted = max(1, min(200, (int) ($cond['maxResults'] ?? 30)));
+        $position = (int) ($cond['searchResultPosition'] ?? 0);
+        $employeeNo = HikvisionEventNormalizer::usableString(
+            $cond['employeeNo'] ?? null,
+            $cond['employee_no'] ?? null,
+            data_get($cond, 'EmployeeNoList.0.employeeNo'),
+        );
+
+        $attempts = [
+            [
+                'path' => '/ISAPI/AccessControl/FingerPrintInfo/Search?format=json',
+                'key' => 'FingerPrintInfoSearchCond',
+            ],
+            [
+                'path' => '/ISAPI/AccessControl/FingerPrint/Search?format=json',
+                'key' => 'FingerPrintSearchCond',
+            ],
+            [
+                'path' => '/ISAPI/AccessControl/FingerPrintUpload?format=json',
+                'key' => 'FingerPrintCond',
+            ],
         ];
 
-        try {
-            $payload = $this->postJson('/ISAPI/AccessControl/FingerPrintUpload?format=json', $body);
-            $search = $payload['FingerPrintSearch'] ?? $payload['FingerPrintInfo'] ?? $payload;
-            $list = $search['FingerPrintInfo'] ?? $search['InfoList'] ?? [];
-            if (isset($list['employeeNo']) || isset($list['fingerPrintID'])) {
-                $list = [$list];
+        foreach ($attempts as $attempt) {
+            try {
+                $found = $this->searchFingerprintsOnPath(
+                    $attempt['path'],
+                    $attempt['key'],
+                    $wanted,
+                    $position,
+                    $employeeNo,
+                    $cond['EmployeeNoList'] ?? null,
+                );
+                if ($found['fingerprints'] !== [] || $found['total'] > 0) {
+                    return $found;
+                }
+            } catch (\Throwable) {
+                continue;
+            }
+        }
+
+        return ['fingerprints' => [], 'total' => 0];
+    }
+
+    /**
+     * @param  list<array<string, mixed>>|null  $employeeNoList
+     * @return array{fingerprints: list<array>, total: int}
+     */
+    protected function searchFingerprintsOnPath(
+        string $path,
+        string $condKey,
+        int $wanted,
+        int $position,
+        ?string $employeeNo,
+        mixed $employeeNoList,
+    ): array {
+        $fingerprints = [];
+        $total = 0;
+        $searchId = $this->shortSearchId();
+
+        while (count($fingerprints) < $wanted) {
+            $pageSize = min(self::ISAPI_SEARCH_PAGE_SIZE, $wanted - count($fingerprints));
+            $pageCond = [
+                'searchID' => $searchId,
+                'searchResultPosition' => $position,
+                'maxResults' => $pageSize,
+            ];
+            if (is_array($employeeNoList) && $employeeNoList !== []) {
+                $pageCond['EmployeeNoList'] = $employeeNoList;
+            }
+            if ($employeeNo !== null && $employeeNo !== '') {
+                $pageCond['employeeNo'] = $employeeNo;
             }
 
-            return [
-                'fingerprints' => is_array($list) ? array_values(array_filter($list, 'is_array')) : [],
-                'total' => (int) ($search['totalMatches'] ?? count((array) $list)),
-            ];
-        } catch (\Throwable) {
-            return ['fingerprints' => [], 'total' => 0];
+            if ($condKey === 'FingerPrintCond') {
+                $payload = $this->postJson($path, [$condKey => $this->filterFingerprintCond($pageCond)]);
+            } else {
+                $payload = $this->postIsapiSearch($path, $condKey, $pageCond);
+            }
+
+            $search = $payload['FingerPrintInfoSearch']
+                ?? $payload['FingerPrintSearch']
+                ?? $payload['FingerPrintList']
+                ?? $payload['FingerPrintInfo']
+                ?? $payload;
+            $list = $this->normalizeInfoList(
+                $search['FingerPrintInfo']
+                ?? $search['FingerPrintList']
+                ?? $search['InfoList']
+                ?? $search['MatchList']
+                ?? []
+            );
+            $list = array_map(fn (array $row) => $this->presentFingerprintInfo($row), $list);
+            $total = max($total, (int) ($search['totalMatches'] ?? $search['numOfMatches'] ?? count($list)));
+            $fingerprints = array_merge($fingerprints, $list);
+            $status = strtolower((string) ($search['responseStatusStrg'] ?? ''));
+            if ($list === [] || $status !== 'more') {
+                break;
+            }
+            $position += max(1, count($list));
         }
+
+        return [
+            'fingerprints' => array_slice($fingerprints, 0, $wanted),
+            'total' => $total > 0 ? $total : count($fingerprints),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $cond
+     * @return array<string, mixed>
+     */
+    protected function filterFingerprintCond(array $cond): array
+    {
+        $keep = [
+            'searchID' => $this->shortSearchId(isset($cond['searchID']) ? (string) $cond['searchID'] : null),
+            'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
+            'maxResults' => min(self::ISAPI_SEARCH_PAGE_SIZE, max(1, (int) ($cond['maxResults'] ?? 30))),
+        ];
+        $employeeNo = HikvisionEventNormalizer::usableString($cond['employeeNo'] ?? null);
+        if ($employeeNo !== null) {
+            $keep['employeeNo'] = $employeeNo;
+        }
+
+        return $keep;
     }
 
     /**
@@ -386,11 +489,52 @@ class HikvisionIsapiClient
         int $maxResults = 500,
         ?array $capabilities = null,
     ): array {
+        $from = Carbon::parse($from);
+        $to = Carbon::parse($to);
+        if ($from->gt($to)) {
+            $from = $to->copy()->subDays(2);
+        }
+
+        $lastError = null;
+        $gotResponse = false;
+        foreach ($this->acsEventCondCandidates($from, $to, $capabilities) as $baseCond) {
+            try {
+                $events = $this->fetchAccessEventsWithCond($from, $to, $maxResults, $capabilities, $baseCond);
+                $gotResponse = true;
+                if ($events !== []) {
+                    return $events;
+                }
+            } catch (\Throwable $e) {
+                $lastError = $e;
+                if (! $this->isRetryableIsapiBadParameters($e)) {
+                    throw $e;
+                }
+            }
+        }
+
+        if (! $gotResponse && $lastError !== null) {
+            throw $lastError;
+        }
+
+        return [];
+    }
+
+    /**
+     * @param  array<string, mixed>  $baseCond
+     * @param  array<string, mixed>|null  $capabilities
+     * @return list<array<string, mixed>>
+     */
+    protected function fetchAccessEventsWithCond(
+        \DateTimeInterface $from,
+        \DateTimeInterface $to,
+        int $maxResults,
+        ?array $capabilities,
+        array $baseCond,
+    ): array {
         $maxPage = $this->resolveMaxResultsPerPage($capabilities);
         $searchId = $this->shortSearchId();
         $position = 0;
         $events = [];
-        $resolvedCond = null;
 
         do {
             $pageMax = min($maxPage, max(1, $maxResults - count($events)));
@@ -401,9 +545,8 @@ class HikvisionIsapiClient
                 $position,
                 $pageMax,
                 $capabilities,
-                $resolvedCond,
+                $baseCond,
             );
-            $resolvedCond = $payload['cond'];
             $acs = $payload['response']['AcsEvent'] ?? $payload['response'];
             $list = $acs['InfoList'] ?? $acs['infoList'] ?? [];
             if (! is_array($list)) {
@@ -499,13 +642,19 @@ class HikvisionIsapiClient
         ];
 
         $withAttr = array_merge(['major' => 0, 'minor' => 0], $capabilityFilters);
-        $withoutAttr = ['major' => 0, 'minor' => 0];
+        $fingerprint = ['major' => 5, 'minor' => 75];
+        $card = ['major' => 5, 'minor' => 1];
+        $allAuth = ['major' => 5, 'minor' => 0];
+        $unfiltered = ['major' => 0, 'minor' => 0];
 
-        $candidates = [
-            array_merge($offsetTimes, $withAttr),
-            array_merge($offsetTimes, $withoutAttr),
-            array_merge($naiveTimes, $withoutAttr),
-        ];
+        $candidates = [];
+        foreach ([$offsetTimes, $naiveTimes] as $times) {
+            $candidates[] = array_merge($times, $fingerprint);
+            $candidates[] = array_merge($times, $card);
+            $candidates[] = array_merge($times, $allAuth);
+            $candidates[] = array_merge($times, $unfiltered);
+            $candidates[] = array_merge($times, $withAttr);
+        }
 
         $unique = [];
         $seen = [];
@@ -555,6 +704,7 @@ class HikvisionIsapiClient
             'searchResultPosition',
             'maxResults',
             'EmployeeNoList',
+            'employeeNo',
             'fuzzySearch',
         ] as $key) {
             if (! array_key_exists($key, $cond)) {
@@ -594,6 +744,9 @@ class HikvisionIsapiClient
         ];
         if (isset($full['EmployeeNoList'])) {
             $minimal['EmployeeNoList'] = $full['EmployeeNoList'];
+        }
+        if (isset($full['employeeNo'])) {
+            $minimal['employeeNo'] = $full['employeeNo'];
         }
         $fallbackId = [
             'searchID' => '1',
@@ -645,6 +798,120 @@ class HikvisionIsapiClient
         }
 
         return array_values(array_filter($list, 'is_array'));
+    }
+
+    /**
+     * @param  list<array<string, mixed>>  $users
+     * @return list<array<string, mixed>>
+     */
+    protected function uniquePresentedUsers(array $users): array
+    {
+        $seen = [];
+        $out = [];
+        foreach ($users as $user) {
+            if (! is_array($user)) {
+                continue;
+            }
+            $user = $this->presentUserInfo($user);
+            $key = (string) ($user['employeeNo'] ?? '');
+            if ($key !== '' && isset($seen[$key])) {
+                continue;
+            }
+            if ($key !== '') {
+                $seen[$key] = true;
+            }
+            $out[] = $user;
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $user
+     * @return array<string, mixed>
+     */
+    protected function presentUserInfo(array $user): array
+    {
+        $no = HikvisionEventNormalizer::usableString(
+            $user['employeeNo'] ?? null,
+            $user['employeeNoString'] ?? null,
+            $user['EmployeeNo'] ?? null,
+        );
+        if ($no !== null) {
+            $user['employeeNo'] = $no;
+        }
+
+        $fpBlock = is_array($user['fingerPrint'] ?? null) ? $user['fingerPrint'] : (
+            is_array($user['FingerPrint'] ?? null) ? $user['FingerPrint'] : []
+        );
+        $fpCount = $this->firstNumericCount(
+            $user['numOfFP'] ?? null,
+            $user['NumOfFP'] ?? null,
+            $user['numOfFingerPrint'] ?? null,
+            $user['NumOfFingerPrint'] ?? null,
+            $user['fingerPrintNum'] ?? null,
+            $fpBlock['num'] ?? null,
+            $fpBlock['count'] ?? null,
+            $fpBlock['numOfFP'] ?? null,
+        );
+        if ($fpCount !== null) {
+            $user['numOfFP'] = $fpCount;
+        }
+
+        $cardCount = $this->firstNumericCount(
+            $user['numOfCard'] ?? null,
+            $user['NumOfCard'] ?? null,
+            $user['cardNum'] ?? null,
+        );
+        if ($cardCount !== null) {
+            $user['numOfCard'] = $cardCount;
+        }
+
+        $faceCount = $this->firstNumericCount(
+            $user['numOfFace'] ?? null,
+            $user['NumOfFace'] ?? null,
+            $user['faceNum'] ?? null,
+        );
+        if ($faceCount !== null) {
+            $user['numOfFace'] = $faceCount;
+        }
+
+        return $user;
+    }
+
+    /**
+     * @param  array<string, mixed>  $row
+     * @return array<string, mixed>
+     */
+    protected function presentFingerprintInfo(array $row): array
+    {
+        $no = HikvisionEventNormalizer::usableString(
+            $row['employeeNo'] ?? null,
+            $row['employeeNoString'] ?? null,
+            $row['EmployeeNo'] ?? null,
+        );
+        if ($no !== null) {
+            $row['employeeNo'] = $no;
+        }
+        $fingerId = $row['fingerPrintID'] ?? $row['FingerPrintID'] ?? $row['fingerID'] ?? null;
+        if ($fingerId !== null && is_numeric($fingerId)) {
+            $row['fingerPrintID'] = (int) $fingerId;
+        }
+
+        return $row;
+    }
+
+    protected function firstNumericCount(mixed ...$values): ?int
+    {
+        foreach ($values as $value) {
+            if ($value === null || $value === '' || ! is_numeric($value)) {
+                continue;
+            }
+
+            return max(0, (int) $value);
+        }
+
+        return null;
     }
 
     // ------------------------------------------------------------------

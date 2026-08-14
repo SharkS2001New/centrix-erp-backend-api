@@ -27,11 +27,18 @@ class HikvisionAttendanceSyncService
     public function syncDevice(AttendanceClockDevice $device, ?Carbon $from = null, ?Carbon $to = null): array
     {
         $to = $to ?? AppTimezone::now();
-        $from = $from ?? (
-            $device->last_event_at
-                ? Carbon::parse($device->last_event_at)->subMinute()
-                : AppTimezone::now()->subDays(7)
-        );
+        if ($from === null) {
+            $cursor = $device->last_event_at ? Carbon::parse($device->last_event_at) : null;
+            if ($cursor && $cursor->gt($to)) {
+                $cursor = $to->copy();
+            }
+            $from = $cursor
+                ? $cursor->copy()->subHours(36)
+                : $to->copy()->subDays(7);
+        }
+        if ($from->gt($to)) {
+            $from = $to->copy()->subDays(2);
+        }
 
         $result = [
             'pulled' => 0,
