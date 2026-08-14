@@ -367,6 +367,56 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertSame(0, $acsBodies[1]['minor'] ?? null);
     }
 
+    public function test_user_search_uses_short_search_id_and_max_30(): void
+    {
+        Http::fake([
+            'http://192.168.100.215/*' => Http::response([
+                'UserInfoSearch' => [
+                    'responseStatusStrg' => 'OK',
+                    'numOfMatches' => 1,
+                    'UserInfo' => [
+                        'employeeNo' => 'EMP001',
+                        'name' => 'Ada',
+                    ],
+                ],
+            ], 200),
+        ]);
+
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-USERS',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'capabilities_json' => ['features' => ['users' => true]],
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $res = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/users/search", [
+            'maxResults' => 50,
+        ]);
+        $res->assertOk();
+        $res->assertJsonPath('users.0.employeeNo', 'EMP001');
+
+        Http::assertSent(function ($request) {
+            if (! str_contains($request->url(), '/ISAPI/AccessControl/UserInfo/Search')) {
+                return false;
+            }
+            $cond = $request->data()['UserInfoSearchCond'] ?? [];
+            $searchId = (string) ($cond['searchID'] ?? '');
+
+            return strlen($searchId) <= 16
+                && ! str_contains($searchId, '-')
+                && (int) ($cond['maxResults'] ?? 0) <= 30
+                && array_key_exists('searchResultPosition', $cond);
+        });
+    }
+
     public function test_agent_ingest_applies_punch_via_employee_mapping(): void
     {
         Sanctum::actingAs($this->admin);

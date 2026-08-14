@@ -18,6 +18,9 @@ use SimpleXMLElement;
  */
 class HikvisionIsapiClient
 {
+    /** DS-K1T UserInfo/CardInfo search typically rejects maxResults above 30. */
+    public const ISAPI_SEARCH_PAGE_SIZE = 30;
+
     protected bool $lastRequestViaAgent = false;
 
     public function __construct(
@@ -129,37 +132,40 @@ class HikvisionIsapiClient
      */
     public function searchUsers(array $cond = []): array
     {
-        $searchId = (string) ($cond['searchID'] ?? Str::uuid());
+        $wanted = max(1, (int) ($cond['maxResults'] ?? 30));
         $position = (int) ($cond['searchResultPosition'] ?? 0);
-        $maxResults = (int) ($cond['maxResults'] ?? 30);
+        $users = [];
+        $total = 0;
+        $hasMore = false;
 
-        $body = [
-            'UserInfoSearchCond' => array_filter([
-                'searchID' => $searchId,
+        while (count($users) < $wanted) {
+            $pageSize = min(self::ISAPI_SEARCH_PAGE_SIZE, $wanted - count($users));
+            $pageCond = array_merge($cond, [
+                'searchID' => $this->shortSearchId($cond['searchID'] ?? null),
                 'searchResultPosition' => $position,
-                'maxResults' => $maxResults,
-                'EmployeeNoList' => $cond['EmployeeNoList'] ?? null,
-                'fuzzySearch' => $cond['fuzzySearch'] ?? null,
-            ], static fn ($v) => $v !== null && $v !== ''),
-        ];
-
-        $payload = $this->postJson('/ISAPI/AccessControl/UserInfo/Search?format=json', $body);
-        $search = $payload['UserInfoSearch'] ?? $payload['UserInfoSearchCond'] ?? $payload;
-        $list = $search['UserInfo'] ?? $search['InfoList'] ?? [];
-        if (isset($list['employeeNo']) || isset($list['EmployeeNo'])) {
-            $list = [$list];
+                'maxResults' => $pageSize,
+            ]);
+            $payload = $this->postIsapiSearch(
+                '/ISAPI/AccessControl/UserInfo/Search?format=json',
+                'UserInfoSearchCond',
+                $pageCond,
+            );
+            $search = $payload['UserInfoSearch'] ?? $payload['UserInfoSearchCond'] ?? $payload;
+            $list = $this->normalizeInfoList($search['UserInfo'] ?? $search['InfoList'] ?? []);
+            $total = max($total, (int) ($search['totalMatches'] ?? $search['numOfMatches'] ?? count($list)));
+            $users = array_merge($users, $list);
+            $status = strtolower((string) ($search['responseStatusStrg'] ?? ''));
+            $hasMore = $status === 'more';
+            if ($list === [] || ! $hasMore) {
+                break;
+            }
+            $position += max(1, count($list));
         }
-        if (! is_array($list)) {
-            $list = [];
-        }
-
-        $total = (int) ($search['totalMatches'] ?? $search['numOfMatches'] ?? count($list));
-        $responseStatus = strtolower((string) ($search['responseStatusStrg'] ?? ''));
 
         return [
-            'users' => array_values(array_filter($list, 'is_array')),
-            'total' => $total,
-            'has_more' => $responseStatus === 'more' || count($list) >= $maxResults,
+            'users' => array_slice($users, 0, $wanted),
+            'total' => $total > 0 ? $total : count($users),
+            'has_more' => $hasMore && count($users) >= $wanted,
         ];
     }
 
@@ -223,25 +229,22 @@ class HikvisionIsapiClient
      */
     public function searchCards(array $cond = []): array
     {
-        $searchId = (string) ($cond['searchID'] ?? Str::uuid());
-        $body = [
-            'CardInfoSearchCond' => array_filter([
-                'searchID' => $searchId,
-                'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
-                'maxResults' => (int) ($cond['maxResults'] ?? 30),
-                'EmployeeNoList' => $cond['EmployeeNoList'] ?? null,
-            ], static fn ($v) => $v !== null && $v !== ''),
-        ];
-        $payload = $this->postJson('/ISAPI/AccessControl/CardInfo/Search?format=json', $body);
+        $pageCond = array_merge($cond, [
+            'searchID' => $this->shortSearchId($cond['searchID'] ?? null),
+            'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
+            'maxResults' => min(self::ISAPI_SEARCH_PAGE_SIZE, max(1, (int) ($cond['maxResults'] ?? 30))),
+        ]);
+        $payload = $this->postIsapiSearch(
+            '/ISAPI/AccessControl/CardInfo/Search?format=json',
+            'CardInfoSearchCond',
+            $pageCond,
+        );
         $search = $payload['CardInfoSearch'] ?? $payload;
-        $list = $search['CardInfo'] ?? $search['InfoList'] ?? [];
-        if (isset($list['employeeNo']) || isset($list['cardNo'])) {
-            $list = [$list];
-        }
+        $list = $this->normalizeInfoList($search['CardInfo'] ?? $search['InfoList'] ?? []);
 
         return [
-            'cards' => is_array($list) ? array_values(array_filter($list, 'is_array')) : [],
-            'total' => (int) ($search['totalMatches'] ?? count((array) $list)),
+            'cards' => $list,
+            'total' => (int) ($search['totalMatches'] ?? count($list)),
         ];
     }
 
@@ -285,14 +288,13 @@ class HikvisionIsapiClient
      */
     public function searchFingerprints(array $cond = []): array
     {
-        $searchId = (string) ($cond['searchID'] ?? Str::uuid());
+        $pageCond = array_merge($cond, [
+            'searchID' => $this->shortSearchId($cond['searchID'] ?? null),
+            'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
+            'maxResults' => min(self::ISAPI_SEARCH_PAGE_SIZE, max(1, (int) ($cond['maxResults'] ?? 30))),
+        ]);
         $body = [
-            'FingerPrintCond' => array_filter([
-                'searchID' => $searchId,
-                'searchResultPosition' => (int) ($cond['searchResultPosition'] ?? 0),
-                'maxResults' => (int) ($cond['maxResults'] ?? 30),
-                'EmployeeNoList' => $cond['EmployeeNoList'] ?? null,
-            ], static fn ($v) => $v !== null && $v !== ''),
+            'FingerPrintCond' => $this->filterSearchCond($pageCond),
         ];
 
         try {
@@ -385,7 +387,7 @@ class HikvisionIsapiClient
         ?array $capabilities = null,
     ): array {
         $maxPage = $this->resolveMaxResultsPerPage($capabilities);
-        $searchId = substr(str_replace('-', '', (string) Str::uuid()), 0, 16);
+        $searchId = $this->shortSearchId();
         $position = 0;
         $events = [];
         $resolvedCond = null;
@@ -468,7 +470,7 @@ class HikvisionIsapiClient
                 return ['response' => $response, 'cond' => $baseCond];
             } catch (\Throwable $e) {
                 $lastError = $e;
-                if ($resolvedCond !== null || ! $this->isRetryableAcsEventError($e)) {
+                if ($resolvedCond !== null || ! $this->isRetryableIsapiBadParameters($e)) {
                     throw $e;
                 }
             }
@@ -519,13 +521,130 @@ class HikvisionIsapiClient
         return $unique;
     }
 
-    protected function isRetryableAcsEventError(\Throwable $e): bool
+    protected function isRetryableIsapiBadParameters(\Throwable $e): bool
     {
         $msg = strtolower($e->getMessage());
 
         return str_contains($msg, 'badparameters')
             || str_contains($msg, 'invalid content')
             || str_contains($msg, '0x60000001');
+    }
+
+    /**
+     * Hikvision searchID is often limited to 16 alphanumeric characters.
+     */
+    protected function shortSearchId(?string $given = null): string
+    {
+        $raw = $given !== null && $given !== ''
+            ? $given
+            : (string) Str::uuid();
+        $clean = preg_replace('/[^A-Za-z0-9]/', '', $raw) ?: '1';
+
+        return substr($clean, 0, 16);
+    }
+
+    /**
+     * @param  array<string, mixed>  $cond
+     * @return array<string, mixed>
+     */
+    protected function filterSearchCond(array $cond): array
+    {
+        $keep = [];
+        foreach ([
+            'searchID',
+            'searchResultPosition',
+            'maxResults',
+            'EmployeeNoList',
+            'fuzzySearch',
+        ] as $key) {
+            if (! array_key_exists($key, $cond)) {
+                continue;
+            }
+            $value = $cond[$key];
+            if ($value === null || $value === '') {
+                continue;
+            }
+            $keep[$key] = $value;
+        }
+
+        $keep['searchID'] = $this->shortSearchId(isset($keep['searchID']) ? (string) $keep['searchID'] : null);
+        $keep['searchResultPosition'] = (int) ($keep['searchResultPosition'] ?? 0);
+        $keep['maxResults'] = min(
+            self::ISAPI_SEARCH_PAGE_SIZE,
+            max(1, (int) ($keep['maxResults'] ?? self::ISAPI_SEARCH_PAGE_SIZE)),
+        );
+
+        return $keep;
+    }
+
+    /**
+     * POST a UserInfo/CardInfo-style search, retrying a minimal cond if firmware
+     * rejects UUID searchIDs, maxResults>30, or optional filters.
+     *
+     * @param  array<string, mixed>  $cond
+     * @return array<string, mixed>
+     */
+    protected function postIsapiSearch(string $path, string $condKey, array $cond): array
+    {
+        $full = $this->filterSearchCond($cond);
+        $minimal = [
+            'searchID' => $full['searchID'],
+            'searchResultPosition' => $full['searchResultPosition'],
+            'maxResults' => $full['maxResults'],
+        ];
+        if (isset($full['EmployeeNoList'])) {
+            $minimal['EmployeeNoList'] = $full['EmployeeNoList'];
+        }
+        $fallbackId = [
+            'searchID' => '1',
+            'searchResultPosition' => $full['searchResultPosition'],
+            'maxResults' => $full['maxResults'],
+        ];
+
+        $candidates = [];
+        foreach ([$full, $minimal, $fallbackId] as $candidate) {
+            $key = json_encode($candidate);
+            if (isset($candidates[$key])) {
+                continue;
+            }
+            $candidates[$key] = $candidate;
+        }
+
+        $lastError = null;
+        foreach ($candidates as $candidate) {
+            try {
+                return $this->postJson($path, [$condKey => $candidate]);
+            } catch (\Throwable $e) {
+                $lastError = $e;
+                if (! $this->isRetryableIsapiBadParameters($e)) {
+                    throw $e;
+                }
+            }
+        }
+
+        throw $lastError ?? new RuntimeException('Hikvision search failed.');
+    }
+
+    /**
+     * @param  mixed  $list
+     * @return list<array<string, mixed>>
+     */
+    protected function normalizeInfoList(mixed $list): array
+    {
+        if (! is_array($list)) {
+            return [];
+        }
+        if (
+            isset($list['employeeNo'])
+            || isset($list['EmployeeNo'])
+            || isset($list['employeeNoString'])
+            || isset($list['cardNo'])
+            || isset($list['fingerPrintID'])
+        ) {
+            $list = [$list];
+        }
+
+        return array_values(array_filter($list, 'is_array'));
     }
 
     // ------------------------------------------------------------------
