@@ -13,7 +13,10 @@ class OrganizationHolidayController extends HrOrgResourceController
 
     protected function applySearch($query, string $q): void
     {
-        $query->where('name', 'like', "%{$q}%");
+        $query->where(function ($sub) use ($q) {
+            $sub->where('name', 'like', "%{$q}%")
+                ->orWhereDate('holiday_date', $q);
+        });
     }
 
     protected function validated(Request $request, bool $updating = false): array

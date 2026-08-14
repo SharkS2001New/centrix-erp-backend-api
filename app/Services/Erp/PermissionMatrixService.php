@@ -60,6 +60,7 @@ class PermissionMatrixService
             self::ensureNotificationsForBackofficeRoles();
             self::ensureShopDebtorsForCustomerViewRoles();
             self::ensureCollectPaymentForPosCashierRoles();
+            self::ensureHrTimeAttendancePagesForExistingRoles();
             // Shared Administrator must keep every industry shell (commerce + hospitality).
             // Without this, hotel tenants only see Administration after the is_admin
             // least-privilege change (operational access comes from the role matrix).
@@ -779,6 +780,67 @@ class PermissionMatrixService
                 'role_id' => $roleId,
                 'permission_id' => $collectId,
             ]);
+        }
+    }
+
+    /**
+     * New Time & attendance pages — grant view to roles that already had Attendance
+     * or Overtime so upgrades keep the sidebar without re-editing every role.
+     */
+    public static function ensureHrTimeAttendancePagesForExistingRoles(): void
+    {
+        self::grantCodesToRolesThatHave('hr.attendance.view', [
+            'hr.attendance_history.view',
+            'hr.missed_punches.view',
+            'hr.duplicate_punches.view',
+            'hr.absents.view',
+            'hr.lateness.view',
+        ]);
+        self::grantCodesToRolesThatHave('hr.overtime.view', [
+            'hr.pending_overtime.view',
+        ]);
+        self::grantCodesToRolesThatHave('hr.overtime.edit', [
+            'hr.pending_overtime.approve',
+        ]);
+        self::grantCodesToRolesThatHave('hr.attendance.create', [
+            'hr.manual_attendance.create',
+        ]);
+    }
+
+    /**
+     * @param  list<string>  $targetCodes
+     */
+    protected static function grantCodesToRolesThatHave(string $sourceCode, array $targetCodes): void
+    {
+        $sourceId = Permission::query()
+            ->where('permission_code', $sourceCode)
+            ->value('id');
+        if (! $sourceId) {
+            return;
+        }
+
+        $targetIds = Permission::query()
+            ->whereIn('permission_code', $targetCodes)
+            ->pluck('id');
+        if ($targetIds->isEmpty()) {
+            return;
+        }
+
+        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+            ->where('permission_id', $sourceId)
+            ->pluck('role_id');
+
+        $adminRoleIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Administrator', 'Admin'])
+            ->pluck('id');
+
+        foreach ($roleIds->merge($adminRoleIds)->unique() as $roleId) {
+            foreach ($targetIds as $permissionId) {
+                \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                    'role_id' => $roleId,
+                    'permission_id' => $permissionId,
+                ]);
+            }
         }
     }
 }

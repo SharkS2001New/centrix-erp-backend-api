@@ -49,6 +49,17 @@ class AttendanceMissedPunchesController extends Controller
         return response()->json($this->missedPunches->autoMapAndRetry((int) $orgId));
     }
 
+    /** POST /attendance/missed-punches/events/{event}/apply */
+    public function applyEvent(Request $request, int $event)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        return response()->json($this->missedPunches->applyUnappliedEvent((int) $orgId, $event));
+    }
+
     /** POST /attendance/missed-punches/{session}/clock-out */
     public function closeClockOut(Request $request, int $session)
     {

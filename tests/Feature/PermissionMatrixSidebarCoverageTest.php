@@ -110,6 +110,11 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
             return [$app['id'] => $keys];
         });
 
+        $hrFeatureKeys = collect($apps->firstWhere('id', 'hr')['modules'] ?? [])
+            ->firstWhere('module', 'hr');
+        $this->assertNotNull($hrFeatureKeys);
+        $this->assertContains('manual_attendance', collect($hrFeatureKeys['features'] ?? [])->pluck('key')->all());
+
         $this->assertContains('payroll_summary', $featureKeysByApp->get('hr', []));
         $this->assertNotContains('payroll_summary', $featureKeysByApp->get('backoffice', []));
         $this->assertContains('profit_loss', $featureKeysByApp->get('accounting', []));
@@ -126,6 +131,42 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
             collect($backofficePricingFeatures['features'] ?? [])->pluck('key')->all(),
             'Price list is a report permission (reports.price_list.view), not pricing_tax',
         );
+    }
+
+    public function test_attendance_view_roles_receive_new_time_attendance_pages(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $role = \App\Models\Role::create([
+            'role_name' => 'Attendance Clerk '.uniqid(),
+            'scope' => 'org',
+            'is_active' => true,
+        ]);
+
+        $attendanceId = (int) \App\Models\Permission::where('permission_code', 'hr.attendance.view')->value('id');
+        $this->assertGreaterThan(0, $attendanceId);
+
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $attendanceId,
+        ]);
+
+        PermissionMatrixService::ensureHrTimeAttendancePagesForExistingRoles();
+
+        $granted = \Illuminate\Support\Facades\DB::table('role_permissions')
+            ->where('role_id', $role->id)
+            ->pluck('permission_id');
+
+        foreach ([
+            'hr.attendance_history.view',
+            'hr.missed_punches.view',
+            'hr.duplicate_punches.view',
+            'hr.absents.view',
+            'hr.lateness.view',
+        ] as $code) {
+            $id = (int) \App\Models\Permission::where('permission_code', $code)->value('id');
+            $this->assertTrue($granted->contains($id), "Expected {$code} granted to attendance.view roles");
+        }
     }
 
     public function test_every_registry_report_feature_appears_in_exactly_one_application(): void

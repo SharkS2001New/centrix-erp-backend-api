@@ -139,4 +139,65 @@ class SalePaymentOverpayTest extends TestCase
         $this->assertEqualsWithDelta(10000.0, (float) $fresh->amount_paid, 0.01);
         $this->assertSame('paid', $fresh->payment_status);
     }
+
+    public function test_cashier_with_collect_payment_can_complete_partial_balance(): void
+    {
+        PermissionMatrixService::ensure();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $role = Role::query()->firstOrCreate(
+            ['role_name' => 'Partial Pay Cashier '.uniqid()],
+            ['scope' => 'branch', 'is_active' => true],
+        );
+
+        $cashier = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'partial_pay_cashier_'.uniqid(),
+            'password' => Hash::make('password'),
+            'full_name' => 'Partial Pay Cashier',
+            'access_scope' => 'branch',
+            'login_channels' => ['backoffice', 'pos'],
+            'is_active' => true,
+        ]);
+
+        $collectId = Permission::query()
+            ->where('permission_code', 'sales.collect_payment.create')
+            ->value('id');
+        $this->assertNotNull($collectId);
+        DB::table('role_permissions')->updateOrInsert(
+            ['role_id' => $role->id, 'permission_id' => $collectId],
+            [],
+        );
+
+        Sanctum::actingAs($cashier);
+
+        $sale = Sale::create([
+            'order_num' => 880004,
+            'branch_id' => $cashier->branch_id,
+            'organization_id' => $cashier->organization_id,
+            'channel' => 'pos',
+            'cashier_id' => $cashier->id,
+            'status' => 'pending_payment',
+            'total_vat' => 0,
+            'order_total' => 1000,
+            'payment_status' => 'partial',
+            'amount_paid' => 400,
+            'is_credit_sale' => 1,
+            'stock_balanced' => 1,
+        ]);
+
+        $method = PaymentMethod::where('method_code', 'CASH')->firstOrFail();
+
+        $this->postJson("/api/v1/sales/{$sale->id}/payments", [
+            'payment_method_id' => $method->id,
+            'amount' => 600,
+        ])->assertOk();
+
+        $this->assertEqualsWithDelta(1000.0, (float) $sale->fresh()->amount_paid, 0.01);
+
+        $this->postJson("/api/v1/sales/{$sale->id}/convert-to-unpaid")
+            ->assertForbidden();
+    }
 }

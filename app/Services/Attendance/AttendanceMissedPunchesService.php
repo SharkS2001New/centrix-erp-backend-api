@@ -6,6 +6,7 @@ use App\Models\AttendanceClockDevice;
 use App\Models\Employee;
 use App\Models\EmployeeClockSession;
 use App\Models\HikvisionAccessEvent;
+use App\Models\HikvisionEmployeeMapping;
 use App\Services\Attendance\Hikvision\HikvisionEventNormalizer;
 use App\Services\Attendance\Hikvision\HikvisionService;
 use App\Support\AppTimezone;
@@ -53,11 +54,13 @@ class AttendanceMissedPunchesService
             $payload = $this->presentEvent($row);
             if (isset($seenHour[$hourKey])) {
                 $payload['process_error'] = 'Extra scan in the same hour as another punch that still needs mapping.';
+                $payload['reason_short'] = $this->shortReason($payload['process_error']);
                 $duplicates[] = $payload;
 
                 continue;
             }
             $seenHour[$hourKey] = true;
+            $payload['reason_short'] = $this->shortReason($payload['process_error']);
             $unapplied[] = $payload;
         }
 
@@ -73,6 +76,7 @@ class AttendanceMissedPunchesService
             HikvisionEventNormalizer::present($row);
             $payload = $this->presentEvent($row);
             $payload['process_error'] = 'Punch was outside lunch or clock-out windows. Attendance was not applied.';
+            $payload['reason_short'] = $this->shortReason($payload['process_error']);
             $unapplied[] = $payload;
         }
 
@@ -93,6 +97,7 @@ class AttendanceMissedPunchesService
             HikvisionEventNormalizer::present($row);
             $payload = $this->presentEvent($row);
             $payload['process_error'] = 'Extra scan in the same hour. Attendance already recorded from the first punch.';
+            $payload['reason_short'] = $this->shortReason($payload['process_error']);
             $duplicates[] = $payload;
         }
 
@@ -206,6 +211,7 @@ class AttendanceMissedPunchesService
             'attendance_status' => $row->attendance_status,
             'verification_method' => $row->verification_method,
             'process_error' => $row->process_error,
+            'reason_short' => $this->shortReason($row->process_error),
             'device_id' => $row->attendance_clock_device_id,
             'device_no' => $row->device?->device_no,
             'device_location' => $row->device?->location,
@@ -336,5 +342,149 @@ class AttendanceMissedPunchesService
         $retry['errors'] = array_slice(array_merge($errors, $retry['errors'] ?? []), 0, 20);
 
         return $retry;
+    }
+
+    /**
+     * HR applies a stored terminal scan to attendance, bypassing punch windows.
+     *
+     * @return array{applied: bool, action: string, session: mixed, attendance?: mixed}
+     */
+    public function applyUnappliedEvent(int $organizationId, int $eventId): array
+    {
+        $event = HikvisionAccessEvent::query()
+            ->with('device')
+            ->where('organization_id', $organizationId)
+            ->where('id', $eventId)
+            ->first();
+        if (! $event) {
+            throw ValidationException::withMessages([
+                'id' => 'Terminal punch not found.',
+            ]);
+        }
+
+        $error = (string) ($event->process_error ?? '');
+        if (in_array($error, [
+            HikvisionAccessEvent::DUPLICATE_PUNCH,
+            HikvisionAccessEvent::DUPLICATE_PUNCH_DISMISSED,
+        ], true)) {
+            throw ValidationException::withMessages([
+                'id' => 'This scan is a duplicate. It does not create a new attendance punch.',
+            ]);
+        }
+        if ($event->processed_at && $error !== HikvisionAccessEvent::OUTSIDE_WINDOW) {
+            throw ValidationException::withMessages([
+                'id' => 'This punch is already applied.',
+            ]);
+        }
+
+        $device = $event->device;
+        if (! $device) {
+            throw ValidationException::withMessages([
+                'id' => 'Clock device not found for this punch.',
+            ]);
+        }
+
+        $employeeNo = trim((string) $event->employee_no);
+        $employeeId = $this->resolveEmployeeIdForEvent($device, $employeeNo, (string) ($event->employee_name ?? ''));
+        if (! $employeeId) {
+            throw ValidationException::withMessages([
+                'employee_no' => 'Map this terminal ID to an employee first, then apply the punch.',
+            ]);
+        }
+
+        $punchedAt = AppTimezone::fromDeviceWallClock($event->event_time)
+            ?? AppTimezone::normalize($event->event_time);
+        if (! $punchedAt) {
+            throw ValidationException::withMessages([
+                'id' => 'This punch has no usable time.',
+            ]);
+        }
+
+        $result = $this->punchService->punch([
+            'organization_id' => $organizationId,
+            'employee_id' => $employeeId,
+            'device_no' => $device->device_no,
+            'punched_at' => $punchedAt,
+            'direction' => 'auto',
+            'hr_override' => true,
+        ]);
+
+        if (in_array($result['action'] ?? '', ['ignored', 'missed'], true)) {
+            throw ValidationException::withMessages([
+                'id' => 'Could not apply this punch to attendance. Map the employee or check the day is valid.',
+            ]);
+        }
+
+        $event->processed_at = AppTimezone::now();
+        $event->process_error = null;
+        $event->clock_session_id = $result['session']?->id;
+        $event->save();
+
+        return [
+            'applied' => true,
+            'action' => (string) ($result['action'] ?? ''),
+            'session' => $result['session'] ?? null,
+            'attendance' => $result['attendance'] ?? null,
+        ];
+    }
+
+    protected function resolveEmployeeIdForEvent(AttendanceClockDevice $device, string $employeeNo, string $employeeName): ?int
+    {
+        if ($employeeNo !== '') {
+            $mapping = HikvisionEmployeeMapping::query()
+                ->where('attendance_clock_device_id', $device->id)
+                ->whereIn('hikvision_employee_no', HikvisionService::employeeNoLookupVariants($employeeNo))
+                ->first();
+            if ($mapping?->employee_id) {
+                return (int) $mapping->employee_id;
+            }
+            $employee = HikvisionService::findUniqueEmployeeForTerminalNo(
+                (int) $device->organization_id,
+                $employeeNo,
+            );
+            if ($employee) {
+                return (int) $employee->id;
+            }
+        }
+        if ($employeeName !== '') {
+            $employee = HikvisionService::findUniqueEmployeeByName(
+                (int) $device->organization_id,
+                $employeeName,
+            );
+            if ($employee) {
+                return (int) $employee->id;
+            }
+        }
+
+        return null;
+    }
+
+    protected function shortReason(?string $error): string
+    {
+        $text = trim((string) $error);
+        if ($text === '') {
+            return 'Not applied';
+        }
+        if ($text === HikvisionAccessEvent::OUTSIDE_WINDOW) {
+            return 'Outside punch window';
+        }
+        if ($text === HikvisionAccessEvent::DUPLICATE_PUNCH) {
+            return 'Duplicate scan';
+        }
+        $lower = strtolower($text);
+        if (str_contains($lower, 'no centrix employee') || str_contains($lower, 'map this')) {
+            return 'Not mapped';
+        }
+        if (str_contains($lower, 'outside')) {
+            return 'Outside punch window';
+        }
+        if (str_contains($lower, 'needs mapping')) {
+            return 'Needs mapping';
+        }
+        if (mb_strlen($text) <= 36) {
+            return $text;
+        }
+
+        return mb_substr($text, 0, 34).'…';
     }
 }

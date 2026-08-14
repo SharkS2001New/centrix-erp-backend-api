@@ -483,7 +483,44 @@ class AttendanceLunchReconcileTest extends TestCase
 
         $this->assertSame(75, (int) $att->lunch_minutes);
         $this->assertSame(15, (int) $att->lunch_late_minutes);
+        $this->assertSame(15, (int) $att->total_late_minutes);
         $this->assertSame('late', $att->status);
+    }
+
+    public function test_payroll_deducts_clock_in_and_lunch_lateness(): void
+    {
+        $this->addSession('08:30:00', '13:00:00');
+        $this->addSession('14:15:00', '17:00:00');
+        app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+        );
+
+        $period = PayPeriod::query()->create([
+            'organization_id' => $this->org->id,
+            'period_code' => 'LNCH'.uniqid(),
+            'period_start' => $this->workDate,
+            'period_end' => $this->workDate,
+            'status' => 'open',
+        ]);
+
+        $line = app(PayrollEarningsService::class)->buildLineInput(
+            $this->employee->fresh('shift'),
+            $period,
+            [
+                'include_allowances' => false,
+                'include_other_deductions' => false,
+                'include_overtime' => false,
+                'use_attendance_proration' => true,
+            ],
+        );
+
+        $attendance = $line['payroll_meta']['attendance'];
+        $this->assertSame(15, (int) $attendance['clock_in_late_minutes_total']);
+        $this->assertSame(15, (int) $attendance['lunch_late_minutes_total']);
+        $this->assertSame(30, (int) $attendance['late_minutes_total']);
+        // 44000 * (1 - (30/60)/9) ≈ 41555.56
+        $this->assertEquals(41555.56, (float) $line['basic_salary']);
     }
 
     public function test_deny_pending_overtime_caps_clock_out_to_shift_end(): void

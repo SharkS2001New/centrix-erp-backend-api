@@ -1207,16 +1207,18 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.attendance.view|hr.attendance.create|hr.manage|hr.view|admin.manage');
             Route::post('attendance/missed-punches/auto-map', [AttendanceMissedPunchesController::class, 'autoMap'])
                 ->middleware('erp.permission:hr.manage|admin.manage');
+            Route::post('attendance/missed-punches/events/{event}/apply', [AttendanceMissedPunchesController::class, 'applyEvent'])
+                ->middleware('erp.permission:hr.manage|admin.manage');
             Route::post('attendance/missed-punches/{session}/clock-out', [AttendanceMissedPunchesController::class, 'closeClockOut'])
                 ->middleware('erp.permission:hr.manage|admin.manage');
             Route::patch('attendance/clock-sessions/{session}', [AttendanceClockController::class, 'updateSession'])
                 ->middleware('erp.permission:hr.manage|admin.manage');
             Route::post('attendance/duplicate-punches/dismiss', [AttendanceMissedPunchesController::class, 'dismissDuplicates'])
-                ->middleware('erp.permission:hr.attendance.view|hr.manage|hr.view|admin.manage');
+                ->middleware('erp.permission:hr.duplicate_punches.view|hr.attendance.view|hr.manage|hr.view|admin.manage');
             Route::get('employee-attendance/day-preview', [EmployeeAttendanceController::class, 'dayPreview'])
-                ->middleware('erp.permission:hr.view');
+                ->middleware('erp.permission:hr.manual_attendance.create|hr.attendance.create|hr.attendance.view|hr.view');
             Route::post('employee-attendance/bulk', [EmployeeAttendanceController::class, 'bulkStore'])
-                ->middleware('erp.permission:hr.manage');
+                ->middleware('erp.permission:hr.manual_attendance.create|hr.attendance.create|hr.manage');
             Route::post('employee-attendance/mark-absents', [EmployeeAttendanceController::class, 'markAbsents'])
                 ->middleware('erp.permission:hr.manage');
             Route::post('employee-attendance/bulk-delete', [EmployeeAttendanceController::class, 'bulkDestroy'])
@@ -1239,11 +1241,11 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::post('employee-overtime/{id}/approve', [EmployeeOvertimeController::class, 'approve'])
-                ->middleware('erp.permission:hr.manage');
+                ->middleware('erp.permission:hr.pending_overtime.approve|hr.manage');
             Route::post('employee-overtime/{id}/deny', [EmployeeOvertimeController::class, 'deny'])
-                ->middleware('erp.permission:hr.manage');
+                ->middleware('erp.permission:hr.pending_overtime.approve|hr.manage');
             Route::apiResource('employee-overtime', EmployeeOvertimeController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
+                ->middlewareFor(['index', 'show'], ['erp.permission:hr.overtime.view|hr.pending_overtime.view|hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::post('employee-cash-advances/{id}/approve', [EmployeeCashAdvanceController::class, 'approve'])
                 ->middleware('erp.permission:hr.cash_advances.approve');
@@ -1253,8 +1255,8 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::apiResource('employee-attendance', EmployeeAttendanceController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:hr.attendance.view|hr.attendance_history.view|hr.absents.view|hr.lateness.view|hr.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manual_attendance.create|hr.attendance.create|hr.manage']);
             Route::post('pay-periods/ensure-runnable', [PayPeriodController::class, 'ensureRunnable'])
                 ->middleware('erp.permission:hr.manage');
             Route::apiResource('pay-periods', PayPeriodController::class)

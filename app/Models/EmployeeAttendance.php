@@ -13,7 +13,7 @@ class EmployeeAttendance extends Model
     protected $table = 'employee_attendance';
     public $timestamps = false;
 
-    protected $appends = ['source_label', 'login_channel', 'login_channel_label'];
+    protected $appends = ['source_label', 'login_channel', 'login_channel_label', 'total_late_minutes'];
 
     protected $fillable = [
         'employee_id',
@@ -72,5 +72,34 @@ class EmployeeAttendance extends Model
     public function getLoginChannelLabelAttribute(): string
     {
         return AttendanceSourceLabels::channelLabel($this->source);
+    }
+
+    public function clockInLateMinutes(): int
+    {
+        return max(0, (int) ($this->attributes['late_minutes'] ?? 0));
+    }
+
+    public function lunchLateMinutes(): int
+    {
+        return max(0, (int) ($this->attributes['lunch_late_minutes'] ?? 0));
+    }
+
+    public function totalLateMinutes(): int
+    {
+        return $this->clockInLateMinutes() + $this->lunchLateMinutes();
+    }
+
+    public function getTotalLateMinutesAttribute(): int
+    {
+        return $this->totalLateMinutes();
+    }
+
+    public function deductibleLateMinutes(): int
+    {
+        if ((bool) ($this->lateness_waived ?? false)) {
+            return 0;
+        }
+
+        return $this->totalLateMinutes();
     }
 }

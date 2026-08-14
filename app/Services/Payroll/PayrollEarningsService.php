@@ -180,7 +180,9 @@ class PayrollEarningsService
      *   expected_hours: float,
      *   paid_hours: float,
      *   paid_leave_hours: float,
-     *   late_minutes_total: int
+     *   late_minutes_total: int,
+     *   clock_in_late_minutes_total: int,
+     *   lunch_late_minutes_total: int
      * }
      */
     public function summarizeAttendance(Employee $employee, string $start, string $end): array
@@ -218,6 +220,8 @@ class PayrollEarningsService
         $paidHours = 0.0;
         $paidLeaveHours = 0.0;
         $lateMinutesTotal = 0;
+        $clockInLateMinutesTotal = 0;
+        $lunchLateMinutesTotal = 0;
 
         $cursor = Carbon::parse($start)->startOfDay();
         $endDay = Carbon::parse($end)->startOfDay();
@@ -290,8 +294,12 @@ class PayrollEarningsService
                     $dayPaid = min($dayPaid, $dayExpectedHours);
                 }
                 $paidHours += $dayPaid;
+                $clockInLate = (int) ($att->late_minutes ?? 0);
+                $lunchLate = (int) ($att->lunch_late_minutes ?? 0);
                 if (! (bool) ($att->lateness_waived ?? false)) {
-                    $lateMinutesTotal += (int) ($att->late_minutes ?? 0);
+                    $clockInLateMinutesTotal += $clockInLate;
+                    $lunchLateMinutesTotal += $lunchLate;
+                    $lateMinutesTotal += $clockInLate + $lunchLate;
                 }
             }
 
@@ -321,6 +329,8 @@ class PayrollEarningsService
             'paid_hours' => round($paidHours, 2),
             'paid_leave_hours' => round($paidLeaveHours, 2),
             'late_minutes_total' => $lateMinutesTotal,
+            'clock_in_late_minutes_total' => $clockInLateMinutesTotal,
+            'lunch_late_minutes_total' => $lunchLateMinutesTotal,
         ];
     }
 

@@ -8,6 +8,7 @@ use App\Services\Attendance\LeaveBalanceService;
 use App\Services\Auth\UserAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;
 
 class HrReportController extends Controller
 {
@@ -161,6 +162,7 @@ class HrReportController extends Controller
                 'a.hours_worked',
                 'a.expected_hours',
                 'a.late_minutes',
+                ...$this->lunchLatenessSelectColumns(),
                 'a.lateness_waived',
                 'a.lateness_waiver_reason',
                 'a.lunch_status',
@@ -182,7 +184,7 @@ class HrReportController extends Controller
         return response()->json($q->paginate(min((int) ($filters['per_page'] ?? 50), 200)));
     }
 
-    /** Lateness list — days with late_minutes > 0 (includes waived). */
+    /** Lateness list — clock-in late, lunch late, and overall (includes waived). */
     public function latenessList(Request $request)
     {
         $filters = $this->filters($request);
@@ -202,6 +204,7 @@ class HrReportController extends Controller
                 'a.check_out',
                 'a.status',
                 'a.late_minutes',
+                ...$this->lunchLatenessSelectColumns(),
                 'a.lateness_waived',
                 'a.lateness_waiver_reason',
                 'a.lateness_waived_at',
@@ -210,7 +213,12 @@ class HrReportController extends Controller
                 'a.source',
                 'a.notes',
             ])
-            ->where('a.late_minutes', '>', 0)
+            ->where(function ($inner) {
+                $inner->where('a.late_minutes', '>', 0);
+                if (Schema::hasColumn('employee_attendance', 'lunch_late_minutes')) {
+                    $inner->orWhere('a.lunch_late_minutes', '>', 0);
+                }
+            })
             ->when($filters['organization_id'] ?? null, fn ($q, $id) => $q->where('a.organization_id', $id))
             ->when($filters['branch_id'] ?? null, fn ($q, $id) => $q->where('a.branch_id', $id))
             ->when($filters['department_id'] ?? null, fn ($q, $id) => $q->where('e.department_id', $id))
@@ -224,6 +232,24 @@ class HrReportController extends Controller
             ->orderBy('e.full_name');
 
         return response()->json($q->paginate(min((int) ($filters['per_page'] ?? 50), 200)));
+    }
+
+    /**
+     * @return list<\Illuminate\Database\Query\Expression|string>
+     */
+    protected function lunchLatenessSelectColumns(): array
+    {
+        if (! Schema::hasColumn('employee_attendance', 'lunch_late_minutes')) {
+            return [
+                DB::raw('0 as lunch_late_minutes'),
+                DB::raw('COALESCE(a.late_minutes, 0) as total_late_minutes'),
+            ];
+        }
+
+        return [
+            'a.lunch_late_minutes',
+            DB::raw('(COALESCE(a.late_minutes, 0) + COALESCE(a.lunch_late_minutes, 0)) as total_late_minutes'),
+        ];
     }
 
     protected function filters(Request $request): array

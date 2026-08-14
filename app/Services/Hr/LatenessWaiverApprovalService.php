@@ -48,7 +48,7 @@ class LatenessWaiverApprovalService
             'attendance record',
         );
 
-        if ((int) ($attendance->late_minutes ?? 0) <= 0) {
+        if ((int) $attendance->totalLateMinutes() <= 0) {
             throw ValidationException::withMessages([
                 'lateness_waived' => ['This attendance record has no late minutes to waive.'],
             ]);
@@ -101,7 +101,7 @@ class LatenessWaiverApprovalService
             'employee_attendance_id' => $attendance->id,
             'employee_id' => $attendance->employee_id,
             'attendance_date' => $date,
-            'late_minutes' => (int) $attendance->late_minutes,
+            'late_minutes' => $attendance->totalLateMinutes(),
             'reason' => $reason,
             'status' => 'pending',
             'waive' => $waive,

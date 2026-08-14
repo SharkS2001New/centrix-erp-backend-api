@@ -6,6 +6,8 @@ use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\AttendanceClockDevice;
 use App\Models\Employee;
 use App\Models\EmployeeClockSession;
+use App\Models\HikvisionAccessEvent;
+use App\Models\HikvisionEmployeeMapping;
 use App\Models\Organization;
 use App\Models\User;
 use App\Models\WorkShift;
@@ -681,5 +683,62 @@ class AttendanceClockPunchTest extends TestCase
             'status' => 'half_day',
             'check_out' => '12:45:00',
         ]);
+    }
+
+    public function test_hr_can_apply_unapplied_terminal_punch_as_applied_by_hr(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-14 23:40:00', 'Africa/Nairobi'));
+
+        $device = AttendanceClockDevice::query()
+            ->where('organization_id', $this->org->id)
+            ->where('device_no', 'TERMINAL-01')
+            ->firstOrFail();
+
+        HikvisionEmployeeMapping::query()->create([
+            'organization_id' => $this->org->id,
+            'attendance_clock_device_id' => $device->id,
+            'employee_id' => $this->employee->id,
+            'hikvision_employee_no' => 'EMP#HIK001',
+            'sync_status' => 'mapped',
+        ]);
+
+        $event = HikvisionAccessEvent::query()->create([
+            'organization_id' => $this->org->id,
+            'attendance_clock_device_id' => $device->id,
+            'event_key' => 'hr-apply-'.uniqid(),
+            'employee_no' => 'EMP#HIK001',
+            'employee_name' => 'Hik Vision',
+            'event_time' => '2026-08-14 23:05:00',
+            'raw_payload' => [],
+            'processed_at' => now(),
+            'process_error' => HikvisionAccessEvent::OUTSIDE_WINDOW,
+        ]);
+
+        $list = $this->getJson('/api/v1/attendance/missed-punches')->assertOk();
+        $this->assertTrue(
+            collect($list->json('unapplied_terminal_punches'))->contains(
+                fn ($row) => (int) ($row['id'] ?? 0) === (int) $event->id
+            )
+        );
+
+        $this->postJson("/api/v1/attendance/missed-punches/events/{$event->id}/apply")
+            ->assertOk()
+            ->assertJsonPath('applied', true)
+            ->assertJsonPath('action', 'in');
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-14',
+            'source' => 'hr_applied',
+            'check_in' => '23:05:00',
+        ]);
+
+        $event->refresh();
+        $this->assertNotNull($event->processed_at);
+        $this->assertNull($event->process_error);
+        $this->assertNotNull($event->clock_session_id);
+
+        Carbon::setTestNow();
     }
 }

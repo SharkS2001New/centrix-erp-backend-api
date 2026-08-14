@@ -312,15 +312,17 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('clock-sessions', [AttendanceClockController::class, 'sessions'])
             ->middleware('erp.permission:hr.view');
         Route::get('missed-punches', [AttendanceMissedPunchesController::class, 'index'])
-            ->middleware('erp.permission:hr.attendance.view|hr.view');
+            ->middleware('erp.permission:hr.missed_punches.view|hr.duplicate_punches.view|hr.attendance.view|hr.view');
         Route::post('missed-punches/retry', [AttendanceMissedPunchesController::class, 'retry'])
             ->middleware('erp.permission:hr.manage|admin.manage');
         Route::post('missed-punches/auto-map', [AttendanceMissedPunchesController::class, 'autoMap'])
             ->middleware('erp.permission:hr.manage|admin.manage');
+        Route::post('missed-punches/events/{event}/apply', [AttendanceMissedPunchesController::class, 'applyEvent'])
+            ->middleware('erp.permission:hr.manage|admin.manage');
         Route::post('missed-punches/{session}/clock-out', [AttendanceMissedPunchesController::class, 'closeClockOut'])
             ->middleware('erp.permission:hr.manage|admin.manage');
         Route::post('duplicate-punches/dismiss', [AttendanceMissedPunchesController::class, 'dismissDuplicates'])
-            ->middleware('erp.permission:hr.attendance.view|hr.manage|hr.view|admin.manage');
+            ->middleware('erp.permission:hr.duplicate_punches.view|hr.attendance.view|hr.manage|hr.view|admin.manage');
         Route::post('sync-from-devices', [AttendanceMissedPunchesController::class, 'syncFromDevices'])
             ->middleware('erp.permission:hr.attendance.view|hr.attendance.create|hr.manage|hr.view|admin.manage');
         Route::get('company-mobile-sessions', [CompanyPremisesController::class, 'sessions'])

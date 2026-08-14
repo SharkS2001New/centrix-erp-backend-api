@@ -53,6 +53,9 @@ class AttendanceClockPunchService
             ]);
         }
 
+        $hrOverride = (bool) ($payload['hr_override'] ?? false);
+        $source = $hrOverride ? 'hr_applied' : 'clock_device';
+
         $open = EmployeeClockSession::query()
             ->where('employee_id', $employee->id)
             ->whereNull('clock_out_at')
@@ -61,7 +64,7 @@ class AttendanceClockPunchService
 
         // Same-hour extra scans must not close anything. Closing first wrote 23:59:59
         // whenever timezone made the open session look like a different calendar day.
-        if ($this->windows->hasActivityInSameHour($employee, $punchedAt)) {
+        if (! $hrOverride && $this->windows->hasActivityInSameHour($employee, $punchedAt)) {
             $session = $open ?? EmployeeClockSession::query()
                 ->where('employee_id', $employee->id)
                 ->orderByDesc('clock_in_at')
@@ -82,6 +85,21 @@ class AttendanceClockPunchService
 
         if ($direction === 'auto') {
             $direction = $this->windows->resolve($employee, $punchedAt, $open);
+        }
+
+        if ($hrOverride && in_array($direction, [
+            AttendancePunchWindowResolver::ACTION_IGNORE,
+            AttendancePunchWindowResolver::ACTION_MISSED,
+            'out',
+        ], true) && $open === null) {
+            $direction = AttendancePunchWindowResolver::ACTION_IN;
+        }
+
+        if ($hrOverride && in_array($direction, [
+            AttendancePunchWindowResolver::ACTION_IGNORE,
+            AttendancePunchWindowResolver::ACTION_MISSED,
+        ], true) && $open) {
+            $direction = 'out';
         }
 
         if ($direction === AttendancePunchWindowResolver::ACTION_IGNORE) {
@@ -122,10 +140,10 @@ class AttendanceClockPunchService
         }
 
         if ($direction === 'in') {
-            return $this->clockIn($employee, $punchedAt, $deviceNo, $payload['branch_id'] ?? null, $open);
+            return $this->clockIn($employee, $punchedAt, $deviceNo, $payload['branch_id'] ?? null, $open, $source);
         }
 
-        return $this->clockOut($employee, $punchedAt, $deviceNo, $open);
+        return $this->clockOut($employee, $punchedAt, $deviceNo, $open, $source);
     }
 
     public function deleteSession(int $organizationId, int $sessionId): void
@@ -463,6 +481,7 @@ class AttendanceClockPunchService
         ?string $deviceNo,
         mixed $branchId,
         ?EmployeeClockSession $open,
+        string $source = 'clock_device',
     ): array {
         if ($open) {
             throw ValidationException::withMessages([
@@ -479,19 +498,21 @@ class AttendanceClockPunchService
             return ['action' => 'in', 'session' => $duplicate->load('employee')];
         }
 
-        try {
-            $this->dayPolicy->assertCanClockIn($employee, $punchedAt->toIso8601String());
-        } catch (\InvalidArgumentException $e) {
-            throw ValidationException::withMessages([
-                'employee_id' => $e->getMessage(),
-            ]);
+        if ($source !== 'hr_applied') {
+            try {
+                $this->dayPolicy->assertCanClockIn($employee, $punchedAt->toIso8601String());
+            } catch (\InvalidArgumentException $e) {
+                throw ValidationException::withMessages([
+                    'employee_id' => $e->getMessage(),
+                ]);
+            }
         }
 
         $session = EmployeeClockSession::create([
             'employee_id' => $employee->id,
             'organization_id' => $employee->organization_id,
             'branch_id' => $branchId ?? $employee->branch_id,
-            'source' => 'clock_device',
+            'source' => $source,
             'clock_in_at' => $punchedAt,
             'device_identifier' => $deviceNo,
         ]);
@@ -499,7 +520,7 @@ class AttendanceClockPunchService
         $attendance = $this->reconciler->recordOpenClockIn(
             $employee,
             $punchedAt,
-            'clock_device',
+            $source,
             $deviceNo,
             $session->branch_id ? (int) $session->branch_id : null,
         );
@@ -521,6 +542,7 @@ class AttendanceClockPunchService
         Carbon $punchedAt,
         ?string $deviceNo,
         ?EmployeeClockSession $open,
+        string $source = 'clock_device',
     ): array {
         if (! $open) {
             throw ValidationException::withMessages([
@@ -545,6 +567,9 @@ class AttendanceClockPunchService
         $open->clock_out_at = $punchedAt;
         $open->clock_out_kind = EmployeeClockSession::CLOCK_OUT_KIND_DEVICE;
         $open->needs_reconciliation = false;
+        if ($source === 'hr_applied') {
+            $open->source = 'hr_applied';
+        }
         if ($deviceNo) {
             $open->device_identifier = $deviceNo;
         }
@@ -555,7 +580,7 @@ class AttendanceClockPunchService
         $attendance = $this->reconciler->reconcileFromSessions(
             $employee,
             $attendanceDate,
-            'clock_device',
+            $source,
             $open->device_identifier,
             $open->branch_id ? (int) $open->branch_id : null,
         );

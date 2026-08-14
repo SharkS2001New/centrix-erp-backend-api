@@ -188,7 +188,15 @@ class PayrollReceiptMailService
 
         $lateMinutes = (int) ($payroll['attendance']['late_minutes_total'] ?? 0);
         if ($lateMinutes > 0) {
-            $rows[] = ['Lateness ('.$lateMinutes.' min)', null, 'note'];
+            $clockIn = (int) ($payroll['attendance']['clock_in_late_minutes_total'] ?? 0);
+            $lunch = (int) ($payroll['attendance']['lunch_late_minutes_total'] ?? 0);
+            $note = 'Lateness ('.$lateMinutes.' min)';
+            if ($clockIn > 0 && $lunch > 0) {
+                $note = 'Lateness ('.$lateMinutes.' min: '.$clockIn.' clock-in + '.$lunch.' lunch)';
+            } elseif ($lunch > 0 && $clockIn <= 0) {
+                $note = 'Lateness from lunch ('.$lateMinutes.' min)';
+            }
+            $rows[] = [$note, null, 'note'];
         }
 
         $rows[] = ['NSSF (member)', $line->nssf];

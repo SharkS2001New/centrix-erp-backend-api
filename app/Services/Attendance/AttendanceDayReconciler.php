@@ -149,7 +149,9 @@ class AttendanceDayReconciler
                 'lunch_minutes' => $existing?->lunch_minutes,
                 'early_leave_minutes' => $existing?->early_leave_minutes ?? 0,
                 'overtime_minutes' => $existing?->overtime_minutes ?? 0,
-                'notes' => $existing?->notes ?: 'On shift — awaiting clock-out',
+                'notes' => $source === 'hr_applied'
+                    ? 'Applied by HR from terminal punch'
+                    : ($existing?->notes ?: 'On shift — awaiting clock-out'),
             ],
         );
 
@@ -521,13 +523,14 @@ class AttendanceDayReconciler
         $waivedBy = $existing?->lateness_waived_by;
         $waivedAt = $existing?->lateness_waived_at;
 
-        // Waived lateness is restored into paid hours so payroll is not reduced.
-        if ($latenessWaived && $lateMinutes > 0) {
+        // Waived lateness (clock-in + lunch) is restored into paid hours so payroll is not reduced.
+        $totalLateMinutes = $lateMinutes + $lunchLateMinutes;
+        if ($latenessWaived && $totalLateMinutes > 0) {
             $paidHours = round(min(
-                $expectedHours > 0 ? $expectedHours : ($paidHours + ($lateMinutes / 60)),
-                $paidHours + ($lateMinutes / 60),
+                $expectedHours > 0 ? $expectedHours : ($paidHours + ($totalLateMinutes / 60)),
+                $paidHours + ($totalLateMinutes / 60),
             ), 2);
-            if ($status === 'late' && $lunchLateMinutes <= 0) {
+            if ($status === 'late') {
                 $status = 'present';
             }
         }
@@ -575,7 +578,7 @@ class AttendanceDayReconciler
         ?string $reason = null,
         ?int $userId = null,
     ): EmployeeAttendance {
-        $late = (int) ($attendance->late_minutes ?? 0);
+        $late = $attendance->totalLateMinutes();
         if ($waived && $late <= 0) {
             throw new \InvalidArgumentException('No lateness to waive on this attendance record.');
         }
