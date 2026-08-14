@@ -112,10 +112,17 @@ class AttendanceDayReconciler
                 'lunch_required' => true,
             ];
         $shiftStart = Carbon::parse($date.' '.$this->normalizeTime($shiftHours['start_time'] ?? '08:00:00'));
+        $firstIn = $at;
+        if ($existing?->check_in) {
+            $prev = Carbon::parse($date.' '.$this->normalizeTime((string) $existing->check_in), AppTimezone::name());
+            if ($prev->lt($firstIn)) {
+                $firstIn = $prev;
+            }
+        }
         $lateAt = app(AttendancePunchWindowResolver::class)->lateThreshold($employee, $date, $shiftStart);
         $lateMinutes = 0;
-        if ($at->gt($lateAt)) {
-            $lateMinutes = (int) max(0, (int) floor(($at->getTimestamp() - $lateAt->getTimestamp()) / 60));
+        if ($firstIn->gt($lateAt)) {
+            $lateMinutes = (int) max(0, (int) floor(($firstIn->getTimestamp() - $lateAt->getTimestamp()) / 60));
         }
 
         $status = $lateMinutes > 0 ? 'late' : 'present';
@@ -129,19 +136,19 @@ class AttendanceDayReconciler
             [
                 'organization_id' => $employee->organization_id,
                 'branch_id' => $branchId ?? $employee->branch_id,
-                'check_in' => AppTimezone::clockTime($at),
-                'check_out' => null,
+                'check_in' => AppTimezone::clockTime($firstIn),
+                'check_out' => $existing?->check_out,
                 'status' => $status,
                 'source' => $source,
                 'device_identifier' => $deviceIdentifier,
-                'hours_worked' => 0,
+                'hours_worked' => $existing?->hours_worked ?? 0,
                 'expected_hours' => $expectedHours,
                 'late_minutes' => $lateMinutes,
-                'lunch_status' => '-',
-                'lunch_minutes' => null,
-                'early_leave_minutes' => 0,
-                'overtime_minutes' => 0,
-                'notes' => 'On shift — awaiting clock-out',
+                'lunch_status' => $existing?->lunch_status ?? '-',
+                'lunch_minutes' => $existing?->lunch_minutes,
+                'early_leave_minutes' => $existing?->early_leave_minutes ?? 0,
+                'overtime_minutes' => $existing?->overtime_minutes ?? 0,
+                'notes' => $existing?->notes ?: 'On shift — awaiting clock-out',
             ],
         );
 

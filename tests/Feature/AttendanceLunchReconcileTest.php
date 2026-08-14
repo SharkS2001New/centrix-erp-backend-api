@@ -104,6 +104,50 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertSame('present', $att->status);
     }
 
+    public function test_day_punch_presenter_maps_four_shift_punches(): void
+    {
+        $this->addSession('08:05:00', '13:02:00');
+        $this->addSession('14:01:00', '17:10:00');
+        $sessions = EmployeeClockSession::query()
+            ->where('employee_id', $this->employee->id)
+            ->orderBy('clock_in_at')
+            ->get();
+
+        $punches = app(\App\Services\Attendance\AttendanceDayPunchPresenter::class)->present(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+            $sessions,
+        );
+
+        $this->assertTrue($punches['lunch_required']);
+        $this->assertSame('08:05', $punches['clock_in']);
+        $this->assertSame('13:02', $punches['lunch_out']);
+        $this->assertSame('14:01', $punches['lunch_in']);
+        $this->assertSame('17:10', $punches['clock_out']);
+    }
+
+    public function test_day_punch_presenter_hides_lunch_when_shift_has_none(): void
+    {
+        $this->shift->forceFill(['lunch_required' => false, 'lunch_minutes' => 0])->save();
+        $this->addSession('08:00:00', '17:00:00');
+        $sessions = EmployeeClockSession::query()
+            ->where('employee_id', $this->employee->id)
+            ->orderBy('clock_in_at')
+            ->get();
+
+        $punches = app(\App\Services\Attendance\AttendanceDayPunchPresenter::class)->present(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+            $sessions,
+        );
+
+        $this->assertFalse($punches['lunch_required']);
+        $this->assertSame('08:00', $punches['clock_in']);
+        $this->assertNull($punches['lunch_out']);
+        $this->assertNull($punches['lunch_in']);
+        $this->assertSame('17:00', $punches['clock_out']);
+    }
+
     public function test_late_thirty_minutes_reduces_paid_hours(): void
     {
         $this->addSession('08:30:00', '13:00:00');

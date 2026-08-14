@@ -110,7 +110,7 @@ class AttendanceClockController extends Controller
     /** GET /attendance/clock-sessions — open and recent sessions */
     public function sessions(Request $request)
     {
-        $query = EmployeeClockSession::query()->with('employee')->orderByDesc('clock_in_at');
+        $query = EmployeeClockSession::query()->with(['employee.shift'])->orderByDesc('clock_in_at');
         $orgId = $request->user()?->organization_id;
         if ($orgId) {
             $query->where('organization_id', $orgId);

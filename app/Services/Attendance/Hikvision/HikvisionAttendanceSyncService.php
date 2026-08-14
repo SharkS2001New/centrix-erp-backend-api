@@ -45,6 +45,7 @@ class HikvisionAttendanceSyncService
             'stored' => 0,
             'applied' => 0,
             'skipped' => 0,
+            'duplicates' => 0,
             'retried' => 0,
             'errors' => [],
             'via_agent' => false,
@@ -113,6 +114,7 @@ class HikvisionAttendanceSyncService
             'stored' => 0,
             'applied' => 0,
             'skipped' => 0,
+            'duplicates' => 0,
             'retried' => 0,
             'offline' => 0,
             'errors' => [],
@@ -124,6 +126,7 @@ class HikvisionAttendanceSyncService
             $summary['stored'] += (int) ($result['stored'] ?? 0);
             $summary['applied'] += (int) ($result['applied'] ?? 0);
             $summary['skipped'] += (int) ($result['skipped'] ?? 0);
+            $summary['duplicates'] += (int) ($result['duplicates'] ?? 0);
             $summary['retried'] += (int) ($result['retried'] ?? 0);
             $errors = $result['errors'] ?? [];
             foreach ($errors as $error) {
@@ -167,6 +170,7 @@ class HikvisionAttendanceSyncService
             'stored' => 0,
             'applied' => 0,
             'skipped' => 0,
+            'duplicates' => 0,
             'retried' => 0,
             'errors' => [],
         ], $processResult, $retryResult);
@@ -188,6 +192,7 @@ class HikvisionAttendanceSyncService
             'stored' => 0,
             'applied' => 0,
             'skipped' => 0,
+            'duplicates' => 0,
             'retried' => 0,
             'errors' => [],
         ];
@@ -233,6 +238,7 @@ class HikvisionAttendanceSyncService
         $result['applied'] = $applied['applied'];
         $result['retried'] = $applied['applied'];
         $result['skipped'] = $applied['skipped'];
+        $result['duplicates'] = (int) ($applied['duplicates'] ?? 0);
         $result['errors'] = $applied['errors'];
 
         return $result;
@@ -251,6 +257,7 @@ class HikvisionAttendanceSyncService
             'stored' => 0,
             'applied' => 0,
             'skipped' => 0,
+            'duplicates' => 0,
             'errors' => [],
         ];
 
@@ -319,9 +326,25 @@ class HikvisionAttendanceSyncService
 
             try {
                 $punch = $this->applyPunch($device, $employeeNo, $employeeId, $punchedAt, $direction);
+                $sessionId = $punch['session']->id ?? null;
+                if (($punch['action'] ?? '') === 'ignored') {
+                    $this->markEventAsDuplicatePunch($stored, $sessionId);
+                    $result['skipped']++;
+                    $result['duplicates'] = ($result['duplicates'] ?? 0) + 1;
+                    $this->markSameHourDuplicatesProcessed(
+                        $device,
+                        $employeeNo,
+                        $punchedAt,
+                        (int) $stored->id,
+                        $sessionId,
+                    );
+
+                    continue;
+                }
+
                 $stored->processed_at = AppTimezone::now();
                 $stored->process_error = null;
-                $stored->clock_session_id = $punch['session']->id ?? null;
+                $stored->clock_session_id = $sessionId;
                 $stored->save();
                 $result['applied']++;
                 $this->markSameHourDuplicatesProcessed(
@@ -329,7 +352,7 @@ class HikvisionAttendanceSyncService
                     $employeeNo,
                     $punchedAt,
                     (int) $stored->id,
-                    $punch['session']->id ?? null,
+                    $sessionId,
                 );
             } catch (ValidationException $e) {
                 $msg = collect($e->errors())->flatten()->first() ?? $e->getMessage();
@@ -425,10 +448,13 @@ class HikvisionAttendanceSyncService
             ]);
     }
 
-    protected function markEventAsDuplicatePunch(HikvisionAccessEvent $stored): void
+    protected function markEventAsDuplicatePunch(HikvisionAccessEvent $stored, mixed $sessionId = null): void
     {
         $stored->processed_at = AppTimezone::now();
         $stored->process_error = HikvisionAccessEvent::DUPLICATE_PUNCH;
+        if ($sessionId) {
+            $stored->clock_session_id = $sessionId;
+        }
         $stored->save();
     }
 
@@ -508,6 +534,9 @@ class HikvisionAttendanceSyncService
         $base['skipped'] = (int) ($base['skipped'] ?? 0)
             + (int) ($process['skipped'] ?? 0)
             + (int) ($retry['skipped'] ?? 0);
+        $base['duplicates'] = (int) ($base['duplicates'] ?? 0)
+            + (int) ($process['duplicates'] ?? 0)
+            + (int) ($retry['duplicates'] ?? 0);
         $base['retried'] = (int) ($base['retried'] ?? 0) + (int) ($retry['retried'] ?? 0);
         $base['errors'] = array_values(array_merge(
             $base['errors'] ?? [],

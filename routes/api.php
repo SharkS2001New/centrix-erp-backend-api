@@ -8,6 +8,7 @@ use App\Http\Controllers\Api\V1\AuditLogController;
 use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\BackgroundJobDispatchController;
 use App\Http\Controllers\Api\V1\BackgroundTaskController;
+use App\Http\Controllers\Api\V1\Operations\AttendanceMissedPunchesController;
 use App\Http\Controllers\Api\V1\Operations\CompanyPremisesController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\CartLineController;
@@ -1200,6 +1201,8 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('organization-holidays', OrganizationHolidayController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
+            Route::post('attendance/sync-from-devices', [AttendanceMissedPunchesController::class, 'syncFromDevices'])
+                ->middleware('erp.permission:hr.attendance.view|hr.attendance.create|hr.manage|hr.view|admin.manage');
             Route::get('employee-attendance/day-preview', [EmployeeAttendanceController::class, 'dayPreview'])
                 ->middleware('erp.permission:hr.view');
             Route::post('employee-attendance/bulk', [EmployeeAttendanceController::class, 'bulkStore'])

@@ -1016,6 +1016,11 @@ class HikvisionDeviceManagementTest extends TestCase
         )->assertOk()->assertJsonPath('applied', 1);
 
         $this->assertSame(1, \App\Models\EmployeeClockSession::query()->where('employee_id', $employee->id)->count());
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $employee->id,
+            'attendance_date' => '2026-08-14',
+            'check_in' => '08:05:00',
+        ]);
         $this->assertDatabaseHas('hikvision_access_events', [
             'attendance_clock_device_id' => $device->id,
             'serial_no' => 'dup-hr-2',

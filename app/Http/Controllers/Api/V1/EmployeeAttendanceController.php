@@ -4,9 +4,11 @@ namespace App\Http\Controllers\Api\V1;
 
 use App\Models\Employee;
 use App\Models\EmployeeAttendance;
+use App\Models\EmployeeClockSession;
 use App\Models\LatenessWaiverRequest;
 use App\Services\Attendance\AttendanceAbsentMaterializer;
 use App\Services\Attendance\AttendanceDayPolicy;
+use App\Services\Attendance\AttendanceDayPunchPresenter;
 use App\Services\Attendance\AttendanceDayReconciler;
 use App\Services\Hr\LatenessWaiverApprovalService;
 use App\Services\Notifications\ActionRequestService;
@@ -121,6 +123,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
         $perPage = min((int) $request->input('per_page', 25), 200);
         $page = $query->orderByDesc('attendance_date')->paginate($perPage);
         $this->attachPendingWaivers($page->getCollection());
+        $this->attachDayPunches($page->getCollection());
 
         return response()->json($page);
     }
@@ -151,6 +154,87 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 'requested_at' => $req->requested_at,
                 'assigned_manager_user_id' => $req->assigned_manager_user_id,
             ] : null);
+        }
+    }
+
+    /**
+     * @param  \Illuminate\Support\Collection<int, EmployeeAttendance>  $rows
+     */
+    protected function attachDayPunches($rows): void
+    {
+        if ($rows->isEmpty()) {
+            return;
+        }
+
+        $employeeIds = $rows->pluck('employee_id')->unique()->filter()->all();
+        $dates = $rows->map(fn ($row) => optional($row->attendance_date)?->toDateString())->filter()->unique()->all();
+        $employees = Employee::query()
+            ->with('shift')
+            ->whereIn('id', $employeeIds)
+            ->get()
+            ->keyBy('id');
+
+        $sessions = collect();
+        if ($employeeIds !== [] && $dates !== []) {
+            $sessions = EmployeeClockSession::query()
+                ->whereIn('employee_id', $employeeIds)
+                ->where(function ($q) use ($dates) {
+                    foreach ($dates as $i => $date) {
+                        $method = $i === 0 ? 'where' : 'orWhere';
+                        $q->{$method}(function ($inner) use ($date) {
+                            $inner->whereDate('clock_in_at', $date)
+                                ->orWhereDate('clock_out_at', $date);
+                        });
+                    }
+                })
+                ->orderBy('clock_in_at')
+                ->get()
+                ->groupBy(function (EmployeeClockSession $session) {
+                    $in = $session->clock_in_at
+                        ? \App\Support\AppTimezone::normalize($session->clock_in_at)?->toDateString()
+                        : null;
+
+                    return ((int) $session->employee_id).'|'.($in ?? '');
+                });
+        }
+
+        $presenter = app(AttendanceDayPunchPresenter::class);
+
+        foreach ($rows as $row) {
+            $date = optional($row->attendance_date)?->toDateString();
+            $employee = $employees->get((int) $row->employee_id);
+            $daySessions = $date
+                ? ($sessions->get(((int) $row->employee_id).'|'.$date) ?? collect())
+                : collect();
+
+            if ($employee && $date) {
+                $punches = $presenter->present($employee, $date, $daySessions);
+            } else {
+                $punches = [
+                    'clock_in' => $row->check_in ? substr((string) $row->check_in, 0, 5) : null,
+                    'lunch_out' => null,
+                    'lunch_in' => null,
+                    'clock_out' => $row->check_out ? substr((string) $row->check_out, 0, 5) : null,
+                    'lunch_required' => $row->lunch_status !== '-',
+                    'session_ids' => [],
+                ];
+            }
+
+            if (! $punches['clock_in'] && $row->check_in) {
+                $punches['clock_in'] = substr((string) $row->check_in, 0, 5);
+            }
+            if (! $punches['clock_out'] && $row->check_out) {
+                $checkOutHm = substr((string) $row->check_out, 0, 5);
+                if ($checkOutHm !== ($punches['lunch_out'] ?? null)) {
+                    $punches['clock_out'] = $checkOutHm;
+                }
+            }
+
+            $row->setAttribute('clock_in', $punches['clock_in']);
+            $row->setAttribute('lunch_out', $punches['lunch_out']);
+            $row->setAttribute('lunch_in', $punches['lunch_in']);
+            $row->setAttribute('clock_out', $punches['clock_out']);
+            $row->setAttribute('lunch_required', $punches['lunch_required']);
         }
     }
 
