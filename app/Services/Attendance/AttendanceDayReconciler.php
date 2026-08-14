@@ -260,6 +260,9 @@ class AttendanceDayReconciler
         $eval = $this->dayPolicy->evaluate($employee, $date);
         $forcedWork = in_array($forcedStatus ?? '', ['present', 'late', 'half_day'], true);
         $forcedOff = in_array($forcedStatus ?? '', ['leave', 'holiday', 'absent'], true);
+        if ($source === 'hr_applied' && ($notes === null || $notes === '')) {
+            $notes = 'Applied by HR from terminal punch';
+        }
 
         // Admin can still record times for a non-scheduled day (present/late/half_day with punches).
         if (! $eval['should_work'] && ! $forcedWork && ! $forcedOff) {

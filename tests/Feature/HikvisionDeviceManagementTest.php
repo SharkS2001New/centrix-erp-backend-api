@@ -1169,4 +1169,27 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertNotEmpty($res->json('errors'));
         $this->assertStringContainsString('CentrixAttendanceAgent', (string) $res->json('errors.0'));
     }
+
+    public function test_fingerprint_search_still_queries_terminal_when_capability_flag_is_false(): void
+    {
+        $device = new AttendanceClockDevice([
+            'host' => '192.168.1.50',
+            'port' => 80,
+            'username' => 'admin',
+            'capabilities_json' => ['features' => ['fingerprints' => false]],
+        ]);
+
+        $client = \Mockery::mock(HikvisionIsapiClient::class);
+        $client->shouldReceive('searchFingerprints')
+            ->once()
+            ->andReturn(['fingerprints' => [['employeeNo' => '0003']], 'total' => 1]);
+
+        $service = \Mockery::mock(HikvisionService::class)->makePartial();
+        $service->shouldReceive('client')->once()->with($device)->andReturn($client);
+
+        $result = $service->searchFingerprints($device, ['maxResults' => 10]);
+
+        $this->assertSame(1, $result['total']);
+        $this->assertSame('0003', $result['fingerprints'][0]['employeeNo']);
+    }
 }

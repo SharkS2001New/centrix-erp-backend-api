@@ -97,7 +97,7 @@ class HikvisionIsapiClient
             'events' => $this->tryCapability(fn () => $this->getAcsEventCapabilities()),
             'event_count' => $this->tryCapability(fn () => $this->getAcsEventTotalNumCapabilities()),
             'cards' => $this->tryCapability(fn () => $this->getJson('/ISAPI/AccessControl/CardInfo/capabilities?format=json')),
-            'fingerprints' => $this->tryCapability(fn () => $this->getJson('/ISAPI/AccessControl/FingerPrint/capabilities?format=json')),
+            'fingerprints' => $this->tryFingerprintCapabilities(),
         ];
 
         $caps['features'] = [
@@ -1111,6 +1111,27 @@ class HikvisionIsapiClient
         throw new RuntimeException(
             "Hikvision {$context} failed HTTP {$status}: ".mb_substr($body, 0, 500)
         );
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function tryFingerprintCapabilities(): array
+    {
+        $paths = [
+            '/ISAPI/AccessControl/FingerPrint/capabilities?format=json',
+            '/ISAPI/AccessControl/FingerPrintInfo/capabilities?format=json',
+        ];
+        $last = ['supported' => false, 'error' => 'not probed'];
+        foreach ($paths as $path) {
+            $result = $this->tryCapability(fn () => $this->getJson($path));
+            if ($result['supported'] ?? false) {
+                return $result;
+            }
+            $last = $result;
+        }
+
+        return $last;
     }
 
     /**

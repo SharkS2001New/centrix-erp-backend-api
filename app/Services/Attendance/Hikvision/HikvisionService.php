@@ -499,8 +499,8 @@ class HikvisionService
      */
     public function searchFingerprints(AttendanceClockDevice $device, array $cond = []): array
     {
-        $this->assertFeature($device, 'fingerprints');
-
+        // Cached capabilities often mark fingerprints false because FingerPrint/capabilities
+        // 404s on DS-K1T terminals that still support FingerPrintInfo Search.
         return $this->client($device)->searchFingerprints($cond);
     }
 
@@ -509,8 +509,6 @@ class HikvisionService
      */
     public function deleteFingerprint(AttendanceClockDevice $device, array $payload): array
     {
-        $this->assertFeature($device, 'fingerprints');
-
         return $this->client($device)->deleteFingerprint($payload);
     }
 
@@ -860,18 +858,34 @@ class HikvisionService
         return 'd'.$deviceId.':h'.substr(sha1($fingerprint), 0, 40);
     }
 
+    /**
+     * @return bool|null  true/false when discovered; null when capabilities were never stored
+     */
+    protected function cachedFeature(AttendanceClockDevice $device, string $feature): ?bool
+    {
+        $caps = $device->capabilities_json;
+        if (! is_array($caps) || ! isset($caps['features']) || ! is_array($caps['features'])) {
+            return null;
+        }
+        if (! array_key_exists($feature, $caps['features'])) {
+            return null;
+        }
+
+        return (bool) $caps['features'][$feature];
+    }
+
     protected function assertFeature(AttendanceClockDevice $device, string $feature): void
     {
-        $caps = $device->capabilities_json ?? [];
-        if (! ($caps['features'][$feature] ?? false)) {
-            $label = match ($feature) {
-                'users' => 'Person / employee management',
-                'cards' => 'Card management',
-                'fingerprints' => 'Fingerprint management',
-                'events' => 'Access / attendance events',
-                default => ucfirst($feature),
-            };
-            throw new RuntimeException("{$label} is not supported by this terminal.");
+        if ($this->cachedFeature($device, $feature) !== false) {
+            return;
         }
+        $label = match ($feature) {
+            'users' => 'Person / employee management',
+            'cards' => 'Card management',
+            'fingerprints' => 'Fingerprint management',
+            'events' => 'Access / attendance events',
+            default => ucfirst($feature),
+        };
+        throw new RuntimeException("{$label} is not supported by this terminal.");
     }
 }

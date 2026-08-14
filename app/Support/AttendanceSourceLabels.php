@@ -11,7 +11,7 @@ class AttendanceSourceLabels
             'company_mobile' => 'Premises (company phone)',
             'clock_device' => 'Premises (clock)',
             'manual' => 'Manual entry',
-            'hr_applied' => 'Applied by HR',
+            'hr_applied' => 'Applied by HR manually',
             default => 'Manual entry',
         };
     }
@@ -31,7 +31,7 @@ class AttendanceSourceLabels
         return match (self::channel($source)) {
             'mobile_sales' => 'Mobile sales app',
             'premises' => 'Premises',
-            default => $source === 'hr_applied' ? 'Applied by HR' : 'Manual entry',
+            default => $source === 'hr_applied' ? 'Applied by HR manually' : 'Manual entry',
         };
     }
 }

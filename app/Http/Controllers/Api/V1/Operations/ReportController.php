@@ -3092,27 +3092,34 @@ class ReportController extends Controller
             $creditNotes = $creditQuery->get();
         }
 
-        $saleIds = $invoices->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
-        $creditsBySale = $invoiceService->statementCreditsBySaleId($saleIds);
-        $saleTotals = $saleIds === []
+        $creditSaleIds = $creditNotes->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $invoiceNosBySale = $creditSaleIds === []
             ? collect()
-            : DB::table('sales')->whereIn('id', $saleIds)->pluck('order_total', 'id');
-
-        $invoices = $invoices->map(function ($row) use ($invoiceService, $creditsBySale, $saleTotals) {
+            : DB::table('customer_invoices')
+                ->whereIn('sale_id', $creditSaleIds)
+                ->whereNull('deleted_at')
+                ->orderBy('id')
+                ->get(['sale_id', 'invoice_number'])
+                ->unique('sale_id')
+                ->pluck('invoice_number', 'sale_id');
+        $creditNotes = $creditNotes->map(function ($row) use ($invoiceNosBySale) {
             $saleId = $row->sale_id ? (int) $row->sale_id : null;
-            $credits = $saleId ? (float) ($creditsBySale[$saleId] ?? 0) : 0.0;
-            $netSale = $saleId !== null
-                ? (float) ($saleTotals[$saleId] ?? $row->invoice_total)
-                : (float) $row->invoice_total;
-            $row->return_credit_total = round($credits, 2);
-            $row->statement_debit = $invoiceService->statementDebitForInvoice(
-                (float) $row->invoice_total,
-                $netSale,
-                $credits,
-            );
+            $row->invoice_number = $saleId ? ($invoiceNosBySale[$saleId] ?? null) : null;
 
             return $row;
         });
+
+        $saleIds = $invoices->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $invoices = $this->decorateStatementInvoices($invoices, $invoiceService);
+
+        $opening = $this->customerStatementOpeningBalance(
+            $customerNum,
+            $orgId,
+            $fromDate,
+            $invoiceService,
+        );
+
+        $aging = $this->customerStatementAging($customerNum, $orgId, $toDate, $invoiceService);
 
         $sales = DB::table('sales')
             ->where('customer_num', $customerNum)
@@ -3127,6 +3134,8 @@ class ReportController extends Controller
         $totalInvoiced = $invoices->sum(fn ($row) => (float) $row->statement_debit);
         $totalCredits = $creditNotes->sum(fn ($row) => (float) $row->total_amount);
         $totalPaid = $payments->sum(fn ($row) => (float) $row->amount_paid);
+        $periodNet = round($opening + $totalInvoiced - $totalCredits - $totalPaid, 2);
+        $amountDue = round((float) $customer->current_balance, 2);
 
         return [
             'customer' => [
@@ -3149,15 +3158,145 @@ class ReportController extends Controller
             'credit_notes' => $creditNotes->values(),
             'payments' => $payments,
             'sales' => $sales,
+            'aging' => $aging,
             'summary' => [
                 'total_invoiced' => round($totalInvoiced, 2),
                 'total_credits' => round($totalCredits, 2),
                 'total_paid' => round($totalPaid, 2),
-                'outstanding_balance' => (float) $customer->current_balance,
+                'opening_balance' => $opening,
+                'period_balance' => $periodNet,
+                'outstanding_balance' => $amountDue,
+                'amount_due' => $amountDue,
                 'credit_limit' => (float) $customer->credit_limit,
                 'from_date' => $fromDate,
                 'to_date' => $toDate,
+                'statement_no' => (string) $customer->customer_num,
             ],
+        ];
+    }
+
+    protected function decorateStatementInvoices($invoices, CustomerInvoiceService $invoiceService)
+    {
+        $saleIds = $invoices->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
+        $creditsBySale = $invoiceService->statementCreditsBySaleId($saleIds);
+        $saleTotals = $saleIds === []
+            ? collect()
+            : DB::table('sales')->whereIn('id', $saleIds)->pluck('order_total', 'id');
+
+        return $invoices->map(function ($row) use ($invoiceService, $creditsBySale, $saleTotals) {
+            $saleId = $row->sale_id ? (int) $row->sale_id : null;
+            $credits = $saleId ? (float) ($creditsBySale[$saleId] ?? 0) : 0.0;
+            $netSale = $saleId !== null
+                ? (float) ($saleTotals[$saleId] ?? $row->invoice_total)
+                : (float) $row->invoice_total;
+            $row->return_credit_total = round($credits, 2);
+            $row->statement_debit = $invoiceService->statementDebitForInvoice(
+                (float) $row->invoice_total,
+                $netSale,
+                $credits,
+            );
+
+            return $row;
+        });
+    }
+
+    protected function customerStatementOpeningBalance(
+        int $customerNum,
+        ?int $orgId,
+        string $fromDate,
+        CustomerInvoiceService $invoiceService,
+    ): float {
+        $priorInvoices = DB::table('customer_invoices')
+            ->where('customer_num', $customerNum)
+            ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->whereNull('deleted_at')
+            ->whereDate('invoice_date', '<', $fromDate)
+            ->get();
+        $priorInvoices = $this->decorateStatementInvoices($priorInvoices, $invoiceService);
+        $invoiced = $priorInvoices->sum(fn ($row) => (float) $row->statement_debit);
+
+        $credits = 0.0;
+        if (Schema::hasTable('credit_notes')) {
+            $credits = (float) DB::table('credit_notes as cn')
+                ->where('cn.customer_num', $customerNum)
+                ->when($orgId, fn ($q) => $q->where('cn.organization_id', $orgId))
+                ->whereDate('cn.credit_date', '<', $fromDate)
+                ->when(
+                    Schema::hasTable('customer_returns') && Schema::hasColumn('customer_returns', 'return_kind'),
+                    function ($q) {
+                        $q->leftJoin('customer_returns as cr', 'cr.id', '=', 'cn.customer_return_id')
+                            ->where(function ($inner) {
+                                $inner->whereNull('cr.id')
+                                    ->orWhereNull('cr.return_kind')
+                                    ->orWhere('cr.return_kind', '!=', 'pos_edit');
+                            });
+                    },
+                )
+                ->sum('cn.total_amount');
+        }
+
+        $paid = (float) DB::table('customer_invoice_payments')
+            ->where('customer_num', $customerNum)
+            ->when($orgId && Schema::hasColumn('customer_invoice_payments', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->whereDate('date_paid', '<', $fromDate)
+            ->sum('amount_paid');
+
+        return round($invoiced - $credits - $paid, 2);
+    }
+
+    protected function customerStatementAging(
+        int $customerNum,
+        ?int $orgId,
+        string $asOf,
+        CustomerInvoiceService $invoiceService,
+    ): array {
+        $buckets = [
+            'current' => 0.0,
+            'days_1_30' => 0.0,
+            'days_31_60' => 0.0,
+            'days_61_90' => 0.0,
+            'days_90_plus' => 0.0,
+        ];
+
+        $open = DB::table('customer_invoices')
+            ->where('customer_num', $customerNum)
+            ->when($orgId && Schema::hasColumn('customer_invoices', 'organization_id'), fn ($q) => $q->where('organization_id', $orgId))
+            ->whereNull('deleted_at')
+            ->whereIn('payment_status', [0, 1])
+            ->get();
+        $open = $this->decorateStatementInvoices($open, $invoiceService);
+        $asOfDay = \Carbon\Carbon::parse($asOf)->startOfDay();
+
+        foreach ($open as $row) {
+            $remaining = max(
+                0,
+                round((float) $row->statement_debit - (float) ($row->amount_paid ?? 0) - (float) ($row->return_credit_total ?? 0), 2),
+            );
+            if ($remaining < 0.01) {
+                continue;
+            }
+            $due = $row->due_date ?: $row->invoice_date;
+            $daysPastDue = \Carbon\Carbon::parse($due)->startOfDay()->diffInDays($asOfDay, false);
+            if ($daysPastDue <= 0) {
+                $buckets['current'] += $remaining;
+            } elseif ($daysPastDue <= 30) {
+                $buckets['days_1_30'] += $remaining;
+            } elseif ($daysPastDue <= 60) {
+                $buckets['days_31_60'] += $remaining;
+            } elseif ($daysPastDue <= 90) {
+                $buckets['days_61_90'] += $remaining;
+            } else {
+                $buckets['days_90_plus'] += $remaining;
+            }
+        }
+
+        return [
+            'current' => round($buckets['current'], 2),
+            'days_1_30' => round($buckets['days_1_30'], 2),
+            'days_31_60' => round($buckets['days_31_60'], 2),
+            'days_61_90' => round($buckets['days_61_90'], 2),
+            'days_90_plus' => round($buckets['days_90_plus'], 2),
+            'amount_due' => round(array_sum($buckets), 2),
         ];
     }
 

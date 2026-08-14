@@ -8,6 +8,9 @@ return new class extends Migration
 {
     public function up(): void
     {
+        if (Schema::getConnection()->getDriverName() !== 'mysql') {
+            return;
+        }
         if (Schema::hasTable('employee_attendance') && Schema::hasColumn('employee_attendance', 'source')) {
             DB::statement("ALTER TABLE employee_attendance MODIFY COLUMN source ENUM(
                 'manual','clock_device','company_mobile','field_rep','hr_applied'
@@ -17,6 +20,9 @@ return new class extends Migration
 
     public function down(): void
     {
+        if (Schema::getConnection()->getDriverName() !== 'mysql') {
+            return;
+        }
         if (Schema::hasTable('employee_attendance') && Schema::hasColumn('employee_attendance', 'source')) {
             DB::table('employee_attendance')->where('source', 'hr_applied')->update(['source' => 'manual']);
             DB::statement("ALTER TABLE employee_attendance MODIFY COLUMN source ENUM(
