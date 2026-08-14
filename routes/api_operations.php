@@ -188,8 +188,12 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('orders/merge', [\App\Http\Controllers\Api\V1\Operations\SaleMergeController::class, 'merge']);
     });
 
-    Route::middleware(['erp.module:payments', 'erp.permission:payments.manage'])->group(function () {
-        Route::post('sales/{saleId}/payments', [PaymentOperationsController::class, 'paySale']);
+    Route::post('sales/{saleId}/payments', [PaymentOperationsController::class, 'paySale'])
+        ->middleware([
+            'erp.module:payments,sales',
+            'erp.permission:payments.manage|payments.sale_payments.create|sales.collect_payment.create',
+        ]);
+    Route::middleware(['erp.module:payments,sales', 'erp.permission:payments.manage'])->group(function () {
         Route::post('sales/{saleId}/convert-to-paid', [PaymentOperationsController::class, 'convertToPaid']);
         Route::post('sales/{saleId}/convert-to-unpaid', [PaymentOperationsController::class, 'convertToUnpaid']);
     });
@@ -301,6 +305,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('clock-in', [AttendanceClockController::class, 'clockIn']);
             Route::post('clock-out', [AttendanceClockController::class, 'clockOut']);
             Route::delete('clock-sessions/{session}', [AttendanceClockController::class, 'destroySession']);
+            Route::patch('clock-sessions/{session}', [AttendanceClockController::class, 'updateSession']);
             Route::get('company-premises', [CompanyPremisesController::class, 'show']);
             Route::post('company-premises', [CompanyPremisesController::class, 'update']);
         });

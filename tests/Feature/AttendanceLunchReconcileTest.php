@@ -163,7 +163,7 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertSame('late', $att->status);
     }
 
-    public function test_thirty_minutes_past_end_does_not_create_overtime(): void
+    public function test_thirty_minutes_past_end_creates_pending_overtime(): void
     {
         $this->addSession('08:00:00', '13:00:00');
         $this->addSession('14:00:00', '17:30:00');
@@ -175,7 +175,8 @@ class AttendanceLunchReconcileTest extends TestCase
 
         $this->assertEquals(9.0, (float) $att->hours_worked);
         $this->assertSame(30, (int) $att->overtime_minutes);
-        $this->assertSame(0, EmployeeOvertime::query()->where('employee_id', $this->employee->id)->count());
+        $this->assertSame(1, EmployeeOvertime::query()->where('employee_id', $this->employee->id)->count());
+        $this->assertSame('pending', EmployeeOvertime::query()->where('employee_id', $this->employee->id)->value('status'));
     }
 
     public function test_sixty_minutes_past_end_creates_pending_overtime(): void
@@ -412,8 +413,8 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertNotNull($line);
         $this->assertEquals(8.5, (float) $line['payroll_meta']['paid_hours']);
         $this->assertEquals(9.0, (float) $line['payroll_meta']['expected_hours']);
-        // 44000 * (8.5/9) ≈ 41555.56
-        $this->assertEquals(41555.56, (float) $line['basic_salary']);
+        // One paid day minus 15 late minutes: 44000 * (1 - (15/60)/9) ≈ 42777.78
+        $this->assertEquals(42777.78, (float) $line['basic_salary']);
     }
 
     public function test_payroll_uses_calendar_days_through_today_not_future_absences(): void
@@ -455,5 +456,63 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertSame(7.0, $summary['remaining_days']);
         $this->assertSame(0.0, $summary['absent_days']);
         $this->assertGreaterThan(0.0, $summary['rest_days_paid']);
+    }
+
+    public function test_clock_in_and_lunch_out_only_is_half_day(): void
+    {
+        $this->addSession('08:00:00', '13:00:00');
+
+        $att = app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+        );
+
+        $this->assertSame('half_day', $att->status);
+        $this->assertSame(0, (int) $att->lunch_late_minutes);
+    }
+
+    public function test_lunch_return_after_one_hour_counts_lunch_late(): void
+    {
+        $this->addSession('08:00:00', '13:00:00');
+        $this->addSession('14:15:00', '17:00:00');
+
+        $att = app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+        );
+
+        $this->assertSame(75, (int) $att->lunch_minutes);
+        $this->assertSame(15, (int) $att->lunch_late_minutes);
+        $this->assertSame('late', $att->status);
+    }
+
+    public function test_deny_pending_overtime_caps_clock_out_to_shift_end(): void
+    {
+        $this->addSession('08:00:00', '13:00:00');
+        $afternoon = $this->addSession('14:00:00', '18:00:00');
+
+        app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+        );
+
+        $ot = EmployeeOvertime::query()
+            ->where('employee_id', $this->employee->id)
+            ->whereDate('work_date', $this->workDate)
+            ->first();
+        $this->assertNotNull($ot);
+        $this->assertSame('pending', $ot->status);
+
+        app(AttendanceDayReconciler::class)->rejectPendingOvertimeAndCapClockOut($ot);
+
+        $this->assertSame(0, EmployeeOvertime::query()->where('employee_id', $this->employee->id)->count());
+        $afternoon->refresh();
+        $this->assertSame('17:00:00', Carbon::parse($afternoon->clock_out_at)->format('H:i:s'));
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => $this->workDate,
+            'check_out' => '17:00:00',
+            'overtime_minutes' => 0,
+        ]);
     }
 }

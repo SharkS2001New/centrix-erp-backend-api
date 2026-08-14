@@ -28,6 +28,7 @@ class EmployeeAttendance extends Model
         'hours_worked',
         'expected_hours',
         'late_minutes',
+        'lunch_late_minutes',
         'lateness_waived',
         'lateness_waiver_reason',
         'lateness_waived_by',

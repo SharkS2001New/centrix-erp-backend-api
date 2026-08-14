@@ -12,6 +12,12 @@ class EmployeeClockSession extends Model
 {
     use HasFactory;
 
+    public const CLOCK_OUT_KIND_DEVICE = 'device';
+
+    public const CLOCK_OUT_KIND_HR = 'hr';
+
+    public const CLOCK_OUT_KIND_AUTO_FORGOTTEN = 'auto_forgotten';
+
     protected $table = 'employee_clock_sessions';
 
     public $timestamps = false;
@@ -23,6 +29,8 @@ class EmployeeClockSession extends Model
         'source',
         'clock_in_at',
         'clock_out_at',
+        'clock_out_kind',
+        'needs_reconciliation',
         'device_identifier',
         'clock_in_latitude',
         'clock_in_longitude',
@@ -42,6 +50,7 @@ class EmployeeClockSession extends Model
     protected $casts = [
         'clock_in_at' => 'datetime',
         'clock_out_at' => 'datetime',
+        'needs_reconciliation' => 'boolean',
         'clock_in_latitude' => 'decimal:7',
         'clock_in_longitude' => 'decimal:7',
         'clock_out_latitude' => 'decimal:7',

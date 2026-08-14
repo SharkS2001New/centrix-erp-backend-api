@@ -37,7 +37,12 @@ class EmployeeOvertimeController extends HrOrgResourceController
                 continue;
             }
             if (in_array($col, $this->filterableColumns(), true)) {
-                $query->where($col, $val);
+                $values = array_values(array_filter(array_map('trim', explode(',', (string) $val))));
+                if (count($values) > 1) {
+                    $query->whereIn($col, $values);
+                } else {
+                    $query->where($col, $val);
+                }
             }
         }
 
@@ -85,6 +90,35 @@ class EmployeeOvertimeController extends HrOrgResourceController
         $row = $this->findScoped($id);
         PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'overtime entry');
         $row->delete();
+
+        return response()->json(null, 204);
+    }
+
+    public function approve(string $id)
+    {
+        $row = $this->findScoped($id);
+        PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'overtime entry');
+        if ($row->status !== 'pending') {
+            throw ValidationException::withMessages([
+                'status' => ['Only pending overtime can be approved.'],
+            ]);
+        }
+        $row->update(['status' => 'approved']);
+
+        return response()->json($row->fresh('employee'));
+    }
+
+    public function deny(string $id)
+    {
+        $row = $this->findScoped($id);
+        PayrollCycleSettlementService::assertNotPayrollLocked($row->payroll_run_id, 'overtime entry');
+        if ($row->status !== 'pending') {
+            throw ValidationException::withMessages([
+                'status' => ['Only pending overtime can be denied.'],
+            ]);
+        }
+        app(\App\Services\Attendance\AttendanceDayReconciler::class)
+            ->rejectPendingOvertimeAndCapClockOut($row);
 
         return response()->json(null, 204);
     }

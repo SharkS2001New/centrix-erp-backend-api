@@ -82,8 +82,24 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
         $this->assertTrue($codes->contains('reports.profit_loss.view'));
         $this->assertTrue($codes->contains('reports.price_list.view'));
         $this->assertTrue($codes->contains('admin.notifications.view'));
+        $this->assertTrue($codes->contains('sales.collect_payment.create'));
 
         $apps = collect($res->json('applications'));
+        $backofficeSalesFeatures = collect($apps->firstWhere('id', 'backoffice')['modules'] ?? [])
+            ->firstWhere('module', 'sales');
+        $this->assertNotNull($backofficeSalesFeatures);
+        $this->assertContains(
+            'collect_payment',
+            collect($backofficeSalesFeatures['features'] ?? [])->pluck('key')->all(),
+        );
+
+        $backofficePaymentFeatures = collect($apps->firstWhere('id', 'backoffice')['modules'] ?? [])
+            ->firstWhere('module', 'payments');
+        $this->assertNotNull($backofficePaymentFeatures);
+        $this->assertSame(
+            ['sale_payments'],
+            collect($backofficePaymentFeatures['features'] ?? [])->pluck('key')->all(),
+        );
         $featureKeysByApp = $apps->mapWithKeys(function (array $app) {
             $keys = collect($app['modules'] ?? [])
                 ->filter(fn (array $module) => ($module['module'] ?? '') === 'reports')

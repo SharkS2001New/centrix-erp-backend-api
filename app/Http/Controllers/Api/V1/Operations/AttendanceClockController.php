@@ -150,4 +150,23 @@ class AttendanceClockController extends Controller
 
         return response()->json(null, 204);
     }
+
+    /** PATCH /attendance/clock-sessions/{session} */
+    public function updateSession(Request $request, int $session)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        $data = $request->validate([
+            'clock_in_at' => 'nullable|date',
+            'clock_out_at' => 'nullable|date',
+            'confirm_reconciliation' => 'sometimes|boolean',
+        ]);
+
+        $result = $this->punchService->updateSession((int) $orgId, $session, $data);
+
+        return response()->json($result);
+    }
 }

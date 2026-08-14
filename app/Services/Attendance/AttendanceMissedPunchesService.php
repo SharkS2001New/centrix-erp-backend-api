@@ -17,6 +17,7 @@ class AttendanceMissedPunchesService
     public function __construct(
         protected HikvisionService $hikvision,
         protected AttendanceClockPunchService $punchService,
+        protected ForgottenClockOutService $forgottenClockOuts,
     ) {
     }
 
@@ -60,6 +61,26 @@ class AttendanceMissedPunchesService
             $unapplied[] = $payload;
         }
 
+        $outsideWindow = HikvisionAccessEvent::query()
+            ->with(['device:id,device_no,location,provider'])
+            ->where('organization_id', $organizationId)
+            ->where('process_error', HikvisionAccessEvent::OUTSIDE_WINDOW)
+            ->orderByDesc('event_time')
+            ->limit(200)
+            ->get();
+
+        foreach ($outsideWindow as $row) {
+            HikvisionEventNormalizer::present($row);
+            $payload = $this->presentEvent($row);
+            $payload['process_error'] = 'Punch was outside lunch or clock-out windows. Attendance was not applied.';
+            $unapplied[] = $payload;
+        }
+
+        usort($unapplied, function (array $a, array $b) {
+            return strcmp((string) ($b['event_time'] ?? ''), (string) ($a['event_time'] ?? ''));
+        });
+        $unapplied = array_slice($unapplied, 0, 400);
+
         $loggedDuplicates = HikvisionAccessEvent::query()
             ->with(['device:id,device_no,location,provider'])
             ->where('organization_id', $organizationId)
@@ -83,24 +104,33 @@ class AttendanceMissedPunchesService
         $todayStart = AppTimezone::parseDateStart(AppTimezone::todayDateString());
         $staleCutoff = AppTimezone::now()->subHours(12);
 
-        $openSessions = EmployeeClockSession::query()
-            ->with('employee:id,full_name,first_name,last_name,employee_code')
+        $openOrFlagged = EmployeeClockSession::query()
+            ->with('employee.shift')
             ->where('organization_id', $organizationId)
-            ->whereNull('clock_out_at')
             ->whereIn('source', ['clock_device', 'company_mobile'])
             ->where(function ($q) use ($todayStart, $staleCutoff) {
-                $q->where('clock_in_at', '<', $todayStart)
-                    ->orWhere('clock_in_at', '<=', $staleCutoff);
+                $q->where('needs_reconciliation', true)
+                    ->orWhere(function ($inner) use ($todayStart, $staleCutoff) {
+                        $inner->whereNull('clock_out_at')
+                            ->where(function ($open) use ($todayStart, $staleCutoff) {
+                                $open->where('clock_in_at', '<', $todayStart->format('Y-m-d H:i:s'))
+                                    ->orWhere('clock_in_at', '<=', $staleCutoff->format('Y-m-d H:i:s'));
+                            });
+                    });
             })
             ->orderBy('clock_in_at')
             ->limit(200)
             ->get();
 
         $missingOut = [];
-        foreach ($openSessions as $session) {
+        foreach ($openOrFlagged as $session) {
             $in = $session->clock_in_at
                 ? Carbon::parse($session->clock_in_at)->timezone(AppTimezone::name())
                 : null;
+            $out = $session->clock_out_at
+                ? Carbon::parse($session->clock_out_at)->timezone(AppTimezone::name())
+                : null;
+            $suggested = $this->forgottenClockOuts->suggestedCloseAt($session);
             $missingOut[] = [
                 'id' => $session->id,
                 'employee_id' => $session->employee_id,
@@ -110,7 +140,12 @@ class AttendanceMissedPunchesService
                 'source' => $session->source,
                 'device_identifier' => $session->device_identifier,
                 'clock_in_at' => $in?->format('Y-m-d H:i:s'),
-                'hours_open' => $in ? round($in->diffInMinutes(AppTimezone::now()) / 60, 1) : null,
+                'clock_out_at' => $out?->format('Y-m-d H:i:s'),
+                'suggested_clock_out_at' => $suggested?->format('Y-m-d H:i:s'),
+                'clock_out_kind' => $session->clock_out_kind,
+                'needs_reconciliation' => (bool) $session->needs_reconciliation,
+                'auto_closed' => $session->clock_out_kind === EmployeeClockSession::CLOCK_OUT_KIND_AUTO_FORGOTTEN,
+                'hours_open' => $in ? round($in->diffInMinutes($out ?? AppTimezone::now()) / 60, 1) : null,
             ];
         }
 
@@ -234,26 +269,39 @@ class AttendanceMissedPunchesService
     /**
      * @return array{action: string, session: mixed, attendance?: mixed}
      */
-    public function closeMissingClockOut(int $organizationId, int $sessionId, mixed $punchedAt = null): array
-    {
+    public function closeMissingClockOut(
+        int $organizationId,
+        int $sessionId,
+        mixed $punchedAt = null,
+        mixed $clockInAt = null,
+        bool $confirm = false,
+    ): array {
         $session = EmployeeClockSession::query()
             ->where('organization_id', $organizationId)
             ->where('id', $sessionId)
-            ->whereNull('clock_out_at')
             ->first();
         if (! $session) {
             throw ValidationException::withMessages([
-                'session_id' => 'Open clock session not found.',
+                'session_id' => 'Clock session not found.',
             ]);
         }
 
-        return $this->punchService->punch([
-            'organization_id' => $organizationId,
-            'employee_id' => $session->employee_id,
-            'device_no' => $session->device_identifier,
-            'punched_at' => $punchedAt,
-            'direction' => 'out',
-        ]);
+        $payload = [
+            'confirm_reconciliation' => $confirm || $punchedAt !== null || $clockInAt !== null,
+        ];
+        if ($clockInAt !== null && $clockInAt !== '') {
+            $payload['clock_in_at'] = $clockInAt;
+        }
+        if ($punchedAt !== null && $punchedAt !== '') {
+            $payload['clock_out_at'] = $punchedAt;
+        } elseif (! $session->clock_out_at) {
+            $suggested = $this->forgottenClockOuts->suggestedCloseAt($session);
+            if ($suggested) {
+                $payload['clock_out_at'] = $suggested->format('Y-m-d H:i:s');
+            }
+        }
+
+        return $this->punchService->updateSession($organizationId, $sessionId, $payload);
     }
 
     /**

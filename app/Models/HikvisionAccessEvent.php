@@ -14,6 +14,8 @@ class HikvisionAccessEvent extends Model
 
     public const DUPLICATE_PUNCH_DISMISSED = 'duplicate_punch_dismissed';
 
+    public const OUTSIDE_WINDOW = 'outside_window';
+
     public $timestamps = false;
 
     protected $table = 'hikvision_access_events';

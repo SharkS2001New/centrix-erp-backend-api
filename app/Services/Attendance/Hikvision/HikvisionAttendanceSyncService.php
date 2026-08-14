@@ -331,7 +331,7 @@ class HikvisionAttendanceSyncService
 
             try {
                 $punch = $this->applyPunch($device, $employeeNo, $employeeId, $punchedAt, $direction);
-                $sessionId = $punch['session']->id ?? null;
+                $sessionId = $punch['session']?->id ?? null;
                 if (($punch['action'] ?? '') === 'ignored') {
                     $this->markEventAsDuplicatePunch($stored, $sessionId);
                     $result['skipped']++;
@@ -343,6 +343,13 @@ class HikvisionAttendanceSyncService
                         (int) $stored->id,
                         $sessionId,
                     );
+
+                    continue;
+                }
+                if (($punch['action'] ?? '') === 'missed') {
+                    $this->markEventAsOutsideWindow($stored, $sessionId);
+                    $result['skipped']++;
+                    $result['missed'] = ($result['missed'] ?? 0) + 1;
 
                     continue;
                 }
@@ -457,6 +464,16 @@ class HikvisionAttendanceSyncService
     {
         $stored->processed_at = AppTimezone::now();
         $stored->process_error = HikvisionAccessEvent::DUPLICATE_PUNCH;
+        if ($sessionId) {
+            $stored->clock_session_id = $sessionId;
+        }
+        $stored->save();
+    }
+
+    protected function markEventAsOutsideWindow(HikvisionAccessEvent $stored, mixed $sessionId = null): void
+    {
+        $stored->processed_at = AppTimezone::now();
+        $stored->process_error = HikvisionAccessEvent::OUTSIDE_WINDOW;
         if ($sessionId) {
             $stored->clock_session_id = $sessionId;
         }

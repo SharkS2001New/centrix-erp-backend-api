@@ -31,13 +31,17 @@ class RoleTemplateTest extends TestCase
         $cashier = Role::query()->where('role_name', 'Cashier')->firstOrFail();
         $this->assertTrue(
             Permission::query()
-                ->whereIn('permission_code', ['pos.terminal.view', 'pos.checkout.create'])
+                ->whereIn('permission_code', [
+                    'pos.terminal.view',
+                    'pos.checkout.create',
+                    'sales.collect_payment.create',
+                ])
                 ->whereIn('id', function ($query) use ($cashier) {
                     $query->select('permission_id')
                         ->from('role_permissions')
                         ->where('role_id', $cashier->id);
                 })
-                ->count() === 2,
+                ->count() === 3,
         );
     }
 

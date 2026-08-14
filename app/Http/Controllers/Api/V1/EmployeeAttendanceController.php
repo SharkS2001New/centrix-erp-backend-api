@@ -62,6 +62,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 'hours_worked' => $existing->hours_worked,
                 'expected_hours' => $existing->expected_hours,
                 'late_minutes' => $existing->late_minutes,
+                'lunch_late_minutes' => $existing->lunch_late_minutes ?? 0,
                 'lunch_status' => $existing->lunch_status,
                 'lunch_minutes' => $existing->lunch_minutes,
                 'overtime_minutes' => $existing->overtime_minutes,
@@ -104,6 +105,14 @@ class EmployeeAttendanceController extends HrOrgResourceController
         }
         if ($request->filled('to_date')) {
             $query->whereDate('attendance_date', '<=', $request->input('to_date'));
+        }
+
+        if ($request->boolean('lateness')) {
+            $query->where(function ($inner) {
+                $inner->where('late_minutes', '>', 0)
+                    ->orWhere('lunch_late_minutes', '>', 0)
+                    ->orWhere('status', 'late');
+            });
         }
 
         if ($q = trim((string) $request->input('q', ''))) {
@@ -496,6 +505,16 @@ class EmployeeAttendanceController extends HrOrgResourceController
                 ),
             ),
         );
+
+        $checkIn = array_key_exists('check_in', $data) ? ($data['check_in'] ?? null) : $row->check_in;
+        $checkOut = array_key_exists('check_out', $data) ? ($data['check_out'] ?? null) : $row->check_out;
+        app(\App\Services\Attendance\AttendanceClockPunchService::class)->adjustDayPunchTimes(
+            $employee,
+            $date,
+            is_string($checkIn) ? $checkIn : null,
+            is_string($checkOut) ? $checkOut : null,
+        );
+        $attendance = $attendance->fresh() ?? $attendance;
 
         // updateOrCreate should hit the same row; if a different row was written, remove the old one.
         if ((int) $attendance->id !== (int) $row->id) {

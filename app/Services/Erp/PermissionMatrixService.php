@@ -59,6 +59,7 @@ class PermissionMatrixService
             self::ensureStockTakeResetForAdminRoles();
             self::ensureNotificationsForBackofficeRoles();
             self::ensureShopDebtorsForCustomerViewRoles();
+            self::ensureCollectPaymentForPosCashierRoles();
             // Shared Administrator must keep every industry shell (commerce + hospitality).
             // Without this, hotel tenants only see Administration after the is_admin
             // least-privilege change (operational access comes from the role matrix).
@@ -745,6 +746,38 @@ class PermissionMatrixService
             \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
                 'role_id' => $roleId,
                 'permission_id' => $shopDebtorsId,
+            ]);
+        }
+    }
+
+    /**
+     * Backoffice Collect payment (complete remaining / partial balances) for POS cashier roles.
+     */
+    public static function ensureCollectPaymentForPosCashierRoles(): void
+    {
+        $collectId = Permission::query()
+            ->where('permission_code', 'sales.collect_payment.create')
+            ->value('id');
+        $checkoutId = Permission::query()
+            ->where('permission_code', 'pos.checkout.create')
+            ->value('id');
+
+        if (! $collectId || ! $checkoutId) {
+            return;
+        }
+
+        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+            ->where('permission_id', $checkoutId)
+            ->pluck('role_id');
+
+        $namedCashierIds = \App\Models\Role::query()
+            ->whereIn('role_name', ['Cashier'])
+            ->pluck('id');
+
+        foreach ($roleIds->merge($namedCashierIds)->unique() as $roleId) {
+            \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                'role_id' => $roleId,
+                'permission_id' => $collectId,
             ]);
         }
     }

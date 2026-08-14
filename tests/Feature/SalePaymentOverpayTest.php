@@ -3,9 +3,14 @@
 namespace Tests\Feature;
 
 use App\Models\PaymentMethod;
+use App\Models\Permission;
 use App\Models\PlatformSubscription;
+use App\Models\Role;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Erp\PermissionMatrixService;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;

@@ -59,10 +59,19 @@ class AttendanceMissedPunchesController extends Controller
 
         $data = $request->validate([
             'punched_at' => 'nullable|date',
+            'clock_in_at' => 'nullable|date',
+            'clock_out_at' => 'nullable|date',
+            'confirm_reconciliation' => 'sometimes|boolean',
         ]);
 
         return response()->json(
-            $this->missedPunches->closeMissingClockOut((int) $orgId, $session, $data['punched_at'] ?? null)
+            $this->missedPunches->closeMissingClockOut(
+                (int) $orgId,
+                $session,
+                $data['clock_out_at'] ?? $data['punched_at'] ?? null,
+                $data['clock_in_at'] ?? null,
+                (bool) ($data['confirm_reconciliation'] ?? false),
+            )
         );
     }
 

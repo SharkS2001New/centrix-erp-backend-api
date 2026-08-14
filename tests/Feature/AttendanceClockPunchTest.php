@@ -436,7 +436,7 @@ class AttendanceClockPunchTest extends TestCase
             'device_no' => 'TERMINAL-01',
             'punched_at' => '2026-08-11T12:45:00+03:00',
             'direction' => 'auto',
-        ])->assertOk()->assertJsonPath('action', 'ignored');
+        ])->assertOk()->assertJsonPath('action', 'missed');
 
         $this->postJson('/api/v1/attendance/clock-punch', [
             'employee_code' => 'EMP#HIK001',
@@ -562,5 +562,124 @@ class AttendanceClockPunchTest extends TestCase
         ]);
 
         Carbon::setTestNow();
+    }
+
+    public function test_forgotten_evening_clock_out_is_closed_at_shift_end(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-14 02:05:00', 'Africa/Nairobi'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-13T08:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated();
+
+        $result = app(\App\Services\Attendance\ForgottenClockOutService::class)->closeDueSessions((int) $this->org->id);
+        $this->assertSame(1, $result['closed']);
+
+        $session = EmployeeClockSession::query()->where('employee_id', $this->employee->id)->first();
+        $this->assertNotNull($session->clock_out_at);
+        $this->assertSame('17:00:00', $session->clock_out_at->timezone('Africa/Nairobi')->format('H:i:s'));
+        $this->assertTrue((bool) $session->needs_reconciliation);
+        $this->assertSame(EmployeeClockSession::CLOCK_OUT_KIND_AUTO_FORGOTTEN, $session->clock_out_kind);
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-13',
+            'check_in' => '08:10:00',
+            'check_out' => '17:00:00',
+        ]);
+
+        $list = $this->getJson('/api/v1/attendance/missed-punches')->assertOk();
+        $this->assertSame(1, $list->json('counts.missing_clock_out'));
+        $this->assertTrue($list->json('missing_clock_out.0.auto_closed'));
+
+        $this->postJson('/api/v1/attendance/missed-punches/'.$session->id.'/clock-out', [
+            'confirm_reconciliation' => true,
+        ])->assertOk();
+
+        $session->refresh();
+        $this->assertFalse((bool) $session->needs_reconciliation);
+        $this->assertSame(0, $this->getJson('/api/v1/attendance/missed-punches')->json('counts.missing_clock_out'));
+
+        Carbon::setTestNow();
+    }
+
+    public function test_admin_can_correct_clock_in_time(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-14 18:00:00', 'Africa/Nairobi'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-14T08:40:00+03:00',
+            'direction' => 'in',
+        ])->assertCreated();
+
+        $sessionId = EmployeeClockSession::query()->where('employee_id', $this->employee->id)->value('id');
+
+        $this->patchJson('/api/v1/attendance/clock-sessions/'.$sessionId, [
+            'clock_in_at' => '2026-08-14 08:05:00',
+        ])->assertOk();
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-14',
+            'check_in' => '08:05:00',
+            'late_minutes' => 0,
+        ]);
+
+        Carbon::setTestNow();
+    }
+
+    public function test_punch_outside_lunch_and_clock_out_windows_is_missed(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T08:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated()->assertJsonPath('action', 'in');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T10:30:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'missed');
+
+        $this->assertSame(1, EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count());
+        $this->assertNull(EmployeeClockSession::query()->where('employee_id', $this->employee->id)->value('clock_out_at'));
+    }
+
+    public function test_clock_in_and_lunch_out_without_return_is_half_day(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T08:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated();
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T12:45:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'out');
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'status' => 'half_day',
+            'check_out' => '12:45:00',
+        ]);
     }
 }

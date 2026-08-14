@@ -853,6 +853,14 @@ class HikvisionIsapiClient
             $fpBlock['count'] ?? null,
             $fpBlock['numOfFP'] ?? null,
         );
+        if ($fpCount === null && $fpBlock !== [] && array_is_list($fpBlock)) {
+            $first = $fpBlock[0] ?? null;
+            if (is_array($first) && (
+                isset($first['fingerPrintID']) || isset($first['FingerPrintID']) || isset($first['fingerID'])
+            )) {
+                $fpCount = count($fpBlock);
+            }
+        }
         if ($fpCount !== null) {
             $user['numOfFP'] = $fpCount;
         }

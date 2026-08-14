@@ -73,6 +73,8 @@ return [
                 // Open/close till on the terminal — not the Backoffice Till management screen (view).
                 'pos.till_management.create',
                 'catalogue.products.view',
+                // Backoffice Collect payment / complete remaining balance on partial orders.
+                'sales.collect_payment.create',
             ],
         ],
 

@@ -17,8 +17,8 @@ class AttendanceDayReconciler
 {
     public const AUTO_OT_NOTE_PREFIX = 'auto_from_attendance';
 
-    /** Minimum overtime hours before a pending OT draft is created. */
-    public const MIN_AUTO_OVERTIME_HOURS = 1.0;
+    /** Any clock-out past shift end is logged as pending overtime. */
+    public const MIN_AUTO_OVERTIME_HOURS = 0.0;
 
     public function __construct(
         protected AttendanceDayPolicy $dayPolicy,
@@ -144,6 +144,7 @@ class AttendanceDayReconciler
                 'hours_worked' => $existing?->hours_worked ?? 0,
                 'expected_hours' => $expectedHours,
                 'late_minutes' => $lateMinutes,
+                'lunch_late_minutes' => 0,
                 'lunch_status' => $existing?->lunch_status ?? '-',
                 'lunch_minutes' => $existing?->lunch_minutes,
                 'early_leave_minutes' => $existing?->early_leave_minutes ?? 0,
@@ -277,6 +278,7 @@ class AttendanceDayReconciler
                     'hours_worked' => 0,
                     'expected_hours' => 0,
                     'late_minutes' => 0,
+                    'lunch_late_minutes' => 0,
                     'lunch_status' => '-',
                     'lunch_minutes' => null,
                     'early_leave_minutes' => 0,
@@ -306,6 +308,7 @@ class AttendanceDayReconciler
                     'hours_worked' => 0,
                     'expected_hours' => 0,
                     'late_minutes' => 0,
+                    'lunch_late_minutes' => 0,
                     'lunch_status' => '-',
                     'lunch_minutes' => null,
                     'early_leave_minutes' => 0,
@@ -365,6 +368,7 @@ class AttendanceDayReconciler
                     'hours_worked' => 0,
                     'expected_hours' => $expectedHours,
                     'late_minutes' => 0,
+                    'lunch_late_minutes' => 0,
                     'lunch_status' => $lunchRequired ? 'skipped' : '-',
                     'lunch_minutes' => null,
                     'early_leave_minutes' => 0,
@@ -406,6 +410,11 @@ class AttendanceDayReconciler
             $lunchStatus = 'taken';
         } else {
             $lunchStatus = 'skipped';
+        }
+
+        $lunchLateMinutes = 0;
+        if ($lunchStatus === 'taken' && $actualLunchMinutes !== null && $configuredLunch > 0) {
+            $lunchLateMinutes = max(0, $actualLunchMinutes - $configuredLunch);
         }
 
         if ($bankLunch && $lunchStatus === 'skipped' && $configuredLunch > 0) {
@@ -478,9 +487,22 @@ class AttendanceDayReconciler
         }
 
         $overtimeMinutes = (int) floor($overtimeSeconds / 60);
+        $resolver = app(AttendancePunchWindowResolver::class);
+        $halfDayFromLunchOut = $lunchTakenOverride === null
+            && $lunchRequired
+            && count($pairs) === 1
+            && $resolver->isInNamedWindow(
+                $employee,
+                $lastOut,
+                'lunch_clock_out_from',
+                'lunch_clock_out_to',
+            );
+
         $status = $forcedStatus;
         if ($status === null || $status === 'present' || $status === 'late') {
-            if ($lateMinutes > 0) {
+            if ($halfDayFromLunchOut) {
+                $status = 'half_day';
+            } elseif ($lateMinutes > 0 || $lunchLateMinutes > 0) {
                 $status = 'late';
             } elseif ($expectedHours > 0 && $paidHours < ($expectedHours * 0.5)) {
                 $status = 'half_day';
@@ -505,7 +527,7 @@ class AttendanceDayReconciler
                 $expectedHours > 0 ? $expectedHours : ($paidHours + ($lateMinutes / 60)),
                 $paidHours + ($lateMinutes / 60),
             ), 2);
-            if ($status === 'late') {
+            if ($status === 'late' && $lunchLateMinutes <= 0) {
                 $status = 'present';
             }
         }
@@ -526,6 +548,7 @@ class AttendanceDayReconciler
                 'hours_worked' => $paidHours,
                 'expected_hours' => $expectedHours,
                 'late_minutes' => $lateMinutes,
+                'lunch_late_minutes' => $lunchLateMinutes,
                 'lateness_waived' => $latenessWaived,
                 'lateness_waiver_reason' => $latenessWaived ? $waiverReason : null,
                 'lateness_waived_by' => $latenessWaived ? $waivedBy : null,
@@ -597,7 +620,7 @@ class AttendanceDayReconciler
             ->where('notes', 'like', self::AUTO_OT_NOTE_PREFIX.'%')
             ->first();
 
-        if ($hours < self::MIN_AUTO_OVERTIME_HOURS) {
+        if ($overtimeMinutes <= 0 || $hours <= self::MIN_AUTO_OVERTIME_HOURS) {
             if ($existing && $existing->status === 'pending' && $existing->payroll_run_id === null) {
                 $existing->delete();
             }
@@ -635,6 +658,58 @@ class AttendanceDayReconciler
             $existing->update($payload);
         } else {
             EmployeeOvertime::create($payload);
+        }
+    }
+
+    /**
+     * Deny a pending auto overtime: drop the OT row and set the day's last clock-out
+     * to the scheduled shift end so attendance no longer shows extra time.
+     */
+    public function rejectPendingOvertimeAndCapClockOut(EmployeeOvertime $overtime): void
+    {
+        $employee = Employee::with('shift')->find($overtime->employee_id);
+        $date = $overtime->work_date instanceof \DateTimeInterface
+            ? Carbon::instance($overtime->work_date)->toDateString()
+            : Carbon::parse((string) $overtime->work_date)->toDateString();
+        $isAuto = str_starts_with((string) $overtime->notes, self::AUTO_OT_NOTE_PREFIX);
+
+        if ($employee && $isAuto) {
+            $eval = $this->dayPolicy->evaluate($employee, $date);
+            $hours = $employee->shift
+                ? $employee->shift->hoursForDate($date, (bool) ($eval['is_holiday'] ?? false))
+                : ['end_time' => '17:00:00'];
+            $shiftEnd = Carbon::parse(
+                $date.' '.$this->normalizeTime($hours['end_time'] ?? '17:00:00'),
+                AppTimezone::name(),
+            );
+
+            $session = EmployeeClockSession::query()
+                ->where('employee_id', $employee->id)
+                ->whereNotNull('clock_out_at')
+                ->where(function ($q) use ($date) {
+                    $q->whereDate('clock_in_at', $date)
+                        ->orWhereDate('clock_out_at', $date);
+                })
+                ->orderByDesc('clock_out_at')
+                ->first();
+
+            if ($session) {
+                $out = AppTimezone::normalize($session->clock_out_at)
+                    ?? Carbon::parse($session->clock_out_at);
+                $out = $out->copy()->timezone(AppTimezone::name());
+                if ($out->gt($shiftEnd)) {
+                    $session->clock_out_at = $shiftEnd->copy();
+                    $session->save();
+                }
+            }
+        }
+
+        if ($overtime->status === 'pending' && $overtime->payroll_run_id === null) {
+            $overtime->delete();
+        }
+
+        if ($employee && $isAuto) {
+            $this->reconcileFromSessions($employee->fresh('shift'), $date);
         }
     }
 

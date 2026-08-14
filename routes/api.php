@@ -9,6 +9,7 @@ use App\Http\Controllers\Api\V1\AuthController;
 use App\Http\Controllers\Api\V1\BackgroundJobDispatchController;
 use App\Http\Controllers\Api\V1\BackgroundTaskController;
 use App\Http\Controllers\Api\V1\Operations\AttendanceMissedPunchesController;
+use App\Http\Controllers\Api\V1\Operations\AttendanceClockController;
 use App\Http\Controllers\Api\V1\Operations\CompanyPremisesController;
 use App\Http\Controllers\Api\V1\BranchController;
 use App\Http\Controllers\Api\V1\CartLineController;
@@ -1208,6 +1209,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.manage|admin.manage');
             Route::post('attendance/missed-punches/{session}/clock-out', [AttendanceMissedPunchesController::class, 'closeClockOut'])
                 ->middleware('erp.permission:hr.manage|admin.manage');
+            Route::patch('attendance/clock-sessions/{session}', [AttendanceClockController::class, 'updateSession'])
+                ->middleware('erp.permission:hr.manage|admin.manage');
             Route::post('attendance/duplicate-punches/dismiss', [AttendanceMissedPunchesController::class, 'dismissDuplicates'])
                 ->middleware('erp.permission:hr.attendance.view|hr.manage|hr.view|admin.manage');
             Route::get('employee-attendance/day-preview', [EmployeeAttendanceController::class, 'dayPreview'])
@@ -1235,6 +1238,10 @@ Route::prefix('v1')->group(function () {
             Route::apiResource('employee-allowances', EmployeeAllowanceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
+            Route::post('employee-overtime/{id}/approve', [EmployeeOvertimeController::class, 'approve'])
+                ->middleware('erp.permission:hr.manage');
+            Route::post('employee-overtime/{id}/deny', [EmployeeOvertimeController::class, 'deny'])
+                ->middleware('erp.permission:hr.manage');
             Route::apiResource('employee-overtime', EmployeeOvertimeController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);

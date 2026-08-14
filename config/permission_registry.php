@@ -54,6 +54,7 @@ return [
             'label' => 'Sales & orders',
             'features' => [
                 'orders' => ['label' => 'Order actions', 'actions' => ['view', 'create', 'edit', 'delete', 'approve']],
+                'collect_payment' => ['label' => 'Collect / complete order payments', 'actions' => ['create']],
                 'discounts' => ['label' => 'Discounts', 'actions' => ['give']],
                 ...\App\Support\SalesOrderQueuePermissions::registryFeatures(),
                 'carts' => ['label' => 'Carts (read-only)', 'actions' => ['view']],

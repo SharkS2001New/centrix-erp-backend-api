@@ -20,8 +20,10 @@ class AttendancePunchWindowResolver
 
     public const ACTION_IGNORE = 'ignore';
 
+    public const ACTION_MISSED = 'missed';
+
     /**
-     * @return self::ACTION_IN|self::ACTION_OUT|self::ACTION_IGNORE
+     * @return self::ACTION_IN|self::ACTION_OUT|self::ACTION_IGNORE|self::ACTION_MISSED
      */
     public function resolve(Employee $employee, Carbon $punchedAt, ?EmployeeClockSession $open): string
     {
@@ -49,7 +51,7 @@ class AttendancePunchWindowResolver
                 return self::ACTION_OUT;
             }
 
-            return self::ACTION_IGNORE;
+            return self::ACTION_MISSED;
         }
 
         if ($this->inWindow($minutes, $windows['lunch_clock_in_from'], $windows['lunch_clock_in_to'])) {
@@ -59,8 +61,16 @@ class AttendancePunchWindowResolver
             return self::ACTION_IN;
         }
 
-        // Missed lunch-in: still clock in so the evening punch can close the day.
-        return self::ACTION_IN;
+        return self::ACTION_MISSED;
+    }
+
+    public function isInNamedWindow(Employee $employee, Carbon $at, string $fromKey, string $toKey): bool
+    {
+        $local = $at->copy()->timezone(AppTimezone::name());
+        $windows = $this->windowsFor($employee, $local);
+        $minutes = ($local->hour * 60) + $local->minute;
+
+        return $this->inWindow($minutes, $windows[$fromKey] ?? null, $windows[$toKey] ?? null);
     }
 
     /**
