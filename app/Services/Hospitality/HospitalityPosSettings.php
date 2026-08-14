@@ -180,6 +180,7 @@ class HospitalityPosSettings
                     ? ($settings['check_print_phones']['tel2'] ?? '')
                     : ''),
             ],
+            'hospitality_check_document_template' => trim((string) ($settings['hospitality_check_document_template'] ?? 'default')) ?: 'default',
             'pos_email_reports' => self::normalizePosEmailReports($settings['pos_email_reports'] ?? null),
         ];
     }
@@ -229,6 +230,7 @@ class HospitalityPosSettings
             'check_receipt_payment_details' => null,
             'use_same_print_phones_for_check' => true,
             'check_print_phones' => ['tel1' => '', 'tel2' => ''],
+            'hospitality_check_document_template' => 'default',
             'pos_email_reports' => self::normalizePosEmailReports(null),
         ];
     }

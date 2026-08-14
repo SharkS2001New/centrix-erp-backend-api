@@ -63,7 +63,8 @@ class ErpCapabilitiesController extends Controller
         // If rows were inserted, bump the capabilities version so stale "admin-only"
         // workspace lists (common for hotel tenants) are rebuilt immediately.
         $industryGrants = \App\Services\Erp\PermissionMatrixService::ensureAdministratorIndustryCatalogPermissions();
-        if ($industryGrants > 0) {
+        $hrPageGrants = \App\Services\Erp\PermissionMatrixService::ensureHrTimeAttendancePagesForExistingRoles();
+        if ($industryGrants > 0 || $hrPageGrants > 0) {
             OrganizationCache::invalidateCapabilities($orgId);
         }
 

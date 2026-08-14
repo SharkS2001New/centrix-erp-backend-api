@@ -147,6 +147,9 @@ class CustomerStatementReturnTest extends TestCase
         $this->assertNotNull($creditRow);
         $this->assertSame(42000.0, (float) $invoiceRow['statement_debit']);
         $this->assertSame(8400.0, (float) $creditRow['total_amount']);
+        $this->assertNotEmpty($creditRow['credit_note_no']);
+        $this->assertArrayHasKey('aging', $statement);
+        $this->assertArrayHasKey('opening_balance', $statement['summary']);
         $this->assertGreaterThanOrEqual(42000.0, (float) data_get($statement, 'summary.total_invoiced'));
         $this->assertGreaterThanOrEqual(8400.0, (float) data_get($statement, 'summary.total_credits'));
     }

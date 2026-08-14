@@ -27,8 +27,8 @@ class OrganizationCache
     /** Per-user capabilities payload key (scoped to org + generation version). */
     public static function capabilitiesUserKey(int $organizationId, int $userId): string
     {
-        // m2: mobile bundle expansion (sales.create → mobile_sales.*) in permission maps.
-        return 'capabilities:m2:v'.self::capabilitiesVersion($organizationId).':user:'.$userId;
+        // m3: rebuild maps after HR time-attendance page grants (absents, missed punches, …).
+        return 'capabilities:m3:v'.self::capabilitiesVersion($organizationId).':user:'.$userId;
     }
 
     /**

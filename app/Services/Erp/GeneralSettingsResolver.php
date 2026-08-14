@@ -142,6 +142,9 @@ class GeneralSettingsResolver
         $out['print_footer_loading_sheet'] = self::normalizeFooterField($out['print_footer_loading_sheet'] ?? '');
         $out['print_footer_picking_list'] = self::normalizeFooterField($out['print_footer_picking_list'] ?? '');
         $out['print_footer_trip_chart'] = self::normalizeFooterField($out['print_footer_trip_chart'] ?? '');
+        $out['print_footer_payroll_receipt'] = self::normalizeFooterField($out['print_footer_payroll_receipt'] ?? '');
+        $tpl = strtolower(trim((string) ($out['payroll_receipt_document_template'] ?? 'default')));
+        $out['payroll_receipt_document_template'] = $tpl !== '' ? substr($tpl, 0, 40) : 'default';
         $out['show_organization_on_documents'] = (bool) ($out['show_organization_on_documents'] ?? true);
         $out['enable_tab_workspace'] = (bool) ($out['enable_tab_workspace'] ?? true);
         $out['document_header_display'] = in_array($out['document_header_display'] ?? '', ['auto', 'logo', 'name', 'logo_and_name'], true)

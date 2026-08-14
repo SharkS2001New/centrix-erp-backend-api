@@ -708,7 +708,7 @@ class AttendanceClockPunchTest extends TestCase
             'attendance_clock_device_id' => $device->id,
             'event_key' => 'hr-apply-'.uniqid(),
             'employee_no' => 'EMP#HIK001',
-            'employee_name' => 'Hik Vision',
+            'employee_name' => null,
             'event_time' => '2026-08-14 23:05:00',
             'raw_payload' => [],
             'processed_at' => now(),
@@ -716,11 +716,12 @@ class AttendanceClockPunchTest extends TestCase
         ]);
 
         $list = $this->getJson('/api/v1/attendance/missed-punches')->assertOk();
-        $this->assertTrue(
-            collect($list->json('unapplied_terminal_punches'))->contains(
-                fn ($row) => (int) ($row['id'] ?? 0) === (int) $event->id
-            )
+        $listed = collect($list->json('unapplied_terminal_punches'))->first(
+            fn ($row) => (int) ($row['id'] ?? 0) === (int) $event->id
         );
+        $this->assertNotNull($listed);
+        $this->assertSame('Hik Vision', $listed['employee_name']);
+        $this->assertSame('EMP#HIK001', $listed['employee_code']);
 
         $this->postJson("/api/v1/attendance/missed-punches/events/{$event->id}/apply")
             ->assertOk()

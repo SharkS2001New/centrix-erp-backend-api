@@ -477,8 +477,8 @@ class MobileSalesService
 
         $sale = $this->mobileSalesQuery($user, $allChannels)
             ->with([
-                'items.product:product_code,product_name,unit_id,organization_id',
-                'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label',
+                'items.product:product_code,product_name,unit_id,organization_id,sell_on_retail',
+                'items.product.unit:id,conversion_factor,full_name,measure_name,small_packaging_label,middle_packaging_label,middle_factor,uses_small_packaging,uom_type',
                 'cashier:id,username',
                 'customer:customer_num,customer_name,organization_id',
             ])
@@ -636,6 +636,12 @@ class MobileSalesService
                 ? (float) ($meta['already_returned'] ?? 0)
                 : 0.0;
 
+            $unit = $product?->unit;
+            $conversionFactor = max(1, (int) ($unit?->conversion_factor ?? 1));
+            $usesSmallPackaging = $unit
+                ? (($unit->uses_small_packaging ?? true) !== false)
+                : true;
+
             return [
                 'sale_item_id' => (int) $item->id,
                 'product_code' => $item->product_code,
@@ -649,8 +655,18 @@ class MobileSalesService
                 'product_vat' => (float) $item->product_vat,
                 'amount' => $displayAmount,
                 'sell_on_retail' => (int) $item->on_wholesale_retail,
+                'product_sell_on_retail' => (int) ($product?->sell_on_retail ?? 0),
                 'max_return_qty' => round($maxReturnQty, 4),
                 'already_returned' => round($alreadyReturned, 4),
+                'conversion_factor' => $conversionFactor,
+                'full_name' => $unit?->full_name,
+                'measure_name' => $unit?->measure_name,
+                'small_packaging_label' => $unit?->small_packaging_label,
+                'middle_packaging_label' => $unit?->middle_packaging_label,
+                'middle_factor' => (int) ($unit?->middle_factor ?? 0),
+                'uses_small_packaging' => $usesSmallPackaging,
+                'uom_type' => $unit?->uom_type,
+                'has_pack_and_small' => $usesSmallPackaging && $conversionFactor > 1,
             ];
         })->values()->all();
     }

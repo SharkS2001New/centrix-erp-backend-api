@@ -3109,7 +3109,6 @@ class ReportController extends Controller
             return $row;
         });
 
-        $saleIds = $invoices->pluck('sale_id')->filter()->map(fn ($id) => (int) $id)->unique()->values()->all();
         $invoices = $this->decorateStatementInvoices($invoices, $invoiceService);
 
         $opening = $this->customerStatementOpeningBalance(

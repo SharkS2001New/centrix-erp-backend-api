@@ -56,8 +56,8 @@ class PayrollReceiptMailService
         $orgName = trim((string) ($organization->org_name ?? 'Organization'));
         $net = number_format((float) $line->net_pay, 2);
 
-        $subject = "Payroll receipt — {$periodLabel}";
-        $body = "Dear {$name},\n\nPlease find attached your payroll receipt for {$periodLabel}.\n\nNet pay: KES {$net}\n\nRegards,\n{$orgName}";
+        $subject = "Salary Payment Receipt — {$periodLabel}";
+        $body = "Dear {$name},\n\nPlease find attached your salary payment receipt for {$periodLabel}.\n\nNet pay: KES {$net}\n\nRegards,\n{$orgName}";
 
         $pdf = $this->buildPdfBinary($run, $line, $organization);
         $filename = $this->attachmentFilename($run, $line, $employee);
@@ -255,7 +255,7 @@ class PayrollReceiptMailService
         </style></head><body>
             <div class="box">
                 <div class="muted" style="text-transform:uppercase;letter-spacing:.06em;">'.$orgName.'</div>
-                <h1>Payroll receipt</h1>
+                <h1>Salary Payment Receipt</h1>
                 <p class="muted" style="margin:0 0 12px;">'.$periodLabel.'</p>
                 <p style="margin:0;font-weight:700;">'.$name.'</p>
                 '.($code !== '' ? '<p class="muted" style="margin:2px 0 12px;">#'.$code.'</p>' : '<div style="height:12px;"></div>').'

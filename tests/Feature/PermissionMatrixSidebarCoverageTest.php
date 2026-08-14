@@ -215,4 +215,90 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
             );
         }
     }
+
+    public function test_hr_view_capability_unlocks_time_attendance_nav_codes(): void
+    {
+        PermissionMatrixService::ensure();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->seedLicense($admin);
+
+        $role = \App\Models\Role::create([
+            'role_name' => 'HR Viewer '.uniqid(),
+            'scope' => 'org',
+            'is_active' => true,
+        ]);
+        $hrViewId = (int) \App\Models\Permission::where('permission_code', 'hr.view')->value('id');
+        $this->assertGreaterThan(0, $hrViewId);
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $hrViewId,
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'hr_viewer_'.uniqid(),
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'full_name' => 'HR Viewer',
+            'access_scope' => 'org',
+            'is_active' => true,
+            'is_admin' => false,
+        ]);
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
+        $nav = app(\App\Services\Auth\UserPermissionService::class)
+            ->navigationPermissionMapForUser($user, $gate);
+
+        foreach ([
+            'hr.absents.view',
+            'hr.missed_punches.view',
+            'hr.duplicate_punches.view',
+            'hr.attendance_history.view',
+            'hr.lateness.view',
+            'hr.pending_overtime.view',
+            'hr.shifts.view',
+        ] as $code) {
+            $this->assertTrue($nav[$code] ?? false, "Expected {$code} when hr.view is assigned");
+        }
+    }
+
+    public function test_single_hr_leaf_does_not_unlock_sibling_time_attendance_pages(): void
+    {
+        PermissionMatrixService::ensure();
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->seedLicense($admin);
+
+        $role = \App\Models\Role::create([
+            'role_name' => 'Employees Only '.uniqid(),
+            'scope' => 'org',
+            'is_active' => true,
+        ]);
+        $empViewId = (int) \App\Models\Permission::where('permission_code', 'hr.employees.view')->value('id');
+        $this->assertGreaterThan(0, $empViewId);
+        \Illuminate\Support\Facades\DB::table('role_permissions')->insert([
+            'role_id' => $role->id,
+            'permission_id' => $empViewId,
+        ]);
+
+        $user = User::create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'role_id' => $role->id,
+            'username' => 'hr_emp_only_'.uniqid(),
+            'password' => \Illuminate\Support\Facades\Hash::make('password'),
+            'full_name' => 'Employees Only',
+            'access_scope' => 'org',
+            'is_active' => true,
+            'is_admin' => false,
+        ]);
+
+        $gate = app(\App\Services\Erp\ErpContext::class)->gateForUser($user);
+        $nav = app(\App\Services\Auth\UserPermissionService::class)
+            ->navigationPermissionMapForUser($user, $gate);
+
+        $this->assertTrue($nav['hr.employees.view'] ?? false);
+        $this->assertFalse($nav['hr.absents.view'] ?? false);
+        $this->assertFalse($nav['hr.missed_punches.view'] ?? false);
+    }
 }

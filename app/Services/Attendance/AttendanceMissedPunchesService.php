@@ -40,6 +40,27 @@ class AttendanceMissedPunchesService
             ->limit(400)
             ->get();
 
+        $outsideWindow = HikvisionAccessEvent::query()
+            ->with(['device:id,device_no,location,provider'])
+            ->where('organization_id', $organizationId)
+            ->where('process_error', HikvisionAccessEvent::OUTSIDE_WINDOW)
+            ->orderByDesc('event_time')
+            ->limit(200)
+            ->get();
+
+        $loggedDuplicates = HikvisionAccessEvent::query()
+            ->with(['device:id,device_no,location,provider'])
+            ->where('organization_id', $organizationId)
+            ->where('process_error', HikvisionAccessEvent::DUPLICATE_PUNCH)
+            ->orderByDesc('event_time')
+            ->limit(200)
+            ->get();
+
+        $nameLookup = $this->eventEmployeeLookup(
+            $organizationId,
+            $events->concat($outsideWindow)->concat($loggedDuplicates),
+        );
+
         $unapplied = [];
         $duplicates = [];
         $seenHour = [];
@@ -51,7 +72,7 @@ class AttendanceMissedPunchesService
                 (string) $row->employee_no,
                 $at?->timezone(AppTimezone::name())->format('Y-m-d H') ?? (string) $row->id,
             ]);
-            $payload = $this->presentEvent($row);
+            $payload = $this->presentEvent($row, $nameLookup);
             if (isset($seenHour[$hourKey])) {
                 $payload['process_error'] = 'Extra scan in the same hour as another punch that still needs mapping.';
                 $payload['reason_short'] = $this->shortReason($payload['process_error']);
@@ -64,17 +85,9 @@ class AttendanceMissedPunchesService
             $unapplied[] = $payload;
         }
 
-        $outsideWindow = HikvisionAccessEvent::query()
-            ->with(['device:id,device_no,location,provider'])
-            ->where('organization_id', $organizationId)
-            ->where('process_error', HikvisionAccessEvent::OUTSIDE_WINDOW)
-            ->orderByDesc('event_time')
-            ->limit(200)
-            ->get();
-
         foreach ($outsideWindow as $row) {
             HikvisionEventNormalizer::present($row);
-            $payload = $this->presentEvent($row);
+            $payload = $this->presentEvent($row, $nameLookup);
             $payload['process_error'] = 'Punch was outside lunch or clock-out windows. Attendance was not applied.';
             $payload['reason_short'] = $this->shortReason($payload['process_error']);
             $unapplied[] = $payload;
@@ -85,17 +98,9 @@ class AttendanceMissedPunchesService
         });
         $unapplied = array_slice($unapplied, 0, 400);
 
-        $loggedDuplicates = HikvisionAccessEvent::query()
-            ->with(['device:id,device_no,location,provider'])
-            ->where('organization_id', $organizationId)
-            ->where('process_error', HikvisionAccessEvent::DUPLICATE_PUNCH)
-            ->orderByDesc('event_time')
-            ->limit(200)
-            ->get();
-
         foreach ($loggedDuplicates as $row) {
             HikvisionEventNormalizer::present($row);
-            $payload = $this->presentEvent($row);
+            $payload = $this->presentEvent($row, $nameLookup);
             $payload['process_error'] = 'Extra scan in the same hour. Attendance already recorded from the first punch.';
             $payload['reason_short'] = $this->shortReason($payload['process_error']);
             $duplicates[] = $payload;
@@ -139,8 +144,7 @@ class AttendanceMissedPunchesService
             $missingOut[] = [
                 'id' => $session->id,
                 'employee_id' => $session->employee_id,
-                'employee_name' => $session->employee?->full_name
-                    ?: trim(($session->employee?->first_name ?? '').' '.($session->employee?->last_name ?? '')),
+                'employee_name' => $this->formatEmployeeName($session->employee),
                 'employee_code' => $session->employee?->employee_code,
                 'source' => $session->source,
                 'device_identifier' => $session->device_identifier,
@@ -176,8 +180,7 @@ class AttendanceMissedPunchesService
         foreach ($missingShift as $employee) {
             $withoutShift[] = [
                 'id' => $employee->id,
-                'employee_name' => $employee->full_name
-                    ?: trim(($employee->first_name ?? '').' '.($employee->last_name ?? '')),
+                'employee_name' => $this->formatEmployeeName($employee),
                 'employee_code' => $employee->employee_code,
             ];
         }
@@ -197,17 +200,21 @@ class AttendanceMissedPunchesService
     }
 
     /**
+     * @param  array<string, array{name: string, code: ?string}>  $nameLookup
      * @return array<string, mixed>
      */
-    protected function presentEvent(HikvisionAccessEvent $row): array
+    protected function presentEvent(HikvisionAccessEvent $row, array $nameLookup = []): array
     {
+        $resolved = $this->resolveEventEmployee($row, $nameLookup);
+
         return [
             'id' => $row->id,
             'event_key' => $row->event_key,
             'event_time' => $row->event_time,
             'event_time_local' => $row->event_time_local ?? null,
             'employee_no' => $row->employee_no,
-            'employee_name' => $row->employee_name,
+            'employee_name' => $resolved['name'],
+            'employee_code' => $resolved['code'],
             'attendance_status' => $row->attendance_status,
             'verification_method' => $row->verification_method,
             'process_error' => $row->process_error,
@@ -216,6 +223,136 @@ class AttendanceMissedPunchesService
             'device_no' => $row->device?->device_no,
             'device_location' => $row->device?->location,
         ];
+    }
+
+    /**
+     * @param  iterable<int, HikvisionAccessEvent>  $events
+     * @return array<string, array{name: string, code: ?string}>
+     */
+    protected function eventEmployeeLookup(int $organizationId, iterable $events): array
+    {
+        $deviceIds = [];
+        $terminalNos = [];
+        foreach ($events as $row) {
+            $deviceIds[] = (int) $row->attendance_clock_device_id;
+            $no = trim((string) $row->employee_no);
+            if ($no !== '') {
+                $terminalNos[] = $no;
+            }
+        }
+        $deviceIds = array_values(array_unique(array_filter($deviceIds)));
+        $terminalNos = array_values(array_unique($terminalNos));
+        if ($deviceIds === [] && $terminalNos === []) {
+            return [];
+        }
+
+        $variants = [];
+        foreach ($terminalNos as $no) {
+            foreach (HikvisionService::employeeNoLookupVariants($no) as $variant) {
+                $variants[$variant] = true;
+            }
+        }
+        $variantList = array_keys($variants);
+
+        $lookup = [];
+        if ($deviceIds !== [] && $variantList !== []) {
+            $mappings = HikvisionEmployeeMapping::query()
+                ->with(['employee:id,full_name,first_name,middle_name,last_name,employee_code'])
+                ->where('organization_id', $organizationId)
+                ->whereIn('attendance_clock_device_id', $deviceIds)
+                ->whereIn('hikvision_employee_no', $variantList)
+                ->get();
+
+            foreach ($mappings as $mapping) {
+                $resolved = [
+                    'name' => $this->formatEmployeeName($mapping->employee),
+                    'code' => $mapping->employee?->employee_code,
+                ];
+                if ($resolved['name'] === '') {
+                    continue;
+                }
+                $deviceId = (int) $mapping->attendance_clock_device_id;
+                foreach (HikvisionService::employeeNoLookupVariants((string) $mapping->hikvision_employee_no) as $variant) {
+                    $lookup[$deviceId.'|'.$variant] = $resolved;
+                }
+            }
+        }
+
+        if ($variantList !== []) {
+            $employees = Employee::query()
+                ->where('organization_id', $organizationId)
+                ->where(function ($q) use ($variantList) {
+                    $q->whereIn('employee_code', $variantList)
+                        ->orWhereIn('payroll_number', $variantList);
+                })
+                ->get(['id', 'full_name', 'first_name', 'middle_name', 'last_name', 'employee_code', 'payroll_number']);
+
+            foreach ($employees as $employee) {
+                $resolved = [
+                    'name' => $this->formatEmployeeName($employee),
+                    'code' => $employee->employee_code,
+                ];
+                if ($resolved['name'] === '') {
+                    continue;
+                }
+                foreach (HikvisionService::employeeNoLookupVariants((string) $employee->employee_code) as $variant) {
+                    $lookup['code|'.$variant] = $resolved;
+                }
+                if ($employee->payroll_number) {
+                    foreach (HikvisionService::employeeNoLookupVariants((string) $employee->payroll_number) as $variant) {
+                        $lookup['code|'.$variant] = $resolved;
+                    }
+                }
+            }
+        }
+
+        return $lookup;
+    }
+
+    /**
+     * @param  array<string, array{name: string, code: ?string}>  $lookup
+     * @return array{name: ?string, code: ?string}
+     */
+    protected function resolveEventEmployee(HikvisionAccessEvent $row, array $lookup): array
+    {
+        $deviceId = (int) $row->attendance_clock_device_id;
+        $no = trim((string) $row->employee_no);
+        if ($no !== '') {
+            foreach (HikvisionService::employeeNoLookupVariants($no) as $variant) {
+                if (isset($lookup[$deviceId.'|'.$variant])) {
+                    return $lookup[$deviceId.'|'.$variant];
+                }
+            }
+            foreach (HikvisionService::employeeNoLookupVariants($no) as $variant) {
+                if (isset($lookup['code|'.$variant])) {
+                    return $lookup['code|'.$variant];
+                }
+            }
+        }
+
+        $fromDevice = HikvisionEventNormalizer::usableString($row->employee_name);
+
+        return [
+            'name' => $fromDevice,
+            'code' => null,
+        ];
+    }
+
+    protected function formatEmployeeName(?Employee $employee): string
+    {
+        if (! $employee) {
+            return '';
+        }
+
+        return trim((string) (
+            $employee->full_name
+            ?: Employee::composeFullName(
+                $employee->first_name,
+                $employee->middle_name,
+                $employee->last_name,
+                '',
+            )
+        ));
     }
 
     /**
