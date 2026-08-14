@@ -163,14 +163,11 @@ class HikvisionDeviceController extends HrOrgResourceController
             'Valid' => 'nullable|array',
         ]);
 
-        $payload = array_merge([
-            'userType' => 'normal',
-            'Valid' => [
-                'enable' => true,
-                'beginTime' => now()->startOfYear()->format('Y-m-d\TH:i:s'),
-                'endTime' => '2037-12-31T23:59:59',
-            ],
-        ], $data);
+        $payload = HikvisionService::terminalUserInfo(
+            (string) $data['employeeNo'],
+            (string) $data['name'],
+            $data,
+        );
 
         return response()->json($this->hikvision->createUser($device, $payload));
     }
@@ -185,7 +182,13 @@ class HikvisionDeviceController extends HrOrgResourceController
             'Valid' => 'nullable|array',
         ]);
 
-        return response()->json($this->hikvision->updateUser($device, $data));
+        $payload = HikvisionService::terminalUserInfo(
+            (string) $data['employeeNo'],
+            (string) $data['name'],
+            $data,
+        );
+
+        return response()->json($this->hikvision->updateUser($device, $payload));
     }
 
     public function deleteUsers(Request $request, string $id)

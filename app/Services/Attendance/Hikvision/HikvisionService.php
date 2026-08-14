@@ -36,6 +36,51 @@ class HikvisionService
     }
 
     /**
+     * ISAPI UserInfo for attendance terminals. Incomplete records appear in the
+     * person list but local fingerprint enroll returns “authentication failed”.
+     *
+     * @param  array<string, mixed>  $overrides
+     * @return array<string, mixed>
+     */
+    public static function terminalUserInfo(string $employeeNo, string $name, array $overrides = []): array
+    {
+        $payload = [
+            'employeeNo' => $employeeNo,
+            'name' => $name !== '' ? $name : $employeeNo,
+            'userType' => 'normal',
+            'gender' => 'unknown',
+            'localUIRight' => true,
+            'maxOpenDoorTime' => 0,
+            'doorRight' => '1',
+            'RightPlan' => [
+                [
+                    'doorNo' => 1,
+                    'planTemplateNo' => '1',
+                ],
+            ],
+            'Valid' => [
+                'enable' => true,
+                // Far-past start: a device clock behind “this year” otherwise
+                // treats the person as not yet valid (authentication failed).
+                'beginTime' => '2000-01-01T00:00:00',
+                'endTime' => '2037-12-31T23:59:59',
+                'timeType' => 'local',
+            ],
+        ];
+
+        if ($overrides !== []) {
+            $valid = $overrides['Valid'] ?? null;
+            unset($overrides['Valid']);
+            $payload = array_merge($payload, $overrides);
+            if (is_array($valid)) {
+                $payload['Valid'] = array_merge($payload['Valid'], $valid);
+            }
+        }
+
+        return $payload;
+    }
+
+    /**
      * Hikvision person ID: numeric code like 0003 (not EMP#0003).
      */
     public static function terminalEmployeeNo(Employee|string $employee): string
@@ -466,16 +511,7 @@ class HikvisionService
             }
 
             $name = trim((string) ($employee->full_name ?? $employee->first_name.' '.$employee->last_name));
-            $payload = [
-                'employeeNo' => $employeeNo,
-                'name' => $name !== '' ? $name : $employeeNo,
-                'userType' => 'normal',
-                'Valid' => [
-                    'enable' => true,
-                    'beginTime' => AppTimezone::now()->startOfYear()->format('Y-m-d\TH:i:s'),
-                    'endTime' => '2037-12-31T23:59:59',
-                ],
-            ];
+            $payload = self::terminalUserInfo($employeeNo, $name);
 
             try {
                 if (isset($existing[$employeeNo])) {
