@@ -1183,6 +1183,7 @@ Route::prefix('v1')->group(function () {
                 Route::post('sync/employees-to-device', [HikvisionDeviceController::class, 'syncEmployeesToDevice']);
                 Route::get('sync/employees-from-device', [HikvisionDeviceController::class, 'syncEmployeesFromDevice']);
                 Route::post('sync/employees/map', [HikvisionDeviceController::class, 'mapEmployee']);
+                Route::post('sync/employees/auto-map', [HikvisionDeviceController::class, 'autoMapEmployees']);
                 Route::post('sync/attendance', [HikvisionDeviceController::class, 'syncAttendance']);
                 Route::post('sync/reprocess-pending', [HikvisionDeviceController::class, 'reprocessPendingAttendance']);
                 Route::get('agent/status', [HikvisionDeviceController::class, 'agentStatus']);
@@ -1203,6 +1204,12 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::post('attendance/sync-from-devices', [AttendanceMissedPunchesController::class, 'syncFromDevices'])
                 ->middleware('erp.permission:hr.attendance.view|hr.attendance.create|hr.manage|hr.view|admin.manage');
+            Route::post('attendance/missed-punches/auto-map', [AttendanceMissedPunchesController::class, 'autoMap'])
+                ->middleware('erp.permission:hr.manage|admin.manage');
+            Route::post('attendance/missed-punches/{session}/clock-out', [AttendanceMissedPunchesController::class, 'closeClockOut'])
+                ->middleware('erp.permission:hr.manage|admin.manage');
+            Route::post('attendance/duplicate-punches/dismiss', [AttendanceMissedPunchesController::class, 'dismissDuplicates'])
+                ->middleware('erp.permission:hr.attendance.view|hr.manage|hr.view|admin.manage');
             Route::get('employee-attendance/day-preview', [EmployeeAttendanceController::class, 'dayPreview'])
                 ->middleware('erp.permission:hr.view');
             Route::post('employee-attendance/bulk', [EmployeeAttendanceController::class, 'bulkStore'])

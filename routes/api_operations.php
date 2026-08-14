@@ -310,6 +310,12 @@ Route::middleware('auth:sanctum')->group(function () {
             ->middleware('erp.permission:hr.attendance.view|hr.view');
         Route::post('missed-punches/retry', [AttendanceMissedPunchesController::class, 'retry'])
             ->middleware('erp.permission:hr.manage|admin.manage');
+        Route::post('missed-punches/auto-map', [AttendanceMissedPunchesController::class, 'autoMap'])
+            ->middleware('erp.permission:hr.manage|admin.manage');
+        Route::post('missed-punches/{session}/clock-out', [AttendanceMissedPunchesController::class, 'closeClockOut'])
+            ->middleware('erp.permission:hr.manage|admin.manage');
+        Route::post('duplicate-punches/dismiss', [AttendanceMissedPunchesController::class, 'dismissDuplicates'])
+            ->middleware('erp.permission:hr.attendance.view|hr.manage|hr.view|admin.manage');
         Route::post('sync-from-devices', [AttendanceMissedPunchesController::class, 'syncFromDevices'])
             ->middleware('erp.permission:hr.attendance.view|hr.attendance.create|hr.manage|hr.view|admin.manage');
         Route::get('company-mobile-sessions', [CompanyPremisesController::class, 'sessions'])

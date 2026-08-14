@@ -16,6 +16,29 @@ class SyncHikvisionAttendanceCommand extends Command
 
     protected $description = 'Pull punches from Hikvision via CentrixAttendanceAgent (LAN bridge). Prefer the agent service for ongoing sync; this command also uses the agent when online.';
 
+    /** First hourly run (Africa/Nairobi). */
+    public const WINDOW_START_HOUR = 7;
+
+    public const WINDOW_START_MINUTE = 20;
+
+    /** Inclusive end of overnight wrap (02:00). No punches expected after this until morning. */
+    public const WINDOW_END_HOUR = 2;
+
+    public const WINDOW_END_MINUTE = 0;
+
+    public static function isInSyncWindow(?\DateTimeInterface $now = null): bool
+    {
+        $tz = config('app.timezone', 'Africa/Nairobi');
+        $clock = $now
+            ? \Carbon\Carbon::parse($now)->timezone($tz)
+            : now()->timezone($tz);
+        $minutes = $clock->hour * 60 + $clock->minute;
+        $start = self::WINDOW_START_HOUR * 60 + self::WINDOW_START_MINUTE;
+        $end = self::WINDOW_END_HOUR * 60 + self::WINDOW_END_MINUTE;
+
+        return $minutes >= $start || $minutes <= $end;
+    }
+
     public function handle(HikvisionAttendanceSyncService $sync): int
     {
         $query = AttendanceClockDevice::query()

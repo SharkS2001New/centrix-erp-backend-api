@@ -38,6 +38,51 @@ class AttendanceMissedPunchesController extends Controller
         return response()->json($this->missedPunches->retryUnapplied((int) $orgId));
     }
 
+    /** POST /attendance/missed-punches/auto-map */
+    public function autoMap(Request $request)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        return response()->json($this->missedPunches->autoMapAndRetry((int) $orgId));
+    }
+
+    /** POST /attendance/missed-punches/{session}/clock-out */
+    public function closeClockOut(Request $request, int $session)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        $data = $request->validate([
+            'punched_at' => 'nullable|date',
+        ]);
+
+        return response()->json(
+            $this->missedPunches->closeMissingClockOut((int) $orgId, $session, $data['punched_at'] ?? null)
+        );
+    }
+
+    /** POST /attendance/duplicate-punches/dismiss */
+    public function dismissDuplicates(Request $request)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        $data = $request->validate([
+            'id' => 'nullable|integer',
+        ]);
+
+        return response()->json(
+            $this->missedPunches->dismissDuplicatePunches((int) $orgId, isset($data['id']) ? (int) $data['id'] : null)
+        );
+    }
+
     /** POST /attendance/sync-from-devices */
     public function syncFromDevices(Request $request)
     {

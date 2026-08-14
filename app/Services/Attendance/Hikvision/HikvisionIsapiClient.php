@@ -815,9 +815,8 @@ class HikvisionIsapiClient
             $user = $this->presentUserInfo($user);
             $key = (string) ($user['employeeNo'] ?? '');
             if ($key !== '' && isset($seen[$key])) {
-                continue;
-            }
-            if ($key !== '') {
+                $user['duplicateOnDevice'] = true;
+            } elseif ($key !== '') {
                 $seen[$key] = true;
             }
             $out[] = $user;

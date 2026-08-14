@@ -392,6 +392,13 @@ class HikvisionDeviceController extends HrOrgResourceController
         return response()->json($result, 201);
     }
 
+    public function autoMapEmployees(string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+
+        return response()->json($this->hikvision->autoMapDeviceUsers($device));
+    }
+
     public function syncAttendance(Request $request, string $id)
     {
         $device = $this->findHikvisionDevice($id);

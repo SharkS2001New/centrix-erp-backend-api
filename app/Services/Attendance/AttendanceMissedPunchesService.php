@@ -3,17 +3,20 @@
 namespace App\Services\Attendance;
 
 use App\Models\AttendanceClockDevice;
+use App\Models\Employee;
 use App\Models\EmployeeClockSession;
 use App\Models\HikvisionAccessEvent;
 use App\Services\Attendance\Hikvision\HikvisionEventNormalizer;
 use App\Services\Attendance\Hikvision\HikvisionService;
 use App\Support\AppTimezone;
 use Carbon\Carbon;
+use Illuminate\Validation\ValidationException;
 
 class AttendanceMissedPunchesService
 {
     public function __construct(
         protected HikvisionService $hikvision,
+        protected AttendanceClockPunchService $punchService,
     ) {
     }
 
@@ -111,14 +114,44 @@ class AttendanceMissedPunchesService
             ];
         }
 
+        $withoutShiftCount = Employee::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->where(function ($q) {
+                $q->whereNull('shift_id')->orWhere('shift_id', 0);
+            })
+            ->count();
+
+        $missingShift = Employee::query()
+            ->where('organization_id', $organizationId)
+            ->where('is_active', true)
+            ->where(function ($q) {
+                $q->whereNull('shift_id')->orWhere('shift_id', 0);
+            })
+            ->orderBy('full_name')
+            ->limit(50)
+            ->get(['id', 'full_name', 'first_name', 'last_name', 'employee_code', 'shift_id']);
+
+        $withoutShift = [];
+        foreach ($missingShift as $employee) {
+            $withoutShift[] = [
+                'id' => $employee->id,
+                'employee_name' => $employee->full_name
+                    ?: trim(($employee->first_name ?? '').' '.($employee->last_name ?? '')),
+                'employee_code' => $employee->employee_code,
+            ];
+        }
+
         return [
             'unapplied_terminal_punches' => $unapplied,
             'duplicate_punches' => $duplicates,
             'missing_clock_out' => $missingOut,
+            'employees_without_shift' => $withoutShift,
             'counts' => [
                 'unapplied_terminal_punches' => count($unapplied),
                 'duplicate_punches' => count($duplicates),
                 'missing_clock_out' => count($missingOut),
+                'employees_without_shift' => $withoutShiftCount,
             ],
         ];
     }
@@ -177,5 +210,83 @@ class AttendanceMissedPunchesService
         $merged['errors'] = array_slice($merged['errors'], 0, 20);
 
         return $merged;
+    }
+
+    /**
+     * @return array{dismissed: int}
+     */
+    public function dismissDuplicatePunches(int $organizationId, ?int $eventId = null): array
+    {
+        $query = HikvisionAccessEvent::query()
+            ->where('organization_id', $organizationId)
+            ->where('process_error', HikvisionAccessEvent::DUPLICATE_PUNCH);
+        if ($eventId) {
+            $query->where('id', $eventId);
+        }
+
+        $dismissed = $query->update([
+            'process_error' => HikvisionAccessEvent::DUPLICATE_PUNCH_DISMISSED,
+        ]);
+
+        return ['dismissed' => $dismissed];
+    }
+
+    /**
+     * @return array{action: string, session: mixed, attendance?: mixed}
+     */
+    public function closeMissingClockOut(int $organizationId, int $sessionId, mixed $punchedAt = null): array
+    {
+        $session = EmployeeClockSession::query()
+            ->where('organization_id', $organizationId)
+            ->where('id', $sessionId)
+            ->whereNull('clock_out_at')
+            ->first();
+        if (! $session) {
+            throw ValidationException::withMessages([
+                'session_id' => 'Open clock session not found.',
+            ]);
+        }
+
+        return $this->punchService->punch([
+            'organization_id' => $organizationId,
+            'employee_id' => $session->employee_id,
+            'device_no' => $session->device_identifier,
+            'punched_at' => $punchedAt,
+            'direction' => 'out',
+        ]);
+    }
+
+    /**
+     * Auto-map device persons then retry pending punches.
+     *
+     * @return array<string, mixed>
+     */
+    public function autoMapAndRetry(int $organizationId): array
+    {
+        $devices = AttendanceClockDevice::query()
+            ->where('organization_id', $organizationId)
+            ->where('provider', 'hikvision')
+            ->where('is_active', true)
+            ->get();
+
+        $mapped = 0;
+        $errors = [];
+        foreach ($devices as $device) {
+            try {
+                $result = $this->hikvision->autoMapDeviceUsers($device);
+                $mapped += (int) ($result['mapped'] ?? 0);
+                foreach ($result['errors'] ?? [] as $error) {
+                    $errors[] = $error;
+                }
+            } catch (\Throwable $e) {
+                $errors[] = ($device->device_no ?: 'device').': '.$e->getMessage();
+            }
+        }
+
+        $retry = $this->retryUnapplied($organizationId);
+        $retry['mapped'] = $mapped;
+        $retry['errors'] = array_slice(array_merge($errors, $retry['errors'] ?? []), 0, 20);
+
+        return $retry;
     }
 }

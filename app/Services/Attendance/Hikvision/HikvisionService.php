@@ -127,6 +127,71 @@ class HikvisionService
         return array_values(array_unique(array_filter($variants, static fn ($v) => $v !== '')));
     }
 
+    public static function normalizePersonName(string $name): string
+    {
+        $text = mb_strtolower(trim($name));
+        $text = preg_replace('/[^a-z0-9\s]+/u', ' ', $text) ?? $text;
+        $text = preg_replace('/\s+/', ' ', $text) ?? $text;
+
+        return trim($text);
+    }
+
+    public static function findUniqueEmployeeForTerminalNo(int $orgId, string $terminalNo): ?Employee
+    {
+        $variants = self::employeeNoLookupVariants($terminalNo);
+        if ($variants === []) {
+            return null;
+        }
+
+        $matches = Employee::with('shift')
+            ->where('organization_id', $orgId)
+            ->where(function ($q) use ($variants) {
+                $q->whereIn('employee_code', $variants)
+                    ->orWhereIn('payroll_number', $variants);
+            })
+            ->get();
+        if ($matches->count() === 1) {
+            return $matches->first();
+        }
+        if ($matches->count() > 1) {
+            return null;
+        }
+
+        $want = self::terminalEmployeeNo($terminalNo);
+        if ($want === '') {
+            return null;
+        }
+
+        $normalized = Employee::with('shift')
+            ->where('organization_id', $orgId)
+            ->where('is_active', true)
+            ->whereNotNull('employee_code')
+            ->get()
+            ->filter(fn (Employee $row) => self::terminalEmployeeNo($row) === $want);
+
+        return $normalized->count() === 1 ? $normalized->first() : null;
+    }
+
+    public static function findUniqueEmployeeByName(int $orgId, string $name): ?Employee
+    {
+        $want = self::normalizePersonName($name);
+        if ($want === '' || strlen($want) < 4) {
+            return null;
+        }
+
+        $hits = Employee::with('shift')
+            ->where('organization_id', $orgId)
+            ->where('is_active', true)
+            ->get()
+            ->filter(function (Employee $row) use ($want) {
+                $full = self::normalizePersonName((string) ($row->full_name ?: trim($row->first_name.' '.$row->last_name)));
+
+                return $full !== '' && $full === $want;
+            });
+
+        return $hits->count() === 1 ? $hits->first() : null;
+    }
+
     /**
      * @return array{online: bool, last_seen_at: string|null, version: string|null}
      */
@@ -559,16 +624,10 @@ class HikvisionService
         $mappedNos = HikvisionEmployeeMapping::query()
             ->where('attendance_clock_device_id', $device->id)
             ->pluck('hikvision_employee_no')
-            ->map(fn ($v) => (string) $v)
+            ->flatMap(fn ($v) => self::employeeNoLookupVariants((string) $v))
+            ->unique()
             ->all();
-
-        $centrixCodes = Employee::query()
-            ->where('organization_id', $orgId)
-            ->pluck('employee_code')
-            ->map(fn ($v) => trim((string) $v))
-            ->filter()
-            ->all();
-        $centrixSet = array_fill_keys($centrixCodes, true);
+        $mappedSet = array_fill_keys($mappedNos, true);
 
         $unmapped = [];
         foreach ($search['users'] as $row) {
@@ -576,7 +635,14 @@ class HikvisionService
             if ($no === '') {
                 continue;
             }
-            if (isset($centrixSet[$no]) || in_array($no, $mappedNos, true)) {
+            $alreadyMapped = false;
+            foreach (self::employeeNoLookupVariants($no) as $variant) {
+                if (isset($mappedSet[$variant])) {
+                    $alreadyMapped = true;
+                    break;
+                }
+            }
+            if ($alreadyMapped || self::findUniqueEmployeeForTerminalNo($orgId, $no)) {
                 continue;
             }
             $unmapped[] = $row;
@@ -610,18 +676,7 @@ class HikvisionService
             ->where('hikvision_employee_no', '!=', $hikvisionEmployeeNo)
             ->delete();
 
-        $mapping = HikvisionEmployeeMapping::query()->updateOrCreate(
-            [
-                'attendance_clock_device_id' => $device->id,
-                'hikvision_employee_no' => $hikvisionEmployeeNo,
-            ],
-            [
-                'organization_id' => $device->organization_id,
-                'employee_id' => $employee->id,
-                'sync_status' => 'mapped',
-                'last_synced_at' => AppTimezone::now(),
-            ]
-        );
+        $mapping = $this->persistMapping($device, $hikvisionEmployeeNo, $employee);
 
         // Apply any stored punches that failed while this terminal ID was unmapped.
         $reprocessed = $this->attendanceSync->reprocessPendingEvents(
@@ -634,6 +689,90 @@ class HikvisionService
             'mapping' => $mapping,
             'reprocessed' => $reprocessed,
         ];
+    }
+
+    /**
+     * Map device persons whose employee number or unique name matches Centrix.
+     *
+     * @return array{mapped: int, skipped: int, retried: int, applied: int, errors: list<string>}
+     */
+    public function autoMapDeviceUsers(AttendanceClockDevice $device): array
+    {
+        $this->assertFeature($device, 'users');
+        $search = $this->client($device)->searchUsers(['maxResults' => 200]);
+        $orgId = (int) $device->organization_id;
+        $result = ['mapped' => 0, 'skipped' => 0, 'retried' => 0, 'applied' => 0, 'errors' => []];
+
+        foreach ($search['users'] as $row) {
+            $no = trim((string) ($row['employeeNo'] ?? $row['EmployeeNo'] ?? ''));
+            if ($no === '') {
+                $result['skipped']++;
+
+                continue;
+            }
+
+            $existing = HikvisionEmployeeMapping::query()
+                ->where('attendance_clock_device_id', $device->id)
+                ->whereIn('hikvision_employee_no', self::employeeNoLookupVariants($no))
+                ->first();
+            if ($existing?->employee_id) {
+                $result['skipped']++;
+
+                continue;
+            }
+
+            $employee = self::findUniqueEmployeeForTerminalNo($orgId, $no);
+            if (! $employee) {
+                $name = trim((string) ($row['name'] ?? $row['Name'] ?? ''));
+                $employee = $name !== '' ? self::findUniqueEmployeeByName($orgId, $name) : null;
+            }
+            if (! $employee) {
+                $result['skipped']++;
+
+                continue;
+            }
+
+            try {
+                $this->persistMapping($device, $no, $employee);
+                $result['mapped']++;
+            } catch (\Throwable $e) {
+                $result['errors'][] = "{$no}: {$e->getMessage()}";
+            }
+        }
+
+        $reprocessed = $this->attendanceSync->reprocessPendingEvents($device);
+        $result['applied'] = (int) ($reprocessed['applied'] ?? 0);
+        $result['retried'] = (int) ($reprocessed['retried'] ?? 0);
+        foreach ($reprocessed['errors'] ?? [] as $error) {
+            $result['errors'][] = $error;
+        }
+
+        return $result;
+    }
+
+    protected function persistMapping(
+        AttendanceClockDevice $device,
+        string $hikvisionEmployeeNo,
+        Employee $employee,
+    ): HikvisionEmployeeMapping {
+        HikvisionEmployeeMapping::query()
+            ->where('attendance_clock_device_id', $device->id)
+            ->where('employee_id', $employee->id)
+            ->where('hikvision_employee_no', '!=', $hikvisionEmployeeNo)
+            ->delete();
+
+        return HikvisionEmployeeMapping::query()->updateOrCreate(
+            [
+                'attendance_clock_device_id' => $device->id,
+                'hikvision_employee_no' => $hikvisionEmployeeNo,
+            ],
+            [
+                'organization_id' => $device->organization_id,
+                'employee_id' => $employee->id,
+                'sync_status' => 'mapped',
+                'last_synced_at' => AppTimezone::now(),
+            ]
+        );
     }
 
     /**

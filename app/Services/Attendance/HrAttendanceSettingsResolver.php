@@ -96,7 +96,7 @@ class HrAttendanceSettingsResolver
         $out['clock_in_late_after'] = self::normalizeClockTime($out['clock_in_late_after'] ?? null, '08:15');
         $out['hikvision_agent_poll_minutes'] = max(
             1,
-            min(60, (int) ($out['hikvision_agent_poll_minutes'] ?? 5)),
+            min(60, (int) ($out['hikvision_agent_poll_minutes'] ?? 60)),
         );
 
         return $out;

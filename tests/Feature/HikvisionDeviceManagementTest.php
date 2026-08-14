@@ -583,6 +583,87 @@ class HikvisionDeviceManagementTest extends TestCase
         );
     }
 
+    public function test_terminal_id_0003_auto_maps_to_emp_hash_code_without_manual_mapping(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $template = \App\Models\Employee::query()->where('organization_id', $this->org->id)->firstOrFail();
+        $shift = \App\Models\WorkShift::query()->create([
+            'organization_id' => $this->org->id,
+            'shift_code' => 'AM'.uniqid(),
+            'shift_name' => 'Auto map shift',
+            'start_time' => '08:00:00',
+            'end_time' => '17:00:00',
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+            'works_saturday' => true,
+            'works_sunday' => true,
+            'works_public_holidays' => true,
+            'is_active' => true,
+        ]);
+        $employee = \App\Models\Employee::query()->create([
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->admin->branch_id,
+            'department_id' => $template->department_id,
+            'position_id' => $template->position_id,
+            'shift_id' => $shift->id,
+            'employee_code' => 'EMP#0004',
+            'payroll_number' => 'EMP#0004',
+            'first_name' => 'Auto',
+            'last_name' => 'Map',
+            'full_name' => 'Auto Map',
+            'employment_status' => 'active',
+            'employment_type' => 'permanent',
+            'pay_frequency' => 'monthly',
+            'hire_date' => '2024-01-01',
+            'base_salary' => 50000,
+            'country' => 'Kenya',
+            'is_active' => true,
+        ]);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-AUTO-MAP',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $this->postJson(
+            "/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/ingest-events",
+            [
+                'events' => [[
+                    'employee_no' => '0004',
+                    'employee_name' => 'Auto Map',
+                    'punched_at' => '2026-08-14T08:07:00+03:00',
+                    'serial_no' => 'auto-map-1',
+                    'attendance_status' => 'checkIn',
+                    'verification_method' => 'fingerprint',
+                    'minor' => 75,
+                ]],
+            ]
+        )->assertOk()->assertJsonPath('applied', 1);
+
+        $this->assertDatabaseHas('employee_clock_sessions', [
+            'employee_id' => $employee->id,
+            'device_identifier' => 'T-AUTO-MAP',
+        ]);
+        $this->assertDatabaseHas('hikvision_employee_mappings', [
+            'attendance_clock_device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'hikvision_employee_no' => '0004',
+        ]);
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $employee->id,
+            'attendance_date' => '2026-08-14',
+            'check_in' => '08:07:00',
+        ]);
+    }
+
     public function test_new_punch_in_same_hour_applies_after_session_deleted(): void
     {
         Sanctum::actingAs($this->admin);
@@ -695,7 +776,7 @@ class HikvisionDeviceManagementTest extends TestCase
 
         $this->getJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/commands/pending")
             ->assertOk()
-            ->assertJsonPath('poll_interval_seconds', 300)
+            ->assertJsonPath('poll_interval_seconds', 3600)
             ->assertJsonPath('commands', []);
     }
 
@@ -1032,6 +1113,12 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertSame(0, $res->json('counts.unapplied_terminal_punches'));
         $this->assertSame(1, $res->json('counts.duplicate_punches'));
         $this->assertSame('0008', $res->json('duplicate_punches.0.employee_no'));
+
+        $dupId = $res->json('duplicate_punches.0.id');
+        $this->postJson('/api/v1/attendance/duplicate-punches/dismiss', ['id' => $dupId])
+            ->assertOk()
+            ->assertJsonPath('dismissed', 1);
+        $this->assertSame(0, $this->getJson('/api/v1/attendance/missed-punches')->json('counts.duplicate_punches'));
     }
 
     public function test_sync_attendance_requires_online_agent(): void

@@ -321,7 +321,12 @@ class HikvisionAttendanceSyncService
             }
 
             $employeeNo = (string) ($event['employee_no'] ?? $stored->employee_no ?? '');
-            $employeeId = $this->resolveMappedEmployeeId($device, $employeeNo, $mappingCache);
+            $employeeId = $this->resolveMappedEmployeeId(
+                $device,
+                $employeeNo,
+                $mappingCache,
+                (string) ($event['employee_name'] ?? $stored->employee_name ?? ''),
+            );
             $direction = 'auto';
 
             try {
@@ -480,6 +485,7 @@ class HikvisionAttendanceSyncService
         AttendanceClockDevice $device,
         string $employeeNo,
         array &$cache,
+        string $employeeName = '',
     ): ?int {
         $key = trim($employeeNo);
         if ($key === '') {
@@ -494,9 +500,48 @@ class HikvisionAttendanceSyncService
             ->whereIn('hikvision_employee_no', HikvisionService::employeeNoLookupVariants($employeeNo))
             ->first();
 
-        $cache[$key] = $mapping?->employee_id ? (int) $mapping->employee_id : null;
+        $employeeId = $mapping?->employee_id ? (int) $mapping->employee_id : null;
+        if (! $employeeId) {
+            $employee = HikvisionService::findUniqueEmployeeForTerminalNo(
+                (int) $device->organization_id,
+                $employeeNo,
+            );
+            if (! $employee && $employeeName !== '') {
+                $employee = HikvisionService::findUniqueEmployeeByName(
+                    (int) $device->organization_id,
+                    $employeeName,
+                );
+            }
+            if ($employee) {
+                $employeeId = (int) $employee->id;
+                $this->persistAutoMapping($device, $employeeNo, $employeeId);
+            }
+        }
+
+        $cache[$key] = $employeeId;
 
         return $cache[$key];
+    }
+
+    protected function persistAutoMapping(AttendanceClockDevice $device, string $employeeNo, int $employeeId): void
+    {
+        HikvisionEmployeeMapping::query()
+            ->where('attendance_clock_device_id', $device->id)
+            ->where('employee_id', $employeeId)
+            ->where('hikvision_employee_no', '!=', $employeeNo)
+            ->delete();
+        HikvisionEmployeeMapping::query()->updateOrCreate(
+            [
+                'attendance_clock_device_id' => $device->id,
+                'hikvision_employee_no' => $employeeNo,
+            ],
+            [
+                'organization_id' => $device->organization_id,
+                'employee_id' => $employeeId,
+                'sync_status' => 'mapped',
+                'last_synced_at' => AppTimezone::now(),
+            ]
+        );
     }
 
     /**

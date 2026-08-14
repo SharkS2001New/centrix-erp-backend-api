@@ -235,39 +235,14 @@ class AttendanceClockPunchService
             ]);
         }
 
-        $variants = \App\Services\Attendance\Hikvision\HikvisionService::employeeNoLookupVariants($code);
-
-        $employee = Employee::with('shift')
-            ->where('organization_id', $orgId)
-            ->where(function ($q) use ($variants) {
-                $q->whereIn('employee_code', $variants)
-                    ->orWhereIn('payroll_number', $variants);
-            })
-            ->first();
-
-        if (! $employee) {
-            foreach ($variants as $variant) {
-                $employee = Employee::with('shift')
-                    ->where('organization_id', $orgId)
-                    ->where(function ($q) use ($variant) {
-                        $q->where('employee_code', 'like', '%'.$variant)
-                            ->orWhere('payroll_number', 'like', '%'.$variant);
-                    })
-                    ->orderBy('id')
-                    ->first();
-                if ($employee) {
-                    break;
-                }
-            }
+        $employee = \App\Services\Attendance\Hikvision\HikvisionService::findUniqueEmployeeForTerminalNo($orgId, $code);
+        if ($employee) {
+            return $employee->loadMissing('shift');
         }
 
-        if (! $employee) {
-            throw ValidationException::withMessages([
-                'employee_code' => "No Centrix employee matches terminal ID \"{$code}\". Enroll the same employee_code on the device.",
-            ]);
-        }
-
-        return $employee;
+        throw ValidationException::withMessages([
+            'employee_code' => "No Centrix employee matches terminal ID \"{$code}\". Map this ID on Attendance clock-in, or enroll the same employee number on the device.",
+        ]);
     }
 
     /**
