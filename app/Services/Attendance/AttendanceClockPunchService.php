@@ -59,11 +59,8 @@ class AttendanceClockPunchService
             ->orderByDesc('clock_in_at')
             ->first();
 
-        if ($open && $this->windows->isStaleOpenSession($open, $punchedAt)) {
-            $this->closeStaleSession($employee, $open, $deviceNo);
-            $open = null;
-        }
-
+        // Same-hour extra scans must not close anything. Closing first wrote 23:59:59
+        // whenever timezone made the open session look like a different calendar day.
         if ($this->windows->hasActivityInSameHour($employee, $punchedAt)) {
             $session = $open ?? EmployeeClockSession::query()
                 ->where('employee_id', $employee->id)
@@ -76,6 +73,11 @@ class AttendanceClockPunchService
                     'attendance' => $session->attendance,
                 ];
             }
+        }
+
+        if ($open && $this->windows->isStaleOpenSession($open, $punchedAt)) {
+            // Leave yesterday without a fabricated midnight clock-out (HR shows 23:59).
+            $open = null;
         }
 
         if ($direction === 'auto') {
@@ -318,18 +320,6 @@ class AttendanceClockPunchService
         }
 
         return $at;
-    }
-
-    protected function closeStaleSession(Employee $employee, EmployeeClockSession $open, ?string $deviceNo): void
-    {
-        $started = AppTimezone::normalize($open->clock_in_at) ?? AppTimezone::now();
-        $closeAt = $started->copy()->endOfDay();
-        try {
-            $this->clockOut($employee, $closeAt, $deviceNo, $open);
-        } catch (\Throwable) {
-            $open->clock_out_at = $closeAt;
-            $open->save();
-        }
     }
 
     /**

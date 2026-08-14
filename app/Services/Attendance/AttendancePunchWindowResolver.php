@@ -97,10 +97,10 @@ class AttendancePunchWindowResolver
             return false;
         }
 
-        $openDay = AppTimezone::normalize($open->clock_in_at)?->toDateString();
-        $punchDay = $punchedAt->copy()->timezone(AppTimezone::name())->toDateString();
+        $openDay = $this->wallCalendarDate($open->clock_in_at);
+        $punchDay = $this->wallCalendarDate($punchedAt);
 
-        return $openDay !== null && $openDay !== $punchDay;
+        return $openDay !== null && $punchDay !== null && $openDay !== $punchDay;
     }
 
     public function lateThreshold(Employee $employee, string $date, Carbon $shiftStart): Carbon
@@ -122,18 +122,31 @@ class AttendancePunchWindowResolver
 
     public function hasActivityInSameHour(Employee $employee, Carbon $at): bool
     {
-        [$start, $end] = $this->hourBounds($at);
+        $local = $at->copy()->timezone(AppTimezone::name());
+        $hourKey = $local->format('Y-m-d H');
+        $dayStart = $local->copy()->startOfDay()->format('Y-m-d H:i:s');
+        $dayEnd = $local->copy()->endOfDay()->format('Y-m-d H:i:s');
 
-        return EmployeeClockSession::query()
+        $sessions = EmployeeClockSession::query()
             ->where('employee_id', $employee->id)
-            ->where(function ($q) use ($start, $end) {
-                $q->whereBetween('clock_in_at', [$start, $end])
-                    ->orWhere(function ($inner) use ($start, $end) {
+            ->where(function ($q) use ($dayStart, $dayEnd) {
+                $q->whereBetween('clock_in_at', [$dayStart, $dayEnd])
+                    ->orWhere(function ($inner) use ($dayStart, $dayEnd) {
                         $inner->whereNotNull('clock_out_at')
-                            ->whereBetween('clock_out_at', [$start, $end]);
+                            ->whereBetween('clock_out_at', [$dayStart, $dayEnd]);
                     });
             })
-            ->exists();
+            ->get(['clock_in_at', 'clock_out_at']);
+
+        foreach ($sessions as $session) {
+            foreach ([$session->clock_in_at, $session->clock_out_at] as $stamp) {
+                if ($stamp && $this->wallHourKey($stamp) === $hourKey) {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -144,6 +157,20 @@ class AttendancePunchWindowResolver
         $local = $at->copy()->timezone(AppTimezone::name());
 
         return [$local->copy()->startOfHour(), $local->copy()->endOfHour()];
+    }
+
+    protected function wallCalendarDate(mixed $value): ?string
+    {
+        $wall = AppTimezone::fromDeviceWallClock($value) ?? AppTimezone::normalize($value);
+
+        return $wall?->format('Y-m-d');
+    }
+
+    protected function wallHourKey(mixed $value): ?string
+    {
+        $wall = AppTimezone::fromDeviceWallClock($value) ?? AppTimezone::normalize($value);
+
+        return $wall?->format('Y-m-d H');
     }
 
     /**

@@ -9,6 +9,7 @@ use App\Models\EmployeeClockSession;
 use App\Models\Organization;
 use App\Models\User;
 use App\Models\WorkShift;
+use Carbon\Carbon;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -491,5 +492,75 @@ class AttendanceClockPunchTest extends TestCase
             'late_minutes' => 0,
             'status' => 'present',
         ]);
+    }
+
+    public function test_same_hour_zulu_punch_is_not_recorded_as_end_of_day(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-14 18:00:00', 'Africa/Nairobi'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-14T08:10:00Z',
+            'direction' => 'auto',
+        ])->assertCreated()->assertJsonPath('action', 'in');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-14T08:35:00Z',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'ignored');
+
+        $session = EmployeeClockSession::query()->where('employee_id', $this->employee->id)->first();
+        $this->assertNotNull($session);
+        $this->assertNull($session->clock_out_at);
+        $this->assertSame('08:10:00', $session->clock_in_at?->timezone('Africa/Nairobi')->format('H:i:s'));
+
+        Carbon::setTestNow();
+    }
+
+    public function test_next_day_morning_punch_does_not_close_yesterday_at_2359(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-14 18:00:00', 'Africa/Nairobi'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-13T08:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated()->assertJsonPath('action', 'in');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-14T08:25:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated()->assertJsonPath('action', 'in');
+
+        $yesterday = EmployeeClockSession::query()
+            ->where('employee_id', $this->employee->id)
+            ->whereDate('clock_in_at', '2026-08-13')
+            ->first();
+        $this->assertNotNull($yesterday);
+        $this->assertNull($yesterday->clock_out_at);
+
+        $today = EmployeeClockSession::query()
+            ->where('employee_id', $this->employee->id)
+            ->whereDate('clock_in_at', '2026-08-14')
+            ->first();
+        $this->assertNotNull($today);
+        $this->assertSame('08:25:00', $today->clock_in_at?->timezone('Africa/Nairobi')->format('H:i:s'));
+        $this->assertNull($today->clock_out_at);
+
+        $this->assertDatabaseMissing('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-13',
+            'check_out' => '23:59:59',
+        ]);
+
+        Carbon::setTestNow();
     }
 }

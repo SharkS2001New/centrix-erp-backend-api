@@ -464,8 +464,13 @@ class HikvisionAttendanceSyncService
     protected function hourBounds(Carbon $at): array
     {
         $local = $at->copy()->timezone(AppTimezone::name());
+        $start = $local->copy()->startOfHour();
+        $end = $local->copy()->endOfHour();
 
-        return [$local->copy()->startOfHour(), $local->copy()->endOfHour()];
+        return [
+            Carbon::parse($start->format('Y-m-d H:i:s'), AppTimezone::name()),
+            Carbon::parse($end->format('Y-m-d H:i:s'), AppTimezone::name()),
+        ];
     }
 
     /**
