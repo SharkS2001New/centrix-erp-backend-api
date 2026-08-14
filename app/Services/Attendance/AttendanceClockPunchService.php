@@ -87,24 +87,30 @@ class AttendanceClockPunchService
             ]);
         }
 
+        $variants = \App\Services\Attendance\Hikvision\HikvisionService::employeeNoLookupVariants($code);
+
         $employee = Employee::with('shift')
             ->where('organization_id', $orgId)
-            ->where(function ($q) use ($code) {
-                $q->where('employee_code', $code)
-                    ->orWhere('payroll_number', $code);
+            ->where(function ($q) use ($variants) {
+                $q->whereIn('employee_code', $variants)
+                    ->orWhereIn('payroll_number', $variants);
             })
             ->first();
 
         if (! $employee) {
-            // Hikvision often stores bare numbers without EMP# prefix.
-            $employee = Employee::with('shift')
-                ->where('organization_id', $orgId)
-                ->where(function ($q) use ($code) {
-                    $q->where('employee_code', 'like', '%'.$code)
-                        ->orWhere('payroll_number', 'like', '%'.$code);
-                })
-                ->orderBy('id')
-                ->first();
+            foreach ($variants as $variant) {
+                $employee = Employee::with('shift')
+                    ->where('organization_id', $orgId)
+                    ->where(function ($q) use ($variant) {
+                        $q->where('employee_code', 'like', '%'.$variant)
+                            ->orWhere('payroll_number', 'like', '%'.$variant);
+                    })
+                    ->orderBy('id')
+                    ->first();
+                if ($employee) {
+                    break;
+                }
+            }
         }
 
         if (! $employee) {

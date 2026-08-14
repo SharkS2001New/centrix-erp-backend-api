@@ -305,7 +305,7 @@ class HikvisionAttendanceSyncService
 
         $mapping = HikvisionEmployeeMapping::query()
             ->where('attendance_clock_device_id', $device->id)
-            ->where('hikvision_employee_no', $key)
+            ->whereIn('hikvision_employee_no', HikvisionService::employeeNoLookupVariants($employeeNo))
             ->first();
 
         $cache[$key] = $mapping?->employee_id ? (int) $mapping->employee_id : null;

@@ -36,6 +36,53 @@ class HikvisionService
     }
 
     /**
+     * Hikvision person ID: numeric code like 0003 (not EMP#0003).
+     */
+    public static function terminalEmployeeNo(Employee|string $employee): string
+    {
+        $code = $employee instanceof Employee
+            ? trim((string) $employee->employee_code)
+            : trim((string) $employee);
+        if ($code === '') {
+            return '';
+        }
+        $stripped = preg_replace('/^emp#?/i', '', $code) ?? $code;
+        if (preg_match('/^\d+$/', $stripped) === 1) {
+            $trimmed = ltrim($stripped, '0');
+            $digits = $trimmed === '' ? '0' : $trimmed;
+
+            return str_pad($digits, 4, '0', STR_PAD_LEFT);
+        }
+
+        return $stripped !== '' ? $stripped : $code;
+    }
+
+    /**
+     * @return list<string>
+     */
+    public static function employeeNoLookupVariants(string $terminalNo): array
+    {
+        $raw = trim($terminalNo);
+        $variants = [$raw];
+        $normalized = self::terminalEmployeeNo($raw);
+        if ($normalized !== '' && $normalized !== $raw) {
+            $variants[] = $normalized;
+        }
+        $digits = ltrim($normalized !== '' ? $normalized : $raw, '0');
+        if ($digits === '') {
+            $digits = '0';
+        }
+        if (preg_match('/^\d+$/', $digits) === 1) {
+            $variants[] = $digits;
+            $variants[] = 'EMP#'.$digits;
+            $variants[] = 'EMP#'.str_pad($digits, 4, '0', STR_PAD_LEFT);
+            $variants[] = str_pad($digits, 4, '0', STR_PAD_LEFT);
+        }
+
+        return array_values(array_unique(array_filter($variants, static fn ($v) => $v !== '')));
+    }
+
+    /**
      * @return array{online: bool, last_seen_at: string|null, version: string|null}
      */
     public function agentStatus(AttendanceClockDevice $device): array
@@ -411,7 +458,7 @@ class HikvisionService
         }
 
         foreach ($employees as $employee) {
-            $employeeNo = trim((string) $employee->employee_code);
+            $employeeNo = self::terminalEmployeeNo($employee);
             if ($employeeNo === '') {
                 $result['skipped']++;
 
