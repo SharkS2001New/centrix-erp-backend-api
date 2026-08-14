@@ -324,8 +324,14 @@ class HikvisionAttendanceSyncService
             ->where('attendance_clock_device_id', $device->id)
             ->where('employee_no', $employeeNo)
             ->whereNotNull('processed_at')
+            ->whereNotNull('clock_session_id')
             ->where('id', '!=', $exceptEventId)
             ->whereBetween('event_time', [$start, $end])
+            ->whereExists(function ($q) {
+                $q->selectRaw('1')
+                    ->from('employee_clock_sessions')
+                    ->whereColumn('employee_clock_sessions.id', 'hikvision_access_events.clock_session_id');
+            })
             ->exists();
     }
 

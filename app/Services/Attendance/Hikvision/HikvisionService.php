@@ -665,12 +665,15 @@ class HikvisionService
     public static function buildEventKey(int $deviceId, array $event): string
     {
         $serial = trim((string) ($event['serial_no'] ?? data_get($event, 'raw.serialNo') ?? ''));
-        if ($serial !== '') {
+        // Numeric AcsEvent serials are unique per punch. Non-numeric values are often
+        // the device SN reused on every scan — include person + time so new punches ingest.
+        if ($serial !== '' && preg_match('/^\d+$/', $serial) === 1) {
             return "d{$deviceId}:s{$serial}";
         }
 
         $fingerprint = implode('|', [
             $deviceId,
+            $serial,
             $event['employee_no'] ?? '',
             $event['punched_at'] ?? '',
             (string) ($event['major'] ?? ''),

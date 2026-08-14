@@ -5,6 +5,7 @@ namespace App\Services\Auth;
 use App\Models\Customer;
 use App\Models\RouteModel;
 use App\Models\User;
+use App\Services\Erp\CapabilityGate;
 use App\Services\Fulfillment\RouteAccessService;
 use Illuminate\Support\Collection;
 use Illuminate\Database\Eloquent\Builder;
@@ -393,6 +394,11 @@ class UserMobileOrderScopeService
     public function assertCheckoutRoute(User $user, string $channel, ?int $routeId): void
     {
         if ($channel !== 'mobile') {
+            return;
+        }
+
+        $org = $user->organization;
+        if ($org && ! app(CapabilityGate::class)->forOrganization($org)->distributionOpsEnabled()) {
             return;
         }
 

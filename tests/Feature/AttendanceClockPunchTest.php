@@ -409,4 +409,87 @@ class AttendanceClockPunchTest extends TestCase
             'check_out' => '13:30:00',
         ]);
     }
+
+    public function test_auto_punches_follow_employee_shift_hours(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        WorkShift::query()->whereKey($this->employee->shift_id)->update([
+            'start_time' => '10:00:00',
+            'end_time' => '19:00:00',
+            'lunch_minutes' => 60,
+            'lunch_required' => true,
+        ]);
+        $this->employee->unsetRelation('shift');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T10:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated()->assertJsonPath('action', 'in');
+
+        // Org default lunch-out is 12:30–14:00; this shift lunches around 14:00.
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T12:45:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'ignored');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T14:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'out');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T15:20:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated()->assertJsonPath('action', 'in');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T19:15:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'out');
+
+        $this->assertSame(2, EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count());
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'check_in' => '10:10:00',
+            'check_out' => '19:15:00',
+        ]);
+    }
+
+    public function test_lateness_grace_follows_shift_start(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        WorkShift::query()->whereKey($this->employee->shift_id)->update([
+            'start_time' => '10:00:00',
+            'end_time' => '19:00:00',
+        ]);
+        $this->employee->unsetRelation('shift');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-12T10:10:00+03:00',
+            'direction' => 'in',
+        ])->assertCreated();
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-12',
+            'check_in' => '10:10:00',
+            'late_minutes' => 0,
+            'status' => 'present',
+        ]);
+    }
 }

@@ -94,8 +94,17 @@ class HrAttendanceSettingsResolver
         $out['evening_clock_out_from'] = self::normalizeClockTime($out['evening_clock_out_from'] ?? null, '16:00');
         $out['evening_clock_out_to'] = self::normalizeClockTime($out['evening_clock_out_to'] ?? null, '22:00');
         $out['clock_in_late_after'] = self::normalizeClockTime($out['clock_in_late_after'] ?? null, '08:15');
+        $out['hikvision_agent_poll_minutes'] = max(
+            1,
+            min(60, (int) ($out['hikvision_agent_poll_minutes'] ?? 5)),
+        );
 
         return $out;
+    }
+
+    public static function agentPollSecondsForOrganizationId(int $organizationId): int
+    {
+        return self::forOrganizationId($organizationId)['hikvision_agent_poll_minutes'] * 60;
     }
 
     public static function normalizeClockTime(mixed $value, string $default): string

@@ -34,8 +34,8 @@ class OrganizationPlatformConfigServiceTest extends TestCase
 
         $this->assertIsArray($config['stock_deduct_on']);
         $this->assertSame('order_created', $config['stock_deduct_on']['pos']);
-        $this->assertSame('order_created', $config['stock_deduct_on']['mobile']);
-        $this->assertSame('order_created', $config['stock_deduct_on']['backend']);
+        $this->assertSame('order_completed', $config['stock_deduct_on']['mobile']);
+        $this->assertSame('order_completed', $config['stock_deduct_on']['backend']);
         $this->assertSame(7, $config['orders_list_default_days']);
         $this->assertSame(30, $config['orders_list_search_days']);
         $this->assertSame('-order_num', $config['orders_list_sort']);

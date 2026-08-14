@@ -104,7 +104,6 @@ class OrganizationPlatformConfigService
                 $salesPlatform['stock_deduct_on'],
                 (bool) ($salesPlatform['show_checkout_on_create_order'] ?? $nextSales['show_checkout_on_create_order'] ?? true),
                 (bool) ($org->enabled_modules['sales.pos'] ?? false),
-                $gate->distributionOpsEnabled(),
             );
         }
 
@@ -618,7 +617,6 @@ class OrganizationPlatformConfigService
                 $sales['stock_deduct_on'] ?? null,
                 (bool) ($sales['show_checkout_on_create_order'] ?? true),
                 (bool) ($org->enabled_modules['sales.pos'] ?? false),
-                $gate->distributionOpsEnabled(),
             ),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'enable_pos_cash_rounding' => PosCashRoundingSettings::enabled($sales, $customSales),
@@ -911,13 +909,12 @@ class OrganizationPlatformConfigService
         mixed $value,
         bool $posCheckoutOnCreate = true,
         bool $externalPosEnabled = true,
-        bool $distributionOpsEnabled = true,
     ): array|string {
         $allowed = ['order_created', 'order_completed', 'trip_pick', 'trip_load', 'trip_depart'];
         $defaults = [
             'pos' => 'order_created',
-            'mobile' => $distributionOpsEnabled ? 'order_completed' : 'order_created',
-            'backend' => $distributionOpsEnabled ? 'order_completed' : 'order_created',
+            'mobile' => 'order_completed',
+            'backend' => 'order_completed',
         ];
 
         if (is_string($value) && in_array($value, $allowed, true)) {
@@ -936,12 +933,6 @@ class OrganizationPlatformConfigService
 
         if ($externalPosEnabled && $posCheckoutOnCreate) {
             $map['pos'] = 'order_created';
-        }
-
-        if (! $distributionOpsEnabled) {
-            $map['pos'] = 'order_created';
-            $map['mobile'] = 'order_created';
-            $map['backend'] = 'order_created';
         }
 
         return $map;

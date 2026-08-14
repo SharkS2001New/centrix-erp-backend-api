@@ -15,7 +15,7 @@ class CapabilityGateStockDeductionTest extends TestCase
             'module_settings' => [
                 'sales' => ['stock_deduct_on' => $timing],
             ],
-            'enabled_modules' => ['distribution' => true],
+            'enabled_modules' => ['distribution' => true, 'sales' => true, 'sales.pos' => true],
         ]);
 
         return (new CapabilityGate($org))->forOrganization($org);
@@ -82,7 +82,7 @@ class CapabilityGateStockDeductionTest extends TestCase
         $this->assertTrue($gate->shouldHoldStockOnCheckout($workflow, 'held', 'pos'));
     }
 
-    public function test_without_distribution_all_channels_deduct_on_order_placement(): void
+    public function test_without_distribution_mobile_honors_stock_deduct_on_setting(): void
     {
         $org = new Organization([
             'deployment_profile' => 'wholesale_retail',
@@ -97,7 +97,7 @@ class CapabilityGateStockDeductionTest extends TestCase
                     'stock_deduct_on' => [
                         'pos' => 'order_created',
                         'mobile' => 'order_completed',
-                        'backend' => 'order_completed',
+                        'backend' => 'order_created',
                     ],
                 ],
             ],
@@ -106,10 +106,32 @@ class CapabilityGateStockDeductionTest extends TestCase
         $workflow = OrderWorkflowService::forGate($gate);
 
         $this->assertFalse($gate->distributionOpsEnabled());
-        $this->assertSame('order_created', $gate->stockDeductTiming('mobile'));
+        $this->assertSame('order_completed', $gate->stockDeductTiming('mobile'));
         $this->assertSame('order_created', $gate->stockDeductTiming('backend'));
-        $this->assertTrue($gate->shouldDeductStockAtCheckout($workflow, 'unpaid', 'mobile'));
-        $this->assertTrue($gate->shouldDeductStockAtCheckout($workflow, 'booked', 'backend'));
+        $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'unpaid', 'mobile'));
+        $this->assertTrue($gate->shouldDeductStockAtCheckout($workflow, 'completed', 'mobile'));
+        $this->assertTrue($gate->shouldDeductStockAtCheckout($workflow, 'unpaid', 'backend'));
         $this->assertFalse($gate->shouldDeductStockAtCheckout($workflow, 'held', 'mobile'));
+    }
+
+    public function test_without_distribution_trip_timing_falls_back_to_order_created(): void
+    {
+        $org = new Organization([
+            'deployment_profile' => 'wholesale_retail',
+            'enabled_modules' => ['sales' => true, 'sales.mobile' => true],
+            'module_settings' => [
+                'sales' => [
+                    'stock_deduct_on' => [
+                        'mobile' => 'trip_load',
+                    ],
+                ],
+            ],
+        ]);
+        $gate = (new CapabilityGate($org))->forOrganization($org);
+        $workflow = OrderWorkflowService::forGate($gate);
+
+        $this->assertSame('order_created', $gate->stockDeductTiming('mobile'));
+        $this->assertFalse($gate->shouldDeferStockToTrip('mobile'));
+        $this->assertTrue($gate->shouldDeductStockAtCheckout($workflow, 'unpaid', 'mobile'));
     }
 }

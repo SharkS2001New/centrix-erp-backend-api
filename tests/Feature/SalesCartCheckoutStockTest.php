@@ -768,7 +768,7 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertDatabaseMissing('cart_lines', ['cart_id' => $cartId]);
     }
 
-    public function test_mobile_save_order_deducts_ledger_when_distribution_is_off(): void
+    public function test_mobile_save_order_deducts_ledger_when_timing_is_order_created(): void
     {
         $org = $this->user->organization;
         $modules = $org->enabled_modules ?? [];
@@ -777,8 +777,8 @@ class SalesCartCheckoutStockTest extends TestCase
         $settings['sales'] = array_merge($settings['sales'] ?? [], [
             'stock_deduct_on' => [
                 'pos' => 'order_created',
-                'mobile' => 'order_completed',
-                'backend' => 'order_completed',
+                'mobile' => 'order_created',
+                'backend' => 'order_created',
             ],
         ]);
         $org->forceFill([

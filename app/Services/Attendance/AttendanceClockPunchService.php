@@ -7,6 +7,7 @@ use App\Models\Employee;
 use App\Models\EmployeeAttendance;
 use App\Models\EmployeeClockSession;
 use App\Models\EmployeeOvertime;
+use App\Models\HikvisionAccessEvent;
 use App\Services\Payroll\PayrollCycleSettlementService;
 use App\Support\AppTimezone;
 use Carbon\Carbon;
@@ -141,6 +142,10 @@ class AttendanceClockPunchService
         }
 
         DB::transaction(function () use ($session, $employee, $date, $attendance) {
+            HikvisionAccessEvent::query()
+                ->where('clock_session_id', $session->id)
+                ->update(['clock_session_id' => null]);
+
             $session->delete();
 
             $remaining = EmployeeClockSession::query()

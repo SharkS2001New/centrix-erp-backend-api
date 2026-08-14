@@ -475,13 +475,6 @@ class CapabilityGate
     /** When inventory is reduced: order_created, order_completed (workflow status), trip_pick, trip_load, or trip_depart. */
     public function stockDeductTiming(?string $channel = null): string
     {
-        // Shop / wholesale-retail with Distribution off has no trip pick/load.
-        // Deduct on placement for POS, backoffice, and mobile Save — not when the
-        // order later reaches completed/paid.
-        if (! $this->distributionOpsEnabled()) {
-            return 'order_created';
-        }
-
         if ($channel === 'pos' && $this->posCheckoutOnCreateEnabled()) {
             return 'order_created';
         }
@@ -490,26 +483,38 @@ class CapabilityGate
         $raw = $sales['stock_deduct_on'] ?? null;
         $channel = $channel ? OrderWorkflowService::forGate($this)->normalizeSalesChannel($channel) : null;
         $allowed = ['order_created', 'order_completed', 'trip_pick', 'trip_load', 'trip_depart'];
+        $timing = null;
 
         if (is_array($raw) && $channel) {
-            $timing = (string) ($raw[$channel] ?? $raw['default'] ?? '');
-            if (in_array($timing, $allowed, true)) {
-                return $timing;
+            $candidate = (string) ($raw[$channel] ?? $raw['default'] ?? '');
+            if (in_array($candidate, $allowed, true)) {
+                $timing = $candidate;
             }
         }
 
-        if (is_string($raw) && in_array($raw, $allowed, true)) {
-            return $raw;
+        if ($timing === null && is_string($raw) && in_array($raw, $allowed, true)) {
+            $timing = $raw;
         }
 
-        $dist = is_array($this->organization?->module_settings['distribution'] ?? null)
-            ? $this->organization->module_settings['distribution']
-            : [];
-        $legacy = (string) ($dist['deduct_stock_on'] ?? 'order_completed');
+        if ($timing === null) {
+            $dist = is_array($this->organization?->module_settings['distribution'] ?? null)
+                ? $this->organization->module_settings['distribution']
+                : [];
+            $legacy = (string) ($dist['deduct_stock_on'] ?? 'order_completed');
+            $timing = in_array($legacy, $allowed, true)
+                ? $legacy
+                : 'order_completed';
+        }
 
-        return in_array($legacy, $allowed, true)
-            ? $legacy
-            : 'order_completed';
+        // Trip pick/load/depart never run without Distribution — fall back to placement.
+        if (
+            ! $this->distributionOpsEnabled()
+            && in_array($timing, ['trip_pick', 'trip_load', 'trip_depart'], true)
+        ) {
+            return 'order_created';
+        }
+
+        return $timing;
     }
 
     public function shouldDeferStockToTrip(?string $channel = null): bool

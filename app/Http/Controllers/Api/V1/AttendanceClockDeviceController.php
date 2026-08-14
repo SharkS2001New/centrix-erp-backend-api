@@ -152,7 +152,9 @@ class AttendanceClockDeviceController extends HrOrgResourceController
                     'password' => $password,
                     'useHttps' => $useHttps,
                 ],
-                'pollIntervalSeconds' => 300,
+                'pollIntervalSeconds' => \App\Services\Attendance\HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId(
+                    (int) $device->organization_id,
+                ),
                 'lookbackMinutes' => 360,
             ],
             'token_name' => $tokenName,

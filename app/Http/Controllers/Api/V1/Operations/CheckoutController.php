@@ -391,14 +391,6 @@ class CheckoutController extends Controller
                     ->concat($lines)
                     ->values();
             }
-            // Mobile has no POS client-side merge. Collapse identical SKUs so
-            // same-day append / order-edit checkouts persist one line (and receipt).
-            if (
-                strtolower(trim((string) ($cart->channel ?? ''))) === 'mobile'
-                && ($salesSettings['pos_combine_identical_lines'] ?? true) !== false
-            ) {
-                $lines = $sameDayAppend->foldCheckoutLinesBySku($lines);
-            }
 
             $customSales = is_array($gate->organization()?->module_settings['sales'] ?? null)
                 ? $gate->organization()->module_settings['sales']
@@ -1279,53 +1271,25 @@ class CheckoutController extends Controller
             : '';
         $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
         // Cash Sales # is sequential within the float session (or cashier/day without float).
-        // Offline/local-first: keep the printed ticket when it is still free.
-        // Online: only accept a client ticket when it is exactly the next sequential #.
+        // Local-first POS: claim the printed ticket when it is still free (online or offline).
         if ($clientPos > 0 && $clientDate !== '') {
+            $claimed = $allocator->claimPrintedTicketForCheckout(
+                (int) $user->organization_id,
+                (int) $user->id,
+                $clientPos,
+                $clientDate,
+                $floatSessionId,
+            );
+            if ($claimed) {
+                return [
+                    'pos_order_num' => $clientPos,
+                    'pos_order_date' => $clientDate,
+                    '__lock_pos_ticket' => true,
+                ];
+            }
+            // Ticket already taken — fall through and allocate the next free Cash Sales #.
             if ($offlineOrder) {
-                $claimed = $allocator->claimPrintedTicketForCheckout(
-                    (int) $user->organization_id,
-                    (int) $user->id,
-                    $clientPos,
-                    $clientDate,
-                    $floatSessionId,
-                );
-                if ($claimed) {
-                    return [
-                        'pos_order_num' => $clientPos,
-                        'pos_order_date' => $clientDate,
-                        '__lock_pos_ticket' => true,
-                    ];
-                }
-                // Ticket already taken (another till synced first, or counter drifted).
-                // Fall through and allocate the next free Cash Sales # so offline sync
-                // still uploads — the sale response carries the new ticket for reprint.
-            } else {
-                $peek = $allocator->peekNextForCashier(
-                    (int) $user->organization_id,
-                    (int) $user->id,
-                    $clientDate,
-                    $floatSessionId,
-                );
-                $expectedNext = (int) ($peek['pos_order_num'] ?? 0);
-                if ($clientPos === $expectedNext) {
-                    $claimed = $allocator->claimPrintedTicketForCheckout(
-                        (int) $user->organization_id,
-                        (int) $user->id,
-                        $clientPos,
-                        $clientDate,
-                        $floatSessionId,
-                    );
-                    if ($claimed) {
-                        return [
-                            'pos_order_num' => $clientPos,
-                            'pos_order_date' => $clientDate,
-                            '__lock_pos_ticket' => true,
-                        ];
-                    }
-                }
-                // Stale reserved-block tickets (e.g. #27 while next is #7) are ignored —
-                // allocate the true next Cash Sales # below.
+                // Offline sync replay: upload under the next free # (reprint note in UI).
             }
         }
 

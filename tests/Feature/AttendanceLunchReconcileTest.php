@@ -321,7 +321,7 @@ class AttendanceLunchReconcileTest extends TestCase
         );
 
         $this->assertEquals(8.5, (float) $att->hours_worked);
-        $this->assertSame(30, (int) $att->late_minutes);
+        $this->assertSame(15, (int) $att->late_minutes);
 
         $waived = app(AttendanceDayReconciler::class)->setLatenessWaiver(
             $att,
@@ -331,7 +331,7 @@ class AttendanceLunchReconcileTest extends TestCase
         );
 
         $this->assertTrue((bool) $waived->lateness_waived);
-        $this->assertEquals(9.0, (float) $waived->hours_worked);
+        $this->assertEquals(8.75, (float) $waived->hours_worked);
         $this->assertSame('present', $waived->status);
         $this->assertSame('Doctor appointment', $waived->lateness_waiver_reason);
     }

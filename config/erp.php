@@ -1070,6 +1070,7 @@ return [
             'evening_clock_out_from' => '16:00',
             'evening_clock_out_to' => '22:00',
             'clock_in_late_after' => '08:15',
+            'hikvision_agent_poll_minutes' => 5,
         ],
         'legacy_archive' => [
             'enabled' => false,

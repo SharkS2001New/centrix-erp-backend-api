@@ -130,7 +130,7 @@ class UserPermissionService
             }
         }
 
-        if ($gate !== null && $this->managerSessionGrantsPermission($user, $permissionCode, $gate)) {
+        if ($this->managerSessionGrantsPermission($user, $permissionCode, $gate)) {
             return true;
         }
 

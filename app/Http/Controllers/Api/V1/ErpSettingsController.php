@@ -172,7 +172,6 @@ class ErpSettingsController extends Controller
             'show_print_proforma_invoice_option',
             'invoice_document_template',
             'proforma_document_template',
-            'credit_note_document_template',
             'proforma_valid_days',
             'show_proforma_payment_details',
             'proforma_payment_details',
@@ -285,7 +284,6 @@ class ErpSettingsController extends Controller
             'show_print_proforma_invoice_option' => 'sometimes|boolean',
             'invoice_document_template' => 'sometimes|string|max:40',
             'proforma_document_template' => 'sometimes|string|max:40',
-            'credit_note_document_template' => 'sometimes|string|max:40',
             'proforma_valid_days' => 'sometimes|integer|min:0|max:365',
             'show_proforma_payment_details' => 'sometimes|boolean',
             'use_same_print_phones_for_proforma' => 'sometimes|boolean',
@@ -967,7 +965,6 @@ class ErpSettingsController extends Controller
             'document_footer_text' => 'sometimes|nullable|string|max:500',
             'print_footer_receipt' => 'sometimes|nullable|string|max:4000',
             'print_footer_a4_invoice' => 'sometimes|nullable|string|max:4000',
-            'print_footer_credit_note' => 'sometimes|nullable|string|max:4000',
             'print_footer_lpo' => 'sometimes|nullable|string|max:4000',
             'print_footer_loading_sheet' => 'sometimes|nullable|string|max:4000',
             'print_footer_picking_list' => 'sometimes|nullable|string|max:4000',
@@ -1387,6 +1384,7 @@ class ErpSettingsController extends Controller
             'evening_clock_out_from',
             'evening_clock_out_to',
             'clock_in_late_after',
+            'hikvision_agent_poll_minutes',
         ];
 
         $rules = [
@@ -1407,15 +1405,16 @@ class ErpSettingsController extends Controller
             'company_face_match_threshold' => 'sometimes|numeric|min:0.5|max:0.99',
             'company_fingerprint_match_threshold' => 'sometimes|numeric|min:0.5|max:0.99',
             'company_mobile_verification_method' => 'sometimes|in:face,fingerprint,face_or_fingerprint,device_biometric,face_or_device_biometric',
-            'morning_clock_in_from' => 'sometimes|date_format:H:i',
-            'morning_clock_in_to' => 'sometimes|date_format:H:i',
-            'lunch_clock_out_from' => 'sometimes|date_format:H:i',
-            'lunch_clock_out_to' => 'sometimes|date_format:H:i',
-            'lunch_clock_in_from' => 'sometimes|date_format:H:i',
-            'lunch_clock_in_to' => 'sometimes|date_format:H:i',
-            'evening_clock_out_from' => 'sometimes|date_format:H:i',
-            'evening_clock_out_to' => 'sometimes|date_format:H:i',
-            'clock_in_late_after' => 'sometimes|date_format:H:i',
+            'morning_clock_in_from' => 'sometimes|string|max:8',
+            'morning_clock_in_to' => 'sometimes|string|max:8',
+            'lunch_clock_out_from' => 'sometimes|string|max:8',
+            'lunch_clock_out_to' => 'sometimes|string|max:8',
+            'lunch_clock_in_from' => 'sometimes|string|max:8',
+            'lunch_clock_in_to' => 'sometimes|string|max:8',
+            'evening_clock_out_from' => 'sometimes|string|max:8',
+            'evening_clock_out_to' => 'sometimes|string|max:8',
+            'clock_in_late_after' => 'sometimes|string|max:8',
+            'hikvision_agent_poll_minutes' => 'sometimes|integer|min:1|max:60',
         ];
         foreach ($hrKeys as $key) {
             if (array_key_exists($key, $rules)) {

@@ -86,7 +86,12 @@ class HikvisionDeviceController extends HrOrgResourceController
             $data['agent_version'] ?? null,
         );
 
-        return response()->json(['commands' => $commands]);
+        return response()->json([
+            'commands' => $commands,
+            'poll_interval_seconds' => \App\Services\Attendance\HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId(
+                (int) $device->organization_id,
+            ),
+        ]);
     }
 
     /**
