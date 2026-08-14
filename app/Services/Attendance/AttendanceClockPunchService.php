@@ -18,6 +18,7 @@ class AttendanceClockPunchService
     public function __construct(
         protected AttendanceDayPolicy $dayPolicy,
         protected AttendanceDayReconciler $reconciler,
+        protected AttendancePunchWindowResolver $windows,
     ) {
     }
 
@@ -53,8 +54,47 @@ class AttendanceClockPunchService
             ->orderByDesc('clock_in_at')
             ->first();
 
+        if ($open && $this->windows->isStaleOpenSession($open, $punchedAt)) {
+            $this->closeStaleSession($employee, $open, $deviceNo);
+            $open = null;
+        }
+
+        if ($this->windows->hasActivityInSameHour($employee, $punchedAt)) {
+            $session = $open ?? EmployeeClockSession::query()
+                ->where('employee_id', $employee->id)
+                ->orderByDesc('clock_in_at')
+                ->first();
+            if ($session) {
+                return [
+                    'action' => 'ignored',
+                    'session' => $session->load('employee'),
+                    'attendance' => $session->attendance,
+                ];
+            }
+        }
+
         if ($direction === 'auto') {
-            $direction = $open ? 'out' : 'in';
+            $direction = $this->windows->resolve($employee, $punchedAt, $open);
+        }
+
+        if ($direction === AttendancePunchWindowResolver::ACTION_IGNORE) {
+            $session = $open ?? EmployeeClockSession::query()
+                ->where('employee_id', $employee->id)
+                ->orderByDesc('clock_in_at')
+                ->first();
+            if (! $session) {
+                $direction = AttendancePunchWindowResolver::ACTION_IN;
+            } else {
+                return [
+                    'action' => 'ignored',
+                    'session' => $session->load('employee'),
+                    'attendance' => $session->attendance,
+                ];
+            }
+        }
+
+        if ($direction === 'out' && $open === null) {
+            $direction = 'in';
         }
 
         if ($direction === 'in') {
@@ -174,6 +214,18 @@ class AttendanceClockPunchService
         return $at;
     }
 
+    protected function closeStaleSession(Employee $employee, EmployeeClockSession $open, ?string $deviceNo): void
+    {
+        $started = AppTimezone::normalize($open->clock_in_at) ?? AppTimezone::now();
+        $closeAt = $started->copy()->endOfDay();
+        try {
+            $this->clockOut($employee, $closeAt, $deviceNo, $open);
+        } catch (\Throwable) {
+            $open->clock_out_at = $closeAt;
+            $open->save();
+        }
+    }
+
     /**
      * @return array{action: string, session: EmployeeClockSession, attendance?: mixed}
      */
@@ -268,7 +320,8 @@ class AttendanceClockPunchService
         }
         $open->save();
 
-        $attendanceDate = Carbon::parse($open->clock_in_at)->toDateString();
+        $attendanceDate = AppTimezone::normalize($open->clock_in_at)?->toDateString()
+            ?? $punchedAt->timezone(AppTimezone::name())->toDateString();
         $attendance = $this->reconciler->reconcileFromSessions(
             $employee,
             $attendanceDate,

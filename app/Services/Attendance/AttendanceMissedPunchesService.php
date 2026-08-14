@@ -35,8 +35,19 @@ class AttendanceMissedPunchesService
             ->get();
 
         $unapplied = [];
+        $seenHour = [];
         foreach ($events as $row) {
             HikvisionEventNormalizer::present($row);
+            $at = AppTimezone::normalize($row->event_time) ?? AppTimezone::fromDeviceWallClock($row->event_time);
+            $hourKey = implode('|', [
+                $row->attendance_clock_device_id,
+                (string) $row->employee_no,
+                $at?->timezone(AppTimezone::name())->format('Y-m-d H') ?? (string) $row->id,
+            ]);
+            if (isset($seenHour[$hourKey])) {
+                continue;
+            }
+            $seenHour[$hourKey] = true;
             $unapplied[] = [
                 'id' => $row->id,
                 'event_key' => $row->event_key,

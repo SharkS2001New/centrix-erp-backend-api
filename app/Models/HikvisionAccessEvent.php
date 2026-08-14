@@ -49,7 +49,7 @@ class HikvisionAccessEvent extends Model
     {
         return Carbon::parse($date)
             ->timezone(AppTimezone::name())
-            ->format('Y-m-d H:i:s');
+            ->format('Y-m-d\\TH:i:sP');
     }
 
     public function getEventTimeLocalAttribute(): ?string

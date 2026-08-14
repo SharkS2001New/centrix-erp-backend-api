@@ -114,7 +114,7 @@ class AttendanceLunchReconcileTest extends TestCase
             $this->workDate,
         );
 
-        $this->assertSame(30, (int) $att->late_minutes);
+        $this->assertSame(15, (int) $att->late_minutes);
         $this->assertEquals(8.5, (float) $att->hours_worked);
         $this->assertSame('late', $att->status);
     }

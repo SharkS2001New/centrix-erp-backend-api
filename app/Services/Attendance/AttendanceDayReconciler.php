@@ -50,8 +50,8 @@ class AttendanceDayReconciler
         $pairs = [];
         foreach ($sessions as $session) {
             $pairs[] = [
-                'in' => Carbon::parse($session->clock_in_at),
-                'out' => Carbon::parse($session->clock_out_at),
+                'in' => AppTimezone::normalize($session->clock_in_at) ?? Carbon::parse($session->clock_in_at),
+                'out' => AppTimezone::normalize($session->clock_out_at) ?? Carbon::parse($session->clock_out_at),
             ];
         }
 
@@ -111,9 +111,10 @@ class AttendanceDayReconciler
                 'lunch_required' => true,
             ];
         $shiftStart = Carbon::parse($date.' '.$this->normalizeTime($shiftHours['start_time'] ?? '08:00:00'));
+        $lateAt = app(AttendancePunchWindowResolver::class)->lateThreshold($employee, $date, $shiftStart);
         $lateMinutes = 0;
-        if ($at->gt($shiftStart)) {
-            $lateMinutes = (int) max(0, (int) floor(($at->getTimestamp() - $shiftStart->getTimestamp()) / 60));
+        if ($at->gt($lateAt)) {
+            $lateMinutes = (int) max(0, (int) floor(($at->getTimestamp() - $lateAt->getTimestamp()) / 60));
         }
 
         $status = $lateMinutes > 0 ? 'late' : 'present';
@@ -127,7 +128,7 @@ class AttendanceDayReconciler
             [
                 'organization_id' => $employee->organization_id,
                 'branch_id' => $branchId ?? $employee->branch_id,
-                'check_in' => $at->format('H:i:s'),
+                'check_in' => AppTimezone::clockTime($at),
                 'check_out' => null,
                 'status' => $status,
                 'source' => $source,
@@ -370,12 +371,13 @@ class AttendanceDayReconciler
 
         usort($pairs, fn ($a, $b) => $a['in']->timestamp <=> $b['in']->timestamp);
 
-        $firstIn = $pairs[0]['in']->copy();
-        $lastOut = $pairs[array_key_last($pairs)]['out']->copy();
+        $firstIn = $pairs[0]['in']->copy()->timezone(AppTimezone::name());
+        $lastOut = $pairs[array_key_last($pairs)]['out']->copy()->timezone(AppTimezone::name());
 
+        $lateAt = app(AttendancePunchWindowResolver::class)->lateThreshold($employee, $date, $shiftStart);
         $lateMinutes = 0;
-        if ($firstIn->gt($shiftStart)) {
-            $lateMinutes = (int) max(0, (int) floor(($firstIn->getTimestamp() - $shiftStart->getTimestamp()) / 60));
+        if ($firstIn->gt($lateAt)) {
+            $lateMinutes = (int) max(0, (int) floor(($firstIn->getTimestamp() - $lateAt->getTimestamp()) / 60));
         }
 
         $actualLunchMinutes = null;
@@ -508,8 +510,8 @@ class AttendanceDayReconciler
             [
                 'organization_id' => $employee->organization_id,
                 'branch_id' => $branchId ?? $employee->branch_id,
-                'check_in' => $firstIn->format('H:i:s'),
-                'check_out' => $lastOut->format('H:i:s'),
+                'check_in' => AppTimezone::clockTime($firstIn),
+                'check_out' => AppTimezone::clockTime($lastOut),
                 'status' => $status,
                 'source' => $source,
                 'device_identifier' => $deviceIdentifier,

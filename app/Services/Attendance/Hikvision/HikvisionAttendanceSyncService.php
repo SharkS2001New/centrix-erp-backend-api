@@ -199,6 +199,9 @@ class HikvisionAttendanceSyncService
 
             $punchedAt = AppTimezone::normalize($event['punched_at'] ?? null);
             if ($punchedAt === null) {
+                $punchedAt = AppTimezone::fromDeviceWallClock($event['punched_at'] ?? null);
+            }
+            if ($punchedAt === null) {
                 $result['errors'][] = ($event['employee_no'] ?? '?').': invalid punched_at';
 
                 continue;
@@ -235,9 +238,18 @@ class HikvisionAttendanceSyncService
                 continue;
             }
 
+            if ($this->sameHourAlreadyApplied($device, (string) ($event['employee_no'] ?? $stored->employee_no ?? ''), $punchedAt, (int) $stored->id)) {
+                $stored->processed_at = AppTimezone::now();
+                $stored->process_error = null;
+                $stored->save();
+                $result['skipped']++;
+
+                continue;
+            }
+
             $employeeNo = (string) ($event['employee_no'] ?? $stored->employee_no ?? '');
             $employeeId = $this->resolveMappedEmployeeId($device, $employeeNo, $mappingCache);
-            $direction = $this->mapAttendanceStatus($event['attendance_status'] ?? $stored->attendance_status);
+            $direction = 'auto';
 
             try {
                 $punch = $this->applyPunch($device, $employeeNo, $employeeId, $punchedAt, $direction);
@@ -246,11 +258,25 @@ class HikvisionAttendanceSyncService
                 $stored->clock_session_id = $punch['session']->id ?? null;
                 $stored->save();
                 $result['applied']++;
+                $this->markSameHourDuplicatesProcessed(
+                    $device,
+                    $employeeNo,
+                    $punchedAt,
+                    (int) $stored->id,
+                    $punch['session']->id ?? null,
+                );
             } catch (ValidationException $e) {
                 $msg = collect($e->errors())->flatten()->first() ?? $e->getMessage();
-                $stored->process_error = mb_substr((string) $msg, 0, 500);
-                $stored->save();
-                $result['errors'][] = "{$employeeNo} @ {$punchedAt->toIso8601String()}: {$msg}";
+                if (is_string($msg) && str_contains(strtolower($msg), 'already has an open')) {
+                    $stored->processed_at = AppTimezone::now();
+                    $stored->process_error = null;
+                    $stored->save();
+                    $result['skipped']++;
+                } else {
+                    $stored->process_error = mb_substr((string) $msg, 0, 500);
+                    $stored->save();
+                    $result['errors'][] = "{$employeeNo} @ {$punchedAt->toIso8601String()}: {$msg}";
+                }
             } catch (\Throwable $e) {
                 $stored->process_error = mb_substr($e->getMessage(), 0, 500);
                 $stored->save();
@@ -287,6 +313,55 @@ class HikvisionAttendanceSyncService
         $device->save();
 
         return $result;
+    }
+
+    protected function sameHourAlreadyApplied(
+        AttendanceClockDevice $device,
+        string $employeeNo,
+        Carbon $punchedAt,
+        int $exceptEventId,
+    ): bool {
+        [$start, $end] = $this->hourBounds($punchedAt);
+
+        return HikvisionAccessEvent::query()
+            ->where('attendance_clock_device_id', $device->id)
+            ->where('employee_no', $employeeNo)
+            ->whereNotNull('processed_at')
+            ->where('id', '!=', $exceptEventId)
+            ->whereBetween('event_time', [$start, $end])
+            ->exists();
+    }
+
+    protected function markSameHourDuplicatesProcessed(
+        AttendanceClockDevice $device,
+        string $employeeNo,
+        Carbon $punchedAt,
+        int $exceptEventId,
+        mixed $sessionId,
+    ): void {
+        [$start, $end] = $this->hourBounds($punchedAt);
+
+        HikvisionAccessEvent::query()
+            ->where('attendance_clock_device_id', $device->id)
+            ->where('employee_no', $employeeNo)
+            ->whereNull('processed_at')
+            ->where('id', '!=', $exceptEventId)
+            ->whereBetween('event_time', [$start, $end])
+            ->update([
+                'processed_at' => AppTimezone::now(),
+                'process_error' => null,
+                'clock_session_id' => $sessionId,
+            ]);
+    }
+
+    /**
+     * @return array{0: Carbon, 1: Carbon}
+     */
+    protected function hourBounds(Carbon $at): array
+    {
+        $local = $at->copy()->timezone(AppTimezone::name());
+
+        return [$local->copy()->startOfHour(), $local->copy()->endOfHour()];
     }
 
     /**
@@ -337,23 +412,7 @@ class HikvisionAttendanceSyncService
             $payload['employee_code'] = $employeeNo;
         }
 
-        try {
-            return $this->punchService->punch($payload);
-        } catch (ValidationException $e) {
-            $msg = collect($e->errors())->flatten()->first() ?? $e->getMessage();
-            // Many Hikvision firmwares mark every scan as checkIn — treat a second scan as clock-out.
-            if (
-                $direction === 'in'
-                && is_string($msg)
-                && str_contains(strtolower($msg), 'already has an open')
-            ) {
-                $payload['direction'] = 'out';
-
-                return $this->punchService->punch($payload);
-            }
-
-            throw $e;
-        }
+        return $this->punchService->punch($payload);
     }
 
     /**

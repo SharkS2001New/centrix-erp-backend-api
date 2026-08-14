@@ -164,4 +164,46 @@ class AppTimezone
 
         return $date?->toIso8601String();
     }
+
+    /**
+     * Hikvision (and similar terminals) print local device time and often append Z
+     * incorrectly. Keep the wall clock in Africa/Nairobi.
+     */
+    public static function fromDeviceWallClock(mixed $value): ?Carbon
+    {
+        if ($value instanceof CarbonInterface || $value instanceof DateTimeInterface) {
+            $carbon = $value instanceof CarbonInterface
+                ? $value->copy()
+                : Carbon::instance($value);
+            $wall = $carbon->format('Y-m-d H:i:s');
+
+            return Carbon::parse($wall, self::name());
+        }
+
+        $input = trim((string) $value);
+        if ($input === '') {
+            return null;
+        }
+        $input = preg_replace('/(Z|[+-]\d{2}:?\d{2})$/', '', $input) ?? $input;
+        $input = str_replace('T', ' ', $input);
+        $input = preg_replace('/\.\d+$/', '', $input) ?? $input;
+        if (preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/', $input) === 1) {
+            $input .= ':00';
+        }
+
+        try {
+            return Carbon::parse($input, self::name());
+        } catch (\Throwable) {
+            return self::normalize($value);
+        }
+    }
+
+    public static function clockTime(mixed $value): ?string
+    {
+        $date = $value instanceof CarbonInterface
+            ? $value->copy()->timezone(self::name())
+            : self::normalize($value);
+
+        return $date?->format('H:i:s');
+    }
 }

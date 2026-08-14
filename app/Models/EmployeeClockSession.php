@@ -2,6 +2,9 @@
 
 namespace App\Models;
 
+use App\Support\AppTimezone;
+use Carbon\Carbon;
+use DateTimeInterface;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 
@@ -48,6 +51,13 @@ class EmployeeClockSession extends Model
         'clock_in_geofence_distance_metres' => 'decimal:2',
         'clock_out_geofence_distance_metres' => 'decimal:2',
     ];
+
+    protected function serializeDate(DateTimeInterface $date): string
+    {
+        return Carbon::parse($date)
+            ->timezone(AppTimezone::name())
+            ->format('Y-m-d\\TH:i:sP');
+    }
 
     public function employee()
     {

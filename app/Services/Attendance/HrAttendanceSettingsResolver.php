@@ -85,7 +85,30 @@ class HrAttendanceSettingsResolver
             'face_or_fingerprint',
         ], true) ? $verification : 'face_or_fingerprint';
 
+        $out['morning_clock_in_from'] = self::normalizeClockTime($out['morning_clock_in_from'] ?? null, '08:00');
+        $out['morning_clock_in_to'] = self::normalizeClockTime($out['morning_clock_in_to'] ?? null, '10:00');
+        $out['lunch_clock_out_from'] = self::normalizeClockTime($out['lunch_clock_out_from'] ?? null, '12:30');
+        $out['lunch_clock_out_to'] = self::normalizeClockTime($out['lunch_clock_out_to'] ?? null, '14:00');
+        $out['lunch_clock_in_from'] = self::normalizeClockTime($out['lunch_clock_in_from'] ?? null, '13:00');
+        $out['lunch_clock_in_to'] = self::normalizeClockTime($out['lunch_clock_in_to'] ?? null, '16:00');
+        $out['evening_clock_out_from'] = self::normalizeClockTime($out['evening_clock_out_from'] ?? null, '16:00');
+        $out['evening_clock_out_to'] = self::normalizeClockTime($out['evening_clock_out_to'] ?? null, '22:00');
+        $out['clock_in_late_after'] = self::normalizeClockTime($out['clock_in_late_after'] ?? null, '08:15');
+
         return $out;
+    }
+
+    public static function normalizeClockTime(mixed $value, string $default): string
+    {
+        $text = trim((string) $value);
+        if (preg_match('/^(\d{1,2}):(\d{2})(?::\d{2})?$/', $text, $m) === 1) {
+            $hour = max(0, min(23, (int) $m[1]));
+            $minute = max(0, min(59, (int) $m[2]));
+
+            return sprintf('%02d:%02d', $hour, $minute);
+        }
+
+        return $default;
     }
 
     /** @return array<int, string> */

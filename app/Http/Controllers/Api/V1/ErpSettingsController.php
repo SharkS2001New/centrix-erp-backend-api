@@ -1378,6 +1378,15 @@ class ErpSettingsController extends Controller
             'company_fingerprint_match_threshold',
             'company_fingerprint_auto_enroll_on_clock',
             'company_mobile_verification_method',
+            'morning_clock_in_from',
+            'morning_clock_in_to',
+            'lunch_clock_out_from',
+            'lunch_clock_out_to',
+            'lunch_clock_in_from',
+            'lunch_clock_in_to',
+            'evening_clock_out_from',
+            'evening_clock_out_to',
+            'clock_in_late_after',
         ];
 
         $rules = [
@@ -1398,6 +1407,15 @@ class ErpSettingsController extends Controller
             'company_face_match_threshold' => 'sometimes|numeric|min:0.5|max:0.99',
             'company_fingerprint_match_threshold' => 'sometimes|numeric|min:0.5|max:0.99',
             'company_mobile_verification_method' => 'sometimes|in:face,fingerprint,face_or_fingerprint,device_biometric,face_or_device_biometric',
+            'morning_clock_in_from' => 'sometimes|date_format:H:i',
+            'morning_clock_in_to' => 'sometimes|date_format:H:i',
+            'lunch_clock_out_from' => 'sometimes|date_format:H:i',
+            'lunch_clock_out_to' => 'sometimes|date_format:H:i',
+            'lunch_clock_in_from' => 'sometimes|date_format:H:i',
+            'lunch_clock_in_to' => 'sometimes|date_format:H:i',
+            'evening_clock_out_from' => 'sometimes|date_format:H:i',
+            'evening_clock_out_to' => 'sometimes|date_format:H:i',
+            'clock_in_late_after' => 'sometimes|date_format:H:i',
         ];
         foreach ($hrKeys as $key) {
             if (array_key_exists($key, $rules)) {

@@ -646,7 +646,7 @@ class HikvisionDeviceManagementTest extends TestCase
         $list->assertOk();
         $this->assertSame('checkIn', $list->json('events.data.0.attendance_status'));
         $this->assertSame('fingerprint', $list->json('events.data.0.verification_method'));
-        $this->assertStringContainsString('2026-08-14 08:32:09', (string) $list->json('events.data.0.event_time'));
+        $this->assertStringContainsString('2026-08-14T08:32:09+03:00', (string) $list->json('events.data.0.event_time'));
         $this->assertStringNotContainsString('Z', (string) $list->json('events.data.0.event_time'));
     }
 
@@ -684,6 +684,59 @@ class HikvisionDeviceManagementTest extends TestCase
         $res->assertJsonPath('counts.unapplied_terminal_punches', 1);
         $this->assertSame('UNMAPPED-88', $res->json('unapplied_terminal_punches.0.employee_no'));
         $this->assertSame('T-MISSED', $res->json('unapplied_terminal_punches.0.device_no'));
+    }
+
+    public function test_same_hour_duplicate_terminal_punches_are_not_listed_as_missed(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-DEDUP',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $this->postJson(
+            "/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/ingest-events",
+            [
+                'events' => [
+                    [
+                        'employee_no' => 'UNMAPPED-55',
+                        'punched_at' => '2026-08-14T08:10:00+03:00',
+                        'serial_no' => 'dup-1',
+                        'minor' => 75,
+                    ],
+                    [
+                        'employee_no' => 'UNMAPPED-55',
+                        'punched_at' => '2026-08-14T08:18:00+03:00',
+                        'serial_no' => 'dup-2',
+                        'minor' => 75,
+                    ],
+                    [
+                        'employee_no' => 'UNMAPPED-55',
+                        'punched_at' => '2026-08-14T08:41:00+03:00',
+                        'serial_no' => 'dup-3',
+                        'minor' => 75,
+                    ],
+                ],
+            ]
+        )->assertOk();
+
+        $this->assertSame(
+            3,
+            \App\Models\HikvisionAccessEvent::query()->where('attendance_clock_device_id', $device->id)->count()
+        );
+
+        $res = $this->getJson('/api/v1/attendance/missed-punches');
+        $res->assertOk();
+        $this->assertSame(1, $res->json('counts.unapplied_terminal_punches'));
+        $this->assertSame('UNMAPPED-55', $res->json('unapplied_terminal_punches.0.employee_no'));
     }
 
     public function test_sync_attendance_requires_online_agent(): void
