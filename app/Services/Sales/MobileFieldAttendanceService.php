@@ -7,6 +7,7 @@ use App\Models\User;
 use App\Services\Attendance\FieldRepAttendanceHrSync;
 use App\Services\Auth\UserAccessService;
 use App\Services\Erp\CapabilityGate;
+use App\Support\AttendanceSourceLabels;
 use App\Support\UploadedImageProcessor;
 use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
@@ -523,7 +524,7 @@ class MobileFieldAttendanceService
             'reopened_at' => $session->reopened_at?->toIso8601String(),
             'can_reopen' => $this->canReopenSession($session),
             'source' => 'field_rep',
-            'source_label' => 'Field rep',
+            'source_label' => AttendanceSourceLabels::label('field_rep'),
         ];
 
         if ($hrLink !== null) {

@@ -1320,16 +1320,19 @@ Route::prefix('v1')->group(function () {
             Route::get('pod-records/{podRecord}/signature/file', [PodRecordController::class, 'signatureFile'])
                 ->middleware('erp.permission:fulfillment.view');
 
+        });
+
+        Route::middleware(['erp.module:distribution,sales.mobile'])->group(function () {
             Route::get('drivers/{driver}/deliveries', [DriverController::class, 'deliveries'])
-                ->middleware('erp.permission:fulfillment.view');
+                ->middleware('erp.permission:fulfillment.view|fulfillment.drivers.view|sales.view');
             Route::apiResource('drivers', DriverController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage|hr.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|fulfillment.drivers.view|sales.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage|fulfillment.drivers.create|fulfillment.drivers.edit|fulfillment.drivers.delete|hr.manage|sales.manage']);
             Route::get('vehicles/{vehicle}/deliveries', [VehicleController::class, 'deliveries'])
-                ->middleware('erp.permission:fulfillment.view');
+                ->middleware('erp.permission:fulfillment.view|fulfillment.vehicles.view|sales.view');
             Route::apiResource('vehicles', VehicleController::class)
-                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:fulfillment.view|fulfillment.vehicles.view|sales.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:fulfillment.manage|fulfillment.vehicles.create|fulfillment.vehicles.edit|fulfillment.vehicles.delete|sales.manage']);
         });
 
         require __DIR__.'/api_operations.php';

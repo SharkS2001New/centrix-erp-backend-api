@@ -5,6 +5,7 @@ namespace Tests\Feature;
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\AttendanceClockDevice;
 use App\Models\Employee;
+use App\Models\EmployeeAttendance;
 use App\Models\EmployeeClockSession;
 use App\Models\HikvisionAccessEvent;
 use App\Models\HikvisionEmployeeMapping;
@@ -774,5 +775,62 @@ class AttendanceClockPunchTest extends TestCase
             'check_out' => '17:10:00',
             'lunch_status' => 'taken',
         ]);
+    }
+
+    public function test_today_clock_sessions_include_all_sources_unless_premises_filtered(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->travelTo('2026-08-15 10:00:00');
+
+        foreach (['clock_device', 'field_rep', 'manual'] as $source) {
+            EmployeeClockSession::query()->create([
+                'employee_id' => $this->employee->id,
+                'organization_id' => $this->org->id,
+                'branch_id' => $this->employee->branch_id,
+                'source' => $source,
+                'clock_in_at' => '2026-08-15 08:00:00',
+                'device_identifier' => $source === 'clock_device' ? 'TERMINAL-01' : null,
+            ]);
+        }
+
+        $all = $this->getJson('/api/v1/attendance/clock-sessions?today=1&per_page=200');
+        $all->assertOk();
+        $this->assertEqualsCanonicalizing(
+            ['clock_device', 'field_rep', 'manual'],
+            collect($all->json('data'))->pluck('source')->unique()->values()->all(),
+        );
+
+        $premises = $this->getJson('/api/v1/attendance/clock-sessions?today=1&premises=1&per_page=200');
+        $premises->assertOk();
+        $premisesSources = collect($premises->json('data'))->pluck('source')->unique()->values()->all();
+        $this->assertContains('clock_device', $premisesSources);
+        $this->assertNotContains('field_rep', $premisesSources);
+        $this->assertNotContains('manual', $premisesSources);
+    }
+
+    public function test_today_employee_attendance_list_includes_mobile_sales_source(): void
+    {
+        Sanctum::actingAs($this->admin);
+        $this->travelTo('2026-08-15 10:00:00');
+
+        EmployeeAttendance::query()->create([
+            'employee_id' => $this->employee->id,
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->employee->branch_id,
+            'attendance_date' => '2026-08-15',
+            'check_in' => '08:10:00',
+            'check_out' => null,
+            'status' => 'present',
+            'source' => 'field_rep',
+            'hours_worked' => 0,
+            'notes' => 'On route — awaiting sign-out',
+        ]);
+
+        $response = $this->getJson('/api/v1/employee-attendance?from_date=2026-08-15&to_date=2026-08-15&per_page=200');
+        $response->assertOk();
+        $row = collect($response->json('data'))->firstWhere('employee_id', $this->employee->id);
+        $this->assertNotNull($row);
+        $this->assertSame('field_rep', $row['source']);
+        $this->assertSame('Mobile sales app', $row['source_label']);
     }
 }

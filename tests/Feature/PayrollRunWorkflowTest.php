@@ -3,10 +3,12 @@
 namespace Tests\Feature;
 
 use App\Models\Employee;
+use App\Models\Organization;
 use App\Models\PayPeriod;
 use App\Models\PayrollLine;
 use App\Models\PayrollRun;
 use App\Models\User;
+use Carbon\Carbon;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
@@ -66,6 +68,30 @@ class PayrollRunWorkflowTest extends TestCase
             ->assertJsonPath('payment_reference', 'BANK-2026-06');
 
         $this->assertNotNull($run->fresh()->paid_at);
+    }
+
+    public function test_ensure_runnable_honors_org_month_end_enforcement_off(): void
+    {
+        Carbon::setTestNow(Carbon::parse('2026-08-15 12:00:00', 'Africa/Nairobi'));
+
+        $org = Organization::findOrFail($this->admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['hr_payroll'] = array_merge($settings['hr_payroll'] ?? [], [
+            'enforce_month_end_run_schedule' => false,
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        $this->postJson('/api/v1/pay-periods/ensure-runnable')
+            ->assertOk()
+            ->assertJsonPath('schedule.enforce_month_end_run_schedule', false)
+            ->assertJsonPath('schedule.can_run_any_period_today', true);
+
+        $this->getJson('/api/v1/payroll/run-schedule')
+            ->assertOk()
+            ->assertJsonPath('enforce_month_end_run_schedule', false)
+            ->assertJsonPath('can_run_any_period_today', true);
+
+        Carbon::setTestNow();
     }
 
     public function test_mark_paid_rejects_non_processed_runs(): void

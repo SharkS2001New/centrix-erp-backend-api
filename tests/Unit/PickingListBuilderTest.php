@@ -212,4 +212,59 @@ class PickingListBuilderTest extends TestCase
         $this->assertSame(2.0, (float) $updatedLine->shortage_qty);
         $this->assertSame('Damaged packs', $updatedLine->shortage_reason);
     }
+
+    public function test_present_picking_list_includes_line_and_total_tonnage(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        $product = Product::query()->firstOrFail();
+        $product->update(['product_weight' => 2.5]);
+
+        $trip = DispatchTrip::query()->create([
+            'branch_id' => $user->branch_id,
+            'trip_code' => 'TRIP-PICK-TEST-WEIGHT',
+            'scheduled_date' => now()->toDateString(),
+            'status' => 'draft',
+            'created_by' => $user->id,
+        ]);
+
+        $sale = Sale::query()->create([
+            'order_num' => 996003,
+            'branch_id' => $user->branch_id,
+            'organization_id' => $user->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $user->id,
+            'status' => 'processed',
+            'payment_status' => 'unpaid',
+            'order_total' => 1000,
+            'total_vat' => 0,
+            'amount_paid' => 0,
+            'archived' => 0,
+        ]);
+
+        SaleItem::query()->create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'quantity' => 4,
+            'selling_price' => 100,
+            'amount' => 400,
+            'product_vat' => 0,
+            'discount_given' => 0,
+        ]);
+
+        $trip->sales()->attach($sale->id, ['stop_seq' => 1]);
+
+        $builder = app(PickingListBuilder::class);
+        $pickingList = $builder->syncPickingList($trip->fresh(['sales', 'branch']));
+        $payload = $builder->present($pickingList);
+
+        $this->assertSame(10.0, (float) $payload['total_weight_kg']);
+        $this->assertSame(0.01, (float) $payload['total_weight_tonnes']);
+        $this->assertSame(0, (int) $payload['missing_weight_count']);
+        $this->assertSame(2.5, (float) $payload['lines'][0]['product_weight']);
+        $this->assertSame(10.0, (float) $payload['lines'][0]['line_weight_kg']);
+        $this->assertFalse($payload['lines'][0]['weight_missing']);
+    }
 }

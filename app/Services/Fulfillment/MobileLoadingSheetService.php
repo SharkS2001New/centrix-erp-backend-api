@@ -19,6 +19,7 @@ class MobileLoadingSheetService
         protected LoadingListBuilder $loadingListBuilder,
         protected UserAccessService $access,
         protected RouteAccessService $routes,
+        protected LoadTonnagePresenter $tonnage,
     ) {}
 
     public function assertAvailable(bool $distributionOpsEnabled, bool $mobileSalesEnabled): void
@@ -124,9 +125,24 @@ class MobileLoadingSheetService
         $saleIds = $sales->pluck('id')->all();
         $orders = $this->loadingListBuilder->aggregateOrdersFromSaleIds($saleIds);
         $totalAmount = round(array_sum(array_column($orders, 'subtotal')), 2);
+        $orgId = $sales->first()?->organization_id !== null
+            ? (int) $sales->first()->organization_id
+            : ($user->organization_id ? (int) $user->organization_id : null);
+        $fleet = $this->tonnage->defaultFleetForRoute($routeId, $orgId);
+        $weight = $this->tonnage->applyToLines(
+            collect($orders)
+                ->flatMap(fn ($order) => $order['lines'] ?? [])
+                ->map(fn ($line) => [
+                    'product_code' => $line['product_code'] ?? null,
+                    'required_qty' => $line['quantity'] ?? $line['required_qty'] ?? 0,
+                ])
+                ->values()
+                ->all(),
+            $orgId,
+        );
 
         return [
-            'loading_list' => [
+            'loading_list' => array_merge([
                 'list_date' => $listDate,
                 'route_id' => $routeId,
                 'route' => $route ? [
@@ -136,7 +152,12 @@ class MobileLoadingSheetService
                 'order_count' => $sales->count(),
                 'total_amount' => $totalAmount,
                 'orders' => $orders,
-            ],
+                'driver' => $fleet['driver'],
+                'vehicle' => $fleet['vehicle'],
+                'total_weight_kg' => $weight['total_weight_kg'],
+                'total_weight_tonnes' => $weight['total_weight_tonnes'],
+                'missing_weight_count' => $weight['missing_weight_count'],
+            ], $this->tonnage->vehicleCapacityFields($fleet['vehicle'])),
             'orders' => $sales->map(fn (Sale $sale) => [
                 'id' => $sale->id,
                 'order_num' => $sale->order_num,
@@ -144,6 +165,7 @@ class MobileLoadingSheetService
                 'order_total' => (float) $sale->order_total,
                 'customer_name' => $sale->customer?->customer_name,
                 'delivery_date' => $sale->delivery_date,
+                'organization_id' => $sale->organization_id,
             ])->values()->all(),
         ];
     }

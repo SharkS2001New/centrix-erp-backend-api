@@ -21,6 +21,7 @@ class MobilePickingSheetService
         protected MobileLoadingSheetService $loadingSheets,
         protected LoadingListBuilder $loadingListBuilder,
         protected StockUomDisplayService $stockUom,
+        protected LoadTonnagePresenter $tonnage,
     ) {}
 
     public function assertAvailable(bool $distributionOpsEnabled, bool $mobileSalesEnabled): void
@@ -61,23 +62,29 @@ class MobilePickingSheetService
             2,
         );
         $dateToken = str_replace('-', '', $listDate);
+        $organizationId = collect($orders)->pluck('organization_id')->filter()->first();
+        $orgId = $organizationId !== null ? (int) $organizationId : null;
+        $fleet = $this->tonnage->defaultFleetForRoute($routeId, $orgId);
+        $pickingList = $this->tonnage->presentPickingListArray([
+            'list_number' => sprintf('PK-%s-%03d', $dateToken, $routeId),
+            'list_date' => $listDate,
+            'route_id' => $routeId,
+            'route' => $loadingList['route'] ?? null,
+            'route_names' => array_values(array_filter([
+                (string) ($loadingList['route']['route_name'] ?? ''),
+            ])),
+            'status' => 'open',
+            'layout' => 'sales',
+            'order_count' => (int) ($loadingList['order_count'] ?? count($saleIds)),
+            'line_count' => count($lines),
+            'order_total_value' => $orderTotalValue,
+            'lines' => $lines,
+            'driver' => $fleet['driver'],
+            'vehicle' => $fleet['vehicle'],
+        ], $fleet['vehicle'], $orgId);
 
         return [
-            'picking_list' => [
-                'list_number' => sprintf('PK-%s-%03d', $dateToken, $routeId),
-                'list_date' => $listDate,
-                'route_id' => $routeId,
-                'route' => $loadingList['route'] ?? null,
-                'route_names' => array_values(array_filter([
-                    (string) ($loadingList['route']['route_name'] ?? ''),
-                ])),
-                'status' => 'open',
-                'layout' => 'sales',
-                'order_count' => (int) ($loadingList['order_count'] ?? count($saleIds)),
-                'line_count' => count($lines),
-                'order_total_value' => $orderTotalValue,
-                'lines' => $lines,
-            ],
+            'picking_list' => $pickingList,
             'orders' => $orders,
         ];
     }
@@ -137,24 +144,27 @@ class MobilePickingSheetService
         );
         $dateToken = str_replace('-', '', $listDate);
         $routePhrase = $this->formatRouteNamesPhrase($routeNames);
+        $organizationId = collect($allOrders)->pluck('organization_id')->filter()->first();
+        $orgId = $organizationId !== null ? (int) $organizationId : null;
+        $pickingList = $this->tonnage->presentPickingListArray([
+            'list_number' => sprintf('PK-%s-COMB', $dateToken),
+            'list_date' => $listDate,
+            'route_id' => null,
+            'route_ids' => $routeIds,
+            'route' => null,
+            'route_names' => $routeNames,
+            'route_names_phrase' => $routePhrase,
+            'combined' => true,
+            'status' => 'open',
+            'layout' => 'sales',
+            'order_count' => $orderCount,
+            'line_count' => count($lines),
+            'order_total_value' => $orderTotalValue,
+            'lines' => $lines,
+        ], null, $orgId);
 
         return [
-            'picking_list' => [
-                'list_number' => sprintf('PK-%s-COMB', $dateToken),
-                'list_date' => $listDate,
-                'route_id' => null,
-                'route_ids' => $routeIds,
-                'route' => null,
-                'route_names' => $routeNames,
-                'route_names_phrase' => $routePhrase,
-                'combined' => true,
-                'status' => 'open',
-                'layout' => 'sales',
-                'order_count' => $orderCount,
-                'line_count' => count($lines),
-                'order_total_value' => $orderTotalValue,
-                'lines' => $lines,
-            ],
+            'picking_list' => $pickingList,
             'orders' => $allOrders,
         ];
     }

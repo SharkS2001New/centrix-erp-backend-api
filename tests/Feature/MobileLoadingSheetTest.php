@@ -162,4 +162,22 @@ class MobileLoadingSheetTest extends TestCase
         $this->getJson('/api/v1/sales/mobile-picking-sheets')
             ->assertForbidden();
     }
+
+    public function test_vehicles_can_be_managed_when_mobile_sales_is_on_without_distribution(): void
+    {
+        $res = $this->postJson('/api/v1/vehicles', [
+            'branch_id' => $this->user->branch_id,
+            'vehicle_code' => 'V-MOB-TONNE-1',
+            'vehicle_name' => 'Field lorry',
+            'plate_number' => 'KDA 888T',
+            'max_weight_kg' => 8000,
+            'is_active' => true,
+        ]);
+        $res->assertCreated();
+        $this->assertSame(8000, (int) $res->json('max_weight_kg'));
+
+        $this->getJson('/api/v1/vehicles')
+            ->assertOk()
+            ->assertJsonFragment(['vehicle_code' => 'V-MOB-TONNE-1']);
+    }
 }

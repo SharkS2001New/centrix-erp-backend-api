@@ -319,6 +319,22 @@ class DispatchTripController extends BaseResourceController
             fn (array $order) => count($order['lines'] ?? []),
             $orders,
         ));
+        $tonnage = app(\App\Services\Fulfillment\LoadTonnagePresenter::class);
+        $weight = $tonnage->applyToLines(
+            collect($orders)
+                ->flatMap(fn ($order) => $order['lines'] ?? [])
+                ->map(fn ($line) => [
+                    'product_code' => $line['product_code'] ?? null,
+                    'required_qty' => $line['quantity'] ?? $line['required_qty'] ?? 0,
+                ])
+                ->values()
+                ->all(),
+            $model->organization_id ? (int) $model->organization_id : null,
+        );
+        $payload['total_weight_kg'] = $weight['total_weight_kg'];
+        $payload['total_weight_tonnes'] = $weight['total_weight_tonnes'];
+        $payload['missing_weight_count'] = $weight['missing_weight_count'];
+        $payload = array_merge($payload, $tonnage->vehicleCapacityFields($loadingList->trip?->vehicle));
 
         try {
             $financialSummary = $this->financials->summarizeForTrip($model);
@@ -341,7 +357,7 @@ class DispatchTripController extends BaseResourceController
         $pickingList->load(['route', 'trip.route', 'trip.driver', 'trip.vehicle']);
 
         return response()->json([
-            'picking_list' => $pickingList,
+            'picking_list' => $builder->present($pickingList),
         ]);
     }
 
@@ -361,7 +377,7 @@ class DispatchTripController extends BaseResourceController
         $updated = $builder->updatePickedQuantities($pickingList, $data['lines']);
 
         return response()->json([
-            'picking_list' => $updated,
+            'picking_list' => $builder->present($updated),
         ]);
     }
 
@@ -381,7 +397,7 @@ class DispatchTripController extends BaseResourceController
         app(TripStockService::class)->deductDeferredTripStockOnPickingComplete($model, $request->user());
 
         return response()->json([
-            'picking_list' => $updated,
+            'picking_list' => $builder->present($updated),
         ]);
     }
 

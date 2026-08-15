@@ -35,12 +35,19 @@ class PayrollRunScheduleService
 
     public function enforceMonthEndSchedule(?int $organizationId = null): bool
     {
+        $platformOn = true;
         try {
-            // Platform master switch: off → all tenants may run anytime.
-            if (! PlatformPayrollScheduleSettingsResolver::enforceMonthEndSchedule()) {
-                return false;
-            }
+            $platformOn = PlatformPayrollScheduleSettingsResolver::enforceMonthEndSchedule();
+        } catch (\Throwable) {
+            $platformOn = true;
+        }
 
+        // Platform master switch: off → all tenants may run anytime.
+        if (! $platformOn) {
+            return false;
+        }
+
+        try {
             // Platform on → org HR setting can still disable for that tenant.
             $settings = $organizationId
                 ? HrPayrollSettingsResolver::forOrganizationId($organizationId)

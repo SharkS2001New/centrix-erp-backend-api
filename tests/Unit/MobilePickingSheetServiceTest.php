@@ -6,6 +6,7 @@ use App\Models\Sale;
 use App\Models\SaleItem;
 use App\Models\Uom;
 use App\Services\Fulfillment\LoadingListBuilder;
+use App\Services\Fulfillment\LoadTonnagePresenter;
 use App\Services\Fulfillment\MobileLoadingSheetService;
 use App\Services\Fulfillment\MobilePickingSheetService;
 use App\Services\Inventory\StockUomDisplayService;
@@ -113,6 +114,7 @@ class MobilePickingSheetServiceTest extends TestCase
             Mockery::mock(MobileLoadingSheetService::class),
             Mockery::mock(LoadingListBuilder::class),
             $stockUom,
+            Mockery::mock(LoadTonnagePresenter::class),
         );
     }
 

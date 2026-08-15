@@ -63,6 +63,7 @@ class PayPeriodController extends BaseResourceController
         }
 
         $period = new PayPeriod([
+            'organization_id' => $data['organization_id'],
             'period_start' => $data['period_start'],
             'period_end' => $data['period_end'],
         ]);
@@ -89,7 +90,7 @@ class PayPeriodController extends BaseResourceController
 
         return response()->json([
             'data' => $periods,
-            'schedule' => app(PayrollRunScheduleService::class)->describe(),
+            'schedule' => app(PayrollRunScheduleService::class)->describe(null, (int) $orgId),
         ]);
     }
 

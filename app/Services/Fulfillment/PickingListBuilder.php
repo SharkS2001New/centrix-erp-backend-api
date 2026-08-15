@@ -19,6 +19,7 @@ class PickingListBuilder
         protected LoadingListBuilder $loadingListBuilder,
         protected ErpContext $erp,
         protected StockUomDisplayService $stockUom,
+        protected LoadTonnagePresenter $tonnage,
     ) {}
 
     public function generateListNumber(int $branchId, string $date): string
@@ -165,6 +166,17 @@ class PickingListBuilder
         }
 
         return $pickingList->fresh(['lines', 'route', 'trip']);
+    }
+
+    /** @return array<string, mixed> */
+    public function present(PickingList $pickingList): array
+    {
+        $pickingList->loadMissing(['lines', 'route', 'trip.vehicle', 'trip.driver']);
+
+        return $this->tonnage->presentPickingList(
+            $pickingList,
+            $pickingList->trip?->vehicle,
+        );
     }
 
     /** @param  array<int, array<string, mixed>>  $lineUpdates */
