@@ -781,4 +781,77 @@ class PermissionMatrixService
             ]);
         }
     }
+
+    /**
+     * Grant additional time-attendance navigation pages to roles that already
+     * have core attendance or HR view permissions. Safe to call repeatedly.
+     *
+     * @return int Number of role_permission rows inserted (0 when already complete).
+     */
+    public static function ensureHrTimeAttendancePagesForExistingRoles(): int
+    {
+        $map = [
+            'hr.attendance.view' => [
+                'hr.attendance_history.view',
+                'hr.missed_punches.view',
+                'hr.duplicate_punches.view',
+                'hr.absents.view',
+                'hr.lateness.view',
+            ],
+            'hr.view' => [
+                'hr.absents.view',
+                'hr.missed_punches.view',
+                'hr.duplicate_punches.view',
+                'hr.attendance_history.view',
+                'hr.lateness.view',
+                'hr.pending_overtime.view',
+                'hr.shifts.view',
+            ],
+        ];
+
+        // Collect all permission codes we need to resolve to IDs.
+        $codes = [];
+        foreach ($map as $trigger => $adds) {
+            $codes[] = $trigger;
+            foreach ($adds as $c) {
+                $codes[] = $c;
+            }
+        }
+
+        $permissions = Permission::query()
+            ->whereIn('permission_code', array_values(array_unique($codes)))
+            ->pluck('id', 'permission_code');
+
+        $inserted = 0;
+
+        foreach ($map as $trigger => $adds) {
+            $triggerId = $permissions[$trigger] ?? null;
+            if (! $triggerId) {
+                continue;
+            }
+
+            $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
+                ->where('permission_id', $triggerId)
+                ->pluck('role_id');
+
+            foreach ($roleIds as $roleId) {
+                foreach ($adds as $code) {
+                    $permissionId = $permissions[$code] ?? null;
+                    if (! $permissionId) {
+                        continue;
+                    }
+
+                    $ok = \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
+                        'role_id' => $roleId,
+                        'permission_id' => $permissionId,
+                    ]);
+                    if ($ok) {
+                        $inserted++;
+                    }
+                }
+            }
+        }
+
+        return $inserted;
+    }
 }
