@@ -86,6 +86,16 @@ class HikvisionDeviceController extends HrOrgResourceController
             $data['agent_version'] ?? null,
         );
 
+        // When the LAN agent polls, kick off an asynchronous sync job so punches
+        // are pulled shortly after the agent comes online.
+        try {
+            if (! app()->runningUnitTests()) {
+                \App\Jobs\SyncHikvisionDeviceJob::dispatch((int) $device->id)->onQueue('default');
+            }
+        } catch (\Throwable $e) {
+            // non-fatal; the agent will still pick up commands
+        }
+
         return response()->json([
             'commands' => $commands,
             'poll_interval_seconds' => \App\Services\Attendance\HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId(
