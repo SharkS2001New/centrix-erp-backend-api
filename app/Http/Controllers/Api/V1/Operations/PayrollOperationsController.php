@@ -146,8 +146,22 @@ class PayrollOperationsController extends Controller
             $grossTotal = 0;
             $netTotal = 0;
 
+            // Preload employees referenced by the input lines to avoid N+1 queries.
+            $employeeIds = array_values(array_unique(array_map(fn($l) => (int) ($l['employee_id'] ?? 0), $payload['lines'])));
+            $employeeQuery = Employee::query()->whereIn('id', $employeeIds);
+            $user = $request->user();
+            if ($user) {
+                app(UserAccessService::class)->scopeOrganization($employeeQuery, $user, 'organization_id', $request);
+                app(UserAccessService::class)->scopeBranchIfLimited($employeeQuery, $user);
+            }
+            $employees = $employeeQuery->get()->keyBy(fn ($e) => (int) $e->id);
+
             foreach ($payload['lines'] as $lineInput) {
-                $employee = $this->findOrgEmployee($lineInput['employee_id'], $request);
+                $employeeId = (int) ($lineInput['employee_id'] ?? 0);
+                $employee = $employees[$employeeId] ?? null;
+                if (! $employee) {
+                    abort(404, "Employee not found: {$employeeId}");
+                }
                 $basic = (float) ($lineInput['basic_salary'] ?? $employee->base_salary ?? 0);
                 $allowances = (float) ($lineInput['allowances'] ?? 0);
                 $meta = is_array($lineInput['payroll_meta'] ?? null) ? $lineInput['payroll_meta'] : [];
