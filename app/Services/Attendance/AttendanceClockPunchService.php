@@ -325,6 +325,175 @@ class AttendanceClockPunchService
     }
 
     /**
+     * HR editor for a full day: clock in, optional lunch out/in, clock out.
+     * Morning session is clock-in → lunch-out; afternoon is lunch-in → clock-out.
+     *
+     * @param  array{
+     *   employee_id: int,
+     *   attendance_date: string,
+     *   clock_in_at: mixed,
+     *   lunch_out_at?: mixed,
+     *   lunch_in_at?: mixed,
+     *   clock_out_at?: mixed
+     * }  $payload
+     * @return array{action: string, sessions: list<EmployeeClockSession>, attendance?: mixed}
+     */
+    public function syncDayPunchTimes(int $organizationId, array $payload): array
+    {
+        $employee = Employee::with('shift')->find((int) ($payload['employee_id'] ?? 0));
+        if (! $employee || (int) $employee->organization_id !== $organizationId) {
+            abort(404, 'Employee not found.');
+        }
+
+        $date = Carbon::parse((string) $payload['attendance_date'], AppTimezone::name())->toDateString();
+        $clockIn = $this->resolvePunchedAt($payload['clock_in_at'] ?? null);
+        $lunchOut = $this->optionalPunchedAt($payload['lunch_out_at'] ?? null);
+        $lunchIn = $this->optionalPunchedAt($payload['lunch_in_at'] ?? null);
+        $clockOut = $this->optionalPunchedAt($payload['clock_out_at'] ?? null);
+
+        if ($lunchIn && ! $lunchOut) {
+            throw ValidationException::withMessages([
+                'lunch_out_at' => 'Set lunch out before lunch in.',
+            ]);
+        }
+
+        $ordered = array_values(array_filter([
+            ['clock_in_at', $clockIn],
+            ['lunch_out_at', $lunchOut],
+            ['lunch_in_at', $lunchIn],
+            ['clock_out_at', $clockOut],
+        ], fn ($row) => $row[1] !== null));
+        for ($i = 1; $i < count($ordered); $i++) {
+            if ($ordered[$i][1]->lte($ordered[$i - 1][1])) {
+                throw ValidationException::withMessages([
+                    $ordered[$i][0] => 'Lunch and clock times must be in order on the same day.',
+                ]);
+            }
+        }
+
+        $sessions = EmployeeClockSession::query()
+            ->where('employee_id', $employee->id)
+            ->where(function ($q) use ($date) {
+                $q->whereDate('clock_in_at', $date)
+                    ->orWhereDate('clock_out_at', $date);
+            })
+            ->orderBy('clock_in_at')
+            ->get();
+
+        $attendance = $sessions->first()?->attendance_id
+            ? EmployeeAttendance::query()->find($sessions->first()->attendance_id)
+            : EmployeeAttendance::query()
+                ->where('employee_id', $employee->id)
+                ->whereDate('attendance_date', $date)
+                ->first();
+        PayrollCycleSettlementService::assertNotPayrollLocked(
+            $attendance?->payroll_run_id,
+            'attendance punch',
+        );
+
+        $source = (string) ($sessions->first()?->source ?: 'hr_applied');
+        $deviceNo = $sessions->first()?->device_identifier;
+        $branchId = $sessions->first()?->branch_id ?? $employee->branch_id;
+
+        $morningOut = $lunchOut ?? $clockOut;
+        $first = $sessions->get(0) ?? new EmployeeClockSession([
+            'employee_id' => $employee->id,
+            'organization_id' => $employee->organization_id,
+            'branch_id' => $branchId,
+            'source' => $source,
+            'device_identifier' => $deviceNo,
+        ]);
+        $first->clock_in_at = $clockIn;
+        $first->clock_out_at = $morningOut;
+        if ($morningOut) {
+            $first->clock_out_kind = EmployeeClockSession::CLOCK_OUT_KIND_HR;
+            $first->needs_reconciliation = false;
+        }
+        $first->save();
+
+        $second = $sessions->get(1);
+        if ($lunchIn) {
+            if (! $second) {
+                $second = new EmployeeClockSession([
+                    'employee_id' => $employee->id,
+                    'organization_id' => $employee->organization_id,
+                    'branch_id' => $branchId,
+                    'source' => 'hr_applied',
+                    'device_identifier' => $deviceNo,
+                ]);
+            }
+            $second->clock_in_at = $lunchIn;
+            $second->clock_out_at = $clockOut;
+            if ($clockOut) {
+                $second->clock_out_kind = EmployeeClockSession::CLOCK_OUT_KIND_HR;
+                $second->needs_reconciliation = false;
+            }
+            $second->save();
+        } elseif ($second) {
+            $second->delete();
+            $second = null;
+        }
+
+        foreach ($sessions->slice(2) as $extra) {
+            $extra->delete();
+        }
+
+        $fresh = EmployeeClockSession::query()
+            ->where('employee_id', $employee->id)
+            ->where(function ($q) use ($date) {
+                $q->whereDate('clock_in_at', $date)
+                    ->orWhereDate('clock_out_at', $date);
+            })
+            ->orderBy('clock_in_at')
+            ->get();
+
+        if ($morningOut || $clockOut) {
+            $attendance = $this->reconciler->reconcileFromSessions(
+                $employee,
+                $date,
+                $source,
+                $deviceNo,
+                $branchId ? (int) $branchId : null,
+            );
+        } else {
+            $attendance = $this->reconciler->recordOpenClockIn(
+                $employee,
+                $clockIn,
+                $source,
+                $deviceNo,
+                $branchId ? (int) $branchId : null,
+                true,
+            );
+        }
+
+        foreach ($fresh as $row) {
+            $row->attendance_id = $attendance->id;
+            $row->save();
+        }
+
+        $synced = EmployeeClockSession::query()
+            ->with('employee')
+            ->whereIn('id', $fresh->pluck('id'))
+            ->orderBy('clock_in_at')
+            ->get();
+
+        return [
+            'action' => 'synced',
+            'sessions' => $synced,
+            'attendance' => $attendance,
+        ];
+    }
+
+    protected function optionalPunchedAt(mixed $value): ?Carbon
+    {
+        if ($value === null || $value === '') {
+            return null;
+        }
+
+        return $this->resolvePunchedAt($value);
+    }
+
+    /**
      * Align the day's first clock-in and last clock-out with HR-edited attendance times.
      */
     public function adjustDayPunchTimes(

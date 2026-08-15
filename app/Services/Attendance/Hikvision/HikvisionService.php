@@ -127,6 +127,15 @@ class HikvisionService
         return array_values(array_unique(array_filter($variants, static fn ($v) => $v !== '')));
     }
 
+    public static function isDeviceUserAlreadyExistsError(\Throwable $e): bool
+    {
+        $message = strtolower($e->getMessage());
+
+        return str_contains($message, 'deviceuseralreadyexist')
+            || str_contains($message, '0x60007002')
+            || str_contains($message, 'user already exist');
+    }
+
     public static function normalizePersonName(string $name): string
     {
         $text = mb_strtolower(trim($name));
@@ -538,7 +547,7 @@ class HikvisionService
     /**
      * Sync Centrix employees → Hikvision device (create/update by employee_code).
      *
-     * @return array{created: int, updated: int, skipped: int, errors: list<string>}
+     * @return array{created: int, updated: int, skipped: int, notices: list<string>, errors: list<string>}
      */
     public function syncEmployeesToDevice(AttendanceClockDevice $device): array
     {
@@ -546,7 +555,7 @@ class HikvisionService
         $client = $this->client($device);
         $orgId = (int) $device->organization_id;
 
-        $result = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'errors' => []];
+        $result = ['created' => 0, 'updated' => 0, 'skipped' => 0, 'notices' => [], 'errors' => []];
 
         $employees = Employee::query()
             ->where('organization_id', $orgId)
@@ -557,11 +566,19 @@ class HikvisionService
             ->get();
 
         $existing = [];
-        $search = $client->searchUsers(['maxResults' => 100]);
+        $wanted = 500;
+        try {
+            $wanted = max(100, min(2000, $client->getUserCount() + 50));
+        } catch (\Throwable) {
+        }
+        $search = $client->searchUsers(['maxResults' => $wanted]);
         foreach ($search['users'] as $row) {
             $no = (string) ($row['employeeNo'] ?? $row['EmployeeNo'] ?? '');
-            if ($no !== '') {
-                $existing[$no] = true;
+            if ($no === '') {
+                continue;
+            }
+            foreach (self::employeeNoLookupVariants($no) as $variant) {
+                $existing[$variant] = true;
             }
         }
 
@@ -575,9 +592,16 @@ class HikvisionService
 
             $name = trim((string) ($employee->full_name ?? $employee->first_name.' '.$employee->last_name));
             $payload = self::terminalUserInfo($employeeNo, $name);
+            $alreadyOnDevice = false;
+            foreach (self::employeeNoLookupVariants($employeeNo) as $variant) {
+                if (isset($existing[$variant])) {
+                    $alreadyOnDevice = true;
+                    break;
+                }
+            }
 
             try {
-                if (isset($existing[$employeeNo])) {
+                if ($alreadyOnDevice) {
                     $client->setupUser($payload);
                     $result['updated']++;
                 } else {
@@ -585,19 +609,15 @@ class HikvisionService
                     $result['created']++;
                 }
 
-                HikvisionEmployeeMapping::query()->updateOrCreate(
-                    [
-                        'attendance_clock_device_id' => $device->id,
-                        'employee_id' => $employee->id,
-                    ],
-                    [
-                        'organization_id' => $orgId,
-                        'hikvision_employee_no' => $employeeNo,
-                        'sync_status' => 'synced',
-                        'last_synced_at' => AppTimezone::now(),
-                    ]
-                );
+                $this->markEmployeeSyncedOnDevice($device, $employee, $employeeNo);
             } catch (\Throwable $e) {
+                if (self::isDeviceUserAlreadyExistsError($e)) {
+                    $this->markEmployeeSyncedOnDevice($device, $employee, $employeeNo);
+                    $result['skipped']++;
+                    $result['notices'][] = "{$employeeNo} already exists on the device — skipped.";
+
+                    continue;
+                }
                 $result['errors'][] = "{$employeeNo}: {$e->getMessage()}";
             }
         }
@@ -746,6 +766,25 @@ class HikvisionService
         }
 
         return $result;
+    }
+
+    protected function markEmployeeSyncedOnDevice(
+        AttendanceClockDevice $device,
+        Employee $employee,
+        string $employeeNo,
+    ): void {
+        HikvisionEmployeeMapping::query()->updateOrCreate(
+            [
+                'attendance_clock_device_id' => $device->id,
+                'employee_id' => $employee->id,
+            ],
+            [
+                'organization_id' => (int) $device->organization_id,
+                'hikvision_employee_no' => $employeeNo,
+                'sync_status' => 'synced',
+                'last_synced_at' => AppTimezone::now(),
+            ]
+        );
     }
 
     protected function persistMapping(

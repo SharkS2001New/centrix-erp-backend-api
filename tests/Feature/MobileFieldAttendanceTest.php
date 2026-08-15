@@ -225,6 +225,13 @@ class MobileFieldAttendanceTest extends TestCase
             'longitude' => 36.821900,
         ])->assertCreated();
 
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $employee->id,
+            'attendance_date' => '2026-06-16',
+            'source' => 'field_rep',
+            'check_out' => null,
+        ]);
+
         $this->withToken($token)->post('/api/v1/mobile/attendance/sign-out', [
             'photo' => UploadedFile::fake()->image('sign-out.jpg'),
             'latitude' => -1.292200,

@@ -306,6 +306,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::post('clock-out', [AttendanceClockController::class, 'clockOut']);
             Route::delete('clock-sessions/{session}', [AttendanceClockController::class, 'destroySession']);
             Route::patch('clock-sessions/{session}', [AttendanceClockController::class, 'updateSession']);
+            Route::post('clock-sessions/day-times', [AttendanceClockController::class, 'syncDayPunchTimes']);
             Route::get('company-premises', [CompanyPremisesController::class, 'show']);
             Route::post('company-premises', [CompanyPremisesController::class, 'update']);
         });

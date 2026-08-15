@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\EmployeeClockSession;
 use App\Services\Attendance\AttendanceClockPunchService;
+use App\Support\AppTimezone;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
@@ -109,7 +110,9 @@ class AttendanceClockController extends Controller
     /** GET /attendance/clock-sessions — open and recent sessions */
     public function sessions(Request $request)
     {
-        $query = EmployeeClockSession::query()->with('employee')->orderByDesc('clock_in_at');
+        $query = EmployeeClockSession::query()
+            ->with(['employee.shift'])
+            ->orderByDesc('clock_in_at');
         $orgId = $request->user()?->organization_id;
         if ($orgId) {
             $query->where('organization_id', $orgId);
@@ -117,9 +120,74 @@ class AttendanceClockController extends Controller
         if ($request->boolean('open_only')) {
             $query->whereNull('clock_out_at');
         }
+        if ($request->boolean('today')) {
+            $today = AppTimezone::todayDateString();
+            $query->where(function ($inner) use ($today) {
+                $inner->whereDate('clock_in_at', $today)
+                    ->orWhereDate('clock_out_at', $today);
+            });
+        }
+        if ($request->boolean('premises')) {
+            $query->where(function ($inner) {
+                $inner->whereIn('source', ['clock_device', 'company_mobile', 'hr_applied'])
+                    ->orWhereNull('source');
+            });
+        }
 
         $perPage = min((int) $request->input('per_page', 50), 200);
 
         return response()->json($query->paginate($perPage));
+    }
+
+    /** PATCH /attendance/clock-sessions/{session} */
+    public function updateSession(Request $request, int $session)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        $data = $request->validate([
+            'clock_in_at' => 'nullable|date',
+            'clock_out_at' => 'nullable|date',
+            'confirm_reconciliation' => 'sometimes|boolean',
+        ]);
+
+        $result = $this->punchService->updateSession((int) $orgId, $session, $data);
+
+        return response()->json($result);
+    }
+
+    /** POST /attendance/clock-sessions/day-times */
+    public function syncDayPunchTimes(Request $request)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        $data = $request->validate([
+            'employee_id' => 'required|integer|exists:employees,id',
+            'attendance_date' => 'required|date',
+            'clock_in_at' => 'required|date',
+            'lunch_out_at' => 'nullable|date',
+            'lunch_in_at' => 'nullable|date',
+            'clock_out_at' => 'nullable|date',
+        ]);
+
+        return response()->json($this->punchService->syncDayPunchTimes((int) $orgId, $data));
+    }
+
+    /** DELETE /attendance/clock-sessions/{session} */
+    public function destroySession(Request $request, int $session)
+    {
+        $orgId = $request->user()?->organization_id;
+        if (! $orgId) {
+            return response()->json(['message' => 'Organization context required.'], 403);
+        }
+
+        $this->punchService->deleteSession((int) $orgId, $session);
+
+        return response()->noContent();
     }
 }

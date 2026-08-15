@@ -108,9 +108,12 @@ class MobileFieldAttendanceService
         return DB::transaction(function () use ($user, $data, $photo) {
             $photoPath = $this->storePhoto($photo, $user, 'sign-in');
 
-            return MobileRepAttendanceSession::create(
+            $session = MobileRepAttendanceSession::create(
                 $this->newSessionAttributes($user, $data, $photoPath),
             );
+            $this->syncToHr($session);
+
+            return $session->fresh();
         });
     }
 
@@ -427,9 +430,7 @@ class MobileFieldAttendanceService
         }
 
         $session->save();
-        if ($session->sign_out_at) {
-            $this->syncToHr($session);
-        }
+        $this->syncToHr($session);
 
         return $session->fresh(['user:id,username,full_name,branch_id']);
     }
@@ -475,6 +476,7 @@ class MobileFieldAttendanceService
                 'accumulated_suspended_seconds' => max(0, (int) $session->accumulated_suspended_seconds) + $gapSeconds,
             ]);
             $session->save();
+            $this->syncToHr($session);
 
             return $session->fresh(['user:id,username,full_name,branch_id']);
         });

@@ -37,4 +37,17 @@ class HikvisionTerminalUserInfoTest extends TestCase
         $this->assertSame('2000-01-01T00:00:00', $info['Valid']['beginTime']);
         $this->assertSame('2030-01-01T00:00:00', $info['Valid']['endTime']);
     }
+
+    public function test_device_user_already_exists_is_detected_from_hikvision_payload(): void
+    {
+        $this->assertTrue(HikvisionService::isDeviceUserAlreadyExistsError(
+            new \RuntimeException('Hikvision device rejected the request (Invalid Content, deviceUserAlreadyExist, 0x60007002).'),
+        ));
+        $this->assertTrue(HikvisionService::isDeviceUserAlreadyExistsError(
+            new \RuntimeException('Hikvision POST failed HTTP 400: {"subStatusCode":"deviceUserAlreadyExist"}'),
+        ));
+        $this->assertFalse(HikvisionService::isDeviceUserAlreadyExistsError(
+            new \RuntimeException('Hikvision device rejected the request (Invalid Content, deviceUserNotExist, 0x60007001).'),
+        ));
+    }
 }

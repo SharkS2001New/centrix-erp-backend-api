@@ -842,7 +842,7 @@ class EmployeeAttendanceController extends HrOrgResourceController
             'check_in' => ['nullable', 'regex:/^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/'],
             'check_out' => ['nullable', 'regex:/^([01]?\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/'],
             'status' => 'nullable|in:present,absent,late,half_day,leave,holiday',
-            'source' => 'nullable|in:manual,clock_device,company_mobile,field_rep',
+            'source' => 'nullable|in:manual,clock_device,company_mobile,field_rep,hr_applied',
             'device_identifier' => 'nullable|string|max:100',
             'notes' => 'nullable|string|max:500',
             'lateness_waived' => 'nullable|boolean',

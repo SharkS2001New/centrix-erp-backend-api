@@ -1213,6 +1213,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:hr.manage|admin.manage');
             Route::patch('attendance/clock-sessions/{session}', [AttendanceClockController::class, 'updateSession'])
                 ->middleware('erp.permission:hr.manage|admin.manage');
+            Route::post('attendance/clock-sessions/day-times', [AttendanceClockController::class, 'syncDayPunchTimes'])
+                ->middleware('erp.permission:hr.manage|admin.manage');
             Route::post('attendance/duplicate-punches/dismiss', [AttendanceMissedPunchesController::class, 'dismissDuplicates'])
                 ->middleware('erp.permission:hr.duplicate_punches.view|hr.attendance.view|hr.manage|hr.view|admin.manage');
             Route::get('employee-attendance/day-preview', [EmployeeAttendanceController::class, 'dayPreview'])

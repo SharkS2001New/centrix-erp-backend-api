@@ -742,4 +742,37 @@ class AttendanceClockPunchTest extends TestCase
 
         Carbon::setTestNow();
     }
+
+    public function test_hr_can_sync_lunch_in_and_lunch_out_times(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-11T08:10:00+03:00',
+            'direction' => 'in',
+        ])->assertCreated();
+
+        $this->postJson('/api/v1/attendance/clock-sessions/day-times', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'clock_in_at' => '2026-08-11 08:05:00',
+            'lunch_out_at' => '2026-08-11 13:00:00',
+            'lunch_in_at' => '2026-08-11 14:00:00',
+            'clock_out_at' => '2026-08-11 17:10:00',
+        ])->assertOk()->assertJsonPath('action', 'synced');
+
+        $this->assertSame(
+            2,
+            EmployeeClockSession::query()->where('employee_id', $this->employee->id)->count(),
+        );
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-11',
+            'check_in' => '08:05:00',
+            'check_out' => '17:10:00',
+            'lunch_status' => 'taken',
+        ]);
+    }
 }

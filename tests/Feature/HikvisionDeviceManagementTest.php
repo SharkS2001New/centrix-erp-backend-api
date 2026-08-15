@@ -1192,4 +1192,81 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertSame(1, $result['total']);
         $this->assertSame('0003', $result['fingerprints'][0]['employeeNo']);
     }
+
+    public function test_sync_employees_to_device_skips_existing_hikvision_users(): void
+    {
+        Http::fake(function ($request) {
+            $url = $request->url();
+            if (str_contains($url, 'UserInfo/Count')) {
+                return Http::response(['UserInfoCount' => ['userNumber' => 0]], 200);
+            }
+            if (str_contains($url, 'UserInfo/Search')) {
+                return Http::response([
+                    'UserInfoSearch' => [
+                        'responseStatusStrg' => 'OK',
+                        'numOfMatches' => 0,
+                        'UserInfo' => [],
+                    ],
+                ], 200);
+            }
+            if (str_contains($url, 'UserInfo/Record')) {
+                return Http::response([
+                    'statusCode' => 6,
+                    'statusString' => 'Invalid Content',
+                    'subStatusCode' => 'deviceUserAlreadyExist',
+                    'errorCode' => '0x60007002',
+                    'errorMsg' => 'deviceUserAlreadyExist',
+                ], 400);
+            }
+
+            return Http::response(['statusString' => 'OK'], 200);
+        });
+
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-SKIP-EXIST',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'capabilities_json' => ['features' => ['users' => true]],
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $employee = \App\Models\Employee::query()
+            ->where('organization_id', $this->org->id)
+            ->where('is_active', true)
+            ->whereNotNull('employee_code')
+            ->where('employee_code', '!=', '')
+            ->first();
+        if (! $employee) {
+            $employee = \App\Models\Employee::create([
+                'organization_id' => $this->org->id,
+                'branch_id' => $this->admin->branch_id,
+                'employee_code' => '0004',
+                'payroll_number' => '0004',
+                'first_name' => 'Skip',
+                'last_name' => 'Existing',
+                'full_name' => 'Skip Existing',
+                'employment_status' => 'active',
+                'is_active' => true,
+            ]);
+        }
+
+        $res = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/sync/employees-to-device");
+        $res->assertOk();
+        $res->assertJsonPath('errors', []);
+        $this->assertGreaterThan(0, (int) $res->json('skipped'));
+        $this->assertNotEmpty($res->json('notices'));
+        $this->assertStringContainsString('already exists on the device', (string) $res->json('notices.0'));
+        $this->assertDatabaseHas('hikvision_employee_mappings', [
+            'attendance_clock_device_id' => $device->id,
+            'employee_id' => $employee->id,
+            'sync_status' => 'synced',
+        ]);
+    }
 }
