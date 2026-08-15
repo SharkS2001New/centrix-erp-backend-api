@@ -58,6 +58,7 @@ class Employee extends Model
         'kra_pin',
         'nssf_number',
         'sha_number',
+        'pays_sha',
         'housing_levy_number',
         'is_active',
         'work_weekdays',
@@ -68,6 +69,7 @@ class Employee extends Model
 
     protected $casts = [
         'is_active' => 'boolean',
+        'pays_sha' => 'boolean',
         'bank_lunch_as_work' => 'boolean',
         'base_salary' => 'decimal:2',
         'monthly_allowance' => 'decimal:2',

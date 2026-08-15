@@ -159,11 +159,13 @@ class PayrollOperationsController extends Controller
                     $statutoryGross = $periodGross;
                 }
 
+                $withShif = (bool) ($employee->pays_sha ?? true);
+
                 if ($autoCalculate || ! isset($lineInput['paye'])) {
-                    $calc = $this->calculator->calculateMonthly($statutoryGross, $other, 0, $orgId);
+                    $calc = $this->calculator->calculateMonthly($statutoryGross, $other, 0, $orgId, $withShif);
                     $calc = $this->applyStatutoryToPeriodGross($calc, $periodGross, $other);
                 } else {
-                    $calc = $this->manualLine($lineInput, $periodGross, $other);
+                    $calc = $this->manualLine($lineInput, $periodGross, $other, $withShif);
                 }
 
                 $calc['basic_salary'] = $basic;
@@ -548,10 +550,10 @@ class PayrollOperationsController extends Controller
     }
 
     /** @param array<string, mixed> $lineInput */
-    protected function manualLine(array $lineInput, float $gross, float $other): array
+    protected function manualLine(array $lineInput, float $gross, float $other, bool $withShif = true): array
     {
         $nssf = (float) ($lineInput['nssf'] ?? 0);
-        $shif = (float) ($lineInput['shif'] ?? 0);
+        $shif = $withShif ? (float) ($lineInput['shif'] ?? 0) : 0.0;
         $housing = (float) ($lineInput['housing_levy'] ?? 0);
         $paye = (float) ($lineInput['paye'] ?? 0);
         $deductions = (float) ($lineInput['deductions'] ?? ($nssf + $shif + $housing + $paye + $other));

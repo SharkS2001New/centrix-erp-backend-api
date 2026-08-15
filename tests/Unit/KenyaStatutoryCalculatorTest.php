@@ -69,4 +69,15 @@ class KenyaStatutoryCalculatorTest extends TestCase
         $r = $this->calculator->calculateMonthly(8000);
         $this->assertEquals(300, $r['shif']);
     }
+
+    public function test_shif_can_be_skipped_when_employee_opt_outs(): void
+    {
+        $r = $this->calculator->calculateMonthly(50000, 0, 0, null, false);
+
+        $this->assertEquals(0, $r['shif']);
+        $this->assertEquals(750, $r['housing_levy']);
+        $this->assertEquals(46250, $r['taxable_income']);
+        $this->assertEqualsWithDelta(6258.35, $r['paye'], 0.02);
+        $this->assertEqualsWithDelta(39991.65, $r['net_pay'], 0.02);
+    }
 }

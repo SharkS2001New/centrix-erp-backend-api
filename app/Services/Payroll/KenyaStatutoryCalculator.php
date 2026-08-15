@@ -33,6 +33,7 @@ class KenyaStatutoryCalculator
         float $otherDeductions = 0,
         float $privateInsurancePremiums = 0,
         ?int $organizationId = null,
+        bool $deductShif = true,
     ): array {
         $gross = round(max(0, $grossPay), 2);
         $other = round(max(0, $otherDeductions), 2);
@@ -42,7 +43,7 @@ class KenyaStatutoryCalculator
 
         $nssfParts = $this->nssf($gross, $cfg['nssf']);
         $nssf = $nssfParts['total'];
-        $shif = $this->shif($gross, $cfg['shif']);
+        $shif = $deductShif ? $this->shif($gross, $cfg['shif']) : 0.0;
         $housing = round($gross * (float) $cfg['housing_levy']['employee_rate'], 2);
 
         // SHIF is an allowable deduction from taxable income (Tax Laws Amendment Act 2024).

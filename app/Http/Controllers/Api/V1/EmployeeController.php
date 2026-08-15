@@ -385,6 +385,7 @@ class EmployeeController extends BaseResourceController
             'kra_pin' => 'nullable|string|max:45',
             'nssf_number' => 'nullable|string|max:45',
             'sha_number' => 'nullable|string|max:45',
+            'pays_sha' => 'nullable|boolean',
             'housing_levy_number' => 'nullable|string|max:45',
             'is_active' => 'nullable|boolean',
         ]);
