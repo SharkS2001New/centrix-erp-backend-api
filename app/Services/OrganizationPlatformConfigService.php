@@ -531,8 +531,8 @@ class OrganizationPlatformConfigService
             'advanced_data_import_pages' => AdvancedDataImportPageRegistry::defaultEnabledMap(),
             'stock_deduct_on' => [
                 'pos' => 'order_created',
-                'mobile' => $isDistribution ? 'order_completed' : 'order_created',
-                'backend' => $isDistribution ? 'order_completed' : 'order_created',
+                'mobile' => 'order_completed',
+                'backend' => 'order_completed',
             ],
             'require_pos_till_float' => false,
             'enable_pos_cash_rounding' => false,

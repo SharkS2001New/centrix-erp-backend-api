@@ -86,13 +86,6 @@ Schedule::command('erp:mark-attendance-absents')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/mark-attendance-absents.log'));
 
-// After the overnight punch window (02:00): close leftover evening sessions at shift end.
-Schedule::command('erp:close-forgotten-clock-outs')
-    ->dailyAt('02:00')
-    ->timezone(config('app.timezone', 'Africa/Nairobi'))
-    ->withoutOverlapping()
-    ->appendOutputTo(storage_path('logs/close-forgotten-clock-outs.log'));
-
 // Punches are expected 07:20–02:00 Africa/Nairobi. Skip the empty overnight gap.
 Schedule::command('erp:sync-hikvision-attendance')
     ->hourlyAt(20)

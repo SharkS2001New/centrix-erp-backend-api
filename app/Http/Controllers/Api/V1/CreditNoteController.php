@@ -309,10 +309,6 @@ class CreditNoteController extends Controller
             $creditDate = $rawDate ? (string) $rawDate : null;
         }
 
-        $returnedBy = $return->relationLoaded('returnedByUser') ? $return->returnedByUser : null;
-        $approvedBy = $return->relationLoaded('approvedByUser') ? $return->approvedByUser : null;
-        $lines = $return->relationLoaded('lines') ? $return->lines : [];
-
         return [
             // Prefer credit_notes.id when issued; otherwise the pending return id.
             'id' => $pendingOnly ? (int) $return->id : (int) $note->id,
@@ -331,25 +327,12 @@ class CreditNoteController extends Controller
             'return_kind' => $return->return_kind,
             'return_no' => $return->return_no,
             'kra_status' => $note?->kra_status,
-            'kra_cu_inv_no' => $note?->kra_cu_inv_no,
-            'kra_invoice_number' => $note?->kra_invoice_number,
-            'kra_receipt_signature' => $note?->kra_receipt_signature,
-            'kra_signature_link' => $note?->kra_signature_link,
-            'kra_serial_number' => $note?->kra_serial_number,
-            'kra_timestamp' => $note?->kra_timestamp,
-            'kra_refund_reason_code' => $note?->kra_refund_reason_code,
-            'kra_relevant_invoice_number' => $note?->kra_relevant_invoice_number,
             'status' => $return->status,
             'can_approve' => (bool) ($return->can_approve ?? false),
             'can_reject' => (bool) ($return->can_reject ?? false),
             'can_delete' => (bool) ($return->can_delete ?? false),
             'can_edit' => (bool) ($return->can_edit ?? false),
             'can_print' => true,
-            'lines' => $lines,
-            'processed_by_name' => $approvedBy?->full_name ?? $approvedBy?->username
-                ?? $returnedBy?->full_name ?? $returnedBy?->username,
-            'returned_by_user' => $returnedBy,
-            'approved_by_user' => $approvedBy,
             'sale' => $return->sale,
             'customer' => $return->customer,
             'customer_return' => $return,

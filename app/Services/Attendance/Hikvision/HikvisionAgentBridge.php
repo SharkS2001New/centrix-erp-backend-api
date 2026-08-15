@@ -60,10 +60,15 @@ class HikvisionAgentBridge
         $device = $device->fresh() ?? $device;
         $status = $this->agentStatus($device);
         if (! $status['online']) {
+            $lastSeen = $status['last_seen_at'] ?? null;
+            $error = $lastSeen
+                ? self::AGENT_NAME.' is installed but has not checked in with Centrix in the last 90 seconds. Windows Services can show Running while the PC is still getting internet or the agent is starting. Wait about a minute and refresh — do not re-download unless this stays offline.'
+                : self::AGENT_NAME.' is not checking in. Download the agent zip for this device, install it on a LAN PC, and keep the Windows service running.';
+
             return [
                 'online' => false,
                 'agent' => $status,
-                'error' => self::AGENT_NAME.' is not running. Download the agent zip for this device, install it on a LAN PC, and keep the Windows service running.',
+                'error' => $error,
             ];
         }
 
@@ -130,8 +135,11 @@ class HikvisionAgentBridge
         string $accept = 'json',
     ): HikvisionIsapiResponse {
         if (! $this->isAgentOnline($device)) {
+            $seen = $device->agent_last_seen_at;
             throw new RuntimeException(
-                self::AGENT_NAME.' is offline. Download the agent zip for this device and keep the Windows service running.',
+                $seen
+                    ? self::AGENT_NAME.' is offline (last check-in was more than 90 seconds ago). The Windows service can still show Running. Wait for internet, then refresh — re-download only if it never comes online.'
+                    : self::AGENT_NAME.' is offline. Download the agent zip for this device and keep the Windows service running.',
             );
         }
 

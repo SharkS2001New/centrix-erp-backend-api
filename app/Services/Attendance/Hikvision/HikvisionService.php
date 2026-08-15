@@ -328,8 +328,8 @@ class HikvisionService
                 $hints[] = 'Verify the device HTTP port is 80 (not the Centrix API port 8000).';
             }
         }
-        if (str_contains($raw, 'Attendance agent is offline') || str_contains($raw, 'did not respond in time')) {
-            $hints[] = 'Download the agent zip from Administration → Attendance clock-in, install on a Windows PC on the office LAN, and ensure it stays running.';
+        if (str_contains($raw, 'Attendance agent is offline') || str_contains($raw, 'did not respond in time') || str_contains($raw, 'has not checked in')) {
+            $hints[] = 'The Windows service can show Running while the agent is still starting or has no internet. Wait a minute and refresh before downloading a new zip.';
         }
         if (str_contains($raw, '401') || str_contains($raw, 'Unauthorized')) {
             $hints[] = 'Check the device username and password.';

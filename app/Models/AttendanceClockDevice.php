@@ -27,14 +27,6 @@ class AttendanceClockDevice extends Model
         'last_synced_at',
         'last_event_at',
         'last_sync_error',
-        'device_name',
-        'device_info_json',
-        'capabilities_json',
-        'capabilities_fetched_at',
-        'last_event_serial',
-        'last_communication_at',
-        'agent_last_seen_at',
-        'agent_version',
     ];
 
     protected $casts = [
@@ -43,11 +35,6 @@ class AttendanceClockDevice extends Model
         'port' => 'integer',
         'last_synced_at' => 'datetime',
         'last_event_at' => 'datetime',
-        'last_communication_at' => 'datetime',
-        'capabilities_fetched_at' => 'datetime',
-        'agent_last_seen_at' => 'datetime',
-        'device_info_json' => 'array',
-        'capabilities_json' => 'array',
     ];
 
     protected $hidden = [
@@ -81,30 +68,5 @@ class AttendanceClockDevice extends Model
         } catch (\Throwable) {
             return null;
         }
-    }
-
-    /** Org-scoped implicit route binding ({attendance_clock_device} legacy routes). */
-    public function resolveRouteBinding($value, $field = null)
-    {
-        $key = $field ?? $this->getRouteKeyName();
-        if ($key === $this->getRouteKeyName() && (! ctype_digit((string) $value) || (int) $value < 1)) {
-            abort(404, 'Attendance clock device not found. It may have been removed or belongs to another organization.');
-        }
-
-        $query = static::query()->where($key, $value);
-        $user = request()->user();
-        $request = request();
-
-        if ($user && ! ($user->is_super_admin && ! $request->attributes->get('acting_organization_id'))) {
-            app(\App\Services\Auth\UserAccessService::class)
-                ->scopeOrganization($query, $user, 'organization_id', $request);
-        }
-
-        $device = $query->first();
-        if (! $device) {
-            abort(404, 'Attendance clock device not found. It may have been removed or belongs to another organization.');
-        }
-
-        return $device;
     }
 }

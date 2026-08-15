@@ -172,8 +172,6 @@ class ErpSettingsController extends Controller
             'show_print_proforma_invoice_option',
             'invoice_document_template',
             'proforma_document_template',
-            'credit_note_document_template',
-            'receipt_document_template',
             'proforma_valid_days',
             'show_proforma_payment_details',
             'proforma_payment_details',
@@ -286,8 +284,6 @@ class ErpSettingsController extends Controller
             'show_print_proforma_invoice_option' => 'sometimes|boolean',
             'invoice_document_template' => 'sometimes|string|max:40',
             'proforma_document_template' => 'sometimes|string|max:40',
-            'credit_note_document_template' => 'sometimes|string|max:40',
-            'receipt_document_template' => 'sometimes|string|max:40',
             'proforma_valid_days' => 'sometimes|integer|min:0|max:365',
             'show_proforma_payment_details' => 'sometimes|boolean',
             'use_same_print_phones_for_proforma' => 'sometimes|boolean',
@@ -557,9 +553,6 @@ class ErpSettingsController extends Controller
             'loading_sheet_show_trip_expenses',
             'loading_sheet_show_trip_profit',
             'loading_sheet_default_checked_by',
-            'loading_sheet_document_template',
-            'picking_list_document_template',
-            'trip_chart_document_template',
             'enable_fulfillment_guidance',
             'mobile_enable_driver_app',
             'mobile_enable_driver_attendance',
@@ -572,9 +565,6 @@ class ErpSettingsController extends Controller
             'set_delivery_date_on' => ['sometimes', 'string', $statusRule],
             'loading_sheet_footer_lines' => 'sometimes|nullable|string|max:2000',
             'loading_sheet_default_checked_by' => 'sometimes|nullable|string|max:120',
-            'loading_sheet_document_template' => 'sometimes|string|max:40',
-            'picking_list_document_template' => 'sometimes|string|max:40',
-            'trip_chart_document_template' => 'sometimes|string|max:40',
         ];
         foreach ($distributionKeys as $key) {
             if (array_key_exists($key, $rules)) {
@@ -594,8 +584,7 @@ class ErpSettingsController extends Controller
         if (! $gate->enabled('distribution')) {
             $data = array_filter(
                 $data,
-                static fn ($key) => str_starts_with((string) $key, 'loading_sheet_')
-                    || in_array($key, ['picking_list_document_template', 'trip_chart_document_template'], true),
+                static fn ($key) => str_starts_with((string) $key, 'loading_sheet_'),
                 ARRAY_FILTER_USE_KEY,
             );
         }
@@ -981,7 +970,6 @@ class ErpSettingsController extends Controller
             'print_footer_picking_list' => 'sometimes|nullable|string|max:4000',
             'print_footer_trip_chart' => 'sometimes|nullable|string|max:4000',
             'print_footer_payroll_receipt' => 'sometimes|nullable|string|max:4000',
-            'payroll_receipt_document_template' => 'sometimes|string|max:40',
             'show_organization_on_documents' => 'sometimes|boolean',
             'enable_tab_workspace' => 'sometimes|boolean',
             'document_header_display' => 'sometimes|in:auto,logo,name,logo_and_name',
@@ -1155,7 +1143,6 @@ class ErpSettingsController extends Controller
             'check_print_phones' => 'sometimes|nullable|array',
             'check_print_phones.tel1' => 'sometimes|nullable|string|max:40',
             'check_print_phones.tel2' => 'sometimes|nullable|string|max:40',
-            'hospitality_check_document_template' => 'sometimes|string|max:40',
         ]);
 
         $current = $org->module_settings ?? [];

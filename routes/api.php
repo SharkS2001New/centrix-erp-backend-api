@@ -1216,9 +1216,9 @@ Route::prefix('v1')->group(function () {
             Route::post('attendance/duplicate-punches/dismiss', [AttendanceMissedPunchesController::class, 'dismissDuplicates'])
                 ->middleware('erp.permission:hr.duplicate_punches.view|hr.attendance.view|hr.manage|hr.view|admin.manage');
             Route::get('employee-attendance/day-preview', [EmployeeAttendanceController::class, 'dayPreview'])
-                ->middleware('erp.permission:hr.manual_attendance.create|hr.attendance.create|hr.attendance.view|hr.view');
+                ->middleware('erp.permission:hr.view');
             Route::post('employee-attendance/bulk', [EmployeeAttendanceController::class, 'bulkStore'])
-                ->middleware('erp.permission:hr.manual_attendance.create|hr.attendance.create|hr.manage');
+                ->middleware('erp.permission:hr.manage');
             Route::post('employee-attendance/mark-absents', [EmployeeAttendanceController::class, 'markAbsents'])
                 ->middleware('erp.permission:hr.manage');
             Route::post('employee-attendance/bulk-delete', [EmployeeAttendanceController::class, 'bulkDestroy'])
@@ -1256,7 +1256,7 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::apiResource('employee-attendance', EmployeeAttendanceController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.attendance.view|hr.attendance_history.view|hr.absents.view|hr.lateness.view|hr.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manual_attendance.create|hr.attendance.create|hr.manage']);
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::post('pay-periods/ensure-runnable', [PayPeriodController::class, 'ensureRunnable'])
                 ->middleware('erp.permission:hr.manage');
             Route::apiResource('pay-periods', PayPeriodController::class)

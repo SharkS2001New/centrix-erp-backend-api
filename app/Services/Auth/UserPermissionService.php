@@ -130,7 +130,7 @@ class UserPermissionService
             }
         }
 
-        if ($this->managerSessionGrantsPermission($user, $permissionCode, $gate)) {
+        if ($gate !== null && $this->managerSessionGrantsPermission($user, $permissionCode, $gate)) {
             return true;
         }
 
@@ -406,9 +406,7 @@ class UserPermissionService
     /** @return array<string, bool> Role-assigned feature codes for accurate sidebar / nav visibility. */
     public function navigationPermissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
-        $direct = $this->directPermissionMapForUser($user, $gate);
-        $map = $this->expandGrantedHrCapabilities($direct);
-        $map = $this->expandCapabilityAliases($map);
+        $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
         $map = $this->expandNavigationDashboardPermissions($map);
         // Do NOT expand sales.orders.view → every sales.order_queue_*.view here.
         // Sidebar queue links require the explicit queue grant from the Roles matrix.
@@ -429,9 +427,7 @@ class UserPermissionService
     /** @return array<string, bool> */
     public function permissionMapForUser(User $user, ?CapabilityGate $gate = null): array
     {
-        $direct = $this->directPermissionMapForUser($user, $gate);
-        $map = $this->expandGrantedHrCapabilities($direct);
-        $map = $this->expandCapabilityAliases($map);
+        $map = $this->expandCapabilityAliases($this->directPermissionMapForUser($user, $gate));
         $map = $this->expandNavigationDashboardPermissions($map);
         $map = $this->expandLegacySalesOrderQueueView($map);
         // Mirror hasPermission('sales.create'|'driver.mobile') for mobile app UI codes.
@@ -674,9 +670,9 @@ class UserPermissionService
     protected function managerSessionGrantsPermission(
         User $user,
         string $permissionCode,
-        CapabilityGate $gate,
+        ?CapabilityGate $gate,
     ): bool {
-        if (! $gate->managerAppEnabled() || ! $this->hasDirectPermission($user, 'mobile_manager.app.access')) {
+        if ($gate === null || ! $gate->managerAppEnabled() || ! $this->hasDirectPermission($user, 'mobile_manager.app.access')) {
             return false;
         }
 
@@ -778,31 +774,6 @@ class UserPermissionService
 
         foreach (SalesOrderQueuePermissions::allViewPermissionCodes() as $code) {
             $map[$code] = true;
-        }
-
-        return $map;
-    }
-
-    /**
-     * When a role is assigned hr.view / hr.manage capability codes (not leaf checkboxes),
-     * copy those aliases onto the nav/API maps. Does not expand from a single leaf such as
-     * hr.employees.view — that would light up every Time & Attendance page.
-     *
-     * @param  array<string, bool>  $directMap
-     * @return array<string, bool>
-     */
-    protected function expandGrantedHrCapabilities(array $directMap): array
-    {
-        $map = $directMap;
-        foreach (['hr.view', 'hr.manage'] as $capability) {
-            if (! ($directMap[$capability] ?? false)) {
-                continue;
-            }
-            foreach (config('permission_aliases.'.$capability, []) as $alias) {
-                if (is_string($alias) && $alias !== '') {
-                    $map[$alias] = true;
-                }
-            }
         }
 
         return $map;
