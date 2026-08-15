@@ -112,3 +112,8 @@ Schedule::call(function () {
         now()->addHours(2),
     );
 })->everyMinute()->name('platform-scheduler-heartbeat');
+
+Schedule::command('erp:monitor-attendance-agents')
+    ->everyMinute()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/monitor-attendance-agents.log'));
