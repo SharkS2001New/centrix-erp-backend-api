@@ -52,12 +52,8 @@ class HikvisionAttendanceSyncService
         ];
 
         try {
-            if (! $this->agentBridge->isAgentOnline($device)) {
-                throw new \RuntimeException(
-                    'CentrixAttendanceAgent is offline. Keep the Windows service running on the office LAN, then Sync attendance again.',
-                );
-            }
-
+            // Prefer using the LAN agent when available, but allow direct device
+            // connections from the server when the agent is offline.
             $client = new HikvisionIsapiClient($device, $this->agentBridge);
             $caps = $device->capabilities_json ?? null;
             $events = $client->fetchAccessEvents($from, $to, 1000, is_array($caps) ? $caps : null);

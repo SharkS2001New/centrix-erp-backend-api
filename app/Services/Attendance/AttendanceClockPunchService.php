@@ -54,7 +54,7 @@ class AttendanceClockPunchService
         }
 
         $hrOverride = (bool) ($payload['hr_override'] ?? false);
-        $source = $hrOverride ? 'hr_applied' : 'clock_device';
+        $source = $this->normalizeAttendanceSource($hrOverride ? 'hr_applied' : 'clock_device');
 
         $open = EmployeeClockSession::query()
             ->where('employee_id', $employee->id)
@@ -144,6 +144,37 @@ class AttendanceClockPunchService
         }
 
         return $this->clockOut($employee, $punchedAt, $deviceNo, $open, $source);
+    }
+
+    protected ?array $attendanceSourceCache = null;
+
+    protected function normalizeAttendanceSource(string $source): string
+    {
+        $supported = $this->attendanceSourceCache ??= $this->fetchAttendanceSourcesFromDb();
+        return in_array($source, $supported, true) ? $source : ($source === 'clock_device' ? 'clock_device' : 'manual');
+    }
+
+    /**
+     * Read the enum values for `employee_attendance.source` from the DB (MySQL only) and return as array.
+     */
+    protected function fetchAttendanceSourcesFromDb(): array
+    {
+        try {
+            $row = DB::selectOne("SHOW COLUMNS FROM `employee_attendance` LIKE 'source'");
+            if (! $row || empty($row->Type)) {
+                return ['manual', 'clock_device'];
+            }
+            if (! preg_match("/^enum\((.*)\)$/", $row->Type, $m)) {
+                return ['manual', 'clock_device'];
+            }
+            $vals = array_map(function ($s) {
+                return trim($s, "'\"");
+            }, explode(',', $m[1]));
+
+            return $vals;
+        } catch (\Throwable $e) {
+            return ['manual', 'clock_device'];
+        }
     }
 
     public function deleteSession(int $organizationId, int $sessionId): void
