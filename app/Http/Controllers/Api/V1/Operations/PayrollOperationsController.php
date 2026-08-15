@@ -48,7 +48,12 @@ class PayrollOperationsController extends Controller
             app(UserAccessService::class)->scopeOrganization($query, $user, 'organization_id', $request);
         }
 
-        return $query->firstOrFail();
+        $run = $query->first();
+        if (! $run) {
+            abort(404, 'Payroll run not found.');
+        }
+
+        return $run;
     }
 
     /** GET /payroll/kenya-statutory — formulas and rates for UI */
