@@ -96,6 +96,20 @@ class WorkShift extends Model
 
         $lunchRequired = $lunchRequired && $lunchMinutes > 0;
 
+        // Short Sat/Sun/holiday hours (e.g. 08:00–12:00) are a full day for that
+        // roster. Do not inherit weekday lunch unless weekend lunch is set explicitly.
+        if ($useAlternateTimes && ! $this->hasAlternateLunchOverride() && $lunchRequired) {
+            $startMin = $this->clockToMinutes($start);
+            $endMin = $this->clockToMinutes($end);
+            if ($startMin !== null && $endMin !== null) {
+                $span = $crosses ? ((24 * 60) - $startMin + $endMin) : max(0, $endMin - $startMin);
+                if ($span > 0 && $span < (6 * 60)) {
+                    $lunchRequired = false;
+                    $lunchMinutes = 0;
+                }
+            }
+        }
+
         return [
             'start_time' => $start,
             'end_time' => $end,
@@ -103,6 +117,18 @@ class WorkShift extends Model
             'lunch_minutes' => $lunchRequired ? $lunchMinutes : 0,
             'lunch_required' => $lunchRequired,
         ];
+    }
+
+    protected function clockToMinutes(?string $time): ?int
+    {
+        if ($time === null || $time === '') {
+            return null;
+        }
+        if (! preg_match('/^(\d{1,2}):(\d{2})/', $time, $m)) {
+            return null;
+        }
+
+        return ((int) $m[1] * 60) + (int) $m[2];
     }
 
     /**

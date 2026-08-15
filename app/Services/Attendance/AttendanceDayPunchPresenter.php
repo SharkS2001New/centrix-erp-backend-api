@@ -107,12 +107,13 @@ class AttendanceDayPunchPresenter
         $lunchFrom = $this->toMinutes($windows['lunch_clock_out_from'] ?? null);
         $lunchTo = $this->toMinutes($windows['lunch_clock_out_to'] ?? null);
         $eveningFrom = $this->toMinutes($windows['evening_clock_out_from'] ?? null);
+        $eveningTo = $this->toMinutes($windows['evening_clock_out_to'] ?? null);
 
+        if ($eveningFrom !== null && $this->inRange($minutes, $eveningFrom, $eveningTo ?? ((24 * 60) - 1))) {
+            return 'clock_out';
+        }
         if ($lunchFrom !== null && $lunchTo !== null && $this->inRange($minutes, $lunchFrom, $lunchTo)) {
             return 'lunch_out';
-        }
-        if ($eveningFrom !== null && $minutes >= $eveningFrom) {
-            return 'clock_out';
         }
         if ($lunchFrom !== null && $minutes < $lunchFrom) {
             return 'clock_out';

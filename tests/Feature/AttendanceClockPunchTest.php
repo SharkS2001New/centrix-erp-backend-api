@@ -660,6 +660,39 @@ class AttendanceClockPunchTest extends TestCase
         $this->assertNull(EmployeeClockSession::query()->where('employee_id', $this->employee->id)->value('clock_out_at'));
     }
 
+    public function test_saturday_noon_punch_closes_the_day_not_lunch(): void
+    {
+        Sanctum::actingAs($this->admin);
+        WorkShift::query()->whereKey($this->employee->shift_id)->update([
+            'use_alternate_hours' => true,
+            'alternate_start_time' => '08:00:00',
+            'alternate_end_time' => '12:00:00',
+        ]);
+        $this->employee->unsetRelation('shift');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-15T08:05:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated()->assertJsonPath('action', 'in');
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-15T12:02:00+03:00',
+            'direction' => 'auto',
+        ])->assertOk()->assertJsonPath('action', 'out');
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-15',
+            'status' => 'present',
+            'check_out' => '12:02:00',
+            'lunch_status' => '-',
+        ]);
+    }
+
     public function test_clock_in_and_lunch_out_without_return_is_half_day(): void
     {
         Sanctum::actingAs($this->admin);

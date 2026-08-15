@@ -83,25 +83,25 @@ class PayrollEarningsService
             : $expectedHours;
 
         if ($useProration && $expectedDays > 0) {
-            // Full-month calendar basis: Sundays/holidays count; remaining period days are credited.
+            // Payable days: attendance, paid leave, and rest days through yesterday only.
+            // Today is still open; remaining period days are not credited.
             $paidDays = round((float) ($attendanceSummary['paid_days'] ?? 0), 2);
-            $salaryDays = round($paidDays + $remainingDays, 2);
             $monthDaysBasis = $this->payrollMonthDaysBasis((int) $employee->organization_id);
             if ($monthDaysBasis === 'fixed_30') {
                 $absentDays = (float) ($attendanceSummary['absent_days'] ?? 0);
                 $ratio = max(0, (30 - $absentDays) / 30);
             } else {
-                $ratio = $salaryDays / $expectedDays;
+                $ratio = $paidDays / $expectedDays;
             }
             // Lateness / short hours on an otherwise paid day reduce salary by the hour shortfall.
             $lateMinutes = (int) ($attendanceSummary['late_minutes_total'] ?? 0);
             if ($lateMinutes > 0 && $expectedHours > 0) {
                 $ratio = max(0, $ratio - (($lateMinutes / 60) / $expectedHours));
             }
-            $payrollBasic = round($contractBasic * $ratio, 2);
+            $periodBasic = round($contractBasic * $ratio, 2);
             $dailyRate = round($contractBasic / $this->monthDayDivisor($monthDaysBasis, $expectedDays), 2);
         } else {
-            $payrollBasic = $contractBasic;
+            $periodBasic = $contractBasic;
             $paidDays = $expectedDays;
             $monthDaysBasis = $this->payrollMonthDaysBasis((int) $employee->organization_id);
             $dailyRate = $expectedDays > 0
@@ -124,7 +124,7 @@ class PayrollEarningsService
             ? $this->approvedOvertimeInPeriod($employee->id, $start, $end)
             : 0.0;
 
-        $grossBeforeOther = round($payrollBasic + $allowances + $overtimeTotal, 2);
+        $grossBeforeOther = round($periodBasic + $allowances + $overtimeTotal, 2);
         $contractGrossForOther = round($contractBasic + $allowanceBreakdown['monthly'], 2);
         $other = 0.0;
         $deductionsDetail = [];
@@ -137,19 +137,20 @@ class PayrollEarningsService
 
         return [
             'employee_id' => $employee->id,
-            'basic_salary' => $payrollBasic,
+            'basic_salary' => $contractBasic,
             'allowances' => $allowances,
             'gross_pay' => $grossBeforeOther,
             'other_deductions' => round($other, 2),
             'payroll_meta' => [
                 'contract_monthly_salary' => $contractBasic,
+                'period_basic' => $periodBasic,
                 'monthly_allowance' => $allowanceBreakdown['monthly'],
                 'contract_gross_for_statutory' => $contractGrossForOther,
                 'allowance_source' => $allowanceBreakdown['source'],
                 'allowance_lines' => $allowanceBreakdown['lines'],
                 'allowances_period' => $allowances,
                 'expected_work_days' => $expectedDays,
-                'paid_work_days' => round($paidDays + ($useProration ? $remainingDays : 0), 2),
+                'paid_work_days' => $useProration ? round($paidDays, 2) : $expectedDays,
                 'calendar_paid_days' => $useProration ? round($paidDays, 2) : $expectedDays,
                 'remaining_days' => $useProration ? round($remainingDays, 2) : 0.0,
                 'expected_hours' => round($expectedHours, 2),
@@ -241,12 +242,9 @@ class PayrollEarningsService
                 $expectedHours += $dayExpectedHours;
             }
 
-            // Future days in the period are not absences — credited separately for salary.
-            if ($cursor->gt($today)) {
+            // Today has not ended, and later days are not paid. Do not credit remaining hours.
+            if ($cursor->gte($today)) {
                 $remaining += 1.0;
-                if ($isWorkday) {
-                    $paidHours += $dayExpectedHours;
-                }
                 $cursor->addDay();
 
                 continue;
@@ -306,7 +304,7 @@ class PayrollEarningsService
             $cursor->addDay();
         }
 
-        // Paid calendar days through today (attendance + paid leave + rest days). Remaining is separate.
+        // Paid calendar days through yesterday (attendance + paid leave + rest days). Remaining is unpaid.
         $paidDays = round($attended + $paidLeave + $restDaysPaid, 2);
         $calendarDays = round($expected, 2);
         $expectedForPay = $this->resolveExpectedPayDays((int) $employee->organization_id, $start, $end);

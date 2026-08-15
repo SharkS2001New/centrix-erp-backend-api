@@ -44,10 +44,10 @@ class AttendancePunchWindowResolver
         }
 
         if ($open) {
-            if ($this->inWindow($minutes, $windows['lunch_clock_out_from'], $windows['lunch_clock_out_to'])) {
+            if ($this->inWindow($minutes, $windows['evening_clock_out_from'], $windows['evening_clock_out_to'])) {
                 return self::ACTION_OUT;
             }
-            if ($this->inWindow($minutes, $windows['evening_clock_out_from'], $windows['evening_clock_out_to'])) {
+            if ($this->inWindow($minutes, $windows['lunch_clock_out_from'], $windows['lunch_clock_out_to'])) {
                 return self::ACTION_OUT;
             }
 
@@ -209,6 +209,9 @@ class AttendancePunchWindowResolver
             : 0;
         $grace = $this->orgLateGraceMinutes($settings);
 
+        $eveningFrom = $this->wrapMinutes($end - 60);
+        $eveningTo = $this->wrapMinutes($end + 300);
+
         $lunchOutFrom = '';
         $lunchOutTo = '';
         $lunchInFrom = '';
@@ -216,10 +219,13 @@ class AttendancePunchWindowResolver
         if ($lunchMin > 0 && $span > $lunchMin) {
             $lunchStart = $this->wrapMinutes($start + (int) floor(($span - $lunchMin) / 2));
             $lunchEnd = $this->wrapMinutes($lunchStart + $lunchMin);
-            $lunchOutFrom = $this->formatMinutes($this->wrapMinutes($lunchStart - 30));
-            $lunchOutTo = $this->formatMinutes($lunchEnd);
-            $lunchInFrom = $this->formatMinutes($lunchStart);
-            $lunchInTo = $this->formatMinutes($this->wrapMinutes($lunchEnd + 120));
+            // Drop lunch windows that collide with shift-end clock-out (half-day Saturday).
+            if (! $this->rangesOverlap($this->wrapMinutes($lunchStart - 30), $lunchEnd, $eveningFrom, $eveningTo)) {
+                $lunchOutFrom = $this->formatMinutes($this->wrapMinutes($lunchStart - 30));
+                $lunchOutTo = $this->formatMinutes($lunchEnd);
+                $lunchInFrom = $this->formatMinutes($lunchStart);
+                $lunchInTo = $this->formatMinutes($this->wrapMinutes($lunchEnd + 120));
+            }
         }
 
         return [
@@ -229,8 +235,8 @@ class AttendancePunchWindowResolver
             'lunch_clock_out_to' => $lunchOutTo,
             'lunch_clock_in_from' => $lunchInFrom,
             'lunch_clock_in_to' => $lunchInTo,
-            'evening_clock_out_from' => $this->formatMinutes($this->wrapMinutes($end - 60)),
-            'evening_clock_out_to' => $this->formatMinutes($this->wrapMinutes($end + 300)),
+            'evening_clock_out_from' => $this->formatMinutes($eveningFrom),
+            'evening_clock_out_to' => $this->formatMinutes($eveningTo),
             'clock_in_late_after' => $this->formatMinutes($this->wrapMinutes($start + $grace)),
             'source' => 'shift',
         ];
@@ -314,6 +320,15 @@ class AttendancePunchWindowResolver
                     });
             })
             ->exists();
+    }
+
+    protected function rangesOverlap(int $aFrom, int $aTo, int $bFrom, int $bTo): bool
+    {
+        if ($aTo < $aFrom || $bTo < $bFrom) {
+            return false;
+        }
+
+        return $aFrom <= $bTo && $bFrom <= $aTo;
     }
 
     protected function inWindow(int $minutes, mixed $from, mixed $to): bool

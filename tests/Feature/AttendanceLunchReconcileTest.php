@@ -355,6 +355,72 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertSame(60, $weekday['lunch_minutes']);
     }
 
+    public function test_short_saturday_hours_do_not_inherit_weekday_lunch(): void
+    {
+        $saturday = '2026-08-15';
+        $this->shift->update([
+            'works_saturday' => true,
+            'use_alternate_hours' => true,
+            'alternate_start_time' => '08:00:00',
+            'alternate_end_time' => '12:00:00',
+        ]);
+
+        $hours = $this->shift->fresh()->hoursForDate($saturday, false);
+        $this->assertFalse($hours['lunch_required']);
+        $this->assertSame(0, $hours['lunch_minutes']);
+        $this->assertSame('08:00:00', $hours['start_time']);
+        $this->assertSame('12:00:00', $hours['end_time']);
+
+        $weekday = $this->shift->fresh()->hoursForDate($this->workDate, false);
+        $this->assertTrue($weekday['lunch_required']);
+        $this->assertSame(60, $weekday['lunch_minutes']);
+        $this->assertSame('17:00:00', $weekday['end_time']);
+    }
+
+    public function test_saturday_noon_clock_out_is_end_of_day_not_lunch(): void
+    {
+        $saturday = '2026-08-15';
+        $this->shift->update([
+            'works_saturday' => true,
+            'use_alternate_hours' => true,
+            'alternate_start_time' => '08:00:00',
+            'alternate_end_time' => '12:00:00',
+        ]);
+
+        EmployeeClockSession::query()->create([
+            'employee_id' => $this->employee->id,
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->employee->branch_id,
+            'source' => 'clock_device',
+            'clock_in_at' => Carbon::parse($saturday.' 08:05:00'),
+            'clock_out_at' => Carbon::parse($saturday.' 12:02:00'),
+        ]);
+        $sessions = EmployeeClockSession::query()
+            ->where('employee_id', $this->employee->id)
+            ->orderBy('clock_in_at')
+            ->get();
+
+        $punches = app(\App\Services\Attendance\AttendanceDayPunchPresenter::class)->present(
+            $this->employee->fresh('shift'),
+            $saturday,
+            $sessions,
+        );
+
+        $this->assertFalse($punches['lunch_required']);
+        $this->assertSame('08:05', $punches['clock_in']);
+        $this->assertNull($punches['lunch_out']);
+        $this->assertSame('12:02', $punches['clock_out']);
+
+        $att = app(AttendanceDayReconciler::class)->reconcileFromSessions(
+            $this->employee->fresh('shift'),
+            $saturday,
+        );
+
+        $this->assertSame('present', $att->status);
+        $this->assertSame('12:02:00', $att->check_out);
+        $this->assertEquals(4.0, (float) $att->expected_hours);
+    }
+
     public function test_lateness_waiver_restores_paid_hours(): void
     {
         $this->addSession('08:30:00', '13:00:00');
@@ -383,6 +449,7 @@ class AttendanceLunchReconcileTest extends TestCase
 
     public function test_payroll_prorates_basic_by_paid_over_expected_hours(): void
     {
+        $this->travelTo('2026-07-21 10:00:00');
         // One late day: 7.5 paid of 8 expected on a single-day period.
         $this->addSession('08:30:00', '13:00:00');
         $this->addSession('14:00:00', '17:00:00');
@@ -413,19 +480,20 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertNotNull($line);
         $this->assertEquals(8.5, (float) $line['payroll_meta']['paid_hours']);
         $this->assertEquals(9.0, (float) $line['payroll_meta']['expected_hours']);
+        $this->assertEquals(44000.0, (float) $line['basic_salary']);
         // One paid day minus 15 late minutes: 44000 * (1 - (15/60)/9) ≈ 42777.78
-        $this->assertEquals(42777.78, (float) $line['basic_salary']);
+        $this->assertEquals(42777.78, (float) $line['payroll_meta']['period_basic']);
     }
 
     public function test_payroll_uses_calendar_days_through_today_not_future_absences(): void
     {
         // Mon–Fri worker, paid across calendar days (Sun counts in place).
-        // Mid-month run on 24 Jul for 1–31: show 24/31, not future days as absent.
+        // Mid-month run on 24 Jul for 1–31: pay through yesterday (23rd). Today is incomplete.
         $this->travelTo('2026-07-24 10:00:00');
 
         $cursor = Carbon::parse('2026-07-01');
-        $today = Carbon::parse('2026-07-24');
-        while ($cursor->lte($today)) {
+        $throughYesterday = Carbon::parse('2026-07-23');
+        while ($cursor->lte($throughYesterday)) {
             // Shift is Mon–Fri; create attendance only on scheduled days.
             if ($cursor->isWeekday()) {
                 $date = $cursor->toDateString();
@@ -452,10 +520,70 @@ class AttendanceLunchReconcileTest extends TestCase
         );
 
         $this->assertSame(31.0, $summary['expected_days']);
-        $this->assertSame(24.0, $summary['paid_days']);
-        $this->assertSame(7.0, $summary['remaining_days']);
+        $this->assertSame(23.0, $summary['paid_days']);
+        $this->assertSame(8.0, $summary['remaining_days']);
         $this->assertSame(0.0, $summary['absent_days']);
         $this->assertGreaterThan(0.0, $summary['rest_days_paid']);
+
+        $period = PayPeriod::query()->create([
+            'organization_id' => $this->org->id,
+            'period_code' => 'LNCH'.uniqid(),
+            'period_start' => '2026-07-01',
+            'period_end' => '2026-07-31',
+            'status' => 'open',
+        ]);
+        $line = app(PayrollEarningsService::class)->buildLineInput(
+            $this->employee->fresh('shift'),
+            $period,
+            [
+                'include_allowances' => false,
+                'include_other_deductions' => false,
+                'include_overtime' => false,
+                'use_attendance_proration' => true,
+            ],
+        );
+        $this->assertEquals(44000.0, (float) $line['basic_salary']);
+        $this->assertEquals(23.0, (float) $line['payroll_meta']['paid_work_days']);
+        $this->assertEquals(8.0, (float) $line['payroll_meta']['remaining_days']);
+        $this->assertEquals(round(44000 * 23 / 31, 2), (float) $line['payroll_meta']['period_basic']);
+        $this->assertEquals((float) $line['payroll_meta']['period_basic'], (float) $line['gross_pay']);
+    }
+
+    public function test_payroll_excludes_today_when_run_mid_august(): void
+    {
+        $this->travelTo('2026-08-15 10:00:00');
+
+        $cursor = Carbon::parse('2026-08-01');
+        $throughYesterday = Carbon::parse('2026-08-14');
+        while ($cursor->lte($throughYesterday)) {
+            if ($cursor->isWeekday()) {
+                $date = $cursor->toDateString();
+                EmployeeClockSession::query()->create([
+                    'employee_id' => $this->employee->id,
+                    'organization_id' => $this->org->id,
+                    'branch_id' => $this->employee->branch_id,
+                    'source' => 'clock_device',
+                    'clock_in_at' => Carbon::parse($date.' 08:00:00'),
+                    'clock_out_at' => Carbon::parse($date.' 17:00:00'),
+                ]);
+                app(AttendanceDayReconciler::class)->reconcileFromSessions(
+                    $this->employee->fresh('shift'),
+                    $date,
+                );
+            }
+            $cursor->addDay();
+        }
+
+        $summary = app(PayrollEarningsService::class)->summarizeAttendance(
+            $this->employee->fresh('shift'),
+            '2026-08-01',
+            '2026-08-31',
+        );
+
+        $this->assertSame(31.0, $summary['expected_days']);
+        $this->assertSame(14.0, $summary['paid_days']);
+        $this->assertSame(17.0, $summary['remaining_days']);
+        $this->assertSame(0.0, $summary['absent_days']);
     }
 
     public function test_clock_in_and_lunch_out_only_is_half_day(): void
@@ -489,6 +617,7 @@ class AttendanceLunchReconcileTest extends TestCase
 
     public function test_payroll_deducts_clock_in_and_lunch_lateness(): void
     {
+        $this->travelTo('2026-07-21 10:00:00');
         $this->addSession('08:30:00', '13:00:00');
         $this->addSession('14:15:00', '17:00:00');
         app(AttendanceDayReconciler::class)->reconcileFromSessions(
@@ -519,8 +648,9 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertSame(15, (int) $attendance['clock_in_late_minutes_total']);
         $this->assertSame(15, (int) $attendance['lunch_late_minutes_total']);
         $this->assertSame(30, (int) $attendance['late_minutes_total']);
+        $this->assertEquals(44000.0, (float) $line['basic_salary']);
         // 44000 * (1 - (30/60)/9) ≈ 41555.56
-        $this->assertEquals(41555.56, (float) $line['basic_salary']);
+        $this->assertEquals(41555.56, (float) $line['payroll_meta']['period_basic']);
     }
 
     public function test_deny_pending_overtime_caps_clock_out_to_shift_end(): void
