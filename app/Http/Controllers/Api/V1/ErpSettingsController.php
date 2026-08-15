@@ -554,6 +554,8 @@ class ErpSettingsController extends Controller
             'loading_sheet_show_trip_profit',
             'loading_sheet_default_checked_by',
             'enable_fulfillment_guidance',
+            'enable_product_shelf_location',
+            'show_load_tonnage',
             'mobile_enable_driver_app',
             'mobile_enable_driver_attendance',
         ];
@@ -584,7 +586,10 @@ class ErpSettingsController extends Controller
         if (! $gate->enabled('distribution')) {
             $data = array_filter(
                 $data,
-                static fn ($key) => str_starts_with((string) $key, 'loading_sheet_'),
+                static fn ($key) => str_starts_with((string) $key, 'loading_sheet_')
+                    || $key === 'show_load_tonnage'
+                    || str_starts_with((string) $key, 'picking_list_')
+                    || str_starts_with((string) $key, 'trip_chart_'),
                 ARRAY_FILTER_USE_KEY,
             );
         }

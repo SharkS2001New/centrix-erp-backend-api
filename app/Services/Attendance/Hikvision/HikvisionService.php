@@ -403,8 +403,8 @@ class HikvisionService
             'device' => $device,
             'online' => $agent['online']
                 || (
-                    ($lastComm = AppTimezone::normalize($device->last_communication_at))
-                    && $lastComm->gt(AppTimezone::now()->subMinutes(30))
+                    filled($device->last_communication_at)
+                    && $device->last_communication_at->gt(AppTimezone::now()->subMinutes(30))
                 ),
             'counts' => $counts,
             'agent' => $agent,

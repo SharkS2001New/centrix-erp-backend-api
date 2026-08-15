@@ -664,6 +664,7 @@ return [
             'loading_sheet_default_checked_by' => '',
             'enable_fulfillment_guidance' => false,
             'enable_product_shelf_location' => false,
+            'show_load_tonnage' => true,
             'mobile_enable_driver_app' => true,
             'mobile_enable_driver_attendance' => false,
         ],

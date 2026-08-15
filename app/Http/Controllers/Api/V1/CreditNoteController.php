@@ -151,16 +151,16 @@ class CreditNoteController extends Controller
     {
         $resolved = $this->resolveCreditNoteResource($id);
         $return = $resolved['return'];
-        $return->load([
-            'lines.product.unit',
-            'sale.items.product.unit',
-            'customer',
-            'returnedByUser',
-            'approvedByUser',
-            'rejectedByUser',
-            'creditNote',
-        ]);
-        $this->service->withActionFlags($return, request()->user());
+            $return->load([
+                'lines.product.unit',
+                'sale.items.product.unit',
+                'customer',
+                'returnedByUser',
+                'approvedByUser',
+                'rejectedByUser',
+                'creditNote',
+            ]);
+            $this->service->withActionFlags($return, request()->user());
 
         return response()->json($this->serializeListRow($return, request()->user()));
     }
@@ -266,14 +266,14 @@ class CreditNoteController extends Controller
         $user = request()->user();
 
         if (Schema::hasTable('credit_notes')) {
-            $note = CreditNote::query()
-                ->with(['customerReturn', 'sale', 'customerReturn.customer'])
-                ->where('organization_id', $user->organization_id)
-                ->whereHas('customerReturn', fn ($inner) => $inner->where('return_kind', 'credit_note'))
+        $note = CreditNote::query()
+            ->with(['customerReturn', 'sale', 'customerReturn.customer'])
+            ->where('organization_id', $user->organization_id)
+            ->whereHas('customerReturn', fn ($inner) => $inner->where('return_kind', 'credit_note'))
                 ->find($id);
 
             if ($note) {
-                app(UserAccessService::class)->assertBranchAccess($user, (int) $note->branch_id);
+        app(UserAccessService::class)->assertBranchAccess($user, (int) $note->branch_id);
                 $return = $note->customerReturn;
                 abort_unless($return, 404);
 

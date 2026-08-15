@@ -60,7 +60,6 @@ class PermissionMatrixService
             self::ensureNotificationsForBackofficeRoles();
             self::ensureShopDebtorsForCustomerViewRoles();
             self::ensureCollectPaymentForPosCashierRoles();
-            self::ensureHrTimeAttendancePagesForExistingRoles();
             // Shared Administrator must keep every industry shell (commerce + hospitality).
             // Without this, hotel tenants only see Administration after the is_admin
             // least-privilege change (operational access comes from the role matrix).
@@ -781,89 +780,5 @@ class PermissionMatrixService
                 'permission_id' => $collectId,
             ]);
         }
-    }
-
-    /**
-     * New Time & attendance pages — grant view to roles that already had Attendance
-     * or Overtime so upgrades keep the sidebar without re-editing every role.
-     */
-    public static function ensureHrTimeAttendancePagesForExistingRoles(): int
-    {
-        self::ensureRegistryPermissions();
-
-        $inserted = 0;
-        $inserted += self::grantCodesToRolesThatHave('hr.attendance.view', [
-            'hr.attendance_history.view',
-            'hr.missed_punches.view',
-            'hr.duplicate_punches.view',
-            'hr.absents.view',
-            'hr.lateness.view',
-        ]);
-        $inserted += self::grantCodesToRolesThatHave('hr.overtime.view', [
-            'hr.pending_overtime.view',
-        ]);
-        $inserted += self::grantCodesToRolesThatHave('hr.overtime.edit', [
-            'hr.pending_overtime.approve',
-        ]);
-        $inserted += self::grantCodesToRolesThatHave('hr.attendance.create', [
-            'hr.manual_attendance.create',
-        ]);
-        // Roles granted the HR module capability (not leaf checkboxes) still need page codes
-        // for sidebar nav, which checks assigned_permissions by exact feature code.
-        $inserted += self::grantCodesToRolesThatHave('hr.view', [
-            'hr.attendance.view',
-            'hr.attendance_history.view',
-            'hr.missed_punches.view',
-            'hr.duplicate_punches.view',
-            'hr.absents.view',
-            'hr.lateness.view',
-            'hr.leave.view',
-            'hr.shifts.view',
-            'hr.pending_overtime.view',
-            'hr.overtime.view',
-        ]);
-
-        return $inserted;
-    }
-
-    /**
-     * @param  list<string>  $targetCodes
-     */
-    protected static function grantCodesToRolesThatHave(string $sourceCode, array $targetCodes): int
-    {
-        $sourceId = Permission::query()
-            ->where('permission_code', $sourceCode)
-            ->value('id');
-        if (! $sourceId) {
-            return 0;
-        }
-
-        $targetIds = Permission::query()
-            ->whereIn('permission_code', $targetCodes)
-            ->pluck('id');
-        if ($targetIds->isEmpty()) {
-            return 0;
-        }
-
-        $roleIds = \Illuminate\Support\Facades\DB::table('role_permissions')
-            ->where('permission_id', $sourceId)
-            ->pluck('role_id');
-
-        $adminRoleIds = \App\Models\Role::query()
-            ->whereIn('role_name', ['Administrator', 'Admin'])
-            ->pluck('id');
-
-        $inserted = 0;
-        foreach ($roleIds->merge($adminRoleIds)->unique() as $roleId) {
-            foreach ($targetIds as $permissionId) {
-                $affected = (int) \Illuminate\Support\Facades\DB::table('role_permissions')->insertOrIgnore([
-                    'role_id' => $roleId,
-                    'permission_id' => $permissionId,
-                ]);
-                $inserted += $affected;
-            }
-        }
-
-        return $inserted;
     }
 }

@@ -44,7 +44,7 @@ class PayrollEarningsService
         }
 
         $includeAllowances = (bool) ($options['include_allowances'] ?? true);
-        $includeOther = (bool) ($options['include_other_deductions'] ?? $options['include_deductions'] ?? true);
+        $includeOther = (bool) ($options['include_other_deductions'] ?? false);
         $includeOvertime = (bool) ($options['include_overtime'] ?? true);
         $useProration = (bool) ($options['use_attendance_proration'] ?? true);
         $hr = HrPayrollSettingsResolver::forOrganizationId((int) $employee->organization_id);
@@ -78,9 +78,6 @@ class PayrollEarningsService
         }
 
         $remainingDays = (float) ($attendanceSummary['remaining_days'] ?? 0);
-        $absentDays = (float) ($attendanceSummary['absent_days'] ?? 0);
-        $unpaidLeaveDays = (float) ($attendanceSummary['unpaid_leave_days'] ?? 0);
-        $lateMinutes = (int) ($attendanceSummary['late_minutes_total'] ?? 0);
         $paidHours = $useProration
             ? (float) ($attendanceSummary['paid_hours'] ?? $expectedHours)
             : $expectedHours;
@@ -91,11 +88,13 @@ class PayrollEarningsService
             $paidDays = round((float) ($attendanceSummary['paid_days'] ?? 0), 2);
             $monthDaysBasis = $this->payrollMonthDaysBasis((int) $employee->organization_id);
             if ($monthDaysBasis === 'fixed_30') {
+                $absentDays = (float) ($attendanceSummary['absent_days'] ?? 0);
                 $ratio = max(0, (30 - $absentDays) / 30);
             } else {
                 $ratio = $paidDays / $expectedDays;
             }
             // Lateness / short hours on an otherwise paid day reduce salary by the hour shortfall.
+            $lateMinutes = (int) ($attendanceSummary['late_minutes_total'] ?? 0);
             if ($lateMinutes > 0 && $expectedHours > 0) {
                 $ratio = max(0, $ratio - (($lateMinutes / 60) / $expectedHours));
             }
@@ -110,18 +109,6 @@ class PayrollEarningsService
                 : 0.0;
             $ratio = 1.0;
         }
-
-        $absentAmount = 0.0;
-        $unpaidLeaveAmount = 0.0;
-        $latenessAmount = 0.0;
-        if ($useProration) {
-            $absentAmount = round($absentDays * $dailyRate, 2);
-            $unpaidLeaveAmount = round($unpaidLeaveDays * $dailyRate, 2);
-            if ($lateMinutes > 0 && $expectedHours > 0) {
-                $latenessAmount = round($contractBasic * (($lateMinutes / 60) / $expectedHours), 2);
-            }
-        }
-        $attendanceDeduction = round($absentAmount + $unpaidLeaveAmount + $latenessAmount, 2);
 
         $allowanceBreakdown = $this->resolveAllowances(
             $employee,
@@ -171,13 +158,6 @@ class PayrollEarningsService
                 'hour_ratio' => round($ratio, 4),
                 'daily_rate' => $dailyRate,
                 'overtime' => $overtimeTotal,
-                'absent_days' => $useProration ? $absentDays : 0.0,
-                'unpaid_leave_days' => $useProration ? $unpaidLeaveDays : 0.0,
-                'late_minutes_total' => $useProration ? $lateMinutes : 0,
-                'absent_amount' => $absentAmount,
-                'unpaid_leave_amount' => $unpaidLeaveAmount,
-                'lateness_amount' => $latenessAmount,
-                'attendance_deduction' => $attendanceDeduction,
                 'attendance' => $attendanceSummary,
                 'deductions_detail' => $deductionsDetail,
                 'other_deductions_percent_base' => $contractGrossForOther,

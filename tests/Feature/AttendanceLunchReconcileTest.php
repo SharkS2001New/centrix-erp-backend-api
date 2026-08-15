@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Models\Employee;
 use App\Models\EmployeeClockSession;
-use App\Models\EmployeeDeduction;
 use App\Models\EmployeeOvertime;
 use App\Models\Organization;
 use App\Models\PayPeriod;
@@ -484,8 +483,6 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertEquals(44000.0, (float) $line['basic_salary']);
         // One paid day minus 15 late minutes: 44000 * (1 - (15/60)/9) ≈ 42777.78
         $this->assertEquals(42777.78, (float) $line['payroll_meta']['period_basic']);
-        $this->assertEquals(1222.22, (float) $line['payroll_meta']['lateness_amount']);
-        $this->assertEquals(0.0, (float) $line['payroll_meta']['absent_amount']);
     }
 
     public function test_payroll_uses_calendar_days_through_today_not_future_absences(): void
@@ -673,80 +670,6 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertEquals(44000.0, (float) $line['basic_salary']);
         // 44000 * (1 - (30/60)/9) ≈ 41555.56
         $this->assertEquals(41555.56, (float) $line['payroll_meta']['period_basic']);
-        $this->assertEquals(2444.44, (float) $line['payroll_meta']['lateness_amount']);
-        $this->assertEquals(0.0, (float) $line['payroll_meta']['absent_amount']);
-    }
-
-    public function test_payroll_loan_absent_lateness_and_overtime_amounts(): void
-    {
-        $this->travelTo('2026-07-22 10:00:00');
-
-        $this->addSession('08:30:00', '13:00:00');
-        $this->addSession('14:15:00', '17:00:00');
-        app(AttendanceDayReconciler::class)->reconcileFromSessions(
-            $this->employee->fresh('shift'),
-            $this->workDate,
-        );
-
-        EmployeeDeduction::query()->create([
-            'employee_id' => $this->employee->id,
-            'branch_id' => $this->employee->branch_id,
-            'name' => 'Staff loan',
-            'calc_type' => 'fixed',
-            'amount' => 2000,
-            'is_active' => true,
-            'frequency' => EmployeeDeduction::FREQUENCY_PER_CYCLE,
-        ]);
-
-        EmployeeOvertime::query()->create([
-            'employee_id' => $this->employee->id,
-            'organization_id' => $this->org->id,
-            'branch_id' => $this->employee->branch_id,
-            'work_date' => $this->workDate,
-            'hours' => 2,
-            'amount' => 1500,
-            'status' => 'approved',
-        ]);
-
-        $period = PayPeriod::query()->create([
-            'organization_id' => $this->org->id,
-            'period_code' => 'LNCH'.uniqid(),
-            'period_start' => $this->workDate,
-            'period_end' => '2026-07-21',
-            'status' => 'open',
-        ]);
-
-        $line = app(PayrollEarningsService::class)->buildLineInput(
-            $this->employee->fresh('shift'),
-            $period,
-            [
-                'include_allowances' => false,
-                'include_other_deductions' => true,
-                'include_overtime' => true,
-                'use_attendance_proration' => true,
-            ],
-        );
-
-        $this->assertNotNull($line);
-        $this->assertEquals(1.0, (float) $line['payroll_meta']['attendance']['absent_days']);
-        $this->assertSame(30, (int) $line['payroll_meta']['late_minutes_total']);
-        $this->assertEquals(22000.0, (float) $line['payroll_meta']['absent_amount']);
-        $this->assertEquals(1222.22, (float) $line['payroll_meta']['lateness_amount']);
-        $this->assertEquals(23222.22, (float) $line['payroll_meta']['attendance_deduction']);
-        $this->assertEquals(1500.0, (float) $line['payroll_meta']['overtime']);
-        $loan = collect($line['payroll_meta']['deductions_detail'] ?? [])
-            ->first(fn ($row) => ($row['name'] ?? '') === 'Staff loan');
-        $this->assertNotNull($loan);
-        $this->assertEquals(2000.0, (float) $loan['amount']);
-        $this->assertGreaterThanOrEqual(2000.0, (float) $line['other_deductions']);
-        $this->assertEquals(
-            round((float) $line['payroll_meta']['period_basic'] + 1500, 2),
-            (float) $line['gross_pay'],
-        );
-        $this->assertEquals(
-            round(44000 * (1 / 2 - (30 / 60) / 18), 2),
-            (float) $line['payroll_meta']['period_basic'],
-        );
     }
 
     public function test_deny_pending_overtime_caps_clock_out_to_shift_end(): void
