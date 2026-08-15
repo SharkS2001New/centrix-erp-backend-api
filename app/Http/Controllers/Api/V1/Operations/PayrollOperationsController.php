@@ -150,11 +150,12 @@ class PayrollOperationsController extends Controller
                 $periodGross = (float) ($lineInput['gross_pay'] ?? ($basic + $allowances + $overtime));
                 $other = (float) ($lineInput['other_deductions'] ?? 0);
 
-                // PAYE / NSSF / SHIF / AHL use the employee's set (contract) monthly gross,
-                // not attendance-prorated period pay. Overtime earned in the period is still taxable.
+                // PAYE / NSSF / SHIF / AHL use the employee's contract monthly basic+allowance
+                // (do NOT include overtime). Overtime remains part of the period gross
+                // for net-pay calculation but should not increase statutory deductions.
                 $contractBasic = (float) ($meta['contract_monthly_salary'] ?? $employee->base_salary ?? $basic);
                 $monthlyAllowance = (float) ($meta['monthly_allowance'] ?? 0);
-                $statutoryGross = round($contractBasic + $monthlyAllowance + $overtime, 2);
+                $statutoryGross = round($contractBasic + $monthlyAllowance, 2);
                 if ($statutoryGross <= 0) {
                     $statutoryGross = $periodGross;
                 }
