@@ -153,4 +153,22 @@ class AttendanceAbsentMaterializerTest extends TestCase
 
         $this->assertSame(0, $result['created_count']);
     }
+
+    public function test_does_not_mark_unscheduled_weekday_absent(): void
+    {
+        $this->shift->update(['work_weekdays' => [6]]); // Saturday only
+        $this->employee->unsetRelation('shift');
+
+        $monday = '2026-07-20';
+        $result = app(AttendanceAbsentMaterializer::class)->markDate($this->org->id, $monday);
+
+        $this->assertSame(
+            0,
+            EmployeeAttendance::query()
+                ->where('employee_id', $this->employee->id)
+                ->whereDate('attendance_date', $monday)
+                ->count(),
+        );
+        $this->assertSame(0, collect($result['created'])->where('employee_id', $this->employee->id)->count());
+    }
 }

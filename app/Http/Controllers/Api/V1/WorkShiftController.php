@@ -79,6 +79,8 @@ class WorkShiftController extends HrOrgResourceController
             'crosses_midnight' => 'nullable|boolean',
             'works_saturday' => 'nullable|boolean',
             'works_sunday' => 'nullable|boolean',
+            'work_weekdays' => 'nullable|array',
+            'work_weekdays.*' => 'integer|min:0|max:6',
             'works_public_holidays' => 'nullable|boolean',
             'use_alternate_hours' => 'nullable|boolean',
             'alternate_start_time' => 'nullable|date_format:H:i,H:i:s',
@@ -109,6 +111,28 @@ class WorkShiftController extends HrOrgResourceController
                     'alternate_start_time' => ['Set alternate start and end times for Saturday / public holidays.'],
                 ]);
             }
+        }
+
+        if (array_key_exists('work_weekdays', $data)) {
+            $days = array_values(array_unique(array_map('intval', $data['work_weekdays'] ?? [])));
+            $days = array_values(array_filter($days, fn ($d) => $d >= 0 && $d <= 6));
+            if ($days === []) {
+                throw ValidationException::withMessages([
+                    'work_weekdays' => ['Select at least one working day for this shift.'],
+                ]);
+            }
+            $data['work_weekdays'] = $days;
+            $data['works_saturday'] = in_array(6, $days, true);
+            $data['works_sunday'] = in_array(0, $days, true);
+        } elseif (! $updating) {
+            $days = [1, 2, 3, 4, 5];
+            if (! empty($data['works_saturday'])) {
+                $days[] = 6;
+            }
+            if (! empty($data['works_sunday'])) {
+                $days[] = 0;
+            }
+            $data['work_weekdays'] = $days;
         }
 
         return $data;

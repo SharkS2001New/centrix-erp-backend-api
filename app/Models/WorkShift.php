@@ -23,6 +23,7 @@ class WorkShift extends Model
         'crosses_midnight',
         'works_saturday',
         'works_sunday',
+        'work_weekdays',
         'works_public_holidays',
         'use_alternate_hours',
         'alternate_start_time',
@@ -37,6 +38,7 @@ class WorkShift extends Model
         'crosses_midnight' => 'boolean',
         'works_saturday' => 'boolean',
         'works_sunday' => 'boolean',
+        'work_weekdays' => 'array',
         'works_public_holidays' => 'boolean',
         'use_alternate_hours' => 'boolean',
         'alternate_crosses_midnight' => 'boolean',
@@ -44,6 +46,26 @@ class WorkShift extends Model
         'alternate_lunch_required' => 'boolean',
         'is_active' => 'boolean',
     ];
+
+    /**
+     * Carbon dayOfWeek ints (0=Sun … 6=Sat). Null means legacy Mon–Fri plus weekend flags.
+     *
+     * @return list<int>|null
+     */
+    public function scheduledWeekdays(): ?array
+    {
+        $raw = $this->work_weekdays;
+        if ($raw === null || $raw === '') {
+            return null;
+        }
+        if (! is_array($raw)) {
+            return null;
+        }
+        $days = array_values(array_unique(array_map('intval', $raw)));
+        $days = array_values(array_filter($days, fn ($d) => $d >= 0 && $d <= 6));
+
+        return $days === [] ? null : $days;
+    }
 
     /**
      * Resolve start/end/lunch for a calendar day.

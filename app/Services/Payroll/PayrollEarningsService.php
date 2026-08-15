@@ -44,7 +44,7 @@ class PayrollEarningsService
         }
 
         $includeAllowances = (bool) ($options['include_allowances'] ?? true);
-        $includeOther = (bool) ($options['include_other_deductions'] ?? false);
+        $includeOther = (bool) ($options['include_other_deductions'] ?? $options['include_deductions'] ?? true);
         $includeOvertime = (bool) ($options['include_overtime'] ?? true);
         $useProration = (bool) ($options['use_attendance_proration'] ?? true);
         $hr = HrPayrollSettingsResolver::forOrganizationId((int) $employee->organization_id);
@@ -78,23 +78,24 @@ class PayrollEarningsService
         }
 
         $remainingDays = (float) ($attendanceSummary['remaining_days'] ?? 0);
+        $absentDays = (float) ($attendanceSummary['absent_days'] ?? 0);
+        $unpaidLeaveDays = (float) ($attendanceSummary['unpaid_leave_days'] ?? 0);
+        $lateMinutes = (int) ($attendanceSummary['late_minutes_total'] ?? 0);
         $paidHours = $useProration
             ? (float) ($attendanceSummary['paid_hours'] ?? $expectedHours)
             : $expectedHours;
 
         if ($useProration && $expectedDays > 0) {
-            // Payable days: attendance, paid leave, and rest days through yesterday only.
-            // Today is still open; remaining period days are not credited.
+            // Payable days: scheduled shift workdays attended or on paid leave through yesterday.
+            // Off days are not paid and are not absences. Today is still open.
             $paidDays = round((float) ($attendanceSummary['paid_days'] ?? 0), 2);
             $monthDaysBasis = $this->payrollMonthDaysBasis((int) $employee->organization_id);
             if ($monthDaysBasis === 'fixed_30') {
-                $absentDays = (float) ($attendanceSummary['absent_days'] ?? 0);
                 $ratio = max(0, (30 - $absentDays) / 30);
             } else {
                 $ratio = $paidDays / $expectedDays;
             }
             // Lateness / short hours on an otherwise paid day reduce salary by the hour shortfall.
-            $lateMinutes = (int) ($attendanceSummary['late_minutes_total'] ?? 0);
             if ($lateMinutes > 0 && $expectedHours > 0) {
                 $ratio = max(0, $ratio - (($lateMinutes / 60) / $expectedHours));
             }
@@ -109,6 +110,18 @@ class PayrollEarningsService
                 : 0.0;
             $ratio = 1.0;
         }
+
+        $absentAmount = 0.0;
+        $unpaidLeaveAmount = 0.0;
+        $latenessAmount = 0.0;
+        if ($useProration) {
+            $absentAmount = round($absentDays * $dailyRate, 2);
+            $unpaidLeaveAmount = round($unpaidLeaveDays * $dailyRate, 2);
+            if ($lateMinutes > 0 && $expectedHours > 0) {
+                $latenessAmount = round($contractBasic * (($lateMinutes / 60) / $expectedHours), 2);
+            }
+        }
+        $attendanceDeduction = round($absentAmount + $unpaidLeaveAmount + $latenessAmount, 2);
 
         $allowanceBreakdown = $this->resolveAllowances(
             $employee,
@@ -158,6 +171,13 @@ class PayrollEarningsService
                 'hour_ratio' => round($ratio, 4),
                 'daily_rate' => $dailyRate,
                 'overtime' => $overtimeTotal,
+                'absent_days' => $useProration ? $absentDays : 0.0,
+                'unpaid_leave_days' => $useProration ? $unpaidLeaveDays : 0.0,
+                'late_minutes_total' => $useProration ? $lateMinutes : 0,
+                'absent_amount' => $absentAmount,
+                'unpaid_leave_amount' => $unpaidLeaveAmount,
+                'lateness_amount' => $latenessAmount,
+                'attendance_deduction' => $attendanceDeduction,
                 'attendance' => $attendanceSummary,
                 'deductions_detail' => $deductionsDetail,
                 'other_deductions_percent_base' => $contractGrossForOther,
@@ -173,6 +193,7 @@ class PayrollEarningsService
      *   paid_days: float,
      *   remaining_days: float,
      *   rest_days_paid: float,
+     *   rest_days_off: float,
      *   attended_days: float,
      *   assumed_future_days: float,
      *   paid_leave_days: float,
@@ -212,7 +233,7 @@ class PayrollEarningsService
         $expected = 0.0;
         $attended = 0.0;
         $remaining = 0.0;
-        $restDaysPaid = 0.0;
+        $restDaysOff = 0.0;
         $paidLeave = 0.0;
         $unpaidLeave = 0.0;
         $deductibleOffDays = 0.0;
@@ -230,29 +251,25 @@ class PayrollEarningsService
 
         while ($cursor->lte($endDay)) {
             $date = $cursor->toDateString();
-            // Full-month pay: every calendar day (including Sundays/holidays) is an expected pay day.
-            $expected += 1.0;
-
             $isWorkday = $this->dayPolicy->isScheduledWorkday($employee, $date);
             $dayExpectedHours = $isWorkday
                 ? $this->attendanceReconciler->expectedPaidHours($employee, $date)
                 : 0.0;
 
-            if ($isWorkday) {
-                $expectedHours += $dayExpectedHours;
-            }
-
-            // Today has not ended, and later days are not paid. Do not credit remaining hours.
-            if ($cursor->gte($today)) {
-                $remaining += 1.0;
+            // Off days (not on the shift / employee work week) are not paid and not absences.
+            if (! $isWorkday) {
+                $restDaysOff += 1.0;
                 $cursor->addDay();
 
                 continue;
             }
 
-            // Rest days (weekends / public holidays) count toward full-month pay automatically.
-            if (! $isWorkday) {
-                $restDaysPaid += 1.0;
+            $expected += 1.0;
+            $expectedHours += $dayExpectedHours;
+
+            // Today has not ended, and later scheduled days are not paid yet.
+            if ($cursor->gte($today)) {
+                $remaining += 1.0;
                 $cursor->addDay();
 
                 continue;
@@ -304,18 +321,22 @@ class PayrollEarningsService
             $cursor->addDay();
         }
 
-        // Paid calendar days through yesterday (attendance + paid leave + rest days). Remaining is unpaid.
-        $paidDays = round($attended + $paidLeave + $restDaysPaid, 2);
-        $calendarDays = round($expected, 2);
-        $expectedForPay = $this->resolveExpectedPayDays((int) $employee->organization_id, $start, $end);
-        $absent = round(max(0, $calendarDays - $paidDays - $unpaidLeave - $remaining), 2);
+        // Paid scheduled workdays through yesterday. Off days are excluded from expected and absent.
+        $paidDays = round($attended + $paidLeave, 2);
+        $scheduledDays = round($expected, 2);
+        $calendarDays = (float) (Carbon::parse($start)->startOfDay()->diffInDays(Carbon::parse($end)->startOfDay()) + 1);
+        $expectedForPay = $this->payrollMonthDaysBasis((int) $employee->organization_id) === 'fixed_30'
+            ? 30.0
+            : $scheduledDays;
+        $absent = round(max(0, $scheduledDays - $paidDays - $unpaidLeave - $remaining), 2);
 
         return [
             'expected_days' => $expectedForPay,
             'calendar_days_in_period' => $calendarDays,
             'paid_days' => $paidDays,
             'remaining_days' => round($remaining, 2),
-            'rest_days_paid' => round($restDaysPaid, 2),
+            'rest_days_paid' => 0.0,
+            'rest_days_off' => round($restDaysOff, 2),
             'attended_days' => round($attended, 2),
             'assumed_future_days' => round($remaining, 2),
             'paid_leave_days' => round($paidLeave, 2),
@@ -334,7 +355,21 @@ class PayrollEarningsService
 
     public function expectedWorkDays(Employee $employee, string $start, string $end): float
     {
-        return $this->resolveExpectedPayDays((int) $employee->organization_id, $start, $end);
+        if ($this->payrollMonthDaysBasis((int) $employee->organization_id) === 'fixed_30') {
+            return 30.0;
+        }
+
+        $count = 0.0;
+        $cursor = Carbon::parse($start)->startOfDay();
+        $endDay = Carbon::parse($end)->startOfDay();
+        while ($cursor->lte($endDay)) {
+            if ($this->dayPolicy->isScheduledWorkday($employee, $cursor->toDateString())) {
+                $count += 1.0;
+            }
+            $cursor->addDay();
+        }
+
+        return $count;
     }
 
     protected function payrollMonthDaysBasis(int $organizationId): string
@@ -344,22 +379,13 @@ class PayrollEarningsService
         return ($hr['payroll_month_days_basis'] ?? 'calendar') === 'fixed_30' ? 'fixed_30' : 'calendar';
     }
 
-    protected function resolveExpectedPayDays(int $organizationId, string $start, string $end): float
-    {
-        if ($this->payrollMonthDaysBasis($organizationId) === 'fixed_30') {
-            return 30.0;
-        }
-
-        return (float) (Carbon::parse($start)->startOfDay()->diffInDays(Carbon::parse($end)->startOfDay()) + 1);
-    }
-
-    protected function monthDayDivisor(string $basis, float $calendarExpectedDays): float
+    protected function monthDayDivisor(string $basis, float $scheduledExpectedDays): float
     {
         if ($basis === 'fixed_30') {
             return 30.0;
         }
 
-        return max(1.0, $calendarExpectedDays);
+        return max(1.0, $scheduledExpectedDays);
     }
 
     /**

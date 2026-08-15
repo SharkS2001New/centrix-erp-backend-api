@@ -289,7 +289,12 @@ class AttendanceDayPolicy
             return in_array($dow, $custom, true);
         }
 
-        // Default: Mon–Fri always; Sat/Sun only when the shift includes them.
+        $shiftDays = $shift?->scheduledWeekdays();
+        if ($shiftDays !== null) {
+            return in_array($dow, $shiftDays, true);
+        }
+
+        // Legacy: Mon–Fri always; Sat/Sun only when the shift includes them.
         if ($dow === Carbon::SATURDAY) {
             return (bool) ($shift?->works_saturday);
         }

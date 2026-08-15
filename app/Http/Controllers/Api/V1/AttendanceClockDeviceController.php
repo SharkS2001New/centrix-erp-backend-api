@@ -130,6 +130,7 @@ class AttendanceClockDeviceController extends HrOrgResourceController
             'config' => [
                 'centrixApiUrl' => $apiUrl,
                 'centrixToken' => $token->plainTextToken,
+                'deviceId' => (int) $device->id,
                 'deviceNo' => $device->device_no,
                 'hikvision' => [
                     'host' => (string) ($host ?? ''),
