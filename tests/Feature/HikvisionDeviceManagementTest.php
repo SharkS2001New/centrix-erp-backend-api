@@ -1170,6 +1170,32 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertStringContainsString('CentrixAttendanceAgent', (string) $res->json('errors.0'));
     }
 
+    public function test_refresh_attendance_does_not_crash_when_agent_last_seen_is_a_database_string(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-HR-SEEN',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'capabilities_json' => ['features' => ['events' => true]],
+            'agent_last_seen_at' => now()->subMinutes(5),
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $fresh = AttendanceClockDevice::query()->findOrFail($device->id);
+        $bridge = app(\App\Services\Attendance\Hikvision\HikvisionAgentBridge::class);
+        $this->assertFalse($bridge->isAgentOnline($fresh));
+
+        $fresh->forceFill(['agent_last_seen_at' => now()])->save();
+        $this->assertTrue($bridge->isAgentOnline($fresh->fresh()));
+    }
+
     public function test_fingerprint_search_still_queries_terminal_when_capability_flag_is_false(): void
     {
         $device = new AttendanceClockDevice([

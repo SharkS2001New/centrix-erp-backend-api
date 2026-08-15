@@ -30,7 +30,7 @@ class HikvisionAgentBridge
 
     public function isAgentOnline(AttendanceClockDevice $device): bool
     {
-        $seen = $device->agent_last_seen_at;
+        $seen = AppTimezone::normalize($device->agent_last_seen_at);
         if ($seen === null) {
             return false;
         }
@@ -45,7 +45,7 @@ class HikvisionAgentBridge
         return [
             'name' => self::AGENT_NAME,
             'online' => $online,
-            'last_seen_at' => optional($device->agent_last_seen_at)?->toIso8601String(),
+            'last_seen_at' => AppTimezone::toIso8601($device->agent_last_seen_at),
             'version' => $device->agent_version,
         ];
     }
