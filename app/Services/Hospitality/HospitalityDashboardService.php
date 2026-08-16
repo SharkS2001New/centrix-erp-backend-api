@@ -14,20 +14,19 @@ class HospitalityDashboardService
     public function summary(Organization $org): array
     {
         $today = now()->toDateString();
-        $totalRooms = HospitalityRoom::query()
+        $roomCounts = HospitalityRoom::query()
             ->where('organization_id', $org->id)
             ->where('is_active', true)
-            ->count();
-        $occupied = HospitalityRoom::query()
-            ->where('organization_id', $org->id)
-            ->where('is_active', true)
-            ->where('status', 'occupied')
-            ->count();
-        $dirty = HospitalityRoom::query()
-            ->where('organization_id', $org->id)
-            ->where('is_active', true)
-            ->where('status', 'dirty')
-            ->count();
+            ->selectRaw('status, COUNT(*) as cnt')
+            ->groupBy('status')
+            ->pluck('cnt', 'status');
+
+        $occupied = (int) ($roomCounts['occupied'] ?? 0);
+        $dirty = (int) ($roomCounts['dirty'] ?? 0);
+        $vacant = (int) ($roomCounts['vacant'] ?? 0);
+        $clean = (int) ($roomCounts['clean'] ?? 0);
+        $ooo = (int) ($roomCounts['ooo'] ?? 0);
+        $totalRooms = (int) $roomCounts->sum();
 
         $arrivals = HospitalityReservation::query()
             ->where('organization_id', $org->id)
@@ -53,9 +52,15 @@ class HospitalityDashboardService
 
         $fnbToday = HospitalityCheck::query()
             ->where('organization_id', $org->id)
-            ->whereIn('status', ['paid', 'settled'])
+            ->whereIn('status', HospitalityCheckService::PAID_STATUSES)
             ->whereDate('closed_at', $today)
             ->selectRaw('COUNT(*) as cnt, COALESCE(SUM(total),0) as revenue')
+            ->first();
+
+        $openFnb = HospitalityCheck::query()
+            ->where('organization_id', $org->id)
+            ->whereIn('status', HospitalityCheckService::EDITABLE_STATUSES)
+            ->selectRaw('COUNT(*) as cnt, COALESCE(SUM(total),0) as amount')
             ->first();
 
         return [
@@ -63,7 +68,10 @@ class HospitalityDashboardService
             'rooms' => [
                 'total' => $totalRooms,
                 'occupied' => $occupied,
+                'vacant' => $vacant,
                 'dirty' => $dirty,
+                'clean' => $clean,
+                'ooo' => $ooo,
                 'occupancy_pct' => $totalRooms > 0 ? round(($occupied / $totalRooms) * 100, 1) : 0,
             ],
             'arrivals_today' => $arrivals,
@@ -73,6 +81,8 @@ class HospitalityDashboardService
             'fnb_today' => [
                 'checks' => (int) ($fnbToday->cnt ?? 0),
                 'revenue' => round((float) ($fnbToday->revenue ?? 0), 2),
+                'open_checks' => (int) ($openFnb->cnt ?? 0),
+                'open_amount' => round((float) ($openFnb->amount ?? 0), 2),
             ],
         ];
     }

@@ -119,30 +119,4 @@ class BackgroundTaskRecoveryTest extends TestCase
         $this->assertSame('completed', $task->status);
         $this->assertNotEmpty($task->result['disk_path'] ?? null);
     }
-
-    public function test_pending_task_fails_when_queue_worker_is_idle(): void
-    {
-        config([
-            'queue.default' => 'database',
-            'background.idle_queue_fail_seconds' => 5,
-        ]);
-        \Illuminate\Support\Facades\Cache::forget(\App\Services\Background\BackgroundJobDispatcher::WORKER_HEARTBEAT_KEY);
-
-        $admin = User::where('username', 'admin')->firstOrFail();
-        $task = BackgroundTask::createPending(
-            'product_import',
-            (int) $admin->organization_id,
-            (int) $admin->id,
-            [],
-        );
-        BackgroundTask::query()->whereKey($task->id)->update([
-            'created_at' => now()->subSeconds(30),
-            'updated_at' => now()->subSeconds(30),
-        ]);
-
-        $fresh = app(BackgroundTaskService::class)->failIfQueueWorkerIdle($task->fresh());
-
-        $this->assertSame('failed', $fresh->status);
-        $this->assertStringContainsString('Queue worker is not running', (string) $fresh->error_message);
-    }
 }

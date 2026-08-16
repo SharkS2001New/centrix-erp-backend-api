@@ -69,4 +69,21 @@ class LocalPrintingSettingsTest extends TestCase
             ->assertOk()
             ->assertJsonPath('local_printing.provider', 'agent');
     }
+
+    public function test_can_set_kitchen_printer_for_hotel_pos_dual_print(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $this->patchJson('/api/v1/erp/settings/local-printing', [
+            'provider' => 'agent',
+            'printer_name' => 'Star TSP143',
+            'kitchen_printer_name' => 'Kitchen EPSON',
+            'fallback_to_browser' => true,
+        ])
+            ->assertOk()
+            ->assertJsonPath('local_printing.provider', 'agent')
+            ->assertJsonPath('local_printing.printer_name', 'Star TSP143')
+            ->assertJsonPath('local_printing.kitchen_printer_name', 'Kitchen EPSON');
+    }
 }

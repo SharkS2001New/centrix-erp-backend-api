@@ -831,6 +831,7 @@ return [
         'local_printing' => [
             'provider' => 'browser',
             'printer_name' => '',
+            'kitchen_printer_name' => '',
             'copies' => 1,
             'fallback_to_browser' => true,
             'require_qz' => false,

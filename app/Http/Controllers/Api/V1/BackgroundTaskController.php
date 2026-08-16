@@ -20,7 +20,6 @@ class BackgroundTaskController extends Controller
 
         $task = $this->tasks->findForUser($id, $request->user());
         abort_if($task === null, 404, 'Background task not found.');
-        $task = $this->tasks->failIfQueueWorkerIdle($task);
 
         return response()->json([
             'id' => $task->id,

@@ -13,6 +13,7 @@ class LocalPrintingSettingsResolver
         return config('erp.module_settings_defaults.local_printing', [
             'provider' => 'browser',
             'printer_name' => '',
+            'kitchen_printer_name' => '',
             'copies' => 1,
             'fallback_to_browser' => true,
             'require_qz' => false,
@@ -58,6 +59,7 @@ class LocalPrintingSettingsResolver
         }
 
         $out['printer_name'] = trim((string) ($out['printer_name'] ?? ''));
+        $out['kitchen_printer_name'] = trim((string) ($out['kitchen_printer_name'] ?? ''));
         $out['copies'] = max(1, min(10, (int) ($out['copies'] ?? 1)));
         $out['fallback_to_browser'] = true;
         $out['require_qz'] = false;
