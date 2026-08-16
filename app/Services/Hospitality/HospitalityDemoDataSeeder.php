@@ -2,6 +2,7 @@
 
 namespace App\Services\Hospitality;
 
+use App\Models\Branch;
 use App\Models\Category;
 use App\Models\CurrentStock;
 use App\Models\HospitalityCheck;
@@ -28,7 +29,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Platform-admin demo seed for Hotel POS testing (menu, tables, outlets).
+ * Platform-admin demo seed / wipe for Hotel POS testing (menu, tables, outlets).
  */
 class HospitalityDemoDataSeeder
 {
@@ -72,6 +73,146 @@ class HospitalityDemoDataSeeder
                 'tables' => count($tables),
                 'uoms' => count($uoms),
                 'product_codes' => array_values($products),
+            ];
+        });
+    }
+
+    /**
+     * Remove hotel/bar menu items, demo floor tables, and all F&B orders so the
+     * tenant can load real data. Keeps outlets, rooms, reservations, VAT, UOMs,
+     * and Food/Drinks categories.
+     *
+     * @return array{orders: int, products: int, tables: int}
+     */
+    public function removeForOrganization(Organization $org): array
+    {
+        if (($org->deployment_profile ?? '') !== 'hotel_bar') {
+            throw ValidationException::withMessages([
+                'organization' => ['Hotel POS demo data can only be removed for Hotel & Bar organizations.'],
+            ]);
+        }
+
+        return DB::transaction(function () use ($org) {
+            $orgId = (int) $org->id;
+
+            $checkIds = HospitalityCheck::query()
+                ->where('organization_id', $orgId)
+                ->pluck('id')
+                ->map(fn ($id) => (int) $id)
+                ->all();
+            $ordersRemoved = count($checkIds);
+
+            if ($checkIds !== []) {
+                HospitalityFolioCharge::query()
+                    ->where('organization_id', $orgId)
+                    ->whereIn('check_id', $checkIds)
+                    ->delete();
+
+                if (Schema::hasColumn('hospitality_rooms', 'sold_check_id')) {
+                    HospitalityRoom::query()
+                        ->where('organization_id', $orgId)
+                        ->whereIn('sold_check_id', $checkIds)
+                        ->update(['sold_check_id' => null]);
+                }
+
+                $stockTx = InventoryTransaction::query()
+                    ->where('reference_type', 'hospitality_check')
+                    ->whereIn('reference_id', $checkIds);
+                if (Schema::hasColumn('inventory_transactions', 'organization_id')) {
+                    $stockTx->where('organization_id', $orgId);
+                }
+                $stockTx->delete();
+
+                HospitalityCheck::query()
+                    ->where('organization_id', $orgId)
+                    ->whereIn('id', $checkIds)
+                    ->delete();
+            }
+
+            if (Schema::hasTable('hospitality_check_num_watermarks')) {
+                DB::table('hospitality_check_num_watermarks')
+                    ->where('organization_id', $orgId)
+                    ->delete();
+            }
+
+            $products = Product::withTrashed()
+                ->where('organization_id', $orgId)
+                ->where(function ($q) {
+                    $q->where('product_code', 'like', self::SEED_PREFIX.'-%');
+                    if (Schema::hasColumn('products', 'sell_on_hotel')) {
+                        $q->orWhere('sell_on_hotel', true);
+                    }
+                    if (Schema::hasColumn('products', 'sell_on_bar')) {
+                        $q->orWhere('sell_on_bar', true);
+                    }
+                })
+                ->get();
+
+            $codes = $products->pluck('product_code')->filter()->unique()->values()->all();
+            $productIds = $products->pluck('id')->filter()->unique()->values()->all();
+
+            if ($codes !== []) {
+                $recipeIds = HospitalityRecipe::query()
+                    ->where('organization_id', $orgId)
+                    ->whereIn('menu_product_code', $codes)
+                    ->pluck('id')
+                    ->all();
+                if ($recipeIds !== []) {
+                    HospitalityRecipe::query()->whereIn('id', $recipeIds)->delete();
+                }
+                HospitalityRecipeIngredient::query()
+                    ->where('organization_id', $orgId)
+                    ->whereIn('ingredient_product_code', $codes)
+                    ->delete();
+
+                RetailPackageSetting::query()->whereIn('product_code', $codes)->delete();
+
+                $branchIds = Branch::query()->where('organization_id', $orgId)->pluck('id')->all();
+                if ($branchIds !== []) {
+                    CurrentStock::query()
+                        ->whereIn('product_code', $codes)
+                        ->whereIn('branch_id', $branchIds)
+                        ->delete();
+
+                    $inv = InventoryTransaction::query()
+                        ->whereIn('product_code', $codes)
+                        ->whereIn('branch_id', $branchIds);
+                    if (Schema::hasColumn('inventory_transactions', 'organization_id')) {
+                        $inv->where('organization_id', $orgId);
+                    }
+                    $inv->delete();
+                }
+
+                if (Schema::hasTable('price_history')) {
+                    DB::table('price_history')
+                        ->where('organization_id', $orgId)
+                        ->whereIn('product_code', $codes)
+                        ->delete();
+                }
+
+                foreach ($products as $product) {
+                    $path = $product->image_path;
+                    if (is_string($path) && $path !== '' && StoredPublicFile::exists($path)) {
+                        Storage::disk('public')->delete($path);
+                    }
+                }
+            }
+
+            if ($productIds !== []) {
+                Product::withTrashed()->whereIn('id', $productIds)->forceDelete();
+            }
+
+            $tablesRemoved = HospitalityFloorTable::query()
+                ->where('organization_id', $orgId)
+                ->whereIn('code', self::DEMO_TABLE_CODES)
+                ->delete();
+
+            OrganizationCache::invalidateCapabilities($orgId);
+
+            return [
+                'orders' => $ordersRemoved,
+                'products' => count($productIds),
+                'tables' => (int) $tablesRemoved,
             ];
         });
     }

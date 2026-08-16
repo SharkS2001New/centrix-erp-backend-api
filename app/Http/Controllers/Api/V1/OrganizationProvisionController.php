@@ -310,6 +310,24 @@ class OrganizationProvisionController extends Controller
         ]);
     }
 
+    /** POST /api/v1/admin/organizations/{organization}/hospitality/remove-demo-data */
+    public function removeHospitalityDemoData(Request $request, int $organization)
+    {
+        $org = $this->findTenantOrganization($organization);
+        $result = app(\App\Services\Hospitality\HospitalityDemoDataSeeder::class)
+            ->removeForOrganization($org);
+
+        return response()->json([
+            'message' => sprintf(
+                'Removed %d menu products, %d tables, and %d Hotel POS orders. Outlets, rooms, and reservations were kept.',
+                $result['products'],
+                $result['tables'],
+                $result['orders'],
+            ),
+            ...$result,
+        ]);
+    }
+
     /** DELETE /api/v1/admin/organizations/{organization} */
     public function destroy(Request $request, int $organization)
     {

@@ -364,6 +364,8 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.super_admin']);
         Route::post('admin/organizations/{organization}/hospitality/seed-demo-data', [OrganizationProvisionController::class, 'seedHospitalityDemoData'])
             ->middleware(['erp.super_admin']);
+        Route::post('admin/organizations/{organization}/hospitality/remove-demo-data', [OrganizationProvisionController::class, 'removeHospitalityDemoData'])
+            ->middleware(['erp.super_admin']);
         Route::get('admin/organizations/{organization}/provision-snapshot', [OrganizationProvisionController::class, 'provisionSnapshot'])
             ->middleware(['erp.super_admin']);
         Route::patch('admin/organizations/{organization}', [OrganizationProvisionController::class, 'update'])
