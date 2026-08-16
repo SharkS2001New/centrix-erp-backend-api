@@ -21,12 +21,14 @@ use Illuminate\Validation\ValidationException;
 class HospitalityCheckService
 {
     /** Draft + collectible statuses that can still receive payments / edits. */
-    public const EDITABLE_STATUSES = ['open', 'unpaid', 'partially_paid'];
+    public const EDITABLE_STATUSES = ['open', 'unpaid', 'partially_paid', 'held'];
 
     /** Legacy aliases still accepted when reading older rows before migrate. */
     public const COLLECTIBLE_STATUSES = ['unpaid', 'partially_paid', 'held'];
 
     public const PAID_STATUSES = ['paid', 'settled'];
+
+    public const VOID_ORDER_NAME = 'Void order';
 
     public function ensureDefaultOutlet(Organization $org, ?int $branchId = null): HospitalityOutlet
     {
@@ -135,7 +137,7 @@ class HospitalityCheckService
 
         // Online local-first: settle the open check that was already built on the server.
         if ($sourceCheckId > 0) {
-            return DB::transaction(function () use ($org, $user, $payments, $input, $idempotency, $sourceCheckId) {
+            return DB::transaction(function () use ($org, $user, $payments, $lines, $input, $idempotency, $sourceCheckId) {
                 $again = $idempotency->findExisting($user, $input);
                 if ($again) {
                     return $this->presentable($again);
@@ -152,6 +154,20 @@ class HospitalityCheckService
                     }
 
                     return $this->presentable($check->fresh());
+                }
+
+                if ($check->status === 'void') {
+                    throw ValidationException::withMessages([
+                        'check' => ['This check was voided and cannot be synced as a sale.'],
+                    ]);
+                }
+
+                if ($lines !== []) {
+                    $check = $this->replaceProductLinesFromOfflinePayload($check, $lines);
+                } elseif ($check->lines()->count() < 1) {
+                    throw ValidationException::withMessages([
+                        'lines' => ['Offline check has no lines.'],
+                    ]);
                 }
 
                 $settlePayments = $payments !== [] ? $payments : [[
@@ -283,6 +299,52 @@ class HospitalityCheckService
                 ]);
             }
         }
+    }
+
+    /**
+     * Align an open source check with the local-first snapshot. Room stays are kept.
+     *
+     * @param  list<array{product_code?: string, qty?: float|int|string}>  $lines
+     */
+    protected function replaceProductLinesFromOfflinePayload(HospitalityCheck $check, array $lines): HospitalityCheck
+    {
+        $wanted = [];
+        foreach ($lines as $row) {
+            $code = trim((string) ($row['product_code'] ?? ''));
+            if ($code === '') {
+                continue;
+            }
+            $wanted[$code] = ($wanted[$code] ?? 0) + max(0.0001, (float) ($row['qty'] ?? 1));
+        }
+        if ($wanted === []) {
+            return $check;
+        }
+
+        $this->assertEditable($check);
+        $existing = HospitalityCheckLine::query()
+            ->where('check_id', $check->id)
+            ->orderBy('id')
+            ->get();
+
+        foreach ($existing as $line) {
+            $mods = is_array($line->modifiers) ? $line->modifiers : [];
+            if (($mods['type'] ?? null) === HospitalityPosRoomSaleService::LINE_TYPE) {
+                continue;
+            }
+            $code = trim((string) $line->product_code);
+            if ($code === '' || ! isset($wanted[$code])) {
+                $line->delete();
+                continue;
+            }
+            $check = $this->updateLineQty($check, (int) $line->id, $wanted[$code]);
+            unset($wanted[$code]);
+        }
+
+        foreach ($wanted as $code => $qty) {
+            $check = $this->addProductLine($check, $code, $qty);
+        }
+
+        return $this->recalculate($check->fresh());
     }
 
     protected function resolveOfflineCheckNumber(int $organizationId, ?string $preferred): string
@@ -468,10 +530,22 @@ class HospitalityCheckService
         return $this->recalculate($check->fresh());
     }
 
-    /** Park / hold an open check as unpaid (same payment queue as Save order). */
+    /** Park / hold an open check so the cashier can start the next ticket. */
     public function hold(HospitalityCheck $check, Organization $org): HospitalityCheck
     {
-        return $this->saveWithoutPayment($check, $org);
+        $this->assertEditable($check);
+        if ($check->lines()->count() < 1) {
+            throw ValidationException::withMessages(['check' => ['Add at least one item before holding.']]);
+        }
+        if (round((float) $check->amount_paid, 2) > 0) {
+            throw ValidationException::withMessages([
+                'check' => ['This check already has payments — collect the balance instead of holding.'],
+            ]);
+        }
+
+        $check->update(['status' => 'unpaid']);
+
+        return $this->presentable($check->fresh());
     }
 
     public function resume(HospitalityCheck $check): HospitalityCheck
@@ -543,16 +617,12 @@ class HospitalityCheckService
             if ($code === '' || $amount <= 0) {
                 continue;
             }
-            if (! in_array($code, ['CASH', 'MPESA', 'EQUITY', 'KCB', 'OTHER', 'CARD', 'CHEQUE', 'BANK', 'ROOM'], true)) {
-                throw ValidationException::withMessages(['payments' => ["Unsupported payment method: {$code}"]]);
-            }
-            if ($code !== 'ROOM' && ! $this->orgPaymentMethodIsActive((int) $org->id, $code)) {
+            if ($code === 'ROOM') {
+                $hasRoomCharge = true;
+            } elseif (! $this->isAllowedHotelPosTender((int) $org->id, $code)) {
                 throw ValidationException::withMessages([
                     'payments' => ["Payment method {$code} is not enabled for this organization."],
                 ]);
-            }
-            if ($code === 'ROOM') {
-                $hasRoomCharge = true;
             }
             $normalized[] = [
                 'method_code' => $code,
@@ -700,19 +770,48 @@ class HospitalityCheckService
         return $this->presentable($check->fresh());
     }
 
-    public function voidOpen(HospitalityCheck $check): HospitalityCheck
+    public function voidOpen(HospitalityCheck $check, ?User $user = null): HospitalityCheck
     {
-        if (! in_array($check->status, ['open', 'unpaid', 'held'], true)) {
-            throw ValidationException::withMessages([
-                'check' => ['Only open or unpaid checks with no payments can be voided.'],
-            ]);
-        }
-        if (round((float) $check->amount_paid, 2) > 0) {
-            throw ValidationException::withMessages(['check' => ['Cannot void a check that has payments.']]);
-        }
-        $check->update(['status' => 'void', 'closed_at' => now()]);
+        return $this->voidCheck($check, $user);
+    }
 
-        return $this->presentable($check->fresh());
+    /**
+     * Cancel a check (open or sold). Check number stays consumed; guest name becomes "Void order".
+     */
+    public function voidCheck(HospitalityCheck $check, ?User $user = null): HospitalityCheck
+    {
+        if ($check->status === 'void') {
+            return $this->presentable($check);
+        }
+
+        return DB::transaction(function () use ($check, $user) {
+            $locked = HospitalityCheck::query()->lockForUpdate()->findOrFail($check->id);
+            if ($locked->status === 'void') {
+                return $this->presentable($locked);
+            }
+
+            if ($user) {
+                app(HospitalityCheckStockService::class)->restoreForVoidedCheck($locked, $user);
+            }
+            app(HospitalityPosRoomSaleService::class)->releaseRoomsForVoidedCheck($locked);
+
+            $meta = is_array($locked->meta) ? $locked->meta : [];
+            $meta['voided'] = true;
+            $meta['status_before_void'] = $locked->status;
+            if ($locked->guest_name && $locked->guest_name !== self::VOID_ORDER_NAME) {
+                $meta['guest_name_before_void'] = $locked->guest_name;
+            }
+
+            $locked->update([
+                'status' => 'void',
+                'guest_name' => self::VOID_ORDER_NAME,
+                'closed_at' => now(),
+                'closed_by' => $user?->id ?? $locked->closed_by,
+                'meta' => $meta,
+            ]);
+
+            return $this->presentable($locked->fresh());
+        });
     }
 
     /**
@@ -1094,6 +1193,25 @@ class HospitalityCheckService
                 'floor_table_id' => ['Select a table before saving or collecting payment.'],
             ]);
         }
+    }
+
+    /**
+     * Hotel POS tenders: Admin → Payment methods (is_active), plus standard POS codes
+     * (Cash / M-Pesa / Equity / KCB / Other / Cheque / Card / Bank) used by retail POS.
+     */
+    protected function isAllowedHotelPosTender(int $organizationId, string $methodCode): bool
+    {
+        $wanted = strtoupper(trim($methodCode));
+        if ($wanted === '') {
+            return false;
+        }
+
+        $standard = ['CASH', 'MPESA', 'EQUITY', 'KCB', 'OTHER', 'CARD', 'CHEQUE', 'BANK'];
+        if (in_array($wanted, $standard, true)) {
+            return true;
+        }
+
+        return $this->orgPaymentMethodIsActive($organizationId, $wanted);
     }
 
     /**

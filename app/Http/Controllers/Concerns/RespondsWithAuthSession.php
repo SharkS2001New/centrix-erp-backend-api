@@ -26,7 +26,8 @@ trait RespondsWithAuthSession
                 $authChannel,
             );
 
-            if (! $user->is_super_admin) {
+            // PIN operator switch continues an already-open till session.
+            if (! $user->is_super_admin && empty($result['operator_switch'])) {
                 $org = $result['organization'] ?? $user->organization;
                 $licenses = app(OrganizationLicenseService::class);
                 $license = is_array($result['capabilities']['license'] ?? null)
@@ -63,6 +64,8 @@ trait RespondsWithAuthSession
                 app(\App\Services\Auth\UserMobileOrderScopeService::class)->mobileContext($user),
             );
         }
+
+        unset($result['operator_switch']);
 
         // Prefer the channel on the issued session (MFA verify has no login_channel body
         // field). Mobile/manager must keep the bearer token in JSON — cookie-only strip

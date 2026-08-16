@@ -44,7 +44,7 @@ class HospitalityFrontDeskService
 
         if ($this->usesFolios($org)) {
             $rows = HospitalityFolio::query()
-                ->with(['room:id,room_number,expected_checkout_at'])
+                ->with(['room:id,room_number,expected_checkout_at,sold_check_id'])
                 ->where('organization_id', $org->id)
                 ->where('status', 'open')
                 ->whereHas('room')
@@ -58,7 +58,6 @@ class HospitalityFrontDeskService
                     if ($res && $res->departure_date?->toDateString() === $day) {
                         return true;
                     }
-                    // Walk-ins / POS stays: due when room expected checkout falls on this day.
                     $checkout = $f->room?->expected_checkout_at;
                     if ($checkout && Carbon::parse($checkout)->toDateString() === $day) {
                         return true;
@@ -67,7 +66,10 @@ class HospitalityFrontDeskService
                     return false;
                 });
 
-            return $rows->map(fn (HospitalityFolio $f) => $this->folios->toArray($f))->values()->all();
+            $out = $rows->map(fn (HospitalityFolio $f) => $this->folios->toArray($f))->values()->all();
+            $folioRoomIds = collect($out)->pluck('room_id')->filter()->map(fn ($id) => (int) $id)->all();
+
+            return array_values(array_merge($out, $this->posStaysDueOn($org, $day, $folioRoomIds)));
         }
 
         $byReservation = HospitalityReservation::query()
@@ -119,13 +121,16 @@ class HospitalityFrontDeskService
     {
         if ($this->usesFolios($org)) {
             $rows = HospitalityFolio::query()
-                ->with(['room:id,room_number,status,floor'])
+                ->with(['room:id,room_number,status,floor,sold_check_id,expected_checkout_at'])
                 ->where('organization_id', $org->id)
                 ->where('status', 'open')
                 ->orderByDesc('checked_in_at')
                 ->get();
 
-            return $rows->map(fn (HospitalityFolio $f) => $this->folios->toArray($f))->all();
+            $out = $rows->map(fn (HospitalityFolio $f) => $this->folios->toArray($f))->all();
+            $folioRoomIds = collect($out)->pluck('room_id')->filter()->map(fn ($id) => (int) $id)->all();
+
+            return array_values(array_merge($out, $this->posOccupiedStays($org, $folioRoomIds)));
         }
 
         $rows = HospitalityRoom::query()
@@ -259,12 +264,6 @@ class HospitalityFrontDeskService
 
     public function checkOutRoom(Organization $org, int $roomId): array
     {
-        if ($this->usesFolios($org)) {
-            throw ValidationException::withMessages([
-                'service' => ['Guest folios are enabled. Check out via the open folio.'],
-            ]);
-        }
-
         return DB::transaction(function () use ($org, $roomId) {
             $room = HospitalityRoom::query()
                 ->where('organization_id', $org->id)
@@ -275,6 +274,17 @@ class HospitalityFrontDeskService
             if ($room->status !== 'occupied') {
                 throw ValidationException::withMessages([
                     'room_id' => ['Room is not occupied.'],
+                ]);
+            }
+
+            $openFolio = HospitalityFolio::query()
+                ->where('organization_id', $org->id)
+                ->where('room_id', $room->id)
+                ->where('status', 'open')
+                ->exists();
+            if ($openFolio) {
+                throw ValidationException::withMessages([
+                    'service' => ['This room has an open guest folio. Check out via the folio.'],
                 ]);
             }
 
@@ -352,12 +362,6 @@ class HospitalityFrontDeskService
 
     public function reassignOccupiedRoom(Organization $org, int $fromRoomId, int $toRoomId): array
     {
-        if ($this->usesFolios($org)) {
-            throw ValidationException::withMessages([
-                'service' => ['Guest folios are enabled. Reassign via the open folio.'],
-            ]);
-        }
-
         return DB::transaction(function () use ($org, $fromRoomId, $toRoomId) {
             if ($fromRoomId === $toRoomId) {
                 throw ValidationException::withMessages([
@@ -373,6 +377,17 @@ class HospitalityFrontDeskService
             if ($from->status !== 'occupied') {
                 throw ValidationException::withMessages([
                     'room_id' => ['Source room is not occupied.'],
+                ]);
+            }
+
+            $openFolio = HospitalityFolio::query()
+                ->where('organization_id', $org->id)
+                ->where('room_id', $from->id)
+                ->where('status', 'open')
+                ->exists();
+            if ($openFolio) {
+                throw ValidationException::withMessages([
+                    'service' => ['Guest folios are enabled. Reassign via the open folio.'],
                 ]);
             }
 
@@ -629,6 +644,14 @@ class HospitalityFrontDeskService
                 'room_id' => ["Room {$room->room_number} is not available ({$room->status})."],
             ]);
         }
+        if (
+            $room->sold_check_id
+            && ($allowRoomId === null || (int) $allowRoomId !== (int) $room->id)
+        ) {
+            throw ValidationException::withMessages([
+                'room_id' => ["Room {$room->room_number} is a Hotel POS prepaid stay until checkout."],
+            ]);
+        }
 
         return $room;
     }
@@ -645,16 +668,75 @@ class HospitalityFrontDeskService
         return [
             'id' => $room?->id,
             'kind' => 'occupancy',
-            'folio_number' => null,
+            'stay_key' => $room?->id ? 'room:'.$room->id : null,
+            'occupancy_source' => $room?->sold_check_id ? 'pos_room_sale' : 'pms_occupancy',
+            'folio_number' => $room?->sold_check_id ? 'POS stay' : null,
             'guest_name' => $guestName,
             'guest_phone' => $guestPhone,
             'room_id' => $room?->id,
             'room_number' => $room?->room_number,
             'balance' => 0,
             'status' => $room?->status,
+            'sold_check_id' => $room?->sold_check_id ? (int) $room->sold_check_id : null,
+            'expected_checkout_at' => $room?->expected_checkout_at
+                ? Carbon::parse($room->expected_checkout_at)->toIso8601String()
+                : null,
             'checked_in_at' => $checkedInAt
                 ? Carbon::parse($checkedInAt)->toIso8601String()
                 : null,
         ];
+    }
+
+    /**
+     * Prepaid Hotel POS stays that are not on an open folio.
+     *
+     * @param  list<int>  $excludeRoomIds
+     * @return list<array<string, mixed>>
+     */
+    protected function posOccupiedStays(Organization $org, array $excludeRoomIds = []): array
+    {
+        $query = HospitalityRoom::query()
+            ->where('organization_id', $org->id)
+            ->where('status', 'occupied')
+            ->whereNotNull('sold_check_id')
+            ->orderByDesc('checked_in_at');
+        if ($excludeRoomIds !== []) {
+            $query->whereNotIn('id', $excludeRoomIds);
+        }
+
+        return $query->get()
+            ->map(fn (HospitalityRoom $room) => $this->occupancyArray(
+                $room,
+                $room->guest_name,
+                $room->guest_phone,
+                $room->checked_in_at,
+            ))
+            ->all();
+    }
+
+    /**
+     * @param  list<int>  $excludeRoomIds
+     * @return list<array<string, mixed>>
+     */
+    protected function posStaysDueOn(Organization $org, string $day, array $excludeRoomIds = []): array
+    {
+        $query = HospitalityRoom::query()
+            ->where('organization_id', $org->id)
+            ->where('status', 'occupied')
+            ->whereNotNull('sold_check_id')
+            ->whereDate('expected_checkout_at', $day)
+            ->orderBy('room_number');
+        if ($excludeRoomIds !== []) {
+            $query->whereNotIn('id', $excludeRoomIds);
+        }
+
+        return $query->get()
+            ->map(fn (HospitalityRoom $room) => $this->occupancyArray(
+                $room,
+                $room->guest_name,
+                $room->guest_phone,
+                $room->checked_in_at,
+            ))
+            ->all();
     }
 }

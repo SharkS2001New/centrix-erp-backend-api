@@ -6,6 +6,7 @@ use App\Http\Controllers\Api\V1\Operations\Concerns\HandlesInventory;
 use App\Models\HospitalityCheck;
 use App\Models\HospitalityCheckLine;
 use App\Models\HospitalityRecipe;
+use App\Models\InventoryTransaction;
 use App\Models\Organization;
 use App\Models\Product;
 use App\Models\User;
@@ -176,6 +177,60 @@ class HospitalityCheckStockService
             $locked->update([
                 'stock_balanced' => true,
                 'stock_deducted_at' => now(),
+            ]);
+        });
+    }
+
+    /** Reverse settle deductions when a sold check is voided. */
+    public function restoreForVoidedCheck(HospitalityCheck $check, User $user): void
+    {
+        if ((int) ($check->stock_balanced ?? 0) !== 1) {
+            return;
+        }
+
+        $rows = InventoryTransaction::query()
+            ->where('reference_type', 'hospitality_check')
+            ->where('reference_id', $check->id)
+            ->where('transaction_type', self::TXN_TYPE)
+            ->get();
+
+        /** @var array<string, float> $net */
+        $net = [];
+        foreach ($rows as $row) {
+            $location = (string) ($row->stock_location ?: 'shop');
+            $key = (string) $row->product_code.'|'.$location;
+            $net[$key] = ($net[$key] ?? 0) + (float) $row->quantity_change;
+        }
+
+        DB::transaction(function () use ($check, $user, $net) {
+            $locked = HospitalityCheck::query()->lockForUpdate()->find($check->id);
+            if (! $locked || (int) ($locked->stock_balanced ?? 0) !== 1) {
+                return;
+            }
+
+            foreach ($net as $key => $qty) {
+                if ($qty >= -0.0001) {
+                    continue;
+                }
+                [$productCode, $location] = explode('|', $key, 2);
+                $this->postStockLedger([
+                    'organization_id' => $locked->organization_id,
+                    'branch_id' => $locked->branch_id ?? $user->branch_id,
+                    'product_code' => $productCode,
+                    'stock_location' => $location ?: 'shop',
+                    'transaction_type' => 'HOSPITALITY_VOID',
+                    'reference_type' => 'hospitality_check',
+                    'reference_id' => $locked->id,
+                    'quantity_change' => abs($qty),
+                    'unit_cost' => null,
+                    'notes' => 'Void Hotel POS check '.$locked->check_number,
+                    'created_by' => $user->id,
+                ], true);
+            }
+
+            $locked->update([
+                'stock_balanced' => false,
+                'stock_deducted_at' => null,
             ]);
         });
     }

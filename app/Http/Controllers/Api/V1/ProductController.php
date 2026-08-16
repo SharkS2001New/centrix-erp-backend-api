@@ -15,6 +15,7 @@ use App\Services\Inventory\SaleStockLocationResolver;
 use App\Services\Erp\ErpContext;
 use App\Services\Sales\MobileProductListSettings;
 use App\Support\OrganizationPublicStorage;
+use App\Support\RemoteProductImageImporter;
 use App\Support\ReferentialIntegrityMessage;
 use App\Support\SqlLikeSearch;
 use App\Support\StoredPublicFile;
@@ -875,6 +876,32 @@ class ProductController extends BaseResourceController
                 (string) $model->product_code,
             ),
         );
+
+        $model->update(['image_path' => $stored['path']]);
+
+        return response()->json($this->presentProduct($model->fresh(), $request));
+    }
+
+    /** POST /products/{product}/image/from-url — download a public image and store it */
+    public function importImageFromUrl(Request $request, string $product)
+    {
+        $model = $this->findScopedModel($request, $product);
+
+        $data = $request->validate([
+            'url' => 'required|string|max:2000',
+        ]);
+
+        $directory = OrganizationPublicStorage::path(
+            $model->organization_id ?? $request->user()?->organization_id,
+            'products',
+            (string) $model->product_code,
+        );
+
+        $stored = (new RemoteProductImageImporter)->import($data['url'], $directory);
+
+        if ($model->image_path) {
+            Storage::disk('public')->delete($model->image_path);
+        }
 
         $model->update(['image_path' => $stored['path']]);
 

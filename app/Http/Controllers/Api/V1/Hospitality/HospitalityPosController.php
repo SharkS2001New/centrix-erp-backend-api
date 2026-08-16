@@ -279,7 +279,7 @@ class HospitalityPosController extends Controller
     {
         $org = $this->requireOrg($request->user());
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
-        $check = $this->checkService->voidOpen($check);
+        $check = $this->checkService->voidCheck($check, $request->user());
 
         return response()->json(['check' => $this->checkService->toArray($check)]);
     }

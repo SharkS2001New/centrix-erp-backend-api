@@ -12,6 +12,8 @@ use App\Services\Auth\AuthSessionService;
 use App\Services\Auth\PasswordExpiryService;
 use App\Services\Auth\PasswordPolicy;
 use App\Services\Auth\PasswordResetService;
+use App\Services\Auth\PinLoginService;
+use App\Services\Auth\SecuritySettingsResolver;
 use App\Services\Auth\TenantAccountResolver;
 use App\Services\Auth\UsernameValidator;
 use App\Services\Sales\UserCartCleanupService;
@@ -698,12 +700,131 @@ class AuthController extends Controller
             ]);
         }
 
-        $token = $request->user()->currentAccessToken();
-        if ($token instanceof \App\Models\PersonalAccessToken) {
-            $token->forceFill(['last_used_at' => now()])->save();
-        }
+        app(PinLoginService::class)->touchPersistedAccessToken($request->user()->currentAccessToken());
 
         return response()->json(['verified' => true]);
+    }
+
+    public function pinOperators(Request $request)
+    {
+        $operators = app(PinLoginService::class)->listOperators($request->user());
+
+        return response()->json([
+            'data' => $operators,
+            'enable_pin_unlock' => (bool) (SecuritySettingsResolver::forOrganizationId(
+                (int) $request->user()->organization_id,
+            )['enable_pin_unlock'] ?? true),
+        ]);
+    }
+
+    public function unlockPin(Request $request)
+    {
+        $data = $request->validate([
+            'pin' => 'required|string|max:12',
+        ]);
+
+        $pins = app(PinLoginService::class);
+        $pins->unlockCurrent($request->user(), $data['pin']);
+        $pins->touchPersistedAccessToken($request->user()->currentAccessToken());
+
+        return response()->json(['verified' => true]);
+    }
+
+    public function switchOperator(Request $request)
+    {
+        $data = $request->validate([
+            'user_id' => 'required|integer',
+            'pin' => 'required|string|max:12',
+            'client_id' => 'required|string|max:80',
+        ]);
+
+        $current = $request->user();
+        if ((int) $data['user_id'] === (int) $current->id) {
+            app(PinLoginService::class)->unlockCurrent($current, $data['pin']);
+
+            return response()->json(['verified' => true, 'same_user' => true]);
+        }
+
+        $result = app(PinLoginService::class)->switchOperator(
+            $current,
+            (int) $data['user_id'],
+            $data['pin'],
+            $data['client_id'],
+        );
+
+        return $this->respondWithAuthSession($result, $request);
+    }
+
+    public function updateMyPin(Request $request)
+    {
+        $data = $request->validate([
+            'pin' => 'required|string|max:12',
+            'pin_confirmation' => 'required|string|max:12',
+            'current_password' => 'nullable|string',
+            'current_pin' => 'nullable|string|max:12',
+        ]);
+
+        $user = $request->user();
+        $pins = app(PinLoginService::class);
+        if ($pins->normalize($data['pin']) !== $pins->normalize($data['pin_confirmation'])) {
+            throw ValidationException::withMessages([
+                'pin_confirmation' => ['PIN confirmation does not match.'],
+            ]);
+        }
+
+        $this->assertCanChangeOwnPin($user, $data, $pins);
+        $pins->assignPin($user, $data['pin']);
+
+        return response()->json([
+            'has_login_pin' => true,
+            'message' => 'Screen PIN saved.',
+        ]);
+    }
+
+    public function clearMyPin(Request $request)
+    {
+        $data = $request->validate([
+            'current_password' => 'nullable|string',
+            'current_pin' => 'nullable|string|max:12',
+        ]);
+
+        $user = $request->user();
+        $pins = app(PinLoginService::class);
+        $this->assertCanChangeOwnPin($user, $data, $pins);
+        $pins->assignPin($user, null);
+
+        return response()->json([
+            'has_login_pin' => false,
+            'message' => 'Screen PIN removed. Unlock with your password.',
+        ]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $data
+     */
+    protected function assertCanChangeOwnPin(
+        User $user,
+        array $data,
+        PinLoginService $pins,
+    ): void {
+        $password = PasswordPolicy::normalizeInput((string) ($data['current_password'] ?? ''));
+        $currentPin = (string) ($data['current_pin'] ?? '');
+
+        if ($password !== '' && Hash::check($password, $user->password)) {
+            return;
+        }
+
+        if ($currentPin !== '' && $pins->userHasPin($user)) {
+            $pins->assertPinMatches($user, $currentPin, 'current_pin');
+
+            return;
+        }
+
+        throw ValidationException::withMessages([
+            'current_password' => $pins->userHasPin($user)
+                ? ['Enter your current password or PIN to change this PIN.']
+                : ['Enter your password to set a screen PIN.'],
+        ]);
     }
 
     public function passkeyUnlockOptions(Request $request)
@@ -726,10 +847,7 @@ class AuthController extends Controller
             $data['credential'],
         );
 
-        $token = $request->user()->currentAccessToken();
-        if ($token instanceof \App\Models\PersonalAccessToken) {
-            $token->forceFill(['last_used_at' => now()])->save();
-        }
+        app(PinLoginService::class)->touchPersistedAccessToken($request->user()->currentAccessToken());
 
         return response()->json(['verified' => true]);
     }

@@ -647,6 +647,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::apiResource('room-types', \App\Http\Controllers\Api\V1\Hospitality\HospitalityRoomTypeController::class)
             ->middlewareFor(['index', 'show'], ['erp.permission:hospitality.rooms.view'])
             ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hospitality.rooms.create|hospitality.rooms.edit']);
+        Route::post('rooms/bulk', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityRoomController::class, 'bulkStore'])
+            ->middleware('erp.permission:hospitality.rooms.create|hospitality.rooms.edit');
         Route::apiResource('rooms', \App\Http\Controllers\Api\V1\Hospitality\HospitalityRoomController::class)
             ->middlewareFor(['index', 'show'], ['erp.permission:hospitality.rooms.view'])
             ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hospitality.rooms.create|hospitality.rooms.edit']);

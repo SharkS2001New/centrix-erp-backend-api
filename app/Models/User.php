@@ -22,7 +22,7 @@ class User extends Authenticatable
         'two_factor_enabled', 'two_factor_method', 'two_factor_secret', 'two_factor_confirmed_at',
         'deleted_by', 'deleted_at',
     ];
-    protected $hidden = ['password', 'two_factor_secret'];
+    protected $hidden = ['password', 'two_factor_secret', 'login_pin'];
     protected $casts = [
         'is_admin' => 'boolean',
         'is_super_admin' => 'boolean',
@@ -43,6 +43,7 @@ class User extends Authenticatable
         'allowed_customer_types',
         'can_use_all_channels',
         'route_selection_locked',
+        'has_login_pin',
     ];
 
     public function getAllowedCustomerTypesAttribute(): array
@@ -61,6 +62,11 @@ class User extends Authenticatable
     {
         return app(\App\Services\Auth\UserMobileOrderScopeService::class)
             ->isRouteSelectionLocked($this);
+    }
+
+    public function getHasLoginPinAttribute(): bool
+    {
+        return filled($this->attributes['login_pin'] ?? null);
     }
 
     public function getAuthPassword(): string

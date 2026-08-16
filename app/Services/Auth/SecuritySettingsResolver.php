@@ -84,6 +84,7 @@ class SecuritySettingsResolver
         $out['password_expiry_enabled'] = (bool) ($out['password_expiry_enabled'] ?? false);
         $out['password_expiry_days'] = max(30, min(730, (int) ($out['password_expiry_days'] ?? 90)));
         $out['password_expiry_max_skips'] = max(0, min(10, (int) ($out['password_expiry_max_skips'] ?? 2)));
+        $out['enable_pin_unlock'] = (bool) ($out['enable_pin_unlock'] ?? true);
 
         return $out;
     }

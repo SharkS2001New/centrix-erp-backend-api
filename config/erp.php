@@ -1028,6 +1028,7 @@ return [
             'password_expiry_enabled' => true,
             'password_expiry_days' => 90,
             'password_expiry_max_skips' => 2,
+            'enable_pin_unlock' => true,
         ],
         'hr_payroll' => [
             'pay_frequency' => 'monthly',

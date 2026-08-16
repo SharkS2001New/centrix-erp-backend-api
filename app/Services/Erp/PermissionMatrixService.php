@@ -60,6 +60,7 @@ class PermissionMatrixService
             self::ensureNotificationsForBackofficeRoles();
             self::ensureShopDebtorsForCustomerViewRoles();
             self::ensureCollectPaymentForPosCashierRoles();
+            self::ensureHrTimeAttendancePagesForExistingRoles();
             // Shared Administrator must keep every industry shell (commerce + hospitality).
             // Without this, hotel tenants only see Administration after the is_admin
             // least-privilege change (operational access comes from the role matrix).
@@ -790,6 +791,8 @@ class PermissionMatrixService
      */
     public static function ensureHrTimeAttendancePagesForExistingRoles(): int
     {
+        self::ensureRegistryPermissions();
+
         $map = [
             'hr.attendance.view' => [
                 'hr.attendance_history.view',

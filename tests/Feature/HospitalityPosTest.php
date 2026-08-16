@@ -348,4 +348,75 @@ class HospitalityPosTest extends TestCase
         $this->assertSame('paid', $paid['status']);
         $this->assertSame($total, (float) $paid['amount_paid']);
     }
+
+    public function test_hold_works_when_unpaid_save_workflow_is_disabled(): void
+    {
+        $settings = $this->org->module_settings ?? [];
+        $hospitality = is_array($settings['hospitality'] ?? null) ? $settings['hospitality'] : [];
+        $hospitality['payment_workflow'] = [
+            'unpaid' => false,
+            'partially_paid' => true,
+            'paid' => true,
+        ];
+        $settings['hospitality'] = $hospitality;
+        $this->org->forceFill(['module_settings' => $settings])->save();
+
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+            ->assertCreated()
+            ->json('check');
+        $checkId = (int) $opened['id'];
+
+        $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/lines", [
+            'product_code' => $product->product_code,
+            'qty' => 1,
+        ])->assertOk();
+
+        $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/save")
+            ->assertStatus(422);
+
+        $held = $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/hold")
+            ->assertOk()
+            ->json('check');
+        $this->assertSame('unpaid', $held['status']);
+
+        $collectible = $this->getJson('/api/v1/hospitality/pos/checks/collectible')
+            ->assertOk()
+            ->json('checks');
+        $this->assertTrue(collect($collectible)->contains(fn ($c) => (int) $c['id'] === $checkId));
+    }
+
+    public function test_settle_accepts_equity_like_retail_pos(): void
+    {
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+            ->assertCreated()
+            ->json('check');
+        $checkId = (int) $opened['id'];
+
+        $withLine = $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/lines", [
+            'product_code' => $product->product_code,
+            'qty' => 1,
+        ])
+            ->assertOk()
+            ->json('check');
+
+        $settled = $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/settle", [
+            'payments' => [
+                ['method_code' => 'EQUITY', 'amount' => (float) $withLine['total']],
+            ],
+        ])
+            ->assertOk()
+            ->json('check');
+
+        $this->assertSame('paid', $settled['status']);
+    }
 }

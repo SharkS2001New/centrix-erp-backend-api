@@ -1277,6 +1277,7 @@ class ErpSettingsController extends Controller
             'password_expiry_enabled' => 'sometimes|boolean',
             'password_expiry_days' => 'sometimes|integer|min:30|max:730',
             'password_expiry_max_skips' => 'sometimes|integer|min:0|max:10',
+            'enable_pin_unlock' => 'sometimes|boolean',
         ]);
 
         $current = $gate->moduleSettings('security');

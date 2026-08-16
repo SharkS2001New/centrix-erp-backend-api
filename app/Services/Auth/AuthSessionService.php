@@ -304,6 +304,35 @@ class AuthSessionService
     }
 
     /**
+     * Start a till session for another operator after a verified PIN switch.
+     *
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    public function issueOperatorSession(
+        User $target,
+        string $clientId,
+        string $loginChannel,
+        ?string $activeWorkspaceId = null,
+    ): array {
+        $org = \App\Models\Organization::findOrFail($target->organization_id);
+        $account = $this->resolver->resolveForCanonicalUser($org, (int) $target->id);
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'user_id' => ['Unable to open a session for this user.'],
+            ]);
+        }
+
+        return $this->issueSession(
+            $account,
+            $clientId,
+            forceLogout: false,
+            loginChannel: $loginChannel,
+            activeWorkspaceId: $activeWorkspaceId,
+            skipSingleSessionCheck: true,
+        );
+    }
+
+    /**
      * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
      */
     protected function issueSession(

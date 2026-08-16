@@ -284,6 +284,22 @@ class HospitalityPosRoomSaleService
         return ['released' => $released];
     }
 
+    /** Vacate rooms occupied by a voided Hotel POS stay. */
+    public function releaseRoomsForVoidedCheck(HospitalityCheck $check): void
+    {
+        HospitalityRoom::query()
+            ->where('organization_id', $check->organization_id)
+            ->where('sold_check_id', $check->id)
+            ->update([
+                'status' => 'vacant',
+                'guest_name' => null,
+                'guest_phone' => null,
+                'checked_in_at' => null,
+                'expected_checkout_at' => null,
+                'sold_check_id' => null,
+            ]);
+    }
+
     public function nightlyRateForRoom(Organization $org, HospitalityRoom $room): float
     {
         $roomTypeId = $room->room_type_id;

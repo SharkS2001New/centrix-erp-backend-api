@@ -72,6 +72,11 @@ class HospitalityFolioService
                         'room_id' => ["Room {$room->room_number} is not available ({$room->status})."],
                     ]);
                 }
+                if ($room->sold_check_id) {
+                    throw ValidationException::withMessages([
+                        'room_id' => ["Room {$room->room_number} is a Hotel POS prepaid stay until checkout."],
+                    ]);
+                }
             }
 
             $folio = HospitalityFolio::create([
@@ -260,9 +265,11 @@ class HospitalityFolioService
 
     public function toArray(HospitalityFolio $folio, bool $detail = false): array
     {
-        $row = [
+            $row = [
             'id' => $folio->id,
             'kind' => 'folio',
+            'stay_key' => 'folio:'.$folio->id,
+            'occupancy_source' => 'pms_folio',
             'folio_number' => $folio->folio_number,
             'guest_name' => $folio->guest_name,
             'guest_phone' => $folio->guest_phone,

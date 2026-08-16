@@ -228,6 +228,13 @@ Route::prefix('v1')->group(function () {
         Route::post('auth/skip-password-expiry', [AuthController::class, 'skipPasswordExpiry']);
         Route::post('auth/set-required-password', [AuthController::class, 'setRequiredPassword']);
         Route::post('auth/verify-password', [AuthController::class, 'verifyPassword']);
+        Route::get('auth/pin-operators', [AuthController::class, 'pinOperators']);
+        Route::post('auth/unlock-pin', [AuthController::class, 'unlockPin'])
+            ->middleware('throttle:auth-login');
+        Route::post('auth/switch-operator', [AuthController::class, 'switchOperator'])
+            ->middleware('throttle:auth-login');
+        Route::post('auth/me/pin', [AuthController::class, 'updateMyPin']);
+        Route::delete('auth/me/pin', [AuthController::class, 'clearMyPin']);
         Route::get('auth/memberships', [AuthController::class, 'memberships']);
         Route::post('auth/switch-organization', [AuthController::class, 'switchOrganization']);
         Route::post('auth/switch-workspace', [AuthController::class, 'switchWorkspace']);
@@ -793,6 +800,8 @@ Route::prefix('v1')->group(function () {
             Route::get('products/{product}/image/file', [ProductController::class, 'imageFile'])
                 ->middleware(['erp.permission:catalogue.view|inventory.view|purchasing.view|pos.checkout.create|pos.terminal.view|hotel_bar_pos.terminal.view']);
             Route::post('products/{product}/image', [ProductController::class, 'uploadImage'])
+                ->middleware(['erp.permission:products.manage']);
+            Route::post('products/{product}/image/from-url', [ProductController::class, 'importImageFromUrl'])
                 ->middleware(['erp.permission:products.manage']);
             Route::delete('products/{product}/image', [ProductController::class, 'deleteImage'])
                 ->middleware(['erp.permission:products.manage']);

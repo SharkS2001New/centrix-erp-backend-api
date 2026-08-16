@@ -51,6 +51,8 @@ class UserController extends BaseResourceController
         $rules['assigned_route_ids'] = 'sometimes|array';
         $rules['assigned_route_ids.*'] = app(RouteAccessService::class)->validationEach($request->user(), $request);
         $rules['must_change_password'] = 'sometimes|boolean';
+        $rules['login_pin'] = 'sometimes|nullable|string|max:12';
+        $rules['clear_login_pin'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         $data = $this->access()->validateAccessScope($data, (bool) ($data['is_admin'] ?? false));
         $organization = Organization::findOrFail($orgId);
@@ -79,6 +81,7 @@ class UserController extends BaseResourceController
             ? $data['assigned_route_ids']
             : null;
         unset($data['assigned_route_ids']);
+        unset($data['login_pin'], $data['clear_login_pin']);
         $data['organization_id'] = $this->access()->organizationId($request->user(), $request);
         app(UsernameValidator::class)->assertUniqueInOrganization(
             (int) $data['organization_id'],
@@ -117,6 +120,8 @@ class UserController extends BaseResourceController
             app(UserTillAssignmentService::class)->sync($model, $request->input('till_id'));
         }
 
+        $this->applyLoginPinFromRequest($request, $model);
+
         return response()->json($this->presentUser($model->fresh()), 201);
     }
 
@@ -132,6 +137,8 @@ class UserController extends BaseResourceController
         $rules['assigned_route_ids'] = 'sometimes|array';
         $rules['assigned_route_ids.*'] = app(RouteAccessService::class)->validationEach($request->user(), $request);
         $rules['must_change_password'] = 'sometimes|boolean';
+        $rules['login_pin'] = 'sometimes|nullable|string|max:12';
+        $rules['clear_login_pin'] = 'sometimes|boolean';
         $data = $request->validate($rules);
         if (isset($data['access_scope']) || array_key_exists('branch_id', $data)) {
             $merged = array_merge($model->only(['access_scope', 'branch_id', 'is_admin']), $data);
@@ -186,6 +193,7 @@ class UserController extends BaseResourceController
                 ? ($data['assigned_route_id'] ? [(int) $data['assigned_route_id']] : [])
                 : null);
         unset($data['assigned_route_ids']);
+        unset($data['login_pin'], $data['clear_login_pin']);
         if (! empty($data['username'])) {
             app(UsernameValidator::class)->assertUniqueInOrganization(
                 (int) $model->organization_id,
@@ -292,6 +300,8 @@ class UserController extends BaseResourceController
         if ($request->exists('till_id')) {
             app(UserTillAssignmentService::class)->sync($model->fresh(), $request->input('till_id'));
         }
+
+        $this->applyLoginPinFromRequest($request, $model->fresh() ?? $model);
 
         $fresh = $model->fresh();
         CapabilitiesCacheInvalidator::forUser($fresh);
@@ -495,6 +505,24 @@ class UserController extends BaseResourceController
         );
 
         return $user;
+    }
+
+    protected function applyLoginPinFromRequest(Request $request, User $user): void
+    {
+        $pins = app(\App\Services\Auth\PinLoginService::class);
+        if ($request->boolean('clear_login_pin')) {
+            $pins->assignPin($user, null);
+
+            return;
+        }
+        if (! $request->exists('login_pin')) {
+            return;
+        }
+        $pin = $request->input('login_pin');
+        if ($pin === null || trim((string) $pin) === '') {
+            return;
+        }
+        $pins->assignPin($user, (string) $pin);
     }
 
     protected function presentUser(User $user, ?PasswordExpiryService $expiryService = null): User

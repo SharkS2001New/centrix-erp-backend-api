@@ -241,10 +241,51 @@ class HospitalityOpsMvpTest extends TestCase
         $this->assertSame('Walk-in Guest', $fresh->guest_name);
         $this->assertNotNull($fresh->expected_checkout_at);
 
+        $listed = collect($this->getJson('/api/v1/hospitality/rooms?per_page=200')->assertOk()->json('data'));
+        $row = $listed->first(fn ($r) => (int) $r['id'] === (int) $room->id);
+        $this->assertSame('pos_room_sale', $row['occupancy_source'] ?? null);
+        $this->assertFalse($row['pos_sellable'] ?? true);
+
+        $this->putJson("/api/v1/hospitality/rooms/{$room->id}", ['status' => 'vacant'])
+            ->assertUnprocessable();
+
+        $inHouse = collect($this->getJson('/api/v1/hospitality/front-desk/in-house')->assertOk()->json('data'));
+        $this->assertTrue($inHouse->contains(fn ($r) => (int) ($r['room_id'] ?? 0) === (int) $room->id));
+
         $released = app(\App\Services\Hospitality\HospitalityPosRoomSaleService::class)
             ->releaseExpiredStays(now()->addDays(3));
         $this->assertGreaterThanOrEqual(1, $released['released']);
         $this->assertSame('dirty', $room->fresh()->status);
         $this->assertNull($room->fresh()->guest_name);
+    }
+
+    public function test_backoffice_bulk_creates_vacant_rooms_and_rejects_occupied_status(): void
+    {
+        $type = HospitalityRoomType::query()->create([
+            'organization_id' => $this->org->id,
+            'code' => 'BLK'.random_int(10, 99),
+            'name' => 'Bulk',
+            'base_rate' => 2500,
+            'max_occupancy' => 2,
+            'is_active' => true,
+        ]);
+        $start = 'B'.random_int(200, 700);
+
+        $created = $this->postJson('/api/v1/hospitality/rooms/bulk', [
+            'room_type_id' => $type->id,
+            'start_number' => $start,
+            'count' => 3,
+            'floor' => '3',
+        ])->assertCreated()->json('data');
+
+        $this->assertCount(3, $created);
+        $this->assertSame('vacant', $created[0]['status']);
+        $this->assertTrue($created[0]['pos_sellable']);
+
+        $this->postJson('/api/v1/hospitality/rooms', [
+            'room_type_id' => $type->id,
+            'room_number' => 'OCC'.random_int(100, 999),
+            'status' => 'occupied',
+        ])->assertUnprocessable();
     }
 }
