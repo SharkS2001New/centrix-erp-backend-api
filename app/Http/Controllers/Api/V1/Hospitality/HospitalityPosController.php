@@ -32,6 +32,28 @@ class HospitalityPosController extends Controller
         return response()->json($this->catalogService->catalog($org, $user, $request));
     }
 
+    public function updateCatalogPrice(Request $request, string $product)
+    {
+        $user = $request->user();
+        $org = $this->requireOrg($user);
+        $data = $request->validate([
+            'unit_price' => ['required', 'numeric', 'min:0'],
+            'outlet_id' => ['nullable', 'integer'],
+        ]);
+        $outletId = $request->filled('outlet_id') ? (int) $request->input('outlet_id') : null;
+
+        return response()->json(
+            $this->catalogService->updateMenuPrice(
+                $org,
+                $user,
+                $request,
+                $product,
+                (float) $data['unit_price'],
+                $outletId,
+            ),
+        );
+    }
+
     public function sellableRooms(Request $request)
     {
         $org = $this->requireOrg($request->user());

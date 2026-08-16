@@ -62,7 +62,7 @@ class LegacyImportConverterController extends Controller
                 'original_names' => $originalNames,
                 'target_industry' => $targetIndustry,
             ]);
-            ConvertLegacyImportJob::dispatch($task->id);
+            $this->tasks->dispatch(ConvertLegacyImportJob::class, $task);
 
             return response()->json([
                 'message' => 'Legacy SQL conversion queued.',

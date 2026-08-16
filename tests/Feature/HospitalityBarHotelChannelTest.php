@@ -182,4 +182,65 @@ class HospitalityBarHotelChannelTest extends TestCase
         $this->assertTrue($hotelRows->contains('id', $hotelOpened['id']));
         $this->assertFalse($hotelRows->contains('id', $barOpened['id']));
     }
+
+    public function test_pos_price_update_follows_outlet_channel(): void
+    {
+        $checks = app(HospitalityCheckService::class);
+        $bar = $checks->ensureDefaultOutlet($this->org, null);
+        $hotel = HospitalityOutlet::query()
+            ->where('organization_id', $this->org->id)
+            ->where('code', 'HOTEL')
+            ->firstOrFail();
+
+        $template = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->whereNotNull('subcategory_id')
+            ->orderBy('product_code')
+            ->firstOrFail();
+
+        $barOnly = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
+        $barOnly->exists = false;
+        $barOnly->product_code = 'BARPRICE1';
+        $barOnly->product_name = 'Bar Price Drink';
+        $barOnly->unit_price = 120;
+        $barOnly->sell_on_bar = true;
+        $barOnly->sell_on_hotel = false;
+        $barOnly->sell_on_retail = false;
+        $barOnly->save();
+
+        $hotelOnly = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
+        $hotelOnly->exists = false;
+        $hotelOnly->product_code = 'HTLPRICE1';
+        $hotelOnly->product_name = 'Hotel Price Dish';
+        $hotelOnly->unit_price = 220;
+        $hotelOnly->sell_on_bar = false;
+        $hotelOnly->sell_on_hotel = true;
+        $hotelOnly->sell_on_retail = false;
+        $hotelOnly->save();
+
+        $this->user->forceFill(['hospitality_outlet_id' => $bar->id])->save();
+        $this->patchJson('/api/v1/hospitality/pos/catalog/BARPRICE1/price', [
+            'unit_price' => 175,
+            'outlet_id' => $bar->id,
+        ])
+            ->assertOk()
+            ->assertJsonPath('unit_price', 175);
+
+        $this->assertSame(175.0, (float) Product::query()->where('product_code', 'BARPRICE1')->value('unit_price'));
+
+        $this->patchJson('/api/v1/hospitality/pos/catalog/HTLPRICE1/price', [
+            'unit_price' => 300,
+            'outlet_id' => $bar->id,
+        ])->assertStatus(422);
+
+        $this->assertSame(220.0, (float) Product::query()->where('product_code', 'HTLPRICE1')->value('unit_price'));
+
+        $this->user->forceFill(['hospitality_outlet_id' => $hotel->id])->save();
+        $this->patchJson('/api/v1/hospitality/pos/catalog/HTLPRICE1/price', [
+            'unit_price' => 310,
+            'outlet_id' => $hotel->id,
+        ])
+            ->assertOk()
+            ->assertJsonPath('unit_price', 310);
+    }
 }

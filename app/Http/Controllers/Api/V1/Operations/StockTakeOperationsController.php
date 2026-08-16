@@ -57,7 +57,7 @@ class StockTakeOperationsController extends Controller
             'session_id' => $session->id,
         ]);
 
-        InitializeStockTakeSessionJob::dispatch($task->id);
+        $this->tasks->dispatch(InitializeStockTakeSessionJob::class, $task);
 
         return response()->json([
             'message' => 'Stock take initialization queued.',
@@ -90,7 +90,7 @@ class StockTakeOperationsController extends Controller
             'lines' => $lines,
         ]);
 
-        SaveStockTakeCountsJob::dispatch($task->id);
+        $this->tasks->dispatch(SaveStockTakeCountsJob::class, $task);
 
         return response()->json([
             'message' => 'Stock take counts save queued.',
@@ -231,7 +231,7 @@ class StockTakeOperationsController extends Controller
             'line_count' => $lineCount,
         ]);
 
-        CompleteStockTakeSessionJob::dispatch($task->id);
+        $this->tasks->dispatch(CompleteStockTakeSessionJob::class, $task);
 
         return response()->json([
             'message' => 'Stock take completion queued.',
@@ -274,7 +274,7 @@ class StockTakeOperationsController extends Controller
             'line_count' => $lineCount,
         ]);
 
-        ResetStockTakeStocksJob::dispatch($task->id);
+        $this->tasks->dispatch(ResetStockTakeStocksJob::class, $task);
 
         return response()->json([
             'message' => 'Stock reset queued.',

@@ -6,9 +6,12 @@ use App\Models\PersonalAccessToken;
 use App\Models\Sale;
 use App\Observers\OrganizationObserver;
 use App\Observers\SaleObserver;
+use App\Services\Background\BackgroundJobDispatcher;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
@@ -27,6 +30,7 @@ class AppServiceProvider extends ServiceProvider
         $this->configureRateLimiting();
         $this->configureCorsFromRuntimeEnv();
         $this->enforceProductionSafety();
+        $this->rememberQueueWorkerHeartbeat();
 
         if (
             $this->app->environment('production')
@@ -34,6 +38,17 @@ class AppServiceProvider extends ServiceProvider
         ) {
             DB::prohibitDestructiveCommands();
         }
+    }
+
+    protected function rememberQueueWorkerHeartbeat(): void
+    {
+        Queue::after(function (JobProcessed $event) {
+            if ($event->connectionName === 'sync') {
+                return;
+            }
+
+            BackgroundJobDispatcher::rememberWorkerSeen();
+        });
     }
 
     protected function configureRateLimiting(): void

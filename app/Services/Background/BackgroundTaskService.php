@@ -39,6 +39,46 @@ class BackgroundTaskService
         return $this->create($type, $user, $payload, (int) $organization->id);
     }
 
+    /**
+     * @param  class-string  $jobClass
+     */
+    public function dispatch(string $jobClass, BackgroundTask $task): void
+    {
+        app(BackgroundJobDispatcher::class)->dispatch($jobClass, $task->id);
+    }
+
+    /**
+     * If a pending task has been waiting with no queue worker, fail it so the UI
+     * does not spin on "Waiting for server…" indefinitely.
+     */
+    public function failIfQueueWorkerIdle(BackgroundTask $task): BackgroundTask
+    {
+        $fresh = $task->fresh() ?? $task;
+        if (($fresh->status ?? '') !== 'pending') {
+            return $fresh;
+        }
+
+        if ((string) config('queue.default', 'sync') === 'sync') {
+            return $fresh;
+        }
+
+        $waitSeconds = max(5, (int) config('background.idle_queue_fail_seconds', 20));
+        if ($fresh->created_at !== null && $fresh->created_at->gt(now()->subSeconds($waitSeconds))) {
+            return $fresh;
+        }
+
+        if (app(BackgroundJobDispatcher::class)->workerRecentlySeen()) {
+            return $fresh;
+        }
+
+        $this->markFailed(
+            $fresh,
+            'Queue worker is not running, so this task never started. Run `php artisan queue:work` or set QUEUE_CONNECTION=sync for local.',
+        );
+
+        return $fresh->fresh() ?? $fresh;
+    }
+
     public function markRunning(BackgroundTask $task): void
     {
         if ($this->isTerminal($task)) {
@@ -223,6 +263,16 @@ class BackgroundTaskService
 
     protected function recoverStaleTask(BackgroundTask $task): bool
     {
+        if ($this->isTerminal($task)) {
+            return false;
+        }
+
+        $before = $task->status;
+        $task = $this->failIfQueueWorkerIdle($task);
+        if ($before === 'pending' && $task->status === 'failed') {
+            return true;
+        }
+
         if ($this->isTerminal($task)) {
             return false;
         }

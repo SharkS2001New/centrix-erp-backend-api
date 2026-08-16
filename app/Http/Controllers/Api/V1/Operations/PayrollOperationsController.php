@@ -290,7 +290,7 @@ class PayrollOperationsController extends Controller
                 'run_id' => (int) $runId,
                 'options' => $options,
             ]);
-            ProcessPayrollAutoJob::dispatch($task->id);
+            $this->tasks->dispatch(ProcessPayrollAutoJob::class, $task);
 
             return response()->json([
                 'message' => 'Payroll auto-process queued.',

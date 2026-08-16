@@ -4,8 +4,10 @@ namespace App\Services\Hospitality;
 
 use App\Models\HospitalityOutlet;
 use App\Models\Organization;
+use App\Models\PriceHistory;
 use App\Models\Product;
 use App\Models\User;
+use App\Services\Catalog\CatalogPricingBroadcastService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Support\SqlLikeSearch;
 use Carbon\Carbon;
@@ -79,6 +81,70 @@ class HospitalityPosCatalogService
                 'product_code' => ["{$product->product_name} is not sellable on {$label} POS."],
             ]);
         }
+    }
+
+    /**
+     * Update the menu selling price for a product on the cashier's Bar/Hotel channel.
+     *
+     * @return array{product_code: string, product_name: string, unit_price: float}
+     */
+    public function updateMenuPrice(
+        Organization $org,
+        User $user,
+        Request $request,
+        string $productCode,
+        float $unitPrice,
+        ?int $outletId = null,
+    ): array {
+        $outlet = $this->resolveOutletForUser($org, $user, $outletId);
+        $this->assertProductAllowedForOutlet($org, $outlet, $productCode);
+
+        $query = Product::query()
+            ->where('organization_id', $org->id)
+            ->where('product_code', $productCode);
+        $this->catalogScope->scopeForUser($query, $user, $request);
+        $product = $query->first();
+        if (! $product) {
+            throw ValidationException::withMessages(['product_code' => ['Product not found.']]);
+        }
+
+        $nextPrice = round(max(0, $unitPrice), 2);
+        $prevUnit = round((float) $product->unit_price, 2);
+        $product->unit_price = $nextPrice;
+        if (Schema::hasColumn('products', 'last_selling_price')) {
+            $product->last_selling_price = $nextPrice;
+        }
+        if ($user->id) {
+            $product->updated_by = $user->id;
+        }
+        $product->save();
+        $product->refresh();
+
+        if ($nextPrice !== $prevUnit) {
+            if (Schema::hasTable('price_history')) {
+                PriceHistory::create([
+                    'product_code' => $product->product_code,
+                    'unit_price' => $nextPrice,
+                    'cost_price' => (float) ($product->last_cost_price ?? 0),
+                    'discount_pct' => (float) ($product->discount_percentage ?? 0),
+                    'changed_by' => $user->id,
+                    'organization_id' => $product->organization_id ?? $org->id,
+                    'changed_at' => now(),
+                ]);
+            }
+            app(CatalogPricingBroadcastService::class)->notifyProductPriceChanged(
+                (int) $org->id,
+                (string) $product->product_code,
+                (string) $product->product_name,
+                $user->id,
+            );
+        }
+
+        return [
+            'product_code' => (string) $product->product_code,
+            'product_name' => (string) $product->product_name,
+            'unit_price' => round((float) $product->unit_price, 2),
+        ];
     }
 
     /**

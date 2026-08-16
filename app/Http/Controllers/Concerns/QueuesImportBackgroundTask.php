@@ -22,8 +22,9 @@ trait QueuesImportBackgroundTask
         // Keep rows in the background_tasks payload (DB) so queue workers do not depend on local disk.
         $payload = app(ImportPayloadStorage::class)->payloadForRows($data['rows'], $maxRows);
 
-        $task = app(BackgroundTaskService::class)->createFromRequest($type, $request, $payload);
-        $jobClass::dispatch($task->id);
+        $tasks = app(BackgroundTaskService::class);
+        $task = $tasks->createFromRequest($type, $request, $payload);
+        $tasks->dispatch($jobClass, $task);
 
         return response()->json([
             'message' => $queuedMessage,

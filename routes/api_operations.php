@@ -554,6 +554,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('hospitality/pos')->group(function () {
         Route::get('catalog', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'catalog'])
             ->middleware('erp.permission:hotel_bar_pos.terminal.view');
+        Route::patch('catalog/{product}/price', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'updateCatalogPrice'])
+            ->middleware('erp.permission:hotel_bar_pos.checks.edit|products.manage')
+            ->where('product', '[^/]+');
         Route::get('rooms', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'sellableRooms'])
             ->middleware('erp.permission:hotel_bar_pos.terminal.view');
         Route::get('settings', [\App\Http\Controllers\Api\V1\Hospitality\HospitalityPosController::class, 'settings'])

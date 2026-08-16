@@ -38,5 +38,28 @@ services:
       QUEUE_CONNECTION: database
       SESSION_DRIVER: database
 
+  queue:
+    build: .
+    image: ghcr.io/sharks2001new/centrix-erp-backend-api:local
+    restart: unless-stopped
+    depends_on:
+      mysql:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      APP_ENV: local
+      APP_DEBUG: "true"
+      DB_HOST_LOCAL: mysql
+      DB_DATABASE_LOCAL: pos_erp
+      DB_USERNAME_LOCAL: root
+      DB_PASSWORD_LOCAL: root
+      CACHE_STORE: database
+      QUEUE_CONNECTION: database
+      SESSION_DRIVER: database
+      RUN_MIGRATIONS_ON_START: "false"
+      RUN_PERMISSIONS_SYNC_ON_START: "false"
+    command: ["php", "artisan", "queue:work", "--memory=512", "--timeout=3600", "--sleep=1", "--tries=1"]
+
 volumes:
   mysql-data:

@@ -66,7 +66,7 @@ class BackgroundJobDispatchController extends Controller
         $this->tasks->assertNoBlockingTask($user);
 
         $task = $this->tasks->create('report_export', $user, $data);
-        GenerateReportExportJob::dispatch($task->id);
+        $this->tasks->dispatch(GenerateReportExportJob::class, $task);
 
         return response()->json([
             'message' => 'Report export queued.',
@@ -94,7 +94,7 @@ class BackgroundJobDispatchController extends Controller
             'search_params' => $data['search_params'] ?? [],
         ]);
 
-        ReportRunJob::dispatch($task->id);
+        $this->tasks->dispatch(ReportRunJob::class, $task);
 
         return response()->json([
             'message' => 'Report load queued.',
@@ -119,7 +119,7 @@ class BackgroundJobDispatchController extends Controller
             'workspace_id' => $data['workspace_id'] ?? null,
         ]);
 
-        ReportBuilderPreviewJob::dispatch($task->id);
+        $this->tasks->dispatch(ReportBuilderPreviewJob::class, $task);
 
         return response()->json([
             'message' => 'Report preview queued.',

@@ -76,7 +76,7 @@ class KraProductRegistrationController extends Controller
             'all' => $registerAll,
         ]);
 
-        RegisterKraProductsJob::dispatch($task->id);
+        $this->tasks->dispatch(RegisterKraProductsJob::class, $task);
 
         return response()->json([
             'message' => 'KRA product registration queued.',

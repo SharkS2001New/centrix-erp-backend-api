@@ -37,7 +37,7 @@ class PaginatedFetchController extends Controller
             'search_params' => $data['search_params'] ?? [],
         ]);
 
-        PaginatedFetchJob::dispatch($task->id);
+        $this->tasks->dispatch(PaginatedFetchJob::class, $task);
 
         return response()->json([
             'message' => 'Data fetch queued.',

@@ -171,7 +171,10 @@ class ExternalAccountingController extends Controller
             ['provider' => $provider],
         );
 
-        \App\Jobs\ProcessAccountingExportsJob::dispatch($task->id);
+        app(\App\Services\Background\BackgroundTaskService::class)->dispatch(
+            \App\Jobs\ProcessAccountingExportsJob::class,
+            $task,
+        );
 
         return response()->json([
             'message' => 'Accounting export processing queued.',
@@ -190,7 +193,10 @@ class ExternalAccountingController extends Controller
             ['provider' => $provider, 'retry_failed' => true],
         );
 
-        \App\Jobs\ProcessAccountingExportsJob::dispatch($task->id);
+        app(\App\Services\Background\BackgroundTaskService::class)->dispatch(
+            \App\Jobs\ProcessAccountingExportsJob::class,
+            $task,
+        );
 
         return response()->json([
             'message' => 'Failed export retry queued.',

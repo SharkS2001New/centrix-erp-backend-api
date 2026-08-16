@@ -129,7 +129,7 @@ class PlatformDatabaseBackupController extends Controller
                         'upload_r2' => $uploadR2,
                     ]);
 
-                    RunDatabaseBackupJob::dispatch($task->id);
+                    $this->tasks->dispatch(RunDatabaseBackupJob::class, $task);
 
                     return response()->json([
                         'message' => 'Database backup queued.',

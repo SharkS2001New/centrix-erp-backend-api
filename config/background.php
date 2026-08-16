@@ -33,4 +33,20 @@ return [
     'fetch_per_page' => (int) env('BACKGROUND_FETCH_PER_PAGE', 500),
     /** Rows above this are stored on disk instead of in background_tasks.result JSON. */
     'result_inline_row_limit' => (int) env('BACKGROUND_RESULT_INLINE_ROW_LIMIT', 500),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Queue worker fallback
+    |--------------------------------------------------------------------------
+    |
+    | When QUEUE_CONNECTION is database/redis and no worker has processed a job
+    | recently, local environments run the job in the HTTP request so imports
+    | do not sit on "Waiting for server…". Production keeps async dispatch.
+    | Set BACKGROUND_INLINE_WHEN_WORKER_IDLE=true|false to override.
+    |
+    */
+    'inline_when_worker_idle' => env('BACKGROUND_INLINE_WHEN_WORKER_IDLE'),
+    'worker_heartbeat_seconds' => (int) env('BACKGROUND_WORKER_HEARTBEAT_SECONDS', 90),
+    /** Pending tasks fail with a worker-missing error after this many seconds. */
+    'idle_queue_fail_seconds' => (int) env('BACKGROUND_IDLE_QUEUE_FAIL_SECONDS', 20),
 ];
