@@ -9,6 +9,7 @@ use App\Observers\SaleObserver;
 use App\Services\Background\BackgroundJobDispatcher;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Queue\Events\JobProcessing;
 use Illuminate\Queue\Events\JobProcessed;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Queue;
@@ -42,6 +43,18 @@ class AppServiceProvider extends ServiceProvider
 
     protected function rememberQueueWorkerHeartbeat(): void
     {
+        Queue::looping(function () {
+            BackgroundJobDispatcher::rememberWorkerSeen();
+        });
+
+        Queue::before(function (JobProcessing $event) {
+            if ($event->connectionName === 'sync') {
+                return;
+            }
+
+            BackgroundJobDispatcher::rememberWorkerSeen();
+        });
+
         Queue::after(function (JobProcessed $event) {
             if ($event->connectionName === 'sync') {
                 return;

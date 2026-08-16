@@ -69,17 +69,26 @@ class HospitalityPosCatalogService
         $channel = self::menuChannelForOutlet($outlet);
         $column = $channel === 'bar' ? 'sell_on_bar' : 'sell_on_hotel';
         $product = Product::query()
+            ->with('subCategory.category')
             ->where('organization_id', $org->id)
             ->where('product_code', $productCode)
             ->first();
         if (! $product) {
             throw ValidationException::withMessages(['product_code' => ['Product not found.']]);
         }
+        $label = $channel === 'bar' ? 'Bar' : 'Restaurant';
         if (Schema::hasColumn('products', $column) && ! (bool) ($product->{$column} ?? true)) {
-            $label = $channel === 'bar' ? 'Bar' : 'Restaurant';
             throw ValidationException::withMessages([
                 'product_code' => ["{$product->product_name} is not sellable on {$label} POS."],
             ]);
+        }
+        if ($channel === 'bar') {
+            $categoryName = strtolower((string) ($product->subCategory?->category?->category_name ?? ''));
+            if ($this->menuGroupForCategoryName($categoryName) === 'food') {
+                throw ValidationException::withMessages([
+                    'product_code' => ["{$product->product_name} is a food item and is not sellable on Bar POS."],
+                ]);
+            }
         }
     }
 
@@ -182,24 +191,14 @@ class HospitalityPosCatalogService
         }
 
         $menuGroup = strtolower(trim((string) $request->input('menu_group', '')));
-        if (in_array($menuGroup, ['food', 'drinks'], true)) {
-            $query->whereHas('subCategory.category', function ($q) use ($org, $menuGroup) {
-                $q->where('categories.organization_id', $org->id);
-                if ($menuGroup === 'food') {
-                    $q->where(function ($inner) {
-                        $inner->whereRaw('LOWER(categories.category_name) LIKE ?', ['%food%'])
-                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%kitchen%'])
-                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%meal%']);
-                    });
-                } else {
-                    $q->where(function ($inner) {
-                        $inner->whereRaw('LOWER(categories.category_name) LIKE ?', ['%drink%'])
-                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%beverage%'])
-                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%bar%'])
-                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%alcohol%']);
-                    });
-                }
-            });
+        if ($channel === 'bar') {
+            $this->excludeFoodCategories($query, $org);
+            if ($menuGroup === 'food') {
+                $query->whereRaw('1 = 0');
+            }
+        }
+        if (in_array($menuGroup, ['food', 'drinks'], true) && ! ($channel === 'bar' && $menuGroup === 'food')) {
+            $this->constrainCategoryMenuGroup($query, $org, $menuGroup);
         }
 
         if ($search !== '') {
@@ -332,6 +331,42 @@ class HospitalityPosCatalogService
         }
 
         return null;
+    }
+
+    /** Bar POS never lists kitchen / food items, even when sell_on_bar is on. */
+    protected function excludeFoodCategories($query, Organization $org): void
+    {
+        $query->where(function ($outer) use ($org) {
+            $outer->whereDoesntHave('subCategory.category', function ($q) use ($org) {
+                $q->where('categories.organization_id', $org->id)
+                    ->where(function ($inner) {
+                        $inner->whereRaw('LOWER(categories.category_name) LIKE ?', ['%food%'])
+                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%kitchen%'])
+                            ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%meal%']);
+                    });
+            });
+        });
+    }
+
+    protected function constrainCategoryMenuGroup($query, Organization $org, string $menuGroup): void
+    {
+        $query->whereHas('subCategory.category', function ($q) use ($org, $menuGroup) {
+            $q->where('categories.organization_id', $org->id);
+            if ($menuGroup === 'food') {
+                $q->where(function ($inner) {
+                    $inner->whereRaw('LOWER(categories.category_name) LIKE ?', ['%food%'])
+                        ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%kitchen%'])
+                        ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%meal%']);
+                });
+            } else {
+                $q->where(function ($inner) {
+                    $inner->whereRaw('LOWER(categories.category_name) LIKE ?', ['%drink%'])
+                        ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%beverage%'])
+                        ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%bar%'])
+                        ->orWhereRaw('LOWER(categories.category_name) LIKE ?', ['%alcohol%']);
+                });
+            }
+        });
     }
 
     /**

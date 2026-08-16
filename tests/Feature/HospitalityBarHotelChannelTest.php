@@ -3,9 +3,11 @@
 namespace Tests\Feature;
 
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
+use App\Models\Category;
 use App\Models\HospitalityOutlet;
 use App\Models\Organization;
 use App\Models\Product;
+use App\Models\SubCategory;
 use App\Models\User;
 use App\Services\Hospitality\HospitalityCheckService;
 use App\Services\Hospitality\HospitalityReportService;
@@ -54,11 +56,33 @@ class HospitalityBarHotelChannelTest extends TestCase
             ->orderBy('product_code')
             ->firstOrFail();
 
+        $foodCat = Category::query()->firstOrCreate(
+            ['organization_id' => $this->org->id, 'category_name' => 'Food'],
+        );
+        $drinksCat = Category::query()->firstOrCreate(
+            ['organization_id' => $this->org->id, 'category_name' => 'Drinks'],
+        );
+        $foodSub = SubCategory::query()->firstOrCreate(
+            [
+                'organization_id' => $this->org->id,
+                'category_id' => $foodCat->id,
+                'subcategory_name' => 'Kitchen',
+            ],
+        );
+        $drinksSub = SubCategory::query()->firstOrCreate(
+            [
+                'organization_id' => $this->org->id,
+                'category_id' => $drinksCat->id,
+                'subcategory_name' => 'Bar',
+            ],
+        );
+
         $barOnly = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
         $barOnly->exists = false;
         $barOnly->product_code = 'BARONLY1';
         $barOnly->product_name = 'Bar Only Drink';
         $barOnly->unit_price = 100;
+        $barOnly->subcategory_id = $drinksSub->id;
         $barOnly->sell_on_bar = true;
         $barOnly->sell_on_hotel = false;
         $barOnly->sell_on_retail = false;
@@ -69,23 +93,45 @@ class HospitalityBarHotelChannelTest extends TestCase
         $hotelOnly->product_code = 'HOTELONLY1';
         $hotelOnly->product_name = 'Hotel Only Dish';
         $hotelOnly->unit_price = 200;
+        $hotelOnly->subcategory_id = $foodSub->id;
         $hotelOnly->sell_on_bar = false;
         $hotelOnly->sell_on_hotel = true;
         $hotelOnly->sell_on_retail = false;
         $hotelOnly->save();
 
+        $foodOnBar = $template->replicate(['id', 'product_code', 'image_path', 'deleted_at', 'deleted_by']);
+        $foodOnBar->exists = false;
+        $foodOnBar->product_code = 'FOODONBAR1';
+        $foodOnBar->product_name = 'Kitchen Plate';
+        $foodOnBar->unit_price = 150;
+        $foodOnBar->subcategory_id = $foodSub->id;
+        $foodOnBar->sell_on_bar = true;
+        $foodOnBar->sell_on_hotel = true;
+        $foodOnBar->sell_on_retail = false;
+        $foodOnBar->save();
+
         $this->user->forceFill(['hospitality_outlet_id' => $bar->id])->save();
-        $barCatalog = $this->getJson('/api/v1/hospitality/pos/catalog')->assertOk()->json();
+        $barCatalog = $this->getJson('/api/v1/hospitality/pos/catalog?per_page=100')->assertOk()->json();
         $barCodes = collect($barCatalog['items'])->pluck('product_code')->all();
         $this->assertContains('BARONLY1', $barCodes);
         $this->assertNotContains('HOTELONLY1', $barCodes);
+        $this->assertNotContains('FOODONBAR1', $barCodes);
         $this->assertSame('bar', $barCatalog['outlet']['menu_channel']);
         $this->assertSame('Bar', $barCatalog['outlet']['menu_channel_label']);
+        $this->assertSame(
+            0,
+            collect($barCatalog['items'])->where('menu_group', 'food')->count(),
+        );
+
+        $this->getJson('/api/v1/hospitality/pos/catalog?menu_group=food&per_page=100')
+            ->assertOk()
+            ->assertJsonPath('items', []);
 
         $this->user->forceFill(['hospitality_outlet_id' => $hotel->id])->save();
-        $hotelCatalog = $this->getJson('/api/v1/hospitality/pos/catalog')->assertOk()->json();
+        $hotelCatalog = $this->getJson('/api/v1/hospitality/pos/catalog?per_page=100')->assertOk()->json();
         $hotelCodes = collect($hotelCatalog['items'])->pluck('product_code')->all();
         $this->assertContains('HOTELONLY1', $hotelCodes);
+        $this->assertContains('FOODONBAR1', $hotelCodes);
         $this->assertNotContains('BARONLY1', $hotelCodes);
         $this->assertSame('hotel', $hotelCatalog['outlet']['menu_channel']);
         $this->assertSame('Restaurant', $hotelCatalog['outlet']['menu_channel_label']);

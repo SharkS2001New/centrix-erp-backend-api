@@ -46,7 +46,7 @@ return [
     |
     */
     'inline_when_worker_idle' => env('BACKGROUND_INLINE_WHEN_WORKER_IDLE'),
-    'worker_heartbeat_seconds' => (int) env('BACKGROUND_WORKER_HEARTBEAT_SECONDS', 90),
+    'worker_heartbeat_seconds' => (int) env('BACKGROUND_WORKER_HEARTBEAT_SECONDS', 180),
     /** Pending tasks fail with a worker-missing error after this many seconds. */
     'idle_queue_fail_seconds' => (int) env('BACKGROUND_IDLE_QUEUE_FAIL_SECONDS', 20),
 ];

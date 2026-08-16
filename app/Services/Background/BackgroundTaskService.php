@@ -91,6 +91,7 @@ class BackgroundTaskService
             'started_at' => now(),
             'error_message' => null,
         ]);
+        BackgroundJobDispatcher::rememberWorkerSeen();
     }
 
     public function updateProgress(BackgroundTask $task, int $progress, ?string $message = null): void
@@ -110,6 +111,7 @@ class BackgroundTaskService
         }
 
         $task->update($updates);
+        BackgroundJobDispatcher::rememberWorkerSeen();
     }
 
     public function markCancelled(BackgroundTask $task, string $message = 'Cancelled by user.'): void
