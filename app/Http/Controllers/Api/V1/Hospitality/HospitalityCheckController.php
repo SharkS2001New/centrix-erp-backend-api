@@ -23,6 +23,7 @@ class HospitalityCheckController extends Controller
         $paginator = $this->checks->listRecent((int) $org->id, [
             'status' => $request->input('status'),
             'outlet_id' => $request->filled('outlet_id') ? (int) $request->input('outlet_id') : null,
+            'channel' => $request->input('channel'),
             'q' => $request->input('q'),
             'from_date' => $request->input('from_date'),
             'to_date' => $request->input('to_date'),

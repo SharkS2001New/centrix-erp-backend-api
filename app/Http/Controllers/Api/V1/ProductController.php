@@ -323,6 +323,8 @@ class ProductController extends BaseResourceController
                 'products.unit_price',
                 'products.last_cost_price',
                 'products.sell_on_retail',
+                'products.sell_on_bar',
+                'products.sell_on_hotel',
                 'products.discount_type',
                 'products.discount_value',
                 'products.discount_percentage',

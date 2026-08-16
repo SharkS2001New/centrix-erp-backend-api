@@ -258,6 +258,7 @@ return [
             'hotel_pos_theme_template',
             'services',
             'payment_workflow',
+            'payment_methods',
         ],
         'ai' => [
             'enable_ai',

@@ -276,6 +276,11 @@ class OrganizationPlatformConfigService
                     $salesPlatform['hospitality_payment_workflow'],
                 );
             }
+            if (array_key_exists('hotel_pos_payment_methods', $salesPlatform) && is_array($salesPlatform['hotel_pos_payment_methods'])) {
+                $currentHospitality['payment_methods'] = \App\Services\Hospitality\HospitalityPosPaymentMethods::normalize(
+                    $salesPlatform['hotel_pos_payment_methods'],
+                );
+            }
             // Checkout mode is XOR: pay-now OR save-for-later (never both).
             if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)) {
                 $collectNow = \App\Services\Hospitality\HospitalityPosSettings::normalizeCollectPayment(
@@ -300,6 +305,7 @@ class OrganizationPlatformConfigService
             || array_key_exists('hotel_pos_theme_template', $salesPlatform)
             || array_key_exists('hospitality_services', $salesPlatform)
             || array_key_exists('hospitality_payment_workflow', $salesPlatform)
+            || array_key_exists('hotel_pos_payment_methods', $salesPlatform)
         ) {
             $currentHospitality = is_array($moduleSettings['hospitality'] ?? null)
                 ? $moduleSettings['hospitality']
@@ -327,6 +333,11 @@ class OrganizationPlatformConfigService
             if (array_key_exists('hospitality_payment_workflow', $salesPlatform) && is_array($salesPlatform['hospitality_payment_workflow'])) {
                 $currentHospitality['payment_workflow'] = \App\Services\Hospitality\HospitalityPaymentWorkflow::normalize(
                     $salesPlatform['hospitality_payment_workflow'],
+                );
+            }
+            if (array_key_exists('hotel_pos_payment_methods', $salesPlatform) && is_array($salesPlatform['hotel_pos_payment_methods'])) {
+                $currentHospitality['payment_methods'] = \App\Services\Hospitality\HospitalityPosPaymentMethods::normalize(
+                    $salesPlatform['hotel_pos_payment_methods'],
                 );
             }
             if (array_key_exists('hotel_pos_collect_payment', $salesPlatform)) {
@@ -546,6 +557,7 @@ class OrganizationPlatformConfigService
             'hotel_pos_theme_template' => 'centrix',
             'hospitality_services' => \App\Services\Hospitality\HospitalityServices::DEFAULTS,
             'hospitality_payment_workflow' => \App\Services\Hospitality\HospitalityPaymentWorkflow::DEFAULTS,
+            'hotel_pos_payment_methods' => \App\Services\Hospitality\HospitalityPosPaymentMethods::DEFAULTS,
             'order_workflow' => $workflowDefaults,
             'order_cancellation_enabled' => true,
             'enable_pos_order_edit' => false,
@@ -643,6 +655,7 @@ class OrganizationPlatformConfigService
             'hotel_pos_theme_template' => \App\Services\Hospitality\HospitalityPosSettings::forOrganization($org)['hotel_pos_theme_template'],
             'hospitality_services' => \App\Services\Hospitality\HospitalityServices::forOrganization($org),
             'hospitality_payment_workflow' => \App\Services\Hospitality\HospitalityPaymentWorkflow::forOrganization($org),
+            'hotel_pos_payment_methods' => \App\Services\Hospitality\HospitalityPosPaymentMethods::forOrganization($org),
             'enable_mpesa_code' => (bool) ($sales['enable_mpesa_code'] ?? false),
             'enable_cheque_number' => (bool) ($sales['enable_cheque_number'] ?? false),
             'enable_pos_order_edit' => (bool) ($sales['enable_pos_order_edit'] ?? false),

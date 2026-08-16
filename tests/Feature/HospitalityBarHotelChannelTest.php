@@ -30,6 +30,7 @@ class HospitalityBarHotelChannelTest extends TestCase
         $modules = $this->org->enabled_modules ?? [];
         $modules['hospitality'] = true;
         $modules['hospitality.bar_pos'] = true;
+        $modules['hospitality.backend'] = true;
         $modules['hospitality.reports'] = true;
         $this->org->forceFill(['enabled_modules' => $modules])->save();
         Sanctum::actingAs($this->user);
@@ -90,6 +91,28 @@ class HospitalityBarHotelChannelTest extends TestCase
         $this->assertSame('Restaurant', $hotelCatalog['outlet']['menu_channel_label']);
     }
 
+    public function test_lean_product_list_includes_menu_channel_flags(): void
+    {
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->whereNull('deleted_at')
+            ->orderBy('product_code')
+            ->firstOrFail();
+        $product->forceFill([
+            'sell_on_bar' => true,
+            'sell_on_hotel' => false,
+        ])->save();
+
+        $res = $this->getJson('/api/v1/products?fields=lean&per_page=50&status=active')
+            ->assertOk()
+            ->json();
+
+        $row = collect($res['data'] ?? [])->firstWhere('product_code', $product->product_code);
+        $this->assertNotNull($row, 'Lean product list should include the updated menu item.');
+        $this->assertTrue((bool) ($row['sell_on_bar'] ?? false));
+        $this->assertFalse((bool) ($row['sell_on_hotel'] ?? true));
+    }
+
     public function test_profit_loss_and_eod_reports_run(): void
     {
         $service = app(HospitalityReportService::class);
@@ -108,5 +131,55 @@ class HospitalityBarHotelChannelTest extends TestCase
 
         $this->getJson('/api/v1/reports/hospitality-profit-loss?from='.$from.'&to='.$to)->assertOk();
         $this->getJson('/api/v1/reports/hospitality-eod-cashier?from='.$from.'&to='.$to)->assertOk();
+    }
+
+    public function test_backoffice_order_list_filters_by_channel(): void
+    {
+        $checks = app(HospitalityCheckService::class);
+        $bar = $checks->ensureDefaultOutlet($this->org, null);
+        $hotel = HospitalityOutlet::query()
+            ->where('organization_id', $this->org->id)
+            ->where('code', 'HOTEL')
+            ->firstOrFail();
+
+        $product = Product::query()
+            ->where('organization_id', $this->org->id)
+            ->orderBy('product_code')
+            ->firstOrFail();
+        $product->forceFill([
+            'sell_on_bar' => true,
+            'sell_on_hotel' => true,
+        ])->save();
+
+        $this->user->forceFill(['hospitality_outlet_id' => $bar->id])->save();
+        $barOpened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'outlet_id' => $bar->id,
+            'product_code' => $product->product_code,
+        ])->assertCreated()->json('check');
+        $this->postJson('/api/v1/hospitality/pos/checks/'.$barOpened['id'].'/lines', [
+            'product_code' => $product->product_code,
+            'qty' => 1,
+        ])->assertOk();
+
+        $this->user->forceFill(['hospitality_outlet_id' => $hotel->id])->save();
+        $hotelOpened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'outlet_id' => $hotel->id,
+            'product_code' => $product->product_code,
+        ])->assertCreated()->json('check');
+        $this->postJson('/api/v1/hospitality/pos/checks/'.$hotelOpened['id'].'/lines', [
+            'product_code' => $product->product_code,
+            'qty' => 1,
+        ])->assertOk();
+
+        $all = collect($this->getJson('/api/v1/hospitality/checks?per_page=50')->assertOk()->json('checks'));
+        $barRows = collect($this->getJson('/api/v1/hospitality/checks?channel=bar&per_page=50')->assertOk()->json('checks'));
+        $hotelRows = collect($this->getJson('/api/v1/hospitality/checks?channel=hotel&per_page=50')->assertOk()->json('checks'));
+
+        $this->assertTrue($all->contains('id', $barOpened['id']));
+        $this->assertTrue($all->contains('id', $hotelOpened['id']));
+        $this->assertTrue($barRows->contains('id', $barOpened['id']));
+        $this->assertFalse($barRows->contains('id', $hotelOpened['id']));
+        $this->assertTrue($hotelRows->contains('id', $hotelOpened['id']));
+        $this->assertFalse($hotelRows->contains('id', $barOpened['id']));
     }
 }

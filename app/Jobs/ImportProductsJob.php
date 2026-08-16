@@ -7,6 +7,7 @@ use App\Jobs\Concerns\ResolvesImportRowsFromTask;
 use App\Jobs\Concerns\RunsBackgroundTaskOnce;
 use App\Models\BackgroundTask;
 use App\Models\Branch;
+use App\Models\Organization;
 use App\Models\Product;
 use App\Models\SubCategory;
 use App\Models\Supplier;
@@ -16,6 +17,7 @@ use App\Models\Vat;
 use App\Services\Auth\UserAccessService;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Catalog\ProductCatalogScopeService;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Inventory\OpeningStockService;
 use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
@@ -58,6 +60,7 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
             }
 
             $organizationId = $this->importOrganizationId($task, $user);
+            $hospitality = $this->isHospitalityOrganization($organizationId);
             $created = 0;
             $skipped = 0;
             $failures = [];
@@ -75,7 +78,7 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
                 }
 
                 try {
-                    $body = $this->normalizeRow($row, $organizationId);
+                    $body = $this->normalizeRow($row, $organizationId, $hospitality);
                     if (! $body['product_name'] || ! $body['subcategory_id'] || ! $body['unit_id']) {
                         throw new \InvalidArgumentException(
                             'Missing required fields: product_name, subcategory (id or name), and unit (id or measure_name).',
@@ -123,8 +126,8 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
                     $body['created_by'] = (int) $user->id;
 
                     unset($body['stock_in_shop'], $body['stock_in_store']);
-                    $openingShop = (float) ($row['stock_in_shop'] ?? 0);
-                    $openingStore = (float) ($row['stock_in_store'] ?? 0);
+                    $openingShop = (float) ($row['stock_in_shop'] ?? $row['outlet_stock'] ?? 0);
+                    $openingStore = (float) ($row['stock_in_store'] ?? $row['storeroom_stock'] ?? 0);
                     $openingBranchId = $this->resolveOpeningBranchId($row, $user, $organizationId, $access, $catalogBranchId);
 
                     $product = Product::create($body);
@@ -235,10 +238,17 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
         return $byName->exists();
     }
 
+    protected function isHospitalityOrganization(int $organizationId): bool
+    {
+        $profile = (string) (Organization::query()->whereKey($organizationId)->value('deployment_profile') ?? '');
+
+        return IndustryRegistry::industryForProfile($profile) === 'hospitality';
+    }
+
     /** @param array<string, mixed> $row
      * @return array<string, mixed>
      */
-    protected function normalizeRow(array $row, int $organizationId): array
+    protected function normalizeRow(array $row, int $organizationId, bool $hospitality = false): array
     {
         $body = [
             'product_code' => trim((string) ($row['product_code'] ?? '')),
@@ -250,38 +260,60 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
 
         $this->resolveForeignKeys($body, $row, $organizationId);
 
-        foreach ([
+        $optional = [
             'last_cost_price',
-            'discount_type',
-            'discount_percentage',
-            'discount_value',
-            'product_weight',
             'reorder_point',
-            'supplier_id',
             'vat_id',
-        ] as $key) {
+        ];
+        if (! $hospitality) {
+            array_push(
+                $optional,
+                'discount_type',
+                'discount_percentage',
+                'discount_value',
+                'product_weight',
+                'supplier_id',
+            );
+        }
+        foreach ($optional as $key) {
             if (array_key_exists($key, $row) && $row[$key] !== '' && $row[$key] !== null) {
                 $body[$key] = $row[$key];
             }
         }
 
-        $sell = strtolower(trim((string) ($row['sell_on_retail'] ?? '')));
-        if (in_array($sell, ['true', '1', 'yes'], true)) {
-            $body['sell_on_retail'] = true;
-        } elseif (in_array($sell, ['false', '0', 'no'], true)) {
+        if ($hospitality) {
             $body['sell_on_retail'] = false;
-        }
-
-        foreach (['sell_on_bar', 'sell_on_hotel'] as $channelKey) {
-            $channel = strtolower(trim((string) ($row[$channelKey] ?? '')));
-            if (in_array($channel, ['true', '1', 'yes'], true)) {
-                $body[$channelKey] = true;
-            } elseif (in_array($channel, ['false', '0', 'no'], true)) {
-                $body[$channelKey] = false;
+            $bar = $this->parseImportFlag($row['sell_on_bar'] ?? null);
+            $hotel = $this->parseImportFlag($row['sell_on_hotel'] ?? null);
+            $body['sell_on_bar'] = $bar ?? true;
+            $body['sell_on_hotel'] = $hotel ?? true;
+        } else {
+            $sell = $this->parseImportFlag($row['sell_on_retail'] ?? null);
+            if ($sell !== null) {
+                $body['sell_on_retail'] = $sell;
+            }
+            foreach (['sell_on_bar', 'sell_on_hotel'] as $channelKey) {
+                $channel = $this->parseImportFlag($row[$channelKey] ?? null);
+                if ($channel !== null) {
+                    $body[$channelKey] = $channel;
+                }
             }
         }
 
         return $body;
+    }
+
+    protected function parseImportFlag(mixed $value): ?bool
+    {
+        $flag = strtolower(trim((string) ($value ?? '')));
+        if (in_array($flag, ['true', '1', 'yes'], true)) {
+            return true;
+        }
+        if (in_array($flag, ['false', '0', 'no'], true)) {
+            return false;
+        }
+
+        return null;
     }
 
     /** @param  array<string, mixed>  $row */

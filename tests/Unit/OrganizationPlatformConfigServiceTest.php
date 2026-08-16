@@ -75,6 +75,18 @@ class OrganizationPlatformConfigServiceTest extends TestCase
             ['paid', 'processed', 'delivered', 'completed'],
             $config['customer_return_statuses'],
         );
+        $this->assertSame(
+            [
+                'cash' => true,
+                'mpesa' => true,
+                'equity' => false,
+                'kcb' => false,
+                'other_bank' => false,
+                'cheque' => false,
+                'extra' => false,
+            ],
+            $config['hotel_pos_payment_methods'],
+        );
     }
 
     public function test_sales_platform_config_reads_custom_action_status_lists(): void

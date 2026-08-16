@@ -128,7 +128,9 @@ class HospitalityPosTest extends TestCase
             ->orderBy('product_code')
             ->firstOrFail();
 
-        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'product_code' => $product->product_code,
+        ])
             ->assertCreated()
             ->json('check');
         $checkId = (int) $opened['id'];
@@ -210,7 +212,9 @@ class HospitalityPosTest extends TestCase
             ->orderBy('product_code')
             ->firstOrFail();
 
-        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'product_code' => $product->product_code,
+        ])
             ->assertCreated()
             ->json('check');
         $checkId = (int) $opened['id'];
@@ -255,7 +259,9 @@ class HospitalityPosTest extends TestCase
             ->orderBy('product_code')
             ->firstOrFail();
 
-        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'product_code' => $product->product_code,
+        ])
             ->assertCreated()
             ->json('check');
 
@@ -270,7 +276,7 @@ class HospitalityPosTest extends TestCase
             ->json('check');
 
         $this->assertCount(1, $withLine['lines']);
-        $this->assertSame(2.0, (float) $withLine['lines'][0]['qty']);
+        $this->assertSame(3.0, (float) $withLine['lines'][0]['qty']);
         $this->assertGreaterThan(0, (float) $withLine['total']);
 
         $held = $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/hold")
@@ -300,7 +306,9 @@ class HospitalityPosTest extends TestCase
             ->orderBy('product_code')
             ->firstOrFail();
 
-        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'product_code' => $product->product_code,
+        ])
             ->assertCreated()
             ->json('check');
         $checkId = (int) $opened['id'];
@@ -366,7 +374,9 @@ class HospitalityPosTest extends TestCase
             ->orderBy('product_code')
             ->firstOrFail();
 
-        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'product_code' => $product->product_code,
+        ])
             ->assertCreated()
             ->json('check');
         $checkId = (int) $opened['id'];
@@ -397,7 +407,9 @@ class HospitalityPosTest extends TestCase
             ->orderBy('product_code')
             ->firstOrFail();
 
-        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [])
+        $opened = $this->postJson('/api/v1/hospitality/pos/checks', [
+            'product_code' => $product->product_code,
+        ])
             ->assertCreated()
             ->json('check');
         $checkId = (int) $opened['id'];

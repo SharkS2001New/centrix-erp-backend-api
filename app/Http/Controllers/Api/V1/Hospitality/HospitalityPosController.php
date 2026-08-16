@@ -79,6 +79,12 @@ class HospitalityPosController extends Controller
             'outlet_id' => ['nullable', 'integer'],
             'branch_id' => ['nullable', 'integer'],
             'floor_table_id' => ['nullable', 'integer'],
+            'product_code' => ['nullable', 'string', 'max:64'],
+            'qty' => ['nullable', 'numeric', 'min:0.0001'],
+            'room_id' => ['nullable', 'integer'],
+            'nights' => ['nullable', 'integer', 'min:1', 'max:90'],
+            'checkout_at' => ['nullable', 'date'],
+            'guest_name' => ['nullable', 'string', 'max:160'],
         ]);
 
         $check = $this->checkService->openCheck(
@@ -89,6 +95,7 @@ class HospitalityPosController extends Controller
                 ? (int) $data['outlet_id']
                 : (($user->hospitality_outlet_id ?? null) ? (int) $user->hospitality_outlet_id : null),
             isset($data['floor_table_id']) ? (int) $data['floor_table_id'] : null,
+            $data,
         );
 
         return response()->json(['check' => $this->checkService->toArray($check)], 201);
@@ -181,7 +188,9 @@ class HospitalityPosController extends Controller
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
         $check = $this->checkService->updateLineQty($check, $lineId, (float) $data['qty']);
 
-        return response()->json(['check' => $this->checkService->toArray($check)]);
+        return response()->json([
+            'check' => $check ? $this->checkService->toArray($check) : null,
+        ]);
     }
 
     public function removeLine(Request $request, int $checkId, int $lineId)
@@ -190,7 +199,9 @@ class HospitalityPosController extends Controller
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
         $check = $this->checkService->removeLine($check, $lineId);
 
-        return response()->json(['check' => $this->checkService->toArray($check)]);
+        return response()->json([
+            'check' => $check ? $this->checkService->toArray($check) : null,
+        ]);
     }
 
     public function clear(Request $request, int $checkId)
@@ -199,7 +210,9 @@ class HospitalityPosController extends Controller
         $check = $this->checkService->findOwnedCheck($checkId, (int) $org->id);
         $check = $this->checkService->clearLines($check);
 
-        return response()->json(['check' => $this->checkService->toArray($check)]);
+        return response()->json([
+            'check' => $check ? $this->checkService->toArray($check) : null,
+        ]);
     }
 
     public function hold(Request $request, int $checkId)

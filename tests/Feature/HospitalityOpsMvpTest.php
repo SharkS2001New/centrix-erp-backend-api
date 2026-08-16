@@ -217,18 +217,16 @@ class HospitalityOpsMvpTest extends TestCase
         $rooms = $this->getJson('/api/v1/hospitality/pos/rooms')->assertOk()->json('data');
         $this->assertTrue(collect($rooms)->contains(fn ($r) => (int) $r['id'] === (int) $room->id));
 
-        $checkId = (int) $this->postJson('/api/v1/hospitality/pos/checks', [])
-            ->assertCreated()
-            ->json('check.id');
-
         $checkout = now()->addDays(2)->setTime(10, 0)->toIso8601String();
-        $this->postJson("/api/v1/hospitality/pos/checks/{$checkId}/room-stays", [
+        $checkId = (int) $this->postJson('/api/v1/hospitality/pos/checks', [
             'room_id' => $room->id,
             'nights' => 2,
             'checkout_at' => $checkout,
             'guest_name' => 'Walk-in Guest',
-        ])->assertOk()
-            ->assertJsonPath('check.guest_name', 'Walk-in Guest');
+        ])
+            ->assertCreated()
+            ->assertJsonPath('check.guest_name', 'Walk-in Guest')
+            ->json('check.id');
 
         $this->assertSame('vacant', $room->fresh()->status);
 

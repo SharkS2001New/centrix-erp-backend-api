@@ -6,6 +6,7 @@ use App\Jobs\ImportProductsJob;
 use App\Models\BackgroundTask;
 use App\Models\Branch;
 use App\Models\Category;
+use App\Models\Organization;
 use App\Models\Product;
 use App\Models\SubCategory;
 use App\Models\Uom;
@@ -51,6 +52,50 @@ class ImportProductsTest extends TestCase
         $this->assertSame((int) $subcategory->id, (int) $product->subcategory_id);
         $this->assertSame((int) $uom->id, (int) $product->unit_id);
         $this->assertNull($product->branch_id);
+    }
+
+    public function test_hospitality_menu_import_defaults_bar_and_hotel_channels(): void
+    {
+        $admin = User::query()->where('username', 'admin')->firstOrFail();
+        $organizationId = (int) $admin->organization_id;
+        [$category, $subcategory, $uom] = $this->catalogFixtures($organizationId);
+        $org = Organization::query()->findOrFail($organizationId);
+        $originalProfile = $org->deployment_profile;
+        $org->forceFill(['deployment_profile' => 'hotel_bar'])->save();
+
+        try {
+            $task = BackgroundTask::createPending('product_import', $organizationId, (int) $admin->id, [
+                'rows' => [
+                    [
+                        'product_code' => 'MENU-IMPORT-001',
+                        'product_name' => 'Imported Club Soda',
+                        'category_name' => $category->category_name,
+                        'subcategory_name' => $subcategory->subcategory_name,
+                        'measure_name' => $uom->full_name,
+                        'unit_price' => 150,
+                        'outlet_stock' => 12,
+                        'storeroom_stock' => 24,
+                    ],
+                ],
+            ]);
+
+            $this->app->call([new ImportProductsJob($task->id), 'handle']);
+
+            $task->refresh();
+            $this->assertSame('completed', $task->status);
+            $this->assertSame(1, $task->result['created'] ?? null);
+
+            $product = Product::query()
+                ->where('organization_id', $organizationId)
+                ->where('product_code', 'MENU-IMPORT-001')
+                ->firstOrFail();
+
+            $this->assertFalse((bool) $product->sell_on_retail);
+            $this->assertTrue((bool) $product->sell_on_bar);
+            $this->assertTrue((bool) $product->sell_on_hotel);
+        } finally {
+            $org->forceFill(['deployment_profile' => $originalProfile])->save();
+        }
     }
 
     public function test_product_reimport_skips_existing_code_and_name_within_org(): void

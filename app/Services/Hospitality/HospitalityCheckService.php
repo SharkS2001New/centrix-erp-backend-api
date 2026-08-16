@@ -13,6 +13,7 @@ use App\Models\Product;
 use App\Models\User;
 use App\Models\Vat;
 use App\Support\SqlLikeSearch;
+use Carbon\Carbon;
 use Illuminate\Contracts\Pagination\LengthAwarePaginator;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
@@ -72,45 +73,148 @@ class HospitalityCheckService
         ]);
     }
 
+    /**
+     * Open a till ticket. Never leaves a blank open order: the first product or room stay
+     * is written in the same transaction.
+     *
+     * @param  array{
+     *   product_code?: string,
+     *   qty?: float|int|string,
+     *   room_id?: int,
+     *   nights?: int,
+     *   checkout_at?: string,
+     *   guest_name?: string|null
+     * }  $firstItem
+     */
     public function openCheck(
         Organization $org,
         User $user,
         ?int $branchId = null,
         ?int $outletId = null,
         ?int $floorTableId = null,
+        array $firstItem = [],
     ): HospitalityCheck {
-        $outlet = $outletId
-            ? HospitalityOutlet::query()
-                ->where('organization_id', $org->id)
-                ->where('id', $outletId)
-                ->where('is_active', true)
-                ->firstOrFail()
-            : app(HospitalityPosCatalogService::class)->resolveOutletForUser($org, $user, null);
-
-        $tableId = null;
-        $serviceMode = 'counter';
-        if ($floorTableId) {
-            $table = $this->resolveFloorTable($org, (int) $outlet->id, $floorTableId);
-            $tableId = $table->id;
-            $serviceMode = 'table';
+        $productCode = trim((string) ($firstItem['product_code'] ?? ''));
+        $roomId = isset($firstItem['room_id']) ? (int) $firstItem['room_id'] : 0;
+        if ($productCode === '' && $roomId < 1) {
+            throw ValidationException::withMessages([
+                'lines' => ['Add an item to open an order. Blank checks are not saved as orders.'],
+            ]);
         }
 
-        return HospitalityCheck::create([
-            'organization_id' => $org->id,
-            'branch_id' => $branchId ?? $outlet->branch_id,
-            'outlet_id' => $outlet->id,
-            'floor_table_id' => $tableId,
-            'check_number' => $this->nextCheckNumber((int) $org->id),
-            'status' => 'open',
-            'service_mode' => $serviceMode,
-            'opened_by' => $user->id,
-            'subtotal' => 0,
-            'vat_total' => 0,
-            'service_charge' => 0,
-            'total' => 0,
-            'amount_paid' => 0,
-            'opened_at' => now(),
-        ]);
+        return DB::transaction(function () use ($org, $user, $branchId, $outletId, $floorTableId, $firstItem, $productCode, $roomId) {
+            $outlet = $outletId
+                ? HospitalityOutlet::query()
+                    ->where('organization_id', $org->id)
+                    ->where('id', $outletId)
+                    ->where('is_active', true)
+                    ->firstOrFail()
+                : app(HospitalityPosCatalogService::class)->resolveOutletForUser($org, $user, null);
+
+            $tableId = null;
+            $serviceMode = 'counter';
+            if ($floorTableId) {
+                $table = $this->resolveFloorTable($org, (int) $outlet->id, $floorTableId);
+                $tableId = $table->id;
+                $serviceMode = 'table';
+            }
+
+            $check = $this->reusableEmptyOpenCheck($org, $user, (int) $outlet->id);
+            if ($check) {
+                $check->update([
+                    'branch_id' => $branchId ?? $outlet->branch_id,
+                    'floor_table_id' => $tableId,
+                    'service_mode' => $serviceMode,
+                    'opened_at' => $check->opened_at ?? now(),
+                ]);
+                $check = $check->fresh();
+            } else {
+                $check = HospitalityCheck::create([
+                    'organization_id' => $org->id,
+                    'branch_id' => $branchId ?? $outlet->branch_id,
+                    'outlet_id' => $outlet->id,
+                    'floor_table_id' => $tableId,
+                    'check_number' => $this->nextCheckNumber((int) $org->id),
+                    'status' => 'open',
+                    'service_mode' => $serviceMode,
+                    'opened_by' => $user->id,
+                    'subtotal' => 0,
+                    'vat_total' => 0,
+                    'service_charge' => 0,
+                    'total' => 0,
+                    'amount_paid' => 0,
+                    'opened_at' => now(),
+                ]);
+            }
+
+            if ($productCode !== '') {
+                return $this->addProductLine(
+                    $check,
+                    $productCode,
+                    isset($firstItem['qty']) ? (float) $firstItem['qty'] : 1,
+                );
+            }
+
+            $nights = max(1, (int) ($firstItem['nights'] ?? 1));
+            $checkoutAt = Carbon::parse((string) ($firstItem['checkout_at'] ?? now()->addDay()));
+
+            return app(HospitalityPosRoomSaleService::class)->addRoomStayLine(
+                $check,
+                $org,
+                $roomId,
+                $nights,
+                $checkoutAt,
+                isset($firstItem['guest_name']) ? (string) $firstItem['guest_name'] : null,
+            );
+        });
+    }
+
+    /** Drop leftover blank POS drafts so they never appear as open F&B orders. */
+    public function discardEmptyOpenDrafts(int $organizationId, ?int $openedBy = null): int
+    {
+        $query = HospitalityCheck::query()
+            ->where('organization_id', $organizationId)
+            ->where('status', 'open')
+            ->where('amount_paid', 0)
+            ->where(function ($q) {
+                $q->whereNull('total')->orWhere('total', '<=', 0);
+            })
+            ->whereDoesntHave('lines');
+        if ($openedBy) {
+            $query->where('opened_by', $openedBy);
+        }
+
+        return (int) $query->delete();
+    }
+
+    protected function abandonIfEmptyOpenDraft(HospitalityCheck $check): ?HospitalityCheck
+    {
+        if ($check->status !== 'open' || round((float) $check->amount_paid, 2) > 0) {
+            return $check;
+        }
+        if ($check->lines()->count() > 0 || round((float) $check->total, 2) > 0) {
+            return $check;
+        }
+        $check->delete();
+
+        return null;
+    }
+
+    /** Reuse this cashier's unused open draft so pay/sync does not leave an extra empty check number. */
+    protected function reusableEmptyOpenCheck(Organization $org, User $user, int $outletId): ?HospitalityCheck
+    {
+        return HospitalityCheck::query()
+            ->where('organization_id', $org->id)
+            ->where('outlet_id', $outletId)
+            ->where('opened_by', $user->id)
+            ->where('status', 'open')
+            ->where('amount_paid', 0)
+            ->where(function ($q) {
+                $q->whereNull('total')->orWhere('total', 0);
+            })
+            ->whereDoesntHave('lines')
+            ->orderByDesc('id')
+            ->first();
     }
 
     /**
@@ -478,7 +582,7 @@ class HospitalityCheckService
         return $this->recalculate($check->fresh());
     }
 
-    public function updateLineQty(HospitalityCheck $check, int $lineId, float $qty): HospitalityCheck
+    public function updateLineQty(HospitalityCheck $check, int $lineId, float $qty): ?HospitalityCheck
     {
         $this->assertEditable($check);
         $line = HospitalityCheckLine::query()
@@ -488,8 +592,9 @@ class HospitalityCheckService
 
         if ($qty <= 0) {
             $line->delete();
+            $fresh = $this->recalculate($check->fresh());
 
-            return $this->recalculate($check->fresh());
+            return $this->abandonIfEmptyOpenDraft($fresh);
         }
 
         $vatPct = 0.0;
@@ -506,7 +611,7 @@ class HospitalityCheckService
         return $this->recalculate($check->fresh());
     }
 
-    public function removeLine(HospitalityCheck $check, int $lineId): HospitalityCheck
+    public function removeLine(HospitalityCheck $check, int $lineId): ?HospitalityCheck
     {
         $this->assertEditable($check);
         HospitalityCheckLine::query()
@@ -514,10 +619,12 @@ class HospitalityCheckService
             ->where('id', $lineId)
             ->delete();
 
-        return $this->recalculate($check->fresh());
+        $fresh = $this->recalculate($check->fresh());
+
+        return $this->abandonIfEmptyOpenDraft($fresh);
     }
 
-    public function clearLines(HospitalityCheck $check): HospitalityCheck
+    public function clearLines(HospitalityCheck $check): ?HospitalityCheck
     {
         $this->assertEditable($check);
         if (round((float) $check->amount_paid, 2) > 0) {
@@ -527,7 +634,9 @@ class HospitalityCheckService
         }
         HospitalityCheckLine::query()->where('check_id', $check->id)->delete();
 
-        return $this->recalculate($check->fresh());
+        $fresh = $this->recalculate($check->fresh());
+
+        return $this->abandonIfEmptyOpenDraft($fresh);
     }
 
     /** Park / hold an open check so the cashier can start the next ticket. */
@@ -823,6 +932,7 @@ class HospitalityCheckService
      *   q?: string|null,
      *   from_date?: string|null,
      *   to_date?: string|null,
+     *   channel?: string|null,
      *   per_page?: int,
      *   page?: int
      * }  $filters
@@ -832,6 +942,8 @@ class HospitalityCheckService
     {
         $limit = max(1, min(200, (int) ($filters['per_page'] ?? 50)));
         $page = max(1, (int) ($filters['page'] ?? 1));
+
+        $this->discardEmptyOpenDrafts($organizationId);
 
         $query = HospitalityCheck::query()
             ->with([
@@ -880,6 +992,25 @@ class HospitalityCheckService
         }
 
         $this->applyCheckListSearch($query, (string) ($filters['q'] ?? ''));
+
+        $channel = strtolower(trim((string) ($filters['channel'] ?? '')));
+        if ($channel === 'bar') {
+            $query->whereHas('outlet', function ($outlet) {
+                $outlet->where('outlet_type', 'bar');
+            });
+        } elseif ($channel === 'hotel') {
+            $query->whereHas('outlet', function ($outlet) {
+                $outlet->where('outlet_type', '!=', 'bar');
+            });
+        }
+
+        // POS may open a blank check before the first item. Those drafts are not orders.
+        $query->where(function ($inner) {
+            $inner->where('status', '!=', 'open')
+                ->orWhere('total', '>', 0)
+                ->orWhere('amount_paid', '>', 0)
+                ->orWhereHas('lines');
+        });
 
         return $query->paginate($limit, ['*'], 'page', $page);
     }
