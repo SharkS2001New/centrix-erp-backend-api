@@ -155,6 +155,39 @@ class AuthController extends Controller
         return $this->respondWithAuthSession($result, $request);
     }
 
+    public function loginWithPin(Request $request)
+    {
+        $data = $request->validate([
+            'company_code' => 'required|string',
+            'username' => 'required|string',
+            'pin' => 'required|string|max:12',
+            'client_id' => 'required|string',
+            'login_channel' => 'sometimes|in:backoffice,pos,mobile,manager',
+            'force_logout' => 'sometimes|boolean',
+        ]);
+
+        try {
+            $result = $this->sessions->loginWithPin(
+                $data['company_code'],
+                $data['username'],
+                $data['pin'],
+                $data['client_id'],
+                (bool) ($data['force_logout'] ?? false),
+                $data['login_channel'] ?? 'backoffice',
+            );
+        } catch (ValidationException $e) {
+            if ($e->errors()['session'] ?? null) {
+                return response()->json([
+                    'message' => 'This user is already logged in on another device.',
+                    'code' => 'session_active_elsewhere',
+                ], 403);
+            }
+            throw $e;
+        }
+
+        return $this->respondWithAuthSession($result, $request);
+    }
+
     public function verifyTwoFactor(Request $request)
     {
         $data = $request->validate([

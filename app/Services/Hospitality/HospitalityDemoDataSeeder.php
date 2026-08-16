@@ -3,18 +3,28 @@
 namespace App\Services\Hospitality;
 
 use App\Models\Category;
+use App\Models\CurrentStock;
+use App\Models\HospitalityCheck;
 use App\Models\HospitalityFloorTable;
+use App\Models\HospitalityFolioCharge;
 use App\Models\HospitalityOutlet;
+use App\Models\HospitalityRecipe;
+use App\Models\HospitalityRecipeIngredient;
+use App\Models\HospitalityRoom;
+use App\Models\InventoryTransaction;
 use App\Models\Organization;
 use App\Models\Product;
+use App\Models\RetailPackageSetting;
 use App\Models\SubCategory;
 use App\Models\Uom;
 use App\Models\User;
 use App\Models\Vat;
 use App\Services\Cache\OrganizationCache;
 use App\Support\SeededProductImage;
+use App\Support\StoredPublicFile;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\Storage;
 use Illuminate\Validation\ValidationException;
 
 /**
@@ -23,6 +33,9 @@ use Illuminate\Validation\ValidationException;
 class HospitalityDemoDataSeeder
 {
     public const SEED_PREFIX = 'HTL';
+
+    /** Floor table codes created by seedForOrganization(). */
+    public const DEMO_TABLE_CODES = ['T1', 'T2', 'T3', 'T4', 'T5', 'T6', 'B1', 'B2'];
 
     /**
      * @return array{

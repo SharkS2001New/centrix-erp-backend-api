@@ -125,6 +125,83 @@ SQL;
         $this->assertStringContainsString('Food', $files['categories-import.csv']);
     }
 
+    public function test_parser_reads_unquoted_tables_and_semicolons_inside_strings(): void
+    {
+        $parser = new SqlDumpInsertParser;
+        $sql = <<<'SQL'
+INSERT INTO product VALUES (1,'MAIN',9001,'Sugar; white',NULL);
+INSERT INTO `product` VALUES (2,'MAIN',9002,'O''Brien Tea',NULL);
+SQL;
+
+        $this->assertSame(['product'], $parser->detectAllTableNames($sql));
+        $rows = $parser->loadRows($sql, 'product');
+        $this->assertCount(2, $rows);
+        $this->assertSame('Sugar; white', $rows[0][3]);
+        $this->assertSame("O'Brien Tea", $rows[1][3]);
+    }
+
+    public function test_products_csv_maps_named_columns_and_keeps_rows_without_subcategory(): void
+    {
+        $sqlByTable = [
+            'category' => "INSERT INTO `category` VALUES ('2020-01-01',NULL,10,'Food');\n",
+            'sub_category' => "INSERT INTO `sub_category` VALUES ('2020-01-01',NULL,20,'Sugar','',10);\n",
+            'uom' => "INSERT INTO `uom` VALUES ('2020-01-01',NULL,30,'KG','Kilogram');\n",
+            'vat_status' => "INSERT INTO `vat_status` VALUES ('2020-01-01',NULL,40,'Vatable','V',16.00);\n",
+            'product' => "INSERT INTO `product` (`id`, `product_code`, `product_name`, `subcateg_id`, `unit_id`, `unit_price`, `dlt_on`) "
+                ."VALUES (1, 9401, 'Loose Salt', NULL, NULL, 55.5, NULL),\n"
+                ."(2, 9402, 'Sugar; icing', 20, 30, 80, NULL);\n",
+        ];
+
+        $generator = new LightStoresCentrixImportCsvGenerator($sqlByTable);
+        $files = $generator->generateAll();
+        $lines = preg_split("/\r\n|\n|\r/", trim($files['products-import.csv'])) ?: [];
+
+        $this->assertCount(3, $lines);
+        $this->assertStringContainsString('9401', $lines[1]);
+        $this->assertStringContainsString('Loose Salt', $lines[1]);
+        $this->assertStringContainsString('55.5', $lines[1]);
+        $this->assertStringContainsString('9402', $lines[2]);
+        $this->assertStringContainsString('Sugar; icing', $lines[2]);
+        $this->assertStringContainsString('Food', $lines[2]);
+    }
+
+    public function test_products_csv_keeps_rows_when_extra_columns_follow_classic_schema(): void
+    {
+        $extra = str_repeat(',0', 8);
+        $sqlByTable = [
+            'category' => "INSERT INTO `category` VALUES ('2020-01-01',NULL,10,'Food');\n",
+            'sub_category' => "INSERT INTO `sub_category` VALUES ('2020-01-01',NULL,20,'Sugar','',10);\n",
+            'uom' => "INSERT INTO `uom` VALUES ('2020-01-01',NULL,30,'KG','Kilogram');\n",
+            'vat_status' => "INSERT INTO `vat_status` VALUES ('2020-01-01',NULL,40,'Vatable','V',16.00);\n",
+            'product' => "INSERT INTO `product` VALUES ("
+                ."'2020-01-01 00:00:00',NULL,1,'MAIN',9501,'Brown Sugar','search',"
+                .'20,30,5,2,120,50,80,0,10,1.5,1,40,1,'
+                ."NULL,NULL,1,0,0,'2024-06-01 00:00:00'{$extra});\n",
+        ];
+
+        $generator = new LightStoresCentrixImportCsvGenerator($sqlByTable);
+        $files = $generator->generateAll();
+        $lines = preg_split("/\r\n|\n|\r/", trim($files['products-import.csv'])) ?: [];
+
+        $this->assertGreaterThanOrEqual(2, count($lines));
+        $this->assertStringContainsString('9501', $lines[1]);
+        $this->assertStringContainsString('Brown Sugar', $lines[1]);
+    }
+
+    public function test_products_table_alias_and_unquoted_insert(): void
+    {
+        $sqlByTable = [
+            'products' => "INSERT INTO products (`product_code`, `product_name`, `unit_price`, `dlt_on`) "
+                ."VALUES (9601, 'Cooking Oil', 210, NULL);\n",
+        ];
+
+        $generator = new LightStoresCentrixImportCsvGenerator($sqlByTable);
+        $files = $generator->generateAll();
+        $this->assertStringContainsString('9601', $files['products-import.csv']);
+        $this->assertStringContainsString('Cooking Oil', $files['products-import.csv']);
+        $this->assertStringContainsString('210', $files['products-import.csv']);
+    }
+
     private function sampleProductInsert(int $code, string $name, bool $deleted): string
     {
         $dlt = $deleted ? "'2024-01-01 00:00:00'" : 'NULL';

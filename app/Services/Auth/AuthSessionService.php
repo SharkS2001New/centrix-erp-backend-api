@@ -9,6 +9,7 @@ use App\Services\Auth\OrganizationLoginGuard;
 use App\Services\Auth\SecuritySettingsResolver;
 use App\Services\Auth\TwoFactorService;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Erp\IndustryRegistry;
 use App\Services\Platform\PlatformMailSettingsResolver;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -61,6 +62,69 @@ class AuthSessionService
         }
 
         return $this->continueAfterPassword($account, $clientId, $forceLogout, $loginChannel);
+    }
+
+    /**
+     * Hotel terminal PIN sign-in. Username is already bound to the device after the
+     * first password login; PIN issues a new session without a second MFA challenge.
+     *
+     * @return array{token: string, user: User, organization: \App\Models\Organization, memberships: array}
+     */
+    public function loginWithPin(
+        string $companyCode,
+        string $username,
+        string $pin,
+        string $clientId,
+        bool $forceLogout = false,
+        string $loginChannel = UserLoginChannelService::BACKOFFICE,
+    ): array {
+        $companyCode = strtoupper(trim($companyCode));
+        $username = trim($username);
+
+        if ($companyCode === '' || $username === '') {
+            throw ValidationException::withMessages([
+                'username' => ['Organization and username are required for PIN sign-in.'],
+            ]);
+        }
+
+        $org = \App\Models\Organization::findByCompanyCodeIdentifier($companyCode);
+        if (! $org) {
+            throw ValidationException::withMessages([
+                'username' => ['Invalid credentials.'],
+            ]);
+        }
+
+        if (! IndustryRegistry::isHospitality($org->deployment_profile)) {
+            throw ValidationException::withMessages([
+                'pin' => ['PIN sign-in is only available for Hotel & Hospitality.'],
+            ]);
+        }
+
+        $settings = SecuritySettingsResolver::forOrganization($org);
+        if (! ($settings['enable_pin_unlock'] ?? true)) {
+            throw ValidationException::withMessages([
+                'pin' => ['PIN sign-in is turned off for this organization. Sign in with your password.'],
+            ]);
+        }
+
+        $account = $this->resolver->resolve($org, $username);
+        if (! $account) {
+            throw ValidationException::withMessages([
+                'username' => ['Invalid credentials.'],
+            ]);
+        }
+
+        $pins = app(PinLoginService::class);
+        $effective = $account->effectiveUser();
+        if (! $pins->userHasPin($effective)) {
+            throw ValidationException::withMessages([
+                'pin' => ['This account does not have a screen PIN. Sign in with your password.'],
+            ]);
+        }
+
+        $pins->assertPinMatches($effective, $pin, 'pin');
+
+        return $this->issueSession($account, $clientId, $forceLogout, $loginChannel);
     }
 
     /**

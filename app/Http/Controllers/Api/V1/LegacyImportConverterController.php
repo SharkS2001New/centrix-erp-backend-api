@@ -47,16 +47,19 @@ class LegacyImportConverterController extends Controller
 
         if ($queue) {
             $storedPaths = [];
+            $originalNames = [];
             foreach ($files as $index => $file) {
                 $storedPaths[] = $file->storeAs(
                     'legacy-imports/uploads',
                     uniqid('sql_'.$index.'_', true).'.sql',
                     'local',
                 );
+                $originalNames[] = $file->getClientOriginalName();
             }
 
             $task = $this->tasks->create('legacy_import_convert', $request->user(), [
                 'stored_paths' => $storedPaths,
+                'original_names' => $originalNames,
                 'target_industry' => $targetIndustry,
             ]);
             ConvertLegacyImportJob::dispatch($task->id);

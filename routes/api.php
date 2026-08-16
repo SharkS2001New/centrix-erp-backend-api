@@ -171,6 +171,8 @@ Route::prefix('v1')->group(function () {
     });
     Route::post('auth/login', [AuthController::class, 'login'])
         ->middleware('throttle:auth-login');
+    Route::post('auth/pin-login', [AuthController::class, 'loginWithPin'])
+        ->middleware('throttle:auth-login');
     Route::post('auth/passkeys/login/options', [AuthController::class, 'passkeyLoginOptions'])
         ->middleware('throttle:auth-login');
     Route::post('auth/passkeys/login/availability', [AuthController::class, 'passkeyLoginAvailability'])

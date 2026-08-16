@@ -18,6 +18,11 @@ class IndustryRegistry
         return is_array($def) ? $def : null;
     }
 
+    public static function isHospitality(?string $deploymentProfile): bool
+    {
+        return self::industryForProfile((string) $deploymentProfile) === 'hospitality';
+    }
+
     public static function industryForProfile(string $profileKey): string
     {
         $profileKey = trim($profileKey);

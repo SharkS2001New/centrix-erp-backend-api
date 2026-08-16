@@ -43,11 +43,15 @@ class ConvertLegacyImportJob implements ShouldQueue
             );
 
             $files = [];
-            foreach ($storedPaths as $path) {
+            $originalNames = $payload['original_names'] ?? [];
+            foreach ($storedPaths as $index => $path) {
                 $full = Storage::disk('local')->path($path);
+                $originalName = is_string($originalNames[$index] ?? null) && $originalNames[$index] !== ''
+                    ? $originalNames[$index]
+                    : basename($path);
                 $files[] = new UploadedFile(
                     $full,
-                    basename($path),
+                    $originalName,
                     'application/sql',
                     null,
                     true,

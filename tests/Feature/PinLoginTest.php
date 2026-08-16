@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\Organization;
 use App\Models\PlatformSubscription;
 use App\Models\User;
 use App\Services\Auth\PinLoginService;
@@ -107,6 +108,81 @@ class PinLoginTest extends TestCase
             ->assertJsonPath('has_login_pin', true);
 
         $this->assertTrue(app(PinLoginService::class)->userHasPin($user->fresh()));
+    }
+
+    public function test_public_pin_login_issues_session_for_hospitality_user(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        $this->makeOrganizationHospitality((int) $user->organization_id);
+        $this->ensureActiveSubscription((int) $user->organization_id);
+        app(PinLoginService::class)->assignPin($user, '2580');
+
+        $res = $this->postJson('/api/v1/auth/pin-login', [
+            'company_code' => 'DEMO',
+            'username' => 'admin',
+            'pin' => '2580',
+            'client_id' => 'HOTEL_PIN_WEB',
+        ])
+            ->assertOk()
+            ->json();
+
+        $this->assertSame((int) $user->id, (int) ($res['user']['id'] ?? 0));
+        $this->assertTrue((bool) ($res['user']['has_login_pin'] ?? false));
+        $this->assertArrayNotHasKey('login_pin', $res['user'] ?? []);
+    }
+
+    public function test_public_pin_login_rejects_wrong_pin(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        $this->makeOrganizationHospitality((int) $user->organization_id);
+        app(PinLoginService::class)->assignPin($user, '2580');
+
+        $this->postJson('/api/v1/auth/pin-login', [
+            'company_code' => 'DEMO',
+            'username' => 'admin',
+            'pin' => '0000',
+            'client_id' => 'HOTEL_PIN_WEB',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['pin']);
+    }
+
+    public function test_public_pin_login_rejects_retail_organizations(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        app(PinLoginService::class)->assignPin($user, '2580');
+
+        $this->postJson('/api/v1/auth/pin-login', [
+            'company_code' => 'DEMO',
+            'username' => 'admin',
+            'pin' => '2580',
+            'client_id' => 'HOTEL_PIN_WEB',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['pin']);
+    }
+
+    public function test_public_pin_login_rejects_user_without_pin(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        $this->makeOrganizationHospitality((int) $user->organization_id);
+        $user->forceFill(['login_pin' => null])->save();
+
+        $this->postJson('/api/v1/auth/pin-login', [
+            'company_code' => 'DEMO',
+            'username' => 'admin',
+            'pin' => '2580',
+            'client_id' => 'HOTEL_PIN_WEB',
+        ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['pin']);
+    }
+
+    protected function makeOrganizationHospitality(int $organizationId): void
+    {
+        Organization::query()->whereKey($organizationId)->update([
+            'deployment_profile' => 'hotel_bar',
+        ]);
     }
 
     protected function ensureActiveSubscription(int $organizationId): void

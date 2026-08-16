@@ -19,6 +19,18 @@ class LightStoresCentrixImportCsvGenerator
     '', 'K.R.A PIN', 'KRA PIN', 'KRA', 'PIN', 'S', 'A', 'N/A', 'NA', 'NULL',
   ];
 
+  /** Dump table names that should be read as the LightStores canonical name. */
+  private const TABLE_ALIASES = [
+    'product' => ['product', 'products'],
+    'category' => ['category', 'categories'],
+    'sub_category' => ['sub_category', 'sub_categories', 'subcategories'],
+    'uom' => ['uom', 'uoms'],
+    'vat_status' => ['vat_status', 'vat_statuses'],
+    'suppliers' => ['suppliers', 'supplier'],
+    'customer' => ['customer', 'customers'],
+    'routes' => ['routes', 'route'],
+  ];
+
   private SqlDumpInsertParser $parser;
 
   private string $targetIndustry;
@@ -68,6 +80,21 @@ class LightStoresCentrixImportCsvGenerator
       }
       foreach ($tables as $table) {
         $sqlByTable[$table] = ($sqlByTable[$table] ?? '')."\n".$sql;
+      }
+    }
+
+    foreach (self::TABLE_ALIASES as $canonical => $aliases) {
+      if (isset($sqlByTable[$canonical]) && $sqlByTable[$canonical] !== '') {
+        continue;
+      }
+      foreach ($aliases as $alias) {
+        if ($alias === $canonical) {
+          continue;
+        }
+        if (isset($sqlByTable[$alias]) && $sqlByTable[$alias] !== '') {
+          $sqlByTable[$canonical] = $sqlByTable[$alias];
+          break;
+        }
       }
     }
 
@@ -190,12 +217,52 @@ class LightStoresCentrixImportCsvGenerator
   /** @return list<list<mixed>> */
   private function loadRows(string $table): array
   {
-    $sql = $this->sqlByTable[$table] ?? '';
+    $sql = $this->sqlForTable($table);
     if ($sql === '') {
       return [];
     }
 
-    return $this->parser->loadRows($sql, $table);
+    $rows = [];
+    foreach ($this->tableSearchNames($table) as $name) {
+      $found = $this->parser->loadRows($sql, $name);
+      if ($found !== []) {
+        $rows = $found;
+        break;
+      }
+    }
+
+    return $rows;
+  }
+
+  private function sqlForTable(string $table): string
+  {
+    foreach ($this->tableSearchNames($table) as $name) {
+      $sql = $this->sqlByTable[$name] ?? '';
+      if ($sql !== '') {
+        return $sql;
+      }
+    }
+
+    return '';
+  }
+
+  /** @return list<string> */
+  private function tableSearchNames(string $table): array
+  {
+    return self::TABLE_ALIASES[$table] ?? [$table];
+  }
+
+  /**
+   * @return list<array{columns: list<string>|null, row: list<mixed>}>
+   */
+  private function loadProductInsertRows(): array
+  {
+    $sql = $this->sqlForTable('product');
+    if ($sql === '') {
+      return [];
+    }
+
+    return $this->parser->loadRowsWithColumns($sql, $this->tableSearchNames('product'));
   }
 
   /** @return array<string, mixed> */
@@ -326,45 +393,43 @@ class LightStoresCentrixImportCsvGenerator
     $vats = $lookups['vats'];
     $suppliers = $lookups['suppliers'];
 
-    foreach ($this->loadRows('product') as $r) {
-      if (! $this->isActiveProductRow($r)) {
+    foreach ($this->loadProductInsertRows() as $insertRow) {
+      $p = $this->mapProductRecord($insertRow['row'], $insertRow['columns']);
+      if ($this->looksLikeDatetime($p['dlt_on'] ?? null)) {
         continue;
       }
-      $productCode = $this->cleanText($r[4] ?? null);
-      $productName = $this->cleanText($r[5] ?? null);
+      $productCode = $this->cleanText($p['product_code'] ?? null);
+      $productName = $this->cleanText($p['product_name'] ?? null);
       if ($productCode === '' || $productName === '' || isset($seen[$productCode])) {
         continue;
       }
       $seen[$productCode] = true;
 
-      $subcategoryId = $r[7] ?? null;
-      $unitId = $r[8] ?? null;
-      if (in_array($subcategoryId, [null, 0, '0'], true) || in_array($unitId, [null, 0, '0'], true)) {
-        continue;
-      }
+      $subcategoryId = $p['subcateg_id'] ?? null;
+      $unitId = $p['unit_id'] ?? null;
+      $subcategoryId = in_array($subcategoryId, [null, '', 0, '0'], true) ? 0 : (int) $subcategoryId;
+      $unitId = in_array($unitId, [null, '', 0, '0'], true) ? 0 : (int) $unitId;
 
-      $subcategoryId = (int) $subcategoryId;
-      $unitId = (int) $unitId;
       [$subName, $catName] = $subcategories[$subcategoryId] ?? ['', ''];
       $subName = $this->normalizeSubcategoryName($subName);
-      $measureName = $uoms[$unitId] ?? '';
+      $measureName = $unitId > 0 ? ($uoms[$unitId] ?? '') : '';
       if ($measureName === '') {
         $measureName = $this->inferMeasureName($productName, $subName);
       }
 
       $supplierName = '';
-      $legacySupplierId = $r[12] ?? null;
-      if (! in_array($legacySupplierId, [null, 0, '0'], true)) {
+      $legacySupplierId = $p['supplier_id'] ?? null;
+      if (! in_array($legacySupplierId, [null, '', 0, '0'], true)) {
         $supplierName = $suppliers[(int) $legacySupplierId] ?? '';
       }
 
-      $vatCode = $this->productVatCode($r, $vats);
+      $vatCode = $this->productVatCodeFromRecord($p, $vats);
 
-      [$discountType, $discountPercentage, $discountValue] = $this->productDiscountFields($r);
+      [$discountType, $discountPercentage, $discountValue] = $this->productDiscountFieldsFromRecord($p);
 
       $sellOnRetail = $hospitality
         ? 'false'
-        : ($this->productSellOnRetail($r) ? 'true' : 'false');
+        : ($this->productSellOnRetailFromRecord($p) ? 'true' : 'false');
 
       $row = [
         $productCode,
@@ -372,15 +437,17 @@ class LightStoresCentrixImportCsvGenerator
         $catName,
         $subName,
         $measureName,
-        (float) ($r[11] ?? 0),
-        (float) ($r[13] ?? 0),
+        (float) ($p['unit_price'] ?? 0),
+        (float) ($p['last_cost_price'] ?? 0),
         $discountType,
         $discountPercentage,
         $discountValue,
-        isset($r[15]) && $r[15] !== null ? (float) $r[15] : '',
+        isset($p['product_weight']) && $p['product_weight'] !== null && $p['product_weight'] !== ''
+          ? (float) $p['product_weight']
+          : '',
         '', // shelf_location — not present in LightStores dumps
-        (float) ($r[9] ?? 0),
-        (float) ($r[10] ?? 0),
+        (float) ($p['stock_in_shop'] ?? 0),
+        (float) ($p['stock_in_store'] ?? 0),
         0,
         $supplierName,
         $vatCode,
@@ -400,31 +467,155 @@ class LightStoresCentrixImportCsvGenerator
   }
 
   /**
-   * LightStores product dumps appear as ~25-column (older) or 29+-column (newer) VALUES rows.
+   * Map a dump VALUES row onto LightStores product fields.
+   *
+   * phpMyAdmin dumps often list columns explicitly (so VALUES order is not the
+   * 25-column positional schema). Bare mysqldump INSERTs still use positions.
    *
    * @param  list<mixed>  $r
+   * @param  list<string>|null  $columns
+   * @return array<string, mixed>
    */
-  private function isActiveProductRow(array $r): bool
+  private function mapProductRecord(array $r, ?array $columns): array
   {
-    $count = count($r);
-    if ($count < 21) {
-      return false;
+    $named = $this->namedRow($r, $columns);
+    if ($named !== null) {
+      return [
+        'product_code' => $this->firstNamed($named, ['product_code', 'item_code', 'sku']),
+        'product_name' => $this->firstNamed($named, ['product_name', 'item_name', 'name']),
+        'subcateg_id' => $this->firstNamed($named, ['subcateg_id', 'subcategory_id', 'sub_category_id', 'subcat_id']),
+        'unit_id' => $this->firstNamed($named, ['unit_id', 'uom_id']),
+        'stock_in_shop' => $this->firstNamed($named, ['stock_in_shop', 'shop_quantity', 'qty_shop']),
+        'stock_in_store' => $this->firstNamed($named, ['stock_in_store', 'store_quantity', 'qty_store']),
+        'unit_price' => $this->firstNamed($named, ['unit_price', 'selling_price', 'price']),
+        'supplier_id' => $this->firstNamed($named, ['supplier_id', 'suplier_id']),
+        'last_cost_price' => $this->firstNamed($named, ['last_cost_price', 'cost_price']),
+        'product_weight' => $this->firstNamed($named, ['product_weight', 'weight']),
+        'discount_raw' => $this->firstNamed($named, ['discount_type', 'discount_percentage', 'discount']),
+        'discount_amount' => $this->firstNamed($named, ['discount_value', 'discount_amount']),
+        'vat_statusid' => $this->firstNamed($named, ['vat_statusid', 'vat_status_id', 'vat_id']),
+        'sell_on_retail' => $this->firstNamed($named, ['sell_on_retail']),
+        'dlt_on' => $this->firstNamed($named, ['dlt_on', 'deleted_on', 'deleted_at']),
+        'column_count' => count($r),
+        'named' => true,
+      ];
     }
-    $deletedIndex = $count >= 29 ? 26 : 20;
 
-    return ($r[$deletedIndex] ?? null) === null;
+    return [
+      'product_code' => $r[4] ?? null,
+      'product_name' => $r[5] ?? null,
+      'subcateg_id' => $r[7] ?? null,
+      'unit_id' => $r[8] ?? null,
+      'stock_in_shop' => $r[9] ?? null,
+      'stock_in_store' => $r[10] ?? null,
+      'unit_price' => $r[11] ?? null,
+      'supplier_id' => $r[12] ?? null,
+      'last_cost_price' => $r[13] ?? null,
+      'product_weight' => $r[15] ?? null,
+      'discount_raw' => $r[16] ?? null,
+      'discount_amount' => $r[17] ?? null,
+      'vat_statusid' => $this->positionalVatId($r),
+      'sell_on_retail' => count($r) >= 29 ? ($r[28] ?? null) : 1,
+      'dlt_on' => $this->positionalDeletedAt($r),
+      'column_count' => count($r),
+      'named' => false,
+    ];
   }
 
   /**
    * @param  list<mixed>  $r
-   * @param  array<int, string>  $vats
+   * @param  list<string>|null  $columns
+   * @return array<string, mixed>|null
    */
-  private function productVatCode(array $r, array $vats): string
+  private function namedRow(array $r, ?array $columns): ?array
+  {
+    if ($columns === null || $columns === []) {
+      return null;
+    }
+
+    $out = [];
+    foreach ($columns as $i => $col) {
+      $key = strtolower(trim((string) $col, " \t`\"'"));
+      if (str_contains($key, '.')) {
+        $key = strtolower(trim(substr($key, (int) strrpos($key, '.') + 1), " \t`\"'"));
+      }
+      if ($key !== '') {
+        $out[$key] = $r[$i] ?? null;
+      }
+    }
+
+    return $out === [] ? null : $out;
+  }
+
+  /**
+   * @param  array<string, mixed>  $named
+   * @param  list<string>  $keys
+   */
+  private function firstNamed(array $named, array $keys): mixed
+  {
+    foreach ($keys as $key) {
+      if (array_key_exists($key, $named)) {
+        return $named[$key];
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * LightStores product dumps appear as ~25-column (older) or 29+-column (newer) VALUES rows.
+   *
+   * Extra columns appended at the end must not mark every product deleted: if index 20 is
+   * still NULL/datetime (classic dlt_on), prefer that over a later timestamp field.
+   *
+   * @param  list<mixed>  $r
+   */
+  private function positionalDeletedAt(array $r): mixed
   {
     $count = count($r);
-    $vatIndex = $count >= 29 ? 24 : 18;
-    $vatId = $r[$vatIndex] ?? null;
-    if (in_array($vatId, [null, 0, '0'], true)) {
+    $idx20 = $count > 20 ? ($r[20] ?? null) : null;
+    $idx26 = $count > 26 ? ($r[26] ?? null) : null;
+
+    if ($count >= 21 && ($idx20 === null || $this->looksLikeDatetime($idx20))) {
+      return $idx20;
+    }
+    if ($count >= 27 && ($idx26 === null || $this->looksLikeDatetime($idx26))) {
+      return $idx26;
+    }
+
+    return null;
+  }
+
+  /** @param  list<mixed>  $r */
+  private function positionalVatId(array $r): mixed
+  {
+    $count = count($r);
+    if ($count >= 29) {
+      $vat = $r[24] ?? null;
+      if (! in_array($vat, [null, '', 0, '0'], true)) {
+        return $vat;
+      }
+    }
+    if ($count > 18) {
+      return $r[18] ?? null;
+    }
+
+    return null;
+  }
+
+  private function looksLikeDatetime(mixed $value): bool
+  {
+    return is_string($value) && preg_match('/^\d{4}-\d{2}-\d{2}/', $value) === 1;
+  }
+
+  /**
+   * @param  array<string, mixed>  $p
+   * @param  array<int, string>  $vats
+   */
+  private function productVatCodeFromRecord(array $p, array $vats): string
+  {
+    $vatId = $p['vat_statusid'] ?? null;
+    if (in_array($vatId, [null, '', 0, '0'], true)) {
       return '';
     }
 
@@ -432,36 +623,35 @@ class LightStoresCentrixImportCsvGenerator
   }
 
   /**
-   * @param  list<mixed>  $r
+   * @param  array<string, mixed>  $p
    * @return array{0: string, 1: float|string, 2: float|string}
    */
-  private function productDiscountFields(array $r): array
+  private function productDiscountFieldsFromRecord(array $p): array
   {
-    $rawType = $this->cleanText($r[16] ?? null);
+    $rawType = $this->cleanText($p['discount_raw'] ?? null);
     if ($rawType === '' || is_numeric($rawType)) {
-      // Older dumps store a numeric discount amount at index 16 without a type label.
-      $amount = (float) ($r[16] ?? 0);
+      $amount = (float) ($p['discount_raw'] ?? 0);
 
       return ['percentage', $amount, ''];
     }
 
     $discountType = $rawType ?: 'percentage';
-    $discountAmount = (float) ($r[17] ?? 0);
+    $discountAmount = (float) ($p['discount_amount'] ?? 0);
     $discountPercentage = $discountType === 'percentage' ? $discountAmount : '';
     $discountValue = $discountType === 'fixed' ? $discountAmount : '';
 
     return [$discountType, $discountPercentage, $discountValue];
   }
 
-  /** @param  list<mixed>  $r */
-  private function productSellOnRetail(array $r): bool
+  /** @param  array<string, mixed>  $p */
+  private function productSellOnRetailFromRecord(array $p): bool
   {
-    if (count($r) >= 29) {
-      return in_array($r[28] ?? null, [1, '1', true], true);
+    $value = $p['sell_on_retail'] ?? null;
+    if ($value === null || $value === '') {
+      return true;
     }
 
-    // Older dumps have no sell_on_retail column — default to sellable on retail.
-    return true;
+    return in_array($value, [1, '1', true], true);
   }
 
   /**
@@ -939,12 +1129,13 @@ class LightStoresCentrixImportCsvGenerator
   private function activeProductUnitIds(): array
   {
     $ids = [];
-    foreach ($this->loadRows('product') as $r) {
-      if (! $this->isActiveProductRow($r)) {
+    foreach ($this->loadProductInsertRows() as $insertRow) {
+      $p = $this->mapProductRecord($insertRow['row'], $insertRow['columns']);
+      if ($this->looksLikeDatetime($p['dlt_on'] ?? null)) {
         continue;
       }
-      $unitId = $r[8] ?? null;
-      if (! in_array($unitId, [null, 0, '0'], true)) {
+      $unitId = $p['unit_id'] ?? null;
+      if (! in_array($unitId, [null, '', 0, '0'], true)) {
         $ids[] = (int) $unitId;
       }
     }
