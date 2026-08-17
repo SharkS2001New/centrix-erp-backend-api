@@ -16,12 +16,11 @@ use App\Services\Background\SupplierCatalogExportFetcher;
 use App\Services\Background\SupplierCatalogExportMapper;
 use App\Services\Background\ListExportMapperResolver;
 use App\Services\Background\ReportExportService;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use InvalidArgumentException;
 
-class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
+class GenerateReportExportJob implements ShouldQueue
 {
     use Queueable;
     use RunsBackgroundTaskOnce;
@@ -45,11 +44,9 @@ class GenerateReportExportJob implements ShouldBeUnique, ShouldQueue
         ReportExportService $exporter,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($this->shouldSkipBackgroundTask($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
         $tasks->updateProgress($task, 2, 'Started fetching…');
 
         try {

@@ -8,6 +8,7 @@ use App\Services\Erp\ErpContext;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 
 class BackgroundTaskService
 {
@@ -40,25 +41,67 @@ class BackgroundTaskService
     }
 
     /**
+     * Push the job onto the queue, then (outside unit tests) run it inline after the
+     * HTTP response if a worker has not claimed it yet. That keeps exports/imports
+     * moving when the queue worker is down or Redis silently drops unique locks.
+     *
      * @param  class-string  $jobClass
      */
     public function dispatch(string $jobClass, BackgroundTask $task): void
     {
-        $jobClass::dispatch($task->id);
-    }
+        $taskId = $task->id;
+        $jobClass::dispatch($taskId);
 
-    public function markRunning(BackgroundTask $task): void
-    {
-        if ($this->isTerminal($task)) {
+        if (app()->runningUnitTests()) {
             return;
         }
 
-        $task->update([
-            'status' => 'running',
-            'progress' => max(1, (int) $task->progress),
-            'started_at' => now(),
-            'error_message' => null,
-        ]);
+        app()->terminating(function () use ($jobClass, $taskId): void {
+            $fresh = BackgroundTask::query()->find($taskId);
+            if ($fresh === null || $fresh->status !== 'pending') {
+                return;
+            }
+
+            set_time_limit(0);
+            ignore_user_abort(true);
+
+            try {
+                $jobClass::dispatchSync($taskId);
+            } catch (\Throwable $e) {
+                Log::warning('Background task inline fallback failed', [
+                    'task_id' => $taskId,
+                    'job' => $jobClass,
+                    'error' => $e->getMessage(),
+                ]);
+            }
+        });
+    }
+
+    /**
+     * Atomically claim a pending task. Returns false if another runner already claimed
+     * it or the task is no longer pending.
+     */
+    public function markRunning(BackgroundTask $task): bool
+    {
+        $affected = BackgroundTask::query()
+            ->whereKey($task->id)
+            ->where('status', 'pending')
+            ->update([
+                'status' => 'running',
+                'progress' => max(1, (int) $task->progress),
+                'started_at' => now(),
+                'error_message' => null,
+            ]);
+
+        if ($affected === 0) {
+            $task->refresh();
+
+            return false;
+        }
+
+        $task->refresh();
+
+        return true;
     }
 
     public function updateProgress(BackgroundTask $task, int $progress, ?string $message = null): void

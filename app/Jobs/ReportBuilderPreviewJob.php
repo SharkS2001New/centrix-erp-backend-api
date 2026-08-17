@@ -25,11 +25,9 @@ class ReportBuilderPreviewJob implements ShouldQueue
     public function handle(BackgroundTaskService $tasks, ReportBuilderService $builder): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($this->shouldSkipBackgroundTask($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
         $tasks->updateProgress($task, 5, 'Started fetching…');
 
         try {

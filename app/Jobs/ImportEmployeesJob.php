@@ -10,12 +10,11 @@ use App\Models\Employee;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
 use App\Services\Hr\HrPayrollSettingsResolver;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Support\Facades\DB;
 
-class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
+class ImportEmployeesJob implements ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
@@ -31,11 +30,9 @@ class ImportEmployeesJob implements ShouldBeUnique, ShouldQueue
     public function handle(BackgroundTaskService $tasks): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($this->shouldSkipBackgroundTask($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $user = User::query()->find($task->user_id);

@@ -13,13 +13,6 @@ trait RunsBackgroundTaskOnce
 
     public int $maxExceptions = 1;
 
-    public int $uniqueFor = 3600;
-
-    public function uniqueId(): string
-    {
-        return $this->taskId;
-    }
-
     protected function shouldSkipBackgroundTask(?BackgroundTask $task): bool
     {
         if ($task === null) {
@@ -28,7 +21,9 @@ trait RunsBackgroundTaskOnce
 
         $status = $task->fresh()?->status ?? $task->status;
 
-        return in_array($status, ['completed', 'failed', 'cancelled'], true);
+        // Skip finished tasks and tasks already claimed by another runner
+        // (worker vs API terminating fallback).
+        return in_array($status, ['completed', 'failed', 'cancelled', 'running'], true);
     }
 
     protected function failBackgroundTask(

@@ -10,11 +10,10 @@ use App\Models\Category;
 use App\Models\SubCategory;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
-class ImportSubCategoriesJob implements ShouldBeUnique, ShouldQueue
+class ImportSubCategoriesJob implements ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
@@ -30,11 +29,9 @@ class ImportSubCategoriesJob implements ShouldBeUnique, ShouldQueue
     public function handle(BackgroundTaskService $tasks): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($this->shouldSkipBackgroundTask($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $user = User::query()->find($task->user_id);

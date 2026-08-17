@@ -17,12 +17,11 @@ use App\Services\Customers\CustomerRoutePolicy;
 use App\Services\Customers\CustomerUniquenessValidator;
 use App\Services\Erp\CapabilityGate;
 use App\Models\Organization;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use Illuminate\Validation\ValidationException;
 
-class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
+class ImportCustomersJob implements ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
@@ -43,11 +42,9 @@ class ImportCustomersJob implements ShouldBeUnique, ShouldQueue
         CustomerRoutePolicy $customerRoutePolicy,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($this->shouldSkipBackgroundTask($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $user = User::query()->find($task->user_id);

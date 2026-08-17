@@ -2,7 +2,6 @@
 
 namespace App\Services\Background;
 
-use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Redis;
@@ -10,13 +9,6 @@ use Illuminate\Support\Facades\Schema;
 
 class BackgroundTaskQueueService
 {
-    /** @var list<class-string> */
-    private const UNIQUE_TASK_JOBS = [
-        \App\Jobs\GenerateReportExportJob::class,
-        \App\Jobs\PaginatedFetchJob::class,
-        \App\Jobs\ReportRunJob::class,
-    ];
-
     /**
      * Best-effort removal of queued (not yet running) Laravel jobs for a background task.
      */
@@ -32,8 +24,6 @@ class BackgroundTaskQueueService
         if ($driver === 'database' && Schema::hasTable('jobs')) {
             $removed += $this->removePendingDatabaseJobs($taskId);
         }
-
-        $this->releaseUniqueJobLocks($taskId);
 
         return $removed;
     }
@@ -131,19 +121,6 @@ class BackgroundTaskQueueService
         $prefix = (string) config('database.redis.options.prefix', '');
 
         return $prefix.'queues:'.$queueName;
-    }
-
-    protected function releaseUniqueJobLocks(string $taskId): void
-    {
-        foreach (self::UNIQUE_TASK_JOBS as $class) {
-            $key = 'laravel_unique_job:'.$class.':'.$taskId;
-
-            try {
-                Cache::forget($key);
-            } catch (\Throwable) {
-                // Best-effort — cooperative cancellation still applies once the worker runs.
-            }
-        }
     }
 
     protected function escapeLike(string $value): string

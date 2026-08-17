@@ -25,11 +25,9 @@ class ConvertLegacyImportJob implements ShouldQueue
     public function handle(BackgroundTaskService $tasks): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($task === null || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $payload = is_array($task->payload) ? $task->payload : [];

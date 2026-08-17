@@ -29,11 +29,9 @@ class ProcessPayrollAutoJob implements ShouldQueue
         PayrollAutoProcessService $autoProcess,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($task === null || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $user = User::query()->find($task->user_id);

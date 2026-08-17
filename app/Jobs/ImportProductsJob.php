@@ -19,11 +19,10 @@ use App\Services\Background\BackgroundTaskService;
 use App\Services\Catalog\ProductCatalogScopeService;
 use App\Services\Erp\IndustryRegistry;
 use App\Services\Inventory\OpeningStockService;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
-class ImportProductsJob implements ShouldBeUnique, ShouldQueue
+class ImportProductsJob implements ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
@@ -42,11 +41,9 @@ class ImportProductsJob implements ShouldBeUnique, ShouldQueue
         UserAccessService $access,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($this->shouldSkipBackgroundTask($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $user = User::query()->find($task->user_id);

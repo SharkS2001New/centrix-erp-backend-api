@@ -25,11 +25,9 @@ class ProcessAccountingExportsJob implements ShouldQueue
         JournalExportService $exports,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($task === null || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $organizationId = (int) $task->organization_id;

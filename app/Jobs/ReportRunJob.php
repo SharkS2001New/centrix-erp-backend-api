@@ -9,12 +9,11 @@ use App\Services\Background\BackgroundTaskService;
 use App\Services\Background\InternalApiPaginator;
 use App\Services\Background\ReportExportSearchParams;
 use App\Services\Background\ReportFetchResultBuilder;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 use InvalidArgumentException;
 
-class ReportRunJob implements ShouldBeUnique, ShouldQueue
+class ReportRunJob implements ShouldQueue
 {
     use Queueable;
     use RunsBackgroundTaskOnce;
@@ -28,11 +27,9 @@ class ReportRunJob implements ShouldBeUnique, ShouldQueue
     public function handle(BackgroundTaskService $tasks, InternalApiPaginator $paginator): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($this->shouldSkipBackgroundTask($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
         $tasks->updateProgress($task, 5, 'Started fetching…');
 
         try {

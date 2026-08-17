@@ -24,11 +24,9 @@ class RunDatabaseBackupJob implements ShouldQueue
         DatabaseBackupService $backups,
     ): void {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($task === null || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $payload = $task->payload ?? [];

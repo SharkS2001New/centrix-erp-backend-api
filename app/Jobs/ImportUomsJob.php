@@ -9,11 +9,10 @@ use App\Models\BackgroundTask;
 use App\Models\Uom;
 use App\Models\User;
 use App\Services\Background\BackgroundTaskService;
-use Illuminate\Contracts\Queue\ShouldBeUnique;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Queue\Queueable;
 
-class ImportUomsJob implements ShouldBeUnique, ShouldQueue
+class ImportUomsJob implements ShouldQueue
 {
     use Queueable;
     use ProcessesImportRowOutcomes;
@@ -29,11 +28,9 @@ class ImportUomsJob implements ShouldBeUnique, ShouldQueue
     public function handle(BackgroundTaskService $tasks): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($this->shouldSkipBackgroundTask($task)) {
+        if ($this->shouldSkipBackgroundTask($task) || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $user = User::query()->find($task->user_id);

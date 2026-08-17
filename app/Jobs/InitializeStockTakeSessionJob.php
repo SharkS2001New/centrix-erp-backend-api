@@ -26,11 +26,9 @@ class InitializeStockTakeSessionJob implements ShouldQueue
     public function handle(BackgroundTaskService $tasks): void
     {
         $task = BackgroundTask::query()->find($this->taskId);
-        if ($task === null) {
+        if ($task === null || ! $tasks->markRunning($task)) {
             return;
         }
-
-        $tasks->markRunning($task);
 
         try {
             $sessionId = (int) ($task->payload['session_id'] ?? 0);
