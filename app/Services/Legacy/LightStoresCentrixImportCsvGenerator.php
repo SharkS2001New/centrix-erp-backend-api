@@ -1259,11 +1259,6 @@ MD;
       return '';
     }
 
-    // Light Stores wrapped labels were dumped with a trailing "nn" (\n\n).
-    if (preg_match('/nn$/i', $text) && ! preg_match('/inn$/i', $text)) {
-      $text = rtrim(substr($text, 0, -2));
-    }
-
     return $text;
   }
 

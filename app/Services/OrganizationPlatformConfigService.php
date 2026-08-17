@@ -134,10 +134,6 @@ class OrganizationPlatformConfigService
             $nextSales['enable_pos_cash_rounding'] = (bool) $salesPlatform['enable_pos_cash_rounding'];
         }
 
-        if (array_key_exists('pos_touch_search_keypad', $salesPlatform)) {
-            $nextSales['pos_touch_search_keypad'] = (bool) $salesPlatform['pos_touch_search_keypad'];
-        }
-
         if (array_key_exists('receipt_show_all_payment_methods', $salesPlatform)) {
             $nextSales['receipt_show_all_payment_methods'] = (bool) $salesPlatform['receipt_show_all_payment_methods'];
         }
@@ -551,7 +547,6 @@ class OrganizationPlatformConfigService
             ],
             'require_pos_till_float' => false,
             'enable_pos_cash_rounding' => false,
-            'pos_touch_search_keypad' => false,
             'receipt_show_all_payment_methods' => true,
             'external_pos_layout' => 'modern',
             'classic_pos_theme_template' => ClassicPosThemeSettings::THEME_TEMPLATE_DEFAULT,
@@ -637,7 +632,6 @@ class OrganizationPlatformConfigService
             ),
             'require_pos_till_float' => (bool) ($sales['require_pos_till_float'] ?? false),
             'enable_pos_cash_rounding' => PosCashRoundingSettings::enabled($sales, $customSales),
-            'pos_touch_search_keypad' => (bool) ($sales['pos_touch_search_keypad'] ?? false),
             'receipt_show_all_payment_methods' => (bool) ($sales['receipt_show_all_payment_methods'] ?? true),
             'external_pos_layout' => in_array(($sales['external_pos_layout'] ?? 'modern'), ['modern', 'classic'], true)
                 ? (string) $sales['external_pos_layout']

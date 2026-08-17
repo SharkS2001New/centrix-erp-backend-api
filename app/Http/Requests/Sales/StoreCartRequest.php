@@ -24,6 +24,9 @@ class StoreCartRequest extends FormRequest
             'till_id' => 'nullable|integer|exists:tills,id',
             'float_session_id' => 'nullable|integer|min:1',
             'route_id' => TenantRouteRules::nullable($orgId),
+            // Outbox sync: create a dedicated TemporaryCart so till DELETE / next-order
+            // wipe cannot empty the cart between PUT lines and checkout.
+            'offline_sync' => 'nullable|boolean',
         ];
     }
 }

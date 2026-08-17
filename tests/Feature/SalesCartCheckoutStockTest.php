@@ -882,4 +882,61 @@ class SalesCartCheckoutStockTest extends TestCase
             $this->assertStringContainsString('Cart not found', $e->getMessage());
         }
     }
+
+    public function test_offline_sync_cart_is_not_the_sticky_till_cart(): void
+    {
+        $sticky = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json();
+
+        $again = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json();
+
+        $this->assertSame($sticky['id'], $again['id']);
+
+        $outbox = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+            'offline_sync' => true,
+        ])->assertCreated()->json();
+
+        $this->assertNotSame($sticky['id'], $outbox['id']);
+    }
+
+    public function test_offline_checkout_rebuilds_lines_when_cart_was_wiped(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+        ])->assertCreated();
+
+        $this->deleteJson("/api/v1/sales/carts/{$cartId}/lines")->assertOk();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'offline_order' => true,
+            'client_sale_uuid' => 'pos-outbox-'.uniqid(),
+            'pos_order_num' => 228,
+            'pos_order_date' => now()->toDateString(),
+            'lines' => [
+                [
+                    'product_code' => $this->productCode,
+                    'quantity' => 2,
+                ],
+            ],
+        ])->assertCreated()->json();
+
+        $this->assertSame(228, (int) ($sale['pos_order_num'] ?? 0));
+        $this->assertNotEmpty($sale['items'] ?? []);
+        $this->assertSame($this->productCode, $sale['items'][0]['product_code']);
+    }
 }

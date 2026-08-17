@@ -1157,23 +1157,36 @@ class CartOperationsController extends Controller
             }
         }
 
-        $cart = TemporaryCart::firstOrCreate(
-            [
+        $cartAttributes = [
+            'organization_id' => (int) (
+                $user->organization_id
+                ?? \App\Support\OrganizationIdResolver::forBranch($branchId)
+            ),
+            'branch_id' => $branchId,
+            'order_source' => $orderSource,
+            'till_id' => $input['till_id'] ?? null,
+            'route_id' => $routeId,
+            'update_no' => 0,
+        ];
+
+        // Dedicated cart for POS outbox upload — must not share the cashier's sticky
+        // firstOrCreate(user+channel) row. Local-first checkout fire-and-forgets
+        // DELETE /lines on that sticky cart, which raced PUT + checkout ("Cart is empty.").
+        if (filter_var($input['offline_sync'] ?? false, FILTER_VALIDATE_BOOLEAN)) {
+            $cart = TemporaryCart::create([
                 'user_id' => $user->id,
                 'channel' => $channel,
-            ],
-            [
-                'organization_id' => (int) (
-                    $user->organization_id
-                    ?? \App\Support\OrganizationIdResolver::forBranch($branchId)
-                ),
-                'branch_id' => $branchId,
-                'order_source' => $orderSource,
-                'till_id' => $input['till_id'] ?? null,
-                'route_id' => $routeId,
-                'update_no' => 0,
-            ]
-        );
+                ...$cartAttributes,
+            ]);
+        } else {
+            $cart = TemporaryCart::firstOrCreate(
+                [
+                    'user_id' => $user->id,
+                    'channel' => $channel,
+                ],
+                $cartAttributes,
+            );
+        }
 
         if (! $cart->organization_id && $user->organization_id) {
             $cart->update(['organization_id' => (int) $user->organization_id]);
@@ -1345,10 +1358,19 @@ class CartOperationsController extends Controller
     }
 
     /**
-     * Bulk-insert draft POS lines (previous-order edit flush) without N× addCartLine.
-     *
-     * @param  list<array<string, mixed>>  $lines
+     * Insert outbox snapshot lines onto a cart at checkout when the till wiped
+     * TemporaryCart rows between PUT /lines and POST /checkout.
+     * Skip stock reserve — checkout deducts after the sale is persisted.
      */
+    public function addDraftLinesForOfflineCheckout(
+        TemporaryCart $cart,
+        array $lines,
+        User $user,
+        CapabilityGate $gate,
+    ): void {
+        $this->addDraftLinesToCart($cart, $lines, $user, $gate, skipStockReserve: true);
+    }
+
     protected function addDraftLinesToCart(
         TemporaryCart $cart,
         array $lines,

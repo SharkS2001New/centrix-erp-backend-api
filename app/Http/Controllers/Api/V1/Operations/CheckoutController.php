@@ -279,8 +279,13 @@ class CheckoutController extends Controller
      */
     protected function checkoutFromCart(TemporaryCart $cart, User $user, CapabilityGate $gate, array $input): array
     {
+        $offlineLines = $this->normalizedOfflineCheckoutLines($input);
+        $canHydrateOfflineLines = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN)
+            && filled($input['client_sale_uuid'] ?? null)
+            && $offlineLines !== [];
+
         $lines = CartLine::where('cart_id', $cart->id)->get();
-        if ($lines->isEmpty()) {
+        if ($lines->isEmpty() && ! $canHydrateOfflineLines) {
             // Empty previous-order edit → cancel the live sale and record the full return.
             if ((int) ($cart->superseded_sale_id ?? 0) > 0) {
                 return $this->checkoutEmptyPreviousOrderEditCancel($cart, $user, $gate, $input);
@@ -297,11 +302,7 @@ class CheckoutController extends Controller
 
         $salesSettings = $gate->moduleSettings('sales');
 
-        // Reject carts whose lines no longer resolve to sellable catalogue products
-        // (soft-deleted, wrong branch, or never existed). Prevents orphan sale_items.
-        $productsByCode = $this->assertCheckoutLinesAccessible($cart, $lines, $user);
-
-        return DB::transaction(function () use ($cart, $user, $gate, $input, $lines, $salesSettings, $productsByCode) {
+        return DB::transaction(function () use ($cart, $user, $gate, $input, $salesSettings, $canHydrateOfflineLines, $offlineLines) {
             // Hold the cart row for the whole checkout so concurrent DELETE /lines
             // waits instead of deadlocking on cart_lines / stock_reservations.
             $lockedCart = TemporaryCart::query()->whereKey($cart->id)->lockForUpdate()->first();
@@ -311,6 +312,28 @@ class CheckoutController extends Controller
                 );
             }
             $cart = $lockedCart;
+
+            $lines = CartLine::where('cart_id', $cart->id)->get();
+            if ($lines->isEmpty() && $canHydrateOfflineLines) {
+                if (array_key_exists('order_discount', $input)) {
+                    $cart->update([
+                        'order_discount' => max(0, (float) $input['order_discount']),
+                    ]);
+                    $cart->refresh();
+                }
+                app(CartOperationsController::class)->addDraftLinesForOfflineCheckout(
+                    $cart,
+                    $offlineLines,
+                    $user,
+                    $gate,
+                );
+                $lines = CartLine::where('cart_id', $cart->id)->get();
+            }
+            if ($lines->isEmpty()) {
+                throw new InvalidArgumentException('Cart is empty.');
+            }
+
+            $productsByCode = $this->assertCheckoutLinesAccessible($cart, $lines, $user);
 
             $idempotency = app(PosOfflineCheckoutIdempotency::class);
             $existing = $idempotency->findExisting($user, $input);
@@ -2251,6 +2274,35 @@ class CheckoutController extends Controller
         }
 
         SalePaymentColumnMapper::replaceFromMethodMap($sale, $map);
+    }
+
+    /**
+     * Offline outbox checkout may include frozen line snapshots so a wiped
+     * TemporaryCart can still persist the sale.
+     *
+     * @return list<array<string, mixed>>
+     */
+    protected function normalizedOfflineCheckoutLines(array $input): array
+    {
+        $rows = $input['lines'] ?? null;
+        if (! is_array($rows) || $rows === []) {
+            return [];
+        }
+
+        $lines = [];
+        foreach ($rows as $row) {
+            if (! is_array($row)) {
+                continue;
+            }
+            $code = trim((string) ($row['product_code'] ?? ''));
+            $qty = (float) ($row['quantity'] ?? 0);
+            if ($code === '' || $qty <= 0) {
+                continue;
+            }
+            $lines[] = $row;
+        }
+
+        return $lines;
     }
 
     /**

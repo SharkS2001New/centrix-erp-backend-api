@@ -66,6 +66,7 @@ class ProductController extends BaseResourceController
     ): array {
         $data = array_merge($product->toArray(), [
             'catalog_scope' => $this->catalogScope->catalogScopeForProduct($product),
+            'has_image' => filled($product->image_path),
         ]);
 
         if ($skipBranchOverlay || ! $request) {
@@ -335,6 +336,7 @@ class ProductController extends BaseResourceController
                 'products.reorder_point',
                 'products.product_weight',
                 'products.shelf_location',
+                'products.image_path',
                 'products.stock_in_shop',
                 'products.stock_in_store',
                 'products.created_by',
@@ -854,7 +856,17 @@ class ProductController extends BaseResourceController
             abort(Response::HTTP_NOT_FOUND);
         }
 
-        return StoredPublicFile::response($model->image_path, 'image/jpeg');
+        $headers = [];
+        if ($request->boolean('download')) {
+            $safe = preg_replace('/[^A-Za-z0-9._-]+/', '_', (string) $model->product_code) ?: 'product';
+            $ext = strtolower((string) pathinfo((string) $model->image_path, PATHINFO_EXTENSION));
+            if ($ext === '') {
+                $ext = 'jpg';
+            }
+            $headers['Content-Disposition'] = 'attachment; filename="'.$safe.'.'.$ext.'"';
+        }
+
+        return StoredPublicFile::response($model->image_path, 'image/jpeg', $headers);
     }
 
     /** POST /products/{product}/image — multipart product photo */
