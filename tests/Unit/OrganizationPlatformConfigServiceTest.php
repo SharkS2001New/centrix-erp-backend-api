@@ -154,6 +154,8 @@ class OrganizationPlatformConfigServiceTest extends TestCase
         $this->assertTrue($service->defaultSalesPlatformConfig()['pos_combine_identical_lines']);
         $this->assertContains('pos_combine_identical_lines', $service->platformControlledSalesKeys());
         $this->assertContains('receipt_show_all_payment_methods', $service->platformControlledSalesKeys());
+        $this->assertContains('pos_touch_search_keypad', $service->platformControlledSalesKeys());
+        $this->assertFalse($service->defaultSalesPlatformConfig()['pos_touch_search_keypad']);
 
         $org = new Organization([
             'enabled_modules' => ['sales.pos' => true],

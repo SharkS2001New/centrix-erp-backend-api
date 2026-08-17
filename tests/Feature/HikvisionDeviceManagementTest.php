@@ -776,7 +776,7 @@ class HikvisionDeviceManagementTest extends TestCase
 
         $this->getJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/commands/pending")
             ->assertOk()
-            ->assertJsonPath('poll_interval_seconds', 3600)
+            ->assertJsonPath('poll_interval_seconds', 300)
             ->assertJsonPath('commands', []);
     }
 

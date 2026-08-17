@@ -712,6 +712,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.mobile_enable_driver_attendance' => 'sometimes|boolean',
             'sales_platform.require_pos_till_float' => 'sometimes|boolean',
             'sales_platform.enable_pos_cash_rounding' => 'sometimes|boolean',
+            'sales_platform.pos_touch_search_keypad' => 'sometimes|boolean',
             'sales_platform.receipt_show_all_payment_methods' => 'sometimes|boolean',
             'sales_platform.external_pos_layout' => 'sometimes|in:modern,classic',
             'sales_platform.backoffice_order_edit_layout' => 'sometimes|in:modern,classic',

@@ -4,6 +4,7 @@ namespace App\Services\Attendance\Hikvision;
 
 use App\Models\AttendanceClockDevice;
 use App\Models\HikvisionAgentCommand;
+use App\Services\Attendance\HrAttendanceSettingsResolver;
 use App\Support\AppTimezone;
 use Illuminate\Support\Str;
 use RuntimeException;
@@ -15,7 +16,16 @@ class HikvisionAgentBridge
 {
     public const AGENT_NAME = 'CentrixAttendanceAgent';
 
+    /** Floor for "online" when poll interval is very short. */
+    public const MIN_ONLINE_SECONDS = 120;
+
+    /** Legacy default used by older call sites / docs. */
     public const AGENT_ONLINE_SECONDS = 90;
+
+    public const MIN_COMMAND_WAIT_SECONDS = 60;
+
+    /** Cap so a single ISAPI proxy call cannot block the hourly scheduler forever. */
+    public const MAX_COMMAND_WAIT_SECONDS = 420;
 
     public const COMMAND_WAIT_SECONDS = 45;
 
@@ -28,6 +38,34 @@ class HikvisionAgentBridge
         '/agent/ping',
     ];
 
+    public function pollSeconds(AttendanceClockDevice $device): int
+    {
+        return max(
+            60,
+            HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId((int) $device->organization_id),
+        );
+    }
+
+    /**
+     * Agent is "online" if it checked in within one poll cycle (+ buffer).
+     * Matches the HR auto-sync interval so hourly Centrix pulls can use the LAN bridge.
+     */
+    public function onlineTtlSeconds(AttendanceClockDevice $device): int
+    {
+        return max(self::MIN_ONLINE_SECONDS, $this->pollSeconds($device) + 120);
+    }
+
+    /**
+     * Wait at least one poll cycle so scheduled sync can meet the next agent check-in.
+     */
+    public function commandWaitSeconds(AttendanceClockDevice $device): int
+    {
+        return max(
+            self::MIN_COMMAND_WAIT_SECONDS,
+            min($this->pollSeconds($device) + 90, self::MAX_COMMAND_WAIT_SECONDS),
+        );
+    }
+
     public function isAgentOnline(AttendanceClockDevice $device): bool
     {
         $seen = AppTimezone::normalize($device->agent_last_seen_at);
@@ -35,7 +73,7 @@ class HikvisionAgentBridge
             return false;
         }
 
-        return $seen->greaterThan(AppTimezone::now()->subSeconds(self::AGENT_ONLINE_SECONDS));
+        return $seen->greaterThan(AppTimezone::now()->subSeconds($this->onlineTtlSeconds($device)));
     }
 
     public function agentStatus(AttendanceClockDevice $device): array
@@ -47,6 +85,8 @@ class HikvisionAgentBridge
             'online' => $online,
             'last_seen_at' => AppTimezone::toIso8601($device->agent_last_seen_at),
             'version' => $device->agent_version,
+            'poll_interval_seconds' => $this->pollSeconds($device),
+            'online_ttl_seconds' => $this->onlineTtlSeconds($device),
         ];
     }
 
@@ -61,8 +101,9 @@ class HikvisionAgentBridge
         $status = $this->agentStatus($device);
         if (! $status['online']) {
             $lastSeen = $status['last_seen_at'] ?? null;
+            $ttl = $this->onlineTtlSeconds($device);
             $error = $lastSeen
-                ? self::AGENT_NAME.' is installed but has not checked in with Centrix in the last 90 seconds. Windows Services can show Running while the PC is still getting internet or the agent is starting. Wait about a minute and refresh — do not re-download unless this stays offline.'
+                ? self::AGENT_NAME." is installed but has not checked in with Centrix in the last {$ttl} seconds. Windows Services can show Running while the PC is still getting internet or the agent is starting. Wait for the next agent poll and refresh — do not re-download unless this stays offline."
                 : self::AGENT_NAME.' is not checking in. Download the agent zip for this device, install it on a LAN PC, and keep the Windows service running.';
 
             return [
@@ -136,15 +177,17 @@ class HikvisionAgentBridge
     ): HikvisionIsapiResponse {
         if (! $this->isAgentOnline($device)) {
             $seen = $device->agent_last_seen_at;
+            $ttl = $this->onlineTtlSeconds($device);
             throw new RuntimeException(
                 $seen
-                    ? self::AGENT_NAME.' is offline (last check-in was more than 90 seconds ago). The Windows service can still show Running. Wait for internet, then refresh — re-download only if it never comes online.'
+                    ? self::AGENT_NAME." is offline (last check-in was more than {$ttl} seconds ago). The Windows service can still show Running. Wait for the next agent poll, then refresh — re-download only if it never comes online."
                     : self::AGENT_NAME.' is offline. Download the agent zip for this device and keep the Windows service running.',
             );
         }
 
         $this->assertAllowedPath($path);
 
+        $waitSeconds = $this->commandWaitSeconds($device);
         $commandId = (string) Str::uuid();
         $now = AppTimezone::now();
 
@@ -157,7 +200,7 @@ class HikvisionAgentBridge
             'accept' => $accept,
             'status' => 'pending',
             'created_at' => $now,
-            'expires_at' => $now->copy()->addSeconds(self::COMMAND_WAIT_SECONDS + 15),
+            'expires_at' => $now->copy()->addSeconds($waitSeconds + 30),
         ]);
 
         if (app()->runningUnitTests() && strtoupper($method) === 'PING') {
@@ -170,7 +213,7 @@ class HikvisionAgentBridge
             ]);
         }
 
-        $deadline = microtime(true) + self::COMMAND_WAIT_SECONDS;
+        $deadline = microtime(true) + $waitSeconds;
 
         do {
             /** @var HikvisionAgentCommand|null $command */

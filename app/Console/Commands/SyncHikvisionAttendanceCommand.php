@@ -3,6 +3,7 @@
 namespace App\Console\Commands;
 
 use App\Models\AttendanceClockDevice;
+use App\Services\Attendance\Hikvision\HikvisionAgentBridge;
 use App\Services\Attendance\Hikvision\HikvisionAttendanceSyncService;
 use Illuminate\Console\Command;
 
@@ -14,7 +15,7 @@ class SyncHikvisionAttendanceCommand extends Command
         {--from= : ISO start time override}
         {--to= : ISO end time override}';
 
-    protected $description = 'Pull punches from Hikvision via CentrixAttendanceAgent (LAN bridge). Prefer the agent service for ongoing sync; this command also uses the agent when online.';
+    protected $description = 'Hourly pull of Hikvision punches via CentrixAttendanceAgent into HR attendance. Prefer keeping the agent online; this command also retries pending events.';
 
     /** First hourly run (Africa/Nairobi). */
     public const WINDOW_START_HOUR = 7;
@@ -39,7 +40,7 @@ class SyncHikvisionAttendanceCommand extends Command
         return $minutes >= $start || $minutes <= $end;
     }
 
-    public function handle(HikvisionAttendanceSyncService $sync): int
+    public function handle(HikvisionAttendanceSyncService $sync, HikvisionAgentBridge $bridge): int
     {
         $query = AttendanceClockDevice::query()
             ->where('is_active', true)
@@ -65,23 +66,43 @@ class SyncHikvisionAttendanceCommand extends Command
         $to = $this->option('to') ? new \DateTimeImmutable((string) $this->option('to')) : null;
 
         $totalApplied = 0;
+        $totalPulled = 0;
+        $offline = 0;
+
         foreach ($devices as $device) {
-            $this->info("Syncing {$device->device_no} ({$device->host})…");
+            $agentOnline = $bridge->isAgentOnline($device);
+            $this->info(sprintf(
+                'Syncing %s (%s) — agent %s…',
+                $device->device_no,
+                $device->host,
+                $agentOnline ? 'online' : 'offline/direct',
+            ));
+
+            if (! $agentOnline) {
+                $offline++;
+                $this->warn('  · Agent not recently checked in; LAN pull may fail (pending punches are still retried).');
+            }
+
             $result = $sync->syncDevice(
                 $device,
                 $from ? \Carbon\Carbon::instance($from) : null,
                 $to ? \Carbon\Carbon::instance($to) : null,
             );
             $totalApplied += $result['applied'];
-            $this->line(
-                "  pulled={$result['pulled']} applied={$result['applied']} skipped={$result['skipped']}"
-            );
+            $totalPulled += $result['pulled'];
+            $this->line(sprintf(
+                '  pulled=%d applied=%d skipped=%d via_agent=%s',
+                $result['pulled'],
+                $result['applied'],
+                $result['skipped'],
+                ! empty($result['via_agent']) ? 'yes' : 'no',
+            ));
             foreach (array_slice($result['errors'], 0, 5) as $error) {
                 $this->warn("  · {$error}");
             }
         }
 
-        $this->info("Done. Applied {$totalApplied} punch(es).");
+        $this->info("Done. Pulled {$totalPulled}, applied {$totalApplied} punch(es). Offline agents: {$offline}/{$devices->count()}.");
 
         return self::SUCCESS;
     }

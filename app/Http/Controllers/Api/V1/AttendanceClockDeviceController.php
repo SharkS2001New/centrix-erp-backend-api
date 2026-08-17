@@ -126,6 +126,13 @@ class AttendanceClockDeviceController extends HrOrgResourceController
             ? rtrim((string) $data['centrix_api_url'], '/')
             : rtrim((string) config('app.url'), '/').'/api/v1';
 
+        $pollSeconds = max(
+            60,
+            \App\Services\Attendance\HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId(
+                (int) $device->organization_id,
+            ),
+        );
+
         return response()->json([
             'config' => [
                 'centrixApiUrl' => $apiUrl,
@@ -138,7 +145,8 @@ class AttendanceClockDeviceController extends HrOrgResourceController
                     'password' => $password,
                     'useHttps' => $useHttps,
                 ],
-                'pollIntervalSeconds' => 300,
+                // Matches HR "Auto-sync interval" so the agent can meet hourly Centrix pulls.
+                'pollIntervalSeconds' => $pollSeconds,
                 'lookbackMinutes' => 360,
             ],
             'token_name' => $tokenName,
