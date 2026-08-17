@@ -68,6 +68,7 @@ class ShopDebtorsSalesIndexTest extends TestCase
             'payment_status' => 'unpaid',
             'order_total' => 1500,
             'amount_paid' => 0,
+            'total_vat' => 0,
             'archived' => 0,
             'created_at' => now(),
         ];
@@ -101,6 +102,16 @@ class ShopDebtorsSalesIndexTest extends TestCase
             'customer_num' => $debtorNum,
         ]));
 
+        $shopPartial = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 4,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => $debtorNum,
+            'status' => 'pending_payment',
+            'payment_status' => 'partial',
+            'amount_paid' => 500,
+        ]));
+
         $from = now()->subDay()->toDateString();
         $to = now()->toDateString();
         $res = $this->getJson(
@@ -110,8 +121,38 @@ class ShopDebtorsSalesIndexTest extends TestCase
         $ids = collect($res->json('data'))->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         $this->assertContains($shopUnpaid->id, $ids);
+        $this->assertContains($shopPartial->id, $ids);
         $this->assertNotContains($shopPaid->id, $ids);
         $this->assertNotContains($routeUnpaid->id, $ids);
         $this->assertNotContains($mobileUnpaid->id, $ids);
+
+        $unpaidIds = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=unpaid&from_date={$from}&to_date={$to}&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $this->assertContains($shopUnpaid->id, $unpaidIds);
+        $this->assertNotContains($shopPartial->id, $unpaidIds);
+        $this->assertNotContains($shopPaid->id, $unpaidIds);
+
+        $partialIds = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=partial&from_date={$from}&to_date={$to}&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $this->assertContains($shopPartial->id, $partialIds);
+        $this->assertNotContains($shopUnpaid->id, $partialIds);
+        $this->assertNotContains($shopPaid->id, $partialIds);
+
+        $paidIds = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=paid&from_date={$from}&to_date={$to}&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $this->assertContains($shopPaid->id, $paidIds);
+        $this->assertNotContains($shopUnpaid->id, $paidIds);
+        $this->assertNotContains($shopPartial->id, $paidIds);
+        $this->assertNotContains($routeUnpaid->id, $paidIds);
+        $this->assertNotContains($mobileUnpaid->id, $paidIds);
     }
 }

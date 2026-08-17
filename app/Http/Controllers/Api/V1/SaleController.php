@@ -281,11 +281,6 @@ class SaleController extends BaseResourceController
             }
         }
 
-        if ($request->boolean('outstanding_balance') || $request->boolean('shop_debtors')) {
-            $query->whereNotIn('sales.status', ['cancelled', 'expired']);
-            $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
-        }
-
         if ($request->boolean('shop_debtors')) {
             RouteOrderScope::withCustomerRouteJoin($query);
             $query->whereNotNull('sales.customer_num')
@@ -304,7 +299,18 @@ class SaleController extends BaseResourceController
         }
 
         $paymentStatusFilter = data_get($request->input('filter', []), 'payment_status');
-        if (is_string($paymentStatusFilter) && trim($paymentStatusFilter) !== '') {
+        $hasPaymentStatusFilter = is_string($paymentStatusFilter) && trim($paymentStatusFilter) !== '';
+
+        // Outstanding balance only when requested — do not force it for shop_debtors
+        // alone so Paid Debtors can list fully settled shop credit orders.
+        if ($request->boolean('outstanding_balance')
+            || ($request->boolean('shop_debtors') && ! $hasPaymentStatusFilter)
+        ) {
+            $query->whereNotIn('sales.status', ['cancelled', 'expired']);
+            $query->whereRaw('(sales.order_total - COALESCE(sales.amount_paid, 0)) > 0.01');
+        }
+
+        if ($hasPaymentStatusFilter) {
             SalePaymentStatus::applyListFilter($query, $paymentStatusFilter);
         }
 
