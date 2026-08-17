@@ -197,6 +197,65 @@ class ImportProductsTest extends TestCase
         $this->assertSame((int) $branchTwo->id, (int) $product->branch_id);
     }
 
+    public function test_product_import_strips_legacy_nn_suffix_and_matches_piece_unit(): void
+    {
+        $admin = User::query()->where('username', 'admin')->firstOrFail();
+        $organizationId = (int) $admin->organization_id;
+        $category = Category::query()->create([
+            'organization_id' => $organizationId,
+            'category_name' => 'DRINKS',
+            'created_by' => (int) $admin->id,
+        ]);
+        $subcategory = SubCategory::query()->create([
+            'organization_id' => $organizationId,
+            'category_id' => $category->id,
+            'subcategory_name' => 'HOT DRINKS',
+            'created_by' => (int) $admin->id,
+        ]);
+        $uom = Uom::query()
+            ->where('organization_id', $organizationId)
+            ->whereRaw('LOWER(TRIM(full_name)) = ?', ['piece'])
+            ->first();
+        if ($uom === null) {
+            $uom = Uom::query()->create([
+                'organization_id' => $organizationId,
+                'measure_name' => 'Piece',
+                'full_name' => 'Piece',
+                'conversion_factor' => 1,
+                'uom_type' => 'PIECE(S)',
+                'uses_small_packaging' => false,
+                'is_active' => true,
+                'created_by' => (int) $admin->id,
+            ]);
+        }
+
+        $task = BackgroundTask::createPending('product_import', $organizationId, (int) $admin->id, [
+            'rows' => [
+                [
+                    'product_code' => 'NN-TEA-001',
+                    'product_name' => 'African Tea',
+                    'category_name' => 'DRINKSnn',
+                    'subcategory_name' => 'HOT DRINKSnn',
+                    'measure_name' => 'Piece',
+                    'unit_price' => 150,
+                ],
+            ],
+        ]);
+
+        $this->app->call([new ImportProductsJob($task->id), 'handle']);
+
+        $task->refresh();
+        $this->assertSame('completed', $task->status, json_encode($task->result));
+        $this->assertSame(1, $task->result['created'] ?? null);
+
+        $product = Product::query()
+            ->where('organization_id', $organizationId)
+            ->where('product_code', 'NN-TEA-001')
+            ->firstOrFail();
+        $this->assertSame((int) $subcategory->id, (int) $product->subcategory_id);
+        $this->assertSame((int) $uom->id, (int) $product->unit_id);
+    }
+
     /** @return array{0: Category, 1: SubCategory, 2: Uom} */
     protected function catalogFixtures(int $organizationId): array
     {

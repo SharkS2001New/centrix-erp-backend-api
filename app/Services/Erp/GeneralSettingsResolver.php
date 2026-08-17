@@ -25,7 +25,7 @@ class GeneralSettingsResolver
             'footer_scale' => 'standard', 'footer_weight' => 'semibold',
         ],
         'hospitality_check' => [
-            'family' => 'arial', 'scale' => 'standard', 'size_px' => 11, 'weight' => 'semibold',
+            'family' => 'arial', 'scale' => 'large', 'size_px' => 11, 'weight' => 'semibold',
             'header_scale' => 'large', 'header_weight' => 'semibold',
             'footer_scale' => 'standard', 'footer_weight' => 'semibold',
         ],
@@ -302,6 +302,17 @@ class GeneralSettingsResolver
             $out[$footerWeightKey] = in_array($out[$footerWeightKey] ?? '', self::PRINT_FONT_WEIGHTS, true)
                 ? $out[$footerWeightKey]
                 : $defaults['footer_weight'];
+
+            // Restaurant/hotel 80mm checks: match retail thermal typeface (Arial) and
+            // use Large by default — Standard was too small on guest checks.
+            if ($variant === 'hospitality_check') {
+                if (($out[$familyKey] ?? '') === 'times') {
+                    $out[$familyKey] = $out['print_font_receipt_family'] ?? 'arial';
+                }
+                if (($out[$scaleKey] ?? '') === 'standard') {
+                    $out[$scaleKey] = 'large';
+                }
+            }
         }
 
         return $out;

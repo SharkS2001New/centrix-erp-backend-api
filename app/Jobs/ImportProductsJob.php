@@ -77,9 +77,7 @@ class ImportProductsJob implements ShouldQueue
                 try {
                     $body = $this->normalizeRow($row, $organizationId, $hospitality);
                     if (! $body['product_name'] || ! $body['subcategory_id'] || ! $body['unit_id']) {
-                        throw new \InvalidArgumentException(
-                            'Missing required fields: product_name, subcategory (id or name), and unit (id or measure_name).',
-                        );
+                        throw new \InvalidArgumentException($this->missingRequiredFieldsMessage($body, $row));
                     }
 
                     $body = $this->applyCatalogScope($body, $row, $user, $organizationId, $catalogScope, $access);
@@ -370,17 +368,25 @@ class ImportProductsJob implements ShouldQueue
     protected function resolveForeignKeys(array &$body, array $row, int $organizationId): void
     {
         if ((int) ($body['subcategory_id'] ?? 0) <= 0) {
-            $subcategoryName = trim((string) ($row['subcategory_name'] ?? ''));
-            if ($subcategoryName !== '') {
+            $subcategoryNames = $this->catalogNameCandidates((string) ($row['subcategory_name'] ?? ''));
+            $categoryNames = $this->catalogNameCandidates((string) ($row['category_name'] ?? ''));
+            if ($subcategoryNames !== []) {
                 $query = SubCategory::query()
                     ->where('organization_id', $organizationId)
-                    ->where('subcategory_name', $subcategoryName);
+                    ->where(function ($q) use ($subcategoryNames) {
+                        foreach ($subcategoryNames as $name) {
+                            $q->orWhereRaw('LOWER(TRIM(subcategory_name)) = ?', [strtolower($name)]);
+                        }
+                    });
 
-                $categoryName = trim((string) ($row['category_name'] ?? ''));
-                if ($categoryName !== '') {
+                if ($categoryNames !== []) {
                     $query->whereHas('category', fn ($q) => $q
                         ->where('organization_id', $organizationId)
-                        ->where('category_name', $categoryName));
+                        ->where(function ($catQuery) use ($categoryNames) {
+                            foreach ($categoryNames as $name) {
+                                $catQuery->orWhereRaw('LOWER(TRIM(category_name)) = ?', [strtolower($name)]);
+                            }
+                        }));
                 }
 
                 $subcategory = $query->first();
@@ -391,13 +397,15 @@ class ImportProductsJob implements ShouldQueue
         }
 
         if ((int) ($body['unit_id'] ?? 0) <= 0) {
-            $measureName = trim((string) ($row['measure_name'] ?? ''));
-            if ($measureName !== '') {
+            $measureNames = $this->unitNameCandidates((string) ($row['measure_name'] ?? ''));
+            if ($measureNames !== []) {
                 $uom = Uom::query()
                     ->where('organization_id', $organizationId)
-                    ->where(function ($q) use ($measureName) {
-                        $q->where('measure_name', $measureName)
-                            ->orWhere('full_name', $measureName);
+                    ->where(function ($q) use ($measureNames) {
+                        foreach ($measureNames as $name) {
+                            $q->orWhereRaw('LOWER(TRIM(measure_name)) = ?', [strtolower($name)])
+                                ->orWhereRaw('LOWER(TRIM(full_name)) = ?', [strtolower($name)]);
+                        }
                     })
                     ->first();
                 if ($uom !== null) {
@@ -442,5 +450,80 @@ class ImportProductsJob implements ShouldQueue
                 }
             }
         }
+    }
+
+    /**
+     * @param  array<string, mixed>  $body
+     * @param  array<string, mixed>  $row
+     */
+    protected function missingRequiredFieldsMessage(array $body, array $row): string
+    {
+        $parts = [];
+        if (trim((string) ($body['product_name'] ?? '')) === '') {
+            $parts[] = 'product_name is empty';
+        }
+        if ((int) ($body['subcategory_id'] ?? 0) <= 0) {
+            $sub = trim((string) ($row['subcategory_name'] ?? ''));
+            $cat = trim((string) ($row['category_name'] ?? ''));
+            $parts[] = $sub === ''
+                ? 'subcategory (id or name) is missing'
+                : 'subcategory "'.$sub.'"'.($cat !== '' ? ' in category "'.$cat.'"' : '').' was not found — import categories/subcategories first, or remove the trailing "nn" leftover from the old dump';
+        }
+        if ((int) ($body['unit_id'] ?? 0) <= 0) {
+            $unit = trim((string) ($row['measure_name'] ?? ''));
+            $parts[] = $unit === ''
+                ? 'unit (id or measure_name) is missing'
+                : 'serving unit "'.$unit.'" was not found — use a Unit from Serving units (e.g. Piece)';
+        }
+
+        return $parts !== []
+            ? implode('; ', $parts)
+            : 'Missing required fields: product_name, subcategory (id or name), and unit (id or measure_name).';
+    }
+
+    /** @return list<string> */
+    protected function catalogNameCandidates(string $raw): array
+    {
+        $names = [];
+        $current = trim(preg_replace('/\s+/', ' ', $raw) ?? '');
+        if ($current === '') {
+            return [];
+        }
+        $names[] = $current;
+        $stripped = $this->stripLegacyNewlineSuffix($current);
+        if ($stripped !== '' && strcasecmp($stripped, $current) !== 0) {
+            $names[] = $stripped;
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    /** @return list<string> */
+    protected function unitNameCandidates(string $raw): array
+    {
+        $current = trim(preg_replace('/\s+/', ' ', $raw) ?? '');
+        if ($current === '') {
+            return [];
+        }
+        $names = [$current];
+        $compact = strtolower(preg_replace('/[^a-z0-9]+/i', '', $current) ?? '');
+        if (in_array($compact, ['piece', 'pieces', 'pcs', 'pc', '1x1pc'], true)) {
+            array_push($names, 'Piece', 'Pieces', 'PIECE', 'PIECES', 'PIECE(S)');
+        }
+
+        return array_values(array_unique($names));
+    }
+
+    protected function stripLegacyNewlineSuffix(string $name): string
+    {
+        $text = trim($name);
+        if ($text === '') {
+            return '';
+        }
+        if (preg_match('/nn$/i', $text) && ! preg_match('/inn$/i', $text)) {
+            return rtrim(substr($text, 0, -2));
+        }
+
+        return $text;
     }
 }
