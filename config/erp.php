@@ -471,6 +471,7 @@ return [
             'allow_credit_pay_now' => true,
             'show_checkout_on_create_order' => true,
             'enable_checkout_customer_name' => false,
+            'enable_pos_auto_continue_after_print' => false,
             'retail_shop_wholesale_store_stock' => false,
             'add_route_markup_prices' => false,
             'pricing_formulas' => [

@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\CurrentStock;
+use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
 use App\Models\Sale;
@@ -970,5 +971,56 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertSame('paid', $sale['payment_status']);
         $this->assertSame('MPESA', strtoupper((string) $sale['payment_method_code']));
         $this->assertGreaterThan(0, (float) $sale['amount_paid']);
+    }
+
+    public function test_replace_lines_keeps_frozen_workspace_retail_markup_amount(): void
+    {
+        $template = Product::query()->where('product_code', $this->productCode)->firstOrFail();
+        $code = 'WIMBI-HOLD-'.uniqid();
+        Product::query()->create([
+            'product_code' => $code,
+            'product_name' => 'Wimbi',
+            'subcategory_id' => $template->subcategory_id,
+            'unit_id' => $template->unit_id,
+            'unit_price' => 100,
+            'vat_id' => $template->vat_id,
+            'sell_on_retail' => true,
+            'organization_id' => $this->user->organization_id,
+            'branch_id' => $this->user->branch_id,
+            'created_by' => $this->user->id,
+            'stock_in_shop' => 100,
+        ]);
+        CurrentStock::query()->updateOrInsert(
+            [
+                'product_code' => $code,
+                'branch_id' => $this->user->branch_id,
+            ],
+            [
+                'shop_quantity' => 100,
+                'store_quantity' => 0,
+            ],
+        );
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $cart = $this->putJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'lines' => [[
+                'product_code' => $code,
+                'quantity' => 2,
+                'unit_price' => 110,
+                'display_unit_price' => 110,
+                'on_wholesale_retail' => 1,
+                'amount' => 220,
+            ]],
+        ])->assertOk()->json();
+
+        $line = $cart['lines'][0] ?? [];
+        $this->assertSame($code, $line['product_code'] ?? null);
+        $this->assertEqualsWithDelta(220.0, (float) ($line['amount'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(110.0, (float) ($line['unit_price'] ?? 0), 0.01);
+        $this->assertEqualsWithDelta(110.0, (float) ($line['display_unit_price'] ?? 0), 0.01);
     }
 }

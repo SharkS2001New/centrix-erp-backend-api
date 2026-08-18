@@ -13,8 +13,11 @@ final class CartLineAmountResolver
     /**
      * Accept client amount only when it is a small nudge away from the server total
      * (cash rounding / float). Otherwise keep the server-computed amount.
+     *
+     * Wholesale/retail package markups (e.g. 100 → 110 /kg) must be kept. Reject only
+     * pack-price × base-qty inflation (e.g. 3600 × 25 = 90,000).
      */
-    public static function resolve(mixed $clientAmount, float $computedAmount): float
+    public static function resolve(mixed $clientAmount, float $computedAmount, float $conversionFactor = 1.0): float
     {
         $computed = round(max(0.0, $computedAmount), 2);
 
@@ -31,9 +34,22 @@ final class CartLineAmountResolver
             return $client;
         }
 
-        // Reject only inflated client totals (e.g. pack price × base qty). When the POS
-        // workspace line amount is lower than a naive unit×qty recompute, keep it.
-        if ($client > $computed) {
+        // When the POS workspace line amount is lower than a naive unit×qty recompute, keep it.
+        if ($client < $computed) {
+            return $client;
+        }
+
+        $factor = max(1.0, $conversionFactor);
+        if ($factor > 1.5 && $computed > 0.009) {
+            $packInflated = round($computed * $factor, 2);
+            $packTol = max(1.0, abs($packInflated) * 0.05);
+            if (abs($client - $packInflated) <= $packTol) {
+                return $computed;
+            }
+        }
+
+        // Unknown UOM: still reject extreme pack×qty blow-ups (25×+), not 10% markups.
+        if ($factor <= 1.5 && $computed > 0.009 && ($client / $computed) >= 8.0) {
             return $computed;
         }
 

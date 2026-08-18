@@ -2098,13 +2098,20 @@ class CartOperationsController extends Controller
         return $code;
     }
 
-    protected function resolveClientCartLineAmount(array $line, float $computedAmount): float
-    {
+    protected function resolveClientCartLineAmount(
+        array $line,
+        float $computedAmount,
+        float $conversionFactor = 1.0,
+    ): float {
         if (! array_key_exists('amount', $line)) {
             return round(max(0.0, $computedAmount), 2);
         }
 
-        return \App\Services\Sales\CartLineAmountResolver::resolve($line['amount'], $computedAmount);
+        return \App\Services\Sales\CartLineAmountResolver::resolve(
+            $line['amount'],
+            $computedAmount,
+            $conversionFactor,
+        );
     }
 
     /**
@@ -2125,18 +2132,24 @@ class CartOperationsController extends Controller
             return [$unitPrice, round(max(0.0, $computedAmount), 2)];
         }
 
-        $finalAmount = $this->resolveClientCartLineAmount($line, $computedAmount);
+        $product->loadMissing('unit');
+        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
+        $finalAmount = $this->resolveClientCartLineAmount($line, $computedAmount, $factor);
         $clientAmount = round(max(0.0, (float) $line['amount']), 2);
 
-        if (
-            abs($finalAmount - $clientAmount) < 0.01
-            && abs($finalAmount - round($computedAmount, 2)) > 0.01
-        ) {
-            $product->loadMissing('unit');
-            $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
-            $entryQty = $factor > 1 && ! $isRetail ? $qty / $factor : $qty;
-            if ($entryQty > 0) {
-                $unitPrice = round($finalAmount / $entryQty, 4);
+        if (abs($finalAmount - $clientAmount) < 0.01) {
+            $clientUnit = array_key_exists('unit_price', $line)
+                && $line['unit_price'] !== null
+                && $line['unit_price'] !== ''
+                ? (float) $line['unit_price']
+                : null;
+            if ($clientUnit !== null && $clientUnit > 0) {
+                $unitPrice = round($clientUnit, 4);
+            } elseif (abs($finalAmount - round($computedAmount, 2)) > 0.01) {
+                $entryQty = $factor > 1 && ! $isRetail ? $qty / $factor : $qty;
+                if ($entryQty > 0) {
+                    $unitPrice = round($finalAmount / $entryQty, 4);
+                }
             }
         }
 

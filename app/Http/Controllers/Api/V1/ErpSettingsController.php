@@ -134,6 +134,7 @@ class ErpSettingsController extends Controller
             'allow_credit_pay_now',
             'show_checkout_on_create_order',
             'enable_checkout_customer_name',
+            'enable_pos_auto_continue_after_print',
             'retail_shop_wholesale_store_stock',
             'add_route_markup_prices',
             'backoffice_order_type_mode',

@@ -33,4 +33,16 @@ class CartLineAmountResolverTest extends TestCase
     {
         $this->assertSame(3155.0, CartLineAmountResolver::resolve(3155, 3155));
     }
+
+    public function test_keeps_wholesale_retail_package_markup_above_catalog(): void
+    {
+        // Wimbi sold at 110/kg with catalog 100 — hold/restore must not strip markup.
+        $this->assertSame(110.0, CartLineAmountResolver::resolve(110, 100));
+        $this->assertSame(220.0, CartLineAmountResolver::resolve(220, 200, 25));
+    }
+
+    public function test_rejects_pack_price_times_base_qty_when_conversion_is_known(): void
+    {
+        $this->assertSame(3600.0, CartLineAmountResolver::resolve(90000, 3600, 25));
+    }
 }
