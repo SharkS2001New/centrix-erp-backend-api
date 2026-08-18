@@ -96,6 +96,30 @@ class HikvisionDeviceManagementTest extends TestCase
         $online->assertJsonPath('agent.name', 'CentrixAttendanceAgent');
     }
 
+    public function test_test_connection_still_tries_recently_known_agent_when_heartbeat_is_stale(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T001-STALE',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+            'agent_last_seen_at' => now()->subMinutes(10),
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $response = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/test-connection");
+        $response->assertOk();
+        $response->assertJsonPath('online', true);
+        $response->assertJsonPath('via_agent', true);
+        $response->assertJsonPath('agent.name', 'CentrixAttendanceAgent');
+    }
+
     public function test_hikvision_resolves_misconfigured_port_8000_to_80(): void
     {
         $device = new AttendanceClockDevice([

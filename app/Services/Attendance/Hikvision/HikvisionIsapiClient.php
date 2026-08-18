@@ -980,10 +980,14 @@ class HikvisionIsapiClient
 
             return $response;
         } catch (\Throwable $e) {
-            if ($bridge !== null && $bridge->isConnectionError($e) && $bridge->isAgentOnline($this->device)) {
+            if (
+                $bridge !== null
+                && $bridge->isConnectionError($e)
+                && $bridge->hasCheckedIn($this->device)
+            ) {
                 $this->lastRequestViaAgent = true;
 
-                return $bridge->executeViaAgent($this->device, $method, $path, $body);
+                return $bridge->executeViaAgent($this->device, $method, $path, $body, 'json', true);
             }
 
             throw $e;

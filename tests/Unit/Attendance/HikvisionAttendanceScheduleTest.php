@@ -31,29 +31,29 @@ class HikvisionAttendanceScheduleTest extends TestCase
         ));
     }
 
-    public function test_agent_online_ttl_follows_poll_interval(): void
+    public function test_agent_online_ttl_tracks_recent_command_heartbeat(): void
     {
         $device = new AttendanceClockDevice(['organization_id' => 1]);
-        $device->forceFill(['agent_last_seen_at' => now()->subMinutes(4)]);
+        $device->forceFill(['agent_last_seen_at' => now()->subSeconds(90)]);
 
         $bridge = app(HikvisionAgentBridge::class);
 
-        // Default poll is 5 minutes → online TTL is poll + 120s (~7 minutes).
+        // The agent polls Centrix for commands every few seconds, so the heartbeat
+        // window stays short even if attendance auto-sync is hourly.
         $this->assertGreaterThanOrEqual(300, $bridge->pollSeconds($device));
-        $this->assertGreaterThanOrEqual(420, $bridge->onlineTtlSeconds($device));
+        $this->assertSame(120, $bridge->onlineTtlSeconds($device));
         $this->assertTrue($bridge->isAgentOnline($device));
 
-        $device->forceFill(['agent_last_seen_at' => now()->subMinutes(20)]);
+        $device->forceFill(['agent_last_seen_at' => now()->subSeconds(121)]);
         $this->assertFalse($bridge->isAgentOnline($device));
     }
 
-    public function test_command_wait_covers_one_poll_cycle(): void
+    public function test_command_wait_is_bounded_for_stale_agents(): void
     {
         $device = new AttendanceClockDevice(['organization_id' => 1]);
         $bridge = app(HikvisionAgentBridge::class);
 
         $wait = $bridge->commandWaitSeconds($device);
-        $this->assertGreaterThanOrEqual($bridge->pollSeconds($device), $wait - 90);
-        $this->assertLessThanOrEqual(HikvisionAgentBridge::MAX_COMMAND_WAIT_SECONDS, $wait);
+        $this->assertSame(HikvisionAgentBridge::MIN_COMMAND_WAIT_SECONDS, $wait);
     }
 }

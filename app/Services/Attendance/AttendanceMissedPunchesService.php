@@ -32,6 +32,8 @@ class AttendanceMissedPunchesService
      */
     public function listForOrganization(int $organizationId): array
     {
+        $this->forgottenClockOuts->closeDueSessions($organizationId);
+
         $events = HikvisionAccessEvent::query()
             ->with(['device:id,device_no,location,provider'])
             ->where('organization_id', $organizationId)

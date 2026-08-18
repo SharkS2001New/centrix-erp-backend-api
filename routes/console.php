@@ -86,6 +86,12 @@ Schedule::command('erp:mark-attendance-absents')
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/mark-attendance-absents.log'));
 
+Schedule::command('erp:close-forgotten-clock-outs')
+    ->dailyAt('02:05')
+    ->timezone(config('app.timezone', 'Africa/Nairobi'))
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/close-forgotten-clock-outs.log'));
+
 // Punches are expected 07:20–02:00 Africa/Nairobi. Skip the empty overnight gap.
 // Runs every hour at :20; CentrixAttendanceAgent must be checking in within the HR auto-sync interval.
 Schedule::command('erp:sync-hikvision-attendance')

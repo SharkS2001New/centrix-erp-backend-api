@@ -609,6 +609,32 @@ class AttendanceClockPunchTest extends TestCase
         Carbon::setTestNow();
     }
 
+    public function test_missed_punches_list_auto_closes_due_previous_day_sessions(): void
+    {
+        Sanctum::actingAs($this->admin);
+        Carbon::setTestNow(Carbon::parse('2026-08-14 02:05:00', 'Africa/Nairobi'));
+
+        $this->postJson('/api/v1/attendance/clock-punch', [
+            'employee_code' => 'EMP#HIK001',
+            'device_no' => 'TERMINAL-01',
+            'punched_at' => '2026-08-13T08:10:00+03:00',
+            'direction' => 'auto',
+        ])->assertCreated();
+
+        $list = $this->getJson('/api/v1/attendance/missed-punches')->assertOk();
+        $this->assertSame(1, $list->json('counts.missing_clock_out'));
+        $this->assertTrue($list->json('missing_clock_out.0.auto_closed'));
+        $this->assertSame('17:00:00', $list->json('missing_clock_out.0.clock_out_at'));
+
+        $this->assertDatabaseHas('employee_attendance', [
+            'employee_id' => $this->employee->id,
+            'attendance_date' => '2026-08-13',
+            'check_out' => '17:00:00',
+        ]);
+
+        Carbon::setTestNow();
+    }
+
     public function test_admin_can_correct_clock_in_time(): void
     {
         Sanctum::actingAs($this->admin);
