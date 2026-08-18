@@ -6,6 +6,7 @@ use App\Models\Organization;
 use App\Models\PlatformSubscription;
 use App\Models\Sale;
 use App\Models\User;
+use App\Services\Sales\MobileRouteExpenseService;
 use Illuminate\Support\Facades\Hash;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -172,6 +173,53 @@ class MobileRouteExpenseTest extends TestCase
                 'expense_amount' => 50,
             ])
             ->assertStatus(422);
+    }
+
+    public function test_pending_and_performed_expenses_and_approve_honor_cashier_filter(): void
+    {
+        $repA = $this->makeMobileUser(['full_name' => 'Expense Rep A']);
+        $repB = $this->makeMobileUser(['full_name' => 'Expense Rep B']);
+        $expenses = app(MobileRouteExpenseService::class);
+        $expenseA = $expenses->createForRep($repA, [
+            'description' => 'Fuel A',
+            'expense_amount' => 100,
+        ]);
+        $expenseB = $expenses->createForRep($repB, [
+            'description' => 'Fuel B',
+            'expense_amount' => 80,
+        ]);
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $pendingA = collect($this->getJson('/api/v1/sales/mobile-orders/pending-expenses?cashier_id='.$repA->id)
+            ->assertOk()
+            ->json('data'))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id);
+        $this->assertTrue($pendingA->contains((int) $expenseA['id']));
+        $this->assertFalse($pendingA->contains((int) $expenseB['id']));
+
+        $approve = $this->postJson('/api/v1/sales/mobile-orders/approve-expenses', [
+            'expense_ids' => [(int) $expenseA['id'], (int) $expenseB['id']],
+            'cashier_id' => $repA->id,
+        ])->assertOk()->json();
+
+        $this->assertSame(1, (int) $approve['approved_count']);
+        $this->assertSame((int) $expenseB['id'], (int) ($approve['errors'][0]['id'] ?? 0));
+
+        $this->postJson('/api/v1/sales/mobile-orders/approve-expenses', [
+            'expense_ids' => [(int) $expenseB['id']],
+            'cashier_id' => $repB->id,
+        ])->assertOk()->assertJsonPath('approved_count', 1);
+
+        $performedA = collect($this->getJson('/api/v1/sales/mobile-orders/performed-expenses?cashier_id='.$repA->id)
+            ->assertOk()
+            ->json('data'))
+            ->pluck('id')
+            ->map(fn ($id) => (int) $id);
+        $this->assertTrue($performedA->contains((int) $expenseA['id']));
+        $this->assertFalse($performedA->contains((int) $expenseB['id']));
     }
 
     protected function enableExpensesCard(User $user): void
