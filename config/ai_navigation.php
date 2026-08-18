@@ -118,6 +118,7 @@ return [
                 ['label' => 'Admin home', 'path' => '/admin', 'module' => 'admin', 'permission' => 'admin.overview.view'],
                 ['label' => 'Users', 'path' => '/admin/users', 'module' => 'admin', 'permission' => 'admin.users.view'],
                 ['label' => 'Roles and permissions', 'path' => '/admin/roles', 'module' => 'admin', 'permission' => 'admin.roles.view'],
+                ['label' => 'Attendance', 'path' => '/admin/attendance-clock', 'module' => 'admin', 'permission' => 'admin.attendance_clock.view'],
             ],
         ],
     ],

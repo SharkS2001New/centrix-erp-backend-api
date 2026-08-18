@@ -312,7 +312,7 @@ return [
                 'users' => ['label' => 'Users', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'roles' => ['label' => 'Roles & permissions', 'actions' => ['view', 'edit']],
                 'audit' => ['label' => 'Audit logs', 'actions' => ['view']],
-                'attendance_clock' => ['label' => 'Attendance clock-in', 'actions' => ['view', 'create', 'edit', 'delete']],
+                'attendance_clock' => ['label' => 'Attendance', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'payment_methods' => ['label' => 'Payment methods', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'vat_rates' => ['label' => 'VAT / tax rates (Administration)', 'actions' => ['view', 'create', 'edit', 'delete']],
                 'kra_responses' => ['label' => 'KRA device logs', 'actions' => ['view']],
