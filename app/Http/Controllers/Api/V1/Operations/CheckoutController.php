@@ -1057,7 +1057,21 @@ class CheckoutController extends Controller
                         abs($splitTotal - $expectedSplitTotal) > 0.02
                         && abs($splitTotal - $payNow) > 0.02
                     ) {
-                        throw new InvalidArgumentException('Payment splits must add up to the amount paid now.');
+                        if ($offlineOrder) {
+                            $splits = $this->healOfflineOrderPaymentSplits(
+                                $splits,
+                                $payNow,
+                                $paymentMethodCode,
+                                $input['payment_reference'] ?? null,
+                            );
+                            $splitTotal = round(array_sum(array_column($splits, 'amount')), 2);
+                        }
+                        if (
+                            abs($splitTotal - $expectedSplitTotal) > 0.02
+                            && abs($splitTotal - $payNow) > 0.02
+                        ) {
+                            throw new InvalidArgumentException('Payment splits must add up to the amount paid now.');
+                        }
                     }
                     foreach ($splits as $split) {
                         $methodCode = (string) $split['method_code'];
@@ -1625,6 +1639,40 @@ class CheckoutController extends Controller
         }
 
         return $normalized;
+    }
+
+    /** @param  list<array{method_code: string, amount: float, reference_number: ?string}>  $splits */
+    protected function healOfflineOrderPaymentSplits(
+        array $splits,
+        float $payNow,
+        string $paymentMethodCode,
+        mixed $paymentReference,
+    ): array {
+        $target = round(max(0, $payNow), 2);
+        if ($target <= 0) {
+            return [];
+        }
+
+        if (count($splits) === 1) {
+            $splits[0]['amount'] = $target;
+
+            return $splits;
+        }
+
+        $method = strtoupper(trim($paymentMethodCode));
+        if ($method === '') {
+            $method = strtoupper(trim((string) ($splits[0]['method_code'] ?? '')));
+        }
+        $reference = trim((string) $paymentReference);
+        if ($reference === '') {
+            $reference = trim((string) ($splits[0]['reference_number'] ?? ''));
+        }
+
+        return [[
+            'method_code' => $method !== '' ? $method : 'CASH',
+            'amount' => $target,
+            'reference_number' => $reference !== '' ? $reference : null,
+        ]];
     }
 
     /**

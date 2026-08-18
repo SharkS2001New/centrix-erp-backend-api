@@ -939,4 +939,36 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertNotEmpty($sale['items'] ?? []);
         $this->assertSame($this->productCode, $sale['items'][0]['product_code']);
     }
+
+    public function test_offline_checkout_heals_stale_payment_splits_for_replay(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated();
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'MPESA',
+            'payment_reference' => 'XYZ123',
+            'pay_now' => 1,
+            'payment_splits' => [
+                ['method_code' => 'CASH', 'amount' => 0.5],
+                ['method_code' => 'MPESA', 'amount' => 0.5, 'reference_number' => 'OLDREF'],
+            ],
+            'offline_order' => true,
+            'client_sale_uuid' => 'pos-offbox-split-'.uniqid(),
+            'pos_order_num' => 229,
+            'pos_order_date' => now()->toDateString(),
+        ])->assertCreated()->json();
+
+        $this->assertSame('paid', $sale['payment_status']);
+        $this->assertSame('MPESA', strtoupper((string) $sale['payment_method_code']));
+        $this->assertGreaterThan(0, (float) $sale['amount_paid']);
+    }
 }
