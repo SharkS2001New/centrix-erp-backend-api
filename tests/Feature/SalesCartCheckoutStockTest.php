@@ -4,7 +4,6 @@ namespace Tests\Feature;
 
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\CurrentStock;
-use App\Models\CurrentStock;
 use App\Models\InventoryTransaction;
 use App\Models\Product;
 use App\Models\Sale;
