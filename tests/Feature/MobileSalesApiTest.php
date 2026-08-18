@@ -6,6 +6,7 @@ use App\Models\PlatformSubscription;
 use App\Models\Sale;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
 
@@ -1479,6 +1480,90 @@ class MobileSalesApiTest extends TestCase
             'status' => 'pending',
             'returned_by' => $rep->id,
         ]);
+    }
+
+    public function test_approved_return_updates_todays_order_list_and_dashboard_totals(): void
+    {
+        $rep = $this->makeMobileUser(['username' => 'mobile_ret_tot_'.uniqid()]);
+        $product = \App\Models\Product::firstOrFail();
+        $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+        $today = now()->toDateString();
+
+        $sale = Sale::create([
+            'order_num' => 97101 + random_int(1, 8000),
+            'branch_id' => $template->branch_id,
+            'organization_id' => $template->organization_id,
+            'channel' => 'mobile',
+            'cashier_id' => $rep->id,
+            'customer_num' => $template->customer_num,
+            'route_id' => $template->route_id,
+            'status' => 'paid',
+            'total_vat' => 0,
+            'order_total' => 200,
+            'payment_status' => 'paid',
+            'amount_paid' => 200,
+            'stock_balanced' => 1,
+        ]);
+
+        \App\Models\SaleItem::create([
+            'sale_id' => $sale->id,
+            'product_code' => $product->product_code,
+            'line_no' => 1,
+            'item_code' => '1',
+            'quantity' => 2,
+            'uom' => $product->uom,
+            'selling_price' => 100,
+            'discount_given' => 0,
+            'product_vat' => 0,
+            'amount' => 200,
+            'on_wholesale_retail' => 0,
+        ]);
+
+        $token = $this->loginMobile($rep);
+
+        $warmed = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?from_date='.$today.'&to_date='.$today)
+            ->assertOk();
+        $this->assertEqualsWithDelta(200.0, (float) $warmed->json('meta.summary.order_total'), 0.001);
+
+        $created = $this->withToken($token)
+            ->postJson("/api/v1/mobile/orders/{$sale->id}/returns", [
+                'reason' => 'Partial return',
+                'lines' => [
+                    [
+                        'product_code' => $product->product_code,
+                        'return_qty' => 1,
+                        'unit_price' => 100,
+                        'amount' => 100,
+                    ],
+                ],
+            ])
+            ->assertCreated()
+            ->json();
+
+        $this->assertSame('pending', $created['status']);
+        $this->assertEqualsWithDelta(
+            200.0,
+            (float) $this->withToken($token)->getJson('/api/v1/mobile/orders')->json('meta.summary.order_total'),
+            0.001,
+        );
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+        $this->postJson('/api/v1/customer-returns/'.$created['id'].'/approve')
+            ->assertOk()
+            ->assertJsonPath('status', 'approved');
+
+        $afterList = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?from_date='.$today.'&to_date='.$today)
+            ->assertOk();
+        $this->assertEqualsWithDelta(100.0, (float) $afterList->json('meta.summary.order_total'), 0.001);
+
+        $dashboard = $this->withToken($token)
+            ->getJson('/api/v1/mobile/dashboard')
+            ->assertOk()
+            ->json('summary');
+        $this->assertEqualsWithDelta(100.0, (float) $dashboard['orderTotals'], 0.001);
     }
 
     public function test_mobile_order_partial_payment_reduces_balance_due(): void

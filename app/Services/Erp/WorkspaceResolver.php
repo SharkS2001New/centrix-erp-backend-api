@@ -37,12 +37,11 @@ class WorkspaceResolver
     ];
 
     /**
-     * Admin finance/tax utilities that must not unlock the Administration workspace alone.
-     * Granting these without core admin rights (users, roles, company, …) keeps the user
-     * in Backoffice — use pricing_tax.* counterparts there instead.
+     * Admin utilities that must not unlock the Administration workspace alone.
+     * KRA device logs and attendance clock-in are grantable Admin module features
+     * and therefore do unlock Administration when assigned.
      */
     protected const ADMIN_NON_ENTRY_FEATURES = [
-        'kra_responses',
         'vat_rates',
         'till_printing',
         'discount_approvals',
@@ -234,8 +233,8 @@ class WorkspaceResolver
     }
 
     /**
-     * Administration entry: core org-admin rights only.
-     * VAT rates / KRA device log / till printing / notifications alone must not unlock it.
+     * Administration entry: users, roles, company, attendance clock-in, KRA device logs, etc.
+     * VAT rates / till printing / discount approvals / notifications alone must not unlock it.
      *
      * @param  array<string, bool>  $permissionMap
      */

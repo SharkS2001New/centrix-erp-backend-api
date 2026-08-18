@@ -188,6 +188,13 @@ class CompletedSalesCacheService
             return ((int) ($b['id'] ?? 0)) <=> ((int) ($a['id'] ?? 0));
         });
 
+        $gross = 0.0;
+        foreach ($rows as $row) {
+            $gross += (float) ($row['orderTotals'] ?? $row['order_total'] ?? 0);
+        }
+        $fallbackGross = round($gross, 2);
+        $cachedSummary = is_array($cached['meta']['summary'] ?? null) ? $cached['meta']['summary'] : [];
+
         return [
             'data' => array_slice($rows, 0, $perPage),
             'meta' => [
@@ -196,6 +203,13 @@ class CompletedSalesCacheService
                 'per_page' => $perPage,
                 'total' => count($rows),
                 'from_cache' => true,
+                // Prefer the live-query summary (all matching sales). Row-sum is only a fallback
+                // when older cache entries stored the first page of rows without meta.summary.
+                'summary' => array_merge([
+                    'order_count' => count($rows),
+                    'gross_total' => $fallbackGross,
+                    'order_total' => $fallbackGross,
+                ], $cachedSummary),
             ],
         ];
     }

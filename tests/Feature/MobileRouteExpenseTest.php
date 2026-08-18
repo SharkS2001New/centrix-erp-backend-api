@@ -69,7 +69,14 @@ class MobileRouteExpenseTest extends TestCase
             0.001,
         );
 
+        $warmedList = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders')
+            ->assertOk();
+        $this->assertEqualsWithDelta(1000.0, (float) $warmedList->json('meta.summary.order_total'), 0.001);
+        $this->assertEqualsWithDelta(0.0, (float) ($warmedList->json('meta.summary.expense_total') ?? 0), 0.001);
+
         $admin = User::where('username', 'admin')->firstOrFail();
+        $this->withoutToken();
         Sanctum::actingAs($admin);
 
         $pending = $this->getJson('/api/v1/sales/mobile-orders/pending-expenses')
@@ -82,12 +89,26 @@ class MobileRouteExpenseTest extends TestCase
             'expense_ids' => [$expenseId],
         ])->assertOk()->assertJsonPath('approved_count', 1);
 
+        $this->app['auth']->forgetGuards();
         $after = $this->withToken($token)
             ->getJson('/api/v1/mobile/dashboard')
             ->assertOk()
             ->json('summary');
         $this->assertEqualsWithDelta(850.0, (float) $after['orderTotals'], 0.001);
         $this->assertEqualsWithDelta(150.0, (float) $after['expenseTotals'], 0.001);
+
+        $todayList = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders')
+            ->assertOk();
+        $this->assertEqualsWithDelta(1000.0, (float) $todayList->json('meta.summary.gross_total'), 0.001);
+        $this->assertEqualsWithDelta(150.0, (float) $todayList->json('meta.summary.expense_total'), 0.001);
+        $this->assertEqualsWithDelta(850.0, (float) $todayList->json('meta.summary.order_total'), 0.001);
+
+        $datedList = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?from_date='.$today.'&to_date='.$today)
+            ->assertOk();
+        $this->assertEqualsWithDelta(850.0, (float) $datedList->json('meta.summary.order_total'), 0.001);
+        $this->assertEqualsWithDelta(150.0, (float) $datedList->json('meta.summary.expense_total'), 0.001);
 
         $reconciliation = $this->withToken($token)
             ->getJson('/api/v1/mobile/reconciliation')
@@ -98,6 +119,45 @@ class MobileRouteExpenseTest extends TestCase
         $this->assertNotNull($todayRow);
         $this->assertEqualsWithDelta(150.0, (float) $todayRow['expense_amount'], 0.001);
         $this->assertEqualsWithDelta(850.0, (float) $todayRow['total_amount'], 0.001);
+    }
+
+    public function test_approved_expense_updates_past_day_order_list_totals(): void
+    {
+        $rep = $this->makeMobileUser();
+        $yesterday = now()->subDay();
+        $date = $yesterday->toDateString();
+        $this->seedMobileSale($rep, 1000, $yesterday);
+
+        $token = $this->loginMobile($rep);
+
+        $before = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?from_date='.$date.'&to_date='.$date)
+            ->assertOk();
+        $this->assertEqualsWithDelta(1000.0, (float) $before->json('meta.summary.order_total'), 0.001);
+
+        $created = $this->withToken($token)
+            ->postJson('/api/v1/mobile/expenses', [
+                'description' => 'Parking',
+                'expense_amount' => 150,
+                'expense_date' => $date,
+            ])
+            ->assertCreated()
+            ->json();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->withoutToken();
+        Sanctum::actingAs($admin);
+        $this->postJson('/api/v1/sales/mobile-orders/approve-expenses', [
+            'expense_ids' => [$created['id']],
+        ])->assertOk()->assertJsonPath('approved_count', 1);
+
+        $this->app['auth']->forgetGuards();
+        $after = $this->withToken($token)
+            ->getJson('/api/v1/mobile/orders?from_date='.$date.'&to_date='.$date)
+            ->assertOk();
+        $this->assertEqualsWithDelta(1000.0, (float) $after->json('meta.summary.gross_total'), 0.001);
+        $this->assertEqualsWithDelta(150.0, (float) $after->json('meta.summary.expense_total'), 0.001);
+        $this->assertEqualsWithDelta(850.0, (float) $after->json('meta.summary.order_total'), 0.001);
     }
 
     public function test_expenses_are_blocked_when_platform_flag_is_off(): void
@@ -122,17 +182,24 @@ class MobileRouteExpenseTest extends TestCase
     protected function setExpensesCard(User $user, bool $enabled): void
     {
         $org = Organization::query()->findOrFail($user->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['sales.mobile'] = true;
+        $modules['sales.backend'] = true;
         $settings = $org->module_settings ?? [];
         $settings['sales'] = array_merge($settings['sales'] ?? [], [
             'enable_mobile_orders' => true,
             'enable_mobile_orders_expenses_card' => $enabled,
         ]);
-        $org->update(['module_settings' => $settings]);
+        $org->update([
+            'enabled_modules' => $modules,
+            'module_settings' => $settings,
+        ]);
     }
 
-    protected function seedMobileSale(User $rep, float $total): Sale
+    protected function seedMobileSale(User $rep, float $total, $at = null): Sale
     {
         $template = Sale::query()->where('channel', 'mobile')->firstOrFail();
+        $at = $at ? \Carbon\Carbon::parse($at) : now();
 
         return Sale::create([
             'order_num' => 97001 + random_int(1, 8000),
@@ -147,8 +214,8 @@ class MobileRouteExpenseTest extends TestCase
             'order_total' => $total,
             'payment_status' => 'paid',
             'amount_paid' => $total,
-            'created_at' => now(),
-            'updated_at' => now(),
+            'created_at' => $at,
+            'updated_at' => $at,
         ]);
     }
 

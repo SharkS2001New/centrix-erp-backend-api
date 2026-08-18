@@ -360,10 +360,7 @@ return [
         'hr.holidays.delete',
         'hr.leave_settings.edit',
     ],
-    'admin.kra_responses.view' => [
-        'reports.kra_receipts.view',
-    ],
-    // Legacy Backoffice code — maps to Administration KRA device log.
+    // Legacy Backoffice code — maps to Administration KRA device logs.
     'pricing_tax.kra_device_log.view' => [
         'admin.kra_responses.view',
     ],
@@ -379,6 +376,7 @@ return [
         'admin.users.view',
         'admin.roles.view',
         'admin.audit.view',
+        'admin.attendance_clock.view',
         'admin.payment_methods.view',
         'admin.vat_rates.view',
         'admin.kra_responses.view',
@@ -394,6 +392,9 @@ return [
         'admin.users.edit',
         'admin.users.delete',
         'admin.roles.edit',
+        'admin.attendance_clock.create',
+        'admin.attendance_clock.edit',
+        'admin.attendance_clock.delete',
         'admin.payment_methods.create',
         'admin.payment_methods.edit',
         'admin.payment_methods.delete',

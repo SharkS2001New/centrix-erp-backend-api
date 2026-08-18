@@ -1000,6 +1000,14 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:sales.view|sales.manage');
             Route::post('sales/mobile-orders/approve-returns', [MobileOrdersQuickActionsController::class, 'approveReturns'])
                 ->middleware('erp.permission:sales.manage');
+            Route::get('sales/mobile-orders/pending-expenses', [MobileOrdersQuickActionsController::class, 'pendingExpenses'])
+                ->middleware('erp.permission:sales.view|sales.manage');
+            Route::get('sales/mobile-orders/performed-expenses', [MobileOrdersQuickActionsController::class, 'performedExpenses'])
+                ->middleware('erp.permission:sales.view|sales.manage');
+            Route::post('sales/mobile-orders/approve-expenses', [MobileOrdersQuickActionsController::class, 'approveExpenses'])
+                ->middleware('erp.permission:sales.manage');
+            Route::post('sales/mobile-orders/reject-expenses', [MobileOrdersQuickActionsController::class, 'rejectExpenses'])
+                ->middleware('erp.permission:sales.manage');
             Route::post('sales/mobile-orders/mark-paid', [MobileOrdersQuickActionsController::class, 'markPaid'])
                 ->middleware('erp.permission:sales.manage');
             Route::get('sales/{saleId}/return-lines', [CustomerReturnController::class, 'saleLines'])
@@ -1175,8 +1183,8 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::post('attendance-clock-devices/{id}/agent-package', [AttendanceClockDeviceController::class, 'issueAgentPackage'])
-                ->middleware('erp.permission:hr.manage');
-            Route::prefix('attendance-clock-devices/{id}/hikvision')->middleware('erp.permission:hr.manage')->group(function () {
+                ->middleware('erp.permission:admin.attendance_clock.create|admin.attendance_clock.edit|hr.manage');
+            Route::prefix('attendance-clock-devices/{id}/hikvision')->middleware('erp.permission:admin.attendance_clock.view|admin.attendance_clock.create|admin.attendance_clock.edit|admin.attendance_clock.delete|hr.manage')->group(function () {
                 Route::post('test-connection', [HikvisionDeviceController::class, 'testConnection']);
                 Route::post('test/live-punch', [HikvisionDeviceController::class, 'pollLivePunch']);
                 Route::get('overview', [HikvisionDeviceController::class, 'overview']);
@@ -1208,8 +1216,8 @@ Route::prefix('v1')->group(function () {
             });
             Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
                 ->parameters(['attendance-clock-devices' => 'id'])
-                ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:admin.attendance_clock.view|hr.view|hr.manage'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:admin.attendance_clock.create|admin.attendance_clock.edit|admin.attendance_clock.delete|hr.manage']);
             Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class)
                 ->parameters(['attendance-mobile-devices' => 'id'])
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])

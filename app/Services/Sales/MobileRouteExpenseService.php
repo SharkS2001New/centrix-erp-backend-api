@@ -107,13 +107,14 @@ class MobileRouteExpenseService
     }
 
     /**
+     * @param  array{cashier_id?: int|null, route_id?: int|null}  $filters
      * @return list<array<string, mixed>>
      */
-    public function pendingForManager(User $user): array
+    public function pendingForManager(User $user, array $filters = []): array
     {
         $this->assertEnabledForUser($user);
 
-        $query = $this->managerQuery($user)
+        $query = $this->managerQuery($user, $filters)
             ->with(['user:id,username,full_name', 'approvedByUser:id,username,full_name'])
             ->where('status', MobileRouteExpense::STATUS_PENDING)
             ->orderByDesc('id');
@@ -122,13 +123,17 @@ class MobileRouteExpenseService
     }
 
     /**
+     * @param  array{from_date?: string|null, to_date?: string|null, cashier_id?: int|null, route_id?: int|null}  $filters
      * @return list<array<string, mixed>>
      */
-    public function performedForManager(User $user, ?string $fromDate = null, ?string $toDate = null): array
+    public function performedForManager(User $user, array $filters = []): array
     {
         $this->assertEnabledForUser($user);
 
-        $query = $this->managerQuery($user)
+        $fromDate = $filters['from_date'] ?? null;
+        $toDate = $filters['to_date'] ?? null;
+
+        $query = $this->managerQuery($user, $filters)
             ->with(['user:id,username,full_name', 'approvedByUser:id,username,full_name'])
             ->where('status', MobileRouteExpense::STATUS_APPROVED)
             ->orderByDesc('expense_date')
@@ -150,9 +155,10 @@ class MobileRouteExpenseService
 
     /**
      * @param  list<int>  $ids
+     * @param  array{cashier_id?: int|null, route_id?: int|null}  $filters
      * @return array{approved_count: int, data: list<array<string, mixed>>, errors: list<array{id: int, message: string}>}
      */
-    public function approveMany(User $manager, array $ids): array
+    public function approveMany(User $manager, array $ids, array $filters = []): array
     {
         $this->assertEnabledForUser($manager);
 
@@ -160,7 +166,7 @@ class MobileRouteExpenseService
         $errors = [];
 
         foreach ($ids as $id) {
-            $query = $this->managerQuery($manager)
+            $query = $this->managerQuery($manager, $filters)
                 ->where('id', (int) $id)
                 ->where('status', MobileRouteExpense::STATUS_PENDING);
             $expense = $query->first();
@@ -193,9 +199,10 @@ class MobileRouteExpenseService
 
     /**
      * @param  list<int>  $ids
+     * @param  array{cashier_id?: int|null, route_id?: int|null}  $filters
      * @return array{rejected_count: int, data: list<array<string, mixed>>, errors: list<array{id: int, message: string}>}
      */
-    public function rejectMany(User $manager, array $ids, ?string $reason = null): array
+    public function rejectMany(User $manager, array $ids, ?string $reason = null, array $filters = []): array
     {
         $this->assertEnabledForUser($manager);
 
@@ -204,7 +211,7 @@ class MobileRouteExpenseService
         $trimmedReason = $reason !== null ? mb_substr(trim($reason), 0, 200) : null;
 
         foreach ($ids as $id) {
-            $query = $this->managerQuery($manager)
+            $query = $this->managerQuery($manager, $filters)
                 ->where('id', (int) $id)
                 ->where('status', MobileRouteExpense::STATUS_PENDING);
             $expense = $query->first();
@@ -305,11 +312,24 @@ class MobileRouteExpenseService
         ];
     }
 
-    protected function managerQuery(User $user): Builder
+    /**
+     * @param  array{cashier_id?: int|null, route_id?: int|null}  $filters
+     */
+    protected function managerQuery(User $user, array $filters = []): Builder
     {
         $query = MobileRouteExpense::query()
             ->where('organization_id', $user->organization_id);
         $this->access->scopeBranchIfLimited($query, $user);
+
+        $cashierId = (int) ($filters['cashier_id'] ?? 0);
+        if ($cashierId > 0) {
+            $query->where('user_id', $cashierId);
+        }
+
+        $routeId = (int) ($filters['route_id'] ?? 0);
+        if ($routeId > 0) {
+            $query->whereHas('user', fn (Builder $rep) => $rep->where('assigned_route_id', $routeId));
+        }
 
         return $query;
     }

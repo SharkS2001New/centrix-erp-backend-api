@@ -7,10 +7,11 @@ use App\Models\User;
 use App\Services\Accounting\CustomerInvoiceService;
 use App\Services\Cache\CompletedSalesCacheService;
 use App\Services\Erp\ErpContext;
+use App\Services\Sales\MobileSalesService;
 use App\Services\Sales\SaleRouteResolver;
-
 use App\Support\EffectiveSaleDate;
 use App\Support\SalePaymentStatus;
+use Carbon\Carbon;
 
 class SaleObserver
 {
@@ -51,6 +52,7 @@ class SaleObserver
     public function created(Sale $sale): void
     {
         $this->syncCustomerInvoice($sale);
+        $this->invalidateMobileRepCaches($sale);
     }
 
     public function updated(Sale $sale): void
@@ -61,12 +63,31 @@ class SaleObserver
 
         if ($sale->wasChanged(['status', 'order_total', 'amount_paid', 'payment_status', 'customer_num', 'archived', 'deleted_at'])) {
             app(CompletedSalesCacheService::class)->invalidateForSale($sale);
+            $this->invalidateMobileRepCaches($sale);
         }
     }
 
     public function deleted(Sale $sale): void
     {
         app(CompletedSalesCacheService::class)->invalidateForSale($sale);
+        $this->invalidateMobileRepCaches($sale);
+    }
+
+    protected function invalidateMobileRepCaches(Sale $sale): void
+    {
+        if (! $sale->cashier_id) {
+            return;
+        }
+
+        $cashier = User::query()->find($sale->cashier_id);
+        if (! $cashier) {
+            return;
+        }
+
+        $date = $sale->created_at
+            ? Carbon::parse($sale->created_at)->startOfDay()
+            : now()->startOfDay();
+        app(MobileSalesService::class)->invalidateDashboardForUser($cashier, $date);
     }
 
     protected function syncCustomerInvoice(Sale $sale): void

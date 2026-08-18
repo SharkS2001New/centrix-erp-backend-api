@@ -29,12 +29,13 @@ class MobileOrdersQuickActionsController extends Controller
     {
         $user = $request->user();
         $this->assertReturnsCardEnabled($this->organizationFor($user));
+        $filters = $this->listFilters($request);
 
         $query = CustomerReturn::query()
             ->with(['lines.product', 'sale', 'customer', 'returnedByUser'])
             ->where('organization_id', $user->organization_id)
-            ->where('status', 'pending')
-            ->whereHas('sale', fn ($sale) => $sale->where('channel', 'mobile'));
+            ->where('status', 'pending');
+        $this->constrainToMobileSale($query, $filters);
 
         if (Schema::hasColumn('customer_returns', 'return_kind')) {
             $query->where(function ($inner) {
@@ -57,17 +58,13 @@ class MobileOrdersQuickActionsController extends Controller
     {
         $user = $request->user();
         $this->assertReturnsCardEnabled($this->organizationFor($user));
-
-        $data = $request->validate([
-            'from_date' => 'nullable|date',
-            'to_date' => 'nullable|date',
-        ]);
+        $filters = $this->listFilters($request);
 
         $query = CustomerReturn::query()
             ->with(['lines.product', 'sale', 'customer', 'returnedByUser', 'approvedByUser'])
             ->where('organization_id', $user->organization_id)
-            ->where('status', 'approved')
-            ->whereHas('sale', fn ($sale) => $sale->where('channel', 'mobile'));
+            ->where('status', 'approved');
+        $this->constrainToMobileSale($query, $filters);
 
         if (Schema::hasColumn('customer_returns', 'return_kind')) {
             $query->where(function ($inner) {
@@ -75,8 +72,8 @@ class MobileOrdersQuickActionsController extends Controller
             });
         }
 
-        $from = $data['from_date'] ?? null;
-        $to = $data['to_date'] ?? null;
+        $from = $filters['from_date'];
+        $to = $filters['to_date'];
         if ($from || $to) {
             $query->where(function ($inner) use ($from, $to) {
                 $dateCol = Schema::hasColumn('customer_returns', 'approved_at')
@@ -107,7 +104,13 @@ class MobileOrdersQuickActionsController extends Controller
         $data = $request->validate([
             'return_ids' => 'required|array|min:1',
             'return_ids.*' => 'integer',
+            'cashier_id' => 'nullable|integer|min:1',
+            'route_id' => 'nullable|integer|min:1',
         ]);
+        $filters = [
+            'cashier_id' => isset($data['cashier_id']) ? (int) $data['cashier_id'] : null,
+            'route_id' => isset($data['route_id']) ? (int) $data['route_id'] : null,
+        ];
 
         $approved = [];
         $errors = [];
@@ -116,8 +119,8 @@ class MobileOrdersQuickActionsController extends Controller
             $query = CustomerReturn::query()
                 ->where('id', (int) $returnId)
                 ->where('organization_id', $user->organization_id)
-                ->where('status', 'pending')
-                ->whereHas('sale', fn ($sale) => $sale->where('channel', 'mobile'));
+                ->where('status', 'pending');
+            $this->constrainToMobileSale($query, $filters);
 
             $this->access->scopeBranchIfLimited($query, $user);
             $return = $query->first();
@@ -157,7 +160,11 @@ class MobileOrdersQuickActionsController extends Controller
         $data = $request->validate([
             'sale_ids' => 'required|array|min:1',
             'sale_ids.*' => 'integer',
+            'cashier_id' => 'nullable|integer|min:1',
+            'route_id' => 'nullable|integer|min:1',
         ]);
+        $cashierId = isset($data['cashier_id']) ? (int) $data['cashier_id'] : null;
+        $routeId = isset($data['route_id']) ? (int) $data['route_id'] : null;
 
         $updated = [];
         $errors = [];
@@ -168,6 +175,12 @@ class MobileOrdersQuickActionsController extends Controller
                 ->where('organization_id', $user->organization_id)
                 ->where('channel', 'mobile')
                 ->where('status', '!=', 'cancelled');
+            if ($cashierId) {
+                $query->where('cashier_id', $cashierId);
+            }
+            if ($routeId) {
+                $query->where('route_id', $routeId);
+            }
 
             $this->access->scopeBranchIfLimited($query, $user);
             $sale = $query->first();
@@ -204,24 +217,19 @@ class MobileOrdersQuickActionsController extends Controller
 
     public function pendingExpenses(Request $request)
     {
+        $filters = $this->listFilters($request);
+
         return response()->json([
-            'data' => $this->routeExpenses->pendingForManager($request->user()),
+            'data' => $this->routeExpenses->pendingForManager($request->user(), $filters),
         ]);
     }
 
     public function performedExpenses(Request $request)
     {
-        $data = $request->validate([
-            'from_date' => 'nullable|date',
-            'to_date' => 'nullable|date',
-        ]);
+        $filters = $this->listFilters($request);
 
         return response()->json([
-            'data' => $this->routeExpenses->performedForManager(
-                $request->user(),
-                $data['from_date'] ?? null,
-                $data['to_date'] ?? null,
-            ),
+            'data' => $this->routeExpenses->performedForManager($request->user(), $filters),
         ]);
     }
 
@@ -230,10 +238,19 @@ class MobileOrdersQuickActionsController extends Controller
         $data = $request->validate([
             'expense_ids' => 'required|array|min:1',
             'expense_ids.*' => 'integer',
+            'cashier_id' => 'nullable|integer|min:1',
+            'route_id' => 'nullable|integer|min:1',
         ]);
 
         return response()->json(
-            $this->routeExpenses->approveMany($request->user(), $data['expense_ids']),
+            $this->routeExpenses->approveMany(
+                $request->user(),
+                $data['expense_ids'],
+                [
+                    'cashier_id' => isset($data['cashier_id']) ? (int) $data['cashier_id'] : null,
+                    'route_id' => isset($data['route_id']) ? (int) $data['route_id'] : null,
+                ],
+            ),
         );
     }
 
@@ -243,6 +260,8 @@ class MobileOrdersQuickActionsController extends Controller
             'expense_ids' => 'required|array|min:1',
             'expense_ids.*' => 'integer',
             'reason' => 'nullable|string|max:200',
+            'cashier_id' => 'nullable|integer|min:1',
+            'route_id' => 'nullable|integer|min:1',
         ]);
 
         return response()->json(
@@ -250,8 +269,55 @@ class MobileOrdersQuickActionsController extends Controller
                 $request->user(),
                 $data['expense_ids'],
                 $data['reason'] ?? null,
+                [
+                    'cashier_id' => isset($data['cashier_id']) ? (int) $data['cashier_id'] : null,
+                    'route_id' => isset($data['route_id']) ? (int) $data['route_id'] : null,
+                ],
             ),
         );
+    }
+
+    /**
+     * Same User / Route / date filters as the Mobile orders list.
+     *
+     * @return array{from_date: ?string, to_date: ?string, cashier_id: ?int, route_id: ?int}
+     */
+    protected function listFilters(Request $request): array
+    {
+        $data = $request->validate([
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date',
+            'cashier_id' => 'nullable|integer|min:1',
+            'route_id' => 'nullable|integer|min:1',
+        ]);
+
+        return [
+            'from_date' => $data['from_date'] ?? null,
+            'to_date' => $data['to_date'] ?? null,
+            'cashier_id' => isset($data['cashier_id']) ? (int) $data['cashier_id'] : null,
+            'route_id' => isset($data['route_id']) ? (int) $data['route_id'] : null,
+        ];
+    }
+
+    /**
+     * Restrict returns to mobile sales matching the list User / Route filters.
+     *
+     * @param  array{cashier_id?: int|null, route_id?: int|null}  $filters
+     */
+    protected function constrainToMobileSale($query, array $filters): void
+    {
+        $cashierId = (int) ($filters['cashier_id'] ?? 0);
+        $routeId = (int) ($filters['route_id'] ?? 0);
+
+        $query->whereHas('sale', function ($sale) use ($cashierId, $routeId) {
+            $sale->where('channel', 'mobile');
+            if ($cashierId > 0) {
+                $sale->where('cashier_id', $cashierId);
+            }
+            if ($routeId > 0) {
+                $sale->where('route_id', $routeId);
+            }
+        });
     }
 
     protected function organizationFor($user): Organization

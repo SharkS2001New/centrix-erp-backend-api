@@ -112,6 +112,10 @@ class MobileSalesService
                 ),
             );
         }
+
+        $completed = app(CompletedSalesCacheService::class);
+        $completed->forgetMobileDay($orgId, (int) $user->id, $dateKey, false);
+        $completed->forgetMobileDay($orgId, (int) $user->id, $dateKey, true);
     }
 
     /**
@@ -214,6 +218,15 @@ class MobileSalesService
                 })
                 ->values()
                 ->all();
+
+            $cachedList['meta'] = is_array($cachedList['meta'] ?? null) ? $cachedList['meta'] : [];
+            $cachedList['meta']['summary'] = $this->expenseAdjustedListSummary(
+                $user,
+                $filters,
+                $cachedList['data'] ?? [],
+                $cachedList['meta']['summary'] ?? null,
+                (int) ($cachedList['meta']['total'] ?? count($cachedList['data'] ?? [])),
+            );
 
             return $cachedList;
         }
@@ -323,7 +336,16 @@ class MobileSalesService
         }
 
         $perPage = min(max((int) ($filters['per_page'] ?? 25), 1), 200);
-        $listSummary = $this->buildOrderListSummary(clone $query, $search, (int) ($user->organization_id ?? 0));
+        $dateScoped = ! $isExactOrderLookup && ($hasExplicitDates || $workflowStatus === null);
+        $listSummary = $this->buildOrderListSummary(
+            clone $query,
+            $search,
+            (int) ($user->organization_id ?? 0),
+            $user,
+            $from,
+            $to,
+            $dateScoped && $search === '',
+        );
         $page = $query->paginate($perPage);
         $gate = $this->erp->gateForUser($user);
         $presentation = app(SaleOrderPresentationService::class);
@@ -386,18 +408,32 @@ class MobileSalesService
      * @return array{
      *     order_count: int,
      *     order_total: float,
+     *     gross_total: float,
+     *     expense_total: float,
      *     matched_qty_label: ?string,
      *     matched_products: list<array{product_code: string, product_name: string, qty_label: string, qty: float}>
      * }
      */
-    protected function buildOrderListSummary(Builder $query, string $search, int $organizationId): array
-    {
+    protected function buildOrderListSummary(
+        Builder $query,
+        string $search,
+        int $organizationId,
+        User $user,
+        Carbon $from,
+        Carbon $to,
+        bool $deductExpenses,
+    ): array {
         $orderCount = (int) (clone $query)->toBase()->getCountForPagination();
-        $orderTotal = round((float) (clone $query)->sum('sales.order_total'), 2);
+        $grossTotal = round((float) (clone $query)->sum('sales.order_total'), 2);
+        $expenseTotal = $deductExpenses
+            ? $this->routeExpenses()->approvedTotalForUserBetween($user, $from, $to)
+            : 0.0;
 
         $summary = [
             'order_count' => $orderCount,
-            'order_total' => $orderTotal,
+            'gross_total' => $grossTotal,
+            'expense_total' => $expenseTotal,
+            'order_total' => round($grossTotal - $expenseTotal, 2),
             'matched_qty_label' => null,
             'matched_products' => [],
         ];
@@ -473,6 +509,45 @@ class MobileSalesService
                 ->implode(' · ');
 
         return $summary;
+    }
+
+    /**
+     * Recompute Today / Sales-by-date KPI totals on cached lists, including approved expenses.
+     *
+     * @param  array<string, mixed>  $filters
+     * @param  list<array<string, mixed>>  $rows
+     * @param  array<string, mixed>|null  $existing
+     * @return array<string, mixed>
+     */
+    protected function expenseAdjustedListSummary(
+        User $user,
+        array $filters,
+        array $rows,
+        ?array $existing,
+        int $orderCount,
+    ): array {
+        $from = isset($filters['from_date'])
+            ? Carbon::parse((string) $filters['from_date'])->startOfDay()
+            : now()->startOfDay();
+        $to = isset($filters['to_date'])
+            ? Carbon::parse((string) $filters['to_date'])->startOfDay()
+            : $from->copy();
+        if ($from->gt($to)) {
+            [$from, $to] = [$to->copy(), $from->copy()];
+        }
+
+        $existing = is_array($existing) ? $existing : [];
+        $gross = array_key_exists('gross_total', $existing)
+            ? (float) $existing['gross_total']
+            : collect($rows)->sum(fn (array $row) => (float) ($row['orderTotals'] ?? $row['order_total'] ?? 0));
+        $expenseTotal = $this->routeExpenses()->approvedTotalForUserBetween($user, $from, $to);
+
+        return array_merge($existing, [
+            'order_count' => $orderCount > 0 ? $orderCount : (int) ($existing['order_count'] ?? count($rows)),
+            'gross_total' => round($gross, 2),
+            'expense_total' => $expenseTotal,
+            'order_total' => round($gross - $expenseTotal, 2),
+        ]);
     }
 
     /** @return array<string, mixed> */

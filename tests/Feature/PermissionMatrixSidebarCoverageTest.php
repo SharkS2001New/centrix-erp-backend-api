@@ -83,8 +83,27 @@ class PermissionMatrixSidebarCoverageTest extends TestCase
         $this->assertTrue($codes->contains('reports.price_list.view'));
         $this->assertTrue($codes->contains('admin.notifications.view'));
         $this->assertTrue($codes->contains('sales.collect_payment.create'));
+        $this->assertTrue($codes->contains('admin.kra_responses.view'));
+        $this->assertTrue($codes->contains('admin.attendance_clock.view'));
+        $this->assertTrue($codes->contains('admin.attendance_clock.create'));
 
         $apps = collect($res->json('applications'));
+        $adminFeatures = collect($apps->firstWhere('id', 'admin')['modules'] ?? [])
+            ->firstWhere('module', 'admin');
+        $this->assertNotNull($adminFeatures);
+        $adminKeys = collect($adminFeatures['features'] ?? [])->pluck('key')->all();
+        $this->assertContains('attendance_clock', $adminKeys);
+        $this->assertContains('kra_responses', $adminKeys);
+
+        $backofficePricingFeatures = collect($apps->firstWhere('id', 'backoffice')['modules'] ?? [])
+            ->firstWhere('module', 'pricing_tax');
+        $this->assertNotNull($backofficePricingFeatures);
+        $this->assertNotContains(
+            'kra_responses',
+            collect($backofficePricingFeatures['features'] ?? [])->pluck('key')->all(),
+            'KRA device logs belong under Administration, not Pricing & tax',
+        );
+
         $backofficeSalesFeatures = collect($apps->firstWhere('id', 'backoffice')['modules'] ?? [])
             ->firstWhere('module', 'sales');
         $this->assertNotNull($backofficeSalesFeatures);

@@ -188,7 +188,7 @@ class WorkspacePermissionGateTest extends TestCase
         $this->assertFalse((bool) ($map['admin.kra_responses.view'] ?? false));
     }
 
-    public function test_admin_kra_responses_alone_does_not_unlock_administration_workspace(): void
+    public function test_admin_kra_device_logs_permission_unlocks_administration_workspace(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();
         $org = Organization::findOrFail($admin->organization_id);
@@ -198,13 +198,28 @@ class WorkspacePermissionGateTest extends TestCase
 
         $user = $this->makeUserWithPermissions($admin, [
             'admin.kra_responses.view',
-            'inventory.stock.view',
         ]);
 
         $ids = $this->workspaceIdsFor($user);
 
-        $this->assertNotContains('admin', $ids);
-        $this->assertContains('backoffice', $ids);
+        $this->assertContains('admin', $ids);
+    }
+
+    public function test_admin_attendance_clock_permission_unlocks_administration_workspace(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['admin'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'admin.attendance_clock.view',
+        ]);
+
+        $ids = $this->workspaceIdsFor($user);
+
+        $this->assertContains('admin', $ids);
     }
 
     /**
