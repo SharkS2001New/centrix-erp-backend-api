@@ -26,7 +26,7 @@ class SyncHikvisionDeviceJob implements ShouldQueue
         }
 
         try {
-            $sync->syncDevice($device);
+            $sync->syncDevice($device, forceDevicePull: true);
         } catch (\Throwable $e) {
             // Job should not bubble up; log and continue.
             \Illuminate\Support\Facades\Log::warning('SyncHikvisionDeviceJob failed', [

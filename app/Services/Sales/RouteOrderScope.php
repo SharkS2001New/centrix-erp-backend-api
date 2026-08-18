@@ -4,6 +4,7 @@ namespace App\Services\Sales;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
+use App\Support\SalePaymentStatus;
 
 /**
  * Route orders: sales tied to a route directly or via the customer's assigned route.
@@ -154,23 +155,23 @@ class RouteOrderScope
     }
 
     /**
-     * Shop Debtors lists: till / backoffice credit sales, not route or mobile.
+     * Shop Debtors: credit / unpaid shop orders for debtor and regular customers.
      *
-     * Match A/R (is_credit_sale / CREDIT method), not customer_type=debtor —
-     * POS credit to a regular customer must still appear, and a cash sale to a
-     * debtor customer must not land on Paid Debtors.
+     * Include POS, backoffice, and WhatsApp. Exclude mobile field sales and
+     * route-type customers (those belong on Route Orders).
+     *
+     * Do not require sales.route_id to be empty — backoffice checkout often copies
+     * the customer's route (inherit_customer_route) onto a shop credit sale.
      */
     public static function applyShopDebtors(Builder $query): Builder
     {
         self::withCustomerRouteJoin($query);
 
         $alias = self::CUSTOMER_JOIN_ALIAS;
+        $openBalanceSql = '('.SalePaymentStatus::isUnpaidSql('sales.').' OR '.SalePaymentStatus::isPartialSql('sales.').')';
 
         return $query
             ->whereNotNull('sales.customer_num')
-            ->where(function (Builder $sub) {
-                $sub->whereNull('sales.route_id')->orWhere('sales.route_id', 0);
-            })
             ->where(function (Builder $sub) {
                 $sub->whereNull('sales.channel')
                     ->orWhereNotIn('sales.channel', ['mobile']);
@@ -179,13 +180,14 @@ class RouteOrderScope
                 $sub->whereNull('sales.order_source')
                     ->orWhere('sales.order_source', '!=', 'mobile');
             })
-            ->where(function (Builder $sub) {
+            ->where(function (Builder $sub) use ($openBalanceSql) {
                 $sub->where('sales.is_credit_sale', 1)
-                    ->orWhereRaw('UPPER(TRIM(COALESCE(sales.payment_method_code, ?))) = ?', ['', 'CREDIT']);
+                    ->orWhereRaw('UPPER(TRIM(COALESCE(sales.payment_method_code, ?))) = ?', ['', 'CREDIT'])
+                    ->orWhereRaw($openBalanceSql);
             })
             ->where(function (Builder $sub) use ($alias) {
                 $sub->whereNull($alias.'.customer_type')
-                    ->orWhere($alias.'.customer_type', '!=', 'route');
+                    ->orWhereNotIn($alias.'.customer_type', ['route']);
             });
     }
 }

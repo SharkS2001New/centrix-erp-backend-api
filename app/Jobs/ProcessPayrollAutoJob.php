@@ -59,6 +59,8 @@ class ProcessPayrollAutoJob implements ShouldQueue
                         $task,
                         min(75, $pct),
                         "Calculating {$employeeName} ({$done}/{$total})…",
+                        $done,
+                        $total,
                     );
                 },
             );

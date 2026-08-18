@@ -133,7 +133,7 @@ class ReportExportService
                 ));
                 $rowCount++;
                 if ($onProgress !== null && $rowCount % self::FILE_PROGRESS_CHUNK === 0) {
-                    $onProgress(90, 'Writing CSV…');
+                    $onProgress(90, 'Writing CSV… ('.number_format($rowCount).' rows)', $rowCount, null);
                 }
             }
         });
@@ -399,7 +399,12 @@ class ReportExportService
 
                 $processed++;
                 if ($onProgress !== null && $total > 0 && $processed % self::FILE_PROGRESS_CHUNK === 0) {
-                    $onProgress(90 + (int) floor(($processed / $total) * 5), 'Building PDF rows…');
+                    $onProgress(
+                        90 + (int) floor(($processed / $total) * 5),
+                        'Building PDF rows… ('.number_format($processed).' of '.number_format($total).')',
+                        $processed,
+                        $total,
+                    );
                 }
             }
 

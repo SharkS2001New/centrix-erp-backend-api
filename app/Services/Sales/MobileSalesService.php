@@ -30,6 +30,11 @@ class MobileSalesService
         protected PosOrderEditService $posOrderEdit,
     ) {}
 
+    protected function routeExpenses(): MobileRouteExpenseService
+    {
+        return app(MobileRouteExpenseService::class);
+    }
+
     /**
      * @return array{
      *     summary: array<string, int|float>,
@@ -145,13 +150,15 @@ class MobileSalesService
         $trendFrom = $to->copy()->subDays(29);
         $trendRows = $this->trendSalesRows($user, $trendFrom, $to, $allChannels);
         $weekStart = $to->copy()->subDays(6)->toDateString();
+        $expenseTotal = $this->routeExpenses()->approvedTotalForUserBetween($user, $from, $to);
 
         return [
             'mobile_context' => $this->mobileScope->mobileContext($user),
             'summary' => array_merge([
                 'NoofOrders' => (int) ($summaryRow->order_count ?? 0),
                 'vatTotals' => (float) ($summaryRow->vat_total ?? 0),
-                'orderTotals' => (float) ($summaryRow->order_total ?? 0),
+                'orderTotals' => round((float) ($summaryRow->order_total ?? 0) - $expenseTotal, 2),
+                'expenseTotals' => $expenseTotal,
                 'noofPaidOrders' => (int) ($summaryRow->paid_count ?? 0),
                 'noofCustomers' => (int) $customerCount->count(),
             ], $this->workflowQueueCounts($user, $allChannels)),
@@ -725,7 +732,7 @@ class MobileSalesService
         $rows = $this->mobileSalesQuery($user, $allChannels);
         $this->applyCreatedAtDayRange($rows, $from, $to);
 
-        return $rows
+        $salesRows = $rows
             ->where('status', '!=', 'cancelled')
             ->selectRaw('DATE(created_at) as sale_day')
             ->selectRaw('COUNT(*) as order_count')
@@ -733,6 +740,38 @@ class MobileSalesService
             ->groupBy('sale_day')
             ->orderBy('sale_day')
             ->get();
+
+        return $this->applyApprovedExpenseDeduction($user, $from, $to, $salesRows);
+    }
+
+    /**
+     * Subtract approved route expenses from daily sales totals for the same rep/day.
+     *
+     * @param  \Illuminate\Support\Collection<int, object{sale_day: mixed, total_amount: mixed, order_count: mixed}>  $rows
+     * @return \Illuminate\Support\Collection<int, object{sale_day: string, total_amount: float, order_count: int, expense_amount: float}>
+     */
+    protected function applyApprovedExpenseDeduction(User $user, Carbon $from, Carbon $to, $rows)
+    {
+        $expensesByDay = $this->routeExpenses()->approvedTotalsByDayForUser($user, $from, $to);
+        $byDay = $rows->keyBy(fn ($row) => Carbon::parse($row->sale_day)->toDateString());
+
+        foreach ($expensesByDay as $day => $amount) {
+            $existing = $byDay->get($day);
+            if ($existing) {
+                $existing->expense_amount = (float) $amount;
+                $existing->total_amount = round((float) $existing->total_amount - (float) $amount, 2);
+                continue;
+            }
+
+            $byDay->put($day, (object) [
+                'sale_day' => $day,
+                'order_count' => 0,
+                'expense_amount' => (float) $amount,
+                'total_amount' => round(0 - (float) $amount, 2),
+            ]);
+        }
+
+        return $byDay->sortKeys()->values();
     }
 
     /**
@@ -747,6 +786,7 @@ class MobileSalesService
             return [
                 'create_date' => $day->format('j-n'),
                 'total_amount' => (float) $row->total_amount,
+                'expense_amount' => (float) ($row->expense_amount ?? 0),
                 'order_count' => (int) $row->order_count,
             ];
         })->values()->all();
@@ -771,15 +811,21 @@ class MobileSalesService
             ->get()
             ->keyBy(fn ($row) => Carbon::parse($row->sale_day)->toDateString());
 
+        $expensesByDay = $this->routeExpenses()->approvedTotalsByDayForUser($user, $from, $to);
+
         $result = [];
         for ($day = $from->copy(); $day->lte($to); $day->addDay()) {
             $key = $day->toDateString();
             $row = $rows->get($key);
+            $expenseAmount = round((float) ($expensesByDay[$key] ?? 0), 2);
+            $gross = (float) ($row->total_amount ?? 0);
             $result[] = [
                 'create_date' => $key,
                 'label' => $day->format('j M'),
                 'order_count' => (int) ($row->order_count ?? 0),
-                'total_amount' => (float) ($row->total_amount ?? 0),
+                'gross_amount' => $gross,
+                'expense_amount' => $expenseAmount,
+                'total_amount' => round($gross - $expenseAmount, 2),
             ];
         }
 
@@ -816,11 +862,15 @@ class MobileSalesService
 
             $orderCount = 0;
             $totalAmount = 0.0;
+            $expenseAmount = 0.0;
+            $grossAmount = 0.0;
             for ($day = $cursor->copy(); $day->lte($bucketEnd); $day->addDay()) {
                 $row = $dailyByDate->get($day->toDateString());
                 if ($row) {
                     $orderCount += (int) ($row['order_count'] ?? 0);
                     $totalAmount += (float) ($row['total_amount'] ?? 0);
+                    $expenseAmount += (float) ($row['expense_amount'] ?? 0);
+                    $grossAmount += (float) ($row['gross_amount'] ?? $row['total_amount'] ?? 0);
                 }
             }
 
@@ -828,6 +878,8 @@ class MobileSalesService
                 'create_date' => $cursor->toDateString(),
                 'label' => $cursor->format('j').'-'.$bucketEnd->format('j M'),
                 'order_count' => $orderCount,
+                'gross_amount' => round($grossAmount, 2),
+                'expense_amount' => round($expenseAmount, 2),
                 'total_amount' => round($totalAmount, 2),
             ];
 

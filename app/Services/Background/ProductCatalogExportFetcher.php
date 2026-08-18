@@ -87,8 +87,15 @@ class ProductCatalogExportFetcher
 
             $lastPage = (int) ($payload['last_page'] ?? 1);
             if ($onProgress !== null && $lastPage > 0) {
-                $progress = (int) floor(min(85, 10 + (($page / max(1, $lastPage)) * 70)));
-                $onProgress($progress, 'Loading products…');
+                $metaTotal = (int) ($payload['total'] ?? $payload['meta']['total'] ?? 0);
+                [$progress, $message, $processed, $total] = InternalApiPaginator::formatPageProgress(
+                    $page,
+                    $lastPage,
+                    $rowCount,
+                    $metaTotal,
+                    'products',
+                );
+                $onProgress($progress, $message, $processed, $total);
             }
             $page++;
         } while ($page <= $lastPage);

@@ -6,6 +6,7 @@ use App\Models\AttendanceClockDevice;
 use App\Models\HikvisionAccessEvent;
 use App\Models\HikvisionEmployeeMapping;
 use App\Services\Attendance\AttendanceClockPunchService;
+use App\Services\Attendance\HrAttendanceSettingsResolver;
 use App\Support\AppTimezone;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -24,8 +25,41 @@ class HikvisionAttendanceSyncService
      *
      * @return array{pulled: int, stored: int, applied: int, skipped: int, retried: int, errors: list<string>, via_agent: bool}
      */
-    public function syncDevice(AttendanceClockDevice $device, ?Carbon $from = null, ?Carbon $to = null): array
+    public function syncDevice(
+        AttendanceClockDevice $device,
+        ?Carbon $from = null,
+        ?Carbon $to = null,
+        bool $forceDevicePull = false,
+    ): array
     {
+        $callerProvidedRange = $from !== null || $to !== null;
+        $settings = HrAttendanceSettingsResolver::forOrganizationId((int) $device->organization_id);
+        $inPunchWindow = HrAttendanceSettingsResolver::isInPunchUploadWindow($settings);
+
+        $result = [
+            'pulled' => 0,
+            'stored' => 0,
+            'applied' => 0,
+            'skipped' => 0,
+            'duplicates' => 0,
+            'retried' => 0,
+            'errors' => [],
+            'via_agent' => false,
+        ];
+
+        if (! $forceDevicePull && ! $callerProvidedRange && ! $inPunchWindow) {
+            $retryResult = $this->reprocessPendingEvents($device);
+            $device->last_synced_at = AppTimezone::now();
+            $device->last_sync_error = null;
+            $device->save();
+
+            return $this->mergeProcessResults(
+                $result,
+                ['stored' => 0, 'applied' => 0, 'skipped' => 0, 'retried' => 0, 'errors' => []],
+                $retryResult,
+            );
+        }
+
         $to = $to ?? AppTimezone::now();
         if ($from === null) {
             $cursor = $device->last_event_at ? Carbon::parse($device->last_event_at) : null;
@@ -39,17 +73,6 @@ class HikvisionAttendanceSyncService
         if ($from->gt($to)) {
             $from = $to->copy()->subDays(2);
         }
-
-        $result = [
-            'pulled' => 0,
-            'stored' => 0,
-            'applied' => 0,
-            'skipped' => 0,
-            'duplicates' => 0,
-            'retried' => 0,
-            'errors' => [],
-            'via_agent' => false,
-        ];
 
         try {
             // Prefer using the LAN agent when available, but allow direct device
@@ -117,7 +140,7 @@ class HikvisionAttendanceSyncService
         ];
 
         foreach ($devices as $device) {
-            $result = $this->syncDevice($device, $from, $to);
+            $result = $this->syncDevice($device, $from, $to, forceDevicePull: true);
             $summary['pulled'] += (int) ($result['pulled'] ?? 0);
             $summary['stored'] += (int) ($result['stored'] ?? 0);
             $summary['applied'] += (int) ($result['applied'] ?? 0);

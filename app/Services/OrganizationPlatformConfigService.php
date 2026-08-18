@@ -616,6 +616,7 @@ class OrganizationPlatformConfigService
             'enable_mobile_orders' => (bool) ($sales['enable_mobile_orders'] ?? true),
             'enable_mobile_orders_returns_card' => (bool) ($sales['enable_mobile_orders_returns_card'] ?? false),
             'enable_mobile_orders_payments_card' => (bool) ($sales['enable_mobile_orders_payments_card'] ?? false),
+            'enable_mobile_orders_expenses_card' => (bool) ($sales['enable_mobile_orders_expenses_card'] ?? false),
             'mobile_enable_field_attendance' => (bool) ($sales['mobile_enable_field_attendance'] ?? false),
             'mobile_enable_driver_app' => (bool) ($distribution['mobile_enable_driver_app'] ?? true),
             'mobile_enable_driver_attendance' => (bool) ($distribution['mobile_enable_driver_attendance'] ?? false),

@@ -59,8 +59,8 @@ class PaginatedFetchJob implements ShouldQueue
                 },
                 null,
                 null,
-                function (int $progress, string $message) use ($tasks, $task): void {
-                    $this->reportProgress($tasks, $task, $progress, $message);
+                function (int $progress, string $message, ?int $processed = null, ?int $total = null) use ($tasks, $task): void {
+                    $this->reportProgress($tasks, $task, $progress, $message, $processed, $total);
                 },
                 $task,
             );

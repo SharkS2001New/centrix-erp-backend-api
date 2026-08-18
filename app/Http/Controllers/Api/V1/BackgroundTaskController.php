@@ -27,6 +27,8 @@ class BackgroundTaskController extends Controller
             'status' => $task->status,
             'progress' => $task->progress,
             'progress_message' => $task->payload['progress_message'] ?? null,
+            'processed' => $task->payload['processed'] ?? null,
+            'total' => $task->payload['total'] ?? null,
             'result' => $task->result,
             'error_message' => $task->error_message,
             'started_at' => $task->started_at,

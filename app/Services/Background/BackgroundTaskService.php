@@ -44,13 +44,20 @@ class BackgroundTaskService
      * Push the job onto the queue, then (outside unit tests) run it inline after the
      * HTTP response if a worker has not claimed it yet. That keeps exports/imports
      * moving when the queue worker is down or Redis silently drops unique locks.
+     * The sync queue driver is not dispatched during the request so the client can
+     * poll progress instead of blocking on "Starting…".
      *
      * @param  class-string  $jobClass
      */
     public function dispatch(string $jobClass, BackgroundTask $task): void
     {
         $taskId = $task->id;
-        $jobClass::dispatch($taskId);
+        // Queue workers pick this up while the HTTP 202 is in flight.
+        // Skip dispatch() on the sync driver outside tests — that would run the
+        // whole job before the client can poll, so the UI stays on "Starting…".
+        if (app()->runningUnitTests() || config('queue.default') !== 'sync') {
+            $jobClass::dispatch($taskId);
+        }
 
         if (app()->runningUnitTests()) {
             return;
@@ -104,7 +111,7 @@ class BackgroundTaskService
         return true;
     }
 
-    public function updateProgress(BackgroundTask $task, int $progress, ?string $message = null): void
+    public function updateProgress(BackgroundTask $task, int $progress, ?string $message = null, ?int $processed = null, ?int $total = null): void
     {
         if ($this->isCancelled($task)) {
             throw new \RuntimeException('Background task was cancelled.');
@@ -114,9 +121,21 @@ class BackgroundTaskService
             'progress' => max(0, min(100, $progress)),
         ];
 
+        $payload = is_array($task->payload) ? $task->payload : [];
+        $payloadChanged = false;
         if ($message !== null && $message !== '') {
-            $payload = is_array($task->payload) ? $task->payload : [];
             $payload['progress_message'] = $message;
+            $payloadChanged = true;
+        }
+        if ($processed !== null) {
+            $payload['processed'] = max(0, $processed);
+            $payloadChanged = true;
+        }
+        if ($total !== null) {
+            $payload['total'] = max(0, $total);
+            $payloadChanged = true;
+        }
+        if ($payloadChanged) {
             $updates['payload'] = $payload;
         }
 

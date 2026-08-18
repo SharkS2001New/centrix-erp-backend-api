@@ -7,6 +7,7 @@ use App\Models\UserDeviceToken;
 use App\Services\Auth\UserMobileOrderScopeService;
 use App\Services\Customers\MobileCustomerService;
 use App\Services\Mobile\UserDeviceTokenService;
+use App\Services\Sales\MobileRouteExpenseService;
 use App\Services\Sales\MobileSalesService;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
@@ -15,6 +16,7 @@ class MobileSalesController extends Controller
 {
     public function __construct(
         protected MobileSalesService $mobileSales,
+        protected MobileRouteExpenseService $routeExpenses,
         protected MobileCustomerService $mobileCustomers,
         protected UserMobileOrderScopeService $mobileScope,
         protected UserDeviceTokenService $deviceTokens,
@@ -58,6 +60,38 @@ class MobileSalesController extends Controller
 
         return response()->json(
             $this->mobileSales->reconciliation($request->user(), $allChannels),
+        );
+    }
+
+    /** GET /mobile/expenses — the signed-in rep's route expenses. */
+    public function indexExpenses(Request $request)
+    {
+        $data = $request->validate([
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date',
+        ]);
+
+        return response()->json([
+            'data' => $this->routeExpenses->listForRep(
+                $request->user(),
+                $data['from_date'] ?? null,
+                $data['to_date'] ?? null,
+            ),
+        ]);
+    }
+
+    /** POST /mobile/expenses — submit a route expense for manager approval. */
+    public function storeExpense(Request $request)
+    {
+        $data = $request->validate([
+            'description' => 'required|string|max:200',
+            'expense_amount' => 'required|numeric|min:0.01',
+            'expense_date' => 'nullable|date',
+        ]);
+
+        return response()->json(
+            $this->routeExpenses->createForRep($request->user(), $data),
+            201,
         );
     }
 

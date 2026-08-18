@@ -18,6 +18,7 @@ class PinLoginTest extends TestCase
     public function test_unlock_pin_succeeds_for_current_user(): void
     {
         $user = User::where('username', 'admin')->firstOrFail();
+        $this->makeOrganizationHospitality((int) $user->organization_id);
         app(PinLoginService::class)->assignPin($user, '2580');
 
         Sanctum::actingAs($user);
@@ -30,6 +31,7 @@ class PinLoginTest extends TestCase
     public function test_unlock_pin_rejects_wrong_pin(): void
     {
         $user = User::where('username', 'admin')->firstOrFail();
+        $this->makeOrganizationHospitality((int) $user->organization_id);
         app(PinLoginService::class)->assignPin($user, '2580');
 
         Sanctum::actingAs($user);
@@ -42,6 +44,7 @@ class PinLoginTest extends TestCase
     public function test_pin_operators_lists_users_with_pins_and_hides_hash(): void
     {
         $cashier = User::where('username', 'admin')->firstOrFail();
+        $this->makeOrganizationHospitality((int) $cashier->organization_id);
         app(PinLoginService::class)->assignPin($cashier, '1111');
 
         $other = $this->makeUser(['full_name' => 'Waiter Ann']);
@@ -65,6 +68,7 @@ class PinLoginTest extends TestCase
     public function test_switch_operator_issues_session_for_selected_user(): void
     {
         $cashier = User::where('username', 'admin')->firstOrFail();
+        $this->makeOrganizationHospitality((int) $cashier->organization_id);
         app(PinLoginService::class)->assignPin($cashier, '1111');
 
         $other = $this->makeUser(['full_name' => 'Waiter Ann']);
@@ -96,6 +100,7 @@ class PinLoginTest extends TestCase
     public function test_user_can_set_own_pin_with_password(): void
     {
         $user = User::where('username', 'admin')->firstOrFail();
+        $this->makeOrganizationHospitality((int) $user->organization_id);
         $user->forceFill(['login_pin' => null])->save();
         Sanctum::actingAs($user);
 
@@ -174,6 +179,32 @@ class PinLoginTest extends TestCase
             'pin' => '2580',
             'client_id' => 'HOTEL_PIN_WEB',
         ])
+            ->assertStatus(422)
+            ->assertJsonValidationErrors(['pin']);
+    }
+
+    public function test_pin_operators_empty_for_retail_organizations(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        app(PinLoginService::class)->assignPin($user, '2580');
+        Sanctum::actingAs($user);
+
+        $this->getJson('/api/v1/auth/pin-operators')
+            ->assertOk()
+            ->assertJsonPath('enable_pin_unlock', false)
+            ->assertJsonPath('data', []);
+    }
+
+    public function test_user_cannot_set_own_pin_on_retail_organization(): void
+    {
+        $user = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($user);
+
+        $this->postJson('/api/v1/auth/me/pin', [
+                'pin' => '4477',
+                'pin_confirmation' => '4477',
+                'current_password' => 'password',
+            ])
             ->assertStatus(422)
             ->assertJsonValidationErrors(['pin']);
     }

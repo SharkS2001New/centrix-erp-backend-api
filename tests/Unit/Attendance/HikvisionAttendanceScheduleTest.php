@@ -31,20 +31,63 @@ class HikvisionAttendanceScheduleTest extends TestCase
         ));
     }
 
-    public function test_agent_online_ttl_tracks_recent_command_heartbeat(): void
+    public function test_punch_upload_follows_admin_clock_windows_not_all_day(): void
     {
-        $device = new AttendanceClockDevice(['organization_id' => 1]);
-        $device->forceFill(['agent_last_seen_at' => now()->subSeconds(90)]);
+        $settings = \App\Services\Attendance\HrAttendanceSettingsResolver::defaults();
+        $tz = 'Africa/Nairobi';
 
+        $this->assertTrue(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 08:05:00', $tz),
+        ));
+        $this->assertTrue(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 12:45:00', $tz),
+        ));
+        $this->assertTrue(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 15:10:00', $tz),
+        ));
+        $this->assertTrue(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 17:10:00', $tz),
+        ));
+        $this->assertTrue(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 07:51:00', $tz),
+        ));
+        $this->assertTrue(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 10:15:00', $tz),
+        ));
+        $this->assertFalse(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 10:25:00', $tz),
+        ));
+        $this->assertFalse(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 03:20:00', $tz),
+        ));
+        $this->assertFalse(\App\Services\Attendance\HrAttendanceSettingsResolver::isInPunchUploadWindow(
+            $settings,
+            Carbon::parse('2026-08-18 11:00:00', $tz),
+        ));
+    }
+
+    public function test_agent_online_ttl_covers_health_check_interval(): void
+    {
+        $device = new AttendanceClockDevice(['organization_id' => 0]);
         $bridge = app(HikvisionAgentBridge::class);
 
-        // The agent polls Centrix for commands every few seconds, so the heartbeat
-        // window stays short even if attendance auto-sync is hourly.
-        $this->assertGreaterThanOrEqual(300, $bridge->pollSeconds($device));
-        $this->assertSame(120, $bridge->onlineTtlSeconds($device));
+        $poll = $bridge->pollSeconds($device);
+        $ttl = $bridge->onlineTtlSeconds($device);
+        $this->assertGreaterThanOrEqual(60, $poll);
+        $this->assertSame($poll + 180, $ttl);
+
+        $device->forceFill(['agent_last_seen_at' => now()->subSeconds($poll)]);
         $this->assertTrue($bridge->isAgentOnline($device));
 
-        $device->forceFill(['agent_last_seen_at' => now()->subSeconds(121)]);
+        $device->forceFill(['agent_last_seen_at' => now()->subSeconds($ttl + 1)]);
         $this->assertFalse($bridge->isAgentOnline($device));
     }
 

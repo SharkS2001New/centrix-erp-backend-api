@@ -4,6 +4,7 @@ namespace Tests\Feature;
 
 use App\Http\Middleware\EnsureOrganizationLicenseActive;
 use App\Models\AttendanceClockDevice;
+use App\Models\HikvisionAgentCommand;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Attendance\Hikvision\HikvisionIsapiClient;
@@ -89,11 +90,14 @@ class HikvisionDeviceManagementTest extends TestCase
         $device->agent_last_seen_at = now();
         $device->save();
 
+        $commandsBefore = HikvisionAgentCommand::query()->count();
         $online = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/test-connection");
         $online->assertOk();
         $online->assertJsonPath('online', true);
         $online->assertJsonPath('via_agent', true);
         $online->assertJsonPath('agent.name', 'CentrixAttendanceAgent');
+        $this->assertStringContainsString('check-in', (string) $online->json('message'));
+        $this->assertSame($commandsBefore, HikvisionAgentCommand::query()->count());
     }
 
     public function test_test_connection_still_tries_recently_known_agent_when_heartbeat_is_stale(): void
@@ -798,10 +802,47 @@ class HikvisionDeviceManagementTest extends TestCase
         $device->setPlainPassword('secret');
         $device->save();
 
+        $expectedPoll = \App\Services\Attendance\HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId(
+            (int) $this->org->id,
+        );
         $this->getJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/commands/pending")
             ->assertOk()
-            ->assertJsonPath('poll_interval_seconds', 300)
+            ->assertJsonPath('poll_interval_seconds', $expectedPoll)
             ->assertJsonPath('commands', []);
+    }
+
+    public function test_agent_heartbeat_keeps_device_online(): void
+    {
+        Sanctum::actingAs($this->admin);
+
+        $device = AttendanceClockDevice::create([
+            'organization_id' => $this->org->id,
+            'device_no' => 'T-HEART',
+            'is_active' => true,
+            'provider' => 'hikvision',
+            'host' => '192.168.100.215',
+            'port' => 80,
+            'username' => 'admin',
+        ]);
+        $device->setPlainPassword('secret');
+        $device->save();
+
+        $this->assertNull($device->fresh()->agent_last_seen_at);
+
+        $schedule = \App\Services\Attendance\HrAttendanceSettingsResolver::agentScheduleForOrganizationId(
+            (int) $this->org->id,
+        );
+        $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/agent/heartbeat", [
+            'agent_version' => '2.6.2',
+        ])
+            ->assertOk()
+            ->assertJsonPath('ok', true)
+            ->assertJsonPath('agent.online', true)
+            ->assertJsonPath('agent.version', '2.6.2')
+            ->assertJsonPath('heartbeat_interval_seconds', $schedule['heartbeat_interval_seconds'])
+            ->assertJsonPath('punch_windows.0.name', 'morning_clock_in');
+
+        $this->assertNotNull($device->fresh()->agent_last_seen_at);
     }
 
     public function test_map_employee_reprocesses_pending_punches(): void

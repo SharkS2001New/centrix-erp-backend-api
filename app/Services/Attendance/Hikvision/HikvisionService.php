@@ -819,7 +819,7 @@ class HikvisionService
      */
     public function syncAttendance(AttendanceClockDevice $device, ?Carbon $from = null, ?Carbon $to = null): array
     {
-        return $this->attendanceSync->syncDevice($device, $from, $to);
+        return $this->attendanceSync->syncDevice($device, $from, $to, forceDevicePull: true);
     }
 
     /**

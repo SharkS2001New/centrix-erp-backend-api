@@ -3,7 +3,9 @@
 namespace App\Services\Auth;
 
 use App\Models\PersonalAccessToken;
+use App\Models\Organization;
 use App\Models\User;
+use App\Services\Erp\IndustryRegistry;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Validation\ValidationException;
@@ -44,6 +46,19 @@ class PinLoginService
         $this->assertValidFormat($pin);
 
         return Hash::make($this->normalize($pin));
+    }
+
+    public function assertHospitalityPinFeatures(?User $user): void
+    {
+        $org = $user?->organization;
+        if (! $org && $user?->organization_id) {
+            $org = Organization::query()->find($user->organization_id);
+        }
+        if (! $org || ! IndustryRegistry::isHospitality($org->deployment_profile)) {
+            throw ValidationException::withMessages([
+                'pin' => ['PIN sign-in is only available for Hotel & Hospitality.'],
+            ]);
+        }
     }
 
     public function userHasPin(User $user): bool

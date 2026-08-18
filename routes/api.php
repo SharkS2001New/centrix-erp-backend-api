@@ -1175,8 +1175,8 @@ Route::prefix('v1')->group(function () {
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::post('attendance-clock-devices/{id}/agent-package', [AttendanceClockDeviceController::class, 'issueAgentPackage'])
-                ->middleware('erp.permission:hr.manage|admin.manage');
-            Route::prefix('attendance-clock-devices/{id}/hikvision')->middleware('erp.permission:hr.manage|admin.manage')->group(function () {
+                ->middleware('erp.permission:hr.manage');
+            Route::prefix('attendance-clock-devices/{id}/hikvision')->middleware('erp.permission:hr.manage')->group(function () {
                 Route::post('test-connection', [HikvisionDeviceController::class, 'testConnection']);
                 Route::post('test/live-punch', [HikvisionDeviceController::class, 'pollLivePunch']);
                 Route::get('overview', [HikvisionDeviceController::class, 'overview']);
@@ -1202,17 +1202,18 @@ Route::prefix('v1')->group(function () {
                 Route::post('sync/reprocess-pending', [HikvisionDeviceController::class, 'reprocessPendingAttendance']);
                 Route::get('agent/status', [HikvisionDeviceController::class, 'agentStatus']);
                 Route::get('agent/commands/pending', [HikvisionDeviceController::class, 'pullAgentCommands']);
+                Route::post('agent/heartbeat', [HikvisionDeviceController::class, 'agentHeartbeat']);
                 Route::post('agent/commands/{commandId}/result', [HikvisionDeviceController::class, 'submitAgentCommandResult']);
                 Route::post('agent/ingest-events', [HikvisionDeviceController::class, 'ingestAgentEvents']);
             });
             Route::apiResource('attendance-clock-devices', AttendanceClockDeviceController::class)
                 ->parameters(['attendance-clock-devices' => 'id'])
-                ->middlewareFor(['index', 'show'], ['erp.permission:hr.view|admin.manage'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage|admin.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::apiResource('attendance-mobile-devices', AttendanceMobileDeviceController::class)
                 ->parameters(['attendance-mobile-devices' => 'id'])
-                ->middlewareFor(['index', 'show'], ['erp.permission:hr.view|admin.manage'])
-                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage|admin.manage']);
+                ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
+                ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);
             Route::apiResource('organization-holidays', OrganizationHolidayController::class)
                 ->middlewareFor(['index', 'show'], ['erp.permission:hr.view'])
                 ->middlewareFor(['store', 'update', 'destroy'], ['erp.permission:hr.manage']);

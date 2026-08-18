@@ -509,7 +509,13 @@ class UserController extends BaseResourceController
 
     protected function applyLoginPinFromRequest(Request $request, User $user): void
     {
+        $wantsPinChange = $request->boolean('clear_login_pin') || $request->filled('login_pin');
+        if (! $wantsPinChange) {
+            return;
+        }
+
         $pins = app(\App\Services\Auth\PinLoginService::class);
+        $pins->assertHospitalityPinFeatures($user);
         if ($request->boolean('clear_login_pin')) {
             $pins->assignPin($user, null);
 

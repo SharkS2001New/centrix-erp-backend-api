@@ -86,12 +86,34 @@ class HikvisionDeviceController extends HrOrgResourceController
             $data['agent_version'] ?? null,
         );
 
-        return response()->json([
-            'commands' => $commands,
-            'poll_interval_seconds' => \App\Services\Attendance\HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId(
-                (int) $device->organization_id,
-            ),
+        return response()->json(array_merge(
+            [
+                'commands' => $commands,
+            ],
+            $this->agentSchedulePayload($device),
+        ));
+    }
+
+    /**
+     * LAN agent keepalive so Centrix stays online even when there are no new punches.
+     */
+    public function agentHeartbeat(Request $request, string $id)
+    {
+        $device = $this->findHikvisionDevice($id);
+        $data = $request->validate([
+            'agent_version' => 'nullable|string|max:40',
         ]);
+        $bridge = app(\App\Services\Attendance\Hikvision\HikvisionAgentBridge::class);
+        $bridge->touchAgent($device, $data['agent_version'] ?? null);
+        $fresh = $device->fresh() ?? $device;
+
+        return response()->json(array_merge(
+            [
+                'ok' => true,
+                'agent' => $bridge->agentStatus($fresh),
+            ],
+            $this->agentSchedulePayload($fresh),
+        ));
     }
 
     /**
@@ -469,6 +491,20 @@ class HikvisionDeviceController extends HrOrgResourceController
         abort_unless($device->provider === 'hikvision' && filled($device->host), 422, 'Device is not configured for Hikvision ISAPI.');
 
         return $device;
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    protected function agentSchedulePayload(AttendanceClockDevice $device): array
+    {
+        $schedule = \App\Services\Attendance\HrAttendanceSettingsResolver::agentScheduleForOrganizationId(
+            (int) $device->organization_id,
+        );
+
+        return array_merge($schedule, [
+            'poll_interval_seconds' => $schedule['heartbeat_interval_seconds'],
+        ]);
     }
 
     /**

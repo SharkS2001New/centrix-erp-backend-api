@@ -9,6 +9,7 @@ use App\Models\Sale;
 use App\Services\Auth\UserAccessService;
 use App\Services\OrganizationPlatformConfigService;
 use App\Services\Sales\CustomerReturnService;
+use App\Services\Sales\MobileRouteExpenseService;
 use App\Services\Sales\SalePaymentStatusConversionService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
@@ -21,6 +22,7 @@ class MobileOrdersQuickActionsController extends Controller
         protected SalePaymentStatusConversionService $paymentConversion,
         protected OrganizationPlatformConfigService $platformConfig,
         protected UserAccessService $access,
+        protected MobileRouteExpenseService $routeExpenses,
     ) {}
 
     public function pendingReturns(Request $request)
@@ -29,7 +31,7 @@ class MobileOrdersQuickActionsController extends Controller
         $this->assertReturnsCardEnabled($this->organizationFor($user));
 
         $query = CustomerReturn::query()
-            ->with(['lines', 'sale', 'customer', 'returnedByUser'])
+            ->with(['lines.product', 'sale', 'customer', 'returnedByUser'])
             ->where('organization_id', $user->organization_id)
             ->where('status', 'pending')
             ->whereHas('sale', fn ($sale) => $sale->where('channel', 'mobile'));
@@ -62,7 +64,7 @@ class MobileOrdersQuickActionsController extends Controller
         ]);
 
         $query = CustomerReturn::query()
-            ->with(['lines', 'sale', 'customer', 'returnedByUser', 'approvedByUser'])
+            ->with(['lines.product', 'sale', 'customer', 'returnedByUser', 'approvedByUser'])
             ->where('organization_id', $user->organization_id)
             ->where('status', 'approved')
             ->whereHas('sale', fn ($sale) => $sale->where('channel', 'mobile'));
@@ -198,6 +200,58 @@ class MobileOrdersQuickActionsController extends Controller
             'data' => $updated,
             'errors' => $errors,
         ]);
+    }
+
+    public function pendingExpenses(Request $request)
+    {
+        return response()->json([
+            'data' => $this->routeExpenses->pendingForManager($request->user()),
+        ]);
+    }
+
+    public function performedExpenses(Request $request)
+    {
+        $data = $request->validate([
+            'from_date' => 'nullable|date',
+            'to_date' => 'nullable|date',
+        ]);
+
+        return response()->json([
+            'data' => $this->routeExpenses->performedForManager(
+                $request->user(),
+                $data['from_date'] ?? null,
+                $data['to_date'] ?? null,
+            ),
+        ]);
+    }
+
+    public function approveExpenses(Request $request)
+    {
+        $data = $request->validate([
+            'expense_ids' => 'required|array|min:1',
+            'expense_ids.*' => 'integer',
+        ]);
+
+        return response()->json(
+            $this->routeExpenses->approveMany($request->user(), $data['expense_ids']),
+        );
+    }
+
+    public function rejectExpenses(Request $request)
+    {
+        $data = $request->validate([
+            'expense_ids' => 'required|array|min:1',
+            'expense_ids.*' => 'integer',
+            'reason' => 'nullable|string|max:200',
+        ]);
+
+        return response()->json(
+            $this->routeExpenses->rejectMany(
+                $request->user(),
+                $data['expense_ids'],
+                $data['reason'] ?? null,
+            ),
+        );
     }
 
     protected function organizationFor($user): Organization

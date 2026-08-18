@@ -68,8 +68,8 @@ class GenerateReportExportJob implements ShouldQueue
             }
 
             $truncated = false;
-            $onProgress = function (int $progress, string $message) use ($tasks, $task): void {
-                $this->reportProgress($tasks, $task, $progress, $message);
+            $onProgress = function (int $progress, string $message, ?int $processed = null, ?int $total = null) use ($tasks, $task): void {
+                $this->reportProgress($tasks, $task, $progress, $message, $processed, $total);
             };
 
             $streamSource = $this->buildStreamSource(
@@ -102,8 +102,8 @@ class GenerateReportExportJob implements ShouldQueue
                 (int) $user->organization_id,
                 $task->id,
                 $streamSource,
-                function (int $progress, string $message) use ($tasks, $task): void {
-                    $this->reportProgress($tasks, $task, $progress, $message);
+                function (int $progress, string $message, ?int $processed = null, ?int $total = null) use ($tasks, $task): void {
+                    $this->reportProgress($tasks, $task, $progress, $message, $processed, $total);
                 },
             );
 

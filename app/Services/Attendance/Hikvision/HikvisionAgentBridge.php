@@ -40,20 +40,24 @@ class HikvisionAgentBridge
 
     public function pollSeconds(AttendanceClockDevice $device): int
     {
+        $orgId = (int) $device->organization_id;
+        if ($orgId < 1) {
+            return 600;
+        }
+
         return max(
             60,
-            HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId((int) $device->organization_id),
+            HrAttendanceSettingsResolver::agentPollSecondsForOrganizationId($orgId),
         );
     }
 
     /**
-     * Agent command heartbeat is independent from attendance auto-sync.
-     * The service polls Centrix for commands every few seconds, so keep this
-     * short enough for "offline" to reflect real check-ins.
+     * Stay online across one punch/heartbeat cycle. Command poll is every few seconds,
+     * but ingest/heartbeat may be the only check-in when that poll blips.
      */
     public function onlineTtlSeconds(AttendanceClockDevice $device): int
     {
-        return self::MIN_ONLINE_SECONDS;
+        return max(self::MIN_ONLINE_SECONDS, $this->pollSeconds($device) + 180);
     }
 
     /**
@@ -116,8 +120,20 @@ class HikvisionAgentBridge
             ];
         }
 
+        // A fresh command/ingest heartbeat means the LAN agent is already talking to Centrix.
+        // Do not block Test connection on a round-trip PING — punch catch-up can occupy the
+        // Node process for minutes while Windows still shows the service as Running.
+        if ($status['online']) {
+            return [
+                'online' => true,
+                'via_agent' => true,
+                'agent' => $status,
+                'message' => self::AGENT_NAME.' is connected. Centrix received a check-in from the office agent.',
+            ];
+        }
+
         try {
-            $response = $this->executeViaAgent($device, 'PING', self::PING_PATH, null, 'json', ! $status['online']);
+            $response = $this->executeViaAgent($device, 'PING', self::PING_PATH, null, 'json', true);
             $fresh = $this->agentStatus($device->fresh() ?? $device);
 
             if (! $response->successful()) {
@@ -135,10 +151,20 @@ class HikvisionAgentBridge
                 'message' => self::AGENT_NAME.' is connected. Centrix can send commands to the office agent.',
             ];
         } catch (\Throwable $e) {
+            $fresh = $this->agentStatus($device->fresh() ?? $device);
+            if ($fresh['online']) {
+                return [
+                    'online' => true,
+                    'via_agent' => true,
+                    'agent' => $fresh,
+                    'message' => self::AGENT_NAME.' is connected. Centrix received a check-in from the office agent.',
+                ];
+            }
+
             return [
                 'online' => false,
-                'agent' => $this->agentStatus($device->fresh() ?? $device),
-                'error' => $e->getMessage(),
+                'agent' => $fresh,
+                'error' => $this->formatPingTimeout($e->getMessage()),
             ];
         }
     }
@@ -194,6 +220,9 @@ class HikvisionAgentBridge
         $waitSeconds = $this->commandWaitSeconds($device);
         $commandId = (string) Str::uuid();
         $now = AppTimezone::now();
+        if (function_exists('set_time_limit')) {
+            @set_time_limit($waitSeconds + 60);
+        }
 
         HikvisionAgentCommand::query()->create([
             'id' => $commandId,
@@ -203,8 +232,8 @@ class HikvisionAgentBridge
             'body_json' => $body,
             'accept' => $accept,
             'status' => 'pending',
-            'created_at' => $now,
-            'expires_at' => $now->copy()->addSeconds($waitSeconds + 30),
+            'created_at' => $now->format('Y-m-d H:i:s'),
+            'expires_at' => $now->copy()->addSeconds($waitSeconds + 30)->format('Y-m-d H:i:s'),
         ]);
 
         if (app()->runningUnitTests() && strtoupper($method) === 'PING') {
@@ -242,24 +271,16 @@ class HikvisionAgentBridge
                 );
             }
 
-            if ($command->expires_at !== null && $command->expires_at->isPast()) {
-                $command->status = 'expired';
-                $command->save();
-                throw new RuntimeException(
-                    'Attendance agent did not respond in time. Ensure the agent is running on the office LAN PC.',
-                );
-            }
-
             usleep(200_000);
         } while (microtime(true) < $deadline);
 
         HikvisionAgentCommand::query()
             ->where('id', $commandId)
-            ->where('status', 'pending')
+            ->whereIn('status', ['pending', 'processing'])
             ->update(['status' => 'expired']);
 
         throw new RuntimeException(
-            'Attendance agent did not respond in time. Ensure the agent is running on the office LAN PC.',
+            'Attendance agent did not respond in time. The Windows service can show Running while the agent is busy syncing punches or cannot reach Centrix. Wait a minute and test again — re-download only if last check-in never updates.',
         );
     }
 
@@ -270,7 +291,7 @@ class HikvisionAgentBridge
     {
         $this->touchAgent($device, $agentVersion);
 
-        $now = AppTimezone::now();
+        $now = AppTimezone::now()->format('Y-m-d H:i:s');
         $ids = HikvisionAgentCommand::query()
             ->where('attendance_clock_device_id', $device->id)
             ->where('status', 'pending')
@@ -348,6 +369,15 @@ class HikvisionAgentBridge
         }
 
         throw new RuntimeException('ISAPI path is not allowed for agent proxy.');
+    }
+
+    protected function formatPingTimeout(string $raw): string
+    {
+        if (str_contains($raw, 'did not respond in time')) {
+            return 'Attendance agent did not respond in time. The Windows service can show Running while the agent is busy syncing punches or cannot reach Centrix. Wait a minute and test again — re-download only if last check-in never updates.';
+        }
+
+        return $raw;
     }
 
     protected function formatAgentError(?string $raw): string

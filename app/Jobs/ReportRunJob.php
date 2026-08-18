@@ -50,8 +50,8 @@ class ReportRunJob implements ShouldQueue
 
             $builder = ReportFetchResultBuilder::forTask($task);
 
-            $onProgress = function (int $progress, string $message) use ($tasks, $task): void {
-                $this->reportProgress($tasks, $task, $progress, $message);
+            $onProgress = function (int $progress, string $message, ?int $processed = null, ?int $total = null) use ($tasks, $task): void {
+                $this->reportProgress($tasks, $task, $progress, $message, $processed, $total);
             };
 
             $tasks->updateProgress($task, 10, 'Loading data…');

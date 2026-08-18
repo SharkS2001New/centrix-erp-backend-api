@@ -229,4 +229,79 @@ class ShopDebtorsSalesIndexTest extends TestCase
         $this->assertNotContains($cashToDebtor->id, $paidIds);
         $this->assertNotContains($posCredit->id, $paidIds);
     }
+
+    public function test_shop_debtors_includes_backoffice_and_whatsapp_unpaid_even_with_inherited_route(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $suffix = random_int(300000000, 399999999);
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $suffix,
+            'customer_name' => 'Backoffice Debtor '.$suffix,
+            'customer_type' => 'debtor',
+            'created_by' => $admin->id,
+        ]);
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $suffix + 1,
+            'customer_name' => 'Regular Save '.$suffix,
+            'customer_type' => 'regular',
+            'created_by' => $admin->id,
+        ]);
+
+        $base = [
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'cashier_id' => $admin->id,
+            'status' => 'unpaid',
+            'payment_status' => 'unpaid',
+            'order_total' => 2200,
+            'amount_paid' => 0,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ];
+
+        $backofficeCredit = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix,
+            'channel' => 'backend',
+            'order_source' => 'backend',
+            'customer_num' => $suffix,
+            'route_id' => 1,
+            'payment_method_code' => 'CREDIT',
+            'is_credit_sale' => 1,
+        ]));
+        $backofficeSaveUnpaid = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 1,
+            'channel' => 'backend',
+            'order_source' => 'backend',
+            'customer_num' => $suffix + 1,
+            'payment_method_code' => 'CASH',
+            'is_credit_sale' => 0,
+        ]));
+        $whatsappUnpaid = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 2,
+            'channel' => 'whatsapp',
+            'order_source' => 'whatsapp',
+            'customer_num' => $suffix,
+            'payment_method_code' => 'CREDIT',
+            'is_credit_sale' => 1,
+        ]));
+
+        $from = now()->subDay()->toDateString();
+        $to = now()->toDateString();
+        $unpaidIds = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=unpaid&from_date={$from}&to_date={$to}&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertContains($backofficeCredit->id, $unpaidIds);
+        $this->assertContains($backofficeSaveUnpaid->id, $unpaidIds);
+        $this->assertContains($whatsappUnpaid->id, $unpaidIds);
+    }
 }

@@ -740,7 +740,17 @@ class AuthController extends Controller
 
     public function pinOperators(Request $request)
     {
-        $operators = app(PinLoginService::class)->listOperators($request->user());
+        $pins = app(PinLoginService::class);
+        try {
+            $pins->assertHospitalityPinFeatures($request->user());
+        } catch (ValidationException) {
+            return response()->json([
+                'data' => [],
+                'enable_pin_unlock' => false,
+            ]);
+        }
+
+        $operators = $pins->listOperators($request->user());
 
         return response()->json([
             'data' => $operators,
@@ -757,6 +767,7 @@ class AuthController extends Controller
         ]);
 
         $pins = app(PinLoginService::class);
+        $pins->assertHospitalityPinFeatures($request->user());
         $pins->unlockCurrent($request->user(), $data['pin']);
         $pins->touchPersistedAccessToken($request->user()->currentAccessToken());
 
@@ -772,6 +783,7 @@ class AuthController extends Controller
         ]);
 
         $current = $request->user();
+        app(PinLoginService::class)->assertHospitalityPinFeatures($current);
         if ((int) $data['user_id'] === (int) $current->id) {
             app(PinLoginService::class)->unlockCurrent($current, $data['pin']);
 
@@ -799,6 +811,7 @@ class AuthController extends Controller
 
         $user = $request->user();
         $pins = app(PinLoginService::class);
+        $pins->assertHospitalityPinFeatures($user);
         if ($pins->normalize($data['pin']) !== $pins->normalize($data['pin_confirmation'])) {
             throw ValidationException::withMessages([
                 'pin_confirmation' => ['PIN confirmation does not match.'],
@@ -823,6 +836,7 @@ class AuthController extends Controller
 
         $user = $request->user();
         $pins = app(PinLoginService::class);
+        $pins->assertHospitalityPinFeatures($user);
         $this->assertCanChangeOwnPin($user, $data, $pins);
         $pins->assignPin($user, null);
 

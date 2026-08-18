@@ -96,7 +96,7 @@ class HrAttendanceSettingsResolver
         $out['clock_in_late_after'] = self::normalizeClockTime($out['clock_in_late_after'] ?? null, '08:15');
         $out['hikvision_agent_poll_minutes'] = max(
             1,
-            min(60, (int) ($out['hikvision_agent_poll_minutes'] ?? 5)),
+            min(60, (int) ($out['hikvision_agent_poll_minutes'] ?? 10)),
         );
 
         return $out;
@@ -104,7 +104,137 @@ class HrAttendanceSettingsResolver
 
     public static function agentPollSecondsForOrganizationId(int $organizationId): int
     {
-        return self::forOrganizationId($organizationId)['hikvision_agent_poll_minutes'] * 60;
+        return self::agentScheduleForOrganizationId($organizationId)['heartbeat_interval_seconds'];
+    }
+
+    /**
+     * Heartbeat is a keepalive. Punch upload follows Admin attendance clock windows.
+     *
+     * @return array{
+     *   timezone: string,
+     *   heartbeat_interval_seconds: int,
+     *   punch_poll_seconds: int,
+     *   punch_lead_minutes: int,
+     *   punch_lag_minutes: int,
+     *   punch_windows: list<array{name: string, from: string, to: string}>,
+     *   in_punch_window: bool
+     * }
+     */
+    public static function agentScheduleForOrganizationId(int $organizationId): array
+    {
+        $settings = $organizationId < 1
+            ? self::normalize(self::defaults())
+            : self::forOrganizationId($organizationId);
+
+        return self::agentScheduleFromSettings($settings);
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return array{
+     *   timezone: string,
+     *   heartbeat_interval_seconds: int,
+     *   punch_poll_seconds: int,
+     *   punch_lead_minutes: int,
+     *   punch_lag_minutes: int,
+     *   punch_windows: list<array{name: string, from: string, to: string}>,
+     *   in_punch_window: bool
+     * }
+     */
+    public static function agentScheduleFromSettings(array $settings, mixed $now = null): array
+    {
+        $settings = self::normalize($settings);
+        $windows = self::punchWindows($settings);
+
+        return [
+            'timezone' => \App\Support\AppTimezone::name(),
+            'heartbeat_interval_seconds' => max(60, (int) $settings['hikvision_agent_poll_minutes'] * 60),
+            'punch_poll_seconds' => 60,
+            'punch_lead_minutes' => 10,
+            'punch_lag_minutes' => 20,
+            'punch_windows' => $windows,
+            'in_punch_window' => self::isInPunchUploadWindow($settings, $now),
+        ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     * @return list<array{name: string, from: string, to: string}>
+     */
+    public static function punchWindows(array $settings): array
+    {
+        $settings = self::normalize($settings);
+        $pairs = [
+            ['morning_clock_in', 'morning_clock_in_from', 'morning_clock_in_to'],
+            ['lunch_clock_out', 'lunch_clock_out_from', 'lunch_clock_out_to'],
+            ['lunch_clock_in', 'lunch_clock_in_from', 'lunch_clock_in_to'],
+            ['evening_clock_out', 'evening_clock_out_from', 'evening_clock_out_to'],
+        ];
+        $out = [];
+        foreach ($pairs as [$name, $fromKey, $toKey]) {
+            $from = trim((string) ($settings[$fromKey] ?? ''));
+            $to = trim((string) ($settings[$toKey] ?? ''));
+            if ($from === '' || $to === '') {
+                continue;
+            }
+            $out[] = ['name' => $name, 'from' => $from, 'to' => $to];
+        }
+
+        return $out;
+    }
+
+    /**
+     * @param  array<string, mixed>  $settings
+     */
+    public static function isInPunchUploadWindow(array $settings, mixed $now = null, int $leadMinutes = 10, int $lagMinutes = 20): bool
+    {
+        $clock = $now === null
+            ? \App\Support\AppTimezone::now()
+            : (\App\Support\AppTimezone::normalize($now) ?? \App\Support\AppTimezone::now());
+        $minutes = ($clock->hour * 60) + $clock->minute;
+
+        foreach (self::punchWindows($settings) as $window) {
+            if (self::minutesInExpandedWindow($minutes, $window['from'], $window['to'], $leadMinutes, $lagMinutes)) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public static function minutesInExpandedWindow(
+        int $minutes,
+        string $from,
+        string $to,
+        int $leadMinutes = 10,
+        int $lagMinutes = 20,
+    ): bool {
+        $start = self::clockToMinutes($from);
+        $end = self::clockToMinutes($to);
+        if ($start === null || $end === null) {
+            return false;
+        }
+        $day = 24 * 60;
+        $start = ($start - $leadMinutes) % $day;
+        if ($start < 0) {
+            $start += $day;
+        }
+        $end = ($end + $lagMinutes) % $day;
+        if ($end < $start) {
+            return $minutes >= $start || $minutes <= $end;
+        }
+
+        return $minutes >= $start && $minutes <= $end;
+    }
+
+    public static function clockToMinutes(string $hhmm): ?int
+    {
+        $text = self::normalizeClockTime($hhmm, '');
+        if ($text === '' || preg_match('/^(\d{2}):(\d{2})$/', $text, $m) !== 1) {
+            return null;
+        }
+
+        return ((int) $m[1] * 60) + (int) $m[2];
     }
 
     public static function normalizeClockTime(mixed $value, string $default): string

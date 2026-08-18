@@ -88,9 +88,11 @@ trait RunsBackgroundTaskOnce
         BackgroundTask $task,
         int $progress,
         ?string $message = null,
+        ?int $processed = null,
+        ?int $total = null,
     ): void {
         $tasks->assertNotCancelled($task);
-        $tasks->updateProgress($task, $progress, $message);
+        $tasks->updateProgress($task, $progress, $message, $processed, $total);
     }
 
     protected function importOrganizationId(BackgroundTask $task, User $user): int

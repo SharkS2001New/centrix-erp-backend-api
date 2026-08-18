@@ -15,7 +15,7 @@ class SyncHikvisionAttendanceCommand extends Command
         {--from= : ISO start time override}
         {--to= : ISO end time override}';
 
-    protected $description = 'Hourly pull of Hikvision punches via CentrixAttendanceAgent into HR attendance. Prefer keeping the agent online; this command also retries pending events.';
+    protected $description = 'Retry pending Hikvision punches and pull from the terminal during Admin attendance clock windows.';
 
     /** First hourly run (Africa/Nairobi). */
     public const WINDOW_START_HOUR = 7;

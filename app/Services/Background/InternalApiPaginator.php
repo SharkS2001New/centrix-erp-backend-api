@@ -103,6 +103,30 @@ class InternalApiPaginator
     }
 
     /**
+     * @return array{0: int, 1: string, 2: int, 3: int} progress, message, processed, total
+     */
+    public static function formatPageProgress(
+        int $page,
+        int $lastPage,
+        int $rowCount,
+        int $metaTotal = 0,
+        string $noun = 'rows',
+    ): array {
+        $lastPage = max(1, $lastPage);
+        $total = $metaTotal > 0 ? $metaTotal : $rowCount;
+        $progress = (int) floor(min(85, 10 + (($page / $lastPage) * 70)));
+        $message = sprintf(
+            'Fetching page %s of %s (%s %s)…',
+            number_format($page),
+            number_format($lastPage),
+            number_format($rowCount),
+            $noun,
+        );
+
+        return [$progress, $message, $rowCount, $total];
+    }
+
+    /**
      * @param  array<string, mixed>  $searchParams
      * @return array{rows: list<array<string, mixed>>, row_count: int, truncated: bool}
      */
@@ -155,8 +179,14 @@ class InternalApiPaginator
 
                 $lastPage = (int) ($payload['last_page'] ?? $payload['meta']['last_page'] ?? 1);
                 if ($onProgress !== null && $lastPage > 0) {
-                    $progress = (int) floor(min(85, 10 + (($page / max(1, $lastPage)) * 70)));
-                    $onProgress($progress, 'Loading data…');
+                    $metaTotal = (int) ($payload['total'] ?? $payload['meta']['total'] ?? 0);
+                    [$progress, $message, $processed, $total] = self::formatPageProgress(
+                        $page,
+                        $lastPage,
+                        count($all),
+                        $metaTotal,
+                    );
+                    $onProgress($progress, $message, $processed, $total);
                 }
                 $page++;
             } while ($page <= $lastPage);
@@ -242,8 +272,14 @@ class InternalApiPaginator
 
                 $lastPage = (int) ($payload['last_page'] ?? $payload['meta']['last_page'] ?? 1);
                 if ($onProgress !== null && $lastPage > 0) {
-                    $progress = (int) floor(min(85, 10 + (($page / max(1, $lastPage)) * 70)));
-                    $onProgress($progress, 'Loading data…');
+                    $metaTotal = (int) ($payload['total'] ?? $payload['meta']['total'] ?? 0);
+                    [$progress, $message, $processed, $total] = self::formatPageProgress(
+                        $page,
+                        $lastPage,
+                        $rowCount,
+                        $metaTotal,
+                    );
+                    $onProgress($progress, $message, $processed, $total);
                 }
                 $page++;
             } while ($page <= $lastPage);
