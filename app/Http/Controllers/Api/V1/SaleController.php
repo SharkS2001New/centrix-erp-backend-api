@@ -107,12 +107,15 @@ class SaleController extends BaseResourceController
             && app(PosOrderEditService::class)->posOrderEditEnabled($gate);
         $statusFilter = data_get($request->input('filter', []), 'status');
         $isHeldList = strtolower((string) $statusFilter) === 'held';
+        $shopDebtors = $request->boolean('shop_debtors');
 
         // Exact order # lookups (returns / invoice load) must see the sale regardless of
         // which sales queue permissions the user has for list browsing.
         // POS previous-order browse and held parks also skip queue gates — cashiers rarely
         // have backoffice queue view rights.
-        if (! $isExactOrderLookup && ! $forPosOrderEdit && ! $isHeldList) {
+        // Shop Debtors is its own page (customers.shop_debtors.view). Queue-status
+        // scope would hide POS credit sales whose workflow status is completed/paid.
+        if (! $isExactOrderLookup && ! $forPosOrderEdit && ! $isHeldList && ! $shopDebtors) {
             SalesOrderQueuePermissions::applyIndexScope(
                 $query,
                 $request->user(),
@@ -281,21 +284,8 @@ class SaleController extends BaseResourceController
             }
         }
 
-        if ($request->boolean('shop_debtors')) {
-            RouteOrderScope::withCustomerRouteJoin($query);
-            $query->whereNotNull('sales.customer_num')
-                ->where(RouteOrderScope::CUSTOMER_JOIN_ALIAS.'.customer_type', 'debtor')
-                ->where(function ($sub) {
-                    $sub->whereNull('sales.route_id')->orWhere('sales.route_id', 0);
-                })
-                ->where(function ($sub) {
-                    $sub->whereNull('sales.channel')
-                        ->orWhereNotIn('sales.channel', ['mobile']);
-                })
-                ->where(function ($sub) {
-                    $sub->whereNull('sales.order_source')
-                        ->orWhere('sales.order_source', '!=', 'mobile');
-                });
+        if ($shopDebtors) {
+            RouteOrderScope::applyShopDebtors($query);
         }
 
         $paymentStatusFilter = data_get($request->input('filter', []), 'payment_status');

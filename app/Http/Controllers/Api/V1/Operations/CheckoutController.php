@@ -648,9 +648,15 @@ class CheckoutController extends Controller
             ) {
                 // Cash / M-Pesa / bank / cheque (anything except credit input): must cover
                 // the bill. Reject intentional underpay — do not invent a "paid" sale.
-                // Only settle-up tiny rounding / reprice gaps after that check.
+                // Till tenders are often capped in pay_now (bill total) with change in
+                // order_change — e.g. KES 3690 due, KES 3700 cash, KES 10 change. KRA
+                // server-first checkout can reprice a few shillings above the till; that
+                // overpay must still count as full payment.
+                $orderChange = max(0, round((float) ($input['order_change'] ?? 0), 2));
+                $amountTendered = max(0, round((float) ($input['amount_tendered'] ?? 0), 2));
+                $tillTender = max($payNow, $amountTendered, round($payNow + $orderChange, 2));
                 $clientPaid = round(
-                    $appendPriorPaid + min($payNow, $cashDue) + $voucherPayment + $pointsPayment + $mpesaOnCart,
+                    $appendPriorPaid + min($tillTender, $cashDue) + $voucherPayment + $pointsPayment + $mpesaOnCart,
                     2,
                 );
                 if ($total > 0.01 && $clientPaid + 0.01 < $total) {
@@ -667,10 +673,17 @@ class CheckoutController extends Controller
                             2,
                         ),
                     );
-                    $paidTillBill = $payNow + 0.01 >= $cashierSeenDue && $cashierSeenDue > 0.01;
-                    $shortfall = round($total - $clientPaid, 2);
-                    // Light Stores last-digit rounding moves a total by at most 5.
-                    if ($offlineOrder || ($paidTillBill && $shortfall <= 5.01)) {
+                    $tillAmountDue = max(0, round((float) ($input['till_amount_due'] ?? 0), 2));
+                    $paidTillBill = $cashierSeenDue > 0.01 && (
+                        $tillTender + 0.01 >= $cashierSeenDue
+                        || ($tillTender > 0.01 && ($cashierSeenDue - $tillTender) <= 5.01)
+                        || (
+                            $tillAmountDue > 0.01
+                            && $tillTender + 0.01 >= $tillAmountDue
+                            && ($cashierSeenDue - $tillAmountDue) <= 5.01
+                        )
+                    );
+                    if ($offlineOrder || $paidTillBill) {
                         $payNow = $cashDue;
                         unset($input['payment_splits']);
                     } else {

@@ -70,6 +70,8 @@ class CheckoutRequest extends FormRequest
             'discount_approval_reason' => 'nullable|string|max:500',
             'pay_now' => 'nullable|numeric|min:0',
             'order_change' => 'nullable|numeric|min:0',
+            'amount_tendered' => 'nullable|numeric|min:0',
+            'till_amount_due' => 'nullable|numeric|min:0',
             'payment_adjustments' => 'nullable|array',
             'payment_adjustments.*.method_code' => 'required|string|max:45',
             'payment_adjustments.*.amount' => 'required|numeric|min:0.01',

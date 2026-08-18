@@ -14,8 +14,8 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
 
 /**
- * Sell vacant rooms from Hotel POS: nights × nightly rate, occupy on full payment,
- * auto-release when expected_checkout_at passes.
+ * Sell vacant rooms from Hotel POS: nights × nightly rate, occupy as soon as the
+ * stay is added to a check, auto-release when expected_checkout_at passes.
  */
 class HospitalityPosRoomSaleService
 {
@@ -35,6 +35,7 @@ class HospitalityPosRoomSaleService
             ->where('organization_id', $org->id)
             ->where('is_active', true)
             ->whereIn('status', ['vacant', 'clean'])
+            ->whereNull('sold_check_id')
             ->orderBy('room_number');
 
         if ($q = trim((string) $q)) {
@@ -85,7 +86,7 @@ class HospitalityPosRoomSaleService
                 ->lockForUpdate()
                 ->firstOrFail();
 
-            if (! $room->is_active || ! in_array($room->status, ['vacant', 'clean'], true)) {
+            if (! $room->is_active || ! in_array($room->status, ['vacant', 'clean'], true) || $room->sold_check_id) {
                 throw ValidationException::withMessages([
                     'room_id' => ["Room {$room->room_number} is not available ({$room->status})."],
                 ]);
@@ -167,6 +168,13 @@ class HospitalityPosRoomSaleService
             ));
             $check->update(['meta' => $meta]);
 
+            $this->occupyRoomForPosStay(
+                $room,
+                $check,
+                $checkoutAt,
+                trim((string) ($check->fresh()->guest_name ?? $guest ?? '')) ?: 'Guest',
+            );
+
             return app(HospitalityCheckService::class)->recalculate($check->fresh());
         });
     }
@@ -209,31 +217,40 @@ class HospitalityPosRoomSaleService
             if (! $room) {
                 continue;
             }
-            if (in_array($room->status, ['occupied', 'ooo'], true) && (int) $room->sold_check_id !== (int) $check->id) {
-                throw ValidationException::withMessages([
-                    'room_id' => ["Room {$room->room_number} was taken before payment completed."],
-                ]);
-            }
-            $openFolio = HospitalityFolio::query()
-                ->where('organization_id', $check->organization_id)
-                ->where('room_id', $roomId)
-                ->where('status', 'open')
-                ->exists();
-            if ($openFolio) {
-                throw ValidationException::withMessages([
-                    'room_id' => ["Room {$room->room_number} has an open guest folio — use Front desk / folio stay, not POS room sale."],
-                ]);
-            }
+            $this->occupyRoomForPosStay($room, $check, $checkoutAt, $guestName);
+        }
+    }
 
-            $room->update([
-                'status' => 'occupied',
-                'guest_name' => mb_substr($guestName, 0, 160),
-                'guest_phone' => null,
-                'checked_in_at' => now(),
-                'expected_checkout_at' => $checkoutAt,
-                'sold_check_id' => $check->id,
+    public function occupyRoomForPosStay(
+        HospitalityRoom $room,
+        HospitalityCheck $check,
+        Carbon $checkoutAt,
+        string $guestName,
+    ): void {
+        if (in_array($room->status, ['occupied', 'ooo'], true) && (int) $room->sold_check_id !== (int) $check->id) {
+            throw ValidationException::withMessages([
+                'room_id' => ["Room {$room->room_number} was taken before this sale completed."],
             ]);
         }
+        $openFolio = HospitalityFolio::query()
+            ->where('organization_id', $check->organization_id)
+            ->where('room_id', $room->id)
+            ->where('status', 'open')
+            ->exists();
+        if ($openFolio) {
+            throw ValidationException::withMessages([
+                'room_id' => ["Room {$room->room_number} has an open guest folio — use Front desk / folio stay, not POS room sale."],
+            ]);
+        }
+
+        $room->update([
+            'status' => 'occupied',
+            'guest_name' => mb_substr($guestName !== '' ? $guestName : 'Guest', 0, 160),
+            'guest_phone' => null,
+            'checked_in_at' => $room->checked_in_at ?? now(),
+            'expected_checkout_at' => $checkoutAt,
+            'sold_check_id' => $check->id,
+        ]);
     }
 
     /**
@@ -268,9 +285,9 @@ class HospitalityPosRoomSaleService
                         ]);
                         continue;
                     }
-                    // Send to housekeeping (dirty), not vacant — same as front-desk check-out.
+                    // Prepaid POS stay ended — room is sellable again on Hotel POS.
                     $room->update([
-                        'status' => 'dirty',
+                        'status' => 'vacant',
                         'guest_name' => null,
                         'guest_phone' => null,
                         'checked_in_at' => null,
@@ -284,20 +301,60 @@ class HospitalityPosRoomSaleService
         return ['released' => $released];
     }
 
-    /** Vacate rooms occupied by a voided Hotel POS stay. */
+    /** Vacate rooms occupied by a voided / cleared Hotel POS stay. */
     public function releaseRoomsForVoidedCheck(HospitalityCheck $check): void
     {
-        HospitalityRoom::query()
+        $this->vacateRoomsHeldByCheck($check);
+    }
+
+    public function releaseRoomIfHeldByCheck(HospitalityCheck $check, int $roomId): void
+    {
+        if ($roomId < 1) {
+            return;
+        }
+        $stillOnCheck = HospitalityCheckLine::query()
+            ->where('check_id', $check->id)
+            ->whereNotNull('modifiers')
+            ->get()
+            ->contains(function (HospitalityCheckLine $line) use ($roomId) {
+                return $this->roomIdFromStayLine($line) === $roomId;
+            });
+        if ($stillOnCheck) {
+            return;
+        }
+        $this->vacateRoomsHeldByCheck($check, $roomId);
+    }
+
+    public function roomIdFromStayLine(?HospitalityCheckLine $line): ?int
+    {
+        if (! $line) {
+            return null;
+        }
+        $mods = is_array($line->modifiers) ? $line->modifiers : [];
+        if (($mods['type'] ?? null) !== self::LINE_TYPE) {
+            return null;
+        }
+        $id = (int) ($mods['room_id'] ?? 0);
+
+        return $id > 0 ? $id : null;
+    }
+
+    protected function vacateRoomsHeldByCheck(HospitalityCheck $check, ?int $roomId = null): void
+    {
+        $query = HospitalityRoom::query()
             ->where('organization_id', $check->organization_id)
-            ->where('sold_check_id', $check->id)
-            ->update([
-                'status' => 'vacant',
-                'guest_name' => null,
-                'guest_phone' => null,
-                'checked_in_at' => null,
-                'expected_checkout_at' => null,
-                'sold_check_id' => null,
-            ]);
+            ->where('sold_check_id', $check->id);
+        if ($roomId) {
+            $query->where('id', $roomId);
+        }
+        $query->update([
+            'status' => 'vacant',
+            'guest_name' => null,
+            'guest_phone' => null,
+            'checked_in_at' => null,
+            'expected_checkout_at' => null,
+            'sold_check_id' => null,
+        ]);
     }
 
     public function nightlyRateForRoom(Organization $org, HospitalityRoom $room): float

@@ -591,7 +591,11 @@ class HospitalityCheckService
             ->firstOrFail();
 
         if ($qty <= 0) {
+            $roomId = app(HospitalityPosRoomSaleService::class)->roomIdFromStayLine($line);
             $line->delete();
+            if ($roomId) {
+                app(HospitalityPosRoomSaleService::class)->releaseRoomIfHeldByCheck($check, $roomId);
+            }
             $fresh = $this->recalculate($check->fresh());
 
             return $this->abandonIfEmptyOpenDraft($fresh);
@@ -614,10 +618,15 @@ class HospitalityCheckService
     public function removeLine(HospitalityCheck $check, int $lineId): ?HospitalityCheck
     {
         $this->assertEditable($check);
-        HospitalityCheckLine::query()
+        $line = HospitalityCheckLine::query()
             ->where('check_id', $check->id)
             ->where('id', $lineId)
-            ->delete();
+            ->firstOrFail();
+        $roomId = app(HospitalityPosRoomSaleService::class)->roomIdFromStayLine($line);
+        $line->delete();
+        if ($roomId) {
+            app(HospitalityPosRoomSaleService::class)->releaseRoomIfHeldByCheck($check, $roomId);
+        }
 
         $fresh = $this->recalculate($check->fresh());
 
@@ -632,6 +641,7 @@ class HospitalityCheckService
                 'check' => ['Cannot clear lines after a partial payment has been recorded.'],
             ]);
         }
+        app(HospitalityPosRoomSaleService::class)->releaseRoomsForVoidedCheck($check);
         HospitalityCheckLine::query()->where('check_id', $check->id)->delete();
 
         $fresh = $this->recalculate($check->fresh());

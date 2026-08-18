@@ -152,4 +152,40 @@ class RouteOrderScope
         return in_array($channel, ['backend', 'backoffice', 'whatsapp'], true)
             || in_array($orderSource, ['backend', 'backoffice', 'whatsapp'], true);
     }
+
+    /**
+     * Shop Debtors lists: till / backoffice credit sales, not route or mobile.
+     *
+     * Match A/R (is_credit_sale / CREDIT method), not customer_type=debtor —
+     * POS credit to a regular customer must still appear, and a cash sale to a
+     * debtor customer must not land on Paid Debtors.
+     */
+    public static function applyShopDebtors(Builder $query): Builder
+    {
+        self::withCustomerRouteJoin($query);
+
+        $alias = self::CUSTOMER_JOIN_ALIAS;
+
+        return $query
+            ->whereNotNull('sales.customer_num')
+            ->where(function (Builder $sub) {
+                $sub->whereNull('sales.route_id')->orWhere('sales.route_id', 0);
+            })
+            ->where(function (Builder $sub) {
+                $sub->whereNull('sales.channel')
+                    ->orWhereNotIn('sales.channel', ['mobile']);
+            })
+            ->where(function (Builder $sub) {
+                $sub->whereNull('sales.order_source')
+                    ->orWhere('sales.order_source', '!=', 'mobile');
+            })
+            ->where(function (Builder $sub) {
+                $sub->where('sales.is_credit_sale', 1)
+                    ->orWhereRaw('UPPER(TRIM(COALESCE(sales.payment_method_code, ?))) = ?', ['', 'CREDIT']);
+            })
+            ->where(function (Builder $sub) use ($alias) {
+                $sub->whereNull($alias.'.customer_type')
+                    ->orWhere($alias.'.customer_type', '!=', 'route');
+            });
+    }
 }

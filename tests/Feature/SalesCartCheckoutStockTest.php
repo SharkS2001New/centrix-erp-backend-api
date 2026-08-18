@@ -1022,4 +1022,68 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEqualsWithDelta(110.0, (float) ($line['unit_price'] ?? 0), 0.01);
         $this->assertEqualsWithDelta(110.0, (float) ($line['display_unit_price'] ?? 0), 0.01);
     }
+
+    public function test_pos_cash_change_covers_repriced_total_on_server_first_checkout(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated()->json();
+
+        $tillDue = round((float) collect($cart['lines'] ?? [])->sum('amount'), 2);
+        $this->assertGreaterThan(0.01, $tillDue);
+
+        // KRA server-first checkout can reprice a few shillings above the till.
+        \App\Models\CartLine::query()->where('cart_id', $cartId)->update([
+            'amount' => $tillDue + 8,
+        ]);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => $tillDue,
+            'order_change' => 10,
+            'amount_tendered' => $tillDue + 10,
+            'till_amount_due' => $tillDue,
+        ])->assertCreated()->json();
+
+        $this->assertContains($sale['payment_status'] ?? $sale['status'], ['paid', 'completed']);
+        $this->assertEqualsWithDelta($tillDue + 8, (float) ($sale['order_total'] ?? 0), 0.05);
+        $this->assertEqualsWithDelta($tillDue + 8, (float) ($sale['amount_paid'] ?? 0), 0.05);
+    }
+
+    public function test_pos_cash_underpay_is_still_rejected(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated()->json();
+
+        $tillDue = round((float) collect($cart['lines'] ?? [])->sum('amount'), 2);
+        $this->assertGreaterThan(10, $tillDue);
+
+        $response = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => $tillDue - 10,
+            'amount_tendered' => $tillDue - 10,
+            'till_amount_due' => $tillDue,
+        ]);
+
+        $response->assertStatus(422);
+        $this->assertStringContainsString(
+            'Full payment required for Cash, M-Pesa, bank, and cheque',
+            (string) $response->getContent(),
+        );
+    }
 }
