@@ -624,7 +624,7 @@ class AttendanceClockPunchTest extends TestCase
         $list = $this->getJson('/api/v1/attendance/missed-punches')->assertOk();
         $this->assertSame(1, $list->json('counts.missing_clock_out'));
         $this->assertTrue($list->json('missing_clock_out.0.auto_closed'));
-        $this->assertSame('17:00:00', $list->json('missing_clock_out.0.clock_out_at'));
+        $this->assertSame('2026-08-13 17:00:00', $list->json('missing_clock_out.0.clock_out_at'));
 
         $this->assertDatabaseHas('employee_attendance', [
             'employee_id' => $this->employee->id,

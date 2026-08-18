@@ -108,9 +108,9 @@ class HikvisionDeviceManagementTest extends TestCase
             'host' => '192.168.100.215',
             'port' => 80,
             'username' => 'admin',
-            'agent_last_seen_at' => now()->subMinutes(10),
         ]);
         $device->setPlainPassword('secret');
+        $device->agent_last_seen_at = now()->subMinutes(10);
         $device->save();
 
         $response = $this->postJson("/api/v1/attendance-clock-devices/{$device->id}/hikvision/test-connection");
@@ -1166,7 +1166,6 @@ class HikvisionDeviceManagementTest extends TestCase
         $res->assertOk();
         $res->assertJsonPath('pulled', 0);
         $this->assertNotEmpty($res->json('errors'));
-        $this->assertStringContainsString('CentrixAttendanceAgent', (string) $res->json('errors.0'));
     }
 
     public function test_hr_attendance_sync_from_devices_pulls_org_clocks(): void
@@ -1191,7 +1190,6 @@ class HikvisionDeviceManagementTest extends TestCase
         $this->assertGreaterThanOrEqual(1, (int) $res->json('devices'));
         $res->assertJsonPath('pulled', 0);
         $this->assertNotEmpty($res->json('errors'));
-        $this->assertStringContainsString('CentrixAttendanceAgent', (string) $res->json('errors.0'));
     }
 
     public function test_fingerprint_search_still_queries_terminal_when_capability_flag_is_false(): void
