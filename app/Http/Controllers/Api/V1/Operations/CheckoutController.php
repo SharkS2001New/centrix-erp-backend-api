@@ -402,6 +402,8 @@ class CheckoutController extends Controller
             $routeId = $this->resolveCheckoutRouteId($cart, $customerNum ? (int) $customerNum : null, $gate);
             app(UserMobileOrderScopeService::class)->assertCheckoutRoute($user, (string) $cart->channel, $routeId);
 
+            $originalLineAmounts = $lines->map(fn ($line) => (float) ($line->amount ?? 0))->all();
+
             $prepared = app(MobileRouteMarkupCheckoutService::class)->prepareCheckoutLines(
                 $cart,
                 $lines,
@@ -655,7 +657,20 @@ class CheckoutController extends Controller
                     // Offline / local-first uploads already printed a paid till receipt.
                     // Cart reprice or a pending-sync edit can leave pay_now below the new
                     // total — settle in full instead of rejecting a sale the cashier already took.
-                    if ($offlineOrder) {
+                    $cashierSeenDue = $cashRound
+                        ? PosCashRounding::orderTotalFromLineAmounts($originalLineAmounts)
+                        : round(array_sum($originalLineAmounts), 2);
+                    $cashierSeenDue = max(
+                        0,
+                        round(
+                            $cashierSeenDue - $orderDiscount - $appendPriorPaid - $voucherPayment - $pointsPayment - $mpesaOnCart,
+                            2,
+                        ),
+                    );
+                    $paidTillBill = $payNow + 0.01 >= $cashierSeenDue && $cashierSeenDue > 0.01;
+                    $shortfall = round($total - $clientPaid, 2);
+                    // Light Stores last-digit rounding moves a total by at most 5.
+                    if ($offlineOrder || ($paidTillBill && $shortfall <= 5.01)) {
                         $payNow = $cashDue;
                         unset($input['payment_splits']);
                     } else {
