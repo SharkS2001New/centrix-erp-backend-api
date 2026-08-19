@@ -2,6 +2,7 @@
 
 namespace Tests\Feature;
 
+use App\Models\PlatformSubscription;
 use App\Models\User;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -17,6 +18,19 @@ class PayrollDeductionTypeUniqueTest extends TestCase
     {
         parent::setUp();
         $this->user = User::where('username', 'admin')->firstOrFail();
+        if ($this->user->organization_id) {
+            PlatformSubscription::query()->firstOrCreate(
+                ['organization_id' => $this->user->organization_id],
+                [
+                    'status' => 'active',
+                    'current_period_start' => now()->subMonth()->toDateString(),
+                    'current_period_end' => now()->addYear()->toDateString(),
+                    'renewal_price' => 0,
+                    'amount' => 0,
+                    'currency' => 'KES',
+                ],
+            );
+        }
         Sanctum::actingAs($this->user);
     }
 
@@ -32,18 +46,7 @@ class PayrollDeductionTypeUniqueTest extends TestCase
             'frequency' => 'per_cycle',
         ];
 
-        $first = $this->postJson('/api/v1/payroll-deduction-types', $payload);
-        if ($first->status() !== 201) {
-            file_put_contents(
-                '/tmp/payroll-deduction-unique-fail.json',
-                json_encode([
-                    'status' => $first->status(),
-                    'json' => $first->json(),
-                    'body' => $first->getContent(),
-                ], JSON_PRETTY_PRINT),
-            );
-        }
-        $first->assertCreated();
+        $this->postJson('/api/v1/payroll-deduction-types', $payload)->assertCreated();
 
         $this->postJson('/api/v1/payroll-deduction-types', $payload)
             ->assertStatus(422)

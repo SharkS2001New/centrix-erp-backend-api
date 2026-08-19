@@ -14,7 +14,7 @@ class SystemIssueReporter
 {
     public function reportException(Throwable $e, Request $request, ?User $user = null): ?SystemIssueReport
     {
-        if ($this->shouldSkipRequest($request)) {
+        if (self::isBenignImapNoise($e) || $this->shouldSkipRequest($request)) {
             return null;
         }
 
@@ -108,12 +108,12 @@ class SystemIssueReporter
                 'fingerprint' => $fingerprint,
                 'status' => 'open',
                 'message' => mb_substr($summary, 0, 500),
-                'technical_detail' => $technicalDetail,
+                'technical_detail' => $this->truncateDetail($technicalDetail),
                 'page_url' => $pageUrl,
                 'api_path' => mb_substr($apiPath, 0, 500),
                 'http_method' => $httpMethod ? mb_substr($httpMethod, 0, 16) : null,
                 'http_status' => $httpStatus,
-                'context' => $context,
+                'context' => $this->safeContext($context),
                 'reported_by_user' => false,
             ]);
         } catch (Throwable $reportError) {
@@ -168,6 +168,23 @@ class SystemIssueReporter
             || str_contains($path, 'health');
     }
 
+    /** Failed IMAP auth / empty inbox must not become a system-issue 500. */
+    public static function isBenignImapNoise(Throwable $e): bool
+    {
+        $message = $e->getMessage();
+        if (! str_contains($message, 'IMAP') && ! str_contains($message, 'imap')) {
+            return false;
+        }
+
+        return str_contains($message, 'PHP Request Shutdown')
+            || str_contains($message, 'Can not authenticate')
+            || str_contains($message, 'Cannot authenticate')
+            || str_contains($message, 'IMAP connection broken')
+            || str_contains($message, 'Unknown search criterion')
+            || str_contains($message, 'AUTHENTICATIONFAILED')
+            || str_contains($message, 'errflg=');
+    }
+
     public function summarizeException(Throwable $e): string
     {
         $class = class_basename($e);
@@ -178,6 +195,14 @@ class SystemIssueReporter
 
         if ($message === '') {
             return $class.$location;
+        }
+
+        if (str_contains($message, 'SQLSTATE') || strlen($message) > 280) {
+            $firstLine = trim(strtok($message, "\n") ?: $message);
+            $firstLine = preg_replace('/\s+/', ' ', $firstLine) ?? $firstLine;
+            $firstLine = mb_substr($firstLine, 0, 280);
+
+            return sprintf('%s: %s%s', $class, $firstLine, $location);
         }
 
         return sprintf('%s: %s%s', $class, $message, $location);
@@ -226,6 +251,24 @@ class SystemIssueReporter
         }
 
         return sprintf('#%d %s(%d): %s', $index, $file, $line, $call);
+    }
+
+    /**
+     * @param  array<string, mixed>  $context
+     * @return array<string, mixed>
+     */
+    protected function safeContext(array $context): array
+    {
+        if (isset($context['exception_message']) && is_string($context['exception_message'])) {
+            $context['exception_message'] = mb_substr($context['exception_message'], 0, 4000);
+        }
+
+        return $context;
+    }
+
+    protected function truncateDetail(string $detail): string
+    {
+        return mb_substr($detail, 0, 60000);
     }
 
     protected function safeNotifySuperAdmins(SystemIssueReport $report, ?User $actor): void

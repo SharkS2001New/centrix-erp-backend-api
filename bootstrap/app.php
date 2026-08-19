@@ -62,6 +62,9 @@ return Application::configure(basePath: dirname(__DIR__))
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions) {
+        $exceptions->dontReportWhen(function (\Throwable $e) {
+            return \App\Services\SystemIssues\SystemIssueReporter::isBenignImapNoise($e);
+        });
         $exceptions->renderable(function (\Illuminate\Database\Eloquent\ModelNotFoundException $e, Request $request) {
             if (! $request->is('api/*') || ! $request->expectsJson()) {
                 return null;
@@ -103,7 +106,8 @@ return Application::configure(basePath: dirname(__DIR__))
             if ($e instanceof AuthenticationException
                 || $e instanceof \Illuminate\Validation\ValidationException
                 || $e instanceof \Illuminate\Http\Exceptions\HttpResponseException
-                || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
+                || \App\Services\SystemIssues\SystemIssueReporter::isBenignImapNoise($e)) {
                 return null;
             }
 
@@ -154,7 +158,24 @@ return Application::configure(basePath: dirname(__DIR__))
         });
         $exceptions->renderable(function (\InvalidArgumentException $e, Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {
+                if ($e->getPrevious() instanceof \Throwable) {
+                    app(\App\Services\SystemIssues\SystemIssueReporter::class)
+                        ->reportException($e->getPrevious(), $request, $request->user());
+                }
+
                 return response()->json(['message' => $e->getMessage()], 422);
+            }
+        });
+        $exceptions->renderable(function (\Throwable $e, Request $request) {
+            if (! \App\Services\SystemIssues\SystemIssueReporter::isBenignImapNoise($e)) {
+                return null;
+            }
+
+            if ($request->is('api/*') || $request->expectsJson()) {
+                return response()->json([
+                    'ok' => false,
+                    'message' => 'Could not connect to the mailbox. Check IMAP settings, or remove the mailbox if you are not using email.',
+                ], 422);
             }
         });
         $exceptions->renderable(function (\Throwable $e, Request $request) {
@@ -164,9 +185,18 @@ return Application::configure(basePath: dirname(__DIR__))
 
             if ($e instanceof AuthenticationException
                 || $e instanceof \Illuminate\Validation\ValidationException
-                || $e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface
                 || $e instanceof \App\Exceptions\MissingProductWeightsException
-                || $e instanceof \InvalidArgumentException) {
+                || $e instanceof \InvalidArgumentException
+                || \App\Services\SystemIssues\SystemIssueReporter::isBenignImapNoise($e)) {
+                return null;
+            }
+
+            if ($e instanceof \Symfony\Component\HttpKernel\Exception\HttpExceptionInterface) {
+                if ($e->getStatusCode() >= 500) {
+                    app(\App\Services\SystemIssues\SystemIssueReporter::class)
+                        ->reportException($e, $request, $request->user());
+                }
+
                 return null;
             }
 

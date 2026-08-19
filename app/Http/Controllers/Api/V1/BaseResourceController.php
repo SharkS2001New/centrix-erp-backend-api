@@ -104,13 +104,40 @@ abstract class BaseResourceController extends Controller
 
         if ($sort !== '' && in_array($sort, $allowed, true)) {
             $query->orderBy($sort, $direction);
+            $this->applyStableListTiebreaker($query, $sort);
 
             return;
         }
 
         if ($defaultColumn !== null) {
             $query->orderBy($defaultColumn, $defaultDirection === 'asc' ? 'asc' : 'desc');
+            $this->applyStableListTiebreaker($query, $defaultColumn);
+
+            return;
         }
+
+        $this->applyStableListTiebreaker($query, null);
+    }
+
+    /**
+     * OFFSET pagination (list screens and CSV export) repeats or skips rows when
+     * ORDER BY is not unique. Always finish with the primary key.
+     */
+    protected function applyStableListTiebreaker($query, ?string $alreadySortedColumn): void
+    {
+        $key = $this->routeKeyColumn();
+        if ($key === '') {
+            return;
+        }
+
+        $table = (new ($this->modelClass()))->getTable();
+        $qualified = $table.'.'.$key;
+        $normalized = strtolower((string) $alreadySortedColumn);
+        if (in_array($normalized, [strtolower($key), strtolower($qualified)], true)) {
+            return;
+        }
+
+        $query->orderBy($qualified);
     }
 
     protected function baseQuery(Request $request)

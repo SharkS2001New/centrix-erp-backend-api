@@ -103,7 +103,7 @@ class PlatformMailSettingsResolver
     public static function ensureAccounts(array $stored): array
     {
         $accounts = $stored['accounts'] ?? null;
-        if (! is_array($accounts) || $accounts === []) {
+        if (! array_key_exists('accounts', $stored)) {
             $id = (string) Str::uuid();
             $account = self::accountDefaults();
             $account['id'] = $id;
@@ -120,6 +120,9 @@ class PlatformMailSettingsResolver
             $account['is_default'] = true;
             $stored['accounts'] = [$account];
             $stored['active_account_id'] = $id;
+        } elseif (! is_array($accounts) || $accounts === []) {
+            $stored['accounts'] = [];
+            $stored['active_account_id'] = null;
         } else {
             $normalized = [];
             foreach ($accounts as $index => $row) {
@@ -137,7 +140,10 @@ class PlatformMailSettingsResolver
                 $normalized[] = $account;
             }
             if ($normalized === []) {
-                return self::ensureAccounts(array_diff_key($stored, ['accounts' => true]));
+                $stored['accounts'] = [];
+                $stored['active_account_id'] = null;
+
+                return $stored;
             }
             $hasDefault = false;
             foreach ($normalized as $i => $account) {
@@ -326,7 +332,7 @@ class PlatformMailSettingsResolver
     {
         $defaults = self::defaults();
         $raw = self::rawStored();
-        $needsPersist = ! is_array($raw['accounts'] ?? null) || $raw['accounts'] === [];
+        $needsPersist = ! array_key_exists('accounts', $raw);
         $stored = self::ensureAccounts($raw);
         if ($needsPersist) {
             $org = self::platformOrganization();
@@ -337,7 +343,21 @@ class PlatformMailSettingsResolver
                 $org->save();
             }
         }
-        $account = self::findAccount($stored, $accountId) ?? self::accountDefaults();
+        $account = self::findAccount($stored, $accountId);
+        if ($account === null && ($stored['accounts'] ?? []) === []) {
+            $account = array_merge(self::accountDefaults(), [
+                'id' => '',
+                'label' => '',
+                'is_default' => false,
+                'enabled' => false,
+                'from_name' => '',
+                'from_address' => '',
+                'reply_to' => '',
+                'imap_enabled' => false,
+            ]);
+        } elseif ($account === null) {
+            $account = self::accountDefaults();
+        }
         $safeAccount = self::sanitizeAccount($account);
 
         $merged = array_merge($defaults, $stored, $safeAccount);
@@ -474,18 +494,28 @@ class PlatformMailSettingsResolver
                 fn ($row) => (string) ($row['id'] ?? '') !== $removeId
             ));
             if ($remaining === []) {
-                abort(422, 'Keep at least one mailbox account.');
-            }
-            $hadDefault = collect($current['accounts'])->contains(
-                fn ($row) => (string) ($row['id'] ?? '') === $removeId && ! empty($row['is_default'])
-            );
-            if ($hadDefault) {
-                $remaining[0]['is_default'] = true;
-            }
-            $current['accounts'] = $remaining;
-            if ((string) ($current['active_account_id'] ?? '') === $removeId) {
-                $default = collect($remaining)->firstWhere('is_default', true) ?? $remaining[0];
-                $current['active_account_id'] = $default['id'];
+                $current['accounts'] = [];
+                $current['active_account_id'] = null;
+                foreach (self::accountFieldKeys() as $key) {
+                    unset($current[$key]);
+                }
+                $current['enabled'] = false;
+                $current['imap_enabled'] = false;
+                $current['from_name'] = '';
+                $current['from_address'] = '';
+                $current['reply_to'] = '';
+            } else {
+                $hadDefault = collect($current['accounts'])->contains(
+                    fn ($row) => (string) ($row['id'] ?? '') === $removeId && ! empty($row['is_default'])
+                );
+                if ($hadDefault) {
+                    $remaining[0]['is_default'] = true;
+                }
+                $current['accounts'] = $remaining;
+                if ((string) ($current['active_account_id'] ?? '') === $removeId) {
+                    $default = collect($remaining)->firstWhere('is_default', true) ?? $remaining[0];
+                    $current['active_account_id'] = $default['id'];
+                }
             }
         }
 
@@ -707,15 +737,18 @@ class PlatformMailSettingsResolver
             return;
         }
 
+        $useSmtps = $port === 465 || $encryption === 'ssl';
+
         Config::set('mail.default', 'smtp');
         Config::set('mail.mailers.smtp', [
             'transport' => 'smtp',
+            'scheme' => $useSmtps ? 'smtps' : null,
             'host' => $host,
             'port' => $port,
-            'encryption' => $encryption === 'none' ? null : $encryption,
+            'encryption' => $encryption === 'none' ? null : ($useSmtps ? 'ssl' : $encryption),
             'username' => $username !== '' ? $username : null,
             'password' => $password,
-            'timeout' => null,
+            'timeout' => 20,
         ]);
         Config::set('mail.from', [
             'address' => $fromAddress,

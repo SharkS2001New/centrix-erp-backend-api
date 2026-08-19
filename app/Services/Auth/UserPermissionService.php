@@ -153,6 +153,11 @@ class UserPermissionService
             return false;
         }
 
+        // KRA device logs are an explicit Administration feature — not an org-admin default.
+        if (str_starts_with($permissionCode, 'admin.kra_responses')) {
+            return false;
+        }
+
         $permission = Permission::query()
             ->where('permission_code', $permissionCode)
             ->first();
@@ -408,6 +413,7 @@ class UserPermissionService
     {
         $direct = $this->directPermissionMapForUser($user, $gate);
         $map = $this->expandGrantedHrCapabilities($direct);
+        $map = $this->expandGrantedAdminCapabilities($map);
         $map = $this->expandCapabilityAliases($map);
         $map = $this->expandNavigationDashboardPermissions($map);
         // Do NOT expand sales.orders.view → every sales.order_queue_*.view here.
@@ -431,6 +437,7 @@ class UserPermissionService
     {
         $direct = $this->directPermissionMapForUser($user, $gate);
         $map = $this->expandGrantedHrCapabilities($direct);
+        $map = $this->expandGrantedAdminCapabilities($map);
         $map = $this->expandCapabilityAliases($map);
         $map = $this->expandNavigationDashboardPermissions($map);
         $map = $this->expandLegacySalesOrderQueueView($map);
@@ -449,6 +456,31 @@ class UserPermissionService
 
         if ($gate !== null) {
             $map = $this->grantManagerAppBundlePermissions($map, $gate);
+        }
+
+        return $map;
+    }
+
+    /**
+     * Legacy `admin.view` / `admin.manage` bundles expand to Administration screens.
+     * KRA device logs are not part of that bundle — assign admin.kra_responses.view explicitly.
+     *
+     * @param  array<string, bool>  $directMap
+     * @return array<string, bool>
+     */
+    protected function expandGrantedAdminCapabilities(array $directMap): array
+    {
+        $aliases = config('permission_aliases', []);
+        $map = $directMap;
+        foreach (['admin.view', 'admin.manage'] as $capability) {
+            if (! ($directMap[$capability] ?? false)) {
+                continue;
+            }
+            foreach ($aliases[$capability] ?? [] as $alias) {
+                if (is_string($alias) && $alias !== '') {
+                    $map[$alias] = true;
+                }
+            }
         }
 
         return $map;
@@ -529,6 +561,9 @@ class UserPermissionService
         foreach (Permission::query()->where('module', 'admin')->get() as $permission) {
             $code = (string) $permission->permission_code;
             if (str_ends_with($code, '.approve')) {
+                continue;
+            }
+            if (str_starts_with($code, 'admin.kra_responses')) {
                 continue;
             }
             if (! PermissionMatrixService::permissionModuleEnabled($code, 'admin', $gate)) {

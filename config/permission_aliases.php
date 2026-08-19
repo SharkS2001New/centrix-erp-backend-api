@@ -379,7 +379,6 @@ return [
         'admin.attendance_clock.view',
         'admin.payment_methods.view',
         'admin.vat_rates.view',
-        'admin.kra_responses.view',
         'admin.notifications.view',
     ],
     'admin.manage' => [

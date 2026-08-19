@@ -8,7 +8,9 @@ use App\Observers\OrganizationObserver;
 use App\Observers\SaleObserver;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
+use Illuminate\Queue\Events\JobFailed;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Illuminate\Support\Facades\RateLimiter;
 use Illuminate\Support\ServiceProvider;
 use Laravel\Sanctum\Sanctum;
@@ -27,6 +29,7 @@ class AppServiceProvider extends ServiceProvider
         $this->configureRateLimiting();
         $this->configureCorsFromRuntimeEnv();
         $this->enforceProductionSafety();
+        $this->reportFailedQueueJobs();
 
         if (
             $this->app->environment('production')
@@ -34,6 +37,41 @@ class AppServiceProvider extends ServiceProvider
         ) {
             DB::prohibitDestructiveCommands();
         }
+    }
+
+    protected function reportFailedQueueJobs(): void
+    {
+        Queue::failing(function (JobFailed $event) {
+            $exception = $event->exception;
+            if ($exception instanceof \Illuminate\Validation\ValidationException) {
+                return;
+            }
+            if (\App\Services\SystemIssues\SystemIssueReporter::isBenignImapNoise($exception)) {
+                return;
+            }
+
+            try {
+                $jobName = method_exists($event->job, 'resolveName')
+                    ? $event->job->resolveName()
+                    : class_basename($event->job::class);
+                $reporter = app(\App\Services\SystemIssues\SystemIssueReporter::class);
+                $reporter->reportMessage(
+                    'Queue job failed: '.$jobName,
+                    $reporter->formatException($exception),
+                    context: [
+                        'source' => 'queue',
+                        'job' => $jobName,
+                        'exception_class' => $exception::class,
+                        'exception_message' => mb_substr($exception->getMessage(), 0, 4000),
+                    ],
+                    apiPath: '/queue/'.$jobName,
+                    httpMethod: 'JOB',
+                    httpStatus: 500,
+                );
+            } catch (\Throwable) {
+                // Never break the queue worker from issue logging.
+            }
+        });
     }
 
     protected function configureRateLimiting(): void

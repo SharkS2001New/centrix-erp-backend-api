@@ -128,8 +128,15 @@ class KraTraderInvoiceAllocator
 
     protected function traderNumberAlreadyUsed(int $organizationId, string $traderNumber): bool
     {
+        if (KraResponse::query()
+            ->where('organization_id', $organizationId)
+            ->where('invoice_number', $traderNumber)
+            ->exists()) {
+            return true;
+        }
+
         $kraRows = KraResponse::query()
-            ->whereHas('sale', fn ($q) => $q->where('organization_id', $organizationId))
+            ->where('organization_id', $organizationId)
             ->whereNotNull('request_payload')
             ->orderByDesc('id')
             ->limit(300)

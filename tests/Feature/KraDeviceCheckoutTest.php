@@ -3,10 +3,13 @@
 namespace Tests\Feature;
 
 use App\Models\Customer;
+use App\Models\KraResponse;
 use App\Models\Organization;
 use App\Models\Product;
+use App\Models\Sale;
 use App\Models\User;
 use App\Models\Vat;
+use App\Services\Sales\CheckoutKraSubmissionService;
 use Illuminate\Support\Facades\Http;
 use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
@@ -385,5 +388,41 @@ class KraDeviceCheckoutTest extends TestCase
         $this->assertDatabaseMissing('kra_responses', [
             'order_no' => 99,
         ]);
+    }
+
+    public function test_kra_success_after_soft_fail_updates_same_invoice_row(): void
+    {
+        $sale = Sale::query()->where('organization_id', $this->user->organization_id)->firstOrFail();
+        $invoiceNumber = '1787'.random_int(100000, 999999);
+
+        $service = app(CheckoutKraSubmissionService::class);
+        $persist = new \ReflectionMethod(CheckoutKraSubmissionService::class, 'persistResponse');
+
+        $failed = $persist->invoke($service, $sale, [
+            'order_no' => (int) $sale->order_num,
+            'invoice_number' => $invoiceNumber,
+            'status' => 'failed',
+            'error_message' => 'Device busy',
+            'request_payload' => [
+                'sign_structure' => ['TraderSystemInvoiceNumber' => $invoiceNumber],
+            ],
+        ]);
+
+        $updated = $persist->invoke($service, $sale, [
+            'order_no' => (int) $sale->order_num,
+            'invoice_number' => $invoiceNumber,
+            'receipt_signature' => 'E3C5-5DZD-NKDS-GE76',
+            'signature_link' => 'https://etims.kra.go.ke/example',
+            'serial_number' => 'DEJA02220240050',
+            'status' => 'success',
+            'error_message' => null,
+            'request_payload' => [
+                'sign_structure' => ['TraderSystemInvoiceNumber' => $invoiceNumber],
+            ],
+        ]);
+
+        $this->assertSame($failed->id, $updated->id);
+        $this->assertSame('success', $updated->fresh()->status);
+        $this->assertSame(1, KraResponse::query()->where('sale_id', $sale->id)->where('invoice_number', $invoiceNumber)->count());
     }
 }

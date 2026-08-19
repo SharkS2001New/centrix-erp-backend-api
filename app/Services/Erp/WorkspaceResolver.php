@@ -38,10 +38,13 @@ class WorkspaceResolver
 
     /**
      * Admin utilities that must not unlock the Administration workspace alone.
-     * KRA device logs and attendance clock-in are grantable Admin module features
-     * and therefore do unlock Administration when assigned.
+     * `admin.view` / `admin.manage` are capability bundles inferred from any alias
+     * (including VAT rates / notifications) and must not open the whole module.
+     * KRA device logs and attendance clock-in unlock Administration only when assigned.
      */
     protected const ADMIN_NON_ENTRY_FEATURES = [
+        'view',
+        'manage',
         'vat_rates',
         'till_printing',
         'discount_approvals',

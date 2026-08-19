@@ -46,4 +46,30 @@ class PlatformMailSmtpOnlyModeTest extends TestCase
             $this->assertFalse($account['inbox_sync_ready']);
         }
     }
+
+    #[Test]
+    public function ensure_accounts_keeps_an_explicit_empty_list(): void
+    {
+        $stored = PlatformMailSettingsResolver::ensureAccounts([
+            'accounts' => [],
+            'imap_host' => 'imap.gmail.com',
+            'imap_enabled' => true,
+        ]);
+
+        $this->assertSame([], $stored['accounts']);
+        $this->assertNull($stored['active_account_id']);
+    }
+
+    #[Test]
+    public function ensure_accounts_migrates_legacy_settings_when_accounts_key_is_missing(): void
+    {
+        $stored = PlatformMailSettingsResolver::ensureAccounts([
+            'from_address' => 'legacy@example.com',
+            'smtp_host' => 'smtp.example.com',
+        ]);
+
+        $this->assertCount(1, $stored['accounts']);
+        $this->assertSame('legacy@example.com', $stored['accounts'][0]['from_address']);
+        $this->assertSame('smtp.example.com', $stored['accounts'][0]['smtp_host']);
+    }
 }

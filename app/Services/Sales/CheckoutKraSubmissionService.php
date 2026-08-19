@@ -8,6 +8,7 @@ use App\Services\Erp\CapabilityGate;
 use App\Services\Kra\KraDeviceErrorTranslator;
 use App\Services\Kra\KraDeviceService;
 use App\Services\Kra\KraFiscalPolicy;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Support\Facades\Log;
 
 /**
@@ -79,9 +80,7 @@ class CheckoutKraSubmissionService
                 'message' => $message,
             ]);
 
-            return KraResponse::create([
-                'sale_id' => $sale->id,
-                'organization_id' => (int) $sale->organization_id,
+            return $this->persistResponse($sale, [
                 'order_no' => $this->displayOrderNo($sale),
                 'invoice_number' => $invoiceNumber,
                 'receipt_signature' => null,
@@ -103,9 +102,7 @@ class CheckoutKraSubmissionService
 
         $mapped = $result['response'] ?? [];
 
-        return KraResponse::create([
-            'sale_id' => $sale->id,
-            'organization_id' => (int) $sale->organization_id,
+        return $this->persistResponse($sale, [
             'order_no' => $this->displayOrderNo($sale),
             'invoice_number' => $mapped['invoice_number'] ?? $invoiceNumber,
             'receipt_signature' => $mapped['receipt_signature'] ?? $mapped['signature'] ?? null,
@@ -117,6 +114,7 @@ class CheckoutKraSubmissionService
                 'document_type' => 'sale',
             ]),
             'status' => 'success',
+            'error_message' => null,
         ]);
     }
 
@@ -142,9 +140,7 @@ class CheckoutKraSubmissionService
             'bypass_above' => $threshold,
         ]);
 
-        return KraResponse::create([
-            'sale_id' => $sale->id,
-            'organization_id' => (int) $sale->organization_id,
+        return $this->persistResponse($sale, [
             'order_no' => $this->displayOrderNo($sale),
             'invoice_number' => 'BYPASS-'.$sale->order_num,
             'receipt_signature' => null,
@@ -165,6 +161,51 @@ class CheckoutKraSubmissionService
             'status' => 'skipped',
             'error_message' => $message,
         ]);
+    }
+
+    /**
+     * One kra_responses row per sale (and per org invoice #). Retries must update the
+     * failed row — inserting again hits uq_org_kra_invoice_number after a CU success.
+     *
+     * @param  array<string, mixed>  $attributes
+     */
+    protected function persistResponse(Sale $sale, array $attributes): KraResponse
+    {
+        $attributes['sale_id'] = (int) $sale->id;
+        $attributes['organization_id'] = (int) $sale->organization_id;
+
+        $existing = KraResponse::query()
+            ->where('sale_id', $sale->id)
+            ->orderByDesc('id')
+            ->first();
+
+        if ($existing) {
+            $existing->fill($attributes);
+            $existing->save();
+
+            return $existing;
+        }
+
+        try {
+            return KraResponse::create($attributes);
+        } catch (UniqueConstraintViolationException $e) {
+            $invoiceNumber = trim((string) ($attributes['invoice_number'] ?? ''));
+            $conflict = $invoiceNumber !== ''
+                ? KraResponse::query()
+                    ->where('organization_id', (int) $sale->organization_id)
+                    ->where('invoice_number', $invoiceNumber)
+                    ->first()
+                : null;
+
+            if ($conflict && (int) $conflict->sale_id === (int) $sale->id) {
+                $conflict->fill($attributes);
+                $conflict->save();
+
+                return $conflict;
+            }
+
+            throw $e;
+        }
     }
 
     public function displayOrderNo(Sale $sale): int

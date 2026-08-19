@@ -332,10 +332,11 @@ class ProductController extends BaseResourceController
                     ->orderByRaw(
                         '(COALESCE(products.stock_in_shop, 0) + COALESCE(products.stock_in_store, 0)) DESC',
                     )
-                    ->orderBy('products.product_name');
+                    ->orderBy('products.product_name')
+                    ->orderBy('products.product_code');
             }
         } else {
-            $this->applyListOrdering($request, $query, 'product_name', 'asc');
+            $this->applyListOrdering($request, $query, 'products.product_name', 'asc');
         }
 
         $leanSalesList = in_array($this->salesLoginChannel($request), ['mobile', 'pos'], true);

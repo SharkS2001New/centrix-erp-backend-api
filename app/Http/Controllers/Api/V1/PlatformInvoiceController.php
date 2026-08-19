@@ -212,7 +212,7 @@ class PlatformInvoiceController extends Controller
     {
         $statuses = ['draft', 'sent', 'paid', 'void'];
 
-        return $request->validate([
+        $data = $request->validate([
             'invoice_number' => [
                 'sometimes',
                 'string',
@@ -273,6 +273,12 @@ class PlatformInvoiceController extends Controller
             'notes' => 'nullable|string|max:5000',
             'terms' => 'nullable|string|max:5000',
         ]);
+
+        if (($data['invoice_options']['customer_kind'] ?? null) === 'external') {
+            $data['organization_id'] = null;
+        }
+
+        return $data;
     }
 
     protected function invoicePayload(PlatformInvoice $invoice): array

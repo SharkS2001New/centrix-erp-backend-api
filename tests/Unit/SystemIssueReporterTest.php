@@ -30,4 +30,14 @@ class SystemIssueReporterTest extends TestCase
 
         $this->assertStringStartsWith('ReflectionException: Class "ErpContext" does not exist', $summary);
     }
+
+    public function test_imap_auth_shutdown_is_not_a_system_issue(): void
+    {
+        $this->assertTrue(SystemIssueReporter::isBenignImapNoise(
+            new \ErrorException('PHP Request Shutdown: Can not authenticate to IMAP server: [CLOSED] IMAP connection broken (authenticate) (errflg=2)'),
+        ));
+        $this->assertFalse(SystemIssueReporter::isBenignImapNoise(
+            new \RuntimeException('Cart checkout failed'),
+        ));
+    }
 }

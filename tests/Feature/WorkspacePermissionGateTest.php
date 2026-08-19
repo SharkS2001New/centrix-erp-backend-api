@@ -188,6 +188,46 @@ class WorkspacePermissionGateTest extends TestCase
         $this->assertFalse((bool) ($map['admin.kra_responses.view'] ?? false));
     }
 
+    public function test_vat_rates_permission_does_not_unlock_administration_workspace(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['admin'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'admin.vat_rates.view',
+            'sales.orders.view',
+        ]);
+
+        $ids = $this->workspaceIdsFor($user);
+
+        $this->assertNotContains('admin', $ids);
+    }
+
+    public function test_org_admin_does_not_auto_grant_kra_device_logs(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $org = Organization::findOrFail($admin->organization_id);
+        $modules = is_array($org->enabled_modules) ? $org->enabled_modules : [];
+        $modules['admin'] = true;
+        $org->update(['enabled_modules' => $modules]);
+
+        $user = $this->makeUserWithPermissions($admin, [
+            'sales.orders.view',
+        ]);
+        $user->is_admin = true;
+        $user->save();
+
+        $map = app(\App\Services\Auth\UserPermissionService::class)
+            ->permissionMapForUser($user, app(ErpContext::class)->gateForUser($user));
+
+        $this->assertContains('admin', $this->workspaceIdsFor($user));
+        $this->assertTrue((bool) ($map['admin.users.view'] ?? false));
+        $this->assertFalse((bool) ($map['admin.kra_responses.view'] ?? false));
+    }
+
     public function test_admin_kra_device_logs_permission_unlocks_administration_workspace(): void
     {
         $admin = User::where('username', 'admin')->firstOrFail();

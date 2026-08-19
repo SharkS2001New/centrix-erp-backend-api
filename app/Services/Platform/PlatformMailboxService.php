@@ -78,7 +78,8 @@ class PlatformMailboxService
             ->values()
             ->all();
 
-        \Illuminate\Support\Facades\Mail::raw($body, function ($message) use (
+        try {
+            \Illuminate\Support\Facades\Mail::raw($body, function ($message) use (
             $to,
             $subject,
             $settings,
@@ -115,6 +116,10 @@ class PlatformMailboxService
                 }
             }
         });
+        } catch (\Throwable $e) {
+            $this->reportMailFailure($e->getMessage(), $to, $subject, $kind, $user, $e);
+            throw $e;
+        }
 
         return PlatformMailMessage::query()->create([
             'direction' => 'outbound',
@@ -250,6 +255,16 @@ class PlatformMailboxService
 
         $accountId = (string) ($account['id'] ?? '');
 
+        if (empty($account['imap_enabled'])) {
+            return [
+                'ok' => false,
+                'code' => 'imap_disabled',
+                'message' => 'IMAP is turned off for this mailbox.',
+                'detail' => 'Inbox sync is optional. Leave IMAP off if you only send mail, or if this mailbox is unused.',
+                'account_id' => $accountId,
+            ];
+        }
+
         $account = PlatformMailSettingsResolver::prefillImapFromSmtp($account);
         if (empty($account['imap_host'])) {
             return [
@@ -273,11 +288,18 @@ class PlatformMailboxService
         }
 
         [$mailbox] = $this->imapMailboxPath($account);
-        @imap_errors();
-        @imap_alerts();
-        $inbox = @imap_open($mailbox, $username, (string) $password, 0, 1);
+        $inbox = false;
+        $err = 'Could not connect to IMAP server.';
+        try {
+            $this->clearImapErrors();
+            $inbox = @imap_open($mailbox, $username, (string) $password, 0, 1);
+            if (! $inbox) {
+                $err = (function_exists('imap_last_error') ? imap_last_error() : null) ?: $err;
+            }
+        } finally {
+            $this->clearImapErrors();
+        }
         if (! $inbox) {
-            $err = imap_last_error() ?: 'Could not connect to IMAP server.';
             $detail = $err.' — If this mailbox matches SMTP, confirm the app password works for IMAP, then update IMAP settings and try again.';
             $isZoho = PlatformMailSettingsResolver::isZohoMailHost($account['imap_host'] ?? null)
                 || PlatformMailSettingsResolver::isZohoMailHost($account['smtp_host'] ?? null);
@@ -299,7 +321,11 @@ class PlatformMailboxService
                 'account_id' => $accountId,
             ];
         }
-        imap_close($inbox);
+        try {
+            @imap_close($inbox);
+        } finally {
+            $this->clearImapErrors();
+        }
 
         return [
             'ok' => true,
@@ -335,7 +361,8 @@ class PlatformMailboxService
 
         $inbox = @imap_open($mailbox, $username, (string) $password);
         if (! $inbox) {
-            $err = imap_last_error() ?: 'Could not connect to IMAP server.';
+            $err = (function_exists('imap_last_error') ? imap_last_error() : null) ?: 'Could not connect to IMAP server.';
+            $this->clearImapErrors();
 
             return [
                 'imported' => 0,
@@ -499,10 +526,12 @@ class PlatformMailboxService
 
         $inbox = @imap_open($mailbox, $username, (string) $password);
         if (! $inbox) {
+            $err = (function_exists('imap_last_error') ? imap_last_error() : null) ?: 'unknown error';
+            $this->clearImapErrors();
             return [
                 'ok' => false,
                 'body' => (string) ($message->body_text ?? ''),
-                'message' => 'Could not connect to IMAP: '.(imap_last_error() ?: 'unknown error'),
+                'message' => 'Could not connect to IMAP: '.$err,
             ];
         }
 
@@ -652,10 +681,12 @@ class PlatformMailboxService
 
         $inbox = @imap_open($mailbox, $username, (string) $password);
         if (! $inbox) {
+            $err = (function_exists('imap_last_error') ? imap_last_error() : null) ?: 'unknown error';
+            $this->clearImapErrors();
             return [
                 'ok' => false,
                 'remote' => false,
-                'message' => 'Could not connect to IMAP to delete remotely: '.(imap_last_error() ?: 'unknown error'),
+                'message' => 'Could not connect to IMAP to delete remotely: '.$err,
             ];
         }
 
@@ -1052,5 +1083,40 @@ class PlatformMailboxService
     protected function stripHtml(string $html): string
     {
         return trim(html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+    }
+
+    protected function reportMailFailure(
+        string $message,
+        string $to,
+        string $subject,
+        string $kind,
+        ?User $user,
+        ?\Throwable $exception = null,
+    ): void {
+        try {
+            $reporter = app(\App\Services\SystemIssues\SystemIssueReporter::class);
+            $detail = $exception
+                ? $reporter->formatException($exception)
+                : $message;
+            $reporter->reportMessage(
+                'Outbound email failed: '.mb_substr($message, 0, 220),
+                $detail,
+                organizationId: $user?->organization_id ? (int) $user->organization_id : null,
+                userId: $user?->id ? (int) $user->id : null,
+                context: [
+                    'source' => 'mail',
+                    'kind' => $kind !== '' ? $kind : 'outbound',
+                    'to' => $to,
+                    'subject' => mb_substr($subject, 0, 180),
+                    'exception_class' => $exception ? $exception::class : null,
+                ],
+                apiPath: '/platform/mail/send',
+                httpMethod: 'POST',
+                httpStatus: 500,
+                actor: $user,
+            );
+        } catch (\Throwable) {
+            // Never block sending/error handling on issue logging.
+        }
     }
 }
