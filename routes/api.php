@@ -1000,6 +1000,8 @@ Route::prefix('v1')->group(function () {
                 ->middleware('erp.permission:sales.view|sales.manage');
             Route::post('sales/mobile-orders/approve-returns', [MobileOrdersQuickActionsController::class, 'approveReturns'])
                 ->middleware('erp.permission:sales.manage');
+            Route::post('sales/mobile-orders/reject-returns', [MobileOrdersQuickActionsController::class, 'rejectReturns'])
+                ->middleware('erp.permission:sales.manage');
             Route::get('sales/mobile-orders/pending-expenses', [MobileOrdersQuickActionsController::class, 'pendingExpenses'])
                 ->middleware('erp.permission:sales.view|sales.manage');
             Route::get('sales/mobile-orders/performed-expenses', [MobileOrdersQuickActionsController::class, 'performedExpenses'])

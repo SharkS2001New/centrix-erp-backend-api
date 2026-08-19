@@ -79,6 +79,31 @@ class MobileOrdersQuickActionsFilterTest extends TestCase
         $this->assertSame('pending', $pendingB->fresh()->status);
     }
 
+    public function test_reject_returns_honors_cashier_filter(): void
+    {
+        $repA = $this->makeMobileUser(['full_name' => 'Reject Rep A']);
+        $repB = $this->makeMobileUser(['full_name' => 'Reject Rep B']);
+        $saleA = $this->seedMobileSale($repA, 400);
+        $saleB = $this->seedMobileSale($repB, 500);
+
+        $pendingA = $this->makeReturn($saleA, $repA, 'pending');
+        $pendingB = $this->makeReturn($saleB, $repB, 'pending');
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $reject = $this->postJson('/api/v1/sales/mobile-orders/reject-returns', [
+            'return_ids' => [$pendingA->id, $pendingB->id],
+            'cashier_id' => $repA->id,
+            'reason' => 'Not a valid return',
+        ])->assertOk()->json();
+
+        $this->assertSame(1, (int) $reject['rejected_count']);
+        $this->assertSame('rejected', $pendingA->fresh()->status);
+        $this->assertSame('Not a valid return', $pendingA->fresh()->reject_reason);
+        $this->assertSame('pending', $pendingB->fresh()->status);
+    }
+
     public function test_mark_paid_honors_cashier_filter(): void
     {
         $repA = $this->makeMobileUser(['full_name' => 'Pay Rep A']);

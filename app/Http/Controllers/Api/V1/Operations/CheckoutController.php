@@ -516,6 +516,10 @@ class CheckoutController extends Controller
             $payNow = (float) ($input['pay_now'] ?? 0);
             $isCredit = (bool) ($input['is_credit_sale'] ?? false);
             $offlineOrder = filter_var($input['offline_order'] ?? false, FILTER_VALIDATE_BOOLEAN);
+            $orderChange = max(0, round((float) ($input['order_change'] ?? 0), 2));
+            $amountTendered = max(0, round((float) ($input['amount_tendered'] ?? 0), 2));
+            $tillAmountDue = max(0, round((float) ($input['till_amount_due'] ?? 0), 2));
+            $tillTender = max($payNow, $amountTendered, round($payNow + $orderChange, 2));
 
             $adjustmentRows = $this->normalizeCheckoutPaymentAdjustments($input['payment_adjustments'] ?? null);
             // Previous-order edit (not same-day append): rebuild net tenders from the
@@ -535,13 +539,16 @@ class CheckoutController extends Controller
             ) {
                 $clientTenderTowardBill = round(
                     $appendPriorPaid
-                        + max(0, (float) ($input['pay_now'] ?? 0))
+                        + max($tillTender, (float) ($input['pay_now'] ?? 0))
                         + $voucherPayment
                         + $pointsPayment
                         + $mpesaOnCart,
                     2,
                 );
-                if ($total > 0.01 && $clientTenderTowardBill + 0.01 >= $total) {
+                if (
+                    ($total > 0.01 && $clientTenderTowardBill + 0.01 >= $total)
+                    || ($tillAmountDue > 0.01 && $tillTender + 0.01 >= $tillAmountDue)
+                ) {
                     $isCredit = false;
                 }
             }
@@ -565,6 +572,7 @@ class CheckoutController extends Controller
                     $payNow = $cashDue;
                 }
             }
+            $tillTender = max($tillTender, $payNow, $amountTendered, round($payNow + $orderChange, 2));
             if ($isPreviousOrderEditSettlement) {
                 $payNow = 0;
                 // Preserve prior payment — do not invent a full settlement for unpaid/partial
@@ -652,9 +660,6 @@ class CheckoutController extends Controller
                 // order_change — e.g. KES 3690 due, KES 3700 cash, KES 10 change. KRA
                 // server-first checkout can reprice a few shillings above the till; that
                 // overpay must still count as full payment.
-                $orderChange = max(0, round((float) ($input['order_change'] ?? 0), 2));
-                $amountTendered = max(0, round((float) ($input['amount_tendered'] ?? 0), 2));
-                $tillTender = max($payNow, $amountTendered, round($payNow + $orderChange, 2));
                 $clientPaid = round(
                     $appendPriorPaid + min($tillTender, $cashDue) + $voucherPayment + $pointsPayment + $mpesaOnCart,
                     2,
@@ -673,16 +678,14 @@ class CheckoutController extends Controller
                             2,
                         ),
                     );
-                    $tillAmountDue = max(0, round((float) ($input['till_amount_due'] ?? 0), 2));
-                    $paidTillBill = $cashierSeenDue > 0.01 && (
-                        $tillTender + 0.01 >= $cashierSeenDue
-                        || ($tillTender > 0.01 && ($cashierSeenDue - $tillTender) <= 5.01)
+                    $seenDue = max($cashierSeenDue, $tillAmountDue);
+                    $paidTillBill = ($tillAmountDue > 0.01 && $tillTender + 0.01 >= $tillAmountDue)
                         || (
-                            $tillAmountDue > 0.01
-                            && $tillTender + 0.01 >= $tillAmountDue
-                            && ($cashierSeenDue - $tillAmountDue) <= 5.01
-                        )
-                    );
+                            $seenDue > 0.01 && (
+                                $tillTender + 0.01 >= $seenDue
+                                || ($tillTender > 0.01 && ($seenDue - $tillTender) <= 5.01)
+                            )
+                        );
                     if ($offlineOrder || $paidTillBill) {
                         $payNow = $cashDue;
                         unset($input['payment_splits']);
@@ -1085,7 +1088,20 @@ class CheckoutController extends Controller
                         abs($splitTotal - $expectedSplitTotal) > 0.02
                         && abs($splitTotal - $payNow) > 0.02
                     ) {
-                        if ($offlineOrder) {
+                        // Till cash overpay (change) is often still in CASH splits after
+                        // pay_now is capped to the bill. Reduce cash first — online and offline.
+                        $splits = $this->alignCheckoutPaymentSplitsToPayNow(
+                            $splits,
+                            $payNow,
+                            $mpesaOnCart,
+                            $paymentMethodCode,
+                        );
+                        $splitTotal = round(array_sum(array_column($splits, 'amount')), 2);
+                        if (
+                            $offlineOrder
+                            && abs($splitTotal - $expectedSplitTotal) > 0.02
+                            && abs($splitTotal - $payNow) > 0.02
+                        ) {
                             $splits = $this->healOfflineOrderPaymentSplits(
                                 $splits,
                                 $payNow,
@@ -1667,6 +1683,66 @@ class CheckoutController extends Controller
         }
 
         return $normalized;
+    }
+
+    /**
+     * Cap split lines to pay_now (plus cart M-Pesa). Cash overpay / change is
+     * taken from CASH first so KRA server-first checkout can still persist tenders.
+     *
+     * @param  list<array{method_code: string, amount: float, reference_number: ?string}>  $splits
+     * @return list<array{method_code: string, amount: float, reference_number: ?string}>
+     */
+    protected function alignCheckoutPaymentSplitsToPayNow(
+        array $splits,
+        float $payNow,
+        float $mpesaOnCart = 0,
+        string $preferredMethod = '',
+    ): array {
+        $target = round(max(0, $payNow) + max(0, $mpesaOnCart), 2);
+        if ($target <= 0 || $splits === []) {
+            return $splits;
+        }
+
+        $currentTotal = round(array_sum(array_column($splits, 'amount')), 2);
+        if (abs($currentTotal - $target) <= 0.02) {
+            return $splits;
+        }
+
+        if ($currentTotal > $target) {
+            $excess = round($currentTotal - $target, 2);
+            $adjusted = $splits;
+            $preferred = strtoupper(trim($preferredMethod));
+            $priority = [];
+            foreach ($adjusted as $index => $split) {
+                $code = strtoupper((string) ($split['method_code'] ?? ''));
+                if ($code === 'CASH') {
+                    $priority[] = $index;
+                }
+            }
+            foreach ($adjusted as $index => $split) {
+                $code = strtoupper((string) ($split['method_code'] ?? ''));
+                if ($preferred !== '' && $code === $preferred && $code !== 'CASH') {
+                    $priority[] = $index;
+                }
+            }
+            $reduceOrder = array_values(array_unique([...$priority, ...array_keys($adjusted)]));
+
+            foreach ($reduceOrder as $index) {
+                if ($excess <= 0.001) {
+                    break;
+                }
+                $reduceBy = round(min((float) $adjusted[$index]['amount'], $excess), 2);
+                $adjusted[$index]['amount'] = round((float) $adjusted[$index]['amount'] - $reduceBy, 2);
+                $excess = round($excess - $reduceBy, 2);
+            }
+
+            return array_values(array_filter(
+                $adjusted,
+                fn (array $split) => (float) ($split['amount'] ?? 0) > 0,
+            ));
+        }
+
+        return $splits;
     }
 
     /** @param  list<array{method_code: string, amount: float, reference_number: ?string}>  $splits */

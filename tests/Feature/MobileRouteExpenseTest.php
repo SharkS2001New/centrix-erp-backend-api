@@ -222,6 +222,40 @@ class MobileRouteExpenseTest extends TestCase
         $this->assertFalse($performedA->contains((int) $expenseB['id']));
     }
 
+    public function test_reject_expenses_honors_cashier_filter(): void
+    {
+        $repA = $this->makeMobileUser(['full_name' => 'Reject Exp A']);
+        $repB = $this->makeMobileUser(['full_name' => 'Reject Exp B']);
+        $expenses = app(MobileRouteExpenseService::class);
+        $expenseA = $expenses->createForRep($repA, [
+            'description' => 'Parking A',
+            'expense_amount' => 40,
+        ]);
+        $expenseB = $expenses->createForRep($repB, [
+            'description' => 'Parking B',
+            'expense_amount' => 60,
+        ]);
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $reject = $this->postJson('/api/v1/sales/mobile-orders/reject-expenses', [
+            'expense_ids' => [(int) $expenseA['id'], (int) $expenseB['id']],
+            'cashier_id' => $repA->id,
+            'reason' => 'Not a route cost',
+        ])->assertOk()->json();
+
+        $this->assertSame(1, (int) $reject['rejected_count']);
+        $this->assertSame(
+            'rejected',
+            \App\Models\MobileRouteExpense::query()->findOrFail($expenseA['id'])->status,
+        );
+        $this->assertSame(
+            'pending',
+            \App\Models\MobileRouteExpense::query()->findOrFail($expenseB['id'])->status,
+        );
+    }
+
     protected function enableExpensesCard(User $user): void
     {
         $this->setExpensesCard($user, true);

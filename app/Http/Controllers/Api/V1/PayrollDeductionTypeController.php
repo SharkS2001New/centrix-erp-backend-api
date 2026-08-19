@@ -5,8 +5,11 @@ namespace App\Http\Controllers\Api\V1;
 use App\Models\Employee;
 use App\Models\EmployeeDeduction;
 use App\Models\PayrollDeductionType;
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class PayrollDeductionTypeController extends HrOrgResourceController
 {
@@ -34,12 +37,18 @@ class PayrollDeductionTypeController extends HrOrgResourceController
         }
 
         $assigned = 0;
-        $model = DB::transaction(function () use ($request, $data, $employeeIds, &$assigned) {
-            $type = PayrollDeductionType::create($data);
-            $assigned = $this->assignToEmployees($request, $type, $employeeIds);
+        try {
+            $model = DB::transaction(function () use ($request, $data, $employeeIds, &$assigned) {
+                $type = PayrollDeductionType::create($data);
+                $assigned = $this->assignToEmployees($request, $type, $employeeIds);
 
-            return $type;
-        });
+                return $type;
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            throw ValidationException::withMessages([
+                'deduction_code' => ['This deduction code is already used in your organization.'],
+            ]);
+        }
 
         return response()->json(array_merge($model->toArray(), [
             'assigned_employee_count' => $assigned,
@@ -49,7 +58,7 @@ class PayrollDeductionTypeController extends HrOrgResourceController
     public function update(Request $request, string $id)
     {
         $model = $this->findScoped($id);
-        $data = $this->validated($request, updating: true);
+        $data = $this->validated($request, updating: true, existing: $model);
         $employeeIds = array_key_exists('employee_ids', $data)
             ? array_values(array_unique(array_map('intval', $data['employee_ids'] ?? [])))
             : null;
@@ -65,12 +74,18 @@ class PayrollDeductionTypeController extends HrOrgResourceController
         }
 
         $assigned = 0;
-        DB::transaction(function () use ($request, $model, $data, $employeeIds, &$assigned) {
-            $model->update($data);
-            if (is_array($employeeIds)) {
-                $assigned = $this->assignToEmployees($request, $model->fresh(), $employeeIds);
-            }
-        });
+        try {
+            DB::transaction(function () use ($request, $model, $data, $employeeIds, &$assigned) {
+                $model->update($data);
+                if (is_array($employeeIds)) {
+                    $assigned = $this->assignToEmployees($request, $model->fresh(), $employeeIds);
+                }
+            });
+        } catch (UniqueConstraintViolationException $e) {
+            throw ValidationException::withMessages([
+                'deduction_code' => ['This deduction code is already used in your organization.'],
+            ]);
+        }
 
         return response()->json(array_merge($model->fresh()->toArray(), [
             'assigned_employee_count' => $assigned,
@@ -130,13 +145,32 @@ class PayrollDeductionTypeController extends HrOrgResourceController
         return $created;
     }
 
-    protected function validated(Request $request, bool $updating = false): array
+    protected function validated(Request $request, bool $updating = false, ?PayrollDeductionType $existing = null): array
     {
         $req = $updating ? 'sometimes|' : 'required|';
+        $user = $request->user();
+        $orgId = (int) ($user?->organization_id
+            ?? $request->input('organization_id')
+            ?? $existing?->organization_id
+            ?? 0);
+        $ignoreId = $existing?->id;
+
+        if ($request->exists('deduction_code')) {
+            $request->merge([
+                'deduction_code' => strtoupper(trim((string) $request->input('deduction_code'))),
+            ]);
+        }
 
         return $request->validate([
             'organization_id' => ($updating ? 'sometimes|' : '') . 'integer|exists:organizations,id',
-            'deduction_code' => $req . 'string|max:45',
+            'deduction_code' => [
+                $updating ? 'sometimes' : 'required',
+                'string',
+                'max:45',
+                Rule::unique('payroll_deduction_types', 'deduction_code')
+                    ->where(fn ($q) => $q->where('organization_id', $orgId))
+                    ->ignore($ignoreId),
+            ],
             'name' => $req . 'string|max:200',
             'calc_type' => 'nullable|in:fixed,percentage',
             'default_amount' => 'nullable|numeric|min:0',
@@ -146,6 +180,8 @@ class PayrollDeductionTypeController extends HrOrgResourceController
             'frequency' => 'nullable|in:per_cycle,one_time',
             'employee_ids' => 'nullable|array',
             'employee_ids.*' => 'integer|exists:employees,id',
+        ], [
+            'deduction_code.unique' => 'This deduction code is already used in your organization.',
         ]);
     }
 }

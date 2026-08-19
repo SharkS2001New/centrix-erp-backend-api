@@ -152,6 +152,64 @@ class MobileOrdersQuickActionsController extends Controller
         ]);
     }
 
+    public function rejectReturns(Request $request)
+    {
+        $user = $request->user();
+        $this->assertReturnsCardEnabled($this->organizationFor($user));
+
+        $data = $request->validate([
+            'return_ids' => 'required|array|min:1',
+            'return_ids.*' => 'integer',
+            'reason' => 'nullable|string|max:500',
+            'cashier_id' => 'nullable|integer|min:1',
+            'route_id' => 'nullable|integer|min:1',
+        ]);
+        $filters = [
+            'cashier_id' => isset($data['cashier_id']) ? (int) $data['cashier_id'] : null,
+            'route_id' => isset($data['route_id']) ? (int) $data['route_id'] : null,
+        ];
+        $reason = $data['reason'] ?? null;
+
+        $rejected = [];
+        $errors = [];
+
+        foreach ($data['return_ids'] as $returnId) {
+            $query = CustomerReturn::query()
+                ->where('id', (int) $returnId)
+                ->where('organization_id', $user->organization_id)
+                ->where('status', 'pending');
+            $this->constrainToMobileSale($query, $filters);
+
+            $this->access->scopeBranchIfLimited($query, $user);
+            $return = $query->first();
+
+            if (! $return) {
+                $errors[] = ['id' => (int) $returnId, 'message' => 'Return not found or not pending.'];
+                continue;
+            }
+
+            try {
+                $rejected[] = $this->returns->withActionFlags(
+                    $this->returns->reject($return, $user, $reason),
+                    $user,
+                );
+            } catch (ValidationException $e) {
+                $errors[] = [
+                    'id' => (int) $returnId,
+                    'message' => collect($e->errors())->flatten()->first() ?: $e->getMessage(),
+                ];
+            } catch (\Throwable $e) {
+                $errors[] = ['id' => (int) $returnId, 'message' => $e->getMessage()];
+            }
+        }
+
+        return response()->json([
+            'rejected_count' => count($rejected),
+            'data' => $rejected,
+            'errors' => $errors,
+        ]);
+    }
+
     public function markPaid(Request $request)
     {
         $user = $request->user();

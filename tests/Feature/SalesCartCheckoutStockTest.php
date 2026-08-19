@@ -1057,6 +1057,88 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEqualsWithDelta($tillDue + 8, (float) ($sale['amount_paid'] ?? 0), 0.05);
     }
 
+    public function test_pos_cash_change_splits_are_aligned_on_online_checkout(): void
+    {
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->json('id');
+
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 1,
+        ])->assertCreated()->json();
+
+        $tillDue = round((float) collect($cart['lines'] ?? [])->sum('amount'), 2);
+        $this->assertGreaterThan(0.01, $tillDue);
+        $tendered = round($tillDue + 480, 2);
+
+        $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+            'status' => 'completed',
+            'payment_method_code' => 'CASH',
+            'pay_now' => $tillDue,
+            'order_change' => 480,
+            'amount_tendered' => $tendered,
+            'till_amount_due' => $tillDue,
+            'payment_splits' => [
+                ['method_code' => 'CASH', 'amount' => $tendered],
+            ],
+        ])->assertCreated()->json();
+
+        $this->assertContains($sale['payment_status'] ?? $sale['status'], ['paid', 'completed']);
+        $this->assertEqualsWithDelta($tillDue, (float) ($sale['amount_paid'] ?? 0), 0.05);
+        $this->assertEqualsWithDelta($tillDue, (float) ($sale['cash'] ?? 0), 0.05);
+    }
+
+    public function test_pos_mpesa_equity_and_kcb_overpay_splits_are_aligned_on_online_checkout(): void
+    {
+        $columnByMethod = [
+            'MPESA' => 'mpesa_amount',
+            'EQUITY' => 'equity_amount',
+            'KCB' => 'kcb_amount',
+        ];
+
+        foreach ($columnByMethod as $method => $column) {
+            $exists = \App\Models\PaymentMethod::query()
+                ->where('organization_id', $this->user->organization_id)
+                ->where('method_code', $method)
+                ->where('is_active', 1)
+                ->exists();
+            if (! $exists) {
+                continue;
+            }
+
+            $cartId = $this->postJson('/api/v1/sales/carts', [
+                'channel' => 'pos',
+                'branch_id' => $this->user->branch_id,
+            ])->json('id');
+
+            $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+                'product_code' => $this->productCode,
+                'quantity' => 1,
+            ])->assertCreated()->json();
+
+            $tillDue = round((float) collect($cart['lines'] ?? [])->sum('amount'), 2);
+            $this->assertGreaterThan(0.01, $tillDue);
+            $tendered = round($tillDue + 100, 2);
+
+            $sale = $this->postJson("/api/v1/sales/carts/{$cartId}/checkout", [
+                'status' => 'completed',
+                'payment_method_code' => $method,
+                'pay_now' => $tillDue,
+                'amount_tendered' => $tendered,
+                'till_amount_due' => $tillDue,
+                'payment_splits' => [
+                    ['method_code' => $method, 'amount' => $tendered],
+                ],
+            ])->assertCreated()->json();
+
+            $this->assertContains($sale['payment_status'] ?? $sale['status'], ['paid', 'completed'], $method);
+            $this->assertEqualsWithDelta($tillDue, (float) ($sale['amount_paid'] ?? 0), 0.05, $method);
+            $this->assertEqualsWithDelta($tillDue, (float) ($sale[$column] ?? 0), 0.05, $method);
+        }
+    }
+
     public function test_pos_cash_underpay_is_still_rejected(): void
     {
         $cartId = $this->postJson('/api/v1/sales/carts', [
