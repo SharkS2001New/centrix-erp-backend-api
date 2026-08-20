@@ -193,32 +193,38 @@ class PlatformMailController extends Controller
             return $payload;
         });
 
-        $unreadQuery = PlatformMailMessage::query()
-            ->where('folder', 'inbox')
-            ->whereNull('read_at');
-        if ($accountId !== '') {
-            $settings = PlatformMailSettingsResolver::resolve($accountId);
-            $isDefault = collect($settings['accounts'] ?? [])->contains(
-                fn ($row) => (string) ($row['id'] ?? '') === $accountId && ! empty($row['is_default'])
-            );
-            $unreadQuery->where(function ($inner) use ($accountId, $isDefault) {
-                $inner->where('mailbox_account_id', $accountId);
-                if ($isDefault) {
-                    $inner->orWhereNull('mailbox_account_id');
-                }
-            });
+        $resolved = PlatformMailSettingsResolver::resolve($accountId !== '' ? $accountId : null);
+        $accounts = is_array($resolved['accounts'] ?? null) ? $resolved['accounts'] : [];
+        // No configured mailbox → no inbox badge (old synced rows must not keep 99+).
+        $unreadCount = 0;
+        if ($accounts !== []) {
+            $unreadQuery = PlatformMailMessage::query()
+                ->where('folder', 'inbox')
+                ->whereNull('read_at');
+            if ($accountId !== '') {
+                $isDefault = collect($accounts)->contains(
+                    fn ($row) => (string) ($row['id'] ?? '') === $accountId && ! empty($row['is_default'])
+                );
+                $unreadQuery->where(function ($inner) use ($accountId, $isDefault) {
+                    $inner->where('mailbox_account_id', $accountId);
+                    if ($isDefault) {
+                        $inner->orWhereNull('mailbox_account_id');
+                    }
+                });
+            }
+            $unreadCount = $unreadQuery->count();
         }
 
         return response()->json([
             'data' => $rows,
-            'unread_count' => $unreadQuery->count(),
+            'unread_count' => $unreadCount,
             'total' => $total,
             'limit' => $limit,
             'offset' => $offset,
             'has_more' => ($offset + $rows->count()) < $total,
             'stats' => PlatformMailStats::summarize(),
-            'active_account_id' => $accountId !== '' ? $accountId : (PlatformMailSettingsResolver::resolve()['active_account_id'] ?? null),
-            'accounts' => PlatformMailSettingsResolver::resolve()['accounts'] ?? [],
+            'active_account_id' => $accountId !== '' ? $accountId : ($resolved['active_account_id'] ?? null),
+            'accounts' => $accounts,
         ]);
     }
 

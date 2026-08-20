@@ -185,6 +185,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
             if ($e instanceof AuthenticationException
                 || $e instanceof \Illuminate\Validation\ValidationException
+                || $e instanceof \Illuminate\Http\Exceptions\HttpResponseException
                 || $e instanceof \App\Exceptions\MissingProductWeightsException
                 || $e instanceof \InvalidArgumentException
                 || \App\Services\SystemIssues\SystemIssueReporter::isBenignImapNoise($e)) {

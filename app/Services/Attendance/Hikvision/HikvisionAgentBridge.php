@@ -111,7 +111,7 @@ class HikvisionAgentBridge
             $ttl = $this->onlineTtlSeconds($device);
             $error = $lastSeen
                 ? self::AGENT_NAME." is installed but has not checked in with Centrix in the last {$ttl} seconds. Windows Services can show Running while the PC is still getting internet or the agent is starting. Wait for the next agent poll and refresh — do not re-download unless this stays offline."
-                : self::AGENT_NAME.' is not checking in. Download the agent zip for this device, install it on a LAN PC, and keep the Windows service running.';
+                : self::AGENT_NAME.' is not checking in. Download the agent zip for this device, run BUILD-AND-INSTALL.bat as Administrator on a LAN PC, and keep the Windows service running.';
 
             return [
                 'online' => false,
@@ -122,7 +122,7 @@ class HikvisionAgentBridge
 
         // A fresh command/ingest heartbeat means the LAN agent is already talking to Centrix.
         // Do not block Test connection on a round-trip PING — punch catch-up can occupy the
-        // Node process for minutes while Windows still shows the service as Running.
+        // agent for minutes while Windows still shows the service as Running.
         if ($status['online']) {
             return [
                 'online' => true,

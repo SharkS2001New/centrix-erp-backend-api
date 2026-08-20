@@ -697,7 +697,8 @@ return [
             'kra_device_test_mode' => false,
             'kra_plu_register_path' => '/api/upload-plu-data',
             'kra_plu_defaults' => [
-                'plu_no' => '301',
+                // Prefer product id as plu_no; this value is only used when id/code are missing.
+                'plu_no' => '1',
                 'barcode_prefix' => '000000',
                 'unit_price' => '1',
                 'item_cls_code' => '99010000',

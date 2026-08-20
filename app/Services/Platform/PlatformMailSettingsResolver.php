@@ -504,6 +504,11 @@ class PlatformMailSettingsResolver
                 $current['from_name'] = '';
                 $current['from_address'] = '';
                 $current['reply_to'] = '';
+                // Clear the sidebar badge; history rows stay but are no longer "unread".
+                PlatformMailMessage::query()
+                    ->where('folder', 'inbox')
+                    ->whereNull('read_at')
+                    ->update(['read_at' => now()]);
             } else {
                 $hadDefault = collect($current['accounts'])->contains(
                     fn ($row) => (string) ($row['id'] ?? '') === $removeId && ! empty($row['is_default'])

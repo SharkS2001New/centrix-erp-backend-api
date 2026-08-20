@@ -77,21 +77,43 @@ class PlatformMailboxNoReplyTest extends TestCase
             $this->markTestSkipped('PLATFORM organization not found.');
         }
 
+        $account = array_merge(PlatformMailSettingsResolver::accountDefaults(), [
+            'id' => 'test-mailbox-1',
+            'label' => 'Test',
+            'is_default' => true,
+            'enabled' => true,
+            'from_address' => 'platform@example.com',
+            'from_name' => 'Centrix Test',
+            'reply_to' => 'support@example.com',
+            'smtp_host' => 'smtp.example.com',
+            'smtp_port' => 587,
+            'smtp_username' => 'platform@example.com',
+            'smtp_encryption' => 'tls',
+            'smtp_password' => 'secret',
+        ], $overrides);
+
         $settings = $org->module_settings ?? [];
         $settings[PlatformMailSettingsResolver::SETTINGS_KEY] = array_merge(
             PlatformMailSettingsResolver::defaults(),
             [
                 'enabled' => true,
-                'from_address' => 'platform@example.com',
-                'from_name' => 'Centrix Test',
-                'reply_to' => 'support@example.com',
-                'smtp_host' => 'smtp.example.com',
-                'smtp_port' => 587,
-                'smtp_username' => 'platform@example.com',
-                'smtp_encryption' => 'tls',
-                'smtp_password' => 'secret',
+                'accounts' => [$account],
+                'active_account_id' => $account['id'],
+                'from_address' => $account['from_address'],
+                'from_name' => $account['from_name'],
+                'reply_to' => $account['reply_to'],
+                'noreply_address' => $account['noreply_address'] ?? ($overrides['noreply_address'] ?? ''),
+                'smtp_host' => $account['smtp_host'],
+                'smtp_port' => $account['smtp_port'],
+                'smtp_username' => $account['smtp_username'],
+                'smtp_encryption' => $account['smtp_encryption'],
+                'smtp_password' => $account['smtp_password'],
             ],
-            $overrides,
+            array_diff_key($overrides, array_flip([
+                'from_address', 'from_name', 'reply_to', 'noreply_address',
+                'smtp_host', 'smtp_port', 'smtp_username', 'smtp_encryption', 'smtp_password',
+                'enabled', 'label',
+            ])),
         );
         $org->module_settings = $settings;
         $org->save();

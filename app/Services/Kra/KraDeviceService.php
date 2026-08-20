@@ -94,6 +94,7 @@ class KraDeviceService
 
     /**
      * Register catalogue products on the on-prem KRA device (LightStores PLU upload).
+     * Products already on the device (E353 / THE SAME NAME) are skipped, not failed.
      *
      * @param  iterable<int, object>  $products
      */
@@ -107,6 +108,7 @@ class KraDeviceService
                 'success' => false,
                 'message' => 'No products to register.',
                 'registered_count' => 0,
+                'skipped_count' => 0,
                 'product_count' => 0,
             ];
         }
@@ -117,6 +119,8 @@ class KraDeviceService
         }
 
         $registered = 0;
+        $skipped = 0;
+        $lastResponse = null;
 
         if ($this->usesUploadPluDataPayload($path)) {
             $batchSize = max(1, (int) (
@@ -126,57 +130,212 @@ class KraDeviceService
             $chunks = array_chunk($items, $batchSize);
 
             foreach ($chunks as $index => $chunk) {
-                $pluItems = array_map(
-                    fn ($product) => self::buildComstorePluItemFromProduct($product),
-                    $chunk,
-                );
-                $payload = $this->buildComstoreUploadPayload($pluItems);
-                $result = $this->postToDevice($path, $payload, [
-                    'batch' => $index + 1,
-                    'plu_count' => count($pluItems),
-                ]);
-
-                if (! $result['success']) {
-                    return array_merge($result, [
+                $outcome = $this->uploadPluChunk($chunk, $path, $index + 1);
+                if (! ($outcome['success'] ?? false)) {
+                    return array_merge($outcome, [
                         'registered_count' => $registered,
+                        'skipped_count' => $skipped,
                         'product_count' => count($items),
                         'batch' => $index + 1,
                         'product_code' => (string) ($chunk[0]->product_code ?? ''),
                     ]);
                 }
 
-                $registered += count($chunk);
+                $registered += (int) ($outcome['registered_count'] ?? 0);
+                $skipped += (int) ($outcome['skipped_count'] ?? 0);
+                $lastResponse = $outcome['response'] ?? $lastResponse;
             }
         } else {
             $chunks = array_chunk($items, 200);
 
             foreach ($chunks as $index => $chunk) {
-                $pluData = array_map(fn ($product) => self::buildPluLineFromProduct($product), $chunk);
-                $payload = $this->buildProductRegisterPayload($pluData, $index + 1, $path);
-                $result = $this->postToDevice($path, $payload, [
-                    'batch' => $index + 1,
-                    'plu_count' => count($pluData),
-                ]);
-
-                if (! $result['success']) {
-                    return array_merge($result, [
+                $outcome = $this->registerPluChunk($chunk, $path, $index + 1);
+                if (! ($outcome['success'] ?? false)) {
+                    return array_merge($outcome, [
                         'registered_count' => $registered,
+                        'skipped_count' => $skipped,
                         'product_count' => count($items),
                         'batch' => $index + 1,
                     ]);
                 }
 
-                $registered += count($chunk);
+                $registered += (int) ($outcome['registered_count'] ?? 0);
+                $skipped += (int) ($outcome['skipped_count'] ?? 0);
+                $lastResponse = $outcome['response'] ?? $lastResponse;
             }
         }
 
         return [
             'success' => true,
-            'message' => "Registered {$registered} product(s) on KRA device.",
+            'message' => $this->registrationSummaryMessage($registered, $skipped),
             'registered_count' => $registered,
+            'skipped_count' => $skipped,
             'product_count' => count($items),
-            'response' => $result['response'] ?? null,
+            'response' => $lastResponse,
         ];
+    }
+
+    /**
+     * @param  list<object>  $chunk
+     * @return array{success: bool, registered_count?: int, skipped_count?: int, message?: string, response?: mixed}
+     */
+    protected function uploadPluChunk(array $chunk, string $path, int $batch): array
+    {
+        $pluItems = array_map(
+            fn ($product) => self::buildComstorePluItemFromProduct($product),
+            $chunk,
+        );
+        $payload = $this->buildComstoreUploadPayload($pluItems);
+        $result = $this->postToDevice($path, $payload, [
+            'batch' => $batch,
+            'plu_count' => count($pluItems),
+        ]);
+
+        if ($result['success'] ?? false) {
+            return [
+                'success' => true,
+                'registered_count' => count($chunk),
+                'skipped_count' => 0,
+                'response' => $result['response'] ?? null,
+            ];
+        }
+
+        if (! $this->isAlreadyRegisteredPluResult($result)) {
+            return $result;
+        }
+
+        // Batch failed because at least one name already exists — retry one-by-one and skip duplicates.
+        if (count($chunk) === 1) {
+            return [
+                'success' => true,
+                'registered_count' => 0,
+                'skipped_count' => 1,
+                'response' => $result['response'] ?? null,
+            ];
+        }
+
+        $registered = 0;
+        $skipped = 0;
+        $lastResponse = $result['response'] ?? null;
+
+        foreach ($chunk as $product) {
+            $one = $this->uploadPluChunk([$product], $path, $batch);
+            if (! ($one['success'] ?? false)) {
+                return $one;
+            }
+            $registered += (int) ($one['registered_count'] ?? 0);
+            $skipped += (int) ($one['skipped_count'] ?? 0);
+            $lastResponse = $one['response'] ?? $lastResponse;
+        }
+
+        return [
+            'success' => true,
+            'registered_count' => $registered,
+            'skipped_count' => $skipped,
+            'response' => $lastResponse,
+        ];
+    }
+
+    /**
+     * @param  list<object>  $chunk
+     * @return array{success: bool, registered_count?: int, skipped_count?: int, message?: string, response?: mixed}
+     */
+    protected function registerPluChunk(array $chunk, string $path, int $batch): array
+    {
+        $pluData = array_map(fn ($product) => self::buildPluLineFromProduct($product), $chunk);
+        $payload = $this->buildProductRegisterPayload($pluData, $batch, $path);
+        $result = $this->postToDevice($path, $payload, [
+            'batch' => $batch,
+            'plu_count' => count($pluData),
+        ]);
+
+        if ($result['success'] ?? false) {
+            return [
+                'success' => true,
+                'registered_count' => count($chunk),
+                'skipped_count' => 0,
+                'response' => $result['response'] ?? null,
+            ];
+        }
+
+        if (! $this->isAlreadyRegisteredPluResult($result)) {
+            return $result;
+        }
+
+        if (count($chunk) === 1) {
+            return [
+                'success' => true,
+                'registered_count' => 0,
+                'skipped_count' => 1,
+                'response' => $result['response'] ?? null,
+            ];
+        }
+
+        $registered = 0;
+        $skipped = 0;
+        $lastResponse = $result['response'] ?? null;
+
+        foreach ($chunk as $product) {
+            $one = $this->registerPluChunk([$product], $path, $batch);
+            if (! ($one['success'] ?? false)) {
+                return $one;
+            }
+            $registered += (int) ($one['registered_count'] ?? 0);
+            $skipped += (int) ($one['skipped_count'] ?? 0);
+            $lastResponse = $one['response'] ?? $lastResponse;
+        }
+
+        return [
+            'success' => true,
+            'registered_count' => $registered,
+            'skipped_count' => $skipped,
+            'response' => $lastResponse,
+        ];
+    }
+
+    /** @param  array<string, mixed>  $result */
+    public function isAlreadyRegisteredPluResult(array $result): bool
+    {
+        if (($result['error_code'] ?? null) === '353') {
+            return true;
+        }
+
+        $raw = $result['technical_message']
+            ?? $result['message']
+            ?? $result['response']
+            ?? '';
+        $translated = KraDeviceErrorTranslator::translate($raw);
+
+        if (($translated['code'] ?? null) === '353') {
+            return true;
+        }
+
+        $haystack = strtoupper(
+            trim((string) ($translated['technical_message'] ?? ''))
+            .' '
+            .trim((string) ($result['message'] ?? ''))
+            .' '
+            .trim(is_string($raw) ? $raw : (json_encode($raw) ?: ''))
+        );
+
+        return str_contains($haystack, 'THE SAME NAME')
+            || str_contains($haystack, 'SAME NAME')
+            || str_contains($haystack, 'ALREADY REGISTERED');
+    }
+
+    protected function registrationSummaryMessage(int $registered, int $skipped): string
+    {
+        if ($registered === 0 && $skipped > 0) {
+            return $skipped === 1
+                ? '1 product was already on the KRA device (skipped).'
+                : "{$skipped} products were already on the KRA device (skipped).";
+        }
+
+        if ($skipped > 0) {
+            return "Registered {$registered} product(s) on KRA device; {$skipped} already on device (skipped).";
+        }
+
+        return "Registered {$registered} product(s) on KRA device.";
     }
 
     public function generateInvoiceNumber(): string
@@ -215,7 +374,11 @@ class KraDeviceService
         $price = (float) ($product->unit_price ?? $product->last_selling_price ?? 0);
         $productCode = trim((string) ($product->product_code ?? ''));
         $barcodePrefix = (string) ($defaults['barcode_prefix'] ?? '000000');
-        $pluNo = (string) ($defaults['plu_no'] ?? $product->id ?? $productCode);
+        // Prefer product id so each PLU is unique — defaults.plu_no is only a last-resort fallback.
+        $pluNo = trim((string) ($product->id ?? ''));
+        if ($pluNo === '' || $pluNo === '0') {
+            $pluNo = $productCode !== '' ? $productCode : (string) ($defaults['plu_no'] ?? '1');
+        }
         $barcode = $barcodePrefix.$productCode;
         $pluName = trim((string) ($product->product_name ?? 'Product'));
         $uploadUnitPrice = (string) ($defaults['unit_price'] ?? '1');
