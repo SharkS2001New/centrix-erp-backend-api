@@ -76,7 +76,7 @@ class AttendanceDayPolicy
      */
     public function evaluateSchedule(Employee $employee, string $date): array
     {
-        $day = Carbon::parse($date);
+        $day = $this->calendarDay($date);
         $dow = (int) $day->dayOfWeek;
 
         $holiday = $this->resolveHoliday($employee, $date);
@@ -128,7 +128,7 @@ class AttendanceDayPolicy
      */
     public function evaluate(Employee $employee, string $date): array
     {
-        $day = Carbon::parse($date);
+        $day = $this->calendarDay($date);
         $dow = (int) $day->dayOfWeek;
 
         $leave = EmployeeLeaveDay::query()
@@ -261,7 +261,22 @@ class AttendanceDayPolicy
             return null;
         }
 
-        return $this->shiftCache[(int) $employee->shift_id] ?? WorkShift::find($employee->shift_id);
+        $shiftId = (int) $employee->shift_id;
+        if (isset($this->shiftCache[$shiftId])) {
+            return $this->shiftCache[$shiftId];
+        }
+
+        if ($employee->relationLoaded('shift') && $employee->shift) {
+            return $employee->shift;
+        }
+
+        return WorkShift::query()->find($shiftId);
+    }
+
+    /** Calendar day in app timezone so weekday lines up with shift work_weekdays. */
+    protected function calendarDay(string $date): Carbon
+    {
+        return Carbon::parse($date, AppTimezone::name())->startOfDay();
     }
 
     /**

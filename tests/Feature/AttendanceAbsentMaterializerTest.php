@@ -171,4 +171,69 @@ class AttendanceAbsentMaterializerTest extends TestCase
         );
         $this->assertSame(0, collect($result['created'])->where('employee_id', $this->employee->id)->count());
     }
+
+    public function test_does_not_mark_monday_when_shift_excludes_monday(): void
+    {
+        // Tue–Fri only (no Monday)
+        $this->shift->update(['work_weekdays' => [2, 3, 4, 5]]);
+        $this->employee->unsetRelation('shift');
+
+        $monday = '2026-07-20';
+        $result = app(AttendanceAbsentMaterializer::class)->markDate($this->org->id, $monday);
+
+        $this->assertSame(
+            0,
+            EmployeeAttendance::query()
+                ->where('employee_id', $this->employee->id)
+                ->whereDate('attendance_date', $monday)
+                ->count(),
+        );
+        $this->assertSame(0, collect($result['created'])->where('employee_id', $this->employee->id)->count());
+    }
+
+    public function test_purges_auto_absent_when_day_is_no_longer_scheduled(): void
+    {
+        EmployeeAttendance::query()->create([
+            'organization_id' => $this->org->id,
+            'employee_id' => $this->employee->id,
+            'branch_id' => $this->employee->branch_id,
+            'attendance_date' => $this->workDate,
+            'status' => 'absent',
+            'source' => 'manual',
+            'hours_worked' => 0,
+            'notes' => AttendanceAbsentMaterializer::AUTO_NOTE,
+        ]);
+
+        $this->shift->update(['work_weekdays' => [2, 3, 4, 5]]); // no Monday
+        $this->employee->unsetRelation('shift');
+
+        $result = app(AttendanceAbsentMaterializer::class)->markDate($this->org->id, $this->workDate);
+
+        $this->assertSame(
+            0,
+            EmployeeAttendance::query()
+                ->where('employee_id', $this->employee->id)
+                ->whereDate('attendance_date', $this->workDate)
+                ->count(),
+        );
+        $this->assertGreaterThanOrEqual(1, $result['removed_count']);
+        $this->assertSame(0, collect($result['created'])->where('employee_id', $this->employee->id)->count());
+    }
+
+    public function test_employee_work_weekdays_override_prevents_absent(): void
+    {
+        $this->employee->update(['work_weekdays' => [2, 3, 4, 5]]); // no Monday
+        $this->employee->refresh();
+
+        $result = app(AttendanceAbsentMaterializer::class)->markDate($this->org->id, $this->workDate);
+
+        $this->assertSame(
+            0,
+            EmployeeAttendance::query()
+                ->where('employee_id', $this->employee->id)
+                ->whereDate('attendance_date', $this->workDate)
+                ->count(),
+        );
+        $this->assertSame(0, collect($result['created'])->where('employee_id', $this->employee->id)->count());
+    }
 }

@@ -36,9 +36,10 @@ class MarkAttendanceAbsents extends Command
         }
 
         $this->info(sprintf(
-            'Marked %d absent attendance record(s); skipped %d.',
+            'Marked %d absent attendance record(s); skipped %d; removed %d unscheduled auto-absent(s).',
             $result['created_count'],
             $result['skipped_count'],
+            $result['removed_count'] ?? 0,
         ));
 
         if ($result['skipped_count'] > 0 && $this->output->isVerbose()) {

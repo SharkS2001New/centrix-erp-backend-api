@@ -122,6 +122,52 @@ class MobileRouteExpenseTest extends TestCase
         $this->assertEqualsWithDelta(850.0, (float) $todayRow['total_amount'], 0.001);
     }
 
+    public function test_web_mobile_orders_summary_deducts_approved_expenses_for_cashier_and_dates(): void
+    {
+        $rep = $this->makeMobileUser(['full_name' => 'Chege']);
+        $from = now()->subDay()->startOfDay();
+        $to = now()->startOfDay();
+        $this->seedMobileSale($rep, 1000, $from);
+        $this->seedMobileSale($rep, 500, $to);
+
+        $token = $this->loginMobile($rep);
+        $created = $this->withToken($token)
+            ->postJson('/api/v1/mobile/expenses', [
+                'description' => 'Fuel',
+                'expense_amount' => 200,
+                'expense_date' => $from->toDateString(),
+            ])
+            ->assertCreated()
+            ->json();
+
+        $admin = User::where('username', 'admin')->firstOrFail();
+        $this->withoutToken();
+        Sanctum::actingAs($admin);
+
+        $before = $this->getJson(
+            '/api/v1/sales?order_source=mobile&cashier_id='.$rep->id
+            .'&from_date='.$from->toDateString()
+            .'&to_date='.$to->toDateString()
+            .'&date_field=placed&exclude_statuses=cancelled,expired&per_page=25',
+        )->assertOk()->json('summary');
+        $this->assertEqualsWithDelta(1500.0, (float) $before['revenue'], 0.001);
+
+        $this->postJson('/api/v1/sales/mobile-orders/approve-expenses', [
+            'expense_ids' => [$created['id']],
+        ])->assertOk()->assertJsonPath('approved_count', 1);
+
+        $after = $this->getJson(
+            '/api/v1/sales?order_source=mobile&cashier_id='.$rep->id
+            .'&from_date='.$from->toDateString()
+            .'&to_date='.$to->toDateString()
+            .'&date_field=placed&exclude_statuses=cancelled,expired&per_page=25',
+        )->assertOk()->json('summary');
+
+        $this->assertEqualsWithDelta(1500.0, (float) $after['gross_revenue'], 0.001);
+        $this->assertEqualsWithDelta(200.0, (float) $after['expense_total'], 0.001);
+        $this->assertEqualsWithDelta(1300.0, (float) $after['revenue'], 0.001);
+    }
+
     public function test_approved_expense_updates_past_day_order_list_totals(): void
     {
         $rep = $this->makeMobileUser();
@@ -288,6 +334,7 @@ class MobileRouteExpenseTest extends TestCase
             'branch_id' => $rep->branch_id ?? $template->branch_id,
             'organization_id' => $template->organization_id,
             'channel' => 'mobile',
+            'order_source' => 'mobile',
             'cashier_id' => $rep->id,
             'customer_num' => $template->customer_num,
             'route_id' => $rep->assigned_route_id ?? $template->route_id,

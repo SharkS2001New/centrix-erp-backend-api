@@ -278,6 +278,28 @@ class MobileRouteExpenseService
     }
 
     /**
+     * Approved route expenses for the manager Mobile Orders list (date + optional user/route).
+     *
+     * @param  array{cashier_id?: int|null, route_id?: int|null}  $filters
+     */
+    public function approvedTotalForManagerBetween(
+        User $manager,
+        Carbon $from,
+        Carbon $to,
+        array $filters = [],
+    ): float {
+        if (! $this->tableReady()) {
+            return 0.0;
+        }
+
+        return round((float) $this->managerQuery($manager, $filters)
+            ->where('status', MobileRouteExpense::STATUS_APPROVED)
+            ->whereDate('expense_date', '>=', $from->toDateString())
+            ->whereDate('expense_date', '<=', $to->toDateString())
+            ->sum('expense_amount'), 2);
+    }
+
+    /**
      * @return array<string, mixed>
      */
     public function serialize(MobileRouteExpense $expense): array

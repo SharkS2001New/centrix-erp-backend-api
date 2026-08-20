@@ -264,6 +264,16 @@ class AttendanceDayReconciler
             $notes = 'Applied by HR from terminal punch';
         }
 
+        // Never auto-mark absent on a day the shift / employee work week says is off.
+        $isAutoAbsent = $forcedStatus === 'absent'
+            && is_string($notes)
+            && str_starts_with($notes, 'Auto-marked absent');
+        if ($isAutoAbsent && ! ($eval['should_work'] ?? false)) {
+            throw new \InvalidArgumentException(
+                $eval['reason'] ?? 'Not a scheduled workday for this employee.',
+            );
+        }
+
         // Admin can still record times for a non-scheduled day (present/late/half_day with punches).
         if (! $eval['should_work'] && ! $forcedWork && ! $forcedOff) {
             $status = $forcedStatus ?? $eval['suggested_status'];
@@ -294,6 +304,13 @@ class AttendanceDayReconciler
             $this->clearAutoOvertime($employee->id, $date);
 
             return $attendance;
+        }
+
+        // Forced absent on a non-scheduled day is not valid — keep the day unmarked / off.
+        if ($forcedOff && ! ($eval['should_work'] ?? false) && $forcedStatus === 'absent') {
+            throw new \InvalidArgumentException(
+                $eval['reason'] ?? 'Not a scheduled workday for this employee.',
+            );
         }
 
         if ($forcedOff) {

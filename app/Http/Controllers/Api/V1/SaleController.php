@@ -11,6 +11,7 @@ use App\Support\SalesOrderQueuePermissions;
 use App\Support\SqlLikeSearch;
 use App\Services\Sales\BackofficeOrderLineEditService;
 use App\Services\Sales\CentrixSalesScope;
+use App\Services\Sales\MobileRouteExpenseService;
 use App\Services\Sales\OrderNumberAllocator;
 use App\Services\Sales\PosOrderEditService;
 use App\Services\Sales\RouteOrderScope;
@@ -316,6 +317,7 @@ class SaleController extends BaseResourceController
 
         // Summary must run before select('sales.*'); aggregate select replaces columns on a clone.
         $summary = $this->summarizeFilteredOrders($query);
+        $summary = $this->applyMobileExpenseDeductionToSummary($summary, $request, $listScope ?? null);
 
         if (! empty($query->getQuery()->joins)) {
             $query->select('sales.*');
@@ -406,6 +408,74 @@ class SaleController extends BaseResourceController
             'cancelled' => (int) ($row->cancelled ?? 0),
             'expired' => (int) ($row->expired ?? 0),
         ];
+    }
+
+    /**
+     * Mobile Orders Revenue card: subtract approved route expenses for the same
+     * date window + optional cashier/route filters (matches mobile app KPIs).
+     *
+     * @param  array<string, mixed>  $summary
+     * @param  array<string, mixed>|null  $listScope
+     * @return array<string, mixed>
+     */
+    protected function applyMobileExpenseDeductionToSummary(array $summary, Request $request, ?array $listScope): array
+    {
+        $orderSource = strtolower(trim((string) $request->input('order_source', '')));
+        $channel = strtolower(trim((string) $request->input('channel', '')));
+        $isMobileList = $orderSource === 'mobile' || $channel === 'mobile';
+        if (! $isMobileList) {
+            return $summary;
+        }
+
+        $user = $request->user();
+        if (! $user) {
+            return $summary;
+        }
+
+        $fromRaw = $request->filled('from_date')
+            ? (string) $request->input('from_date')
+            : (string) ($listScope['from'] ?? '');
+        $toRaw = $request->filled('to_date')
+            ? (string) $request->input('to_date')
+            : (string) ($listScope['to'] ?? '');
+        if ($fromRaw === '' || $toRaw === '') {
+            return $summary;
+        }
+
+        try {
+            $from = Carbon::parse($fromRaw)->startOfDay();
+            $to = Carbon::parse($toRaw)->startOfDay();
+        } catch (\Throwable) {
+            return $summary;
+        }
+
+        if ($from->greaterThan($to)) {
+            [$from, $to] = [$to, $from];
+        }
+
+        $expenseTotal = app(MobileRouteExpenseService::class)->approvedTotalForManagerBetween(
+            $user,
+            $from,
+            $to,
+            [
+                'cashier_id' => $request->filled('cashier_id') ? (int) $request->input('cashier_id') : null,
+                'route_id' => $request->filled('route_id') ? (int) $request->input('route_id') : null,
+            ],
+        );
+
+        if ($expenseTotal <= 0) {
+            $summary['gross_revenue'] = round((float) ($summary['revenue'] ?? 0), 2);
+            $summary['expense_total'] = 0.0;
+
+            return $summary;
+        }
+
+        $gross = round((float) ($summary['revenue'] ?? 0), 2);
+        $summary['gross_revenue'] = $gross;
+        $summary['expense_total'] = $expenseTotal;
+        $summary['revenue'] = round($gross - $expenseTotal, 2);
+
+        return $summary;
     }
 
     public function show(Request $request, string $id)
