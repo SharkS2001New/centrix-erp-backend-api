@@ -64,7 +64,9 @@ class AttendanceDayPunchPresenter
             return $empty;
         }
 
-        if ($second) {
+        // Lunch mapping needs a closed morning session. A second open clock-in
+        // (duplicate morning punch) must not be shown as "Lunch in".
+        if ($second && $first->clock_out_at) {
             $empty['lunch_out'] = $this->clockHm($first->clock_out_at);
             $empty['lunch_in'] = $this->clockHm($second->clock_in_at);
             $empty['clock_out'] = $this->clockHm($last->clock_out_at);

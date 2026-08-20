@@ -126,6 +126,44 @@ class AttendanceLunchReconcileTest extends TestCase
         $this->assertSame('17:10', $punches['clock_out']);
     }
 
+    public function test_day_punch_presenter_does_not_treat_duplicate_open_morning_as_lunch_in(): void
+    {
+        EmployeeClockSession::query()->create([
+            'employee_id' => $this->employee->id,
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->employee->branch_id,
+            'source' => 'clock_device',
+            'clock_in_at' => "{$this->workDate} 07:24:00",
+            'clock_out_at' => null,
+            'device_identifier' => 'TEST',
+        ]);
+        EmployeeClockSession::query()->create([
+            'employee_id' => $this->employee->id,
+            'organization_id' => $this->org->id,
+            'branch_id' => $this->employee->branch_id,
+            'source' => 'clock_device',
+            'clock_in_at' => "{$this->workDate} 07:24:30",
+            'clock_out_at' => null,
+            'device_identifier' => 'TEST',
+        ]);
+
+        $sessions = EmployeeClockSession::query()
+            ->where('employee_id', $this->employee->id)
+            ->orderBy('clock_in_at')
+            ->get();
+
+        $punches = app(\App\Services\Attendance\AttendanceDayPunchPresenter::class)->present(
+            $this->employee->fresh('shift'),
+            $this->workDate,
+            $sessions,
+        );
+
+        $this->assertSame('07:24', $punches['clock_in']);
+        $this->assertNull($punches['lunch_out']);
+        $this->assertNull($punches['lunch_in']);
+        $this->assertNull($punches['clock_out']);
+    }
+
     public function test_day_punch_presenter_hides_lunch_when_shift_has_none(): void
     {
         $this->shift->forceFill(['lunch_required' => false, 'lunch_minutes' => 0])->save();
