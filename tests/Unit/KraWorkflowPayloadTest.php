@@ -20,6 +20,7 @@ class KraWorkflowPayloadTest extends TestCase
 
         $this->assertSame('Orange Juice', $line['item_Name']);
         $this->assertSame('', $line['Barcode']);
+        $this->assertSame('PRD#0001', $line['product_code']);
         $this->assertSame('100.00', $line['SalePrice']);
         $this->assertSame('2', $line['SaleQty']);
         $this->assertSame('200.00', $line['SaleAmount']);

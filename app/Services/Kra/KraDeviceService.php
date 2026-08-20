@@ -481,10 +481,14 @@ class KraDeviceService
         $amount = round(max(0.0, (float) ($item['amount'] ?? 0)), 2);
         $quantity = max(0.001, (float) ($item['quantity'] ?? 1));
         $itemName = trim((string) ($item['product_name'] ?? 'Product'));
+        $productCode = trim((string) ($item['product_code'] ?? ''));
 
         return [
             'item_Name' => $itemName !== '' ? $itemName : 'Product',
+            // Comstore sale workflow expects an empty Barcode; keep product_code for
+            // Centrix matching against device SKU / "NO FIND PLU DATA for item …".
             'Barcode' => '',
+            'product_code' => $productCode,
             'SalePrice' => self::formatWorkflowSalePrice($amount, $quantity),
             'SaleQty' => self::formatWorkflowSaleQty($quantity),
             'SaleAmount' => number_format($amount, 2, '.', ''),
@@ -925,25 +929,27 @@ class KraDeviceService
         $technical = (string) ($translated['technical_message'] ?? $rawMessage);
         $code = $translated['code'] ?? null;
 
-        // Prefer the exact PLU token from the device when present.
-        if (preg_match('/NO\s+FIND\s+PLU\s+DATA\s+for\s+item\s+([^\s,;]+)/i', $technical, $match) === 1) {
-            $item = trim((string) $match[1]);
+        // Prefer the exact PLU / SKU token from the device when present.
+        // Do NOT list every sale line as missing — that made the UI mark every
+        // product as the cause even when only one device SKU failed.
+        if (preg_match('/NO\s+FIND\s+PLU\s+DATA\s+for\s+item\s+(.+?)(?:\s+error|\s*$|[.;,]|\s+Upload)/is', $technical, $match) === 1
+            || preg_match('/NO\s+FIND\s+PLU\s+DATA\s+for\s+item\s+([^\s,;]+)/i', $technical, $match) === 1
+        ) {
+            $item = trim((string) ($match[1] ?? ''));
+            $item = rtrim($item, " \t\n\r\0\x0B.;,");
             if ($item !== '') {
-                $message = 'Product not found on the KRA device: '.$item.'. Upload it to the device first, then retry.';
+                $label = $this->resolvePluLabelForDeviceToken($payload, $item) ?? $item;
+                $message = 'Product not found on the KRA device: '.$label.'. Upload it to the device first, then retry.';
             }
         } elseif (
             in_array((string) $code, ['337', '13'], true)
             || preg_match('/NO\s+FIND\s+PLU\s+DATA|not found on the KRA device/i', $message.$technical) === 1
         ) {
             $labels = $this->pluLabelsFromPayload($payload);
-            if ($labels !== []) {
-                if (count($labels) === 1) {
-                    $message = 'Product not found on the KRA device: '.$labels[0].'. Upload it to the device first, then retry.';
-                } else {
-                    $message = 'One or more of these products were not found on the KRA device: '
-                        .implode('; ', $labels)
-                        .'. Upload the missing product(s) to the device, then retry.';
-                }
+            // Only name the product when the sale has a single line — otherwise keep
+            // the generic translator message (device did not identify which PLU).
+            if (count($labels) === 1) {
+                $message = 'Product not found on the KRA device: '.$labels[0].'. Upload it to the device first, then retry.';
             }
         }
 
@@ -955,6 +961,49 @@ class KraDeviceService
             'payload' => $payload,
             'response' => $response,
         ];
+    }
+
+    /**
+     * Map a device "for item …" token to the sale line label using product_code / SKU.
+     *
+     * @param  array<string, mixed>  $payload
+     */
+    protected function resolvePluLabelForDeviceToken(array $payload, string $token): ?string
+    {
+        $tokenNorm = strtolower(trim($token));
+        if ($tokenNorm === '') {
+            return null;
+        }
+
+        $prefix = strtolower((string) (config('erp.module_settings_defaults.finance.kra_plu_defaults.barcode_prefix') ?? '000000'));
+        $raw = $payload['plu_data'] ?? $payload['PluData'] ?? [];
+        if (! is_array($raw)) {
+            return null;
+        }
+
+        foreach ($raw as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $name = trim((string) ($line['item_Name'] ?? $line['ItemName'] ?? $line['product_name'] ?? ''));
+            $code = trim((string) ($line['product_code'] ?? $line['Barcode'] ?? $line['barcode'] ?? $line['itemCd'] ?? ''));
+            $codeNorm = strtolower($code);
+            $prefixed = $codeNorm !== '' ? $prefix.$codeNorm : '';
+            $nameNorm = strtolower($name);
+
+            $matches =
+                ($codeNorm !== '' && ($codeNorm === $tokenNorm || $prefixed === $tokenNorm
+                    || str_ends_with($tokenNorm, $codeNorm)))
+                || ($nameNorm !== '' && ($nameNorm === $tokenNorm || $nameNorm === str_replace('_', ' ', $tokenNorm)));
+
+            if (! $matches) {
+                continue;
+            }
+
+            return $code !== '' ? ($name !== '' ? "{$name} ({$code})" : $code) : $name;
+        }
+
+        return null;
     }
 
     /**
@@ -974,7 +1023,7 @@ class KraDeviceService
                 continue;
             }
             $name = trim((string) ($line['item_Name'] ?? $line['ItemName'] ?? $line['product_name'] ?? ''));
-            $code = trim((string) ($line['Barcode'] ?? $line['barcode'] ?? $line['product_code'] ?? $line['itemCd'] ?? ''));
+            $code = trim((string) ($line['product_code'] ?? $line['Barcode'] ?? $line['barcode'] ?? $line['itemCd'] ?? ''));
             if ($name === '' && $code === '') {
                 continue;
             }
