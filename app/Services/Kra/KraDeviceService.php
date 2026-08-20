@@ -921,15 +921,67 @@ class KraDeviceService
     protected function deviceFailureResult(string $rawMessage, array $payload, ?array $response = null): array
     {
         $translated = KraDeviceErrorTranslator::translate($rawMessage);
+        $message = (string) ($translated['message'] ?? '');
+        $technical = (string) ($translated['technical_message'] ?? $rawMessage);
+        $code = $translated['code'] ?? null;
+
+        // Prefer the exact PLU token from the device when present.
+        if (preg_match('/NO\s+FIND\s+PLU\s+DATA\s+for\s+item\s+([^\s,;]+)/i', $technical, $match) === 1) {
+            $item = trim((string) $match[1]);
+            if ($item !== '') {
+                $message = 'Product not found on the KRA device: '.$item.'. Upload it to the device first, then retry.';
+            }
+        } elseif (
+            in_array((string) $code, ['337', '13'], true)
+            || preg_match('/NO\s+FIND\s+PLU\s+DATA|not found on the KRA device/i', $message.$technical) === 1
+        ) {
+            $labels = $this->pluLabelsFromPayload($payload);
+            if ($labels !== []) {
+                if (count($labels) === 1) {
+                    $message = 'Product not found on the KRA device: '.$labels[0].'. Upload it to the device first, then retry.';
+                } else {
+                    $message = 'One or more of these products were not found on the KRA device: '
+                        .implode('; ', $labels)
+                        .'. Upload the missing product(s) to the device, then retry.';
+                }
+            }
+        }
 
         return [
             'success' => false,
-            'message' => $translated['message'],
-            'technical_message' => $translated['technical_message'],
-            'error_code' => $translated['code'],
+            'message' => $message,
+            'technical_message' => $technical,
+            'error_code' => $code,
             'payload' => $payload,
             'response' => $response,
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $payload
+     * @return list<string>
+     */
+    protected function pluLabelsFromPayload(array $payload): array
+    {
+        $raw = $payload['plu_data'] ?? $payload['PluData'] ?? [];
+        if (! is_array($raw)) {
+            return [];
+        }
+
+        $labels = [];
+        foreach ($raw as $line) {
+            if (! is_array($line)) {
+                continue;
+            }
+            $name = trim((string) ($line['item_Name'] ?? $line['ItemName'] ?? $line['product_name'] ?? ''));
+            $code = trim((string) ($line['Barcode'] ?? $line['barcode'] ?? $line['product_code'] ?? $line['itemCd'] ?? ''));
+            if ($name === '' && $code === '') {
+                continue;
+            }
+            $labels[] = $code !== '' ? ($name !== '' ? "{$name} ({$code})" : $code) : $name;
+        }
+
+        return array_values(array_unique($labels));
     }
 
     protected function mapResponse(?array $responseData): ?array
