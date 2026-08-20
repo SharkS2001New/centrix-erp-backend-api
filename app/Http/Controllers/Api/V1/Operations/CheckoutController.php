@@ -1468,6 +1468,20 @@ class CheckoutController extends Controller
             }
 
             if (! $canFree) {
+                // Previous-order edit claimed this Cash Sale # but markers were lost
+                // (DELETE /lines wiped superseded_sale_id). Never silently mint a new
+                // order_num — that left the original receipt live and a duplicate ticket.
+                $existingStatus = (string) ($existing->status ?? '');
+                $isParkedHold = in_array($existingStatus, ['held', 'draft'], true);
+                $cartClaimsHeld = $cart->held_order_num
+                    && (int) $cart->held_order_num === $requested;
+                if (! $isParkedHold && $cartClaimsHeld && $supersededId === null) {
+                    abort(
+                        422,
+                        'Previous-order edit is missing its sale identity. Cancel and reopen the receipt to edit.',
+                    );
+                }
+
                 // Live (or foreign) sale already owns this number — allocate fresh.
                 return $allocator->nextForOrganization($orgId);
             }

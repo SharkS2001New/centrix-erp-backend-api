@@ -352,14 +352,21 @@ class CartOperationsController extends Controller
             'This cart belongs to another branch.',
         );
 
+        // Mid previous-order edit (qty/swap/wholesale rebuild): clear lines only —
+        // keep held_order_num / superseded_sale_id so checkout still supersedes.
+        $preserveEdit = filter_var(
+            request()->query('preserve_edit', request()->input('preserve_edit', false)),
+            FILTER_VALIDATE_BOOLEAN,
+        );
+
         // Serialize against checkout / line edits. Retry MySQL 1213 deadlocks (stock
         // reservations vs cart_lines lock order under concurrent POS traffic).
-        DB::transaction(function () use ($resolvedId, $user) {
+        DB::transaction(function () use ($resolvedId, $user, $preserveEdit) {
             $locked = TemporaryCart::query()->whereKey($resolvedId)->lockForUpdate()->first();
             if (! $locked) {
                 return;
             }
-            $this->clearCart($locked, $user);
+            $this->clearCart($locked, $user, preserveEditMarkers: $preserveEdit);
         }, 5);
 
         return response()->json(['ok' => true]);
@@ -1848,10 +1855,14 @@ class CartOperationsController extends Controller
         $cart->increment('update_no');
     }
 
-    protected function clearCart(TemporaryCart $cart, ?User $user = null): void
-    {
+    protected function clearCart(
+        TemporaryCart $cart,
+        ?User $user = null,
+        bool $preserveEditMarkers = false,
+    ): void {
         $user ??= request()->user();
         $supersededSaleId = (int) ($cart->superseded_sale_id ?? 0);
+        $heldOrderNum = $cart->held_order_num;
 
         if ($user) {
             app(\App\Services\Notifications\ActionRequestService::class)->cancelAllPendingForCart(
@@ -1863,6 +1874,21 @@ class CartOperationsController extends Controller
 
         $this->releaseCartReservations($cart->id);
         CartLine::where('cart_id', $cart->id)->delete();
+
+        if ($preserveEditMarkers && $supersededSaleId > 0) {
+            // Rebuild / mid-edit wipe: empty lines but keep edit identity.
+            $cart->update([
+                'order_discount' => 0,
+                'discount_voucher_id' => null,
+                'held_order_num' => $heldOrderNum,
+                'superseded_sale_id' => $supersededSaleId,
+            ]);
+            $this->clearCartPaymentOptions($cart);
+            $cart->increment('update_no');
+
+            return;
+        }
+
         $cart->update([
             'order_discount' => 0,
             'discount_voucher_id' => null,
