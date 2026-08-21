@@ -153,6 +153,14 @@ class SalePaymentStatusConversionService
                 'payment_status' => 'unpaid',
             ];
 
+            // Converting a customer sale to unpaid creates a shop receivable — mark it
+            // as credit so Shop Debtors / A/R treat it like a credit checkout, not a
+            // cash sale that merely had tenders cleared.
+            if ($sale->customer_num) {
+                $updates['is_credit_sale'] = 1;
+                $updates['payment_method_code'] = 'CREDIT';
+            }
+
             if (
                 $sale->status !== 'cancelled'
                 && $sale->status !== 'held'

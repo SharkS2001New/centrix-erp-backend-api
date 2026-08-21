@@ -69,8 +69,68 @@ class ReportBuilderTest extends TestCase
             ->assertOk();
 
         $this->assertSame('accounting', $accountingResponse->json('workspace_id'));
-        $accountingModules = collect($accountingResponse->json('sources'))->pluck('module')->unique()->values()->all();
-        $this->assertSame(['Accounting'], $accountingModules);
+        $accountingModules = collect($accountingResponse->json('sources'))->pluck('module')->unique()->sort()->values()->all();
+        $this->assertSame(['Accounting', 'Payments'], $accountingModules);
+    }
+
+    public function test_distribution_schema_includes_logistics_sources(): void
+    {
+        $response = $this->getJson('/api/v1/reports/builder/schema?workspace_id=distribution')
+            ->assertOk();
+
+        $this->assertSame('distribution', $response->json('workspace_id'));
+        $modules = collect($response->json('sources'))->pluck('module')->unique()->sort()->values()->all();
+        $this->assertSame(['Logistics', 'Sales'], $modules);
+        $this->assertContains('dispatch_trips', collect($response->json('sources'))->pluck('key')->all());
+    }
+
+    public function test_hospitality_schema_excludes_retail_sales(): void
+    {
+        $response = $this->getJson('/api/v1/reports/builder/schema?workspace_id=hospitality_backoffice')
+            ->assertOk();
+
+        $this->assertSame('hospitality_backoffice', $response->json('workspace_id'));
+        $modules = collect($response->json('sources'))->pluck('module')->unique()->sort()->values()->all();
+        $this->assertSame(['Hospitality', 'Inventory', 'Purchasing'], $modules);
+        $this->assertNotContains('Sales', $modules);
+        $keys = collect($response->json('sources'))->pluck('key')->all();
+        $this->assertContains('hospitality_checks', $keys);
+        $this->assertContains('hospitality_folios', $keys);
+        $this->assertNotContains('sales', $keys);
+    }
+
+    public function test_hospitality_can_preview_checks_source(): void
+    {
+        $this->postJson('/api/v1/reports/builder/preview', [
+            'spec' => [
+                'source' => 'hospitality_checks',
+                'sources' => ['hospitality_checks'],
+                'columns' => [
+                    ['source' => 'hospitality_checks', 'field' => 'status', 'label' => 'Status'],
+                    ['source' => 'hospitality_checks', 'field' => 'total', 'label' => 'Total', 'aggregate' => 'sum'],
+                ],
+                'group_by' => ['status'],
+            ],
+            'per_page' => 10,
+            'workspace_id' => 'hospitality_backoffice',
+        ])->assertOk()->assertJsonStructure(['data']);
+    }
+
+    public function test_distribution_can_preview_dispatch_trips(): void
+    {
+        $this->postJson('/api/v1/reports/builder/preview', [
+            'spec' => [
+                'source' => 'dispatch_trips',
+                'sources' => ['dispatch_trips'],
+                'columns' => [
+                    ['source' => 'dispatch_trips', 'field' => 'status', 'label' => 'Status'],
+                    ['source' => 'dispatch_trips', 'field' => 'trip_count', 'label' => 'Trips', 'aggregate' => 'count'],
+                ],
+                'group_by' => ['status'],
+            ],
+            'per_page' => 10,
+            'workspace_id' => 'distribution',
+        ])->assertOk()->assertJsonStructure(['data']);
     }
 
     public function test_builder_sources_catalog_is_grouped_by_module(): void

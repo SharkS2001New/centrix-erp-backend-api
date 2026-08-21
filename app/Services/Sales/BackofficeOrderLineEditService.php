@@ -590,15 +590,8 @@ class BackofficeOrderLineEditService
             return [$unitPrice, round($amount, 2)];
         }
 
-        $roundedAmount = PosCashRounding::roundLightStoresAmount($amount);
-        $product->loadMissing('unit');
-        $factor = max(1.0, (float) ($product->unit?->conversion_factor ?? 1));
-        $entryQty = $factor > 1 && ! $isRetailLine ? $baseQty / $factor : $baseQty;
-        $displayUnit = $entryQty > 0
-            ? PosCashRounding::roundLightStoresAmount($roundedAmount / $entryQty)
-            : $unitPrice;
-
-        return [$displayUnit, $roundedAmount];
+        // Cash rounding applies to line amount only — keep unit price decimals (e.g. 92.22).
+        return [$unitPrice, PosCashRounding::roundLightStoresAmount($amount)];
     }
 
     protected function adjustStockForQtyChange(

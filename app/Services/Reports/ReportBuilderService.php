@@ -107,8 +107,12 @@ class ReportBuilderService
             'Sales' => 'Sales Reports',
             'Inventory' => 'Inventory Reports',
             'Purchasing' => 'Purchases Reports',
-            'Accounting' => 'Finance & Accounting',
+            'Accounting', 'Payments' => 'Finance & Accounting',
             'HR' => 'HR Reports',
+            'Logistics' => 'Distribution Reports',
+            'Hospitality' => 'Hospitality Reports',
+            'POS' => 'POS Reports',
+            'Administration' => 'Administration Reports',
             default => 'Other Reports',
         };
     }
@@ -119,8 +123,11 @@ class ReportBuilderService
             'Sales' => 'sales.reports',
             'Inventory' => 'inventory.reports',
             'Purchasing' => 'customers_suppliers.reports',
-            'Accounting' => 'accounting.reports',
+            'Accounting', 'Payments' => 'accounting.reports',
             'HR' => 'hr_payroll.reports',
+            'Logistics' => 'distribution.reports',
+            'Hospitality' => 'hospitality.reports',
+            'POS' => 'sales.reports',
             default => null,
         };
     }

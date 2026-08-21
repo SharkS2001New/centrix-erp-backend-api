@@ -1691,6 +1691,9 @@ return [
         ],
     ], is_file(__DIR__.'/report_builder_extended.php')
         ? require __DIR__.'/report_builder_extended.php'
+        : [],
+    is_file(__DIR__.'/report_builder_hospitality.php')
+        ? require __DIR__.'/report_builder_hospitality.php'
         : []),
 
     'aggregates' => ['sum', 'avg', 'count', 'min', 'max'],
@@ -1713,11 +1716,24 @@ return [
      * Keys match config/erp_workspaces.php and the web workspace switcher.
      */
     'workspace_source_modules' => [
-        'backoffice' => ['Sales', 'Inventory', 'Purchasing'],
-        'accounting' => ['Accounting'],
+        'backoffice' => ['Sales', 'Inventory', 'Purchasing', 'POS'],
+        'accounting' => ['Accounting', 'Payments'],
         'hr' => ['HR'],
-        'distribution' => ['Sales', 'Distribution'],
-        'admin' => ['Administration', 'Sales', 'Inventory', 'Purchasing', 'Accounting', 'HR'],
+        'distribution' => ['Sales', 'Logistics'],
+        'hospitality_backoffice' => ['Hospitality', 'Inventory', 'Purchasing'],
+        'admin' => [
+            'Administration',
+            'Sales',
+            'Inventory',
+            'Purchasing',
+            'Accounting',
+            'HR',
+            'Logistics',
+            'Payments',
+            'POS',
+            'Hospitality',
+        ],
         'pos' => [],
+        'hotel_bar_pos' => [],
     ],
 ];

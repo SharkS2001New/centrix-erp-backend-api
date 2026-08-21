@@ -304,4 +304,84 @@ class ShopDebtorsSalesIndexTest extends TestCase
         $this->assertContains($backofficeSaveUnpaid->id, $unpaidIds);
         $this->assertContains($whatsappUnpaid->id, $unpaidIds);
     }
+
+    public function test_shop_debtors_includes_older_converted_unpaid_within_orders_window(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $org = \App\Models\Organization::query()->findOrFail($admin->organization_id);
+        $settings = $org->module_settings ?? [];
+        $sales = is_array($settings['sales'] ?? null) ? $settings['sales'] : [];
+        $sales['convert_to_unpaid_statuses'] = ['paid', 'pending_payment', 'completed', 'mobile', 'whatsapp'];
+        $settings['sales'] = $sales;
+        $org->module_settings = $settings;
+        $org->save();
+
+        $suffix = random_int(400000000, 499999999);
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $suffix,
+            'customer_name' => 'Older Debtor '.$suffix,
+            'customer_type' => 'debtor',
+            'created_by' => $admin->id,
+        ]);
+
+        $placedAt = now()->subDays(10);
+        $sale = Sale::query()->create([
+            'order_num' => $suffix,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'cashier_id' => $admin->id,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => $suffix,
+            'status' => 'completed',
+            'payment_status' => 'paid',
+            'payment_method_code' => 'CASH',
+            'is_credit_sale' => 0,
+            'order_total' => 2500,
+            'amount_paid' => 2500,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => $placedAt,
+            'completed_at' => $placedAt,
+        ]);
+        if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'effective_sale_date')) {
+            $sale->forceFill(['effective_sale_date' => $placedAt->toDateString()])->saveQuietly();
+        }
+
+        $converted = app(\App\Services\Sales\SalePaymentStatusConversionService::class)
+            ->convertToUnpaid($sale->fresh(), $admin);
+
+        $this->assertSame('unpaid', $converted->payment_status);
+        $this->assertTrue((bool) $converted->is_credit_sale);
+        $this->assertSame('CREDIT', strtoupper((string) $converted->payment_method_code));
+
+        // Keep the original sale calendar day so a 3-day UI window would hide it while
+        // the orders-list (14-day) window still includes it.
+        $oldDay = $placedAt->toDateString();
+        if (\Illuminate\Support\Facades\Schema::hasColumn('sales', 'effective_sale_date')) {
+            $converted->forceFill(['effective_sale_date' => $oldDay])->saveQuietly();
+        }
+
+        $from = now()->subDays(14)->toDateString();
+        $to = now()->toDateString();
+        $ids = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=unpaid&from_date={$from}&to_date={$to}&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertContains($sale->id, $ids);
+
+        $narrowFrom = now()->subDays(2)->toDateString();
+        $narrowIds = collect(
+            $this->getJson(
+                "/api/v1/sales?shop_debtors=1&filter[payment_status]=unpaid&from_date={$narrowFrom}&to_date={$to}&per_page=200",
+            )->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+        $this->assertNotContains($sale->id, $narrowIds);
+    }
 }
