@@ -16,18 +16,22 @@ class HikvisionAgentBridge
 {
     public const AGENT_NAME = 'CentrixAttendanceAgent';
 
-    /** Floor for "online" when poll interval is very short. */
-    public const MIN_ONLINE_SECONDS = 120;
+    /** Floor for "online" — survive brief outages / overnight PC sleep wake. */
+    public const MIN_ONLINE_SECONDS = 1800;
 
     /** Legacy default used by older call sites / docs. */
     public const AGENT_ONLINE_SECONDS = 90;
 
-    public const MIN_COMMAND_WAIT_SECONDS = 60;
+    /** Minimum wait for an ISAPI proxy round-trip through the LAN agent. */
+    public const MIN_COMMAND_WAIT_SECONDS = 120;
 
     /** Cap so a single ISAPI proxy call cannot block the hourly scheduler forever. */
     public const MAX_COMMAND_WAIT_SECONDS = 420;
 
-    public const COMMAND_WAIT_SECONDS = 45;
+    public const COMMAND_WAIT_SECONDS = 120;
+
+    /** If the agent checked in within this window, Test connection skips a blocking PING. */
+    public const RECENT_CHECKIN_GRACE_SECONDS = 7200;
 
     public const PING_PATH = '/agent/ping';
 
@@ -52,20 +56,20 @@ class HikvisionAgentBridge
     }
 
     /**
-     * Stay online across one punch/heartbeat cycle. Command poll is every few seconds,
-     * but ingest/heartbeat may be the only check-in when that poll blips.
+     * Stay online across missed heartbeats. Command poll is every few seconds when healthy;
+     * allow a long grace so brief network blips or punch catch-up do not flip offline.
      */
     public function onlineTtlSeconds(AttendanceClockDevice $device): int
     {
-        return max(self::MIN_ONLINE_SECONDS, $this->pollSeconds($device) + 180);
+        return max(self::MIN_ONLINE_SECONDS, ($this->pollSeconds($device) * 3) + 300);
     }
 
     /**
-     * Agent command polling is frequent, so keep proxy waits bounded.
+     * Agent command polling is frequent; still allow enough time for a busy device ISAPI call.
      */
     public function commandWaitSeconds(AttendanceClockDevice $device): int
     {
-        return self::MIN_COMMAND_WAIT_SECONDS;
+        return min(self::MAX_COMMAND_WAIT_SECONDS, max(self::MIN_COMMAND_WAIT_SECONDS, 120));
     }
 
     public function isAgentOnline(AttendanceClockDevice $device): bool
@@ -132,6 +136,17 @@ class HikvisionAgentBridge
             ];
         }
 
+        // Recently known agent that missed a couple of heartbeats — treat as live without a
+        // blocking PING so offices are not forced to re-download every morning.
+        if ($this->hasRecentCheckIn($device)) {
+            return [
+                'online' => true,
+                'via_agent' => true,
+                'agent' => $status,
+                'message' => self::AGENT_NAME.' checked in recently. If punches look behind, wait a minute for the next sync — do not re-download.',
+            ];
+        }
+
         try {
             $response = $this->executeViaAgent($device, 'PING', self::PING_PATH, null, 'json', true);
             $fresh = $this->agentStatus($device->fresh() ?? $device);
@@ -152,7 +167,7 @@ class HikvisionAgentBridge
             ];
         } catch (\Throwable $e) {
             $fresh = $this->agentStatus($device->fresh() ?? $device);
-            if ($fresh['online']) {
+            if ($fresh['online'] || $this->hasRecentCheckIn($device->fresh() ?? $device)) {
                 return [
                     'online' => true,
                     'via_agent' => true,
@@ -169,9 +184,19 @@ class HikvisionAgentBridge
         }
     }
 
+    public function hasRecentCheckIn(AttendanceClockDevice $device): bool
+    {
+        $seen = AppTimezone::normalize($device->agent_last_seen_at);
+        if ($seen === null) {
+            return false;
+        }
+
+        return $seen->greaterThan(AppTimezone::now()->subSeconds(self::RECENT_CHECKIN_GRACE_SECONDS));
+    }
+
     public function shouldUseAgent(AttendanceClockDevice $device): bool
     {
-        return $this->isAgentOnline($device);
+        return $this->isAgentOnline($device) || $this->hasRecentCheckIn($device);
     }
 
     public function touchAgent(AttendanceClockDevice $device, ?string $version = null): void
@@ -205,7 +230,11 @@ class HikvisionAgentBridge
         string $accept = 'json',
         bool $allowStale = false,
     ): HikvisionIsapiResponse {
-        if (! $this->isAgentOnline($device) && ! ($allowStale && $this->hasCheckedIn($device))) {
+        $canProxy = $this->isAgentOnline($device)
+            || $this->hasRecentCheckIn($device)
+            || ($allowStale && $this->hasCheckedIn($device));
+
+        if (! $canProxy) {
             $seen = $device->agent_last_seen_at;
             $ttl = $this->onlineTtlSeconds($device);
             throw new RuntimeException(

@@ -422,7 +422,9 @@ class AuthSessionService
         }
 
         if ($forceLogout) {
-            $authUser->tokens()->delete();
+            $authUser->tokens()
+                ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
+                ->delete();
         } else {
             $this->pruneStaleTokens($authUser);
             $authUser->tokens()->where('name', $clientId)->delete();

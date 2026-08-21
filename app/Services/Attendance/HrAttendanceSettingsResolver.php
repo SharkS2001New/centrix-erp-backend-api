@@ -148,7 +148,11 @@ class HrAttendanceSettingsResolver
 
         return [
             'timezone' => \App\Support\AppTimezone::name(),
-            'heartbeat_interval_seconds' => max(60, (int) $settings['hikvision_agent_poll_minutes'] * 60),
+            // Keepalive for CentrixAttendanceAgent — keep ≤2 minutes so the agent stays live overnight.
+            'heartbeat_interval_seconds' => max(
+                60,
+                min(120, (int) $settings['hikvision_agent_poll_minutes'] * 60),
+            ),
             'punch_poll_seconds' => 60,
             'punch_lead_minutes' => 10,
             'punch_lag_minutes' => 20,

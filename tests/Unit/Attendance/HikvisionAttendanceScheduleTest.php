@@ -82,7 +82,7 @@ class HikvisionAttendanceScheduleTest extends TestCase
         $poll = $bridge->pollSeconds($device);
         $ttl = $bridge->onlineTtlSeconds($device);
         $this->assertGreaterThanOrEqual(60, $poll);
-        $this->assertSame($poll + 180, $ttl);
+        $this->assertSame(max(HikvisionAgentBridge::MIN_ONLINE_SECONDS, ($poll * 3) + 300), $ttl);
 
         $device->forceFill(['agent_last_seen_at' => now()->subSeconds($poll)]);
         $this->assertTrue($bridge->isAgentOnline($device));
@@ -98,5 +98,19 @@ class HikvisionAttendanceScheduleTest extends TestCase
 
         $wait = $bridge->commandWaitSeconds($device);
         $this->assertSame(HikvisionAgentBridge::MIN_COMMAND_WAIT_SECONDS, $wait);
+    }
+
+    public function test_recent_checkin_grace_keeps_agent_usable(): void
+    {
+        $device = new AttendanceClockDevice(['organization_id' => 0]);
+        $bridge = app(HikvisionAgentBridge::class);
+        $ttl = $bridge->onlineTtlSeconds($device);
+
+        $device->forceFill([
+            'agent_last_seen_at' => now()->subSeconds($ttl + 60),
+        ]);
+        $this->assertFalse($bridge->isAgentOnline($device));
+        $this->assertTrue($bridge->hasRecentCheckIn($device));
+        $this->assertTrue($bridge->shouldUseAgent($device));
     }
 }

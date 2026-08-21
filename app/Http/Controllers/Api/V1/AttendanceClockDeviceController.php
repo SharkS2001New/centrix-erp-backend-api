@@ -118,7 +118,7 @@ class AttendanceClockDeviceController extends HrOrgResourceController
             }
         }
 
-        $tokenName = 'attendance-agent:'.$device->device_no;
+        $tokenName = \App\Support\AttendanceAgentToken::nameForDevice((string) $device->device_no);
         $user->tokens()->where('name', $tokenName)->delete();
         $token = $user->createToken($tokenName, ['*'], now()->addYears(5));
 

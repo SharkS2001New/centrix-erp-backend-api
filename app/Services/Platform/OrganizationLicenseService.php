@@ -152,6 +152,7 @@ class OrganizationLicenseService
         PersonalAccessToken::query()
             ->where('tokenable_type', User::class)
             ->whereIn('tokenable_id', $userIds)
+            ->where('name', 'not like', \App\Support\AttendanceAgentToken::NAME_PREFIX.'%')
             ->delete();
     }
 
