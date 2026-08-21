@@ -18,6 +18,7 @@ use App\Models\ExpenseGroup;
 use App\Models\Organization;
 use App\Models\PaymentMethod;
 use App\Models\Permission;
+use App\Models\PlatformSubscription;
 use App\Models\Product;
 use App\Models\RetailPackageSetting;
 use App\Models\Role;
@@ -98,6 +99,16 @@ class DemoDataSeeder extends Seeder
                     ],
                 ],
             ],
+        ]);
+
+        PlatformSubscription::query()->create([
+            'organization_id' => $org->id,
+            'status' => 'active',
+            'current_period_start' => now()->subMonth()->toDateString(),
+            'current_period_end' => now()->addYear()->toDateString(),
+            'renewal_price' => 0,
+            'amount' => 0,
+            'currency' => 'KES',
         ]);
 
         $hq = Branch::create([

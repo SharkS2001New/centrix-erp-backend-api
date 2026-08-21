@@ -14,6 +14,7 @@ class ReportExportService
 
     public function __construct(
         protected ReportBrandingService $branding,
+        protected ExportInventoryQtyFormatter $inventoryQty,
     ) {}
 
     /**
@@ -294,10 +295,17 @@ class ReportExportService
      */
     protected function cellValue(array $row, array $column): string
     {
-        $value = $row[$column['key']] ?? '';
+        $key = (string) ($column['key'] ?? '');
+        $value = $row[$key] ?? '';
         if ($value === null) {
             return '';
         }
+
+        $formattedQty = $this->inventoryQty->format($value, $row, $key);
+        if ($formattedQty !== null) {
+            return $formattedQty;
+        }
+
         if (is_bool($value)) {
             return $value ? 'Yes' : 'No';
         }

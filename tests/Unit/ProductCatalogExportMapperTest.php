@@ -9,7 +9,7 @@ class ProductCatalogExportMapperTest extends TestCase
 {
     public function test_maps_stock_and_pricing_fields_from_raw_api_shape(): void
     {
-        $mapper = new ProductCatalogExportMapper();
+        $mapper = app(ProductCatalogExportMapper::class);
         $mapped = $mapper->mapBatch([
             [
                 'product_code' => 'PRD#0001',
@@ -29,8 +29,8 @@ class ProductCatalogExportMapperTest extends TestCase
         $row = $mapped[0];
         $this->assertSame('Uncategorised', $row['category_name']);
         $this->assertSame('General', $row['subcategory_name']);
-        $this->assertSame(12, $row['shop_qty']);
-        $this->assertSame(4, $row['store_qty']);
+        $this->assertSame('12', $row['shop_qty']);
+        $this->assertSame('4', $row['store_qty']);
         $this->assertSame('—', $row['uom_label']);
         $this->assertSame('—', $row['supplier_name']);
         $this->assertSame('—', $row['vat_treatment']);
@@ -39,9 +39,47 @@ class ProductCatalogExportMapperTest extends TestCase
         $this->assertSame(5, $row['discount']);
     }
 
+    public function test_prefers_available_stock_over_on_hand(): void
+    {
+        $mapper = app(ProductCatalogExportMapper::class);
+        $mapped = $mapper->mapBatch([
+            [
+                'product_code' => 'PRD#0004',
+                'product_name' => 'Reserved SKU',
+                'stock_in_shop' => 20,
+                'stock_available_shop' => 15,
+                'stock_in_store' => 8,
+                'stock_available_store' => 6,
+            ],
+        ]);
+
+        $this->assertSame('15', $mapped[0]['shop_qty']);
+        $this->assertSame('6', $mapped[0]['store_qty']);
+    }
+
+    public function test_formats_stock_with_uom_packaging_like_catalogue_ui(): void
+    {
+        $mapper = app(ProductCatalogExportMapper::class);
+        $mapped = $mapper->mapBatch([
+            [
+                'product_code' => 'PRD#0005',
+                'product_name' => 'Sugar',
+                'stock_available_shop' => 140,
+                'stock_available_store' => 0,
+                'uom_name' => 'Bag',
+                'conversion_factor' => 50,
+                'small_packaging_label' => 'kg',
+                'uses_small_packaging' => true,
+            ],
+        ]);
+
+        $this->assertSame('2 Bag, 40 kg', $mapped[0]['shop_qty']);
+        $this->assertSame('0 Bag', $mapped[0]['store_qty']);
+    }
+
     public function test_preserves_pre_enriched_rows_when_present(): void
     {
-        $mapper = new ProductCatalogExportMapper();
+        $mapper = app(ProductCatalogExportMapper::class);
         $mapped = $mapper->mapBatch([
             [
                 'product_code' => 'PRD#0002',
@@ -61,7 +99,7 @@ class ProductCatalogExportMapperTest extends TestCase
         $row = $mapped[0];
         $this->assertSame('Custom category', $row['category_name']);
         $this->assertSame('Custom sub', $row['subcategory_name']);
-        $this->assertSame(9, $row['shop_qty']);
+        $this->assertSame('9', $row['shop_qty']);
         $this->assertSame('Bottle', $row['uom_label']);
         $this->assertSame('Invatable', $row['vat_treatment']);
         $this->assertSame('Yes', $row['is_active']);
@@ -69,7 +107,7 @@ class ProductCatalogExportMapperTest extends TestCase
 
     public function test_marks_inactive_products_from_deleted_at(): void
     {
-        $mapper = new ProductCatalogExportMapper();
+        $mapper = app(ProductCatalogExportMapper::class);
         $mapped = $mapper->mapBatch([
             [
                 'product_code' => 'PRD#0003',

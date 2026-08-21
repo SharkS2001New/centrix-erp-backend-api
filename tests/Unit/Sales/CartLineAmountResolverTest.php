@@ -27,6 +27,15 @@ class CartLineAmountResolverTest extends TestCase
     {
         // Tier-priced POS line: workspace 3600, naive unit×qty recompute 92000.
         $this->assertSame(3600.0, CartLineAmountResolver::resolve(3600, 92000));
+        $this->assertSame(3600.0, CartLineAmountResolver::resolve(3600, 90000, 25));
+    }
+
+    public function test_rejects_stale_one_kg_price_on_larger_qty_line(): void
+    {
+        // Sugar: server priced 45kg correctly; client still posted the 1kg total.
+        $this->assertSame(5640.0, CartLineAmountResolver::resolve(130, 5640, 50));
+        // Polished: 45kg wholesale break must not collapse to the 1kg retail total.
+        $this->assertSame(4150.0, CartLineAmountResolver::resolve(95, 4150, 90));
     }
 
     public function test_accepts_matching_client_amount(): void

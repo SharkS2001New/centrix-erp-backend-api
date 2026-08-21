@@ -205,6 +205,21 @@ class PosLinePricingService
 
         $sorted = $tiers;
         usort($sorted, fn ($a, $b) => $a['min_qty'] <=> $b['min_qty']);
+
+        // Qty sits in a gap between capped bands (e.g. 12.2 when tiers are 1–12 and
+        // 12.5–49) — use the next band so first-tier /kg markup does not leak upward.
+        for ($i = 0; $i < count($sorted) - 1; $i++) {
+            $prevMax = $sorted[$i]['max_qty'];
+            $next = $sorted[$i + 1];
+            if (
+                $prevMax !== null
+                && $quantity > $prevMax + 0.0001
+                && $quantity + 0.0001 < $next['min_qty']
+            ) {
+                return $next;
+            }
+        }
+
         for ($i = count($sorted) - 1; $i >= 0; $i--) {
             if ($quantity + 0.0001 >= $sorted[$i]['min_qty']) {
                 return $sorted[$i];
@@ -268,23 +283,20 @@ class PosLinePricingService
         float $conversion,
         float $middleFactor,
     ): float {
-        unset($middleFactor);
-        $maxQty = array_key_exists('max_qty', $tier) && $tier['max_qty'] !== null
-            ? (float) $tier['max_qty']
-            : null;
-        $halfPack = $conversion >= 2 ? $conversion / 2 : 1.0;
+        $level = (string) ($tier['measure_level'] ?? 'small');
+        $mode = $this->normalizeTierPriceMode($tier);
 
-        // Small retail band on pack products (e.g. 1–12 kg): markup per kg.
-        if ($conversion >= 2 && $maxQty !== null && $maxQty <= $halfPack) {
+        // Per-kg / per-piece retail tiers (match web retail-pricing.js).
+        if ($mode === 'retail' && $level === 'small') {
             return 1.0;
         }
 
-        // Larger retail band on pack products: markup per half-bag chunk.
+        // Pack products: accumulate markup per half pack (25kg of a 50kg bag).
         if ($conversion >= 2) {
-            return $halfPack;
+            return $conversion / 2;
         }
 
-        return 1.0;
+        return max(1.0, $this->smallUnitsPerLevel($conversion, $middleFactor, $level));
     }
 
     /**

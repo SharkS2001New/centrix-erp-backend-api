@@ -7,6 +7,7 @@ use App\Models\SubCategory;
 use App\Models\Supplier;
 use App\Models\Uom;
 use App\Models\Vat;
+use App\Services\Inventory\StockUomDisplayService;
 use Illuminate\Support\Collection;
 
 /**
@@ -14,6 +15,11 @@ use Illuminate\Support\Collection;
  */
 class ProductCatalogExportMapper implements ListExportRowMapper
 {
+    public function __construct(
+        protected StockUomDisplayService $stockUom,
+        protected ExportInventoryQtyFormatter $qtyFormatter,
+    ) {}
+
     /**
      * @param  list<array<string, mixed>>  $products
      * @return list<array<string, mixed>>
@@ -113,14 +119,15 @@ class ProductCatalogExportMapper implements ListExportRowMapper
             ? ($product['discount_value'] ?? '')
             : ($product['discount_percentage'] ?? '');
 
-        $shopQty = $product['shop_qty']
-            ?? $product['stock_available_shop']
+        // Match catalogue UI (enrichProduct): available first, then on-hand fallback.
+        $shopBase = $product['stock_available_shop']
+            ?? $product['shop_qty']
             ?? $product['stock_in_shop']
-            ?? '';
-        $storeQty = $product['store_qty']
-            ?? $product['stock_available_store']
+            ?? null;
+        $storeBase = $product['stock_available_store']
+            ?? $product['store_qty']
             ?? $product['stock_in_store']
-            ?? '';
+            ?? null;
 
         $isActive = array_key_exists('is_active', $product)
             ? ! empty($product['is_active'])
@@ -136,14 +143,61 @@ class ProductCatalogExportMapper implements ListExportRowMapper
             'unit_price' => $product['unit_price'] ?? '',
             'last_cost_price' => $product['last_cost_price'] ?? '',
             'discount' => $discount,
-            'shop_qty' => $shopQty,
-            'store_qty' => $storeQty,
+            'shop_qty' => $this->formatStockQty($shopBase, $uom, $product),
+            'store_qty' => $this->formatStockQty($storeBase, $uom, $product),
             'uom_label' => $product['uom_label'] ?? ($uom?->full_name ?? '—'),
             'supplier_name' => $product['supplier_name'] ?? ($supplier?->supplier_name ?? '—'),
             'vat_treatment' => $product['vat_treatment'] ?? $this->vatTreatmentLabel($vat),
             'pricing' => $product['pricing'] ?? $this->pricingLabel($sellOnRetail),
             'is_active' => $isActive ? 'Yes' : 'No',
+            // Keep UOM metadata so ReportExportService can re-format if needed.
+            'conversion_factor' => $uom?->conversion_factor ?? ($product['conversion_factor'] ?? 1),
+            'uom_name' => $uom?->full_name ?? ($product['uom_name'] ?? null),
+            'small_packaging_label' => $uom?->small_packaging_label ?? ($product['small_packaging_label'] ?? null),
+            'middle_packaging_label' => $uom?->middle_packaging_label ?? ($product['middle_packaging_label'] ?? null),
+            'middle_factor' => $uom?->middle_factor ?? ($product['middle_factor'] ?? null),
+            'uom_type' => $uom?->uom_type ?? ($product['uom_type'] ?? null),
+            'uses_small_packaging' => $uom?->uses_small_packaging ?? ($product['uses_small_packaging'] ?? true),
         ];
+    }
+
+    /**
+     * @param  array<string, mixed>  $product
+     */
+    protected function formatStockQty(mixed $baseQty, ?Uom $uom, array $product): string
+    {
+        if ($baseQty === null || $baseQty === '') {
+            return '';
+        }
+        if (is_string($baseQty) && ! is_numeric(trim($baseQty))) {
+            return $baseQty;
+        }
+        if (! is_numeric($baseQty)) {
+            return (string) $baseQty;
+        }
+
+        $resolved = $uom;
+        if ($resolved === null && $this->productHasUomPackagingMeta($product)) {
+            $resolved = $this->qtyFormatter->resolveUom($product);
+        }
+
+        if ($resolved === null) {
+            return (string) $baseQty;
+        }
+
+        return $this->stockUom->formatMixedStockDisplay((float) $baseQty, $resolved)['text'];
+    }
+
+    /**
+     * @param  array<string, mixed>  $product
+     */
+    protected function productHasUomPackagingMeta(array $product): bool
+    {
+        return array_key_exists('conversion_factor', $product)
+            || array_key_exists('uom_factor', $product)
+            || array_key_exists('small_packaging_label', $product)
+            || isset($product['uom'])
+            || isset($product['product_uom']);
     }
 
     protected function vatTreatmentLabel(?Vat $vat): string

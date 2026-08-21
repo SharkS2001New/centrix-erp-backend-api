@@ -56,6 +56,7 @@ class LowStockReportService
                 'u.middle_packaging_label',
                 'u.middle_factor',
                 'u.uom_type',
+                'u.uses_small_packaging',
                 DB::raw('COALESCE(cs.shop_quantity, 0) as shop_quantity'),
                 DB::raw('COALESCE(cs.store_quantity, 0) as store_quantity'),
                 DB::raw("{$totalSql} as total_quantity"),

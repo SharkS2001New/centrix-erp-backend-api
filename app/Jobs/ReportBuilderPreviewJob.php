@@ -50,19 +50,30 @@ class ReportBuilderPreviewJob implements ShouldQueue
             $tasks->assertNotCancelled($task);
 
             $this->reportProgress($tasks, $task, 55, 'Please wait…');
-            $result = $builder->run($user, $validatedSpec, $filters, $workspaceId);
+            $paginator = $builder->run($user, $validatedSpec, $filters, $workspaceId);
             $tasks->assertNotCancelled($task);
             $this->reportProgress($tasks, $task, 92, 'Almost done…');
 
-            $rows = $result['data'] ?? [];
+            // LengthAwarePaginator ArrayAccess indexes items by offset, not Laravel's
+            // JSON key "data" — always extract via items()/toArray().
+            $payload = $paginator->toArray();
+            $rows = $payload['data'] ?? [];
             if (! is_array($rows)) {
-                $rows = [];
+                $rows = collect($paginator->items())
+                    ->map(fn ($row) => (array) $row)
+                    ->values()
+                    ->all();
             }
 
             $tasks->markCompleted($task, [
                 'data' => $rows,
                 'row_count' => count($rows),
-                'meta' => $result['meta'] ?? null,
+                'meta' => [
+                    'current_page' => $payload['current_page'] ?? $paginator->currentPage(),
+                    'last_page' => $payload['last_page'] ?? $paginator->lastPage(),
+                    'per_page' => $payload['per_page'] ?? $paginator->perPage(),
+                    'total' => $payload['total'] ?? $paginator->total(),
+                ],
             ]);
         } catch (\Throwable $e) {
             $this->failBackgroundTask($tasks, $task, $e, 'ReportBuilderPreviewJob');

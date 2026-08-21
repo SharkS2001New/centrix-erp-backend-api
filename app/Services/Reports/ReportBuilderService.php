@@ -241,7 +241,21 @@ class ReportBuilderService
         }
 
         if ($isMultiSource) {
-            return $this->validateJoinedSpec($spec, $sources, $primarySource, $columns);
+            try {
+                return $this->validateJoinedSpec($spec, $sources, $primarySource, $columns);
+            } catch (ValidationException $joinError) {
+                // Unjoinable pairs: silently fall back to side-by-side when a shared
+                // dimension exists so users can still build a useful report.
+                $autoBlend = $this->firstSharedBlendDimension($sources);
+                if ($autoBlend) {
+                    try {
+                        return $this->validateBlendedSpec($spec, $sources, $primarySource, $columns, $autoBlend);
+                    } catch (ValidationException) {
+                        throw $joinError;
+                    }
+                }
+                throw $joinError;
+            }
         }
 
         return $this->validateSingleSourceSpec($spec, $primarySource, $columns);
@@ -321,6 +335,35 @@ class ReportBuilderService
         }
 
         return $out;
+    }
+
+    /**
+     * @param  list<string>  $sourceKeys
+     */
+    protected function firstSharedBlendDimension(array $sourceKeys): ?string
+    {
+        if (count($sourceKeys) < 2) {
+            return null;
+        }
+
+        foreach (config('report_builder.blend_dimensions', []) as $key => $def) {
+            $supported = array_keys($def['sources'] ?? []);
+            if ($supported === []) {
+                continue;
+            }
+            $allSupported = true;
+            foreach ($sourceKeys as $sourceKey) {
+                if (! in_array($sourceKey, $supported, true)) {
+                    $allSupported = false;
+                    break;
+                }
+            }
+            if ($allSupported) {
+                return $key;
+            }
+        }
+
+        return null;
     }
 
     /**
@@ -670,7 +713,9 @@ class ReportBuilderService
                     continue;
                 }
 
-                $left = in_array($toKey, $fromSource['left_joins'] ?? [], true);
+                // Prefer LEFT so multi-source reports keep primary rows when related
+                // sources do not match — users expect exploratory freedom, not INNER dropouts.
+                $left = true;
                 $graph[$fromKey][$toKey] = [
                     'join_key' => "{$fromKey}_{$toKey}",
                     'table' => $joinDef[0],
@@ -693,7 +738,8 @@ class ReportBuilderService
         foreach (config('report_builder.source_links.extra_edges', []) as $edge) {
             $from = $edge['from'];
             $to = $edge['to'];
-            $graph[$from][$to] = $edge;
+            $normalized = array_merge($edge, ['left' => true]);
+            $graph[$from][$to] = $normalized;
             if (! isset($graph[$to][$from])) {
                 $toTable = config("report_builder.sources.{$to}.table") ?? $edge['table'];
                 $graph[$to][$from] = [
@@ -702,7 +748,7 @@ class ReportBuilderService
                     'first' => $edge['second'],
                     'op' => $edge['op'],
                     'second' => $edge['first'],
-                    'left' => $edge['left'] ?? false,
+                    'left' => true,
                 ];
             }
         }
@@ -1094,8 +1140,7 @@ class ReportBuilderService
                 }
                 $appliedJoinKeys[$edge['join_key']] = true;
                 $joinedAliases[$alias] = true;
-                $method = ! empty($edge['left']) ? 'leftJoin' : 'join';
-                $query->{$method}($edge['table'], $edge['first'], $edge['op'], $edge['second']);
+                $query->leftJoin($edge['table'], $edge['first'], $edge['op'], $edge['second']);
             }
         }
 
@@ -1107,12 +1152,9 @@ class ReportBuilderService
 
         $this->applySourceFilters($query, $primary, $user, $filters, $primary['default_date_column'] ?? null);
 
-        foreach ($referencedSources as $sourceKey) {
-            if ($sourceKey === $primaryKey) {
-                continue;
-            }
-            $this->applySecondarySourceFilters($query, config("report_builder.sources.{$sourceKey}"));
-        }
+        // Intentionally skip secondary base_where on joined multi-source reports.
+        // LEFT joins already keep primary rows; stacking secondary predicates often
+        // empties exploratory combinations the user expects to see.
 
         $selects = [];
         foreach ($spec['columns'] as $col) {
