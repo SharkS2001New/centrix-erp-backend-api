@@ -1039,6 +1039,30 @@ class KraDeviceService
             return null;
         }
 
+        // Some Comstore / middleware builds nest the fiscal fields under data/result.
+        foreach (['data', 'result', 'response', 'Response'] as $wrapKey) {
+            $nested = $responseData[$wrapKey] ?? null;
+            if (is_array($nested)) {
+                $responseData = array_merge($nested, $responseData);
+            }
+        }
+
+        $signatureLink = $this->firstNonEmptyString(
+            $responseData['signature_link'] ?? null,
+            $responseData['Signature Link'] ?? null,
+            $responseData['signatureLink'] ?? null,
+            $responseData['SignatureLink'] ?? null,
+            $responseData['qr_link'] ?? null,
+            $responseData['qr_url'] ?? null,
+            $responseData['QRCode'] ?? null,
+            $responseData['qrCode'] ?? null,
+            $responseData['qr_code'] ?? null,
+            $responseData['verification_url'] ?? null,
+            $responseData['verificationUrl'] ?? null,
+            $responseData['InvoiceUrl'] ?? null,
+            $responseData['invoice_url'] ?? null,
+        );
+
         return [
             'success' => $responseData['success'] ?? false,
             'message' => $responseData['message'] ?? '',
@@ -1054,14 +1078,23 @@ class KraDeviceService
                 ?? $responseData['receipt_signature']
                 ?? $responseData['signature']
                 ?? null,
-            'signature_link' => $responseData['signature_link']
-                ?? $responseData['Signature Link']
-                ?? $responseData['signatureLink']
-                ?? $responseData['qr_link']
-                ?? $responseData['qr_url']
-                ?? $responseData['verification_url']
-                ?? null,
+            'signature_link' => $signatureLink,
             'version' => $responseData['version'] ?? null,
         ];
+    }
+
+    protected function firstNonEmptyString(mixed ...$values): ?string
+    {
+        foreach ($values as $value) {
+            if ($value == null) {
+                continue;
+            }
+            $text = trim((string) $value);
+            if ($text !== '') {
+                return $text;
+            }
+        }
+
+        return null;
     }
 }

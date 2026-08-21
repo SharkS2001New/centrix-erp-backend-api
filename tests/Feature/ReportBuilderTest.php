@@ -84,6 +84,36 @@ class ReportBuilderTest extends TestCase
         $this->assertArrayHasKey('Sales', $response->json('sources_by_module'));
     }
 
+    public function test_grouped_report_auto_includes_dimension_columns_in_group_by(): void
+    {
+        $spec = [
+            'source' => 'sales',
+            'columns' => [
+                ['field' => 'channel', 'label' => 'Channel'],
+                ['field' => 'branch_name', 'label' => 'Branch'],
+                ['field' => 'customer_name', 'label' => 'Customer'],
+                ['field' => 'order_total', 'label' => 'Total', 'aggregate' => 'sum', 'alias' => 'total_sales'],
+            ],
+            'group_by' => ['channel'],
+        ];
+
+        $validated = $this->builder->validateSpec($spec, 'backoffice');
+
+        $this->assertEqualsCanonicalizing(
+            ['channel', 'branch_name', 'customer_name'],
+            $validated['group_by']
+        );
+
+        $byField = collect($validated['columns'])->keyBy('field');
+        $this->assertNull($byField['channel']['aggregate']);
+        $this->assertNull($byField['branch_name']['aggregate']);
+        $this->assertNull($byField['customer_name']['aggregate']);
+        $this->assertSame('sum', $byField['order_total']['aggregate']);
+
+        $result = $this->builder->run($this->user, $validated, ['per_page' => 5], 'backoffice');
+        $this->assertGreaterThanOrEqual(0, $result->total());
+    }
+
     public function test_no_column_limit_on_custom_report(): void
     {
         $columns = [];

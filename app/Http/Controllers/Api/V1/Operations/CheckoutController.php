@@ -120,11 +120,12 @@ class CheckoutController extends Controller
 
         // Fiscalize after the sale commits (not inside the DB transaction) but still
         // before the HTTP response so the first thermal receipt includes the eTIMS QR.
+        $persistedKra = null;
         if ($pendingKra) {
-            $kraResponse = app(CheckoutKraSubmissionService::class)
+            $persistedKra = app(CheckoutKraSubmissionService::class)
                 ->submitForSale($sale, $gate, $buyerPin);
-            if ($kraResponse) {
-                $sale->setRelation('kraResponse', $kraResponse);
+            if ($persistedKra) {
+                $sale->setRelation('kraResponse', $persistedKra);
             }
         }
 
@@ -144,6 +145,7 @@ class CheckoutController extends Controller
             ?? ucfirst(str_replace('_', ' ', (string) $sale->status));
 
         // Soft-fail / amount-bypass markers for every channel (POS, backoffice, mobile, WhatsApp).
+        // Capture before refresh — failed/skipped rows are not on the success-only relation.
         $kraSkipMeta = $this->kraSkipMetaFromSale($sale);
 
         // Mobile only needs confirmation fields; skip full toArray of items/payments.
@@ -164,16 +166,28 @@ class CheckoutController extends Controller
 
         // Preserve fiscal payload for immediate POS/thermal print — cashiers often lack
         // admin.kra_responses.view, so print must not rely on a separate lookup.
+        // Do not reload kraResponse via the success-only relation: that drops soft-fail
+        // rows and (historically) success rows whose eTIMS link was only in the payload.
         $sale = $sale->fresh([
             'items.product.unit',
             'payments.paymentMethod',
-            'kraResponse',
             'cashier:id,username,full_name',
         ]);
+        if ($persistedKra) {
+            $sale->setRelation('kraResponse', $persistedKra->fresh() ?? $persistedKra);
+        } elseif ($sale) {
+            $sale->load('kraResponse');
+            if (! $sale->kraResponse) {
+                $fallbackKra = $sale->kraResponses()->orderByDesc('id')->first();
+                if ($fallbackKra) {
+                    $sale->setRelation('kraResponse', $fallbackKra);
+                }
+            }
+        }
 
         $payload = array_merge($sale->toArray(), [
             'status_name' => $statusName,
-        ], $this->kraSkipMetaFromSale($sale));
+        ], $kraSkipMeta !== [] ? $kraSkipMeta : $this->kraSkipMetaFromSale($sale));
 
         return response()->json($payload, 201);
     }
@@ -183,9 +197,9 @@ class CheckoutController extends Controller
      */
     protected function kraSkipMetaFromSale(Sale $sale): array
     {
-        $kra = $sale->relationLoaded('kraResponse')
+        $kra = $sale->relationLoaded('kraResponse') && $sale->kraResponse
             ? $sale->kraResponse
-            : $sale->kraResponse()->latest('id')->first();
+            : $sale->kraResponses()->orderByDesc('id')->first();
 
         if (! $kra) {
             return [];

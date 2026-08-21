@@ -407,11 +407,12 @@ class ReportBuilderService
                 throw ValidationException::withMessages(["columns.{$i}.field" => "Unknown field: {$fieldKey}"]);
             }
 
+            $allowed = $this->allowedAggregatesForField($field);
             $aggregate = $col['aggregate'] ?? null;
             if (! $aggregate) {
-                $aggregate = $field['aggregates'][0] ?? 'sum';
+                $aggregate = $allowed[0];
             }
-            if (! in_array($aggregate, $field['aggregates'] ?? [], true)) {
+            if (! in_array($aggregate, $allowed, true)) {
                 throw ValidationException::withMessages(["columns.{$i}.aggregate" => "Field {$fieldKey} cannot use aggregate {$aggregate}."]);
             }
 
@@ -476,6 +477,7 @@ class ReportBuilderService
 
         $validatedColumns = [];
         $outputKeys = [];
+        $hasGroupBy = $groupBy !== [];
 
         foreach ($columns as $i => $col) {
             $sourceKey = $col['source'] ?? $primarySource;
@@ -490,25 +492,26 @@ class ReportBuilderService
                 throw ValidationException::withMessages(["columns.{$i}.field" => "Unknown field: {$fieldKey}"]);
             }
 
-            $aggregate = $col['aggregate'] ?? null;
-            if ($groupBy) {
+            $aggregate = null;
+            if ($hasGroupBy) {
                 $inGroup = collect($groupBy)->contains(
                     fn ($g) => $g['source'] === $sourceKey && $g['field'] === $fieldKey
                 );
-                if (! $inGroup) {
-                    $aggregate = $aggregate ?: ($field['aggregates'][0] ?? 'sum');
-                    if (! in_array($aggregate, $field['aggregates'] ?? [], true)) {
-                        throw ValidationException::withMessages(["columns.{$i}.aggregate" => "Field {$fieldKey} cannot use aggregate {$aggregate}."]);
-                    }
-                } else {
+                if ($inGroup) {
                     $aggregate = null;
+                } else {
+                    $decision = $this->resolveGroupedColumnDecision($field, $col['aggregate'] ?? null);
+                    if ($decision['auto_group']) {
+                        $groupBy[] = ['source' => $sourceKey, 'field' => $fieldKey];
+                        $aggregate = null;
+                    } else {
+                        $aggregate = $decision['aggregate'];
+                    }
                 }
-            } else {
-                $aggregate = null;
             }
 
             $alias = $col['alias'] ?? $fieldKey.($aggregate ? "_{$aggregate}" : '');
-            if (count($sources) > 1 && ! $groupBy) {
+            if (count($sources) > 1 && ! $hasGroupBy) {
                 $alias = $col['alias'] ?? "{$sourceKey}_{$fieldKey}".($aggregate ? "_{$aggregate}" : '');
             }
             if (! preg_match('/^[a-z][a-z0-9_]*$/', $alias)) {
@@ -534,6 +537,14 @@ class ReportBuilderService
                 'alias' => $alias,
                 'aggregate' => $aggregate,
             ];
+        }
+
+        $groupBy = collect($groupBy)
+            ->unique(fn ($g) => $g['source'].'.'.$g['field'])
+            ->values()
+            ->all();
+        if ($maxGroupBy !== null && $maxGroupBy > 0 && count($groupBy) > (int) $maxGroupBy) {
+            throw ValidationException::withMessages(['group_by' => 'Too many group-by fields.']);
         }
 
         foreach ($groupBy as $i => $entry) {
@@ -793,6 +804,55 @@ class ReportBuilderService
     }
 
     /**
+     * Aggregates allowed for a field. Measure fields declare their own list;
+     * dimension / descriptive fields fall back to max/min/count so grouping never hard-fails.
+     *
+     * @param  array<string, mixed>  $field
+     * @return list<string>
+     */
+    protected function allowedAggregatesForField(array $field): array
+    {
+        $configured = array_values(array_filter($field['aggregates'] ?? []));
+        if ($configured !== []) {
+            return $configured;
+        }
+
+        return ['max', 'min', 'count'];
+    }
+
+    /**
+     * Decide aggregate vs auto-group when a report uses GROUP BY.
+     *
+     * @param  array<string, mixed>  $field
+     * @return array{aggregate: ?string, auto_group: bool}
+     */
+    protected function resolveGroupedColumnDecision(array $field, ?string $requestedAggregate): array
+    {
+        $allowed = $this->allowedAggregatesForField($field);
+        $groupable = (bool) ($field['groupable'] ?? false);
+        $hasConfiguredMeasures = ($field['aggregates'] ?? []) !== [];
+
+        if ($requestedAggregate && in_array($requestedAggregate, $allowed, true)) {
+            return ['aggregate' => $requestedAggregate, 'auto_group' => false];
+        }
+
+        // Prefer keeping groupable dimensions in GROUP BY (not MAX/MIN of labels).
+        if ($groupable && ! $hasConfiguredMeasures) {
+            return ['aggregate' => null, 'auto_group' => true];
+        }
+
+        if ($hasConfiguredMeasures) {
+            return ['aggregate' => $allowed[0], 'auto_group' => false];
+        }
+
+        if ($groupable) {
+            return ['aggregate' => null, 'auto_group' => true];
+        }
+
+        return ['aggregate' => $allowed[0], 'auto_group' => false];
+    }
+
+    /**
      * @param  array<string, mixed>  $spec
      * @param  array<int, array<string, mixed>>  $columns
      * @return array<string, mixed>
@@ -805,6 +865,10 @@ class ReportBuilderService
         if (! is_array($groupBy)) {
             $groupBy = [];
         }
+        $groupBy = array_values(array_filter(array_map(
+            fn ($entry) => is_array($entry) ? ($entry['field'] ?? null) : $entry,
+            $groupBy
+        )));
         $maxGroupBy = config('report_builder.max_group_by');
         if ($maxGroupBy !== null && $maxGroupBy > 0 && count($groupBy) > (int) $maxGroupBy) {
             throw ValidationException::withMessages(['group_by' => 'Too many group-by fields.']);
@@ -812,6 +876,7 @@ class ReportBuilderService
 
         $validatedColumns = [];
         $outputKeys = [];
+        $hasGroupBy = $groupBy !== [];
 
         foreach ($columns as $i => $col) {
             $colSource = $col['source'] ?? $sourceKey;
@@ -827,18 +892,19 @@ class ReportBuilderService
                 throw ValidationException::withMessages(["columns.{$i}.field" => "Unknown field: {$fieldKey}"]);
             }
 
-            $aggregate = $col['aggregate'] ?? null;
-            if ($groupBy) {
-                if (! in_array($fieldKey, $groupBy, true)) {
-                    $aggregate = $aggregate ?: 'sum';
-                    if (! in_array($aggregate, $field['aggregates'] ?? [], true)) {
-                        throw ValidationException::withMessages(["columns.{$i}.aggregate" => "Field {$fieldKey} cannot use aggregate {$aggregate}."]);
-                    }
-                } else {
+            $aggregate = null;
+            if ($hasGroupBy) {
+                if (in_array($fieldKey, $groupBy, true)) {
                     $aggregate = null;
+                } else {
+                    $decision = $this->resolveGroupedColumnDecision($field, $col['aggregate'] ?? null);
+                    if ($decision['auto_group']) {
+                        $groupBy[] = $fieldKey;
+                        $aggregate = null;
+                    } else {
+                        $aggregate = $decision['aggregate'];
+                    }
                 }
-            } else {
-                $aggregate = null;
             }
 
             $alias = $col['alias'] ?? $fieldKey.($aggregate ? "_{$aggregate}" : '');
@@ -859,6 +925,11 @@ class ReportBuilderService
             ];
         }
 
+        $groupBy = array_values(array_unique($groupBy));
+        if ($maxGroupBy !== null && $maxGroupBy > 0 && count($groupBy) > (int) $maxGroupBy) {
+            throw ValidationException::withMessages(['group_by' => 'Too many group-by fields.']);
+        }
+
         foreach ($groupBy as $i => $fieldKey) {
             $field = $source['fields'][$fieldKey] ?? null;
             if (! $field || ! ($field['groupable'] ?? false)) {
@@ -876,7 +947,7 @@ class ReportBuilderService
             'blend_by' => null,
             'mode' => 'single',
             'columns' => $validatedColumns,
-            'group_by' => array_values($groupBy),
+            'group_by' => $groupBy,
             'sort' => $sort,
             'charts' => $charts,
             'kpis' => $kpis,
@@ -1335,8 +1406,9 @@ class ReportBuilderService
             if (! $field) {
                 throw ValidationException::withMessages(["kpis.{$i}.field" => 'Invalid KPI field.']);
             }
-            $aggregate = $kpi['aggregate'] ?? 'sum';
-            if (! in_array($aggregate, $field['aggregates'] ?? [], true)) {
+            $allowed = $this->allowedAggregatesForField($field);
+            $aggregate = $kpi['aggregate'] ?? $allowed[0];
+            if (! in_array($aggregate, $allowed, true)) {
                 throw ValidationException::withMessages(["kpis.{$i}.aggregate" => 'Invalid KPI aggregate.']);
             }
             $valid[] = [

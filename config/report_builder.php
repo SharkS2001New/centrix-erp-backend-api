@@ -294,6 +294,7 @@ return [
                     'label' => 'Conversion factor',
                     'expr' => 'u.conversion_factor',
                     'type' => 'number',
+                    'aggregates' => ['avg', 'min', 'max', 'count'],
                     'requires_join' => 'uoms',
                 ],
                 'branch_name' => [
@@ -1480,11 +1481,13 @@ return [
                     'label' => 'Check in',
                     'expr' => 'ea.check_in',
                     'type' => 'string',
+                    'aggregates' => ['min', 'max', 'count'],
                 ],
                 'check_out' => [
                     'label' => 'Check out',
                     'expr' => 'ea.check_out',
                     'type' => 'string',
+                    'aggregates' => ['min', 'max', 'count'],
                 ],
                 'hours_worked' => [
                     'label' => 'Hours worked',
