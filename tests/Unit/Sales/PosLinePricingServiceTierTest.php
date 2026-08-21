@@ -105,12 +105,29 @@ class PosLinePricingServiceTierTest extends TestCase
 
         $this->assertSame(95.0, $this->linePrice(8300, $tiers, 1, true, 90, 45));
         $this->assertSame(4150.0, $this->linePrice(8300, $tiers, 45, true, 90, 45));
+        $this->assertEqualsWithDelta(4334.44, $this->linePrice(8300, $tiers, 47, true, 90, 45), 0.02);
         $this->assertSame(8300.0, $this->linePrice(8300, $tiers, 90, true, 90, 45));
 
-        // Must not keep applying 2.777/kg into the half-bag band.
+        // Must not keep applying 2.777/kg into the half-bag band (45 × 95 = 4275).
+        $this->assertNotEquals(4275.0, $this->linePrice(8300, $tiers, 45, true, 90, 45));
         $this->assertNotEquals(
             round((8300 / 90 + 2.777) * 45, 2),
             $this->linePrice(8300, $tiers, 45, true, 90, 45),
         );
+    }
+
+    public function test_past_lone_per_kg_band_uses_pure_wholesale(): void
+    {
+        $tiers = [
+            [
+                'min_qty' => 1.0,
+                'max_qty' => 44.0,
+                'measure_level' => 'small',
+                'price_mode' => 'retail',
+                'markup_price' => 2.777,
+            ],
+        ];
+
+        $this->assertSame(4150.0, $this->linePrice(8300, $tiers, 45, true, 90, 45));
     }
 }

@@ -185,6 +185,15 @@ class PosLinePricingService
         ));
     }
 
+    /**
+     * @param  list<array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}>  $tiers
+     */
+    protected function isPerUnitRetailTier(array $tier): bool
+    {
+        return $this->normalizeTierPriceMode($tier) === 'retail'
+            && (string) ($tier['measure_level'] ?? 'small') === 'small';
+    }
+
     /** @param  list<array{min_qty: float, max_qty: ?float, measure_level: string, price_mode: string, markup_price: float}>  $tiers */
     protected function tierForQuantity(array $tiers, float $quantity, bool $extendPastMax = false): ?array
     {
@@ -221,9 +230,21 @@ class PosLinePricingService
         }
 
         for ($i = count($sorted) - 1; $i >= 0; $i--) {
-            if ($quantity + 0.0001 >= $sorted[$i]['min_qty']) {
-                return $sorted[$i];
+            if ($quantity + 0.0001 < $sorted[$i]['min_qty']) {
+                continue;
             }
+            $tier = $sorted[$i];
+            // Past a capped per-kg retail band: do not keep applying /kg markup
+            // (e.g. 1–44 @ +2.777 must not price 45kg at the same 95/kg rate).
+            if (
+                $tier['max_qty'] !== null
+                && $quantity > $tier['max_qty'] + 0.0001
+                && $this->isPerUnitRetailTier($tier)
+            ) {
+                return null;
+            }
+
+            return $tier;
         }
 
         return null;
