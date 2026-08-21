@@ -18,9 +18,9 @@ class SyncHikvisionAttendanceCommand extends Command
     protected $description = 'Retry pending Hikvision punches and pull from the terminal during Admin attendance clock windows.';
 
     /** First hourly run (Africa/Nairobi). */
-    public const WINDOW_START_HOUR = 7;
+    public const WINDOW_START_HOUR = 6;
 
-    public const WINDOW_START_MINUTE = 20;
+    public const WINDOW_START_MINUTE = 0;
 
     /** Inclusive end of overnight wrap (02:00). No punches expected after this until morning. */
     public const WINDOW_END_HOUR = 2;

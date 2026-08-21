@@ -15,6 +15,9 @@ class HikvisionAttendanceScheduleTest extends TestCase
         $tz = 'Africa/Nairobi';
 
         $this->assertTrue(SyncHikvisionAttendanceCommand::isInSyncWindow(
+            Carbon::parse('2026-08-17 06:00:00', $tz),
+        ));
+        $this->assertTrue(SyncHikvisionAttendanceCommand::isInSyncWindow(
             Carbon::parse('2026-08-17 07:20:00', $tz),
         ));
         $this->assertTrue(SyncHikvisionAttendanceCommand::isInSyncWindow(
@@ -27,7 +30,7 @@ class HikvisionAttendanceScheduleTest extends TestCase
             Carbon::parse('2026-08-17 03:20:00', $tz),
         ));
         $this->assertFalse(SyncHikvisionAttendanceCommand::isInSyncWindow(
-            Carbon::parse('2026-08-17 07:00:00', $tz),
+            Carbon::parse('2026-08-17 05:59:00', $tz),
         ));
     }
 
