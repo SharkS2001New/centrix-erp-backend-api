@@ -477,4 +477,207 @@ class ReportBuilderTest extends TestCase
                 'primary_source' => 'sales',
             ]);
     }
+
+    public function test_suggest_requires_instruction(): void
+    {
+        $this->postJson('/api/v1/reports/builder/suggest', [
+            'workspace_id' => 'backoffice',
+        ])->assertStatus(422);
+    }
+
+    public function test_suggest_returns_validated_draft_from_ai(): void
+    {
+        if (! isset($this->reportSources()['sales'])) {
+            $this->markTestSkipped('sales source not configured');
+        }
+
+        $org = \App\Models\Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['ai'] = array_merge(is_array($settings['ai'] ?? null) ? $settings['ai'] : [], [
+            'enabled' => true,
+            'provider' => 'openai',
+            'api_key' => 'sk-test-report-builder-suggest',
+            'model' => 'gpt-4o-mini',
+            'base_url' => '',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'api.openai.com/*' => \Illuminate\Support\Facades\Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'name' => 'Daily sales totals',
+                            'description' => 'Sales by day with order totals',
+                            'sources' => ['sales'],
+                            'columns' => [
+                                ['source' => 'sales', 'field' => 'sale_day'],
+                                ['source' => 'sales', 'field' => 'order_total', 'aggregate' => 'sum'],
+                                ['source' => 'sales', 'field' => 'payment_status'],
+                            ],
+                            'group_by' => ['sale_day', 'payment_status'],
+                            'blend_by' => null,
+                        ]),
+                    ],
+                ]],
+            ], 200),
+        ]);
+
+        $response = $this->postJson('/api/v1/reports/builder/suggest', [
+            'instruction' => 'Daily sales totals by payment status',
+            'workspace_id' => 'backoffice',
+        ])->assertOk();
+
+        $response
+            ->assertJsonPath('name', 'Daily sales totals')
+            ->assertJsonPath('description', 'Sales by day with order totals')
+            ->assertJsonPath('spec.source', 'sales')
+            ->assertJsonPath('spec.sources.0', 'sales')
+            ->assertJsonPath('mode', 'ai')
+            ->assertJsonPath('provider', 'openai');
+
+        $columns = collect($response->json('spec.columns'));
+        $this->assertTrue($columns->contains(fn ($c) => ($c['field'] ?? null) === 'sale_day'));
+        $this->assertTrue($columns->contains(fn ($c) => ($c['field'] ?? null) === 'order_total'));
+    }
+
+    public function test_suggest_uses_gemini_when_org_provider_is_gemini(): void
+    {
+        if (! isset($this->reportSources()['sales'])) {
+            $this->markTestSkipped('sales source not configured');
+        }
+
+        $org = \App\Models\Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['ai'] = array_merge(is_array($settings['ai'] ?? null) ? $settings['ai'] : [], [
+            'enabled' => true,
+            'provider' => 'gemini',
+            'api_key' => 'test-gemini-key',
+            'model' => 'gemini-3.7-flash',
+            'base_url' => '',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'generativelanguage.googleapis.com/*' => \Illuminate\Support\Facades\Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [[
+                            'text' => json_encode([
+                                'name' => 'Gemini sales report',
+                                'description' => 'Suggested via Gemini',
+                                'sources' => ['sales'],
+                                'columns' => [
+                                    ['source' => 'sales', 'field' => 'sale_day'],
+                                    ['source' => 'sales', 'field' => 'order_total', 'aggregate' => 'sum'],
+                                ],
+                                'group_by' => ['sale_day'],
+                                'blend_by' => null,
+                            ]),
+                        ]],
+                    ],
+                ]],
+            ], 200),
+        ]);
+
+        $response = $this->postJson('/api/v1/reports/builder/suggest', [
+            'instruction' => 'Daily sales totals',
+            'workspace_id' => 'backoffice',
+        ])->assertOk();
+
+        $response
+            ->assertJsonPath('mode', 'ai')
+            ->assertJsonPath('provider', 'gemini')
+            ->assertJsonPath('name', 'Gemini sales report')
+            ->assertJsonPath('spec.sources.0', 'sales');
+    }
+
+    public function test_suggest_rejects_unknown_fields_and_keeps_valid_ones(): void
+    {
+        if (! isset($this->reportSources()['sales'])) {
+            $this->markTestSkipped('sales source not configured');
+        }
+
+        $org = \App\Models\Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['ai'] = array_merge(is_array($settings['ai'] ?? null) ? $settings['ai'] : [], [
+            'enabled' => true,
+            'provider' => 'openai',
+            'api_key' => 'sk-test-report-builder-suggest',
+            'model' => 'gpt-4o-mini',
+            'base_url' => '',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        \Illuminate\Support\Facades\Http::fake([
+            'api.openai.com/*' => \Illuminate\Support\Facades\Http::response([
+                'choices' => [[
+                    'message' => [
+                        'content' => json_encode([
+                            'name' => 'Sales overview',
+                            'description' => null,
+                            'sources' => ['sales', 'not_a_real_source'],
+                            'columns' => [
+                                ['source' => 'sales', 'field' => 'order_total'],
+                                ['source' => 'sales', 'field' => 'made_up_field'],
+                            ],
+                        ]),
+                    ],
+                ]],
+            ], 200),
+        ]);
+
+        $response = $this->postJson('/api/v1/reports/builder/suggest', [
+            'instruction' => 'Show me sales totals',
+            'workspace_id' => 'backoffice',
+        ])->assertOk();
+
+        $this->assertSame(['sales'], $response->json('spec.sources'));
+        $fields = collect($response->json('spec.columns'))->pluck('field')->all();
+        $this->assertContains('order_total', $fields);
+        $this->assertNotContains('made_up_field', $fields);
+    }
+
+    public function test_suggest_works_without_ai_using_local_keywords(): void
+    {
+        if (! isset($this->reportSources()['sales'])) {
+            $this->markTestSkipped('sales source not configured');
+        }
+
+        $org = \App\Models\Organization::findOrFail($this->user->organization_id);
+        $settings = $org->module_settings ?? [];
+        $settings['ai'] = array_merge(is_array($settings['ai'] ?? null) ? $settings['ai'] : [], [
+            'enabled' => false,
+            'api_key' => '',
+        ]);
+        $org->update(['module_settings' => $settings]);
+
+        \Illuminate\Support\Facades\Http::fake();
+
+        $response = $this->postJson('/api/v1/reports/builder/suggest', [
+            'instruction' => 'Daily sales totals by payment status unpaid',
+            'workspace_id' => 'backoffice',
+        ])->assertOk();
+
+        $response
+            ->assertJsonPath('mode', 'local')
+            ->assertJsonPath('spec.sources.0', 'sales');
+
+        $fields = collect($response->json('spec.columns'))->pluck('field')->all();
+        $this->assertNotEmpty($fields);
+        $this->assertTrue(
+            collect($fields)->intersect(['sale_day', 'order_total', 'payment_status', 'amount_paid'])->isNotEmpty()
+        );
+
+        \Illuminate\Support\Facades\Http::assertNothingSent();
+    }
+
+    public function test_suggest_rejects_more_than_100_words(): void
+    {
+        $words = implode(' ', array_fill(0, 101, 'sales'));
+        $this->postJson('/api/v1/reports/builder/suggest', [
+            'instruction' => $words,
+            'workspace_id' => 'backoffice',
+        ])->assertStatus(422);
+    }
 }

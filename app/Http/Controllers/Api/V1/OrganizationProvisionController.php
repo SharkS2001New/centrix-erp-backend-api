@@ -772,6 +772,7 @@ class OrganizationProvisionController extends Controller
             'sales_platform.enable_mpesa_stk' => 'sometimes|boolean',
             'sales_platform.enable_kra_integration' => 'sometimes|boolean',
             'sales_platform.enable_ai' => 'sometimes|boolean',
+            'sales_platform.use_platform_gemini' => 'sometimes|boolean',
             'sales_platform.enable_whatsapp_orders' => 'sometimes|boolean',
             'sales_platform.enable_advanced_data_import' => 'sometimes|boolean',
             'sales_platform.advanced_data_import_pages' => 'sometimes|array',

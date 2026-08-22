@@ -468,6 +468,7 @@ Route::middleware('auth:sanctum')->group(function () {
             Route::middleware('erp.permission:reports.builder')->prefix('builder')->group(function () {
                 Route::get('schema', [ReportBuilderController::class, 'schema']);
                 Route::get('sources', [ReportBuilderController::class, 'sources']);
+                Route::post('suggest', [ReportBuilderController::class, 'suggest']);
                 Route::get('templates', [ReportBuilderController::class, 'indexTemplates']);
                 Route::post('templates', [ReportBuilderController::class, 'storeTemplate']);
                 Route::get('templates/{templateId}', [ReportBuilderController::class, 'showTemplate']);
@@ -755,7 +756,8 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::middleware('erp.permission:ai.assist')->prefix('ai')->group(function () {
         Route::get('status', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'status']);
         Route::get('schemas', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'schemas']);
-        Route::post('chat', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'chat']);
+        Route::post('chat', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'chat'])
+            ->middleware('throttle:ai-chat');
         Route::post('teach', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'teach']);
         Route::post('explore', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'explore']);
         Route::post('knowledge/{id}/confirm', [\App\Http\Controllers\Api\V1\AiAssistantController::class, 'confirmKnowledge']);

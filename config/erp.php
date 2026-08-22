@@ -264,6 +264,7 @@ return [
         ],
         'ai' => [
             'enable_ai',
+            'use_platform_gemini',
         ],
         'whatsapp' => [
             'enable_whatsapp_orders',
@@ -755,8 +756,9 @@ return [
         ],
         'ai' => [
             'enable_ai' => true,
+            'use_platform_gemini' => false,
             'enabled' => false,
-            'provider' => 'openai',
+            'provider' => env('AI_PROVIDER', 'openai'),
             'model' => '',
             'api_key' => '',
             'base_url' => '',

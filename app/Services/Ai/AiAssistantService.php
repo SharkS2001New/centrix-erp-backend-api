@@ -22,6 +22,7 @@ class AiAssistantService
         protected AiKnowledgeService $knowledge,
         protected AiPageExplorer $pageExplorer,
         protected AiIntentResolver $intentResolver,
+        protected AiToolChatService $toolChat,
     ) {}
 
     public function isAvailableForUser(User $user): bool
@@ -42,6 +43,7 @@ class AiAssistantService
         bool $confirmAction = false,
         ?string $workspaceId = null,
         ?string $pathname = null,
+        ?string $conversationId = null,
     ): array {
         $teachResult = $this->tryCaptureUserTeaching($user, $message);
         if ($teachResult) {
@@ -54,13 +56,35 @@ class AiAssistantService
             $gate = $this->contextBuilder->gateForUser($user);
 
             return [
+                'success' => false,
                 'reply' => ! $gate->aiPlatformEnabled()
                     ? 'AI assistant is not enabled for this organization. Contact your platform administrator.'
                     : (! ($settings['enabled'] ?? false)
                         ? 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.'
-                        : 'AI assistant is not configured for this organization. An admin must add an OpenAI API key under Administration → Settings → AI.'),
+                        : 'AI assistant is not configured for this organization. An admin must add an API key under Administration → Settings → AI.'),
+                'message' => ! $gate->aiPlatformEnabled()
+                    ? 'AI assistant is not enabled for this organization. Contact your platform administrator.'
+                    : (! ($settings['enabled'] ?? false)
+                        ? 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.'
+                        : 'AI assistant is not configured for this organization. An admin must add an API key under Administration → Settings → AI.'),
                 'tools_used' => [],
+                'error_code' => 'not_configured',
             ];
+        }
+
+        // Tool-calling path (Gemini always; OpenAI only when AI_USE_TOOL_CHAT=true).
+        $provider = strtolower((string) ($runtime['provider'] ?? config('ai.provider', 'openai')));
+        $useToolChat = $provider === 'gemini'
+            || ($provider === 'openai' && filter_var(config('ai.use_tool_chat', false), FILTER_VALIDATE_BOOLEAN));
+        if ($useToolChat && ! $confirmAction && ! $pendingAction) {
+            return $this->toolChat->chat(
+                $user,
+                $message,
+                $conversationId,
+                $history,
+                $workspaceId,
+                $pathname,
+            );
         }
 
         if ($confirmAction && $pendingAction) {

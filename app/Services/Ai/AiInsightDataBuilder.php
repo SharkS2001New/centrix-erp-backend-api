@@ -91,6 +91,29 @@ class AiInsightDataBuilder
     }
 
     /** @return array<string, mixed> */
+    public function salesSummaryForPeriod(Organization $organization, User $user, string $from, string $to): array
+    {
+        $orgId = (int) $organization->id;
+        $gross = $this->salesTotal($orgId, $from, $to);
+        $transactions = 0;
+        if (Schema::hasTable('sales')) {
+            $transactions = (int) DB::table('sales')
+                ->where('organization_id', $orgId)
+                ->whereNotIn('status', ['cancelled', 'draft', 'held', 'expired'])
+                ->whereRaw('DATE(COALESCE(completed_at, created_at)) BETWEEN ? AND ?', [$from, $to])
+                ->count();
+        }
+
+        return [
+            'from_date' => $from,
+            'to_date' => $to,
+            'gross_sales' => $gross,
+            'net_sales' => $gross,
+            'transactions' => $transactions,
+        ];
+    }
+
+    /** @return array<string, mixed> */
     public function salesBriefSlice(Organization $organization, User $user, int $lookbackDays = 7): array
     {
         $lookbackDays = max(1, min(90, $lookbackDays));

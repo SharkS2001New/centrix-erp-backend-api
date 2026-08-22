@@ -35,7 +35,7 @@ class AiSettingsController extends Controller
 
         $data = $request->validate([
             'enabled' => 'sometimes|boolean',
-            'provider' => 'sometimes|in:openai',
+            'provider' => 'sometimes|in:openai,gemini',
             'model' => 'sometimes|nullable|string|max:80',
             'api_key' => 'sometimes|nullable|string|max:250',
             'base_url' => 'sometimes|nullable|string|max:500',

@@ -72,6 +72,7 @@ class AiAssistantController extends Controller
             'workspace_id' => 'nullable|string|max:32|in:pos,backoffice,admin,accounting,hr,distribution',
             'pathname' => 'nullable|string|max:300',
             'message' => ['required', 'string', 'max:4000', 'not_regex:/data:image\//i'],
+            'conversation_id' => 'nullable|uuid',
             'history' => 'nullable|array|max:16',
             'history.*.role' => 'required_with:history|in:user,assistant',
             'history.*.content' => 'required_with:history|string|max:8000',
@@ -108,6 +109,7 @@ class AiAssistantController extends Controller
             (bool) ($data['confirm_action'] ?? false),
             $data['workspace_id'] ?? null,
             $data['pathname'] ?? null,
+            $data['conversation_id'] ?? null,
         );
 
         if (! empty($data['confirm_learn_id'])) {

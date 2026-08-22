@@ -148,6 +148,30 @@ class AppServiceProvider extends ServiceProvider
                 max(1, (int) ($api['max_attempts'] ?? 600)),
             )->by($key);
         });
+
+        $aiChat = config('ai.rate_limit');
+        RateLimiter::for('ai-chat', function (Request $request) use ($aiChat) {
+            $decay = max(1, (int) ($aiChat['decay_minutes'] ?? 1));
+            $max = max(1, (int) ($aiChat['max_attempts'] ?? 30));
+            $key = $request->user()?->id
+                ? 'ai-chat:user:'.$request->user()->id
+                : 'ai-chat:ip:'.$request->ip();
+
+            return Limit::perMinutes($decay, $max)->by($key)->response(function (Request $request, array $headers) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'AI usage is temporarily limited. Please try again shortly.',
+                    'reply' => 'AI usage is temporarily limited. Please try again shortly.',
+                    'error_code' => 'rate_limited',
+                    'tools_used' => [],
+                    'usage' => [
+                        'input_tokens' => 0,
+                        'output_tokens' => 0,
+                        'total_tokens' => 0,
+                    ],
+                ], 429, $headers);
+            });
+        });
     }
 
     /**

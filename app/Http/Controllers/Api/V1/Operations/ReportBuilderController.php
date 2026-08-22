@@ -5,13 +5,17 @@ namespace App\Http\Controllers\Api\V1\Operations;
 use App\Http\Controllers\Controller;
 use App\Models\CustomReportTemplate;
 use App\Services\Reports\ReportBuilderService;
+use App\Services\Reports\ReportBuilderSuggestService;
 use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Validation\ValidationException;
 
 class ReportBuilderController extends Controller
 {
-    public function __construct(protected ReportBuilderService $builder) {}
+    public function __construct(
+        protected ReportBuilderService $builder,
+        protected ReportBuilderSuggestService $suggestService,
+    ) {}
 
     public function schema(Request $request)
     {
@@ -43,6 +47,23 @@ class ReportBuilderController extends Controller
             'source_count' => count($schema['sources']),
             'sources_by_module' => $grouped,
         ]);
+    }
+
+    public function suggest(Request $request)
+    {
+        $data = $request->validate([
+            'instruction' => 'required|string|max:800',
+            'workspace_id' => 'nullable|string|max:50',
+        ]);
+
+        $workspaceId = $this->workspaceIdFromRequest($request);
+        $result = $this->suggestService->suggest(
+            $request->user(),
+            $data['instruction'],
+            $workspaceId,
+        );
+
+        return response()->json($result);
     }
 
     public function indexTemplates(Request $request)

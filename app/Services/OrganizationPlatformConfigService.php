@@ -381,8 +381,15 @@ class OrganizationPlatformConfigService
                 $currentAi[$key] = (bool) $salesPlatform[$key];
             }
         }
+        if (array_key_exists('use_platform_gemini', $salesPlatform) && $salesPlatform['use_platform_gemini']) {
+            $currentAi['enable_ai'] = true;
+            $currentAi['enabled'] = true;
+            $currentAi['provider'] = 'gemini';
+            $currentAi['use_platform_gemini'] = true;
+        }
         if (array_key_exists('enable_ai', $salesPlatform) && ! $salesPlatform['enable_ai']) {
             $currentAi['enabled'] = false;
+            $currentAi['use_platform_gemini'] = false;
         }
         $moduleSettings['ai'] = $currentAi;
 
@@ -537,6 +544,7 @@ class OrganizationPlatformConfigService
             'enable_mpesa_stk' => true,
             'enable_kra_integration' => true,
             'enable_ai' => true,
+            'use_platform_gemini' => false,
             'enable_whatsapp_orders' => false,
             'enable_advanced_data_import' => false,
             'advanced_data_import_pages' => AdvancedDataImportPageRegistry::defaultEnabledMap(),
@@ -623,6 +631,7 @@ class OrganizationPlatformConfigService
             'enable_mpesa_stk' => (bool) ($finance['enable_mpesa_stk'] ?? true),
             'enable_kra_integration' => (bool) ($finance['enable_kra_integration'] ?? true),
             'enable_ai' => (bool) ($ai['enable_ai'] ?? true),
+            'use_platform_gemini' => (bool) ($ai['use_platform_gemini'] ?? false),
             'enable_whatsapp_orders' => (bool) ($whatsapp['enable_whatsapp_orders'] ?? false),
             'enable_advanced_data_import' => (bool) ($admin['enable_advanced_data_import'] ?? false),
             'advanced_data_import_pages' => $importPages,
@@ -872,6 +881,12 @@ class OrganizationPlatformConfigService
 
         if (! $gate->aiPlatformEnabled()) {
             unset($data['enabled'], $data['api_key'], $data['model'], $data['base_url'], $data['provider']);
+        }
+
+        $ai = $gate->moduleSettings('ai');
+        if (! empty($ai['use_platform_gemini'])) {
+            // Platform Gemini key is authoritative — org managers cannot override provider/credentials.
+            unset($data['api_key'], $data['provider'], $data['base_url'], $data['model']);
         }
 
         return $data;
