@@ -166,11 +166,28 @@ class MpesaPaybillAccountController extends Controller
             'is_default' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
             'enable_stk_push' => 'sometimes|nullable|boolean',
+            'env' => 'sometimes|nullable|string|in:sandbox,live',
+            'consumer_key' => 'sometimes|nullable|string|max:255',
+            'consumer_secret' => 'sometimes|nullable|string|max:2000',
+            'passkey' => 'sometimes|nullable|string|max:2000',
+            'stk_callback_url' => 'sometimes|nullable|string|max:500',
+            'c2b_confirmation_url' => 'sometimes|nullable|string|max:500',
+            'c2b_validation_url' => 'sometimes|nullable|string|max:500',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
         ]);
 
         $data['primary_short_code'] = trim((string) $data['primary_short_code']);
-        foreach (['shortcode', 'till_number', 'child_storecode', 'name'] as $key) {
+        foreach ([
+            'shortcode',
+            'till_number',
+            'child_storecode',
+            'name',
+            'env',
+            'consumer_key',
+            'stk_callback_url',
+            'c2b_confirmation_url',
+            'c2b_validation_url',
+        ] as $key) {
             if (array_key_exists($key, $data) && is_string($data[$key])) {
                 $data[$key] = trim($data[$key]) ?: null;
             }
@@ -183,6 +200,32 @@ class MpesaPaybillAccountController extends Controller
         }
         if (array_key_exists('enable_stk_push', $data) && $data['enable_stk_push'] === '') {
             $data['enable_stk_push'] = null;
+        }
+
+        // Blank / masked secrets keep the existing value on update.
+        foreach (['consumer_secret', 'passkey'] as $secretKey) {
+            if (! array_key_exists($secretKey, $data)) {
+                continue;
+            }
+            $incoming = trim((string) $data[$secretKey]);
+            if ($incoming === '' || $incoming === '********') {
+                unset($data[$secretKey]);
+            }
+        }
+
+        // Drop credential columns until migration has run.
+        foreach ([
+            'env',
+            'consumer_key',
+            'consumer_secret',
+            'passkey',
+            'stk_callback_url',
+            'c2b_confirmation_url',
+            'c2b_validation_url',
+        ] as $col) {
+            if (array_key_exists($col, $data) && ! Schema::hasColumn('mpesa_paybill_accounts', $col)) {
+                unset($data[$col]);
+            }
         }
 
         $routeId = array_key_exists('route_id', $data) ? $data['route_id'] : $existing?->route_id;

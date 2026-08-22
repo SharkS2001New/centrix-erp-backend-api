@@ -209,7 +209,8 @@ class MpesaPaybillAccountService
     }
 
     /**
-     * Overlay paybill shortcodes + STK flag onto org/branch Daraja credentials.
+     * Overlay paybill shortcodes, STK flag, and optional Daraja credentials onto org/branch config.
+     * Non-empty account credential fields win; blank inherits the base config.
      *
      * @param  array<string, mixed>  $baseConfig
      * @return array<string, mixed>
@@ -242,6 +243,21 @@ class MpesaPaybillAccountService
 
         if ($account->enable_stk_push !== null) {
             $config['enable_stk_push'] = (bool) $account->enable_stk_push;
+        }
+
+        foreach ([
+            'env',
+            'consumer_key',
+            'consumer_secret',
+            'passkey',
+            'stk_callback_url',
+            'c2b_confirmation_url',
+            'c2b_validation_url',
+        ] as $key) {
+            $value = trim((string) ($account->getAttributes()[$key] ?? ''));
+            if ($value !== '') {
+                $config[$key] = $value;
+            }
         }
 
         return MpesaSettingsResolver::normalize($config);

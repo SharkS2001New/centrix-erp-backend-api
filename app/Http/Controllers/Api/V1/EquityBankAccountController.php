@@ -131,17 +131,32 @@ class EquityBankAccountController extends Controller
             ],
             'is_default' => 'sometimes|boolean',
             'is_active' => 'sometimes|boolean',
+            'callback_url' => 'sometimes|nullable|string|max:500',
+            'callback_shared_secret' => 'sometimes|nullable|string|max:2000',
             'sort_order' => 'sometimes|integer|min:0|max:9999',
         ]);
 
         $data['primary_account_number'] = trim((string) $data['primary_account_number']);
-        foreach (['account_number', 'paybill_number', 'name'] as $key) {
+        foreach (['account_number', 'paybill_number', 'name', 'callback_url'] as $key) {
             if (array_key_exists($key, $data) && is_string($data[$key])) {
                 $data[$key] = trim($data[$key]) ?: null;
             }
         }
         if (! array_key_exists('is_active', $data) && ! $existing) {
             $data['is_active'] = true;
+        }
+
+        if (array_key_exists('callback_shared_secret', $data)) {
+            $incoming = trim((string) $data['callback_shared_secret']);
+            if ($incoming === '' || $incoming === '********') {
+                unset($data['callback_shared_secret']);
+            }
+        }
+
+        foreach (['callback_url', 'callback_shared_secret'] as $col) {
+            if (array_key_exists($col, $data) && ! Schema::hasColumn('equity_bank_accounts', $col)) {
+                unset($data[$col]);
+            }
         }
 
         return $data;

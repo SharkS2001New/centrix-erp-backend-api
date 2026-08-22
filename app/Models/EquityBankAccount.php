@@ -17,6 +17,8 @@ class EquityBankAccount extends Model
         'route_id',
         'is_default',
         'is_active',
+        'callback_url',
+        'callback_shared_secret',
         'sort_order',
     ];
 
@@ -25,6 +27,26 @@ class EquityBankAccount extends Model
         'is_active' => 'boolean',
         'sort_order' => 'integer',
     ];
+
+    protected $hidden = [
+        'callback_shared_secret',
+    ];
+
+    protected $appends = [
+        'has_callback_shared_secret',
+        'has_own_callback_credentials',
+    ];
+
+    public function getHasCallbackSharedSecretAttribute(): bool
+    {
+        return trim((string) ($this->attributes['callback_shared_secret'] ?? '')) !== '';
+    }
+
+    public function getHasOwnCallbackCredentialsAttribute(): bool
+    {
+        return trim((string) ($this->attributes['callback_url'] ?? '')) !== ''
+            || $this->has_callback_shared_secret;
+    }
 
     public function organization(): BelongsTo
     {

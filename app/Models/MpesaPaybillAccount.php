@@ -20,6 +20,13 @@ class MpesaPaybillAccount extends Model
         'is_default',
         'is_active',
         'enable_stk_push',
+        'env',
+        'consumer_key',
+        'consumer_secret',
+        'passkey',
+        'stk_callback_url',
+        'c2b_confirmation_url',
+        'c2b_validation_url',
         'sort_order',
     ];
 
@@ -29,6 +36,37 @@ class MpesaPaybillAccount extends Model
         'enable_stk_push' => 'boolean',
         'sort_order' => 'integer',
     ];
+
+    protected $hidden = [
+        'consumer_secret',
+        'passkey',
+    ];
+
+    protected $appends = [
+        'has_consumer_secret',
+        'has_passkey',
+        'has_own_daraja_credentials',
+    ];
+
+    public function getHasConsumerSecretAttribute(): bool
+    {
+        return trim((string) ($this->attributes['consumer_secret'] ?? '')) !== '';
+    }
+
+    public function getHasPasskeyAttribute(): bool
+    {
+        return trim((string) ($this->attributes['passkey'] ?? '')) !== '';
+    }
+
+    public function getHasOwnDarajaCredentialsAttribute(): bool
+    {
+        return trim((string) ($this->attributes['consumer_key'] ?? '')) !== ''
+            || $this->has_consumer_secret
+            || $this->has_passkey
+            || trim((string) ($this->attributes['stk_callback_url'] ?? '')) !== ''
+            || trim((string) ($this->attributes['c2b_confirmation_url'] ?? '')) !== ''
+            || trim((string) ($this->attributes['c2b_validation_url'] ?? '')) !== '';
+    }
 
     public function organization(): BelongsTo
     {

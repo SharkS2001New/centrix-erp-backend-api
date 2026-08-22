@@ -44,7 +44,11 @@ class EquityPaymentController extends Controller
         }
 
         $settings = EquitySettingsResolver::forOrganization($organization);
-        $secret = trim((string) ($settings['callback_shared_secret'] ?? ''));
+        $account = $resolved['account'];
+        $accountSecret = trim((string) ($account?->getAttributes()['callback_shared_secret'] ?? ''));
+        $secret = $accountSecret !== ''
+            ? $accountSecret
+            : trim((string) ($settings['callback_shared_secret'] ?? ''));
         if ($secret !== '' && $secret !== '********') {
             $provided = trim((string) (
                 $request->header('X-Equity-Secret')
@@ -68,7 +72,6 @@ class EquityPaymentController extends Controller
             return response()->json(['ResultCode' => 1, 'ResultDesc' => 'Missing transaction id or amount'], 422);
         }
 
-        $account = $resolved['account'];
         $existing = EquityIncomingPayment::query()
             ->where('organization_id', (int) $resolved['organization_id'])
             ->where('transaction_id', $transactionId)
