@@ -3,27 +3,26 @@
 namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
-class MpesaIncomingPayment extends Model
+class EquityIncomingPayment extends Model
 {
     protected $fillable = [
         'organization_id',
-        'mpesa_paybill_account_id',
+        'equity_bank_account_id',
         'matched_branch_id',
         'matched_route_id',
-        'matched_till_id',
         'transaction_id',
         'phone_number',
         'bill_ref_number',
         'payer_name',
-        'business_short_code',
+        'business_account_number',
         'parsed_order_num',
         'parsed_customer_num',
         'amount',
         'applied_amount',
         'source',
         'status',
-        'applied_cart_id',
         'applied_sale_id',
         'applied_invoice_id',
         'match_method',
@@ -31,7 +30,6 @@ class MpesaIncomingPayment extends Model
         'reconciliation_status',
         'matched_by_user_id',
         'reconciliation_notes',
-        'stk_request_id',
         'received_at',
         'applied_at',
         'matched_at',
@@ -43,8 +41,13 @@ class MpesaIncomingPayment extends Model
         'matched_at' => 'datetime',
     ];
 
-    public function sale()
+    public function sale(): BelongsTo
     {
         return $this->belongsTo(Sale::class, 'applied_sale_id');
+    }
+
+    public function equityBankAccount(): BelongsTo
+    {
+        return $this->belongsTo(EquityBankAccount::class, 'equity_bank_account_id');
     }
 }

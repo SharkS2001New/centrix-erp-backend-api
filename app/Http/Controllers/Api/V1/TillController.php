@@ -165,6 +165,9 @@ class TillController extends BaseResourceController
     public function store(\Illuminate\Http\Request $request)
     {
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
+        if (in_array('mpesa_paybill_account_id', $this->fillableFields(), true)) {
+            $rules['mpesa_paybill_account_id'] = 'nullable|integer|exists:mpesa_paybill_accounts,id';
+        }
         $data = $request->validate($rules);
 
         $branchId = isset($data['branch_id']) ? (int) $data['branch_id'] : 0;
@@ -213,6 +216,7 @@ class TillController extends BaseResourceController
         }
 
         $model = Till::create($data);
+        $this->syncTillPaybillLink($model);
 
         return response()->json($model, 201);
     }
@@ -221,6 +225,9 @@ class TillController extends BaseResourceController
     {
         $model = $this->findScopedTill($request, $id);
         $rules = array_fill_keys($this->fillableFields(), 'nullable');
+        if (in_array('mpesa_paybill_account_id', $this->fillableFields(), true)) {
+            $rules['mpesa_paybill_account_id'] = 'nullable|integer|exists:mpesa_paybill_accounts,id';
+        }
         $data = $request->validate($rules);
 
         unset($data['working_amount'], $data['float_breakdown']);
@@ -266,8 +273,33 @@ class TillController extends BaseResourceController
         }
 
         $model->update($data);
+        $this->syncTillPaybillLink($model->fresh() ?? $model);
 
         return response()->json($model);
+    }
+
+    protected function syncTillPaybillLink(Till $till): void
+    {
+        if (! \Illuminate\Support\Facades\Schema::hasTable('mpesa_paybill_accounts')
+            || ! \Illuminate\Support\Facades\Schema::hasColumn('mpesa_paybill_accounts', 'pos_till_id')) {
+            return;
+        }
+
+        \App\Models\MpesaPaybillAccount::query()
+            ->where('pos_till_id', $till->id)
+            ->where('organization_id', (int) $till->organization_id)
+            ->when(
+                $till->mpesa_paybill_account_id,
+                fn ($q) => $q->where('id', '!=', (int) $till->mpesa_paybill_account_id),
+            )
+            ->update(['pos_till_id' => null]);
+
+        if ($till->mpesa_paybill_account_id) {
+            \App\Models\MpesaPaybillAccount::query()
+                ->where('id', (int) $till->mpesa_paybill_account_id)
+                ->where('organization_id', (int) $till->organization_id)
+                ->update(['pos_till_id' => $till->id]);
+        }
     }
 
     public function destroy(Request $request, string $id)

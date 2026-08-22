@@ -33,6 +33,7 @@ use App\Http\Controllers\Api\V1\MobileDriverAttendanceAdminController;
 use App\Http\Controllers\Api\V1\Operations\PayrollOperationsController;
 use App\Http\Controllers\Api\V1\Operations\ReturnOperationsController;
 use App\Http\Controllers\Api\V1\Operations\MpesaReconciliationController;
+use App\Http\Controllers\Api\V1\Operations\EquityReconciliationController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
 use App\Http\Controllers\Api\V1\Operations\KraProductRegistrationController;
 use App\Http\Controllers\Api\V1\Operations\KraOperationsController;
@@ -264,6 +265,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('bank-reconciliations/{reconciliationId}', [BankReconciliationController::class, 'show']);
         Route::get('mpesa-reconciliation', [MpesaReconciliationController::class, 'index']);
         Route::get('mpesa-reconciliation/{paymentId}', [MpesaReconciliationController::class, 'show']);
+        Route::get('equity-reconciliation', [EquityReconciliationController::class, 'index']);
+        Route::get('equity-reconciliation/{paymentId}', [EquityReconciliationController::class, 'show']);
     });
 
     Route::middleware(['erp.module:accounting', 'erp.permission:accounting.manage'])->prefix('accounting')->group(function () {
@@ -298,6 +301,8 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::delete('bank-reconciliations/{reconciliationId}', [BankReconciliationController::class, 'destroy']);
         Route::post('mpesa-reconciliation/{paymentId}/apply', [MpesaReconciliationController::class, 'apply']);
         Route::post('mpesa-reconciliation/{paymentId}/ignore', [MpesaReconciliationController::class, 'ignore']);
+        Route::post('equity-reconciliation/{paymentId}/apply', [EquityReconciliationController::class, 'apply']);
+        Route::post('equity-reconciliation/{paymentId}/ignore', [EquityReconciliationController::class, 'ignore']);
     });
 
     // ---- HR / Attendance (clock device) ----

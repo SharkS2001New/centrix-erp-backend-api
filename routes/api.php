@@ -22,6 +22,8 @@ use App\Http\Controllers\Api\V1\CustomerInvoicePaymentController;
 use App\Http\Controllers\Api\V1\CreditNoteController;
 use App\Http\Controllers\Api\V1\CustomerReturnController;
 use App\Http\Controllers\Api\V1\MobileOrdersQuickActionsController;
+use App\Http\Controllers\Api\V1\MpesaPaybillAccountController;
+use App\Http\Controllers\Api\V1\EquityBankAccountController;
 use App\Http\Controllers\Api\V1\LegacyOrdersController;
 use App\Http\Controllers\Api\V1\LegacyReturnsController;
 use App\Http\Controllers\Api\V1\DamageController;
@@ -63,6 +65,7 @@ use App\Http\Controllers\Api\V1\MobilePickingSheetController;
 use App\Http\Controllers\Api\V1\Operations\CompanyMobileAttendanceController;
 use App\Http\Controllers\Api\V1\Operations\ExternalAccountingController;
 use App\Http\Controllers\Api\V1\Operations\MpesaPaymentController;
+use App\Http\Controllers\Api\V1\Operations\EquityPaymentController;
 use App\Http\Controllers\Api\V1\OrganizationController;
 use App\Http\Controllers\Api\V1\OrganizationHolidayController;
 use App\Http\Controllers\Api\V1\OrganizationKpiController;
@@ -200,6 +203,8 @@ Route::prefix('v1')->group(function () {
         Route::post('payments/c2b/validation', [MpesaPaymentController::class, 'validationRequest']);
         Route::post('payments/c2b/confirmation', [MpesaPaymentController::class, 'c2bConfirmation']);
     });
+    Route::post('payments/equity/confirmation', [EquityPaymentController::class, 'confirmation'])
+        ->middleware('throttle:api');
     Route::get('accounting/quickbooks/callback', [ExternalAccountingController::class, 'quickBooksCallback'])
         ->middleware('throttle:auth-org-preview');
 
@@ -292,6 +297,26 @@ Route::prefix('v1')->group(function () {
             ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
         Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
             ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
+        Route::get('mpesa-paybill-accounts', [MpesaPaybillAccountController::class, 'index'])
+            ->middleware(['erp.module_any:accounting,payments,sales', 'erp.permission:admin.manage|payments.manage|accounting.view']);
+        Route::post('mpesa-paybill-accounts', [MpesaPaybillAccountController::class, 'store'])
+            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
+        Route::patch('mpesa-paybill-accounts/{id}', [MpesaPaybillAccountController::class, 'update'])
+            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage'])
+            ->whereNumber('id');
+        Route::delete('mpesa-paybill-accounts/{id}', [MpesaPaybillAccountController::class, 'destroy'])
+            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage'])
+            ->whereNumber('id');
+        Route::get('equity-bank-accounts', [EquityBankAccountController::class, 'index'])
+            ->middleware(['erp.module_any:accounting,payments,sales', 'erp.permission:admin.manage|payments.manage|accounting.view']);
+        Route::post('equity-bank-accounts', [EquityBankAccountController::class, 'store'])
+            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
+        Route::patch('equity-bank-accounts/{id}', [EquityBankAccountController::class, 'update'])
+            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage'])
+            ->whereNumber('id');
+        Route::delete('equity-bank-accounts/{id}', [EquityBankAccountController::class, 'destroy'])
+            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage'])
+            ->whereNumber('id');
         Route::get('erp/settings/ai', [AiSettingsController::class, 'show'])
             ->middleware(['erp.permission:admin.manage']);
         Route::patch('erp/settings/ai', [AiSettingsController::class, 'update'])

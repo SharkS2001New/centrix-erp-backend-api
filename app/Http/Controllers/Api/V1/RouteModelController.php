@@ -183,6 +183,32 @@ class RouteModelController extends BaseResourceController
             $rules['branch_id'] = ['sometimes', 'nullable', 'integer', 'exists:branches,id'];
         }
 
+        if (Schema::hasColumn('routes', 'mpesa_paybill_account_id')) {
+            $rules['mpesa_paybill_account_id'] = [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('mpesa_paybill_accounts', 'id')->where(function ($q) use ($orgId) {
+                    if ($orgId > 0) {
+                        $q->where('organization_id', $orgId);
+                    }
+                }),
+            ];
+        }
+
+        if (Schema::hasColumn('routes', 'equity_bank_account_id')) {
+            $rules['equity_bank_account_id'] = [
+                'sometimes',
+                'nullable',
+                'integer',
+                Rule::exists('equity_bank_accounts', 'id')->where(function ($q) use ($orgId) {
+                    if ($orgId > 0) {
+                        $q->where('organization_id', $orgId);
+                    }
+                }),
+            ];
+        }
+
         $data = $request->validate($rules);
 
         if (array_key_exists('receipt_payment_details', $data)) {

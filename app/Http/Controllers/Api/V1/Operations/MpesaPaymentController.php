@@ -13,7 +13,9 @@ use App\Models\MpesaPaymentSkip;
 use App\Models\MpesaStkRequest;
 use App\Models\Organization;
 use App\Models\TemporaryCart;
+use App\Models\Till;
 use App\Services\Erp\ErpContext;
+use App\Services\Mpesa\MpesaPaybillAccountService;
 use App\Services\Mpesa\MpesaPaymentReferenceParser;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use App\Services\MpesaService;
@@ -33,21 +35,33 @@ class MpesaPaymentController extends Controller
     {
         $org = Organization::findOrFail($user->organization_id);
         $branch = $cart->branch_id ? Branch::find($cart->branch_id) : null;
+        $till = $cart->till_id ? Till::find($cart->till_id) : null;
 
-        return MpesaService::forOrganization($org, $branch);
+        return MpesaService::forOrganization($org, $branch, $till);
     }
 
     public function stkPush(Request $request, int|string $cartId)
     {
         $cart = $this->findOwnedCart($cartId, $request->user());
         $org = Organization::findOrFail($request->user()->organization_id);
+        $mpesaService = $this->mpesaForCart($cart, $request->user());
+
         try {
-            MpesaSettingsResolver::assertStkPushEnabledForOrganization($org);
+            // Prefer till/paybill STK flag; fall back to org-wide setting.
+            if (! MpesaSettingsResolver::isStkPushEnabled($mpesaService->config())) {
+                throw new \RuntimeException('STK push is disabled for this till / paybill.');
+            }
+            MpesaSettingsResolver::assertReadyForStkPush($mpesaService->config());
         } catch (\RuntimeException $e) {
+            // Keep org-level platform disable messaging when org STK is off and no till override enabled it.
+            try {
+                MpesaSettingsResolver::assertStkPushEnabledForOrganization($org);
+            } catch (\RuntimeException $orgError) {
+                return response()->json(['message' => $orgError->getMessage()], 422);
+            }
+
             return response()->json(['message' => $e->getMessage()], 422);
         }
-
-        $mpesaService = $this->mpesaForCart($cart, $request->user());
         $data = $request->validate([
             'phone_number' => ['required', 'string', 'max:45'],
             'amount' => ['nullable', 'numeric', 'min:1'],
@@ -395,8 +409,8 @@ class MpesaPaymentController extends Controller
             ]);
         }
 
-        $organizationId = MpesaSettingsResolver::organizationIdForC2bPayload($payload);
-        if ($organizationId === null) {
+        $resolved = app(MpesaPaybillAccountService::class)->resolveFromC2bPayload($payload);
+        if ($resolved === null) {
             Log::warning('M-Pesa C2B confirmation ignored — organization could not be resolved', [
                 'transaction_id' => $transactionId,
                 'business_short_code' => $payload['BusinessShortCode'] ?? $payload['business_short_code'] ?? null,
@@ -408,11 +422,14 @@ class MpesaPaymentController extends Controller
             ]);
         }
 
+        $organizationId = (int) $resolved['organization_id'];
         $billRefNumber = trim((string) ($payload['BillRefNumber'] ?? $payload['bill_ref_number'] ?? ''));
         $payerName = trim((string) ($payload['FirstName'] ?? $payload['first_name'] ?? ''));
         $businessShortCode = trim((string) ($payload['BusinessShortCode'] ?? $payload['business_short_code'] ?? ''));
 
         $parsed = app(MpesaPaymentReferenceParser::class)->parse($billRefNumber);
+        /** @var \App\Models\MpesaPaybillAccount|null $paybillAccount */
+        $paybillAccount = $resolved['account'] ?? null;
 
         $payment = $this->recordIncomingMpesaPayment(
             $transactionId,
@@ -422,6 +439,10 @@ class MpesaPaymentController extends Controller
             $organizationId,
             null,
             array_filter([
+                'mpesa_paybill_account_id' => $paybillAccount?->id,
+                'matched_branch_id' => $resolved['branch_id'] ?? null,
+                'matched_route_id' => $resolved['route_id'] ?? null,
+                'matched_till_id' => $resolved['till_id'] ?? null,
                 'bill_ref_number' => $billRefNumber !== '' ? $billRefNumber : null,
                 'payer_name' => $payerName !== '' ? $payerName : null,
                 'business_short_code' => $businessShortCode !== '' ? $businessShortCode : null,

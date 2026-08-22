@@ -17,9 +17,21 @@ class RouteModel extends Model
         'direction',
         'is_active',
         'receipt_payment_details',
+        'mpesa_paybill_account_id',
+        'equity_bank_account_id',
     ];
     protected $casts = [
         'is_active' => 'boolean',
         'receipt_payment_details' => 'array',
     ];
+
+    public function mpesaPaybillAccount()
+    {
+        return $this->belongsTo(MpesaPaybillAccount::class, 'mpesa_paybill_account_id');
+    }
+
+    public function equityBankAccount()
+    {
+        return $this->belongsTo(EquityBankAccount::class, 'equity_bank_account_id');
+    }
 }

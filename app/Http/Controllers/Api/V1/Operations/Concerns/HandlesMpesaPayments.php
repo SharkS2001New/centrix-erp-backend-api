@@ -120,7 +120,17 @@ trait HandlesMpesaPayments
         if ($stkRequestId && ! $payment->stk_request_id) {
             $updates['stk_request_id'] = $stkRequestId;
         }
-        foreach (['payer_name', 'bill_ref_number', 'business_short_code', 'parsed_order_num', 'parsed_customer_num'] as $key) {
+        foreach ([
+            'payer_name',
+            'bill_ref_number',
+            'business_short_code',
+            'parsed_order_num',
+            'parsed_customer_num',
+            'mpesa_paybill_account_id',
+            'matched_branch_id',
+            'matched_route_id',
+            'matched_till_id',
+        ] as $key) {
             if (! empty($metadata[$key]) && empty($payment->{$key})) {
                 $updates[$key] = $metadata[$key];
             }

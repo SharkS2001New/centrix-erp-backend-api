@@ -734,6 +734,16 @@ return [
                 'c2b_confirmation_url' => '',
                 'c2b_validation_url' => '',
             ],
+            'equity' => [
+                'enable_paybill_reconciliation' => false,
+                'auto_apply_order_reference' => true,
+                'payment_account_hint' => 'Enter your order number (e.g. S12)',
+                'primary_account_number' => '',
+                'paybill_number' => '',
+                'account_number' => '',
+                'callback_url' => '',
+                'callback_shared_secret' => '',
+            ],
             'quickbooks' => [
                 'client_id' => '',
                 'client_secret' => '',

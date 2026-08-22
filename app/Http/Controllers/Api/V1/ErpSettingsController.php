@@ -797,6 +797,9 @@ class ErpSettingsController extends Controller
         $mpesaConfig = MpesaSettingsResolver::forOrganization($org);
         $finance['mpesa'] = $this->mpesaForResponse($mpesaConfig);
         $finance['mpesa_status'] = MpesaSettingsResolver::describe($mpesaConfig);
+        $finance['equity'] = \App\Services\Equity\EquitySettingsResolver::maskForClient(
+            is_array($finance['equity'] ?? null) ? $finance['equity'] : [],
+        );
         $qbStored = is_array($finance['quickbooks'] ?? null) ? $finance['quickbooks'] : [];
         $finance['quickbooks'] = QuickBooksSettingsResolver::maskStoredForClient($qbStored);
         $finance['quickbooks_status'] = QuickBooksSettingsResolver::describe(
@@ -839,6 +842,15 @@ class ErpSettingsController extends Controller
             'mpesa.stk_callback_url' => 'sometimes|nullable|string|max:500',
             'mpesa.c2b_confirmation_url' => 'sometimes|nullable|string|max:500',
             'mpesa.c2b_validation_url' => 'sometimes|nullable|string|max:500',
+            'equity' => 'sometimes|array',
+            'equity.enable_paybill_reconciliation' => 'sometimes|boolean',
+            'equity.auto_apply_order_reference' => 'sometimes|boolean',
+            'equity.payment_account_hint' => 'sometimes|nullable|string|max:250',
+            'equity.primary_account_number' => 'sometimes|nullable|string|max:40',
+            'equity.paybill_number' => 'sometimes|nullable|string|max:40',
+            'equity.account_number' => 'sometimes|nullable|string|max:40',
+            'equity.callback_url' => 'sometimes|nullable|string|max:500',
+            'equity.callback_shared_secret' => 'sometimes|nullable|string|max:250',
             'accounting_mode' => 'sometimes|in:native,external',
             'accounting_provider' => 'sometimes|nullable|in:quickbooks',
             'accounting_sync_direction' => 'sometimes|in:export,import,bidirectional',
@@ -880,13 +892,26 @@ class ErpSettingsController extends Controller
         $current = $gate->moduleSettings('finance');
         $nextFinance = array_merge($current, array_filter(
             $data,
-            fn ($key) => ! in_array($key, ['mpesa', 'quickbooks'], true),
+            fn ($key) => ! in_array($key, ['mpesa', 'equity', 'quickbooks'], true),
             ARRAY_FILTER_USE_KEY,
         ));
 
         if (array_key_exists('mpesa', $data) && is_array($data['mpesa'])) {
             $mergedMpesa = MpesaSettingsResolver::mergeFinanceMpesa($current, $data['mpesa']);
             $nextFinance['mpesa'] = $mergedMpesa['mpesa'];
+        }
+
+        if (array_key_exists('equity', $data) && is_array($data['equity'])) {
+            $existingEquity = is_array($current['equity'] ?? null) ? $current['equity'] : [];
+            $incomingEquity = $data['equity'];
+            if (($incomingEquity['callback_shared_secret'] ?? '') === '' && ! empty($existingEquity['callback_shared_secret'])) {
+                $incomingEquity['callback_shared_secret'] = $existingEquity['callback_shared_secret'];
+            } elseif (($incomingEquity['callback_shared_secret'] ?? '') === '********') {
+                $incomingEquity['callback_shared_secret'] = $existingEquity['callback_shared_secret'] ?? '';
+            }
+            $nextFinance['equity'] = \App\Services\Equity\EquitySettingsResolver::normalize(
+                array_merge($existingEquity, $incomingEquity),
+            );
         }
 
         if (array_key_exists('quickbooks', $data) && is_array($data['quickbooks'])) {
@@ -907,11 +932,34 @@ class ErpSettingsController extends Controller
         $moduleSettings['finance'] = $nextFinance;
         $org->update(['module_settings' => $moduleSettings]);
 
+        if (array_key_exists('mpesa', $data) && is_array($nextFinance['mpesa'] ?? null)) {
+            try {
+                app(\App\Services\Mpesa\MpesaPaybillAccountService::class)
+                    ->syncDefaultFromOrgSettings($org->fresh(), $nextFinance['mpesa']);
+            } catch (\InvalidArgumentException $e) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'mpesa.child_storecode' => [$e->getMessage()],
+                ]);
+            }
+        }
+        if (array_key_exists('equity', $data) && is_array($nextFinance['equity'] ?? null)) {
+            try {
+                app(\App\Services\Equity\EquityBankAccountService::class)
+                    ->syncDefaultFromOrgSettings($org->fresh(), $nextFinance['equity']);
+            } catch (\InvalidArgumentException $e) {
+                throw \Illuminate\Validation\ValidationException::withMessages([
+                    'equity.primary_account_number' => [$e->getMessage()],
+                ]);
+            }
+        }
         $refreshedGate = $this->erp->gateForOrganization($org->fresh());
         $finance = $this->mergedFinanceSettings($refreshedGate);
         $mpesaConfig = MpesaSettingsResolver::forOrganization($org->fresh());
         $finance['mpesa'] = $this->mpesaForResponse($mpesaConfig);
         $finance['mpesa_status'] = MpesaSettingsResolver::describe($mpesaConfig);
+        $finance['equity'] = \App\Services\Equity\EquitySettingsResolver::maskForClient(
+            is_array($finance['equity'] ?? null) ? $finance['equity'] : [],
+        );
         $qbStored = is_array($finance['quickbooks'] ?? null) ? $finance['quickbooks'] : [];
         $finance['quickbooks'] = QuickBooksSettingsResolver::maskStoredForClient($qbStored);
         $finance['quickbooks_status'] = QuickBooksSettingsResolver::describe(

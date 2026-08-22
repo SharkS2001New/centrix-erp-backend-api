@@ -11,7 +11,12 @@ class Till extends Model
     protected $table = 'tills';
     protected $fillable = [
         'organization_id', 'branch_id', 'till_number', 'till_name', 'description', 'is_active',
-        'ip_address', 'cashier_id', 'lock_mode',
+        'ip_address', 'cashier_id', 'lock_mode', 'mpesa_paybill_account_id',
     ];
     protected $casts = ['is_active' => 'boolean'];
+
+    public function mpesaPaybillAccount()
+    {
+        return $this->belongsTo(MpesaPaybillAccount::class, 'mpesa_paybill_account_id');
+    }
 }

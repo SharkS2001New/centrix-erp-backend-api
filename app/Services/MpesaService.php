@@ -4,7 +4,9 @@ namespace App\Services;
 
 use App\Models\Branch;
 use App\Models\Organization;
+use App\Models\Till;
 use App\Services\Erp\CapabilityGate;
+use App\Services\Mpesa\MpesaPaybillAccountService;
 use App\Services\Mpesa\MpesaSettingsResolver;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
@@ -23,19 +25,25 @@ class MpesaService
             : 'https://api.safaricom.co.ke';
     }
 
-    public static function forOrganization(Organization $organization, ?Branch $branch = null): self
+    public static function forOrganization(Organization $organization, ?Branch $branch = null, ?Till $till = null): self
     {
-        return new self(MpesaSettingsResolver::forBranch($organization, $branch));
+        $config = MpesaSettingsResolver::forBranch($organization, $branch);
+        if ($till) {
+            $account = app(MpesaPaybillAccountService::class)->accountForPosTill($till);
+            $config = app(MpesaPaybillAccountService::class)->applyAccountToConfig($config, $account);
+        }
+
+        return new self($config);
     }
 
-    public static function forGate(CapabilityGate $gate, ?Branch $branch = null): self
+    public static function forGate(CapabilityGate $gate, ?Branch $branch = null, ?Till $till = null): self
     {
         $organization = $gate->organization();
         if (! $organization) {
             return new self(MpesaSettingsResolver::forGate($gate));
         }
 
-        return new self(MpesaSettingsResolver::forBranch($organization, $branch));
+        return self::forOrganization($organization, $branch, $till);
     }
 
     public function config(): array
