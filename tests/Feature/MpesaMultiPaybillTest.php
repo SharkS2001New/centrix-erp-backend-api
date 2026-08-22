@@ -7,8 +7,10 @@ use App\Models\MpesaPaybillAccount;
 use App\Models\Organization;
 use App\Models\RouteModel;
 use App\Models\Sale;
+use App\Models\User;
 use App\Services\Mpesa\MpesaPaybillAccountService;
 use App\Services\Mpesa\MpesaPaymentMatchingService;
+use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
 
@@ -133,5 +135,15 @@ class MpesaMultiPaybillTest extends TestCase
 
         $candidates = app(MpesaPaymentMatchingService::class)->findCandidates($payment);
         $this->assertSame([], $candidates);
+    }
+
+    public function test_admin_can_list_mpesa_paybill_accounts(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $this->getJson('/api/v1/mpesa-paybill-accounts')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
     }
 }

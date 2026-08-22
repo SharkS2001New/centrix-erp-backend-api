@@ -298,24 +298,24 @@ Route::prefix('v1')->group(function () {
         Route::patch('erp/settings/finance', [ErpSettingsController::class, 'updateFinance'])
             ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
         Route::get('mpesa-paybill-accounts', [MpesaPaybillAccountController::class, 'index'])
-            ->middleware(['erp.module_any:accounting,payments,sales', 'erp.permission:admin.manage|payments.manage|accounting.view']);
+            ->middleware(['erp.module_any:admin,accounting,payments,sales', 'erp.permission:admin.manage|payments.manage|accounting.view']);
         Route::post('mpesa-paybill-accounts', [MpesaPaybillAccountController::class, 'store'])
-            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage']);
         Route::patch('mpesa-paybill-accounts/{id}', [MpesaPaybillAccountController::class, 'update'])
-            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage'])
+            ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage'])
             ->whereNumber('id');
         Route::delete('mpesa-paybill-accounts/{id}', [MpesaPaybillAccountController::class, 'destroy'])
-            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage'])
+            ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage'])
             ->whereNumber('id');
         Route::get('equity-bank-accounts', [EquityBankAccountController::class, 'index'])
-            ->middleware(['erp.module_any:accounting,payments,sales', 'erp.permission:admin.manage|payments.manage|accounting.view']);
+            ->middleware(['erp.module_any:admin,accounting,payments,sales', 'erp.permission:admin.manage|payments.manage|accounting.view']);
         Route::post('equity-bank-accounts', [EquityBankAccountController::class, 'store'])
-            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage']);
+            ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage']);
         Route::patch('equity-bank-accounts/{id}', [EquityBankAccountController::class, 'update'])
-            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage'])
+            ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage'])
             ->whereNumber('id');
         Route::delete('equity-bank-accounts/{id}', [EquityBankAccountController::class, 'destroy'])
-            ->middleware(['erp.module_any:accounting,payments', 'erp.permission:admin.manage'])
+            ->middleware(['erp.module_any:admin,accounting,payments', 'erp.permission:admin.manage'])
             ->whereNumber('id');
         Route::get('erp/settings/ai', [AiSettingsController::class, 'show'])
             ->middleware(['erp.permission:admin.manage']);

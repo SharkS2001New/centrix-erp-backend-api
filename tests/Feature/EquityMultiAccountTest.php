@@ -7,8 +7,10 @@ use App\Models\EquityIncomingPayment;
 use App\Models\Organization;
 use App\Models\RouteModel;
 use App\Models\Sale;
+use App\Models\User;
 use App\Services\Equity\EquityBankAccountService;
 use App\Services\Equity\EquityPaymentMatchingService;
+use Laravel\Sanctum\Sanctum;
 use Tests\Concerns\RefreshesErpDatabase;
 use Tests\TestCase;
 
@@ -133,5 +135,15 @@ class EquityMultiAccountTest extends TestCase
 
         $candidates = app(EquityPaymentMatchingService::class)->findCandidates($payment);
         $this->assertSame([], $candidates);
+    }
+
+    public function test_admin_can_list_equity_bank_accounts(): void
+    {
+        $orgAdmin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($orgAdmin);
+
+        $this->getJson('/api/v1/equity-bank-accounts')
+            ->assertOk()
+            ->assertJsonStructure(['data']);
     }
 }

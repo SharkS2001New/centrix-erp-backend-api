@@ -7,7 +7,7 @@ use App\Models\Branch;
 use App\Models\MpesaPaybillAccount;
 use App\Models\RouteModel;
 use App\Models\Till;
-use App\Services\Erp\ErpContext;
+use App\Services\Auth\UserAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
@@ -15,12 +15,12 @@ use Illuminate\Validation\ValidationException;
 
 class MpesaPaybillAccountController extends Controller
 {
-    public function __construct(protected ErpContext $erp) {}
+    public function __construct(protected UserAccessService $access) {}
 
     public function index(Request $request)
     {
         $user = $request->user();
-        $orgId = (int) $this->erp->access()->organizationId($user, $request);
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
         if ($orgId <= 0 || ! Schema::hasTable('mpesa_paybill_accounts')) {
             return response()->json(['data' => []]);
         }
@@ -37,8 +37,17 @@ class MpesaPaybillAccountController extends Controller
 
     public function store(Request $request)
     {
+        if (! Schema::hasTable('mpesa_paybill_accounts')) {
+            return response()->json([
+                'message' => 'Paybill accounts are not available yet. Run database migrations on the API server.',
+            ], 503);
+        }
+
         $user = $request->user();
-        $orgId = (int) $this->erp->access()->organizationId($user, $request);
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
+        if ($orgId <= 0) {
+            abort(403, 'Your account is not linked to an organization.');
+        }
         $data = $this->validated($request, $orgId);
 
         $this->assertShortCodeAvailable($data['primary_short_code'], $orgId);
@@ -60,8 +69,17 @@ class MpesaPaybillAccountController extends Controller
 
     public function update(Request $request, int $id)
     {
+        if (! Schema::hasTable('mpesa_paybill_accounts')) {
+            return response()->json([
+                'message' => 'Paybill accounts are not available yet. Run database migrations on the API server.',
+            ], 503);
+        }
+
         $user = $request->user();
-        $orgId = (int) $this->erp->access()->organizationId($user, $request);
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
+        if ($orgId <= 0) {
+            abort(403, 'Your account is not linked to an organization.');
+        }
         $account = MpesaPaybillAccount::query()
             ->where('organization_id', $orgId)
             ->findOrFail($id);
@@ -84,8 +102,17 @@ class MpesaPaybillAccountController extends Controller
 
     public function destroy(Request $request, int $id)
     {
+        if (! Schema::hasTable('mpesa_paybill_accounts')) {
+            return response()->json([
+                'message' => 'Paybill accounts are not available yet. Run database migrations on the API server.',
+            ], 503);
+        }
+
         $user = $request->user();
-        $orgId = (int) $this->erp->access()->organizationId($user, $request);
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
+        if ($orgId <= 0) {
+            abort(403, 'Your account is not linked to an organization.');
+        }
         $account = MpesaPaybillAccount::query()
             ->where('organization_id', $orgId)
             ->findOrFail($id);
@@ -156,6 +183,14 @@ class MpesaPaybillAccountController extends Controller
         }
         if (array_key_exists('enable_stk_push', $data) && $data['enable_stk_push'] === '') {
             $data['enable_stk_push'] = null;
+        }
+
+        $routeId = array_key_exists('route_id', $data) ? $data['route_id'] : $existing?->route_id;
+        $posTillId = array_key_exists('pos_till_id', $data) ? $data['pos_till_id'] : $existing?->pos_till_id;
+        if ($routeId && $posTillId) {
+            throw ValidationException::withMessages([
+                'pos_till_id' => ['A paybill cannot be linked to both a route and a POS till. Choose one.'],
+            ]);
         }
 
         return $data;

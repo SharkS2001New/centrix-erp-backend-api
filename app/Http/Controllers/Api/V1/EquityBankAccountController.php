@@ -6,7 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Branch;
 use App\Models\EquityBankAccount;
 use App\Models\RouteModel;
-use App\Services\Erp\ErpContext;
+use App\Services\Auth\UserAccessService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Schema;
 use Illuminate\Validation\Rule;
@@ -14,12 +14,12 @@ use Illuminate\Validation\ValidationException;
 
 class EquityBankAccountController extends Controller
 {
-    public function __construct(protected ErpContext $erp) {}
+    public function __construct(protected UserAccessService $access) {}
 
     public function index(Request $request)
     {
         $user = $request->user();
-        $orgId = (int) $this->erp->access()->organizationId($user, $request);
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
         if ($orgId <= 0 || ! Schema::hasTable('equity_bank_accounts')) {
             return response()->json(['data' => []]);
         }
@@ -37,7 +37,7 @@ class EquityBankAccountController extends Controller
     public function store(Request $request)
     {
         $user = $request->user();
-        $orgId = (int) $this->erp->access()->organizationId($user, $request);
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
         $data = $this->validated($request, $orgId);
 
         $this->assertAccountNumberAvailable($data['primary_account_number'], $orgId);
@@ -60,7 +60,7 @@ class EquityBankAccountController extends Controller
     public function update(Request $request, int $id)
     {
         $user = $request->user();
-        $orgId = (int) $this->erp->access()->organizationId($user, $request);
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
         $account = EquityBankAccount::query()
             ->where('organization_id', $orgId)
             ->findOrFail($id);
@@ -84,7 +84,7 @@ class EquityBankAccountController extends Controller
     public function destroy(Request $request, int $id)
     {
         $user = $request->user();
-        $orgId = (int) $this->erp->access()->organizationId($user, $request);
+        $orgId = (int) ($this->access->organizationId($user, $request) ?? 0);
         $account = EquityBankAccount::query()
             ->where('organization_id', $orgId)
             ->findOrFail($id);
