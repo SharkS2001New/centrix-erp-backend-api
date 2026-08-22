@@ -541,4 +541,107 @@ class ShopDebtorsSalesIndexTest extends TestCase
         $this->assertContains($sale->id, $unpaidIds);
         $this->assertNotContains($sale->id, $shopIds);
     }
+
+    public function test_shop_debtors_unpaid_list_is_unpaid_orders_for_regular_and_debtor_customers(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $suffix = random_int(900000000, 999999999);
+        $regularNum = $suffix;
+        $debtorNum = $suffix + 1;
+        $routeNum = $suffix + 2;
+
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $regularNum,
+            'customer_name' => 'Parity Regular '.$suffix,
+            'customer_type' => 'regular',
+            'created_by' => $admin->id,
+        ]);
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $debtorNum,
+            'customer_name' => 'Parity Debtor '.$suffix,
+            'customer_type' => 'debtor',
+            'created_by' => $admin->id,
+        ]);
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $routeNum,
+            'customer_name' => 'Parity Route '.$suffix,
+            'customer_type' => 'route',
+            'created_by' => $admin->id,
+        ]);
+
+        $base = [
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'cashier_id' => $admin->id,
+            'status' => 'completed',
+            'payment_status' => 'unpaid',
+            'payment_method_code' => 'CASH',
+            'is_credit_sale' => 0,
+            'order_total' => 3000,
+            'amount_paid' => 0,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ];
+
+        $regularSale = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => $regularNum,
+        ]));
+        $debtorSale = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 1,
+            'channel' => 'backend',
+            'order_source' => 'backend',
+            'customer_num' => $debtorNum,
+        ]));
+        $routeSale = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 2,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => $routeNum,
+        ]));
+        $walkInSale = Sale::query()->create(array_merge($base, [
+            'order_num' => $suffix + 3,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => null,
+        ]));
+
+        $from = now()->subDay()->toDateString();
+        $to = now()->toDateString();
+        $listQuery = "filter[payment_status]=unpaid&outstanding_balance=1&exclude_statuses=cancelled,expired"
+            ."&from_date={$from}&to_date={$to}&date_field=placed&per_page=200";
+
+        $unpaidIds = collect(
+            $this->getJson("/api/v1/sales?{$listQuery}")->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $shopIds = collect(
+            $this->getJson("/api/v1/sales?shop_debtors=1&{$listQuery}")->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertContains($regularSale->id, $unpaidIds);
+        $this->assertContains($debtorSale->id, $unpaidIds);
+        $this->assertContains($routeSale->id, $unpaidIds);
+        $this->assertContains($walkInSale->id, $unpaidIds);
+
+        $this->assertContains($regularSale->id, $shopIds);
+        $this->assertContains($debtorSale->id, $shopIds);
+        $this->assertNotContains($routeSale->id, $shopIds);
+        $this->assertNotContains($walkInSale->id, $shopIds);
+
+        foreach ($shopIds as $shopId) {
+            $this->assertContains($shopId, $unpaidIds);
+        }
+    }
 }
