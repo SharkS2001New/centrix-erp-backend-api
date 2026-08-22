@@ -339,6 +339,19 @@ class AiSettingsResolver
 
         $apiKey = trim((string) ($settings['api_key'] ?? ''));
         if ($apiKey === '' && $provider === 'gemini') {
+            // Tenant Gemini key blank → fall back to platform Gemini credentials / env.
+            $platformGemini = self::resolvePlatformGeminiCredentials();
+            if ($platformGemini) {
+                return [
+                    'enabled' => true,
+                    'provider' => 'gemini',
+                    'api_key' => $platformGemini['api_key'],
+                    'model' => trim((string) ($settings['model'] ?? '')) !== ''
+                        ? trim((string) $settings['model'])
+                        : $platformGemini['model'],
+                    'base_url' => $platformGemini['base_url'],
+                ];
+            }
             $apiKey = trim((string) config('ai.gemini.api_key', ''));
         }
         if ($apiKey === '' && $provider === 'openai') {

@@ -68,15 +68,18 @@ class GeminiProvider implements AiProviderInterface
         }
 
         $payload = [
-            'system_instruction' => [
-                'parts' => [['text' => (string) ($request['system'] ?? '')]],
-            ],
             'contents' => $contents,
             'generationConfig' => [
                 'temperature' => (float) ($request['temperature'] ?? 0.2),
                 'maxOutputTokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
             ],
         ];
+        $system = trim((string) ($request['system'] ?? ''));
+        if ($system !== '') {
+            $payload['system_instruction'] = [
+                'parts' => [['text' => $system]],
+            ];
+        }
 
         $tools = $this->formatTools($request['tools'] ?? []);
         if ($tools !== []) {
@@ -123,7 +126,33 @@ class GeminiProvider implements AiProviderInterface
         }
 
         if (! $response->successful()) {
-            Log::warning('Gemini request failed', ['status' => $response->status(), 'body' => $response->body()]);
+            $body = $response->body();
+            $providerMessage = (string) ($response->json('error.message') ?? '');
+            Log::warning('Gemini request failed', [
+                'status' => $response->status(),
+                'body' => $body,
+                'model' => $model,
+            ]);
+
+            if ($response->status() === 404 || str_contains(strtolower($providerMessage), 'not found')) {
+                throw new AiProviderException(
+                    'Gemini model "'.$model.'" was not found. Set a valid model (e.g. gemini-2.0-flash) under AI settings or GEMINI_MODEL.',
+                    'model_not_found',
+                    404,
+                    false,
+                );
+            }
+
+            if ($providerMessage !== '') {
+                $detail = strlen($providerMessage) > 200 ? substr($providerMessage, 0, 197).'…' : $providerMessage;
+                throw new AiProviderException(
+                    'Gemini request failed: '.$detail,
+                    'provider_error',
+                    $response->status(),
+                    false,
+                );
+            }
+
             throw AiProviderException::unavailable();
         }
 
@@ -197,16 +226,20 @@ class GeminiProvider implements AiProviderInterface
      */
     protected function buildGeneratePayload(array $request): array
     {
+        $system = trim((string) ($request['system'] ?? ''));
         $payload = [
-            'system_instruction' => [
-                'parts' => [['text' => (string) ($request['system'] ?? '')]],
-            ],
             'contents' => $this->buildContentsFromHistory($request['messages'] ?? []),
             'generationConfig' => [
                 'temperature' => (float) ($request['temperature'] ?? 0.2),
                 'maxOutputTokens' => (int) ($request['max_output_tokens'] ?? config('ai.defaults.max_output_tokens', 2048)),
             ],
         ];
+
+        if ($system !== '') {
+            $payload['system_instruction'] = [
+                'parts' => [['text' => $system]],
+            ];
+        }
 
         $tools = $this->formatTools($request['tools'] ?? []);
         if ($tools !== []) {

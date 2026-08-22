@@ -242,6 +242,57 @@ class AiGeminiChatTest extends TestCase
         $this->assertStringNotContainsString('password', $body);
     }
 
+    public function test_gemini_create_product_uses_classic_assistant(): void
+    {
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::response([
+                'candidates' => [[
+                    'content' => [
+                        'parts' => [['text' => 'I can help you create a product. Fill in the form below.']],
+                    ],
+                ]],
+                'usageMetadata' => [
+                    'promptTokenCount' => 20,
+                    'candidatesTokenCount' => 10,
+                    'totalTokenCount' => 30,
+                ],
+            ], 200),
+        ]);
+
+        $response = $this->postJson('/api/v1/ai/chat', [
+            'message' => 'Help me create a new product',
+            'context' => 'erp',
+        ])->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('provider', 'gemini')
+            ->assertJsonPath('pending_action.type', 'create_product');
+
+        $this->assertNotEmpty($response->json('form_spec'));
+    }
+
+    public function test_gemini_tool_chat_failure_falls_back_to_classic_assistant(): void
+    {
+        Http::fake([
+            'generativelanguage.googleapis.com/*' => Http::sequence()
+                ->push(['error' => ['message' => 'temporary']], 503)
+                ->push([
+                    'candidates' => [[
+                        'content' => ['parts' => [['text' => 'Sales reports are under Reports → Sales summary.']]],
+                    ]],
+                    'usageMetadata' => ['totalTokenCount' => 12],
+                ], 200),
+        ]);
+
+        $response = $this->postJson('/api/v1/ai/chat', [
+            'message' => 'How do I view sales reports?',
+            'context' => 'erp',
+        ])->assertOk()
+            ->assertJsonPath('success', true)
+            ->assertJsonPath('provider', 'gemini');
+
+        $this->assertStringContainsString('Sales', (string) $response->json('reply'));
+    }
+
     public function test_invalid_gemini_api_key_returns_safe_message(): void
     {
         Http::fake([

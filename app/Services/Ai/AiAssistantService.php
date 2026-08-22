@@ -2,12 +2,11 @@
 
 namespace App\Services\Ai;
 
+use App\Exceptions\Ai\AiProviderException;
 use App\Models\Organization;
 use App\Models\User;
 use App\Services\Erp\CapabilityGate;
 use Illuminate\Database\Eloquent\ModelNotFoundException;
-use Illuminate\Http\Client\ConnectionException;
-use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Validation\ValidationException;
 
@@ -23,6 +22,7 @@ class AiAssistantService
         protected AiPageExplorer $pageExplorer,
         protected AiIntentResolver $intentResolver,
         protected AiToolChatService $toolChat,
+        protected AiProviderFactory $providers,
     ) {}
 
     public function isAvailableForUser(User $user): bool
@@ -52,39 +52,15 @@ class AiAssistantService
 
         $runtime = AiSettingsResolver::resolveRuntime($user);
         if (! $runtime) {
-            $settings = AiSettingsResolver::forUser($user);
-            $gate = $this->contextBuilder->gateForUser($user);
+            $notConfigured = $this->notConfiguredReply(AiSettingsResolver::forUser($user), $this->contextBuilder->gateForUser($user));
 
             return [
                 'success' => false,
-                'reply' => ! $gate->aiPlatformEnabled()
-                    ? 'AI assistant is not enabled for this organization. Contact your platform administrator.'
-                    : (! ($settings['enabled'] ?? false)
-                        ? 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.'
-                        : 'AI assistant is not configured for this organization. An admin must add an API key under Administration → Settings → AI.'),
-                'message' => ! $gate->aiPlatformEnabled()
-                    ? 'AI assistant is not enabled for this organization. Contact your platform administrator.'
-                    : (! ($settings['enabled'] ?? false)
-                        ? 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.'
-                        : 'AI assistant is not configured for this organization. An admin must add an API key under Administration → Settings → AI.'),
+                'reply' => $notConfigured,
+                'message' => $notConfigured,
                 'tools_used' => [],
                 'error_code' => 'not_configured',
             ];
-        }
-
-        // Tool-calling path (Gemini always; OpenAI only when AI_USE_TOOL_CHAT=true).
-        $provider = strtolower((string) ($runtime['provider'] ?? config('ai.provider', 'openai')));
-        $useToolChat = $provider === 'gemini'
-            || ($provider === 'openai' && filter_var(config('ai.use_tool_chat', false), FILTER_VALIDATE_BOOLEAN));
-        if ($useToolChat && ! $confirmAction && ! $pendingAction) {
-            return $this->toolChat->chat(
-                $user,
-                $message,
-                $conversationId,
-                $history,
-                $workspaceId,
-                $pathname,
-            );
         }
 
         if ($confirmAction && $pendingAction) {
@@ -93,6 +69,34 @@ class AiAssistantService
 
         if ($pendingAction && $this->actionExecutor->isConfirmation($message)) {
             return $this->executeConfirmedAction($user, $pendingAction, $workspaceId, $pathname);
+        }
+
+        // Create / write intents stay on the classic assistant (forms + confirm).
+        // Tool chat is used for Gemini data Q&A (and OpenAI when AI_USE_TOOL_CHAT=true),
+        // with automatic fallback to classic Gemini/OpenAI if the tool path fails.
+        $inferredCreate = $this->intentResolver->inferCreateAction($message, $history, $pathname);
+        $provider = strtolower((string) ($runtime['provider'] ?? config('ai.provider', 'openai')));
+        $preferToolChat = ! $inferredCreate && (
+            $provider === 'gemini'
+            || ($provider === 'openai' && filter_var(config('ai.use_tool_chat', false), FILTER_VALIDATE_BOOLEAN))
+        );
+        if ($preferToolChat) {
+            $toolResult = $this->toolChat->chat(
+                $user,
+                $message,
+                $conversationId,
+                $history,
+                $workspaceId,
+                $pathname,
+            );
+            if (! empty($toolResult['success']) || ! empty($toolResult['declined_off_topic'])) {
+                return $toolResult;
+            }
+
+            Log::info('AI tool chat failed; falling back to classic assistant', [
+                'provider' => $provider,
+                'error_code' => $toolResult['error_code'] ?? null,
+            ]);
         }
 
         $gate = $this->contextBuilder->gateForUser($user);
@@ -141,29 +145,7 @@ class AiAssistantService
         $messages[] = ['role' => 'user', 'content' => $message];
 
         try {
-            $response = Http::withToken($runtime['api_key'])
-                ->timeout(60)
-                ->post($runtime['base_url'].'/chat/completions', [
-                    'model' => $runtime['model'],
-                    'messages' => $messages,
-                    'max_tokens' => config('ai.defaults.max_tokens'),
-                    'temperature' => 0.25,
-                ]);
-
-            if (! $response->successful()) {
-                Log::warning('AI chat failed', ['status' => $response->status(), 'body' => $response->body()]);
-
-                return [
-                    'reply' => $this->formatApiFailure(
-                        $response->status(),
-                        $response->json('error.message') ?? $response->body(),
-                    ),
-                    'tools_used' => array_keys(array_diff_key($systemContext, array_flip(['organization', 'user']))),
-                    'error_code' => $response->json('error.code') ?? (string) $response->status(),
-                ];
-            }
-
-            $rawReply = trim($response->json('choices.0.message.content') ?? '');
+            $rawReply = $this->completeWithProvider($runtime, $messages);
             if ($rawReply === '') {
                 $rawReply = 'I could not generate a response. Please try rephrasing your question.';
             }
@@ -187,13 +169,16 @@ class AiAssistantService
             $reply = AiActionExecutor::stripActionBlock($rawReply);
 
             $result = [
+                'success' => true,
                 'reply' => $reply,
+                'message' => $reply,
                 'tools_used' => array_keys(array_diff_key(
                     $systemContext,
                     array_flip(['organization', 'user', 'enabled_modules', 'active_workspace']),
                 )),
                 'data' => $systemContext,
                 'active_workspace' => $scope['id'],
+                'provider' => $runtime['provider'] ?? null,
             ];
 
             $pending = null;
@@ -206,11 +191,12 @@ class AiAssistantService
             } elseif ($pendingAction) {
                 $pending = $pendingAction;
             } else {
-                $inferred = $this->intentResolver->inferCreateAction($message, $history, $pathname);
+                $inferred = $inferredCreate ?? $this->intentResolver->inferCreateAction($message, $history, $pathname);
                 if ($inferred) {
                     $pending = $inferred;
                     if ($this->looksLikeFetchingReply($reply)) {
                         $result['reply'] = 'Use the form below to complete the details. Options are loaded from your organization data.';
+                        $result['message'] = $result['reply'];
                     }
                 }
             }
@@ -219,9 +205,11 @@ class AiAssistantService
                 $actionType = (string) ($pending['type'] ?? '');
                 if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
                     $result['reply'] = $this->workspaceScope->declineMessage($scope);
+                    $result['message'] = $result['reply'];
                     unset($pending);
                 } elseif ($actionType !== '' && ! $this->actionExecutor->canExecute($user, $actionType)) {
                     $result['reply'] = $this->actionExecutor->permissionDeclineMessage($actionType);
+                    $result['message'] = $result['reply'];
                     unset($pending);
                 } else {
                     $result['pending_action'] = $pending;
@@ -230,18 +218,25 @@ class AiAssistantService
                         $result['reply'] = $actionType === 'record_customer_payment'
                             ? 'Fill in the form below, then click Confirm & record payment.'
                             : 'Fill in the form below, then click Confirm & create.';
+                        $result['message'] = $result['reply'];
                     }
                 }
             }
 
             return $result;
-        } catch (ConnectionException $e) {
-            Log::error('AI chat connection failed', ['message' => $e->getMessage()]);
+        } catch (AiProviderException $e) {
+            Log::warning('AI chat provider failure', [
+                'provider' => $runtime['provider'] ?? null,
+                'code' => $e->codeKey,
+                'message' => $e->getMessage(),
+            ]);
 
             return [
-                'reply' => 'Could not connect to the AI provider. Check network access and the base URL in Admin → Settings → AI.',
+                'success' => false,
+                'reply' => $e->getMessage(),
+                'message' => $e->getMessage(),
                 'tools_used' => [],
-                'error_code' => 'connection_failed',
+                'error_code' => $e->codeKey,
             ];
         } catch (\Throwable $e) {
             Log::error('AI chat exception', [
@@ -250,7 +245,9 @@ class AiAssistantService
             ]);
 
             return [
+                'success' => false,
                 'reply' => $this->formatInternalFailure($e),
+                'message' => $this->formatInternalFailure($e),
                 'tools_used' => [],
                 'error_code' => 'internal_error',
             ];
@@ -361,30 +358,7 @@ class AiAssistantService
         $messages[] = ['role' => 'user', 'content' => $message];
 
         try {
-            $response = Http::withToken($runtime['api_key'])
-                ->timeout(60)
-                ->post($runtime['base_url'].'/chat/completions', [
-                    'model' => $runtime['model'],
-                    'messages' => $messages,
-                    'max_tokens' => config('ai.defaults.max_tokens'),
-                    'temperature' => 0.25,
-                ]);
-
-            if (! $response->successful()) {
-                Log::warning('AI training chat failed', ['status' => $response->status(), 'body' => $response->body()]);
-
-                return [
-                    'reply' => $this->formatApiFailure(
-                        $response->status(),
-                        $response->json('error.message') ?? $response->body(),
-                    ),
-                    'tools_used' => array_keys(array_diff_key($systemContext, array_flip(['organization', 'user']))),
-                    'error_code' => $response->json('error.code') ?? (string) $response->status(),
-                    'training_mode' => $trainingMode,
-                ];
-            }
-
-            $rawReply = trim($response->json('choices.0.message.content') ?? '');
+            $rawReply = $this->completeWithProvider($runtime, $messages);
             if ($rawReply === '') {
                 $rawReply = 'I could not generate a response. Please try rephrasing your question.';
             }
@@ -402,13 +376,16 @@ class AiAssistantService
             $reply = AiActionExecutor::stripActionBlock($rawReply);
 
             $result = [
+                'success' => true,
                 'reply' => $reply,
+                'message' => $reply,
                 'tools_used' => array_keys(array_diff_key(
                     $systemContext,
                     array_flip(['organization', 'user', 'enabled_modules', 'active_workspace']),
                 )),
                 'active_workspace' => $scope['id'],
                 'training_mode' => $trainingMode,
+                'provider' => $runtime['provider'] ?? null,
             ];
 
             $pending = null;
@@ -426,6 +403,7 @@ class AiAssistantService
                     $pending = $inferred;
                     if ($this->looksLikeFetchingReply($reply)) {
                         $result['reply'] = 'Use the form below to preview the fields. Confirm is disabled in training mode.';
+                        $result['message'] = $result['reply'];
                     }
                 }
             }
@@ -434,6 +412,7 @@ class AiAssistantService
                 $actionType = (string) ($pending['type'] ?? '');
                 if ($actionType !== '' && ! in_array($actionType, $scope['action_types'] ?? [], true)) {
                     $result['reply'] = $this->workspaceScope->declineMessage($scope);
+                    $result['message'] = $result['reply'];
                 } else {
                     $contextUser = clone $user;
                     $contextUser->organization_id = $organization->id;
@@ -442,18 +421,25 @@ class AiAssistantService
                     $result['form_spec'] = $this->formSpecBuilder->forAction($contextUser, $pending, $pathname);
                     if (empty(trim($result['reply'] ?? ''))) {
                         $result['reply'] = 'Preview the form below. Training mode does not execute actions against tenant data.';
+                        $result['message'] = $result['reply'];
                     }
                 }
             }
 
             return $result;
-        } catch (ConnectionException $e) {
-            Log::error('AI training chat connection failed', ['message' => $e->getMessage()]);
+        } catch (AiProviderException $e) {
+            Log::warning('AI training chat provider failure', [
+                'provider' => $runtime['provider'] ?? null,
+                'code' => $e->codeKey,
+                'message' => $e->getMessage(),
+            ]);
 
             return [
-                'reply' => 'Could not connect to the AI provider. Check the API key and base URL in Organization settings → AI.',
+                'success' => false,
+                'reply' => $e->getMessage(),
+                'message' => $e->getMessage(),
                 'tools_used' => [],
-                'error_code' => 'connection_failed',
+                'error_code' => $e->codeKey,
                 'training_mode' => $trainingMode,
             ];
         } catch (\Throwable $e) {
@@ -463,7 +449,9 @@ class AiAssistantService
             ]);
 
             return [
+                'success' => false,
                 'reply' => $this->formatInternalFailure($e),
+                'message' => $this->formatInternalFailure($e),
                 'tools_used' => [],
                 'error_code' => 'internal_error',
                 'training_mode' => $trainingMode,
@@ -624,20 +612,61 @@ class AiAssistantService
         return 'AI assistant encountered an internal error. Try again or contact your administrator.';
     }
 
-    protected function formatApiFailure(int $status, ?string $providerMessage): string
+    /**
+     * @param  array{provider?: string, api_key: string, model: string, base_url?: string}  $runtime
+     * @param  list<array{role: string, content: string}>  $messages
+     */
+    protected function completeWithProvider(array $runtime, array $messages): string
     {
-        $detail = trim((string) $providerMessage);
-        if (strlen($detail) > 240) {
-            $detail = substr($detail, 0, 237).'…';
+        $systemParts = [];
+        $history = [];
+        foreach ($messages as $message) {
+            $role = (string) ($message['role'] ?? '');
+            $content = (string) ($message['content'] ?? '');
+            if ($content === '') {
+                continue;
+            }
+            if ($role === 'system') {
+                $systemParts[] = $content;
+                continue;
+            }
+            $history[] = [
+                'role' => $role === 'assistant' ? 'assistant' : 'user',
+                'content' => $content,
+            ];
         }
 
-        return match ($status) {
-            401 => 'OpenAI rejected the API key (401). Verify the API key in Admin → Settings → AI.'
-                .($detail ? " Provider: {$detail}" : ''),
-            429 => 'OpenAI quota exceeded (429). Check billing on your OpenAI account.'
-                .($detail ? " — {$detail}" : ''),
-            default => 'AI request failed (HTTP '.$status.').'.($detail ? " {$detail}" : ''),
-        };
+        $turn = $this->providers->make($runtime)->chat([
+            'system' => implode("\n\n", $systemParts),
+            'messages' => $history,
+            'temperature' => 0.25,
+            'max_output_tokens' => (int) config('ai.defaults.max_output_tokens', config('ai.defaults.max_tokens', 2048)),
+        ]);
+
+        return trim((string) ($turn['text'] ?? ''));
+    }
+
+    protected function notConfiguredReply(array $settings, CapabilityGate $gate): string
+    {
+        if (! $gate->aiPlatformEnabled()) {
+            return 'AI assistant is not enabled for this organization. Contact your platform administrator.';
+        }
+
+        if (! empty($settings['use_platform_gemini'])) {
+            return AiSettingsResolver::platformGeminiConfigured()
+                ? 'AI assistant is not available right now. Try again shortly.'
+                : 'Platform Gemini is enabled for this organization, but no Gemini API key is configured. A platform admin must add it under Platform → Settings → AI credentials.';
+        }
+
+        if (! ($settings['enabled'] ?? false)) {
+            return 'AI assistant is disabled for this organization. An admin can enable it under Administration → Settings → AI.';
+        }
+
+        $provider = strtolower((string) ($settings['provider'] ?? 'openai'));
+
+        return $provider === 'gemini'
+            ? 'AI assistant is not configured. Add a Gemini API key under Administration → Settings → AI, or ask a platform admin to enable Platform Gemini for this organization.'
+            : 'AI assistant is not configured for this organization. An admin must add an API key under Administration → Settings → AI.';
     }
 
     protected function looksLikeFetchingReply(string $reply): bool
