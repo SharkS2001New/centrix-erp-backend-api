@@ -29,4 +29,17 @@ class MpesaPaymentReferenceParserTest extends TestCase
 
         $this->assertSame(['order_num' => 88], $parser->parse('ORDER-S88'));
     }
+
+    public function test_strips_fixed_paybill_account_name_before_matching(): void
+    {
+        $parser = new MpesaPaymentReferenceParser();
+
+        // Paybill 4036507, account name "moon" — customers enter moon + order ref.
+        $this->assertSame(['order_num' => 12], $parser->parse('moonS12', 'moon'));
+        $this->assertSame(['order_num' => 12], $parser->parse('MOON S12', 'moon'));
+        $this->assertSame(['order_num' => 12], $parser->parse('moon-12', 'moon'));
+        $this->assertSame(['order_num' => 12], $parser->parse('moon12', 'moon'));
+        $this->assertSame(['order_num' => 12], $parser->parse('S12', 'moon'));
+        $this->assertSame([], $parser->parse('moon', 'moon'));
+    }
 }

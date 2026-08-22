@@ -64,7 +64,9 @@ class ProcessMpesaIncomingMatchJob implements ShouldQueue
                 $user,
                 null,
                 (string) $best['method'],
-                'Auto-matched from C2B reference',
+                $best['method'] === 'amount_latest'
+                    ? 'Auto-matched by latest order with matching amount'
+                    : 'Auto-matched from C2B reference',
             );
         } catch (\Throwable $e) {
             Log::warning('M-Pesa auto-match failed', [

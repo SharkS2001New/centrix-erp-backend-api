@@ -28,7 +28,14 @@ class EquityPaymentMatchingService
 
     public function enrichPayment(EquityIncomingPayment $payment): EquityIncomingPayment
     {
-        $parsed = $this->referenceParser->parse((string) ($payment->bill_ref_number ?? ''));
+        $accountName = null;
+        $organization = Organization::query()->find((int) $payment->organization_id);
+        if ($organization) {
+            $name = trim((string) (EquitySettingsResolver::forOrganization($organization)['payment_account_name'] ?? ''));
+            $accountName = $name !== '' ? $name : null;
+        }
+
+        $parsed = $this->referenceParser->parse((string) ($payment->bill_ref_number ?? ''), $accountName);
 
         $payment->fill([
             'parsed_order_num' => $parsed['order_num'] ?? null,
@@ -107,10 +114,29 @@ class EquityPaymentMatchingService
             }
         }
 
+        if (! $payment->parsed_order_num && ! $payment->parsed_customer_num) {
+            $sale = $this->findLatestOpenSaleByAmount(
+                $organizationId,
+                $amount,
+                $paymentAccount,
+                $payment->business_account_number,
+            );
+            if ($sale) {
+                $candidates->push($this->candidateFromSale($sale, 'amount_latest', $amount));
+            }
+        }
+
         return $candidates
             ->unique(fn (array $row) => (int) $row['sale_id'])
             ->sortByDesc(function (array $row) use ($paymentAccount, $payment) {
                 $confidence = $this->confidenceRank((string) $row['confidence']) * 10;
+                $methodBoost = match ((string) ($row['method'] ?? '')) {
+                    'order_ref' => 5,
+                    'customer_num', 'customer_phone' => 3,
+                    'amount_latest' => 2,
+                    default => 0,
+                };
+                $confidence += $methodBoost;
                 $sale = Sale::query()->find((int) $row['sale_id']);
                 if (! $sale) {
                     return $confidence;
@@ -184,7 +210,7 @@ class EquityPaymentMatchingService
             return false;
         }
 
-        return ($bestMatch['method'] ?? '') === 'order_ref';
+        return in_array($bestMatch['method'] ?? '', ['order_ref', 'amount_latest'], true);
     }
 
     protected function findSaleByOrderNum(int $organizationId, int $orderNum): ?Sale
@@ -196,6 +222,45 @@ class EquityPaymentMatchingService
             ->whereNotIn('status', ['cancelled'])
             ->orderByDesc('id')
             ->first();
+    }
+
+    protected function findLatestOpenSaleByAmount(
+        int $organizationId,
+        float $amount,
+        ?EquityBankAccount $paymentAccount,
+        ?string $businessAccountNumber,
+    ): ?Sale {
+        if ($amount < 0.01) {
+            return null;
+        }
+
+        $sales = Sale::query()
+            ->with('customer')
+            ->where('organization_id', $organizationId)
+            ->whereNotIn('status', ['cancelled', 'held', 'expired'])
+            ->whereRaw('(order_total - amount_paid) >= 0.01')
+            ->where('created_at', '>=', now()->subDays(7))
+            ->orderByDesc('id')
+            ->limit(40)
+            ->get();
+
+        foreach ($sales as $sale) {
+            $balanceDue = round((float) $sale->order_total - (float) $sale->amount_paid, 2);
+            if (abs($balanceDue - $amount) > 1.0) {
+                continue;
+            }
+            if (! $this->bankAccounts->paymentMatchesSale(
+                $paymentAccount,
+                $businessAccountNumber,
+                $sale,
+            )) {
+                continue;
+            }
+
+            return $sale;
+        }
+
+        return null;
     }
 
     /** @return Collection<int, Sale> */
@@ -240,6 +305,7 @@ class EquityPaymentMatchingService
 
         return match ($method) {
             'order_ref' => $amountMatches ? 'high' : 'medium',
+            'amount_latest' => abs($amount - $balanceDue) <= 1.0 ? 'high' : 'low',
             'customer_num' => $amountMatches ? 'medium' : 'low',
             'customer_phone' => $amountMatches ? 'medium' : 'low',
             default => 'low',

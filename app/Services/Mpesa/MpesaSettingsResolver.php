@@ -59,7 +59,8 @@ class MpesaSettingsResolver
         $out['enable_stk_push'] = filter_var($out['enable_stk_push'] ?? true, FILTER_VALIDATE_BOOLEAN);
         $out['enable_c2b_reconciliation'] = filter_var($out['enable_c2b_reconciliation'] ?? true, FILTER_VALIDATE_BOOLEAN);
         $out['auto_apply_order_reference'] = filter_var($out['auto_apply_order_reference'] ?? true, FILTER_VALIDATE_BOOLEAN);
-        $out['payment_account_hint'] = trim((string) ($out['payment_account_hint'] ?? 'Enter your order number (e.g. S12)'));
+        $out['payment_account_name'] = trim((string) ($out['payment_account_name'] ?? ''));
+        $out['payment_account_hint'] = trim((string) ($out['payment_account_hint'] ?? 'Enter your paybill account name (e.g. moon)'));
         foreach (['consumer_key', 'consumer_secret', 'shortcode', 'till_number', 'child_storecode', 'passkey', 'stk_callback_url', 'c2b_confirmation_url', 'c2b_validation_url'] as $key) {
             $out[$key] = trim((string) ($out[$key] ?? ''));
         }

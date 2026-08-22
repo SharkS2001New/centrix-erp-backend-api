@@ -103,6 +103,67 @@ class MpesaC2bReconciliationTest extends TestCase
             ->assertJsonPath('summary.count', 0);
     }
 
+    public function test_direct_paybill_matches_latest_sale_by_amount(): void
+    {
+        Queue::fake();
+
+        $settings = $this->organization->module_settings;
+        $settings['finance']['mpesa']['payment_account_name'] = 'moon';
+        $settings['finance']['mpesa']['payment_account_hint'] = 'Enter moon';
+        $this->organization->update(['module_settings' => $settings]);
+
+        $older = Sale::query()->where('organization_id', $this->organization->id)->firstOrFail();
+        $older->update([
+            'order_num' => 8801,
+            'order_total' => 750,
+            'amount_paid' => 0,
+            'payment_status' => 'unpaid',
+            'status' => 'confirmed',
+            'created_at' => now()->subHours(2),
+        ]);
+
+        $latest = Sale::query()->create([
+            'order_num' => 8802,
+            'branch_id' => $older->branch_id,
+            'organization_id' => $this->organization->id,
+            'channel' => 'pos',
+            'cashier_id' => $older->cashier_id,
+            'customer_num' => $older->customer_num,
+            'status' => 'confirmed',
+            'total_vat' => 0,
+            'order_total' => 750,
+            'payment_status' => 'unpaid',
+            'amount_paid' => 0,
+            'created_at' => now()->subMinutes(5),
+        ]);
+
+        $this->postJson('/api/v1/payments/c2b/confirmation', [
+            'TransID' => 'QBC-MOON-AMT-001',
+            'TransAmount' => '750',
+            'MSISDN' => '254712345678',
+            'BusinessShortCode' => '6563610',
+            'BillRefNumber' => 'moon',
+        ])->assertOk();
+
+        $payment = MpesaIncomingPayment::query()->where('transaction_id', 'QBC-MOON-AMT-001')->firstOrFail();
+        $this->assertNull($payment->parsed_order_num);
+
+        (new ProcessMpesaIncomingMatchJob($payment->id))->handle(
+            app(\App\Services\Mpesa\MpesaPaymentMatchingService::class),
+            app(\App\Services\Mpesa\MpesaPaymentApplicationService::class),
+        );
+
+        $payment->refresh();
+        $latest->refresh();
+        $older->refresh();
+
+        $this->assertSame('applied', $payment->status);
+        $this->assertSame((int) $latest->id, (int) $payment->applied_sale_id);
+        $this->assertSame('amount_latest', $payment->match_method);
+        $this->assertSame(750.0, (float) $latest->amount_paid);
+        $this->assertSame(0.0, (float) $older->amount_paid);
+    }
+
     public function test_accountant_can_manually_apply_unmatched_payment(): void
     {
         $user = User::query()->where('organization_id', $this->organization->id)->where('is_admin', true)->firstOrFail();

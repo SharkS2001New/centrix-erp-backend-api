@@ -28,7 +28,14 @@ class MpesaPaymentMatchingService
 
     public function enrichPayment(MpesaIncomingPayment $payment): MpesaIncomingPayment
     {
-        $parsed = $this->referenceParser->parse((string) ($payment->bill_ref_number ?? ''));
+        $accountName = null;
+        $organization = Organization::query()->find((int) $payment->organization_id);
+        if ($organization) {
+            $name = trim((string) (MpesaSettingsResolver::forOrganization($organization)['payment_account_name'] ?? ''));
+            $accountName = $name !== '' ? $name : null;
+        }
+
+        $parsed = $this->referenceParser->parse((string) ($payment->bill_ref_number ?? ''), $accountName);
 
         $payment->fill([
             'parsed_order_num' => $parsed['order_num'] ?? null,
@@ -119,10 +126,33 @@ class MpesaPaymentMatchingService
             $candidates->push($this->candidateFromSale($sale, 'phone_amount', $amount));
         }
 
+        // Direct paybill (account name only, e.g. "moon"): no order ref — match latest
+        // unpaid sale whose outstanding balance equals the paid amount. STK already
+        // matches via stk_request; this covers Lipa na M-Pesa paybill without STK.
+        if (! $payment->parsed_order_num && ! $payment->parsed_customer_num) {
+            $sale = $this->findLatestOpenSaleByAmount(
+                $organizationId,
+                $amount,
+                $paymentAccount,
+                $payment->business_short_code,
+            );
+            if ($sale) {
+                $candidates->push($this->candidateFromSale($sale, 'amount_latest', $amount));
+            }
+        }
+
         return $candidates
             ->unique(fn (array $row) => (int) $row['sale_id'])
             ->sortByDesc(function (array $row) use ($paymentAccount, $payment) {
                 $confidence = $this->confidenceRank((string) $row['confidence']) * 10;
+                // Prefer explicit refs / STK over amount-only when both exist.
+                $methodBoost = match ((string) ($row['method'] ?? '')) {
+                    'stk_request', 'order_ref' => 5,
+                    'customer_num', 'customer_phone' => 3,
+                    'amount_latest' => 2,
+                    default => 0,
+                };
+                $confidence += $methodBoost;
                 $sale = Sale::query()->find((int) $row['sale_id']);
                 if (! $sale) {
                     return $confidence;
@@ -195,7 +225,7 @@ class MpesaPaymentMatchingService
             return false;
         }
 
-        return in_array($bestMatch['method'] ?? '', ['order_ref', 'stk_request'], true);
+        return in_array($bestMatch['method'] ?? '', ['order_ref', 'stk_request', 'amount_latest'], true);
     }
 
     protected function findSaleByOrderNum(int $organizationId, int $orderNum): ?Sale
@@ -207,6 +237,48 @@ class MpesaPaymentMatchingService
             ->whereNotIn('status', ['cancelled'])
             ->orderByDesc('id')
             ->first();
+    }
+
+    /**
+     * Latest unpaid / partial sale whose outstanding balance matches the payment amount.
+     */
+    protected function findLatestOpenSaleByAmount(
+        int $organizationId,
+        float $amount,
+        ?MpesaPaybillAccount $paymentAccount,
+        ?string $businessShortCode,
+    ): ?Sale {
+        if ($amount < 0.01) {
+            return null;
+        }
+
+        $sales = Sale::query()
+            ->with('customer')
+            ->where('organization_id', $organizationId)
+            ->whereNotIn('status', ['cancelled', 'held', 'expired'])
+            ->whereRaw('(order_total - amount_paid) >= 0.01')
+            ->where('created_at', '>=', now()->subDays(7))
+            ->orderByDesc('id')
+            ->limit(40)
+            ->get();
+
+        foreach ($sales as $sale) {
+            $balanceDue = round((float) $sale->order_total - (float) $sale->amount_paid, 2);
+            if (abs($balanceDue - $amount) > 1.0) {
+                continue;
+            }
+            if (! $this->paybillAccounts->paymentMatchesSale(
+                $paymentAccount,
+                $businessShortCode,
+                $sale,
+            )) {
+                continue;
+            }
+
+            return $sale;
+        }
+
+        return null;
     }
 
     /** @return Collection<int, Sale> */
@@ -293,6 +365,7 @@ class MpesaPaymentMatchingService
         return match ($method) {
             'order_ref' => $amountMatches ? 'high' : 'medium',
             'stk_request' => 'high',
+            'amount_latest' => abs($amount - $balanceDue) <= 1.0 ? 'high' : 'low',
             'customer_num' => $amountMatches ? 'medium' : 'low',
             'customer_phone' => $amountMatches ? 'medium' : 'low',
             'phone_amount' => $amountMatches ? 'low' : 'low',

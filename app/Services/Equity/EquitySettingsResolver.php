@@ -19,6 +19,7 @@ class EquitySettingsResolver
                 || ($equity['enable_paybill_reconciliation'] ?? null) === 1
                 || ($equity['enable_paybill_reconciliation'] ?? null) === '1',
             'auto_apply_order_reference' => ($equity['auto_apply_order_reference'] ?? $defaults['auto_apply_order_reference'] ?? true) !== false,
+            'payment_account_name' => trim((string) ($equity['payment_account_name'] ?? $defaults['payment_account_name'] ?? '')),
             'payment_account_hint' => trim((string) ($equity['payment_account_hint'] ?? $defaults['payment_account_hint'] ?? '')),
             'callback_url' => trim((string) ($equity['callback_url'] ?? '')),
             'primary_account_number' => trim((string) ($equity['primary_account_number'] ?? '')),

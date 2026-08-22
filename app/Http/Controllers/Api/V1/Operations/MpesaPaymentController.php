@@ -427,7 +427,11 @@ class MpesaPaymentController extends Controller
         $payerName = trim((string) ($payload['FirstName'] ?? $payload['first_name'] ?? ''));
         $businessShortCode = trim((string) ($payload['BusinessShortCode'] ?? $payload['business_short_code'] ?? ''));
 
-        $parsed = app(MpesaPaymentReferenceParser::class)->parse($billRefNumber);
+        $organization = Organization::query()->find($organizationId);
+        $accountName = $organization
+            ? (string) (MpesaSettingsResolver::forOrganization($organization)['payment_account_name'] ?? '')
+            : '';
+        $parsed = app(MpesaPaymentReferenceParser::class)->parse($billRefNumber, $accountName !== '' ? $accountName : null);
         /** @var \App\Models\MpesaPaybillAccount|null $paybillAccount */
         $paybillAccount = $resolved['account'] ?? null;
 
