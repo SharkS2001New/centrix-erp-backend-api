@@ -491,4 +491,54 @@ class ShopDebtorsSalesIndexTest extends TestCase
         $this->assertContains($sale->id, $unpaidIds);
         $this->assertContains($sale->id, $shopIds);
     }
+
+    public function test_shop_debtors_unpaid_excludes_route_customers(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $suffix = random_int(700000000, 799999999);
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $suffix,
+            'customer_name' => 'Route Debtor '.$suffix,
+            'customer_type' => 'route',
+            'created_by' => $admin->id,
+        ]);
+
+        $sale = Sale::query()->create([
+            'order_num' => $suffix,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'cashier_id' => $admin->id,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => $suffix,
+            'status' => 'unpaid',
+            'payment_status' => 'unpaid',
+            'payment_method_code' => 'CREDIT',
+            'is_credit_sale' => 1,
+            'order_total' => 900,
+            'amount_paid' => 0,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        $from = now()->subDay()->toDateString();
+        $to = now()->toDateString();
+        $query = "from_date={$from}&to_date={$to}&date_field=placed&outstanding_balance=1&per_page=200";
+
+        $unpaidIds = collect(
+            $this->getJson("/api/v1/sales?filter[payment_status]=unpaid&{$query}")->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $shopIds = collect(
+            $this->getJson("/api/v1/sales?shop_debtors=1&filter[payment_status]=unpaid&{$query}")->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertContains($sale->id, $unpaidIds);
+        $this->assertNotContains($sale->id, $shopIds);
+    }
 }

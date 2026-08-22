@@ -883,6 +883,42 @@ class SalesCartCheckoutStockTest extends TestCase
         $this->assertEqualsWithDelta(4.0, (float) ($cart['lines'][0]['quantity'] ?? 0), 0.0001);
     }
 
+    public function test_pos_cart_keeps_separate_lines_when_combine_identical_disabled(): void
+    {
+        $org = $this->user->organization()->firstOrFail();
+        $moduleSettings = (array) ($org->module_settings ?? []);
+        $sales = array_merge(
+            config('erp.module_settings_defaults.sales', []),
+            is_array($moduleSettings['sales'] ?? null) ? $moduleSettings['sales'] : [],
+            ['pos_combine_identical_lines' => false],
+        );
+        $org->update([
+            'module_settings' => array_merge($moduleSettings, ['sales' => $sales]),
+        ]);
+        $this->user->setRelation('organization', $org->fresh());
+
+        $cartId = $this->postJson('/api/v1/sales/carts', [
+            'channel' => 'pos',
+            'branch_id' => $this->user->branch_id,
+        ])->assertCreated()->json('id');
+
+        $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 2,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->assertJsonCount(1, 'lines');
+
+        $cart = $this->postJson("/api/v1/sales/carts/{$cartId}/lines", [
+            'product_code' => $this->productCode,
+            'quantity' => 10,
+            'on_wholesale_retail' => 0,
+        ])->assertCreated()->json();
+
+        $this->assertCount(2, $cart['lines'] ?? []);
+        $quantities = collect($cart['lines'])->pluck('quantity')->map(fn ($q) => (float) $q)->sort()->values()->all();
+        $this->assertEquals([2.0, 10.0], $quantities);
+    }
+
     public function test_fresh_owned_cart_after_delete_returns_friendly_404_not_type_error(): void
     {
         $cartId = $this->postJson('/api/v1/sales/carts', [

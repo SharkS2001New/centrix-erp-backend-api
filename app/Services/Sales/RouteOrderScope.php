@@ -159,15 +159,14 @@ class RouteOrderScope
      */
     public static function applyShopDebtors(Builder $query): Builder
     {
-        self::withCustomerRouteJoin($query);
-
-        $alias = self::CUSTOMER_JOIN_ALIAS;
-
         return $query
             ->whereNotNull('sales.customer_num')
-            ->whereRaw(
-                'LOWER(TRIM(COALESCE('.$alias.'.customer_type, ?))) IN (?, ?)',
-                ['', 'regular', 'debtor'],
-            );
+            ->whereExists(function ($sub) {
+                $sub->select(DB::raw('1'))
+                    ->from('customers')
+                    ->whereColumn('customers.customer_num', 'sales.customer_num')
+                    ->whereColumn('customers.organization_id', 'sales.organization_id')
+                    ->whereIn('customers.customer_type', ['regular', 'debtor']);
+            });
     }
 }
