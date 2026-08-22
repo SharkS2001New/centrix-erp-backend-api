@@ -126,7 +126,7 @@ class ShopDebtorsSalesIndexTest extends TestCase
         $this->assertContains($shopPartial->id, $ids);
         $this->assertNotContains($shopPaid->id, $ids);
         $this->assertNotContains($routeUnpaid->id, $ids);
-        $this->assertNotContains($mobileUnpaid->id, $ids);
+        $this->assertContains($mobileUnpaid->id, $ids);
 
         $unpaidIds = collect(
             $this->getJson(
@@ -226,7 +226,7 @@ class ShopDebtorsSalesIndexTest extends TestCase
                 "/api/v1/sales?shop_debtors=1&filter[payment_status]=paid&from_date={$from}&to_date={$to}&per_page=200",
             )->assertOk()->json('data')
         )->pluck('id')->map(fn ($id) => (int) $id)->all();
-        $this->assertNotContains($cashToDebtor->id, $paidIds);
+        $this->assertContains($cashToDebtor->id, $paidIds);
         $this->assertNotContains($posCredit->id, $paidIds);
     }
 
@@ -440,5 +440,55 @@ class ShopDebtorsSalesIndexTest extends TestCase
         )->pluck('id')->map(fn ($id) => (int) $id)->all();
 
         $this->assertContains($sale->id, $unpaidIds);
+    }
+
+    public function test_shop_debtors_unpaid_matches_unpaid_orders_for_regular_customer_cash_sale(): void
+    {
+        $admin = User::where('username', 'admin')->firstOrFail();
+        Sanctum::actingAs($admin);
+
+        $suffix = random_int(800000000, 899999999);
+        Customer::query()->create([
+            'organization_id' => $admin->organization_id,
+            'branch_id' => $admin->branch_id,
+            'customer_num' => $suffix,
+            'customer_name' => 'Regular Cash '.$suffix,
+            'customer_type' => 'regular',
+            'created_by' => $admin->id,
+        ]);
+
+        $sale = Sale::query()->create([
+            'order_num' => $suffix,
+            'branch_id' => $admin->branch_id,
+            'organization_id' => $admin->organization_id,
+            'cashier_id' => $admin->id,
+            'channel' => 'pos',
+            'order_source' => 'pos',
+            'customer_num' => $suffix,
+            'status' => 'completed',
+            'payment_status' => 'unpaid',
+            'payment_method_code' => 'CASH',
+            'is_credit_sale' => 0,
+            'order_total' => 12000,
+            'amount_paid' => 0,
+            'total_vat' => 0,
+            'archived' => 0,
+            'created_at' => now(),
+        ]);
+
+        $from = now()->subDay()->toDateString();
+        $to = now()->toDateString();
+        $query = "from_date={$from}&to_date={$to}&date_field=placed&per_page=200";
+
+        $unpaidIds = collect(
+            $this->getJson("/api/v1/sales?filter[payment_status]=unpaid&{$query}")->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $shopIds = collect(
+            $this->getJson("/api/v1/sales?shop_debtors=1&filter[payment_status]=unpaid&outstanding_balance=1&{$query}")->assertOk()->json('data')
+        )->pluck('id')->map(fn ($id) => (int) $id)->all();
+
+        $this->assertContains($sale->id, $unpaidIds);
+        $this->assertContains($sale->id, $shopIds);
     }
 }

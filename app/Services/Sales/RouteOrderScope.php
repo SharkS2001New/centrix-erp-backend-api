@@ -4,7 +4,6 @@ namespace App\Services\Sales;
 
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Support\Facades\DB;
-use App\Support\SalePaymentStatus;
 
 /**
  * Route orders: sales tied to a route directly or via the customer's assigned route.
@@ -155,54 +154,20 @@ class RouteOrderScope
     }
 
     /**
-     * Shop Debtors: POS / backoffice / WhatsApp orders for regular & debtor customers.
-     *
-     * Mobile field sales and route-type customers belong on other queues.
-     * Payment bucket (unpaid / partial / paid) is applied separately on the list query.
-     *
-     * @param  'unpaid'|'partial'|'paid'|null  $paymentBucket  When null, only open receivables.
+     * Shop Debtors: same sales list as Unpaid / Partial / Paid Orders, scoped to
+     * regular & debtor customers only. Payment bucket is applied separately.
      */
-    public static function applyShopDebtors(Builder $query, ?string $paymentBucket = null): Builder
+    public static function applyShopDebtors(Builder $query): Builder
     {
         self::withCustomerRouteJoin($query);
 
         $alias = self::CUSTOMER_JOIN_ALIAS;
-        $bucket = $paymentBucket !== null && trim($paymentBucket) !== ''
-            ? SalePaymentStatus::normalizeLabel($paymentBucket)
-            : null;
 
-        $query
+        return $query
             ->whereNotNull('sales.customer_num')
-            ->where(function (Builder $sub) {
-                $sub->whereNull('sales.channel')
-                    ->orWhereRaw('LOWER(TRIM(COALESCE(sales.channel, ?))) != ?', ['', 'mobile']);
-            })
-            ->where(function (Builder $sub) {
-                $sub->whereNull('sales.order_source')
-                    ->orWhereRaw('LOWER(TRIM(COALESCE(sales.order_source, ?))) != ?', ['', 'mobile']);
-            })
-            ->where(function (Builder $sub) use ($alias) {
-                $sub->whereNull($alias.'.customer_type')
-                    ->orWhereRaw(
-                        'LOWER(TRIM(COALESCE('.$alias.'.customer_type, ?))) IN (?, ?)',
-                        ['', 'regular', 'debtor'],
-                    );
-            });
-
-        if ($bucket === SalePaymentStatus::PAID) {
-            $query->where(function (Builder $sub) {
-                $sub->where('sales.is_credit_sale', 1)
-                    ->orWhereRaw('UPPER(TRIM(COALESCE(sales.payment_method_code, ?))) = ?', ['', 'CREDIT']);
-            });
-        } elseif ($bucket === null) {
-            $openBalanceSql = '('.SalePaymentStatus::isUnpaidSql('sales.').' OR '.SalePaymentStatus::isPartialSql('sales.').')';
-            $query->where(function (Builder $sub) use ($openBalanceSql) {
-                $sub->where('sales.is_credit_sale', 1)
-                    ->orWhereRaw('UPPER(TRIM(COALESCE(sales.payment_method_code, ?))) = ?', ['', 'CREDIT'])
-                    ->orWhereRaw($openBalanceSql);
-            });
-        }
-
-        return $query;
+            ->whereRaw(
+                'LOWER(TRIM(COALESCE('.$alias.'.customer_type, ?))) IN (?, ?)',
+                ['', 'regular', 'debtor'],
+            );
     }
 }

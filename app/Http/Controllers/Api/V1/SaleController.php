@@ -286,13 +286,7 @@ class SaleController extends BaseResourceController
         }
 
         if ($shopDebtors) {
-            $paymentStatusFilter = data_get($request->input('filter', []), 'payment_status');
-            $hasPaymentStatusFilter = is_string($paymentStatusFilter) && trim($paymentStatusFilter) !== '';
-
-            RouteOrderScope::applyShopDebtors(
-                $query,
-                $hasPaymentStatusFilter ? (string) $paymentStatusFilter : null,
-            );
+            RouteOrderScope::applyShopDebtors($query);
         }
 
         $paymentStatusFilter = data_get($request->input('filter', []), 'payment_status');
